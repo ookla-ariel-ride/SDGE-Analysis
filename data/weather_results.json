@@ -1,0 +1,10 @@
+{
+ "base_kwh_day": 42.2,
+ "kwh_per_cdd65": 3.0,
+ "kwh_per_hdd60": -1.23,
+ "r2": 0.45,
+ "annual_cooling_kwh": 1738,
+ "annual_heating_kwh": -415,
+ "precool_shift_value": 233,
+ "setpoint_value": 104
+}

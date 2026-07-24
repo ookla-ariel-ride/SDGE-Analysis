@@ -1,0 +1,34 @@
+{
+ "IQ 5P|t1": {
+  "median_h": 7,
+  "p10_h": 6
+ },
+ "IQ 5P|t2": {
+  "median_h": 2,
+  "p10_h": 1
+ },
+ "IQ 10C|t1": {
+  "median_h": 36,
+  "p10_h": 13
+ },
+ "IQ 10C|t2": {
+  "median_h": 5,
+  "p10_h": 2
+ },
+ "PW3|t1": {
+  "median_h": 336,
+  "p10_h": 90
+ },
+ "PW3|t2": {
+  "median_h": 7,
+  "p10_h": 3
+ },
+ "PW3+Exp|t1": {
+  "median_h": 336,
+  "p10_h": 241
+ },
+ "PW3+Exp|t2": {
+  "median_h": 30,
+  "p10_h": 9
+ }
+}

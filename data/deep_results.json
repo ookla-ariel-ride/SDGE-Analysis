@@ -1,0 +1,37 @@
+{
+ "wildcard": {
+  "TOU-DR-P + PW3 (15 events dodged)": 6719,
+  "EV-TOU-5 + PW3": 3192,
+  "TOU-DR-P no battery (events hit)": 7483
+ },
+ "phantom": {
+  "baseload_kw": 1.02,
+  "annual_kwh": 8935,
+  "annual_cost_at_blend": 1787,
+  "note": "25th-pct 3-5am non-EV draw; cost blends SOP/off/on exposure"
+ },
+ "ev_sessions": {
+  "count": 576,
+  "kwh_total": 14158,
+  "cost_total": 3081,
+  "avg_kwh": 24.6,
+  "sessions_touching_onpeak": 48,
+  "onpeak_kwh_in_sessions": 931,
+  "offpeak_kwh_in_sessions": 1718,
+  "cost_if_all_sop": 1780,
+  "wasted_vs_perfect": 1301
+ },
+ "vacation": {
+  "non_ev_daily_median": 37.7,
+  "away_day_threshold": 26.3,
+  "away_days_detected": 37,
+  "note": "days with non-EV load in bottom decile; away-mode savings depend on what stays on"
+ },
+ "monte_carlo": {
+  "payback_median": 9.4,
+  "payback_p10": 8.1,
+  "payback_p90": 11.6,
+  "prob_payback_within_warranty10yr": 0.645,
+  "npv10_at_4pct_median": -2158
+ }
+}

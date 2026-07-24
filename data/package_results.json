@@ -1,0 +1,62 @@
+{
+ "plan_battery_matrix": {
+  "EV-TOU-5": {
+   "no_battery": 4861,
+   "with_PW3": 3192,
+   "battery_value": 1669
+  },
+  "EV-TOU-2": {
+   "no_battery": 5816,
+   "with_PW3": 4539,
+   "battery_value": 1276
+  },
+  "TOU-DR1": {
+   "no_battery": 6833,
+   "with_PW3": 5983,
+   "battery_value": 850
+  }
+ },
+ "baseline": {
+  "annual_cost": 4861,
+  "avg_monthly_bill": 405,
+  "monthly_min": 93,
+  "monthly_max": 709
+ },
+ "moved_kwh": 2507,
+ "packages": [
+  {
+   "name": "LOW \u2014 behavior only ($0)",
+   "annual_cost": 3527,
+   "annual_savings": 1334,
+   "hw_cost": 0,
+   "payback_yr": 0,
+   "avg_monthly_bill": 294,
+   "monthly_min": 58,
+   "monthly_max": 413
+  },
+  {
+   "name": "MID \u2014 behavior + 1x Powerwall 3 (~$14,500)",
+   "annual_cost": 2179,
+   "annual_savings": 2681,
+   "hw_cost": 14500,
+   "payback_yr": 5.4,
+   "avg_monthly_bill": 182,
+   "monthly_min": 19,
+   "monthly_max": 258
+  },
+  {
+   "name": "HIGH \u2014 behavior + PW3 + Expansion (~$20,400)",
+   "annual_cost": 2176,
+   "annual_savings": 2685,
+   "hw_cost": 20400,
+   "payback_yr": 7.6,
+   "avg_monthly_bill": 181,
+   "monthly_min": 21,
+   "monthly_max": 257
+  }
+ ],
+ "battery_marginal_after_behavior": {
+  "PW3": 1347,
+  "PW3X": 1351
+ }
+}

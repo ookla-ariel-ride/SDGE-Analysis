@@ -1,0 +1,15 @@
+#!/bin/sh
+# Block commits containing secrets or private data. Requires gitleaks
+# (brew install gitleaks). Enable with: git config core.hooksPath .githooks
+#
+# If private/pii-rules.toml exists (local-only, gitignored), it extends the
+# default rules with personal-data patterns (name, address, account numbers).
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not installed (brew install gitleaks) — refusing to commit unscanned." >&2
+    exit 1
+fi
+TOPLEVEL=$(git rev-parse --show-toplevel)
+if [ -f "$TOPLEVEL/private/pii-rules.toml" ]; then
+    exec gitleaks git --pre-commit --staged --redact --verbose --config "$TOPLEVEL/private/pii-rules.toml"
+fi
+exec gitleaks git --pre-commit --staged --redact --verbose

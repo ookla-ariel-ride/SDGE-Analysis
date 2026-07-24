@@ -1,0 +1,52 @@
+# ============================================================
+# PRIVATE MATERIAL — never push. Only files containing PII or
+# household behavioral fingerprints live in private/ ; extra
+# patterns below are belt-and-suspenders in case a sensitive
+# file ever lands outside it.
+# ============================================================
+
+# The private archive:
+#   - raw SDGE Green Button CSV (name, address, account & meter numbers in header)
+#   - SAM 8760 hourly whole-home consumption (no identifiers, but reveals occupancy)
+#   - as-run script copy with personal header
+private/
+
+# Local duplicate/backup copies of the working tree (contain the private archive)
+dupes/
+
+# A private/ directory nested anywhere else (e.g. inside a backup copy)
+*/private/
+
+# Bill PDFs are kept in *-bills/ folders whose filenames don't say "bill"
+*-bills/
+*billing_history*
+bill_summary*
+
+# Known-sensitive file patterns, wherever they appear
+Electric_15_Minute*.csv
+*green*button*.csv
+*GreenButton*.csv
+*sam_8760*.csv
+enphase_sam8760*.csv
+
+# Bills / statements if ever downloaded here
+*bill*.pdf
+*statement*.pdf
+
+# Secrets hygiene
+*.key
+*apikey*
+*api_key*
+.env
+.env.*
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Aggregated, PII-free data files that raw-export patterns above would
+# otherwise catch (verified clean before each exception was added).
+# Must stay LAST: gitignore is last-match-wins.
+!data/electric_bill_summary.csv
+!data/enphase_daily_production.csv
+!data/pvoutput_5min_sample.csv

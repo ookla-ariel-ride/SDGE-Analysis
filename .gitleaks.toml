@@ -1,0 +1,28 @@
+# Gitleaks configuration for this repo.
+# Extends the default credential rules with generic patterns for utility-account
+# PII. Deliberately contains NO actual personal values — person-specific
+# patterns live in private/pii-rules.toml (gitignored, local-only), which
+# extends this file. See README "Privacy & secret scanning".
+
+[extend]
+useDefault = true
+
+# SDGE bill-formatted account numbers: 0087 XXXX XXXX X (spaces or dashes)
+[[rules]]
+id = "sdge-formatted-account-number"
+description = "SDGE bill-formatted account number"
+regex = '''\b0087[ -]\d{4}[ -]\d{4}[ -]\d\b'''
+
+# "Account number: 1234567890" style — any labeled long account/meter number
+[[rules]]
+id = "labeled-account-or-meter-number"
+description = "Labeled utility account or meter number"
+regex = '''(?i)\b(account|meter)\s*(number|num|no\.?|#)\s*[:=]?\s*\d{6,}'''
+
+# Raw Green Button / SDGE interval exports carry the customer name and address
+# in their header block — they must never be committed (see .gitignore).
+[[rules]]
+id = "green-button-export-header"
+description = "Raw Green Button export header (contains name/address)"
+regex = '''(?i)^\s*(name|address)\s*,\s*"?[^,\n]+"?\s*$'''
+path = '''(?i).*\.csv$'''
