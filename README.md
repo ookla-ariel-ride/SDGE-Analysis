@@ -69,6 +69,12 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `data/soiling_results.json` | Soiling/rain-recovery study results (rain events, regressions, annual economics) |
 | `data/carbon_results.json` | Grid-carbon timing results (CAISO hourly intensity, household footprint, EV-timing deltas) |
 | `data/extra_results.json` | Phantom-baseload decomposition, rate-escalation ladder, marginal price map, NBT re-billing, cleaning-cadence model |
+| `data/package_results.json` | LOW/MID/HIGH package figures from the integrated pipeline — savings, honest asset-alone paybacks |
+| `data/deep_results.json` | Deep-dive outputs: TOU-DR-P wildcard, phantom baseload, EV sessions, vacation detection, Monte Carlo battery ROI |
+| `data/gas_monthly_therms.csv`, `data/gas_bill_summary.csv` | Monthly gas usage and aggregated gas bill summary (electrification analysis inputs) |
+| `data/weather_daily_tmean.csv`, `data/weather_results.json` | Open-Meteo daily temperatures + weather-normalized cooling results |
+| `data/pvoutput_yearly_2020-2025.csv` | PVOutput per-year production stats, 2020–2025 (degradation analysis input) |
+| `data/cleaning_study_peaks_2024.csv` | Peak-day production windows around the 2024 cleaning (diff-in-diff companion) |
 | `data/wall_charger_daily.csv` | Tesla Wall Connector daily delivered kWh (wall-side) - third-source validation of the EV session detector (99.6% clean-window agreement) 
 | `TECHNICAL.md` | **Full technical/reproducibility documentation** — every script, data schema, algorithm, and chart pipeline, methods-section style |
 | `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
@@ -80,6 +86,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `analysis/battery_backup_sims.py` | Battery arbitrage + backup endurance simulations |
 | `analysis/soiling_analysis.py` | Soiling from rain-recovery events + days-since-rain regression (NOAA/RCC ACIS precipitation) |
 | `analysis/carbon_timing.py` | Grid-carbon timing from CAISO Today's Outlook history data (CO2 + demand) |
+| `analysis/deep_analyses.py` | Deep-dive script: TOU-DR-P wildcard, phantom load, EV sessions, vacation detection, Monte Carlo |
 | `analysis/battery_dispatch_policies.py` | Battery dispatch-policy comparison — evening-only vs two-window vs price-aware (the report's battery basis) |
 | `analysis/lifetime_payback.py` | Lifetime solar payback: cumulative production value vs install invoice, with crossover dates |
 | `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder |
@@ -89,6 +96,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `reusable-prompt.md` | Full prompt to reproduce this entire analysis (plan + solar + battery + gas + bill audit) in Claude Cowork |
 | `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
 | `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
+| `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy) |
 
 ## Reproduce this for your own home — start here
 
