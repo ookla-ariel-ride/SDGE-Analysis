@@ -83,18 +83,11 @@ def load():
     return df
 
 
+from rates import bill_nem_monthly as _bnm
+
 def bill_monthly(frame, imp="imp", exp="exp"):
-    """Monthly per-TOU-period NEM netting -> {month: $}. Sum = annual bill."""
-    out = {}
-    for ym, m in frame.groupby("ym"):
-        tot = m.dt.dt.date.nunique() * BSC + m[imp].sum() * NBC
-        for s in ("S", "W"):
-            for p in ("on", "off", "sop"):
-                sub = m[(m.seas == s) & (m.p == p)]
-                net = sub[imp].sum() - sub[exp].sum()
-                tot += net * (retail(s, p) if net >= 0 else credit(s, p))
-        out[str(ym)] = tot
-    return out
+    """Monthly per-TOU-period NEM netting -> {month: $} (canonical engine)."""
+    return _bnm(frame, imp, exp)
 
 
 def bill(frame, imp="imp", exp="exp"):

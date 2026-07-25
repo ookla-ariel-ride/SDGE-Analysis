@@ -20,11 +20,7 @@ Rates read off the actual bills (EV-TOU-5 + CEA Clean Impact Plus, eff. 6/1/2026
 import pandas as pd, numpy as np, datetime as dt
 
 CSV="usage.csv"  # SDG&E Green Button 15-min (skiprows=13)
-UDC={"S":{"on":0.30203,"off":0.30203,"sop":0.02606},"W":{"on":0.31174,"off":0.31174,"sop":0.02606}}
-CEA={"S":{"on":0.51684,"off":0.15975,"sop":0.04961},"W":{"on":0.24430,"off":0.15782,"sop":0.05187}}
-NBC=0.021; PCIA=0.02828; BSC=0.79343
-energy=lambda s,p: UDC[s][p]+CEA[s][p]+PCIA   # netted energy rate (NBC handled separately)
-credit=lambda s,p: UDC[s][p]+CEA[s][p]        # export credit: delivery + generation only
+from rates import UDC, CEA, NBC, PCIA, BSC, energy, credit  # canonical (single source of truth)
 
 def load():
     df=pd.read_csv(CSV,skiprows=13); df.columns=[c.strip() for c in df.columns]

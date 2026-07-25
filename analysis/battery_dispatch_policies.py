@@ -37,7 +37,13 @@ def run_batt(d, imp0, gen0, cap, policy):
     soc = cap / 2; served = 0.0; thru = 0.0
     p = d.p.values; h = d.hour.values; kw = imp0 * 4
     for i in range(len(d)):
-        if exp[i] > 0:
+        disch_win = (16 <= h[i] < 21) or \
+                    (policy == "twowin" and 6 <= h[i] < 9 and kw[i] < 2.5) or \
+                    (policy == "greedy" and p[i] != "sop" and kw[i] < 2.5)
+        if exp[i] > 0 and not (disch_win and imp[i] > 0):
+            # charge from surplus — unless this interval also has import inside a
+            # discharge window (6.3% of intervals carry both flows; serving a
+            # 51-87c import beats storing surplus worth ~8c)
             c = min(exp[i], (cap - soc) / ETA, PWRQ)
             if c > 0: soc += c * ETA; exp[i] -= c; thru += c * ETA
             continue
@@ -47,10 +53,7 @@ def run_batt(d, imp0, gen0, cap, policy):
             take = min(max((lim - soc) / ETA, 0), PWRQ) if grid_ok else 0
             if take > 0: soc += take * ETA; imp[i] += take; thru += take * ETA
             continue
-        disch = (16 <= h[i] < 21) or \
-                (policy == "twowin" and 6 <= h[i] < 9 and kw[i] < 2.5) or \
-                (policy == "greedy" and kw[i] < 2.5)
-        if disch:
+        if disch_win:
             dd = min(imp[i], soc * ETA, PWRQ)
             if dd > 0: soc -= dd / ETA; imp[i] -= dd; served += dd
     return imp, exp, served, thru
@@ -105,10 +108,11 @@ if __name__ == "__main__":
         pb[name] = {"battery_marginal": round(b_sh - b2),
                     "combined_save": round(base - b2), "bill": round(b2)}
     out["post_behavior"] = pb
-    out["escalation_greedy_pw3"] = escalation(out["pw3"]["greedy"]["save"])
+    out["escalation_greedy_pw3_post_behavior"] = escalation(pb["mid"]["battery_marginal"])
+    out["escalation_note"] = "seeded from the post-EV-fix battery marginal (the decision-relevant figure)"
     out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
                     "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
                     "rte": 0.9, "power_kw": 11.5, "requires": "multi-window time-based control"}
     json.dump(out, open("battery_dispatch_policies.json", "w"), indent=1)
     print("post_behavior:", pb)
-    print("escalation:", out["escalation_greedy_pw3"])
+    print("escalation:", out["escalation_greedy_pw3_post_behavior"])

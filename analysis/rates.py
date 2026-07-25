@@ -11,7 +11,15 @@ fine for RANKING, not for absolute dollars; see TECHNICAL.md.)
 Billing mechanics (NEM 2.0, matching the bills):
   * energy charges netted per (month, season, TOU period): positive net billed
     at UDC+CEA+PCIA; negative net credited at UDC+CEA
+  * PCIA is applied to NET kWh — bill evidence: the same statement charges
+    "PCIA 2023 224 kWh x rate" on a period with 224 kWh NET usage while charging
+    "Wildfire Fund Charge 308 kWh" (gross imports) — so netting PCIA inside the
+    energy rate is bill-correct. Exports offset PCIA only within net-positive
+    buckets; every month of the audit year was net-positive, so the treatment of
+    PCIA in a net-NEGATIVE period is untested against a bill (not determinable
+    from available statements; bounded ambiguity only if a month goes negative)
   * non-bypassable charges (NBC) on GROSS imported kWh — never netted
+    (bill evidence: wildfire charged on 308 gross kWh vs 224 net)
   * Base Services Charge per day
 TOU windows (year-round, post-June-2026): on-peak 16-21 daily;
 super-off-peak 0-6 + 10-14 weekdays, 0-14 weekends; off-peak otherwise.
@@ -32,15 +40,20 @@ def period(hour_frac, is_weekend):
     if is_weekend: return "sop" if hour_frac < 14 else "off"
     return "sop" if (hour_frac < 6 or 10 <= hour_frac < 14) else "off"
 
-def bill_nem(frame, imp="Consumption", exp="Generation"):
-    """Annual $: monthly per-period NEM netting + NBC on gross imports + BSC.
+def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
+    """{month: $} via monthly per-period NEM netting + NBC on gross imports + BSC.
     frame needs columns: dt, seas ('S'/'W'), p ('on'/'off'/'sop'), ym, imp, exp."""
-    tot = 0.0
-    for _, m in frame.groupby("ym"):
-        tot += m.dt.dt.date.nunique() * BSC + m[imp].sum() * NBC
+    out = {}
+    for ym, m in frame.groupby("ym"):
+        tot = m.dt.dt.date.nunique() * BSC + m[imp].sum() * NBC
         for s in ("S", "W"):
             for p in ("on", "off", "sop"):
                 sub = m[(m.seas == s) & (m.p == p)]
                 net = sub[imp].sum() - sub[exp].sum()
                 tot += net * (energy(s, p) if net >= 0 else credit(s, p))
-    return tot
+        out[str(ym)] = tot
+    return out
+
+def bill_nem(frame, imp="Consumption", exp="Generation"):
+    """Annual $ (sum of bill_nem_monthly)."""
+    return sum(bill_nem_monthly(frame, imp, exp).values())
