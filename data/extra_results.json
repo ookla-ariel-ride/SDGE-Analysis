@@ -153,21 +153,59 @@
   "household_ice_vehicles": 0,
   "home_charging_setup": "one home charger shared by both cars (owner: cars alternate; meter: sessions on 335 of 365 days, 2+ sessions on 190 days); Model 3 almost exclusively home-charged, Model Y occasionally supplemented by supercharging",
   "crosscheck": {
-   "implied_wall_kwh_all_driving_at_260_330_wh_per_mi": [
-    8849,
-    11232
+   "detector_wall_kwh": 13723,
+   "tesla_home_battery_kwh": 12828,
+   "implied_charging_loss": 0.065,
+   "typical_ac_loss": "0.08-0.12",
+   "sessions_app_vs_detector": [
+    612,
+    560
    ],
-   "measured_home_charging_kwh": 13723,
-   "residual_kwh": [
-    2491,
-    4874
+   "peak_share_app_blended_vs_detector_onpeak": [
+    0.058,
+    0.064
    ],
-   "candidate_explanations": [
-    "idle/Sentry/preconditioning drain (~730-1,100 kWh/yr for two cars)",
-    "real-world efficiency below rated on highway/heat",
-    "possible partial over-attribution of >=2.5 kW house-load combinations by the session detector"
-   ],
-   "note": "the vast majority of all charging for ~34,000 mi/yr occurs at home, so the 13,723 kWh home figure approximates total wall energy; it exceeds the implied all-driving need by the residual above, pointing to idle/preconditioning drain, sub-rated real-world efficiency, and/or partial detector over-attribution; labeled estimated"
+   "supercharged_share_of_total": 0.091,
+   "effective_consumption_wh_per_mi_battery": 420,
+   "real_world_vs_rated_efficiency": 0.83,
+   "verdict": "meter session-detection validated within ~4% by the vehicles' own 12-month telemetry; prior odometer residual explained by measured real-world consumption, not detector over-attribution"
+  },
+  "tesla_app_stats_12mo": {
+   "source": "Tesla app Charge Stats, trailing 12 months (Aug 2025 - Jul 2026), captured 2026-07-24; battery-side kWh",
+   "model_y": {
+    "total_kwh": 7292,
+    "home_kwh": 5916,
+    "supercharger_kwh": 1247,
+    "work_kwh": 58,
+    "other_kwh": 70,
+    "home_sessions": 300,
+    "tou_split": {
+     "off_peak": 0.82,
+     "mid_peak": 0.1,
+     "peak": 0.08
+    },
+    "rated_miles_added": 20702
+   },
+   "model_3": {
+    "total_kwh": 7006,
+    "home_kwh": 6912,
+    "supercharger_kwh": 53,
+    "other_kwh": 40,
+    "home_sessions": 312,
+    "tou_split": {
+     "off_peak": 0.74,
+     "mid_peak": 0.22,
+     "peak": 0.04
+    },
+    "rated_miles_added": 20519
+   },
+   "combined": {
+    "home_kwh": 12828,
+    "supercharger_kwh": 1300,
+    "total_kwh": 14298,
+    "home_sessions": 612,
+    "rated_miles_added": 41221
+   }
   }
  }
 }
