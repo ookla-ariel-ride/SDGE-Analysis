@@ -26,7 +26,12 @@ cp ../1-raw-data/Electric_15_Minute_*.csv usage.csv
 # The §9 regeneration gate — run after ANY script or artifact change:
 cmp private/verify/behavior_rebuild.json data/behavior_rebuild.json
 cmp private/verify/battery_dispatch_policies.json data/battery_dispatch_policies.json
-# (must be byte-identical; a diff means a stale artifact or an unreproducible script)
+../../.venv/bin/python package_results.py && git diff --exit-code ../../data/package_results.json
+../../.venv/bin/python extended_findings.py && git diff --exit-code ../../data/extended_results.json
+# (must be byte-identical; a diff means a stale artifact or an unreproducible script.
+#  extended_findings.py fails closed: it computes all battery figures from the dispatch
+#  engine, asserts them against battery_dispatch_policies.json, validates every required
+#  section, and writes the artifact atomically — a partial/failed run changes nothing.)
 
 # Full-history secret scan (CI runs the generic rules automatically on every push):
 gitleaks git --config .gitleaks.toml .                # committed generic rules
