@@ -191,3 +191,23 @@ paragraph. Never drop or reword these when regenerating either file.
 - Private (gitignored): `private/` — raw Green Button, bill PDFs, monitoring exports, as-run
   scripts with personal headers. Exception: `private/README.md` is committed as a placeholder
   documenting what's withheld.
+
+
+## 12. README structure requirements (keep on every regeneration).
+README.md must retain: (a) a "Companion documents" block immediately after the provenance
+blockquote, linking TECHNICAL.md, GLOSSARY.md, DATA-SOURCES-CHEATSHEET.md, and
+reusable-prompt.md with one-line descriptions; (b) a "Reproduce this for your own home -
+start here" section (blank-slate clone commands, cheatsheet data-gathering, personal
+private/pii-rules.toml setup, AI route vs manual route, the S9 validation gates, then
+publish); (c) a privacy note describing the MECHANICAL enforcement (pre-commit hook via
+core.hooksPath .githooks, CI gitleaks workflow, local-only private/pii-rules.toml) - never
+manual grepping alone; (d) a "Refreshing this analysis" flow reflecting the current
+pipeline (rates.py as single source of truth -> pipeline scripts -> regeneration
+diff-check -> report-template.html), never the retired analyze.py/D-block flow.
+
+## 13. Self-preservation (this file).
+Any future edit of CLAUDE.md must keep: the "Commands" section at the top (hook setup,
+venv/requirements.txt, the private/verify sandbox pattern, the regeneration gate, gitleaks
+scan invocations), the mechanical-enforcement text in section 4, and the reference to the
+committed requirements.txt (pandas, numpy). These encode the working developer setup;
+dropping them in a regeneration silently breaks the privacy gate and the reproduction path.
