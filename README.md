@@ -14,7 +14,7 @@ own file viewer shows the HTML *source*, not the rendered report, so use the lin
 instead.)
 
 **Choose your path:**
-- Just want the results? Read [the live report](https://ookla-ariel-ride.github.io/SDGE-Analysis/) or [the bottom line](#the-bottom-line) below.
+- Just want to see the report? [Read it live](https://ookla-ariel-ride.github.io/SDGE-Analysis/).
 - Want to run this on your own home? Jump to [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here).
 - Auditing the methods? Start with [TECHNICAL.md](TECHNICAL.md).
 
@@ -22,7 +22,7 @@ instead.)
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
 
-An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data.
+An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data. It was created for one specific household with every personal identifier removed, and the repo packages the full machinery behind it (scripts, data schemas, report template, intake interview, and privacy gates) so anyone can generate the same in-depth analysis of solar production, battery economics, rate plans, and EV charging from their own data.
 
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
@@ -30,21 +30,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 [**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the intake interview: every data source you need, field by field, to run this on your own home ·
 [**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
-## The bottom line
-
-Stay on EV-TOU-5: it beats every other eligible plan on this usage by a modeled $959/yr
-(`data/plan_results.csv`), and a battery widens that gap rather than changing the answer
-(`data/battery_plan_matrix.json`). Fix EV charging times first; moving the cars' charging
-into the super-off-peak window saves a modeled $1,193/yr and costs nothing. A battery earns
-at most $2,325/yr on its own, a 6.2 to 8.5 year asset payback depending on dispatch policy,
-so it is a resilience purchase with a real but slower return. More solar does not pencil
-out: after the behavior fix an expansion adds a marginal $216/yr, and outage endurance is
-the only reason to buy it. Dollars are modeled at constant 6/1/2026 rates (the year's
-actual bills totaled $3,282 on older tariffs); the report labels every figure measured,
-modeled, or estimated.
-
 **In this README:**
-[The bottom line](#the-bottom-line) ·
 [What the report covers](#what-the-report-covers) ·
 [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here) ·
 [Publish with GitHub Pages](#publish-with-github-pages) ·
@@ -54,24 +40,25 @@ modeled, or estimated.
 
 ## What the report covers
 
-| § | Section | What's in it |
-|---|---|---|
-| — | Bottom line | Integrated recommendation: plan, EV-timing fix, baseload hunt, battery verdict, solar-expansion verdict, payback status, carbon tip |
-| 1 | The data | Triple-verified inputs: meter flows, whole-home load, production (3 independent sources, ±2%, 0.9999 correlation) |
-| 2 | Your solar system today | Hardware inventory, size verification against measured peak power, health/degradation signals |
-| 3 | Rate plan comparison | All eligible SDG&E plans priced against actual 15-min usage, CCA vs bundled, validated within 1% of SDG&E's own tool |
-| 4 | Battery × plan matrix | Whether a battery changes the best-plan answer (it doesn't — it strengthens it) |
-| 5 | Usage profile | Where the money goes by hour/period/month, with charts; EV-charging findings |
-| 6 | Battery hardware | Arbitrage simulations of 6 real configurations, a three-policy dispatch comparison (evening-only / two-window / price-aware — the published basis), and outage-endurance tiers |
-| 7 | Three costed packages | Low ($0 behavior) / Mid (+1 battery) / High (+expansion): savings, projected bills, honest asset-alone paybacks |
-| 8 | Array upgrades | More panels? Higher-capacity panels? Microinverter upgrade for clipping? All answered with measured data |
-| 9 | Deeper analyses | 6-yr degradation, clipping check, weather-normalized cooling, EV session report card + fleet cross-check (meter-derived; cross-checked by Tesla-app and wall-charger telemetry), electrification dividend (~$3,230/yr vs gasoline counterfactual), away-day/weekend/representative-year workups, TOU-DR-P wildcard, phantom-load flag |
-| 10 | Actual bills | 365-day bill audit, model-vs-actual reconciliation (rate vintage the leading explanation), gas usage + electrification (HPWH) |
-| 11 | Lifetime payback | Install invoice vs cumulative production value by year — gross and net-of-ITC break-even dates (simple, undiscounted) |
-| 12 | Cleaning & soiling | Measured cleaning effect (multi-year diff-in-diff), rain-recovery soiling study, optimal cleaning month & cadence economics |
-| 13 | Carbon · NEM · prices | Grid-carbon timing from real CAISO data (28-day hourly sampling, with chart), $/yr value of NEM 2.0 grandfathering (flat-rate sensitivity) + the 2039 transition strategy, battery vs rate-escalation ladder, phantom-baseload decomposition, marginal price map |
-| — | What to do Monday | Implementation appendix: charger schedule, pre-battery checklist, pre-registered EV-fix success metrics, re-run triggers |
-| 14 | Methodology | Every model, source, and caveat — plus the validation chain |
+One interactive page that works through a single home's energy economics end to end. At a
+high level, it covers:
+
+- how the raw data was gathered and cross-checked: utility interval meter, solar
+  production, whole-home load, a year of actual bills, weather, and grid data
+- which rate plan fits the measured usage, including CCA vs bundled generation
+- what EV-charging behavior costs and what changing it would be worth
+- whether a battery makes financial sense, how dispatch policy changes that answer, and
+  how long each configuration could carry the house through an outage
+- the health of the existing solar array: degradation, clipping, soiling and cleaning
+  economics, and whether expansion is worthwhile
+- how the modeled bills reconcile against the year of actual statements
+- grid-carbon timing, NEM economics, and long-run rate-escalation exposure
+- a closing implementation appendix and a methodology section documenting every model,
+  source, caveat, and the validation chain
+
+The report reaches specific verdicts and dollar figures on each of these; read it for the
+answers. Every figure in it is labeled measured, modeled, or estimated, and traces to a
+committed script and data artifact in this repo.
 
 > **Note on solar monitoring:** this analysis happened to pull production data from **Enphase
 > Enlighten**, but the method is vendor-agnostic. SolarEdge, Tesla, SMA, Fronius, PVOutput, and
@@ -220,7 +207,7 @@ schema and pipeline in depth.
 | `data/weather_daily_tmean.csv`, `data/weather_results.json` | Open-Meteo daily temperatures + weather-normalized cooling results |
 | `data/pvoutput_yearly_2020-2025.csv` | PVOutput per-year production stats, 2020–2025 (degradation analysis input) |
 | `data/cleaning_study_peaks_2024.csv` | Peak-day production windows around the 2024 cleaning (diff-in-diff companion) |
-| `data/wall_charger_daily.csv` | Tesla Wall Connector daily delivered kWh (wall-side) — cross-check of the EV session detector (99.6% aggregate agreement over the 20-day clean window) |
+| `data/wall_charger_daily.csv` | Tesla Wall Connector daily delivered kWh (wall-side) — the independent cross-check of the EV session detector |
 | `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder, §6 serviceable-load inputs |
 | `data/battery_plan_matrix.json` | The §4 battery × plan matrix: no-battery / with-battery / battery-value per top-3 plan (table rates, cross-plan ranking; canonical-engine cross-check included) |
 
@@ -315,4 +302,4 @@ Spotted an error in the method, or a number that doesn't reproduce? Open an issu
 
 ---
 
-*Last reviewed: 2026-07-25, against commit `114d71d`.*
+*Last reviewed: 2026-07-25, against commit `04aae43`.*
