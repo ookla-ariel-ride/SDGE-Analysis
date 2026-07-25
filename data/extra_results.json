@@ -151,7 +151,7 @@
   ],
   "combined_mi_per_yr": 34036,
   "household_ice_vehicles": 0,
-  "home_charging_setup": "one home charger; second car primarily supercharges away from home",
+  "home_charging_setup": "one home charger shared by both cars (owner: cars alternate; meter: sessions on 335 of 365 days, 2+ sessions on 190 days); Model 3 almost exclusively home-charged, Model Y occasionally supplemented by supercharging",
   "crosscheck": {
    "implied_wall_kwh_all_driving_at_260_330_wh_per_mi": [
     8849,
@@ -167,7 +167,7 @@
     "real-world efficiency below rated on highway/heat",
     "possible partial over-attribution of >=2.5 kW house-load combinations by the session detector"
    ],
-   "note": "home charging alone exceeds the implied need for ALL driving, consistent with the 'one charger + occasional supercharging' setup only if residual loads above are real; labeled estimated"
+   "note": "the vast majority of all charging for ~34,000 mi/yr occurs at home, so the 13,723 kWh home figure approximates total wall energy; it exceeds the implied all-driving need by the residual above, pointing to idle/preconditioning drain, sub-rated real-world efficiency, and/or partial detector over-attribution; labeled estimated"
   }
  }
 }
