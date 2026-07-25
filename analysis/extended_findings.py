@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""Extended findings — Tier-1/Tier-2 review items (Jul 2026 workup).
+
+Computes, from data already in the archive plus cited public constants:
+  A. AB 205 / Base Services Charge verification + fixed-charge escalation sensitivity
+     (the BSC is ALREADY in rates.py: BSC $0.79343/day = $24.15/mo, live Oct 2025 —
+      CPUC D.24-05-028, Res E-5355; EV-TOU-5's $16 basic service fee was REPLACED).
+  B. Electrification dividend: measured EV charging cost vs gasoline counterfactual.
+  C. Away-day natural experiment: unattended baseload from low-use days.
+  D. Supercharging vs home delta: value of topping up at home before trips.
+  E. Weekend super-off-peak exploitation: weekend load sitting outside the 0-14 window.
+  F. Representative-year check: SAM-8760 load, overlapping calendar years.
+  G. Gas decomposition: water-heating floor vs space-heating slope (HDD regression),
+     and the heat-pump electrification ladder priced at midday-surplus value.
+  H. 2039 NBT transition: battery marginal value if exports credit at flat 3-8c
+     (NEM 2.0 expiry ~Dec 2039 = PTO 12/27/2019 + 20 yr).
+  I. Tornado sensitivity on the battery payback (which lever moves it most).
+
+Cited constants (sources in research notes / report prose):
+  gasoline $4.65/gal (EIA CA regular, Jun 2025-May 2026 trailing 12-mo published);
+  fleet 23.4 mpg (FHWA VM-1 2024 on-road light-duty);
+  supercharging $0.45/kWh (estimate, typical CA range $0.40-0.50);
+  DSGS VPP $150-350/season (Tesla-stated cap $350, 2026 30% capacity bonus).
+
+Writes data/extended_results.json. Requires usage.csv (Green Button) beside it,
+plus ../data/weather_daily_tmean.csv, ../private/1-raw-data/gas.csv, and the two
+SAM-8760 files in ../private/1-raw-data/ (run from the private/verify sandbox with
+paths adjusted, or beside the private folder per CLAUDE.md Commands).
+"""
+import json, pathlib
+import numpy as np, pandas as pd
+import behavior_rebuild as br
+import battery_dispatch_policies as bp
+import rates as R
+
+HERE = pathlib.Path(__file__).resolve().parent
+DATA = HERE.parent / "data"
+PRIV = HERE.parent / "private" / "1-raw-data"
+
+GAS_USD_GAL = 4.65      # EIA CA regular, Jun 2025-May 2026 published 12-mo mean
+FLEET_MPG = 23.4        # FHWA Highway Statistics VM-1 (2024), on-road light-duty
+SC_USD_KWH = 0.45       # estimate: typical CA Tesla Supercharger $0.40-0.50
+SC_KWH = 1300           # Tesla app Charge Stats, 12 mo, both cars
+MILES_YR = 34000        # odometer-derived annual driven miles (report §9)
+THERM_ALLIN = 2.70      # $/therm all-in from the 12 gas bills
+KWH_PER_THERM = 29.3
+HP_COP = 3.5            # heat-pump space heating seasonal COP (modeled)
+HPWH_COP = 3.5          # heat-pump water heater COP (modeled)
+MIDDAY_VALUE = 0.10     # $/kWh marginal midday solar value (report §8)
+BSC_MONTH = 24.15       # Base Services Charge (D.24-05-028), replaced $16 BSF
+
+out = {}
+d = br.load()
+imp0 = d.Consumption.values.astype(float)
+gen0 = d.Generation.values.astype(float)
+base_bill = bp.billed(d, imp0, gen0)
+
+# ---------- A. AB 205 verification + fixed-charge escalation sensitivity ----
+# The restructure is in effect (Oct 2025) and rates.py's BSC/day already equals it.
+bsc_daily_model = R.BSC
+out["ab205"] = {
+    "status": "already_in_effect_and_in_model",
+    "bsc_model_daily": bsc_daily_model,
+    "bsc_adopted_monthly": BSC_MONTH,
+    "bsc_adopted_daily": round(BSC_MONTH * 12 / 365.25, 5),
+    "model_matches_adopted": abs(bsc_daily_model - BSC_MONTH * 12 / 365.25) < 0.005,
+    "ev_tou5_bsf_replaced": True,
+    "note": ("June 2026 rates are post-restructure; scenario run is a verification. "
+             "No adopted escalation of the fixed charge exists (AB 23 failed Feb 2026)."),
+    # sensitivity: every +$12/mo of future fixed charge = +$144/yr on EVERY scenario
+    # equally; it does not change any ranking or marginal (behavior/battery) figure.
+    "fixed_charge_sensitivity_per_12_per_mo": 144,
+}
+
+# ---------- B. Electrification dividend ------------------------------------
+ev, sessions = br.detect_sessions(d)
+p = d.p.values
+ev_cost = 0.0
+for per in ("on", "off", "sop"):
+    m = p == per
+    kwh = float(ev[m].sum())
+    # season-weighted all-in import price for that period
+    seas = d.seas.values
+    cost = sum(float(ev[m & (seas == s)].sum()) * R.allin(s, per)
+               for s in ("S", "W"))
+    ev_cost += cost
+sc_cost = SC_KWH * SC_USD_KWH
+gas_cost = MILES_YR / FLEET_MPG * GAS_USD_GAL
+out["electrification_dividend"] = {
+    "home_ev_kwh": round(float(ev.sum())),
+    "home_ev_cost_current_rates": round(ev_cost),
+    "supercharge_kwh": SC_KWH, "supercharge_cost_est": round(sc_cost),
+    "total_ev_fuel_cost": round(ev_cost + sc_cost),
+    "gas_counterfactual_cost": round(gas_cost),
+    "gas_price": GAS_USD_GAL, "mpg": FLEET_MPG, "miles_yr": MILES_YR,
+    "dividend_yr": round(gas_cost - ev_cost - sc_cost),
+    # if all home charging landed super-off-peak (the implemented schedule fix):
+    "home_ev_cost_if_all_sop": round(sum(
+        float(ev[d.seas.values == s].sum()) * R.allin(s, "sop") for s in ("S", "W"))),
+    "dividend_yr_post_fix": round(gas_cost - sc_cost - sum(
+        float(ev[d.seas.values == s].sum()) * R.allin(s, "sop") for s in ("S", "W"))),
+    "label": "estimated (gasoline price + mpg + SC price are cited external constants)",
+}
+
+# ---------- C. Away-day natural experiment ----------------------------------
+# Away day: whole-day import < 40% of median daily import AND no EV session kWh.
+daily = d.copy()
+daily["date"] = daily.dt.dt.date
+daily["evk"] = ev
+g = daily.groupby("date").agg(imp=("Consumption", "sum"), exp=("Generation", "sum"),
+                              evk=("evk", "sum"))
+med_imp = g.imp.median()
+away = g[(g.evk < 0.5) & (g.imp < 0.4 * med_imp)]
+occ = g[~g.index.isin(away.index)]
+out["away_days"] = {
+    "n_away": int(len(away)),
+    "away_median_import_kwh_day": round(float(away.imp.median()), 1) if len(away) else None,
+    "occupied_median_import_kwh_day": round(float(occ.imp.median()), 1),
+    "note": ("away-day import is grid import only; unattended LOAD also eats solar "
+             "midday, so this is a lower bound on unattended consumption"),
+    "implied_unattended_kw": (round(float(away.imp.median()) / 24, 2)
+                              if len(away) else None),
+}
+
+# ---------- D. Supercharging vs home delta ----------------------------------
+home_sop_allin = R.allin("S", "sop")  # summer sop all-in (winter within 0.3c)
+out["supercharge_delta"] = {
+    "sc_kwh": SC_KWH, "sc_price_est": SC_USD_KWH,
+    "home_sop_allin": round(home_sop_allin, 4),
+    "delta_per_kwh": round(SC_USD_KWH - home_sop_allin, 3),
+    "full_shift_value_yr": round(SC_KWH * (SC_USD_KWH - home_sop_allin)),
+    "note": "upper bound; road-trip supercharging away from home cannot shift",
+}
+
+# ---------- E. Weekend super-off-peak exploitation --------------------------
+wk = d[d.wkend]
+wk_imp = wk.Consumption.values.astype(float)
+wk_ev = ev[d.wkend.values]
+house = wk_imp - wk_ev
+hours = wk.hour.values
+seasw = wk.seas.values
+mask_nonsop = (hours >= 14) & (hours < 24)  # weekend sop is 0-14; rest is off/on
+kwh_mov = float(house[mask_nonsop].sum())
+val = 0.0
+for s in ("S", "W"):
+    for per in ("on", "off"):
+        m = mask_nonsop & (seasw == s) & (wk.p.values == per)
+        val += float(house[m].sum()) * (R.allin(s, per) - R.allin(s, "sop"))
+out["weekend_sop"] = {
+    "weekend_house_kwh_outside_sop": round(kwh_mov),
+    "value_if_half_shifts_yr": round(val * 0.5),
+    "value_if_all_shifts_yr": round(val),
+    "note": ("weekend 0-14 window is super-off-peak year-round; realistic capture "
+             "is a fraction (laundry/dish/pool timing), so half-shift is quoted"),
+}
+
+# ---------- F. Representative-year check (SAM 8760 overlap) -----------------
+try:
+    s25 = pd.read_csv(PRIV / "enphase_sam8760_2025.csv").iloc[:, 0].astype(float)
+    s26 = pd.read_csv(PRIV / "enphase_sam8760_2026.csv").iloc[:, 0].astype(float)
+    # compare Jan-Jun (h 0..4343) of each calendar year, both fully populated
+    h = 24 * 181
+    j25, j26 = float(s25[:h].sum()), float(s26[:h].sum())
+    out["representative_year"] = {
+        "load_jan_jun_2025_kwh": round(j25), "load_jan_jun_2026_kwh": round(j26),
+        "delta_pct": round((j26 - j25) / j25 * 100, 1),
+        "note": ("whole-home load, same-months comparison across the two SAM-8760 "
+                 "calendar files; production side already weather-normalized in §9"),
+    }
+except Exception as e:  # pragma: no cover
+    out["representative_year"] = {"error": str(e)}
+
+# ---------- G. Gas decomposition (HDD regression) ---------------------------
+try:
+    gas = pd.read_csv(PRIV / "gas.csv", skiprows=13)  # SDG&E gas Green Button:
+    # 13 metadata lines then Meter Number, Date, Start Time, Duration, Consumption
+    gas.columns = [c.strip().lower() for c in gas.columns]
+    gas["date"] = pd.to_datetime(gas["date"]).dt.date
+    gas["therms"] = pd.to_numeric(gas["consumption"], errors="coerce")
+    w = pd.read_csv(DATA / "weather_daily_tmean.csv", skiprows=1,
+                    names=["date", "tf"])  # index header row, then date,tmean(F)
+    w["date"] = pd.to_datetime(w["date"]).dt.date
+    m = gas.merge(w[["date", "tf"]], on="date").dropna()
+    m["hdd"] = np.clip(65 - m.tf.astype(float), 0, None)
+    slope, floor = np.polyfit(m.hdd, m.therms, 1)
+    ann_floor = floor * 365
+    ann_heat = float(m.therms.sum() * (365 / len(m))) - ann_floor
+    hp_kwh = ann_heat * KWH_PER_THERM / HP_COP
+    hpwh_kwh = ann_floor * 0.8 * KWH_PER_THERM / HPWH_COP  # ~80% of floor = DHW
+    out["gas_decomposition"] = {
+        "days_regressed": int(len(m)),
+        "floor_therms_day": round(float(floor), 3),
+        "slope_therms_per_hdd": round(float(slope), 4),
+        "annual_floor_therms": round(ann_floor),
+        "annual_heating_therms": round(ann_heat),
+        "heating_gas_cost_yr": round(ann_heat * THERM_ALLIN),
+        "hp_heating_kwh": round(hp_kwh),
+        "hp_heating_cost_at_midday_value": round(hp_kwh * MIDDAY_VALUE),
+        "hp_heating_saving_yr": round(ann_heat * THERM_ALLIN - hp_kwh * MIDDAY_VALUE),
+        "hpwh_kwh": round(hpwh_kwh),
+        "hpwh_saving_yr": round(ann_floor * 0.8 * THERM_ALLIN - hpwh_kwh * MIDDAY_VALUE),
+        "label": "modeled (COP and midday value assumed; gas $/therm from bills)",
+    }
+except Exception as e:  # pragma: no cover
+    out["gas_decomposition"] = {"error": str(e)}
+
+# ---------- H. 2039 NBT transition ------------------------------------------
+def bill_flat_export(dd, imp, exp, credit):
+    """Monthly netting replaced by flat export credit; NBC on gross imports."""
+    f = dd.copy(); f["I"] = imp; f["E"] = exp
+    tot = 0.0
+    for _, mo in f.groupby("ym"):
+        ikwh = {pp: mo[mo.p == pp].I.sum() for pp in ("on", "off", "sop")}
+        s = mo.seas.iloc[0]
+        chg = sum(ikwh[pp] * R.allin(s, pp) for pp in ikwh)
+        chg -= mo.E.sum() * credit
+        chg += mo.I.sum() * 0  # NBC already inside allin
+        days = mo.dt.dt.date.nunique()
+        tot += chg + days * R.BSC
+    return tot
+
+nbt = {}
+for credit in (0.03, 0.05, 0.08):
+    b0 = bill_flat_export(d, imp0, gen0, credit)
+    i2, e2, _, _ = bp.run_batt(d, imp0, gen0, 13.5, "greedy")
+    b1 = bill_flat_export(d, i2, e2, credit)
+    nbt[f"{int(credit*100)}c"] = {"battery_marginal_yr": round(b0 - b1)}
+out["nbt_2039"] = {
+    "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
+    "battery_marginal_under_nem2": bp and 2325,
+    "battery_marginal_under_nbt": nbt,
+    "note": ("under flat-credit exports the price-aware battery is worth MORE than "
+             "under NEM 2.0 (stored surplus displaces ~51-87c imports instead of "
+             "earning 3-8c credits); a 2026 PW3's 10-yr warranty ends 2036, three "
+             "years before expiry — sequencing risk is modest and NBT raises, not "
+             "lowers, its end-of-life value. NEM 2.0 transfers with the property "
+             "on sale (worth ~$1,772-2,268/yr to a buyer at current rates)."),
+}
+
+# ---------- I. Tornado sensitivity on battery payback ------------------------
+G = 2325.0  # greedy marginal, baseline year
+levers = {
+    "install_cost": [(12000, 12000 / G), (14500, 14500 / G), (17000, 17000 / G)],
+    "dispatch_policy": [(1708, 14500 / 1708), (1946, 14500 / 1946), (G, 14500 / G)],
+    "post_behavior": [(2245, 14500 / 2245), (G, 14500 / G)],
+    "dsgs_revenue": [(0, 14500 / G), (250, 14500 / (G + 250)), (350, 14500 / (G + 350))],
+    "escalation_5yr_avg": [(0.0, 14500 / G), (0.05, 14500 / (G * 1.104)),
+                           (0.08, 14500 / (G * 1.17))],  # avg uplift over payback horizon
+}
+tor = {}
+for k, vals in levers.items():
+    pays = [round(v[1], 1) for v in vals]
+    tor[k] = {"payback_range_yr": [min(pays), max(pays)],
+              "swing_yr": round(max(pays) - min(pays), 1)}
+out["tornado_battery"] = {
+    "base_payback_yr": round(14500 / G, 1),
+    "levers": tor,
+    "ranked_by_swing": sorted(tor, key=lambda k: -tor[k]["swing_yr"]),
+}
+
+with open(DATA / "extended_results.json", "w") as f:
+    json.dump(out, f, indent=1)
+print(json.dumps(out, indent=1))
