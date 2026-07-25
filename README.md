@@ -14,13 +14,22 @@ file viewer shows the HTML *source*, not the rendered report — use the link ab
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
 
+An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data.
+
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
 [**GLOSSARY.md**](GLOSSARY.md) — every term (NEM, TOU, PCIA, CAISO, phantom load…) in plain English ·
 [**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the data-gathering checklist for running this on your own home ·
 [**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
-An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data.
+**In this README:**
+[What the report covers](#what-the-report-covers) ·
+[Contents](#contents) ·
+[Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here) ·
+[Publish with GitHub Pages](#publish-with-github-pages) ·
+[Repository layout](#repository-layout) ·
+[The private inputs](#the-private-inputs--and-how-to-obtain-your-own) ·
+[Refreshing this analysis](#refreshing-this-analysis-same-house-new-data)
 
 ## What the report covers
 
@@ -51,10 +60,24 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 
 ## Contents
 
+### Report & documentation
+
 | File | What it is |
 |---|---|
 | `index.html` | The interactive report (plan comparison, charts, behavior findings, SDG&E-tool comparison, battery deep-dive) |
 | `report-template.html` | De-personalized report skeleton (`{{TOKEN}}` placeholders) — start here when regenerating `index.html` (see `reusable-prompt.md` Phase D and `CLAUDE.md` §10) |
+| `TECHNICAL.md` | **Full technical/reproducibility documentation** — every script, data schema, algorithm, and chart pipeline, methods-section style |
+| `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
+| `reusable-prompt.md` | Full prompt to reproduce this entire analysis (plan + solar + battery + gas + bill audit) in Claude Cowork |
+| `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
+| `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
+| `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
+| `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
+
+### Data artifacts (this house's results — regenerate, don't edit)
+
+| File | What it is |
+|---|---|
 | `data/plan_results.csv` | Modeled annual cost per plan (CEA and SDG&E-bundled scenarios) |
 | `data/report_data.json` | All computed statistics used by the report |
 | `data/hourly_profile.csv`, `data/monthly.csv` | Aggregated usage profiles |
@@ -80,10 +103,15 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `data/pvoutput_yearly_2020-2025.csv` | PVOutput per-year production stats, 2020–2025 (degradation analysis input) |
 | `data/cleaning_study_peaks_2024.csv` | Peak-day production windows around the 2024 cleaning (diff-in-diff companion) |
 | `data/wall_charger_daily.csv` | Tesla Wall Connector daily delivered kWh (wall-side) — cross-check of the EV session detector (99.6% aggregate agreement over the 20-day clean window) |
-| `TECHNICAL.md` | **Full technical/reproducibility documentation** — every script, data schema, algorithm, and chart pipeline, methods-section style |
-| `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
-| `analysis/analyze.py` | The plan billing model (Python/pandas) — rerun against a fresh Green Button CSV |
-| `analysis/analyze_norelief.py` | Variant: prices CEA generation without the Rate Relief Credit |
+| `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder, §6 serviceable-load inputs |
+| `data/battery_plan_matrix.json` | The §4 battery × plan matrix: no-battery / with-battery / battery-value per top-3 plan (table rates, cross-plan ranking; canonical-engine cross-check included) |
+
+### Analysis scripts & research
+
+| File | What it is |
+|---|---|
+| `analysis/analyze.py` | **Legacy** cross-plan ranking model (table rates, kept labeled — `CLAUDE.md` §9); current models import `analysis/rates.py` instead |
+| `analysis/analyze_norelief.py` | Legacy variant: prices CEA generation without the Rate Relief Credit |
 | `analysis/rates.py` | **Canonical rate constants + billing engine** (bill-derived; imported by all current models) |
 | `analysis/billing_model_nem.py` | Bill-validated NEM 2.0 monthly per-TOU-period netting model |
 | `analysis/behavior_rebuild.py` | Session-based EV/behavior shift model — physically moves kWh and re-bills (supersedes the crude cap approach) |
@@ -97,17 +125,10 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `analysis/battery_plan_matrix.py` | Battery × plan matrix (§4): the price-aware PW3 dispatch billed under each top-3 plan's rate-table values → `data/battery_plan_matrix.json` |
 | `analysis/package_results.py` | Composes `data/package_results.json` from the behavior + dispatch artifacts (no new computation) |
 | `analysis/lifetime_payback.py` | Lifetime solar payback: cumulative production value vs install invoice, with crossover dates |
-| `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder, §6 serviceable-load inputs |
-| `data/battery_plan_matrix.json` | The §4 battery × plan matrix: no-battery / with-battery / battery-value per top-3 plan (table rates, cross-plan ranking; canonical-engine cross-check included) |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/extended-research-notes.md` | AB 205 / DSGS-VPP / outage-exposure / fuel-constant research (sources + captured figures) backing the extended findings |
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |
-| `reusable-prompt.md` | Full prompt to reproduce this entire analysis (plan + solar + battery + gas + bill audit) in Claude Cowork |
-| `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
-| `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
-| `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
-| `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
 | `analysis/household.py` | Loader for `private/household.yaml` — analysis scripts read per-house facts (invoice, dates, charger kW, vehicle specs…) through it and **fail closed** with a run-the-intake-interview message if the file or a required key is missing |
 
 ## Reproduce this for your own home — start here
@@ -165,15 +186,15 @@ privacy note.
 ## Publish with GitHub Pages
 
 ```bash
-cd sdge-rate-analysis
-git init && git add . && git commit -m "SDGE rate analysis"
+cd my-energy-analysis                    # the repo you initialized in step 0
+git add . && git commit -m "My energy analysis"
 # create a repo on github.com (private recommended - see privacy note), then:
-git remote add origin https://github.com/<you>/sdge-rate-analysis.git
+git remote add origin https://github.com/<you>/my-energy-analysis.git
 git push -u origin main
 ```
 
 Then on GitHub: **Settings → Pages → Source: Deploy from a branch → Branch: `main` / root → Save.**
-Your report will be live at `https://<you>.github.io/sdge-rate-analysis/` within a minute or two.
+Your report will be live at `https://<you>.github.io/my-energy-analysis/` within a minute or two.
 
 > ### ⚠️ Privacy note
 > All sensitive material (raw Green Button CSV with name/address/account number, Enphase
@@ -193,8 +214,9 @@ Your report will be live at `https://<you>.github.io/sdge-rate-analysis/` within
 
 | Path | Pushed to GitHub? | Contents |
 |---|---|---|
-| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md` | ✅ yes | Report, template, and docs (PII-free) |
+| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `GLOSSARY.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md` | ✅ yes | Report, template, and docs (PII-free) |
 | `data/`, `analysis/`, `research/` | ✅ yes | Data, scripts, and rate research (PII-free) |
+| `.githooks/`, `.gitleaks.toml`, `.github/workflows/` | ✅ yes | The mechanical privacy enforcement: pre-commit gitleaks hook, generic scan rules, CI full-history re-scan |
 | `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns); CAISO raw day-cache |
 | `private/household.yaml`, `private/intake-status.md` | ❌ gitignored | Per-house config written by the intake interview (invoice, dates, vehicle specs…) + the per-field gathered/skipped log that gates Phase B |
 | `.env` | ❌ gitignored | Secrets only (PVOutput API key, monitoring tokens) — never in `household.yaml`, never committed |
@@ -251,3 +273,7 @@ With your own two files above plus current rates, the scripts regenerate every n
    each `data/*.json` regenerates cleanly — that diff-check is the acceptance gate.
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D — or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
+
+---
+
+*Last reviewed: 2026-07-25, against commit `e637892`.*
