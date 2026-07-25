@@ -5,10 +5,10 @@
   "days": 365
  },
  "baseline": {
-  "model_bill": 4675.2,
+  "model_bill": 4883.54,
   "actual_billed": 3282,
-  "month_min": 87.5,
-  "month_max": 693.52,
+  "month_min": 93.16,
+  "month_max": 708.76,
   "imports_kwh": 23277.8,
   "exports_kwh": 9921.6,
   "onpeak_import_kwh": 3989.0
@@ -26,45 +26,45 @@
  "scenarios": {
   "a": {
    "label": "a: EV-only, 100% compliance",
-   "bill": 3495.27,
-   "saved": 1179.93,
-   "month_min": 83.08,
-   "month_max": 530.51,
+   "bill": 3690.71,
+   "saved": 1192.83,
+   "month_min": 88.47,
+   "month_max": 545.74,
    "kwh_moved": 2575.0
   },
   "b": {
    "label": "b: EV-only, 80% compliance (seeded)",
-   "bill": 3670.88,
-   "saved": 1004.32,
-   "month_min": 83.37,
-   "month_max": 533.47,
+   "bill": 3871.46,
+   "saved": 1012.08,
+   "month_min": 88.78,
+   "month_max": 548.7,
    "kwh_moved": 2123.5,
    "sessions_moved": 454
   },
   "c": {
    "label": "c: EV + 25% flexible house load",
-   "bill": 3016.32,
-   "saved": 1658.88,
-   "month_min": 65.76,
-   "month_max": 458.41,
+   "bill": 3211.77,
+   "saved": 1671.77,
+   "month_min": 71.15,
+   "month_max": 473.65,
    "kwh_moved": 3352.7,
    "house_kwh_moved": 777.7
   },
   "d": {
    "label": "d: stretch - EV + 50% house load",
-   "bill": 2537.37,
-   "saved": 2137.82,
-   "month_min": 48.44,
-   "month_max": 386.31,
+   "bill": 2732.82,
+   "saved": 2150.72,
+   "month_min": 53.83,
+   "month_max": 401.55,
    "kwh_moved": 4130.4,
    "house_kwh_moved": 1555.5
   }
  },
  "battery": {
   "spec": "13.5 kWh usable, 11.5 kW, 90% RTE, export-charge + overnight SOP top-up, on-peak discharge",
-  "marginal_on_baseline": 1873.0,
-  "marginal_after_scenario_a": 1742.79,
-  "double_count_avoided": 130.22
+  "marginal_on_baseline": 1876.34,
+  "marginal_after_scenario_a": 1752.3,
+  "double_count_avoided": 124.04
  },
  "note": "Model absolute bills run high vs audited $3,282/yr; report DELTAS. Old crude 2.5 kW-cap method claimed ~$1,330/yr; see scenarios for honest session-based range."
 }

@@ -1,33 +1,35 @@
 {
- "basis": "behavior_rebuild.py session-based shifts + battery_dispatch_policies.py price-aware dispatch, at 6/1/2026 rates; NBC on gross imports; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
+ "basis": "integrated pipeline: behavior_rebuild.py EV shift -> battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem (canonical bill-derived rates, NBC on gross imports); baseline $4,884 at 6/1/2026 rates; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
  "model_baseline_current_rates": 4884,
  "packages": {
   "LOW": {
    "cost": 0,
-   "savings_yr": 1180,
+   "savings_yr": 1193,
    "savings_range": [
-    1004,
-    1659
+    1012,
+    1672
    ],
-   "note": "EV-only 100% compliance; 80% = $1,004; +25% flexible house load = $1,659 (stretch)",
-   "projected_bill_current_rates_yr": 3704
+   "note": "EV-only 100% compliance; 80% = $1,012; +25% flexible house load = $1,672; stretch (50%) = $2,151",
+   "projected_bill_current_rates_yr": 3691
   },
   "MID": {
    "cost": 14500,
-   "savings_yr": 3380,
-   "battery_alone_yr": 2330,
-   "battery_alone_payback_yr": 6.2,
-   "battery_monte_carlo_median_yr": 9.4,
-   "projected_bill_current_rates_yr": 1504,
-   "note": "behavior $1,180 + price-aware battery ~$2,200 post-EV-fix (overlap $130 excluded); evening-only dispatch would earn $1,729",
-   "battery_alone_post_ev_fix_yr": 2200,
-   "battery_alone_payback_evening_only_yr": 8.4
+   "savings_yr": 3368,
+   "battery_alone_yr": 2259,
+   "battery_alone_post_ev_fix_yr": 2175,
+   "battery_alone_payback_yr": 6.4,
+   "battery_alone_payback_post_fix_yr": 6.7,
+   "battery_alone_payback_evening_only_yr": 8.8,
+   "projected_bill_current_rates_yr": 1516,
+   "note": "single integrated run: EV shift then price-aware PW3 dispatch, re-billed end-to-end"
   },
   "HIGH": {
    "cost": 20400,
-   "savings_yr_vs_mid": 396,
-   "note": "expansion adds ~$396/yr under price-aware dispatch (~15-yr marginal payback on $5,900) \u2014 primarily buys outage endurance"
+   "savings_yr": 3554,
+   "marginal_vs_mid_yr": 186,
+   "projected_bill_current_rates_yr": 1329,
+   "note": "post-behavior expansion marginal $186/yr (~32-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
   }
  },
- "superseded": "earlier package-payback framings that divided hardware cost by combined behavior+battery savings are invalid; battery-alone payback is the honest hardware metric"
+ "superseded": "additive cross-model splicing (behavior + battery from different engines) replaced by the integrated pipeline; package payback framings that credit free behavior to hardware remain invalid"
 }

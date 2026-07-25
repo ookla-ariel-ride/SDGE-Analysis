@@ -1,23 +1,24 @@
 {
+ "baseline_bill_current_rates": 4884,
  "pw3": {
   "evening": {
-   "save": 1729,
-   "kwh_served": 3104,
-   "cycles_per_day": 0.63
+   "save": 1652,
+   "kwh_served": 3052,
+   "cycles_per_day": 0.65
   },
   "twowin": {
-   "save": 1980,
-   "kwh_served": 3730,
-   "cycles_per_day": 0.76
+   "save": 1882,
+   "kwh_served": 3674,
+   "cycles_per_day": 0.79
   },
   "greedy": {
-   "save": 2330,
-   "kwh_served": 4715,
-   "cycles_per_day": 0.96
+   "save": 2259,
+   "kwh_served": 4618,
+   "cycles_per_day": 0.99
   },
   "greedy_profile_S": [
-   21.31,
-   10.92,
+   21.51,
+   11.59,
    6.93,
    3.33,
    2.82,
@@ -26,43 +27,43 @@
    2.73,
    1.84,
    1.08,
-   0.71,
-   0.77,
+   0.72,
+   0.78,
    0.54,
    0.39,
    0.08,
    0.39,
    0.2,
-   0.39,
-   0.42,
-   1.03,
-   1.42,
+   0.41,
+   0.45,
+   1.11,
+   1.54,
+   1.91,
    1.84,
-   1.79,
-   1.68
+   1.72
   ],
-  "onpeak_after_greedy": 883
+  "onpeak_after_greedy": 934
  },
  "pw3x": {
   "evening": {
-   "save": 2062,
-   "kwh_served": 3576,
-   "cycles_per_day": 0.36
+   "save": 1967,
+   "kwh_served": 3548,
+   "cycles_per_day": 0.38
   },
   "twowin": {
-   "save": 2312,
-   "kwh_served": 4221,
-   "cycles_per_day": 0.43
+   "save": 2194,
+   "kwh_served": 4192,
+   "cycles_per_day": 0.45
   },
   "greedy": {
-   "save": 2726,
-   "kwh_served": 5433,
-   "cycles_per_day": 0.55
+   "save": 2680,
+   "kwh_served": 5400,
+   "cycles_per_day": 0.58
   },
   "greedy_profile_S": [
-   21.34,
-   13.76,
-   7.4,
+   21.54,
+   14.76,
+   7.75,
    3.33,
    2.82,
    5.03,
@@ -70,39 +71,60 @@
    2.73,
    1.84,
    1.08,
-   0.71,
-   0.77,
+   0.72,
+   0.78,
    0.54,
    0.39,
    0.08,
    0.39,
    0.2,
    0.25,
-   0.23,
-   0.28,
-   0.39,
+   0.24,
+   0.31,
+   0.45,
    1.49,
-   1.4,
-   1.24
+   1.42,
+   1.26
   ],
-  "onpeak_after_greedy": 414
+  "onpeak_after_greedy": 441
+ },
+ "post_behavior": {
+  "behavior_save": 1193,
+  "kwh_moved": 2575,
+  "mid": {
+   "battery_marginal": 2175,
+   "combined_save": 3368,
+   "bill": 1516
+  },
+  "high": {
+   "battery_marginal": 2361,
+   "combined_save": 3554,
+   "bill": 1329
+  }
  },
  "escalation_greedy_pw3": {
   "3%": {
-   "payback": 5.9,
-   "npv10": 5020
+   "payback": 6.1,
+   "npv10": 4425
   },
   "5%": {
-   "payback": 5.7,
-   "npv10": 6718
+   "payback": 5.8,
+   "npv10": 6072
   },
   "8%": {
-   "payback": 5.3,
-   "npv10": 9608
+   "payback": 5.5,
+   "npv10": 8874
   },
   "12%": {
-   "payback": 5.0,
-   "npv10": 14205
+   "payback": 5.1,
+   "npv10": 13330
   }
+ },
+ "notes": {
+  "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+  "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
+  "rte": 0.9,
+  "power_kw": 11.5,
+  "requires": "multi-window time-based control"
  }
 }
