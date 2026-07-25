@@ -84,6 +84,24 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a></div>
 </nav>
 
+<div class="note" style="border-left-color:var(--acc);background:rgba(52,211,153,.06)">
+<b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Every conclusion is computed from data — meter intervals, parsed bills, production records, and public rate and grid datasets — by committed scripts; nothing is asserted from intuition or vendor claims. It works to answer ten questions:
+
+<ol class="hang">
+<li><b>Am I on the best electric rate plan?</b> — every eligible plan priced against actual 15-minute usage, cross-checked against the utility's own tool (§3)</li>
+<li><b>Does adding a battery change which plan is best?</b> (§4)</li>
+<li><b>What behavior changes are worth real money?</b> EV-charging timing, load shifting, the always-on baseload (§5, §9, §13)</li>
+<li><b>Does a home battery pay for itself — which one, dispatched how, with what honest payback?</b> (§6, §7)</li>
+<li><b>Should I add panels, install higher-capacity panels, or upgrade microinverters?</b> (§8)</li>
+<li><b>Should I electrify gas appliances?</b> (§10)</li>
+<li><b>Has the solar system paid for itself, and what is it worth per year now?</b> (§11)</li>
+<li><b>Was paying for panel cleaning worth it — and what cadence and month are optimal?</b> (§12)</li>
+<li><b>When is grid power cheapest and cleanest, and do those windows align?</b> (§13)</li>
+<li><b>What is NEM 2.0 grandfathering actually worth per year?</b> (§13)</li>
+</ol>
+Every answer carries its evidence: <span class="pill g">measured</span> from meters and bills, <span class="pill y">modeled</span> on bill-validated engines, or <span class="pill r">estimated</span> where inputs are approximate (§14 legend). Absolute dollars anchor to real bills; projections are labeled with their rate basis.
+</div>
+
 <h2 id="s0">Bottom line</h2>
 <div class="rec">
 <b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete 365-day audit of 12 statements (13 billing periods): <b>$3,282/yr electric (~$274/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>analysis/behavior_rebuild.py</code>).<br><br>
@@ -266,7 +284,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <p><b>Upgrading the microinverters because of clipping: the data says it isn't costing you much.</b> The concern is reasonable: IQ7X units cap at ~315 VA (9.45 kW AC across 30), and Enlighten's per-panel clipping flags look alarming. The 5-minute data says otherwise. On May 11 — a 62.9 kWh peak-production spring day, i.e. maximum clipping risk (cool, clear, high irradiance) — <b>true 5-minute power</b> (PVOutput donation API) topped out at <b>8,520 W at solar noon against the ~9,450 W AC ceiling</b>: a ~10% headroom cushion with <b>no flat-line at the inverter limit</b>. The annual data agrees: the 99.9th-percentile production hour is 8.82 kWh, and zero days show the flat-topped plateau sustained clipping produces. Whatever per-panel flags Enlighten raises are momentary and energetically trivial (≤1–2% of production, ≤~300 kWh). It's also <i>midday</i> energy worth only ~10.4¢/kWh, and the battery's charging needs are already covered many times over by the 27 kWh/day surplus. Net recoverable value ≤ ~$35/yr against ~$8,000–11,000 to swap 30 microinverters: a non-starter. <span class="small">(The May 11 5-minute curve comes from the PVOutput donation API; the sample file <code>data/pvoutput_5min_sample.csv</code> shows a different day with the same no-clipping signature.)</span> <b>The right time for IQ8s is when IQ7X units start failing</b> — and yours are warrantied through January 2045, so failures get replaced free until then.</p>
 <p><b>When would expansion make sense?</b> If overnight consumption grows structurally — a second EV, electrified heating — <i>and</i> you've already installed storage to move midday energy into that demand; or when bidirectional EV charging (V2H) arrives in your ecosystem, at which point your car's 60–100 kWh pack dwarfs any wall battery and changes the whole calculus. Cheaper interim moves that soak up the 10¢ midday surplus: a heat-pump water heater on a 10am–2pm timer, midday EV top-ups on home days, and pre-cooling.</p>
 
-<details class="sec" id="sec9">
+<details class="sec" id="sec9" open>
 <summary><h2 id="s9">9 · Deeper analyses</h2><span class="teaser">Degradation ~0.5–1.0%/yr (normal aging, no failing component); the big money is EV charging timing — $1,193/yr at 100% compliance.</span></summary>
 <p>Six questions that earned their own workups; each feeds a number used elsewhere in the report.</p>
 
@@ -327,7 +345,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <p class="small">Cumulative column computed from unrounded values (yearly figures rounded to $100, so adjacent rows may differ by ±$100 from adding the rounded numbers).</p>
 <div class="rec"><b>The $37,845 gross cost was recovered around fall 2025</b> (73% of the way through 2025's production year) — and if the 30% federal ITC was claimed (2019 systems qualified; net cost ~$26,500), payoff happened in <b>early 2024</b>. The system now earns its keep free and clear: at today's rates the no-solar counterfactual bills at $9,876/yr vs $4,884 with solar, so <b>solar is worth ~$4,990/yr right now</b> (blended ~$0.30/kWh; ~$0.49/kWh under the pre-2026 TOU structure, which is why past years were worth more per kWh). Caveat: the historical rate index is approximate — read the crossovers as ± a few months, not specific weeks. Reproduce: <code>analysis/lifetime_payback.py</code>.</div>
 
-<details class="sec" id="sec12">
+<details class="sec" id="sec12" open>
 <summary><h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2><span class="teaser">The 2024 cleaning measurably worked (+11.8%), but under the 2026 TOU a $200 routine cleaning does not pay for itself — at most once a year, early-to-mid July.</span></summary>
 <p>Two questions: did the 2024 cleaning actually work, and is paying for future cleanings still worth it?</p>
 <h3>The 8/12/2024 cleaning ($200): +11.8% production gain <span class="pill g">measured</span></h3>
@@ -349,7 +367,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <p>Modeling soiling accumulation over the Apr–Nov dry season against your actual daily production curve, the optimal <b>single</b> cleaning lands at <b>mid-July</b> — it precedes the peak-value late-summer months with a fresh array. The optimal <b>two-cleaning</b> schedule is ~Jun 12 + Aug 21, but the second cleaning adds only $10–51/yr across all soiling scenarios: <b>bi-annual is not justified</b>. The bigger caution is the June 2026 TOU change: a marginal <i>midday</i> kWh (which is what cleaning recovers) is now credited at only ~8–13¢, so at midday-marginal value a cleaning recovers only ~$7–52/yr going forward; even at the full blended value, the cadence model caps the best case at $126/yr — <b>below the $200 price in every scenario</b>. Verdict: on the numbers, routine paid cleaning <b>does not pay at $200 under the 2026 TOU</b>. If you clean anyway (aesthetics, inspection, a visible step-down in Enlighten), do it <b>once, early-to-mid July</b> — and shop below ~$125. Re-evaluate if TOU rules or NEM status change midday value.</p>
 </details>
 
-<details class="sec" id="sec13">
+<details class="sec" id="sec13" open>
 <summary><h2 id="s13">13 · Grid carbon, NEM 2.0's dollar value, escalation &amp; the price map</h2><span class="teaser">Overnight grid power is the dirtiest of the day; NEM 2.0 grandfathering is worth ~$1,800–2,300/yr; battery 10-yr NPV turns clearly positive at ~8%/yr escalation.</span></summary>
 <p>Five short workups price the context around everything above: when grid power is cleanest, what NEM 2.0 grandfathering is worth, how rate escalation moves battery payback, what the always-on floor is made of, and what a single kWh costs hour by hour.</p>
 <h3>Grid-carbon timing — the cheapest hours are the dirtiest (real CAISO data) <span class="pill y">modeled · 4 sampled days</span></h3>

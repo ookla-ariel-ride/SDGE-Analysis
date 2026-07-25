@@ -130,6 +130,25 @@ Analysis window: <b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · Rat
 <div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a></div>
 </nav>
 
+<div class="note" style="border-left-color:var(--acc);background:rgba(52,211,153,.06)">
+<b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Every conclusion is computed from data by committed scripts; nothing is asserted from intuition or vendor claims. It works to answer these questions:
+
+<ol class="hang">
+<li><b>Am I on the best electric rate plan?</b> (§3)</li>
+<li><b>Does adding a battery change which plan is best?</b> (§4)</li>
+<li><b>What behavior changes are worth real money?</b> (§5, §9, §13)</li>
+<li><b>Does a home battery pay — which one, dispatched how, honest payback?</b> (§6, §7)</li>
+<li><b>Should I add/upgrade panels or microinverters?</b> (§8)</li>
+<li><b>Should I electrify gas appliances?</b> (§10)</li>
+<li><b>Has the solar system paid for itself?</b> (§11)</li>
+<li><b>Is panel cleaning worth it — cadence and month?</b> (§12)</li>
+<li><b>When is grid power cheapest and cleanest — do they align?</b> (§13)</li>
+<li><b>What is NEM grandfathering worth per year?</b> (§13)</li>
+</ol>
+<!-- TODO: adapt the question list to the analyses actually run (drop solar/gas questions if not applicable). Keep the evidence-label sentence. -->
+Every answer carries its evidence: <span class="pill g">measured</span>, <span class="pill y">modeled</span>, or <span class="pill r">estimated</span> (§14 legend). Absolute dollars anchor to real bills; projections are labeled with their rate basis.
+</div>
+
 <h2 id="s0">Bottom line</h2>
 <div class="rec">
 <b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements: <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
@@ -306,7 +325,7 @@ Analysis window: <b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · Rat
      Close with: when WOULD expansion make sense (structural load growth, V2H), and cheaper interim moves. -->
 <p><b>More panels: {{EXPANSION_VERDICT_SHORT}}.</b> The constraint isn't generation — it's timing: the array already exports {{EXPORTED_SHARE}} of what it makes, and added capacity returns a {{EXPANSION_PAYBACK_YEARS}} payback.</p>
 
-<details class="sec" id="sec9">
+<details class="sec" id="sec9" open>
 <summary><h2 id="s9">9 · Deeper analyses</h2><span class="teaser">{{SEC9_TEASER}}<!-- TODO: one line — the two or three headline findings from the deep dives. --></span></summary>
 <p>Questions that earned their own workups; each feeds a number used elsewhere in the report.</p>
 
@@ -361,7 +380,7 @@ Analysis window: <b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · Rat
 <p class="small"><!-- TODO: rounding note for the cumulative column. --></p>
 <div class="rec"><b>{{PAYBACK_HEADLINE}}</b> <!-- TODO: crossover dates with and without the federal ITC; current $/yr value from the no-solar counterfactual; blended $/kWh now vs under the prior TOU structure; index-precision caveat. Cite {{LIFETIME_SCRIPT}}. --></div>
 
-<details class="sec" id="sec12">
+<details class="sec" id="sec12" open>
 <summary><h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2><span class="teaser">{{SEC12_TEASER}}<!-- TODO: one line — did the historical cleaning work, and does paying for future cleanings pencil? --></span></summary>
 <p>Two questions: did the {{CLEANING_YEAR}} cleaning actually work, and is paying for future cleanings still worth it?</p>
 <h3>The {{CLEANING_DATE}} cleaning ({{CLEANING_PRICE}}): {{CLEANING_EFFECT_PCT}} production gain <span class="pill g">measured</span></h3>
@@ -380,7 +399,7 @@ Analysis window: <b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · Rat
 <p><!-- TODO: optimal single-cleaning month, whether a second cleaning pencils, and how current TOU midday value changes the verdict; a shop-below price threshold. --></p>
 </details>
 
-<details class="sec" id="sec13">
+<details class="sec" id="sec13" open>
 <summary><h2 id="s13">13 · Grid carbon, NEM's dollar value, escalation &amp; the price map</h2><span class="teaser">{{SEC13_TEASER}}<!-- TODO: one line — carbon-timing headline, NEM-grandfathering value, escalation effect on battery NPV. --></span></summary>
 <p>Short workups pricing the context around everything above: when grid power is cleanest, what NEM grandfathering is worth, how rate escalation moves battery payback, what the always-on floor is made of, and what a single kWh costs hour by hour.</p>
 <h3>Grid-carbon timing <span class="pill y">modeled · {{CARBON_SAMPLE_DESCRIPTION}}</span></h3>

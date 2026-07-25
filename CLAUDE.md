@@ -128,7 +128,8 @@ Methodology) — with uppercase eyebrow labels and compact pills. Scroll-spy via
 IntersectionObserver on h2s (no scroll listeners); active pill in --acc. h2
 scroll-margin-top ≥ nav height; smooth scrolling gated by prefers-reduced-motion. The three
 heaviest audit sections (Deep dives, Cleaning, Carbon/NEM) are native <details>/<summary>,
-closed by default, summary = h2 + one-line conclusion teaser; hashchange/load JS opens a
+OPEN by default (collapsible — closed-by-default made readers think the content was
+missing), summary = h2 + one-line conclusion teaser; hashchange/load JS opens a
 collapsed section before jumping; charts inside collapsed sections lazy-init on first open.
 Quiet back-to-top button (appears after §1, aria-label). Mobile ≤800px: grouped TOC ≤ ~2 rows
 (horizontal scroll). Keyboard :focus-visible on pills/summaries. Page must degrade cleanly

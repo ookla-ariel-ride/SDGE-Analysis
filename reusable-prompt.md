@@ -179,6 +179,12 @@ spliced across models).
 
 ## PHASE D — DELIVERABLES
 
+**The report must open with a Purpose block** (above the Bottom line): one paragraph stating
+what the document is — a decision document computed from measured data by committed scripts —
+followed by an enumerated list of the questions it answers, each with a section pointer, and a
+closing line explaining the measured/modeled/estimated evidence labels. Adapt the question
+list to the analyses actually run (the template carries the reference list).
+
 **Start `index.html` from `report-template.html` (in this repo) — do not build the shell from scratch.** The template already contains the finished dark-theme CSS, the grouped Verdict/Evidence/Audit sticky TOC with scroll-spy, the collapsible audit sections with lazy-chart init, the five chart scaffolds, confidence-pill examples, hanging-indent bottom line, and the provenance slot. Your job is to replace every `{{TOKEN}}` with a script-produced value and fill the TODO blocks with your findings — never invent a number to fill a token, and never strip the navigation/provenance machinery.
 
 **One GitHub-Pages-ready folder:** `index.html`, `report-template.html`, `README.md`,
@@ -200,7 +206,7 @@ groups — **Verdict / Evidence / Audit** — as compact pills under uppercase e
 scroll-spy via ONE IntersectionObserver on the h2s (no scroll listeners), active pill
 highlighted; h2 `scroll-margin-top` ≥ nav height; smooth scrolling gated by
 `prefers-reduced-motion`. The heaviest audit sections are native `<details>/<summary>`,
-closed by default, each summary = the h2 plus a one-line conclusion teaser;
+open by default (collapsible; do not hide content behind closed sections), each summary = the h2 plus a one-line conclusion teaser;
 hashchange/load JS opens a collapsed section before jumping to it; charts inside collapsed
 sections lazy-init on first open. Quiet back-to-top button (after §1, aria-labeled). Mobile
 ≤800px: grouped TOC collapses to ≤ ~2 rows with horizontal scroll. Keyboard `:focus-visible`
