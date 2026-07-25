@@ -1,5 +1,5 @@
 {
- "basis": "behavior_rebuild.py session-based shifts + netting-model battery dispatch, at 6/1/2026 rates; NBC on gross imports; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
+ "basis": "behavior_rebuild.py session-based shifts + battery_dispatch_policies.py price-aware dispatch, at 6/1/2026 rates; NBC on gross imports; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
  "model_baseline_current_rates": 4884,
  "packages": {
   "LOW": {
@@ -14,17 +14,19 @@
   },
   "MID": {
    "cost": 14500,
-   "savings_yr": 2923,
-   "battery_alone_yr": 1743,
-   "battery_alone_payback_yr": 8.3,
+   "savings_yr": 3380,
+   "battery_alone_yr": 2330,
+   "battery_alone_payback_yr": 6.2,
    "battery_monte_carlo_median_yr": 9.4,
-   "projected_bill_current_rates_yr": 1961,
-   "note": "behavior $1,180 + battery marginal $1,743 (overlap $130 already excluded)"
+   "projected_bill_current_rates_yr": 1504,
+   "note": "behavior $1,180 + price-aware battery ~$2,200 post-EV-fix (overlap $130 excluded); evening-only dispatch would earn $1,729",
+   "battery_alone_post_ev_fix_yr": 2200,
+   "battery_alone_payback_evening_only_yr": 8.4
   },
   "HIGH": {
    "cost": 20400,
-   "savings_yr_vs_mid": "5-15",
-   "note": "expansion buys outage endurance, not savings"
+   "savings_yr_vs_mid": 396,
+   "note": "expansion adds ~$396/yr under price-aware dispatch (~15-yr marginal payback on $5,900) \u2014 primarily buys outage endurance"
   }
  },
  "superseded": "earlier package-payback framings that divided hardware cost by combined behavior+battery savings are invalid; battery-alone payback is the honest hardware metric"

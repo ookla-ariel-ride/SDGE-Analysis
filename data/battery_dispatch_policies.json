@@ -1,0 +1,108 @@
+{
+ "pw3": {
+  "evening": {
+   "save": 1729,
+   "kwh_served": 3104,
+   "cycles_per_day": 0.63
+  },
+  "twowin": {
+   "save": 1980,
+   "kwh_served": 3730,
+   "cycles_per_day": 0.76
+  },
+  "greedy": {
+   "save": 2330,
+   "kwh_served": 4715,
+   "cycles_per_day": 0.96
+  },
+  "greedy_profile_S": [
+   21.31,
+   10.92,
+   6.93,
+   3.33,
+   2.82,
+   5.03,
+   2.55,
+   2.73,
+   1.84,
+   1.08,
+   0.71,
+   0.77,
+   0.54,
+   0.39,
+   0.08,
+   0.39,
+   0.2,
+   0.39,
+   0.42,
+   1.03,
+   1.42,
+   1.84,
+   1.79,
+   1.68
+  ],
+  "onpeak_after_greedy": 883
+ },
+ "pw3x": {
+  "evening": {
+   "save": 2062,
+   "kwh_served": 3576,
+   "cycles_per_day": 0.36
+  },
+  "twowin": {
+   "save": 2312,
+   "kwh_served": 4221,
+   "cycles_per_day": 0.43
+  },
+  "greedy": {
+   "save": 2726,
+   "kwh_served": 5433,
+   "cycles_per_day": 0.55
+  },
+  "greedy_profile_S": [
+   21.34,
+   13.76,
+   7.4,
+   3.33,
+   2.82,
+   5.03,
+   2.55,
+   2.73,
+   1.84,
+   1.08,
+   0.71,
+   0.77,
+   0.54,
+   0.39,
+   0.08,
+   0.39,
+   0.2,
+   0.25,
+   0.23,
+   0.28,
+   0.39,
+   1.49,
+   1.4,
+   1.24
+  ],
+  "onpeak_after_greedy": 414
+ },
+ "escalation_greedy_pw3": {
+  "3%": {
+   "payback": 5.9,
+   "npv10": 5020
+  },
+  "5%": {
+   "payback": 5.7,
+   "npv10": 6718
+  },
+  "8%": {
+   "payback": 5.3,
+   "npv10": 9608
+  },
+  "12%": {
+   "payback": 5.0,
+   "npv10": 14205
+  }
+ }
+}
