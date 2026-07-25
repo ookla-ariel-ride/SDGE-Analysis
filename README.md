@@ -1,8 +1,10 @@
 # SDG&E Rate Plan Analysis
 
+[![gitleaks](https://github.com/ookla-ariel-ride/SDGE-Analysis/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/ookla-ariel-ride/SDGE-Analysis/actions/workflows/gitleaks.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 ## [View the live report](https://ookla-ariel-ride.github.io/SDGE-Analysis/)
 
-**Click the link above** to open the interactive report in your browser:
 **https://ookla-ariel-ride.github.io/SDGE-Analysis/**
 
 That page *is* `index.html`, served by GitHub Pages. The charts render on their own; you
@@ -10,6 +12,11 @@ don't install anything. (You can also clone or download this repo and double-cli
 `index.html`, which is fully self-contained with data inlined and Chart.js from CDN. GitHub's
 own file viewer shows the HTML *source*, not the rendered report, so use the link above
 instead.)
+
+**Choose your path:**
+- Just want the results? Read [the live report](https://ookla-ariel-ride.github.io/SDGE-Analysis/) or [the bottom line](#the-bottom-line) below.
+- Want to run this on your own home? Jump to [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here).
+- Auditing the methods? Start with [TECHNICAL.md](TECHNICAL.md).
 
 > **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
@@ -23,12 +30,25 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 [**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the intake interview: every data source you need, field by field, to run this on your own home ·
 [**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
+## The bottom line
+
+Stay on EV-TOU-5: it beats every other eligible plan on this usage by a modeled $959/yr
+(`data/plan_results.csv`), and a battery widens that gap rather than changing the answer
+(`data/battery_plan_matrix.json`). Fix EV charging times first; moving the cars' charging
+into the super-off-peak window saves a modeled $1,193/yr and costs nothing. A battery earns
+at most $2,325/yr on its own, a 6.2 to 8.5 year asset payback depending on dispatch policy,
+so it is a resilience purchase with a real but slower return. More solar does not pencil
+out: after the behavior fix an expansion adds a marginal $216/yr, and outage endurance is
+the only reason to buy it. Dollars are modeled at constant 6/1/2026 rates (the year's
+actual bills totaled $3,282 on older tariffs); the report labels every figure measured,
+modeled, or estimated.
+
 **In this README:**
+[The bottom line](#the-bottom-line) ·
 [What the report covers](#what-the-report-covers) ·
 [Reproduce this for your own home](#reproduce-this-for-your-own-home--start-here) ·
 [Publish with GitHub Pages](#publish-with-github-pages) ·
 [Repository layout](#repository-layout) ·
-[Contents](#contents) ·
 [The private inputs](#the-private-inputs--and-how-to-obtain-your-own) ·
 [Refreshing this analysis](#refreshing-this-analysis-same-house-new-data)
 
@@ -151,12 +171,11 @@ Your report will be live at `https://<you>.github.io/my-energy-analysis/` within
 | `private/3-analysis-extras/` | ❌ gitignored | As-run script copy with personal header |
 | `private/README.md` | ✅ yes (placeholder) | Map of the private archive — the one file under `private/` that is committed, so the repo documents what's withheld |
 
-## Contents
+The complete file-by-file inventory follows; `TECHNICAL.md` documents every artifact's
+schema and pipeline in depth.
 
-The complete file-by-file inventory. `TECHNICAL.md` documents every artifact's schema
-and pipeline in depth; this is the quick map.
-
-### Report & documentation
+<details>
+<summary><strong>Report &amp; documentation</strong></summary>
 
 | File | What it is |
 |---|---|
@@ -169,6 +188,8 @@ and pipeline in depth; this is the quick map.
 | `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
 | `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
 | `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
+
+</details>
 
 <details>
 <summary><strong>Data artifacts</strong> (this house's results; regenerate, don't edit)</summary>
@@ -290,6 +311,8 @@ With your own two files above plus current rates, the scripts regenerate every n
 The committed `data/*` artifacts and `index.html` are one household's results, included
 as worked examples; regenerate them from your own data rather than republishing these.
 
+Spotted an error in the method, or a number that doesn't reproduce? Open an issue.
+
 ---
 
-*Last reviewed: 2026-07-25, against commit `dd04495`.*
+*Last reviewed: 2026-07-25, against commit `114d71d`.*
