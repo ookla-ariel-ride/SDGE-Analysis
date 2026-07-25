@@ -20,9 +20,7 @@ file viewer shows the HTML *source*, not the rendered report — use the link ab
 [**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the data-gathering checklist for running this on your own home ·
 [**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
-An interactive, evidence-based report for a solar + EV home in the SDG&E Coastal climate zone
-(NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data,
-a full-year detailed-bill audit, six years of production records, and real weather + grid data.
+An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data.
 
 ## What the report covers
 
@@ -37,7 +35,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | 6 | Battery hardware | Arbitrage simulations of 6 real configurations, a three-policy dispatch comparison (evening-only / two-window / price-aware — the published basis), and outage-endurance tiers |
 | 7 | Three costed packages | Low ($0 behavior) / Mid (+1 battery) / High (+expansion): savings, projected bills, honest asset-alone paybacks |
 | 8 | Array upgrades | More panels? Higher-capacity panels? Microinverter upgrade for clipping? All answered with measured data |
-| 9 | Deeper analyses | 6-yr degradation, clipping check, weather-normalized cooling, EV session report card, TOU-DR-P wildcard, phantom-load flag |
+| 9 | Deeper analyses | 6-yr degradation, clipping check, weather-normalized cooling, EV session report card + fleet validation (meter x Tesla app x wall charger, 99.6% agreement), TOU-DR-P wildcard, phantom-load flag 
 | 10 | Actual bills | 365-day bill audit, model-vs-actual reconciliation (rate-vintage, not methodology), gas usage + electrification (HPWH) |
 | 11 | Lifetime payback | Install invoice vs cumulative production value by year — gross and net-of-ITC break-even dates |
 | 12 | Cleaning & soiling | Measured cleaning effect (multi-year diff-in-diff), rain-recovery soiling study, optimal cleaning month & cadence economics |
@@ -71,6 +69,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | `data/soiling_results.json` | Soiling/rain-recovery study results (rain events, regressions, annual economics) |
 | `data/carbon_results.json` | Grid-carbon timing results (CAISO hourly intensity, household footprint, EV-timing deltas) |
 | `data/extra_results.json` | Phantom-baseload decomposition, rate-escalation ladder, marginal price map, NBT re-billing, cleaning-cadence model |
+| `data/wall_charger_daily.csv` | Tesla Wall Connector daily delivered kWh (wall-side) - third-source validation of the EV session detector (99.6% clean-window agreement) 
 | `TECHNICAL.md` | **Full technical/reproducibility documentation** — every script, data schema, algorithm, and chart pipeline, methods-section style |
 | `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
 | `analysis/analyze.py` | The plan billing model (Python/pandas) — rerun against a fresh Green Button CSV |
