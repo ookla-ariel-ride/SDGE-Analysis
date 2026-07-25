@@ -1,14 +1,15 @@
 # SDG&E Rate Plan Analysis
 
-## 📊 [➡️ View the live report](https://ookla-ariel-ride.github.io/SDGE-Analysis/)
+## [View the live report](https://ookla-ariel-ride.github.io/SDGE-Analysis/)
 
 **Click the link above** to open the interactive report in your browser:
 **https://ookla-ariel-ride.github.io/SDGE-Analysis/**
 
-That page *is* `index.html`, served by GitHub Pages — charts render automatically, nothing to
-install. (Alternate ways to view it: clone/download this repo and double-click `index.html`,
-which is fully self-contained with data inlined and Chart.js from CDN. Note that GitHub's own
-file viewer shows the HTML *source*, not the rendered report — use the link above instead.)
+That page *is* `index.html`, served by GitHub Pages. The charts render on their own; you
+don't install anything. (You can also clone or download this repo and double-click
+`index.html`, which is fully self-contained with data inlined and Chart.js from CDN. GitHub's
+own file viewer shows the HTML *source*, not the rendered report, so use the link above
+instead.)
 
 > **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
@@ -54,8 +55,8 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 
 > **Note on solar monitoring:** this analysis happened to pull production data from **Enphase
 > Enlighten**, but the method is vendor-agnostic. SolarEdge, Tesla, SMA, Fronius, PVOutput, and
-> other platforms all expose equivalent production feeds (gross generation + system specs). The
-> `DATA-SOURCES-CHEATSHEET.md` describes the *data* you need, not one vendor's menu — substitute
+> other platforms all expose equivalent production feeds (gross generation + system specs).
+> `DATA-SOURCES-CHEATSHEET.md` describes the *data* you need, not one vendor's menu; substitute
 > your own monitoring platform's export.
 
 ## Contents
@@ -74,7 +75,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
 | `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
 
-### Data artifacts (this house's results — regenerate, don't edit)
+### Data artifacts (this house's results; regenerate, don't edit)
 
 | File | What it is |
 |---|---|
@@ -134,8 +135,8 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 ## Reproduce this for your own home — start here
 
 Nothing here is specific to one house; the machinery is reusable. The committed `data/*` files
-and `index.html` are **this house's results** — yours get regenerated from your own data, so
-don't edit them; replace them.
+and `index.html` are **this house's results**. Yours get regenerated from your own data, so
+replace them rather than editing them.
 
 **0 · Blank slate.** Clone the machinery, drop the history and results, protect yourself:
 
@@ -148,28 +149,28 @@ brew install gitleaks                   # or see gitleaks docs for other platfor
 git config core.hooksPath .githooks     # secret/PII scan now blocks every commit
 ```
 
-**1 · Run the intake interview.** Work through [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md)
-— it is now a per-field interview spec (`id` / `question` / `type` / `required_if` / `where` /
+**1 · Run the intake interview.** Work through [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md),
+a per-field interview spec (`id` / `question` / `type` / `required_if` / `where` /
 `privacy` tier). Raw files (interval export, 12 months of detailed bills, production records,
 rate tables) go in `private/1-raw-data/`; per-house facts go in `private/household.yaml`
 (copy `household.example.yaml` and replace every placeholder); log progress per field id in
 `private/intake-status.md`. Secrets (API keys, monitoring tokens) go ONLY into a gitignored
-`.env`. Analysis may not start while any required field is missing — the scripts fail closed
+`.env`. Analysis may not start while any required field is missing: the scripts fail closed
 without `household.yaml`. (The "private inputs" section below shows what the withheld files
 look like.)
 
 **2 · Add your personal PII patterns.** Create `private/pii-rules.toml` with your own name,
 address, and account/meter numbers (see `CLAUDE.md` §4 for the format and the rule chain).
-It stays local — the pre-commit hook picks it up automatically and blocks any commit
+It stays local; the pre-commit hook picks it up automatically and blocks any commit
 containing those values.
 
-**3 · Run the analysis — two routes:**
+**3 · Run the analysis.** Two routes:
 - **AI route (how this repo was built):** paste [`reusable-prompt.md`](reusable-prompt.md)
   into a Claude Cowork or Claude Code session and hand it your gathered files. `CLAUDE.md` is
   the operating manual the agent follows; `report-template.html` is the report shell it fills.
 - **Manual route:** `python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt`;
-  make sure `private/household.yaml` exists (step 1 — the scripts fail closed without it);
-  update `analysis/rates.py` from **your** bills (it is the single source of truth — non-SDG&E
+  make sure `private/household.yaml` exists (step 1; the scripts fail closed without it);
+  update `analysis/rates.py` from **your** bills (it is the single source of truth; non-SDG&E
   users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
   `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
   pattern); run `behavior_rebuild.py`, `battery_dispatch_policies.py`, `billing_model_nem.py`,
@@ -180,7 +181,7 @@ containing those values.
 model must reproduce your actual bills before you quote any absolute dollar; every committed
 artifact must regenerate from its committed script; report deltas, not levels.
 
-**5 · Publish (optional).** Follow the GitHub Pages section below — after reading the
+**5 · Publish (optional).** Follow the GitHub Pages section below, after reading the
 privacy note.
 
 ## Publish with GitHub Pages
@@ -226,31 +227,31 @@ Your report will be live at `https://<you>.github.io/my-energy-analysis/` within
 ## The private inputs — and how to obtain your own
 
 Only two input datasets are withheld (plus the small `private/household.yaml` config the
-intake interview writes — its schema is public in `household.example.yaml`), and anyone can
+intake interview writes; its schema is public in `household.example.yaml`), and anyone can
 pull their own equivalents in minutes:
 
 **1. Utility 15-minute interval export** (`Electric_15_Minute_<range>.csv`)
 - SDG&E customers: My Energy Center (myenergycenter.com) → Usage → **Green Button Download** →
   set date range (13 months recommended) → format `.csv`. Other utilities: look for
-  "Green Button" or "interval data" download in your usage portal — the standard is
+  "Green Button" or "interval data" download in your usage portal. The standard is
   industry-wide, though column layouts vary slightly.
-- Format: 13 metadata lines (name, address, account, meter — this is why it's private),
+- Format: 13 metadata lines (name, address, account, meter; this is why it's private),
   then a header row and one row per 15-minute interval:
   `Meter Number, Date (M/D/YYYY), Start Time (h:mm AM/PM), Duration (15), Consumption (kWh imported), Generation (kWh exported), Net`.
 - `analysis/analyze.py` reads it with `skiprows=13`.
 
-**2. Hourly whole-home consumption, one year** — your total electrical *load*, which is not
+**2. Hourly whole-home consumption, one year**: your total electrical *load*, which is not
 the same as grid imports when you have solar. It powers the backup-endurance simulation, the
 no-solar counterfactual behind the lifetime-payback numbers, and the load/production splits.
 - **How this analysis got it (Enphase-specific):** Enlighten (enlighten.enphaseenergy.com) →
   Reports → **SAM 8760** → pick year → Submit (report is emailed). Requires Enphase
   consumption metering (CTs installed). Format: single column `kWh`, exactly 8,760 hourly
   values per calendar year; `analysis/battery_backup_sims.py` stitches two years into a
-  rolling 365 days. No identifiers in the file — it's withheld only because hourly
+  rolling 365 days. There are no identifiers in the file; it's withheld only because hourly
   whole-home load reveals occupancy patterns.
 - **Different solar or monitoring hardware? Use your platform's equivalent:** SolarEdge
   (consumption-meter export), Tesla (Powerwall/app energy history), SMA, Fronius, and others
-  expose the same consumption feed if consumption metering is installed — as does any
+  expose the same consumption feed if consumption metering is installed, as does any
   standalone circuit monitor (Emporia Vue, Sense, IoTaWatt). Any source works if you can
   shape it into hourly kWh for the year; adjust the two-column loader in
   `analysis/battery_backup_sims.py` to your export's format.
@@ -259,24 +260,24 @@ no-solar counterfactual behind the lifetime-payback numbers, and the load/produc
   interval export from item 1. Hourly resolution keeps the energy balance honest; the
   derivation caveats are covered in `TECHNICAL.md`.
 
-Everything else needed to reproduce the analysis — daily production, PVOutput records,
-all rate tables (`research/rates-reference.md`), and both models — is in this repo.
+Everything else needed to reproduce the analysis (daily production, PVOutput records,
+the rate tables in `research/rates-reference.md`, and both models) is in this repo.
 With your own two files above plus current rates, the scripts regenerate every number.
 
 ## Refreshing this analysis (same house, new data)
 
 1. My Energy Center → Usage → Green Button Download → last 13 months, CSV → `private/1-raw-data/`.
-2. If SDG&E (Jan/Jun) or CEA (Feb/Jun) issued new rates, update `analysis/rates.py` — the
+2. If SDG&E (Jan/Jun) or CEA (Feb/Jun) issued new rates, update `analysis/rates.py`, the
    single source of truth all current models import. If the household changed (vehicle,
    charger, cleaning event, appliance), update `private/household.yaml` too.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
-   each `data/*.json` regenerates cleanly — that diff-check is the acceptance gate.
-4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D — or
+   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate.
+4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D, or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
 
 ## License
 
-[MIT](LICENSE) — the scripts, template, and documentation are free to reuse and adapt.
+[MIT](LICENSE). The scripts, template, and documentation are free to reuse and adapt.
 The committed `data/*` artifacts and `index.html` are one household's results, included
 as worked examples; regenerate them from your own data rather than republishing these.
 
