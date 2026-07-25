@@ -158,10 +158,27 @@ Round-three review found every one of these violated. Check them mechanically, n
   conclusions only. Corrections, superseded drafts, and "we fixed X" belong in commits/PRs,
   never in the published document.
 
-## 10. Report navigation requirements (index.html — keep on every regeneration).
+## 10. Report design & navigation requirements (index.html — keep on every regeneration).
 Start from `report-template.html` — it implements everything below plus the chart scaffolds,
 confidence pills, and provenance slot; replace {{TOKENS}} with script-produced values only.
-Single self-contained file, vanilla CSS/JS, Chart.js CDN only. Sticky TOC in three labeled
+Single self-contained file, vanilla CSS/JS; CDN allowed only for Chart.js (pinned with SRI
+integrity hash) and Google Fonts (Space Grotesk display / Source Serif 4 body / IBM Plex
+Mono data — with system fallbacks).
+
+**Design system ("Solar ledger") — do not revert to the old dark-slate/emerald look:**
+- Light default on warm-white paper (#FBFAF7/#1A2332 ink); dark variant via
+  `[data-theme="dark"]` tokens, user-toggleable (◐ button, localStorage-persisted, honors
+  prefers-color-scheme on first visit; charts read colors from CSS vars so toggle reloads).
+- SEMANTIC TOU palette, used consistently everywhere (CSS tokens → chart palette via JS):
+  on-peak #BF3B2B · off-peak #C98A3D · super-off-peak #2E7D6B · solar #E9B62F. A period's
+  color is the same in the day-band, every chart series, tables, and the price map.
+- Signature element: the DAY-BAND — pure-CSS 24-h TOU strip (segments at 0-6-10-14-16-21)
+  with tick marks and prices, full-width under the header; keep it on every regeneration.
+- Every time-axis chart shades the 4-9pm window via the `onpeakBand` Chart.js plugin.
+- Evidence pills are mono uppercase stamps, color-coded measured=sop-green /
+  modeled=off-peak-amber / estimated=on-peak-red.
+- All numerals in IBM Plex Mono with tabular-nums (cards, tables, pills).
+- Print stylesheet hides nav/toggle buttons. Sticky TOC in three labeled
 groups — Verdict (Bottom line, Plans, Battery×plan, Packages), Evidence (Data, System, Usage,
 Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning, Carbon/NEM,
 Methodology) — with uppercase eyebrow labels and compact pills. Scroll-spy via ONE

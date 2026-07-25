@@ -212,6 +212,20 @@ sections lazy-init on first open. Quiet back-to-top button (after §1, aria-labe
 ≤800px: grouped TOC collapses to ≤ ~2 rows with horizontal scroll. Keyboard `:focus-visible`
 on pills and summaries. The page must degrade cleanly with JS disabled.
 
+**Design system ("Solar ledger" — build it in, keep it on every regeneration):** light
+default on warm-white paper (`#FBFAF7` paper / `#1A2332` ink), dark variant via
+`[data-theme="dark"]` tokens with a ◐ toggle (localStorage-persisted; honors
+prefers-color-scheme on first visit; charts read colors from CSS variables). Semantic TOU
+palette used consistently in the day-band, every chart series, tables, and the price map:
+on-peak `#BF3B2B`, off-peak `#C98A3D`, super-off-peak `#2E7D6B`, solar `#E9B62F`. Signature
+element: the pure-CSS **day-band** (24-h TOU strip, segments 0-6-10-14-16-21, ticks +
+prices) full-width under the header. Every time-axis chart shades 4–9pm via the
+`onpeakBand` Chart.js plugin. Type: Space Grotesk (display), Source Serif 4 (body prose),
+IBM Plex Mono with tabular-nums for all numerals; Google Fonts CDN with system fallbacks.
+Evidence pills are mono uppercase stamps (measured=green / modeled=amber / estimated=red,
+matching the price semantics). Chart.js pinned with an SRI integrity hash. Print stylesheet
+hides nav and buttons. `report-template.html` implements all of this — start from it.
+
 **Provenance note (required; must survive every regeneration).** The methodology section's
 closing small-print in `index.html` ends with a "How this report was produced" sentence, and
 `README.md` carries the equivalent blockquote immediately before the report description.

@@ -4,58 +4,91 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Home Energy Optimization — SDG&E Plan + Battery Analysis</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>const _t=localStorage.getItem('sdge-theme');document.documentElement.dataset.theme=_t!==null?(_t==='dark'?'dark':''):(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'')</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" integrity="sha384-JUh163oCRItcbPme8pYnROHQMC6fNKTBWtRG3I3I0erJkzNgL7uxKlNwcrcFKeqF" crossorigin="anonymous"></script>
 <style>
-  :root{--bg:#0f172a;--card:#1e293b;--ink:#e2e8f0;--sub:#94a3b8;--acc:#34d399;--warn:#fbbf24;--bad:#f87171;--line:#334155;--blue:#60a5fa}
+  :root{
+    --paper:#FBFAF7;--card:#FFFFFF;--ink:#1A2332;--sub:#5A6478;--line:#E3DFD6;
+    --onpeak:#BF3B2B;--offpeak:#C98A3D;--sop:#2E7D6B;--solar:#E9B62F;
+    --bg:var(--paper);--acc:var(--sop);--warn:var(--offpeak);--bad:var(--onpeak);--blue:var(--sub);
+    --disp:"Space Grotesk",system-ui,sans-serif;
+    --serif:"Source Serif 4",Georgia,serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,monospace;
+  }
+  [data-theme="dark"]{
+    --paper:#161512;--card:#1E1C18;--ink:#EAE6DC;--sub:#9A9385;--line:#33302A;
+    --onpeak:#E0654F;--offpeak:#D9A65B;--sop:#4FA893;--solar:#EFC55A;
+  }
   *{box-sizing:border-box;margin:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
-  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
-  h1{font-size:1.9rem;margin-bottom:4px}
-  h2{font-size:1.35rem;margin:38px 0 14px;border-bottom:2px solid var(--acc);padding-bottom:6px}
-  h3{font-size:1.05rem;margin:18px 0 8px;color:var(--acc)}
-  p{margin:8px 0}
-  .sub{color:var(--sub);font-size:.95rem}
+  body{font-family:var(--serif);background:var(--paper);color:var(--ink);line-height:1.62;font-size:1.01rem}
+  .wrap{max-width:1080px;margin:0 auto;padding:36px 20px 90px}
+  h1{font-family:var(--disp);font-weight:700;font-size:2.25rem;letter-spacing:-.015em;line-height:1.1;margin-bottom:6px}
+  h2{font-family:var(--disp);font-weight:700;font-size:1.4rem;letter-spacing:-.01em;margin:46px 0 14px;border-bottom:2px solid var(--line);padding-bottom:7px}
+  h3{font-family:var(--disp);font-weight:500;font-size:1.05rem;margin:22px 0 8px}
+  p{margin:9px 0}
+  .sub{font-family:var(--disp);color:var(--sub);font-size:.92rem}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:20px 0}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
-  .card .big{font-size:1.6rem;font-weight:700;color:var(--acc)}
-  .card .big.warn{color:var(--warn)} .card .big.bad{color:var(--bad)} .card .big.blue{color:var(--blue)}
-  .card .lbl{color:var(--sub);font-size:.85rem;margin-top:4px}
-  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.92rem}
-  th,td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line)}
-  th{color:var(--sub);font-weight:600;text-transform:uppercase;font-size:.75rem;letter-spacing:.04em}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:17px 17px 14px}
+  .card .big{font-family:var(--mono);font-weight:600;font-size:1.5rem;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--sop)}
+  .card .big.warn{color:var(--offpeak)} .card .big.bad{color:var(--onpeak)} .card .big.blue{color:var(--ink)}
+  .card .lbl{font-family:var(--disp);color:var(--sub);font-size:.82rem;margin-top:6px;line-height:1.45}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.9rem}
+  th,td{padding:9px 10px;text-align:right}
+  td{font-family:var(--mono);font-variant-numeric:tabular-nums;border-bottom:1px solid var(--line);font-size:.86rem}
+  th{font-family:var(--mono);color:var(--sub);font-weight:500;text-transform:uppercase;font-size:.68rem;letter-spacing:.1em;border-bottom:2px solid var(--ink)}
   td:first-child,th:first-child{text-align:left}
-  tr.win td{background:rgba(52,211,153,.10);font-weight:700}
-  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.75rem;font-weight:700}
-  .pill.g{background:rgba(52,211,153,.18);color:var(--acc)} .pill.y{background:rgba(251,191,36,.15);color:var(--warn)} .pill.r{background:rgba(248,113,113,.15);color:var(--bad)}
-  .chartbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:16px 0}
-  .note{background:rgba(251,191,36,.08);border-left:4px solid var(--warn);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.92rem}
-  .rec{background:rgba(52,211,153,.08);border-left:4px solid var(--acc);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  td:first-child{font-family:var(--disp);font-size:.9rem}
+  tr.win td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
+  .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
+  .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
+  .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
+  .note{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--offpeak);padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.93rem}
+  .rec{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--sop);padding:13px 18px;border-radius:0 8px 8px 0;margin:14px 0}
+  .purpose{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--sop);padding:13px 18px;border-radius:0 8px 8px 0;margin:14px 0;font-size:.95rem}
+  .dayband{margin:22px 0 4px}
+  .db-strip{display:flex;height:30px;border-radius:5px;overflow:hidden;border:1px solid var(--line)}
+  .db-sop{background:var(--sop)} .db-off{background:var(--offpeak)} .db-on{background:var(--onpeak)}
+  .db-ticks{display:flex;font-family:var(--mono);font-size:.66rem;color:var(--sub);margin-top:4px}
+  .db-labels{display:flex;font-family:var(--mono);font-size:.63rem;letter-spacing:.07em;text-transform:uppercase;margin-top:1px}
+  .db-labels span{text-align:center;color:var(--sub)}
+  .db-labels .on{color:var(--onpeak);font-weight:600}
+  .db-caption{font-family:var(--mono);font-size:.7rem;color:var(--sub);margin-top:8px}
+  @media(max-width:800px){.db-labels{display:none}}
   ol.hang{margin:10px 0 0 0;padding-left:1.6em}
   ol.hang li{margin:9px 0;padding-left:.3em}
-  .pkg{border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;background:var(--card)}
-  .pkg.best{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+  .pkg{border:1px solid var(--line);border-radius:8px;padding:18px;margin:14px 0;background:var(--card)}
+  .pkg.best{border-color:var(--sop);box-shadow:0 0 0 1px var(--sop)}
   .pkg h3{margin-top:0}
   ul{margin:8px 0 8px 22px} li{margin:6px 0}
-  a{color:var(--acc)}
-  .small{font-size:.8rem;color:var(--sub)}
+  a{color:var(--sop)}
+  .small{font-size:.82rem;color:var(--sub)}
+  b,strong{font-weight:600}
+  code{font-family:var(--mono);font-size:.85em;background:color-mix(in srgb,var(--line) 40%,transparent);padding:1px 5px;border-radius:3px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
   @media(max-width:800px){.grid2{grid-template-columns:1fr}}
-  nav.toc{position:sticky;top:0;z-index:10;background:rgba(15,23,42,.95);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);margin:0 -20px;padding:8px 20px;display:flex;flex-direction:column;gap:5px}
+  nav.toc{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--paper) 93%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);margin:0 -20px;padding:8px 20px;display:flex;flex-direction:column;gap:5px}
   .toc-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
-  .toc-eyebrow{font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--sub);min-width:66px;flex:0 0 auto}
-  nav.toc a{font-size:.72rem;color:var(--sub);text-decoration:none;padding:3px 9px;border:1px solid var(--line);border-radius:999px;white-space:nowrap}
-  nav.toc a:hover,nav.toc a.active{color:var(--acc);border-color:var(--acc)}
-  nav.toc a:focus-visible,summary:focus-visible,.totop:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+  .toc-eyebrow{font-family:var(--mono);font-size:.6rem;font-weight:500;letter-spacing:.13em;text-transform:uppercase;color:var(--sub);min-width:66px;flex:0 0 auto}
+  nav.toc a{font-family:var(--disp);font-weight:500;font-size:.74rem;color:var(--sub);text-decoration:none;padding:3px 10px;border:1px solid var(--line);border-radius:999px;white-space:nowrap}
+  nav.toc a:hover{color:var(--ink);border-color:var(--sub)}
+  nav.toc a.active{color:var(--sop);border-color:var(--sop)}
+  nav.toc a:focus-visible,summary:focus-visible,.totop:focus-visible,.themetoggle:focus-visible{outline:2px solid var(--sop);outline-offset:2px}
   h2{scroll-margin-top:calc(var(--navh,132px) + 10px)}
   details.sec>summary{cursor:pointer;list-style:none}
   details.sec>summary::-webkit-details-marker{display:none}
   details.sec>summary h2::after{content:"▸";float:right;color:var(--sub);font-size:.95rem;font-weight:400}
   details.sec[open]>summary h2::after{content:"▾"}
-  .teaser{display:block;color:var(--sub);font-size:.85rem;margin:-6px 0 12px}
-  .totop{position:fixed;right:16px;bottom:16px;z-index:11;font-size:.72rem;color:var(--sub);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:8px 12px;cursor:pointer;opacity:0;visibility:hidden}
+  .teaser{display:block;font-family:var(--disp);color:var(--sub);font-size:.85rem;margin:-6px 0 12px}
+  .totop{position:fixed;right:16px;bottom:16px;z-index:11;font-family:var(--mono);font-size:.7rem;color:var(--sub);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:8px 12px;cursor:pointer;opacity:0;visibility:hidden}
   .totop.show{opacity:1;visibility:visible}
-  .totop:hover{color:var(--acc);border-color:var(--acc)}
+  .totop:hover{color:var(--sop);border-color:var(--sop)}
+  .themetoggle{position:fixed;left:16px;bottom:16px;z-index:11;font-family:var(--mono);font-size:.7rem;color:var(--sub);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:8px 12px;cursor:pointer}
+  .themetoggle:hover{color:var(--sop);border-color:var(--sop)}
+  @media print{nav.toc,.totop,.themetoggle{display:none}body{font-size:.92rem}}
   @media (prefers-reduced-motion:no-preference){
     html{scroll-behavior:smooth}
     nav.toc a{transition:color .15s,border-color .15s}
@@ -78,13 +111,31 @@
 Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1, 2026 · Report generated Jul 24, 2026<br>
 <b>Data sources:</b> SDG&amp;E Green Button 15-min electric + daily gas interval data · 24 detailed bill PDFs (12 electric — 13 billing periods covering a full 365 days — + 12 gas) · Enphase Enlighten (SAM 8760 hourly consumption + daily production) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power, system registration) · Open-Meteo temperatures · NOAA/RCC ACIS precipitation · CAISO Today's Outlook CO₂ + demand history · solar install invoice (2019)</p>
 
+<div class="dayband" aria-hidden="true">
+  <div class="db-strip">
+    <div class="db-sop" style="width:25%"></div>
+    <div class="db-off" style="width:16.67%"></div>
+    <div class="db-sop" style="width:16.67%"></div>
+    <div class="db-off" style="width:8.33%"></div>
+    <div class="db-on"  style="width:20.83%"></div>
+    <div class="db-off" style="width:12.5%"></div>
+  </div>
+  <div class="db-ticks">
+    <span style="width:25%">0</span><span style="width:16.67%">6</span><span style="width:16.67%">10</span><span style="width:8.33%">14</span><span style="width:20.83%">16</span><span style="width:12.5%;display:flex;justify-content:space-between">21<span>24</span></span>
+  </div>
+  <div class="db-labels">
+    <span style="width:25%">super-off-peak 12.5¢</span><span style="width:16.67%">off-peak ~51¢</span><span style="width:16.67%">super-off 12.5¢</span><span style="width:8.33%">off</span><span class="on" style="width:20.83%">on-peak 61–87¢</span><span style="width:12.5%">off-peak</span>
+  </div>
+  <p class="db-caption">The weekday price clock (Jun–Oct rates shown) — every conclusion in this report is about moving energy across these windows.</p>
+</div>
+
 <nav class="toc" id="toc">
 <div class="toc-group"><span class="toc-eyebrow">Verdict</span><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a></div>
 <div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#s8">8 Array upgrades</a></div>
 <div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Solar payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a></div>
 </nav>
 
-<div class="note" style="border-left-color:var(--acc);background:rgba(52,211,153,.06)">
+<div class="purpose">
 <b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Every conclusion is computed from data — meter intervals, parsed bills, production records, and public rate and grid datasets — by committed scripts; nothing is asserted from intuition or vendor claims. It works to answer ten questions:
 
 <ol class="hang">
@@ -432,6 +483,7 @@ This is an independent analysis, not advice from SDG&amp;E, CEA, Enphase, or Tes
 <b>How this report was produced:</b> generated with <b>Claude Cowork (Fable&nbsp;5)</b>; the data, methodology, and conclusions were then independently reviewed with <b>Claude Code (Fable&nbsp;5)</b> and adversarially reviewed with <b>Codex (GPT&#8209;5.6&nbsp;Sol)</b>; the analysis was subsequently re-worked in Claude Cowork to incorporate the findings of both reviews.</p>
 
 <button class="totop" id="totop" aria-label="Back to top">↑ Top</button>
+<button class="themetoggle" id="themetoggle" aria-label="Switch between light and dark theme">◐ theme</button>
 
 <script>
 const D = {
@@ -448,42 +500,50 @@ const D = {
  bat_pw3x_S:[21.63,15.12,7.83,3.33,2.82,5.03,2.55,2.73,1.81,1.02,0.74,0.78,0.55,0.39,0.06,0.32,0.03,0.06,0.16,0.31,0.47,1.5,1.42,1.27],
  carb:[266.2,277.5,286.9,293.1,283.6,266.7,228.4,203.2,153.5,131.4,121.3,123.0,126.9,129.4,125.2,116.8,134.1,154.1,169.3,178.3,184.1,195.6,217.9,242.2]
 };
-const gridCol='#334155', tickCol='#94a3b8';
-Chart.defaults.color=tickCol; Chart.defaults.borderColor=gridCol;
+// Palette read from the CSS tokens so charts follow the light/dark theme.
+const V=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const A=(hex,a)=>{const h=hex.replace('#','');return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${a})`};
+const PAL={ink:V('--ink'),sub:V('--sub'),line:V('--line'),on:V('--onpeak'),off:V('--offpeak'),sop:V('--sop'),solar:V('--solar')};
+Chart.defaults.color=PAL.sub; Chart.defaults.borderColor=PAL.line;
+Chart.defaults.font.family='"IBM Plex Mono",ui-monospace,monospace'; Chart.defaults.font.size=11;
+// Signature: shade the 4-9pm on-peak window on every time-axis chart.
+const onpeakBand={id:'onpeakBand',beforeDraw(c){const{ctx,chartArea:ar,scales:{x}}=c;if(!ar||!x)return;
+ ctx.save();ctx.fillStyle=A(PAL.on,.07);
+ ctx.fillRect(x.getPixelForValue(16),ar.top,x.getPixelForValue(21)-x.getPixelForValue(16),ar.bottom-ar.top);ctx.restore();}};
 const hrs=[...Array(24).keys()].map(h=>h+':00');
 new Chart(document.getElementById('hourly'),{type:'line',data:{labels:hrs,datasets:[
- {label:'Summer import (avg kW)',data:D.hourlyS_imp,borderColor:'#f87171',backgroundColor:'rgba(248,113,113,.15)',fill:true,tension:.3},
- {label:'Summer solar export (avg kW)',data:D.hourlyS_exp,borderColor:'#fbbf24',borderDash:[6,3],tension:.3},
- {label:'Winter import (avg kW)',data:D.hourlyW_imp,borderColor:'#60a5fa',backgroundColor:'rgba(96,165,250,.10)',fill:true,tension:.3},
- {label:'Winter solar export (avg kW)',data:D.hourlyW_exp,borderColor:'#34d399',borderDash:[6,3],tension:.3}]},
- options:{plugins:{title:{display:true,text:'Average demand by hour — midnight EV charging block, and the 6–9pm evening peak inside the expensive window',color:'#e2e8f0'}},scales:{y:{title:{display:true,text:'avg kW'}}}}});
+ {label:'Summer import (avg kW)',data:D.hourlyS_imp,borderColor:PAL.on,backgroundColor:A(PAL.on,.10),fill:true,tension:.3,pointRadius:0},
+ {label:'Summer solar export (avg kW)',data:D.hourlyS_exp,borderColor:PAL.solar,borderDash:[6,3],tension:.3,pointRadius:0},
+ {label:'Winter import (avg kW)',data:D.hourlyW_imp,borderColor:PAL.sub,backgroundColor:A(PAL.sub,.08),fill:true,tension:.3,pointRadius:0},
+ {label:'Winter solar export (avg kW)',data:D.hourlyW_exp,borderColor:PAL.sop,borderDash:[6,3],tension:.3,pointRadius:0}]},
+ options:{plugins:{title:{display:true,text:'Average demand by hour — midnight EV charging block, and the 6–9pm evening peak inside the shaded on-peak window',color:PAL.ink}},scales:{y:{title:{display:true,text:'avg kW'}}}},plugins:[onpeakBand]});
 new Chart(document.getElementById('battery'),{type:'line',data:{labels:hrs,datasets:[
- {label:'Grid import now (summer, avg kW)',data:D.bat_now_S,borderColor:'#f87171',backgroundColor:'rgba(248,113,113,.12)',fill:true,tension:.3},
- {label:'With 1 × Powerwall 3',data:D.bat_pw3_S,borderColor:'#34d399',borderWidth:2,tension:.3},
- {label:'With PW3 + Expansion (27 kWh)',data:D.bat_pw3x_S,borderColor:'#60a5fa',borderDash:[5,3],tension:.3}]},
- options:{plugins:{title:{display:true,text:'Projected grid import with a battery — the 4–9pm peak (red) is erased; overnight rises slightly as the battery tops up on cheap power',color:'#e2e8f0'}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}}});
+ {label:'Grid import now (summer, avg kW)',data:D.bat_now_S,borderColor:PAL.on,backgroundColor:A(PAL.on,.10),fill:true,tension:.3,pointRadius:0},
+ {label:'With 1 × Powerwall 3',data:D.bat_pw3_S,borderColor:PAL.sop,borderWidth:2,tension:.3,pointRadius:0},
+ {label:'With PW3 + Expansion (27 kWh)',data:D.bat_pw3x_S,borderColor:PAL.off,borderDash:[5,3],tension:.3,pointRadius:0}]},
+ options:{plugins:{title:{display:true,text:'Projected grid import with a battery — the shaded 4–9pm peak is erased; overnight rises as the battery tops up on cheap power',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
 // #carbon lives inside the collapsed §13 <details>: lazy-init it on first open so it sizes correctly.
 let carbonChart=null;
 function initCarbon(){
  if(carbonChart)return;
  carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
-  {label:'CAISO grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.12)',fill:true,tension:.3}]},
-  options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:'#e2e8f0'}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}}});
+  {label:'CAISO grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3,pointRadius:0}]},
+  options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
 }
 const sec13=document.getElementById('sec13');
 sec13.addEventListener('toggle',()=>{if(sec13.open)initCarbon();});
 if(sec13.open)initCarbon();
 new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
- {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:'rgba(96,165,250,.7)'},
- {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:'rgba(52,211,153,.7)'},
- {type:'line',label:'Modeled energy cost ($, EV-TOU-5+CEA)',data:D.mCost,borderColor:'#fbbf24',yAxisID:'y2',tension:.3}]},
- options:{plugins:{title:{display:true,text:'Monthly energy flows and modeled cost (* partial months)',color:'#e2e8f0'}},
+ {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:A(PAL.sub,.55)},
+ {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:A(PAL.solar,.75)},
+ {type:'line',label:'Modeled energy cost ($, EV-TOU-5+CEA)',data:D.mCost,borderColor:PAL.on,yAxisID:'y2',tension:.3,pointRadius:0}]},
+ options:{plugins:{title:{display:true,text:'Monthly energy flows and modeled cost (* partial months)',color:PAL.ink}},
  scales:{y:{title:{display:true,text:'kWh'}},y2:{position:'right',grid:{display:false},title:{display:true,text:'$'}}}}});
 new Chart(document.getElementById('periods'),{type:'bar',data:{
  labels:['Super off-peak (64% of imports)','Off-peak (19%)','On-peak 4–9pm (17%)'],
- datasets:[{label:'Annual import kWh',data:[14811,4478,3989],backgroundColor:'rgba(96,165,250,.7)'},
-  {label:'Annual import cost $',data:[1869,2284,2951],backgroundColor:'rgba(248,113,113,.7)'}]},
- options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of the energy causes ~42% of gross import cost — the on-peak problem in one picture',color:'#e2e8f0'}}}});
+ datasets:[{label:'Annual import kWh',data:[14811,4478,3989],backgroundColor:A(PAL.sub,.55)},
+  {label:'Annual import cost $',data:[1869,2284,2951],backgroundColor:A(PAL.on,.75)}]},
+ options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of the energy causes ~42% of gross import cost — the on-peak problem in one picture',color:PAL.ink}}}});
 
 // --- Navigation enhancements (progressive: page works fully without this script) ---
 // Anchor offset: measure the sticky nav's real height and feed it to h2{scroll-margin-top}.
@@ -522,6 +582,12 @@ totop.addEventListener('click',()=>scrollTo(0,0));
 new IntersectionObserver(([en])=>{
  totop.classList.toggle('show',!en.isIntersecting&&en.boundingClientRect.top<0);
 }).observe(document.getElementById('s2'));
+
+// Theme toggle: charts read the palette at init, so persist the choice and reload.
+document.getElementById('themetoggle').addEventListener('click',()=>{
+ localStorage.setItem('sdge-theme',document.documentElement.dataset.theme==='dark'?'light':'dark');
+ location.reload();
+});
 </script>
 </div>
 </body>
