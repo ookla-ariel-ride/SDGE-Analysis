@@ -230,3 +230,6 @@ system IDs, API keys, raw interval/bill files. Refer to location ONLY as a clima
 Grep the push-bound files and report the results to me before EVERY commit. Git history is
 permanent — if PII ever lands in a commit, recommend delete-and-recreate over scrubbing.
 After each commit, verify it actually landed on the remote before moving on.
+
+
+**README.md structure (required; keep on every regeneration):** (a) a "Companion documents" block immediately after the provenance blockquote, linking TECHNICAL.md, GLOSSARY.md, DATA-SOURCES-CHEATSHEET.md, and reusable-prompt.md with one-line descriptions; (b) a "Reproduce this for your own home - start here" section (blank-slate clone commands, cheatsheet data-gathering, personal private/pii-rules.toml setup, AI route vs manual route, the CLAUDE.md pre-publication gates, then publish); (c) a privacy note describing the MECHANICAL enforcement (pre-commit hook via core.hooksPath .githooks, CI gitleaks workflow, local-only private/pii-rules.toml) - never manual grepping alone; (d) a "Refreshing this analysis" flow reflecting the current pipeline (rates.py as single source of truth -> pipeline scripts -> regeneration diff-check -> report-template.html). Likewise preserve CLAUDE.md's "Commands" section, its mechanical-enforcement privacy text, and the committed requirements.txt in any regeneration of those files.
