@@ -157,7 +157,7 @@
   /* --- formatting & navigation additions (keep on every regeneration) --- */
   .skiplink{position:absolute;left:-9999px;top:0;z-index:50;font-family:var(--mono);font-size:.8rem;background:var(--card);color:var(--ink);border:1px solid var(--sop);border-radius:4px;padding:8px 14px}
   .skiplink:focus{left:12px;top:12px}
-  @media(max-width:800px){.wrap table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}}
+  @media screen and (max-width:800px){.wrap table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}}
   .rec::before{content:"Verdict"}
   .note::before{content:"Caveat"}
   [data-label].rec::before,[data-label].note::before{content:attr(data-label)}
@@ -172,8 +172,9 @@
   .toc-collapse{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);background:none;border:1px dashed var(--line);border-radius:999px;padding:2px 9px;cursor:pointer;margin-left:auto}
   .toc-collapse:hover{color:var(--sop);border-color:var(--sop)}
   nav.toc.compact .toc-group a:not(.active):not(.toc-home){display:none}
-  nav.toc.compact:hover .toc-group a,nav.toc.compact:focus-within .toc-group a{display:inline-block}
+  nav.toc.compact:hover .toc-group a:not(.active):not(.toc-home),nav.toc.compact:focus-within .toc-group a:not(.active):not(.toc-home){display:inline-block}
   .toc-home{font-weight:700;border-color:var(--ink)!important;color:var(--ink)!important}
+  @media (hover:none){.hlink{display:none}}
   @media print{.chartbox,table,.rec,.note,.pkg{break-inside:avoid}.hlink,.skiplink{display:none}}
 </style>
 </head>
@@ -213,7 +214,7 @@
 <div class="progress" id="progress"></div>
 </nav>
 
-<div class="note" style="border-left-color:var(--acc);background:rgba(52,211,153,.06)">
+<div class="purpose">
 <b>Purpose.</b> This report is a decision document for one household: given a full year of measured energy data, what should this home do about its rate plan, its behavior, storage, and its solar array? Every conclusion is computed from data by committed scripts; nothing is asserted from intuition or vendor claims. It works to answer these questions:
 
 <ol class="hang">
@@ -660,15 +661,26 @@ document.querySelectorAll('h2[id],h3[id]').forEach(h=>{
 const prog=document.getElementById('progress');
 let ticking=false;
 addEventListener('scroll',()=>{if(!ticking){requestAnimationFrame(()=>{
- const d=document.documentElement;prog.style.width=(100*d.scrollTop/(d.scrollHeight-d.clientHeight))+'%';ticking=false});ticking=true}},{passive:true});
+ const d=document.documentElement;prog.style.width=(100*d.scrollTop/Math.max(1,d.scrollHeight-d.clientHeight))+'%';ticking=false});ticking=true}},{passive:true});
+// Overflowing tables become keyboard-scrollable named regions (mobile).
+const markScrollables=()=>document.querySelectorAll('.wrap table').forEach(t=>{
+ const over=t.scrollWidth>t.clientWidth+1;
+ if(over&&!t.hasAttribute('tabindex')){t.tabIndex=0;t.setAttribute('role','region');
+  const h=t.closest('section,details,div,body').querySelector('h2,h3');
+  t.setAttribute('aria-label',(h?h.textContent.replace('#','').trim()+' — ':'')+'scrollable table');}
+ if(!over&&t.hasAttribute('tabindex')){t.removeAttribute('tabindex');t.removeAttribute('role');t.removeAttribute('aria-label');}
+});
+markScrollables();addEventListener('resize',markScrollables);
 // Collapse/expand the audit <details> sections from the nav.
 const collapser=document.getElementById('toccollapse');
-if(collapser)collapser.addEventListener('click',()=>{
+if(collapser){
  const secs=[...document.querySelectorAll('details.sec')];
- const anyOpen=secs.some(s=>s.open);
- secs.forEach(s=>s.open=!anyOpen);
- collapser.textContent=anyOpen?'\u25b8 expand audit':'\u25be collapse audit';
-});
+ const sync=()=>{const open=secs.some(s=>s.open);
+  collapser.textContent=open?'\u25be collapse audit':'\u25b8 expand audit';
+  collapser.setAttribute('aria-expanded',open)};
+ secs.forEach(s=>s.addEventListener('toggle',sync));sync();
+ collapser.addEventListener('click',()=>{const anyOpen=secs.some(s=>s.open);secs.forEach(s=>s.open=!anyOpen)});
+}
 
 // Theme toggle: charts read the palette at init, so persist the choice and reload.
 document.getElementById('themetoggle').addEventListener('click',()=>{
