@@ -178,21 +178,35 @@ Your report will be live at `https://<you>.github.io/sdge-rate-analysis/` within
 
 Only two input datasets are withheld, and anyone can pull their own equivalents in minutes:
 
-**1. SDGE Green Button 15-minute interval CSV** (`Electric_15_Minute_<range>.csv`)
-- Get yours: My Energy Center (myenergycenter.com) → Usage → **Green Button Download** →
-  set date range (13 months recommended) → format `.csv`.
+**1. Utility 15-minute interval export** (`Electric_15_Minute_<range>.csv`)
+- SDG&E customers: My Energy Center (myenergycenter.com) → Usage → **Green Button Download** →
+  set date range (13 months recommended) → format `.csv`. Other utilities: look for
+  "Green Button" or "interval data" download in your usage portal — the standard is
+  industry-wide, though column layouts vary slightly.
 - Format: 13 metadata lines (name, address, account, meter — this is why it's private),
   then a header row and one row per 15-minute interval:
   `Meter Number, Date (M/D/YYYY), Start Time (h:mm AM/PM), Duration (15), Consumption (kWh imported), Generation (kWh exported), Net`.
 - `analysis/analyze.py` reads it with `skiprows=13`.
 
-**2. Enphase SAM 8760 hourly consumption** (`<system_id>_sam_8760_report.csv`, one per calendar year)
-- Get yours: Enlighten (enlighten.enphaseenergy.com) → Reports → **SAM 8760** → pick year →
-  Submit (report is emailed). Requires Enphase consumption metering (CTs installed).
-- Format: single column `kWh`, exactly 8,760 hourly values, Jan 1 00:00 → Dec 31 23:00,
-  local time; future hours of the current year are zero. No identifiers in the file —
-  it's withheld only because hourly whole-home load reveals occupancy patterns.
-- `analysis/battery_backup_sims.py` stitches two calendar years into a rolling 365 days.
+**2. Hourly whole-home consumption, one year** — your total electrical *load*, which is not
+the same as grid imports when you have solar. It powers the backup-endurance simulation, the
+no-solar counterfactual behind the lifetime-payback numbers, and the load/production splits.
+- **How this analysis got it (Enphase-specific):** Enlighten (enlighten.enphaseenergy.com) →
+  Reports → **SAM 8760** → pick year → Submit (report is emailed). Requires Enphase
+  consumption metering (CTs installed). Format: single column `kWh`, exactly 8,760 hourly
+  values per calendar year; `analysis/battery_backup_sims.py` stitches two years into a
+  rolling 365 days. No identifiers in the file — it's withheld only because hourly
+  whole-home load reveals occupancy patterns.
+- **Different solar or monitoring hardware? Use your platform's equivalent:** SolarEdge
+  (consumption-meter export), Tesla (Powerwall/app energy history), SMA, Fronius, and others
+  expose the same consumption feed if consumption metering is installed — as does any
+  standalone circuit monitor (Emporia Vue, Sense, IoTaWatt). Any source works if you can
+  shape it into hourly kWh for the year; adjust the two-column loader in
+  `analysis/battery_backup_sims.py` to your export's format.
+- **No consumption metering at all?** Derive it: `load = production + imports − exports`,
+  using your production records (dataset the solar platform always has) and the utility
+  interval export from item 1. Hourly resolution keeps the energy balance honest; the
+  derivation caveats are covered in `TECHNICAL.md`.
 
 Everything else needed to reproduce the analysis — daily production, PVOutput records,
 all rate tables (`research/rates-reference.md`), and both models — is in this repo.
