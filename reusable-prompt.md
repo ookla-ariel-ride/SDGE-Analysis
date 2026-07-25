@@ -1,4 +1,4 @@
-# Reusable prompt: whole-home energy optimization (rate plan + solar + battery + gas)
+# Reusable prompt: whole-home energy optimization (rate plan + solar + battery + payback + carbon + gas)
 
 Paste everything below the line into a new Claude Cowork session. Written for an SDG&E
 customer with rooftop solar and an EV, but Claude will adapt to your situation (no solar,
@@ -9,8 +9,9 @@ no EV, a different California utility, bundled vs CCA generation, etc.). Pair th
 
 I want a complete, data-driven analysis of my home energy: whether I'm on the best electric
 rate plan, whether a home battery makes sense (and which one), whether I should add or upgrade
-solar, and whether electrifying gas appliances pays off — ending in ONE unified interactive
-HTML report I can publish to GitHub Pages. Ask me clarifying questions (solar? EV? CCA?
+solar, whether my solar has paid for itself yet, whether panel cleaning is worth paying for,
+when my grid electricity is cleanest, and whether electrifying gas appliances pays off —
+ending in ONE unified interactive HTML report I can publish to GitHub Pages. Ask me clarifying questions (solar? EV? CCA?
 gas service? report format?) before starting, keep a task list, use subagents for independent
 sub-analyses and for an adversarial math-verification pass, and verify every number
 programmatically before presenting.
@@ -29,7 +30,8 @@ Fronius/PVOutput all expose equivalent feeds; describe the DATA you need, not on
 **0. Data intake gate — do this FIRST, before any analysis.** The companion checklist
 [`DATA-SOURCES-CHEATSHEET.md`](https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/DATA-SOURCES-CHEATSHEET.md)
 lists every input (sections A–H: household basics, interval data, rate PDFs, detailed bills,
-solar production, gas, weather, battery research). Walk me through it section by section and
+solar production + install invoice + cleaning history, gas, weather & grid data, battery
+research). Walk me through it section by section and
 ask me for each piece: confirm what I already have gathered, what you should pull from my
 logged-in portals, and what to skip (no solar → skip E; no gas → skip F). Verify each file
 actually loads (row counts, date coverage, no gaps — tell me if a month is missing) before
@@ -57,7 +59,10 @@ its source URL and capture date.
 all-in import rate = delivery + non-bypassable + (CCA: PCIA + CCA generation | bundled:
 EECC); credit NEM exports per my NEM version; add the daily fixed charge; apply baseline
 credits where they exist; exclude tiered non-TOU plans if I'm on NEM. Model both CCA and
-bundled scenarios if I'm on a CCA.
+bundled scenarios if I'm on a CCA. Also emit a **marginal price map** — the all-in import and
+export $/kWh for every season × TOU-period cell of my current plan, from bill-validated rates —
+and, if I'm grandfathered on NEM 1.0/2.0, re-bill the same year under NBT-style flat export
+credits to put a $/yr value on my grandfathered status.
 
 **4. Solar system + production (if I have solar).** The utility meter only sees exports, not
 self-consumed solar, so get GROSS production from my solar monitoring:
@@ -71,21 +76,45 @@ self-consumed solar, so get GROSS production from my solar monitoring:
   load−imports+exports); confirm night-time residual ≈ 0 and totals agree within a few percent.
   Report specific yield (kWh/kW/yr), capacity factor, self-consumption vs export split, and any
   degradation or dead-panel signal.
+- Verify system size against physics: registered module count × wattage (kW DC) and
+  microinverter count × rating (kW AC) vs the measured multi-year peak-power distribution —
+  they should agree within a few percent.
+- If I've ever paid for panel cleaning (ask for dates + cost), MEASURE the effect with a
+  diff-in-diff: pull the same multi-week daily windows around the cleaning date for several
+  years from my monitoring history (PVOutput `getoutput` API, donor feature — or the public
+  daily list) and compare the cleaned year's pre→post change against the identical calendar
+  windows in the uncleaned control years (controls remove the seasonal decline).
+- Quantify soiling independently from rain recovery: daily precipitation from the NOAA/RCC
+  ACIS API (data.rcc-acis.org, free, no key, nearest airport gauge — also the fallback when
+  Open-Meteo is unreachable), clear-sky-normalized production before/after rain events that
+  follow long dry spells, plus a days-since-rain regression. If the regression and the
+  cleaning evidence disagree, report the honest bracket — then model the optimal cleaning
+  cadence (best single and two-cleaning dates), valuing recovered kWh at what a marginal
+  midday kWh is actually worth on my tariff, not at the blended rate.
 
-**5. Behavior analysis (with $/yr each).** On-peak (4–9pm) import volume and cost; high-power
+**5. Lifetime solar payback (needs my install invoice).** Ask me for the install
+contract/invoice (total installed price, payment date, whether the federal ITC was claimed)
+and the PTO date. Build the cumulative-value curve — each year's ACTUAL production × that
+year's blended $/kWh value, scaled by the utility's rate history rather than pricing all of
+history at today's rates — and find the gross and net-of-ITC crossover dates. Also state what
+solar is worth per year TODAY by re-billing a no-solar counterfactual on the bill-validated
+netting model. Flag the rate-history scaling as approximate (±10% on crossover timing).
+
+**6. Behavior analysis (with $/yr each).** On-peak (4–9pm) import volume and cost; high-power
 (>2.5 kW) loads by TOU period (EV-charging discipline; charging that spills past the 6am
 super-off-peak boundary); an EV charging-session "report card" (sessions, kWh, cost vs
-perfectly-timed cost, dollars lost to mistiming); a phantom/always-on baseload estimate
-(present it cautiously — likely contaminated by legitimate baseload, not all recoverable);
-load-shifting scenarios (25%/50% of on-peak → super-off-peak); midday self-consumption vs
-export economics.
+perfectly-timed cost, dollars lost to mistiming); a phantom/always-on baseload DECOMPOSITION
+from EV-free quiet nights — median/p10/p90 kW, duty-cycling signature, seasonal profile, and
+the lowest occupied-day import floor (present it cautiously — largely legitimate baseload, not
+all recoverable); load-shifting scenarios (25%/50% of on-peak → super-off-peak); midday
+self-consumption vs export economics.
 
-**6. Weather normalization.** Pull daily temperatures for my area (Open-Meteo archive API,
+**7. Weather normalization.** Pull daily temperatures for my area (Open-Meteo archive API,
 free, no key) and regress non-EV daily load on cooling/heating degree-days to isolate A/C
 load in kWh/°F, quantify the value of pre-cooling and setpoint changes, and enable
 hot-vs-mild-summer bill projections.
 
-**7. Battery study.** Simulate per-interval arbitrage (charge from would-be exports +
+**8. Battery study.** Simulate per-interval arbitrage (charge from would-be exports +
 overnight super-off-peak top-up, discharge on-peak, ~90% round trip) for real current products
 (e.g. Enphase IQ 5P/10C, Tesla Powerwall 3 ± expansion) at researched 2026 installed prices.
 Simulate outage endurance hour-by-hour (outage at 6pm, solar recharge, median AND 10th
@@ -94,11 +123,13 @@ percentile) for backup tiers: essentials / whole-house-minus-EV / whole-home-inc
 battery — battery value differs by plan because it arbitrages that plan's price spread. Check
 current incentive status (federal ITC, SGIP) — DO NOT assume they still exist. Note NEM
 implications of adding storage. Run a Monte Carlo on battery payback (vary rate escalation,
-capacity fade, install price). Label paybacks honestly: PACKAGE payback (battery + free
+capacity fade, install price) AND an explicit rate-escalation sensitivity ladder (e.g.
+3/5/8/12%/yr → payback and 10-yr NPV) so I can see how the answer depends on that one
+assumption. Label paybacks honestly: PACKAGE payback (battery + free
 behavior fixes) is NOT the same as BATTERY-ALONE payback — report both, don't credit free
 behavior savings to hardware.
 
-**8. Solar expansion / repowering / microinverter upgrade — answer with data.** Should I add
+**9. Solar expansion / repowering / microinverter upgrade — answer with data.** Should I add
 panels, install higher-capacity panels, or upgrade microinverters? Value a marginal midday
 kWh at its ACTUAL current export credit (often ~10¢ under post-2024 TOU) vs what it costs;
 factor NEM expansion/grandfathering limits (adding >~1 kW or 10% can drop NEM 2.0 → NBT).
@@ -106,14 +137,23 @@ If I mention clipping, MEASURE it from 5-minute power vs the AC nameplate ceilin
 distribution, flat-top day detection) and value clipped energy at its time-of-day worth before
 recommending any inverter swap — usually clipping is trivial and replace-on-failure is right.
 
-**9. Gas + electrification (if I have gas service).** Export gas Green Button (daily therms)
+**10. Grid-carbon timing (if my grid publishes it — CAISO does).** Pull REAL grid data from
+CAISO's Today's Outlook history endpoints (`caiso.com/outlook/history/YYYYMMDD/co2.csv` and
+`demand.csv` — free, no key), one representative mid-month day per season. Compute hourly
+grid-average kg CO2/MWh (total CO2 ÷ demand) and apply it to my 15-minute imports/exports:
+annual import footprint, CO2 avoided by exports, and the emissions delta of moving mistimed
+EV charging overnight vs to solar midday. Cross the carbon answer with the tariff: if midday
+and overnight price the same (post-2026 TOU windows often make weekday 10am–2pm
+super-off-peak), say so — the cleaner choice may be free.
+
+**11. Gas + electrification (if I have gas service).** Export gas Green Button (daily therms)
 and note the gas rate schedule. Split usage into non-heating baseline (water heater + cooking)
 vs space heating. Model a heat-pump water heater (gas therms saved vs electricity added on a
 midday-solar timer) and note heat-pump space heating as a larger, bundle-with-HVAC move.
 IMPORTANT: check the bills for whether gas has a real fixed monthly charge before claiming an
 all-electric "drop the connection fee" windfall — many gas bills are nearly purely volumetric.
 
-**10. Detailed bill audit (do this — it's where the truth is).** Have me download every
+**12. Detailed bill audit (do this — it's where the truth is).** Have me download every
 monthly detailed bill PDF (electric AND gas, ~12 months each) into my Downloads folder. Parse
 each line-by-line (pdfplumber). This: (a) validates your modeled rates to the penny, (b)
 resolves ambiguities your model can't — e.g. whether a CCA relief credit actually applies,
@@ -125,18 +165,19 @@ my real bill while trusting the model for plan RANKINGS and PERCENTAGE savings. 
 against the utility's OWN plan-comparison tool (My Energy Center → Pricing Plans) and explain
 any differences.
 
-**11. Deliverables — one folder, GitHub-Pages-ready.**
+**13. Deliverables — one folder, GitHub-Pages-ready.**
 - `index.html`: ONE unified, self-contained interactive report (dark theme, Chart.js from CDN)
   — a coherent document, not sections bolted on. Suggested structure: bottom-line integrated
   recommendation (plan + battery package + solar verdict, with actual vs projected monthly
   bill) → data & validation summary → your solar system profile → plan comparison (folding in
   the utility's tool) → does-a-battery-change-the-plan matrix → usage/behavior findings with
-  charts → battery hardware (arbitrage + outage endurance) → THREE costed packages (Low =
+  charts → lifetime solar payback → battery hardware (arbitrage + outage endurance) → THREE costed packages (Low =
   behavior-only $0, Mid = +one battery, High = +expanded storage; each with annual cost,
   savings vs baseline, projected avg AND min–max monthly bill, payback/ROI, 10-yr value,
   backup capability; mark a recommendation and model the interaction so behavior and battery
   savings aren't double-counted) → solar expansion/clipping verdict → deep analyses
-  (degradation, weather-normalized cooling, EV report card, plan wildcards, phantom load) →
+  (degradation, cleaning effect, soiling, weather-normalized cooling, EV report card,
+  grid-carbon timing, plan wildcards, phantom decomposition, NEM-grandfathering value) →
   actual-bill reconciliation + gas + electrification → methodology/sources/caveats.
 - `README.md` with a clickable live-report link, GitHub-Pages publish steps, and a privacy note.
 - `analysis/*.py` scripts, de-identified aggregate data in `data/`, `rates-reference.md` and
@@ -144,7 +185,7 @@ any differences.
 - `.gitignore` + a `private/` folder holding all raw PII (Green Button CSVs, bill PDFs,
   monitoring exports) — gitignored, never pushed.
 
-**12. Privacy & safety review (MANDATORY before anything is shared or committed).** Audit
+**14. Privacy & safety review (MANDATORY before anything is shared or committed).** Audit
 every deliverable (report, README, scripts, data, commit messages) and confirm none contains:
 my name, street address, account/meter/RIN numbers, email/phone, exact coordinates, my
 utility/solar/PVOutput account IDs, any API key, or a raw interval/bill file. Refer to

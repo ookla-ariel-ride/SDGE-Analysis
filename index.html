@@ -39,6 +39,10 @@
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
   @media(max-width:800px){.grid2{grid-template-columns:1fr}}
+  nav.toc{position:sticky;top:0;z-index:10;background:rgba(15,23,42,.95);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);margin:0 -20px;padding:8px 20px;display:flex;flex-wrap:wrap;gap:6px}
+  nav.toc a{font-size:.72rem;color:var(--sub);text-decoration:none;padding:3px 9px;border:1px solid var(--line);border-radius:999px;white-space:nowrap}
+  nav.toc a:hover{color:var(--acc);border-color:var(--acc)}
+  h2{scroll-margin-top:60px}
 </style>
 </head>
 <body>
@@ -47,35 +51,42 @@
 <h1>Home Energy Optimization — Rate Plan + Battery Analysis</h1>
 <p class="sub">Single-family home · SDG&amp;E Coastal climate zone · 10.05 kW solar + EV · NEM 2.0 · Clean Energy Alliance (CEA) generation<br>
 Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1, 2026 · Report generated Jul 24, 2026<br>
-<b>Data sources:</b> SDG&amp;E Green Button 15-min electric + daily gas interval data · SDG&amp;E electric &amp; gas billing history (2024–2026) · Enphase Enlighten (SAM 8760 hourly consumption + daily production) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power) · Open-Meteo daily temperatures</p>
+<b>Data sources:</b> SDG&amp;E Green Button 15-min electric + daily gas interval data · 24 detailed bill PDFs (12 electric — 13 billing periods covering a full 365 days — + 12 gas) · Enphase Enlighten (SAM 8760 hourly consumption + daily production) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power, system registration) · Open-Meteo temperatures · NOAA/RCC ACIS precipitation · CAISO Today's Outlook CO₂ + demand history · solar install invoice (2019)</p>
+
+<nav class="toc">
+<a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#s7">7 Packages</a><a href="#s8">8 Array upgrades</a><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a>
+</nav>
 
 <h2>Bottom line</h2>
 <div class="rec">
-<b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete 365-day audit of 13 statements: <b>$3,282/yr electric (~$274/mo)</b>. An earlier draft used a modeled baseline that ran high; see §10 for why (rate-vintage, not methodology). Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>analysis/behavior_rebuild.py</code>).<br><br>
+<b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete 365-day audit of 12 statements (13 billing periods): <b>$3,282/yr electric (~$274/mo)</b>. An earlier draft used a modeled baseline that ran high; see §10 for why (rate-vintage, not methodology). Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated NEM netting model (<code>analysis/behavior_rebuild.py</code>).<br><br>
 <b>1. Plan: stay on EV-TOU-5</b> — cheapest with or without a battery (~$955/yr clear of the runner-up; SDG&amp;E's own tool agrees), and a battery only widens its lead. This is the one rock-solid conclusion.<br>
 <b>2. Fix EV charging timing: worth ~$1,000–1,180/yr, free.</b> Session-level analysis found 560 charging sessions (13,723 kWh/yr): 81% of EV energy already lands in super-off-peak, but the stragglers are expensive — and surprisingly, <b>more than half the opportunity is daytime off-peak charging (~$0.51–0.54/kWh), not the 4–9pm window</b>. Moving all of it to super-off-peak saves $1,180/yr at 100% compliance, $1,004 at 80% (§5). Shifting flexible house load out of 4–9pm too (laundry, pre-cooling) adds up to ~$480 more, but treat that as a stretch.<br>
-<b>3. Investigate the always-on baseload.</b> Your overnight floor implies ~1 kW running 24/7 (~$1,800/yr of house load). Some is legitimate (fridge, pumps), but this is potentially the second-biggest lever — worth an hour with a plug meter (§9).<br>
-<b>4. Battery = primarily a resilience purchase.</b> One Powerwall 3's own marginal saving is <b>~$1,740/yr at current rates</b> (after the EV fix — the two barely overlap, only $130), i.e. <b>~8–10 yr simple payback</b> on ~$14.5k depending on dispatch assumptions; the Monte Carlo median is 9.4 yr with <b>~65% odds of paying back inside the 10-yr warranty</b> and roughly break-even 10-yr NPV. Buy it for backup power (it's excellent at that) with the bill savings as a solid bonus — not for a fast payback.<br>
-<b>5. More solar? No.</b> The 10.05 kW array already over-produces at the wrong time of day (60% exported at ~10¢); adding panels pays back in 13–16 yr and risks NEM 2.0 status (§8).
+<b>3. Investigate the always-on baseload.</b> 44 EV-free nights put the overnight floor at a median 1.03 kW (~9,000 kWh/yr, ~$1,800/yr). It cycles like compressor equipment and swings ~0.5 kW seasonally (Sep–Oct peak) — that seasonal half is findable with a plug meter and worth chasing (§13).<br>
+<b>4. Battery = primarily a resilience purchase.</b> One Powerwall 3's own marginal saving is <b>~$1,740/yr at current rates</b> (after the EV fix — the two barely overlap, only $130), i.e. <b>~8–10 yr simple payback</b> on ~$14.5k depending on dispatch assumptions; the older, more conservative Monte Carlo put the median at 9.4 yr with <b>~65% odds of paying back inside the 10-yr warranty</b>; at SDG&amp;E's recent ~8%/yr rate-escalation pace the 10-yr NPV turns clearly positive (§13). Buy it for backup power (it's excellent at that) with the bill savings as a solid bonus — not for a fast payback.<br>
+<b>5. More solar? No.</b> The 10.05 kW array (verified: 30 × Panasonic 335 W = 10,050 W DC) already over-produces at the wrong time of day (60% exported at ~10¢); adding panels pays back in 13–16 yr and risks NEM 2.0 status — which is itself worth <b>~$2,000–2,500/yr</b> (§13).<br>
+<b>6. Your solar already paid for itself.</b> The $37,845 system (Dec 2019) crossed break-even around <b>Aug 2025</b> — early 2024 if the 30% ITC was claimed — and now earns ~$5,200/yr (§11). The 2024 panel cleaning measurably worked (+11.8%), but at today's midday rates future cleanings are break-even at $200: at most one per year, mid-July, when visibly dirty (§12).<br>
+<b>7. Charge the EV midday when home on weekdays.</b> Same super-off-peak price as overnight, but the grid is 2.2× cleaner at noon than at 3am (real CAISO data) — identical savings, −391 kg CO₂/yr (§13).
 </div>
 
 <div class="cards">
   <div class="card"><div class="big">EV-TOU-5</div><div class="lbl">Best plan in every scenario — the solid conclusion</div></div>
-  <div class="card"><div class="big blue">~$274/mo</div><div class="lbl">Actual electric bill — $3,282/yr from a complete 365-day, 13-statement audit</div></div>
+  <div class="card"><div class="big blue">~$274/mo</div><div class="lbl">Actual electric bill — $3,282/yr from a complete 365-day bill audit</div></div>
   <div class="card"><div class="big">~$1,180/yr</div><div class="lbl">Free win: fully super-off-peak EV charging (session-level, 100% compliance)</div></div>
   <div class="card"><div class="big warn">~8–10 yr</div><div class="lbl">Battery-alone payback — a backup purchase with a solid savings bonus</div></div>
+  <div class="card"><div class="big">Paid off</div><div class="lbl">$37,845 install recovered ~Aug 2025 (early 2024 w/ ITC); now ~$5,200/yr</div></div>
 </div>
 
-<h2>1 · The data (triple-verified)</h2>
+<h2 id="s1">1 · The data (triple-verified)</h2>
 <p>Every 15-minute interval of the last 365 days was analyzed. Grid flows come from SDG&amp;E's meter (23,278 kWh imported, 9,922 kWh exported). Whole-home load comes from Enphase consumption metering (29,857 kWh/yr = ~13,100 EV + ~16,700 house). Solar production is verified across three independent sources — Enphase CT meter (16,502 kWh/yr), PVOutput microinverter records (16,839), and an independently derived series (16,660) — agreeing within ±2% at 0.9999 daily correlation. Specific yield 1,642 kWh/kW/yr: the 6-year-old array is healthy. Model validation: reconstruction of the actual July 2026 bill's generation charge landed within ~6%; our plan rankings match SDG&amp;E's own tool within 1% (see §3).</p>
 
-<h2>2 · Your solar system today</h2>
+<h2 id="s2">2 · Your solar system today</h2>
 <div class="grid2">
 <div>
 <h3>Hardware</h3>
 <ul>
-<li><b>Array:</b> 10.05 kW DC nameplate, rack/rail mounted, southwest-facing</li>
-<li><b>Inverters:</b> 30 × Enphase IQ7X microinverters (IQ7X-96-2-US, ~315 VA each ≈ 9.45 kW AC max) — panel-level MPPT and monitoring</li>
+<li><b>Array:</b> 10.05 kW DC nameplate — <b>size verified</b>: 30 × Panasonic 335 W modules (N335) = 10,050 W exactly, per the monitoring-platform registration; rack/rail mounted, southwest-facing, ~22° tilt</li>
+<li><b>Inverters:</b> 30 × Enphase IQ7X microinverters (IQ7X-96-2-US, ~315 VA each ≈ 9.45 kW AC max) — panel-level MPPT and monitoring. Physics agrees with the paperwork: measured multi-year peaks (9,233 W in 2022, 9,204 W in 2024) sit at 97–98% of the AC ceiling, exactly where a healthy 10.05 kW DC / 9.45 kW AC array should top out</li>
 <li><b>Gateway &amp; metering:</b> Enphase IQ Gateway with revenue-grade production CT <i>and</i> consumption CTs ("load with solar" configuration) — this consumption metering is what made the whole-home load and battery analysis in this report possible</li>
 <li><b>Monitoring:</b> Enlighten (per-panel) + automatic publishing to PVOutput</li>
 <li><b>In service since:</b> PTO December 27, 2019 (NEM 2.0 grandfathered ~20 years, to late 2039)</li>
@@ -94,7 +105,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 </div>
 <p class="small">That last split is the key architectural fact of this house: the array makes more than enough energy, but 60% of it leaves as low-value midday exports while the EV charges at night. Every recommendation in this report — plan, behavior, battery, and the §8 expansion verdict — follows from that timing mismatch.</p>
 
-<h2>3 · Rate plan comparison (today, without a battery)</h2>
+<h2 id="s3">3 · Rate plan comparison (today, without a battery)</h2>
 <p>Each plan priced per-interval: SDG&amp;E delivery (6/1/2026) + CEA generation (6/1/2026) + PCIA, NEM 2.0 export credits at retail minus non-bypassable charges (~2.1¢), $0.79343/day Base Services Charge. DR (tiered) is ineligible — NEM 2.0 requires TOU.</p>
 <table>
 <thead><tr><th>Plan</th><th>Annual (CEA gen)</th><th>Annual (SDG&amp;E bundled)</th><th>vs. current</th><th>SDG&amp;E's own tool says</th></tr></thead>
@@ -108,13 +119,13 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 </tbody>
 </table>
 <p class="small">*Excludes Reduce-Your-Use event surcharges ($1.16/kWh during called events). SDG&amp;E's My Energy Center tool (captured Jul 24, 2026) independently reached the same ranking within 1% on every overlapping plan — but it prices generation at bundled SDG&amp;E rates as a proxy (its own disclaimer: results "do not reflect the actual CCA costs") and cannot model behavior change or batteries. It also listed legacy DR-SES ($6,098) and grandfathered TOU-DR ($6,491), both worse.</p>
-<p><b>Why EV-TOU-5 wins:</b> 62% of imports happen in the super off-peak window (overnight EV charging), where EV-TOU-5's delivery rate is 4.1¢/kWh vs 16.3¢ (EV-TOU-2) or 32.9¢ (TOU-DR1). All-in super off-peak ≈ 12.5¢/kWh vs on-peak 60–87¢. All residential plans now share the same $0.79/day fixed charge, so there's no penalty for being on the EV plan.</p>
+<p><b>Why EV-TOU-5 wins:</b> 64% of imports happen in the super off-peak window (overnight EV charging), where EV-TOU-5's delivery rate is 4.1¢/kWh vs 16.3¢ (EV-TOU-2) or 32.9¢ (TOU-DR1). All-in super off-peak ≈ 12.5¢/kWh vs on-peak 60–87¢. All residential plans now share the same $0.79/day fixed charge, so there's no penalty for being on the EV plan.</p>
 <div class="note"><b>CEA vs SDG&amp;E generation — settled by the bills:</b> the detailed statements confirm your CEA product is "Clean Impact Plus" with <b>no −3.871¢ relief credit</b> (only a +$0.001/kWh adder). So there is no CEA generation discount to chase — bundled SDG&amp;E generation would run modestly cheaper (~$200–300/yr) if you ever opted out, but a CCA opt-out carries a commitment period and doesn't change the plan ranking or any package recommendation below. See §10.</div>
 
-<h2>4 · Does a battery change which plan is best? No — it strengthens it.</h2>
-<p>A battery's savings come from arbitraging the gap between cheap charging power and expensive on-peak power. That gap is widest on EV-TOU-5, so the battery is worth the most there. Simulated annual cost by plan, with and without one Powerwall 3 (current behavior):</p>
+<h2 id="s4">4 · Does a battery change which plan is best? No — it strengthens it.</h2>
+<p>A battery's savings come from arbitraging the gap between cheap charging power and expensive on-peak power. That gap is widest on EV-TOU-5, so the battery is worth the most there. The table below is the <b>interval simulation at current 6/1/2026 rates</b> — its absolute dollars run higher than your real bills (which were billed largely on cheaper 2025 tariffs; your actual is $3,282/yr, see §10). Use it for the <i>ranking</i> and the <i>battery-value column</i>, not the bill levels:</p>
 <table>
-<thead><tr><th>Plan</th><th>No battery</th><th>With 1 × PW3</th><th>Battery's value on this plan</th></tr></thead>
+<thead><tr><th>Plan</th><th>No battery (modeled)</th><th>With 1 × PW3 (modeled)</th><th>Battery's value on this plan</th></tr></thead>
 <tbody>
 <tr class="win"><td>EV-TOU-5</td><td>$4,861</td><td>$3,192</td><td>$1,669/yr</td></tr>
 <tr><td>EV-TOU-2</td><td>$5,816</td><td>$4,539</td><td>$1,276/yr</td></tr>
@@ -123,7 +134,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 </table>
 <p><b>Conclusion:</b> the battery doesn't just leave EV-TOU-5 on top — it stretches its lead over TOU-DR1 from ~$1,970/yr to ~$2,790/yr. Plan choice and battery choice point the same direction, so the packages below are all built on EV-TOU-5.</p>
 
-<h2>5 · Usage profile — where the money goes</h2>
+<h2 id="s5">5 · Usage profile — where the money goes</h2>
 <p class="small">Charts below use SDG&amp;E meter data (grid imports and solar exports); whole-home load and gross production come from the Enphase/PVOutput data (§1–2).</p>
 <div class="chartbox"><canvas id="hourly" height="110"></canvas></div>
 <div class="chartbox"><canvas id="battery" height="110"></canvas></div>
@@ -133,12 +144,12 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <p>Four behaviors drive the current bill, and the packages in §7 attack them in order of cost:</p>
 <ul>
 <li><b>Large loads run during 4–9pm on-peak:</b> 2,568 kWh/yr of &gt;2.5 kW draw (EV top-ups, pool/laundry-class loads) lands in the most expensive window (60–87¢). Moving it past midnight turns ~$1,850 of cost into ~$325.</li>
-<li><b>Charging spills past 6am:</b> ~1,900 kWh/yr of high-power draw at 5–9am; past 6am weekdays it pays ~51¢ instead of 12.5¢. Finish charging by 6am.</li>
+<li><b>Charging spills past 6am:</b> ~1,900 kWh/yr of high-power draw at 6–9am; past 6am weekdays it pays ~51¢ instead of 12.5¢. Finish charging by 6am.</li>
 <li><b>Evening A/C through peak hours:</b> summer evenings average 3–4 kW at 6–9pm. Pre-cooling in the 10am–2pm super off-peak window (often on your own solar) and easing the setpoint 4–9pm shifts this; physically re-billing a 25% shift of on-peak house load is worth ≈ <b>$480/yr</b> (see §7 LOW; the weather regression in §9 attributes ~$230 of that to cooling specifically).</li>
 <li><b>Midday exports earn little:</b> since the 2026 TOU change, 10am–2pm weekday exports credit at only ~10.4¢. Self-consuming (laundry, dishwasher, EV top-up, pre-cool) beats exporting-then-reimporting at 51–87¢.</li>
 </ul>
 
-<h2>6 · Battery hardware — capability and cost</h2>
+<h2 id="s6">6 · Battery hardware — capability and cost</h2>
 <p class="sub">System context: 10.05 kW DC array, 30 × Enphase IQ7X (~9.45 kW AC), PTO Dec 2019. Adding storage does <b>not</b> affect NEM 2.0 grandfathering (runs to ~late 2039). Incentives, honestly: the 30% federal credit expired Dec 31 2025; SGIP (~$200/kWh) is waitlisted 12–18 months — join the waitlist, don't count on it.</p>
 <div class="grid2">
 <div>
@@ -160,7 +171,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <tbody>
 <tr><td>IQ 5P</td><td>7 h</td><td>2 h</td></tr>
 <tr><td>IQ 10C</td><td>36 h</td><td>5 h</td></tr>
-<tr class="win"><td>PW3</td><td><b>14 d</b> (89 h worst-case)</td><td>7 h</td></tr>
+<tr class="win"><td>PW3</td><td><b>14 d</b> (90 h worst-case)</td><td>7 h</td></tr>
 <tr><td>PW3 + Exp</td><td>14 d</td><td>30 h</td></tr>
 </tbody>
 </table>
@@ -168,7 +179,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 </div>
 <p class="small">*2026 typical installed prices — get quotes. Whole-home-incl-EV backup (~82 kWh/day) isn't practical to battery through; in an extended outage, charge the EV midday from the array (~45 kWh/day average production) and let the battery carry the house. <b>Tesla PW3</b> = best value and power (11.5 kW starts anything; 10-yr warranty; AC-couples fine with the IQ7X fleet). <b>Enphase IQ 10C</b> = single-ecosystem integration with Enlighten, 15-yr warranty, needs IQ System Controller; swap it into any package below at roughly −$1,500 cost and −$270/yr savings. Skip a single 5P.</p>
 
-<h2>7 · The decision: three packages</h2>
+<h2 id="s7">7 · The decision: three packages</h2>
 <p>All packages keep <b>EV-TOU-5</b>. <b>Baseline = your actual bills: $3,282/yr (~$274/mo), complete 365-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>analysis/behavior_rebuild.py</code>) — no year-end lump-sum shortcuts, and behavior/battery interaction is modeled so nothing is double-counted (overlap: only $130/yr).</p>
 
 <div class="grid3">
@@ -201,14 +212,14 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 
 <div class="rec"><b>Recommendation: LOW today, MID if you value backup power.</b> The EV-charging fix is free, immediate, and worth ~$1,180/yr — do it this week regardless. One Powerwall 3 adds ~$1,740/yr of its own savings (~8–10 yr payback) plus genuine outage resilience; buy it if backup matters to you, skip it if only the dollars do. The expansion pack earns ~nothing in savings — resilience only. Sequence: reprogram EV charging (especially eliminating daytime off-peak sessions), get PW3 and IQ 10C quotes, join the SGIP waitlist. (CEA relief-credit question is settled — it does not apply; see §10.)</div>
 
-<h2>8 · Array upgrades: more panels, bigger panels, or new microinverters? No, no, and not yet.</h2>
+<h2 id="s8">8 · Array upgrades: more panels, bigger panels, or new microinverters? No, no, and not yet.</h2>
 <p><b>More panels: the numbers say no.</b> The constraint isn't generation — it's timing. The array already exports 60% of what it makes (9,922 kWh/yr) because production peaks midday while the EV charges at night, and since the 2026 TOU change those midday exports credit at only ~10.4¢/kWh. A marginal new-panel kWh therefore earns ~10–12¢, while the marginal import it would offset (overnight super off-peak) costs just 12.5¢ — nearly a wash. At typical retrofit pricing (~$2.50–3.00/W), added capacity returns roughly $170–190 per kW per year: a <b>13–16 year payback</b> — worse than a battery, which at least monetizes the same sunlight at 60–87¢ instead of 10¢ (and adds backup value).</p>
 <p><b>The regulatory landmine matters more than the math.</b> NEM 2.0 systems may only grow by ~10% or 1 kW without consequences. A larger addition gets billed under today's Solar Billing Plan (NBT), where exports earn avoided-cost rates (often 3–8¢), and clumsy paperwork can put your 2039 grandfathering at risk. Your NEM 2.0 status is one of this home's most valuable energy assets — don't disturb it for low-value midday kWh.</p>
 <p><b>Repowering with higher-capacity panels: also no.</b> That trade only makes sense for failing or badly shaded arrays. Yours produces 1,642 kWh/kW/yr with a rock-stable inverter-vs-meter ratio and no degradation signal at year 6 — you'd be discarding healthy hardware to make more of the energy you already can't use at full value.</p>
-<p><b>Upgrading the microinverters because of clipping: the data says it isn't costing you much.</b> The concern is reasonable — IQ7X units cap at ~315 VA (9.45 kW AC across 30), and Enlighten's per-panel clipping flags look alarming. But the data settles it. Pulling <b>true 5-minute power</b> (PVOutput donation API) for May 11 — a 62.9 kWh peak-production spring day, i.e. maximum clipping risk (cool, clear, high irradiance) — the array topped out at <b>8,520 W at solar noon against the ~9,450 W AC ceiling</b>: a ~10% headroom cushion with <b>no flat-line at the inverter limit</b>. Confirmed annually too — the 99.9th-percentile production hour is 8.82 kWh and zero days show the flat-topped plateau sustained clipping produces. Whatever per-panel flags Enlighten raises are momentary and energetically trivial (≤1–2% of production, ≤~300 kWh), and it's <i>midday</i> energy worth only ~10.4¢/kWh — the battery's charging needs are already covered many times over by the 27 kWh/day surplus. Net recoverable value ≤ ~$35/yr against ~$8–11k to swap 30 microinverters: a non-starter. <b>The right time for IQ8s is when IQ7X units start failing</b> — and yours are warrantied through January 2045, so failures get replaced free until then.</p>
+<p><b>Upgrading the microinverters because of clipping: the data says it isn't costing you much.</b> The concern is reasonable — IQ7X units cap at ~315 VA (9.45 kW AC across 30), and Enlighten's per-panel clipping flags look alarming. But the data settles it. Pulling <b>true 5-minute power</b> (PVOutput donation API) for May 11 — a 62.9 kWh peak-production spring day, i.e. maximum clipping risk (cool, clear, high irradiance) — the array topped out at <b>8,520 W at solar noon against the ~9,450 W AC ceiling</b>: a ~10% headroom cushion with <b>no flat-line at the inverter limit</b>. Confirmed annually too — the 99.9th-percentile production hour is 8.82 kWh and zero days show the flat-topped plateau sustained clipping produces. Whatever per-panel flags Enlighten raises are momentary and energetically trivial (≤1–2% of production, ≤~300 kWh), and it's <i>midday</i> energy worth only ~10.4¢/kWh — the battery's charging needs are already covered many times over by the 27 kWh/day surplus. Net recoverable value ≤ ~$35/yr against ~$8–11k to swap 30 microinverters: a non-starter. <span class="small">(The May 11 5-minute curve was pulled live via the PVOutput donor API; the committed sample file <code>data/pvoutput_5min_sample.csv</code> shows a different day with the same no-clipping signature.)</span> <b>The right time for IQ8s is when IQ7X units start failing</b> — and yours are warrantied through January 2045, so failures get replaced free until then.</p>
 <p><b>When would expansion make sense?</b> If overnight consumption grows structurally — a second EV, electrified heating — <i>and</i> you've already installed storage to move midday energy into that demand; or when bidirectional EV charging (V2H) arrives in your ecosystem, at which point your car's 60–100 kWh pack dwarfs any wall battery and changes the whole calculus. Cheaper interim moves that soak up the 10¢ midday surplus: a heat-pump water heater on a 10am–2pm timer, midday EV top-ups on home days, and pre-cooling.</p>
 
-<h2>9 · Deeper analyses</h2>
+<h2 id="s9">9 · Deeper analyses</h2>
 
 <h3>Array health: 6-year degradation trend</h3>
 <p>PVOutput's size-normalized daily efficiency (kWh per kW installed) across full years 2021–2025 ran 4.749 → 4.839 → 4.245 → 4.528 → 4.501. A naïve fit reads ~1.3–1.7%/yr, but this metric isn't weather-normalized and the swing is dominated by weather (the wet 2023 El Niño winter sits mid-series and steepens the slope; 2025 generation is still within ~5% of 2021). A microinverter failure would show as an abrupt step-down or dead channel, not a gradual slope — and none appears. <b>Verdict: normal aging, best-estimate ~0.5–1.0%/yr, no failing component.</b> The array is performing as expected for its age. <span class="small">(The sharp drop in <i>exported</i> kWh in 2025 reflects higher self-consumption/load, not weaker generation.)</span></p>
@@ -228,7 +239,7 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <h3>Phantom / always-on load — flagged for a hands-on check</h3>
 <div class="note">A naïve read of the 3–5am floor suggests ~1 kW always-on (~$1,800/yr), but that figure is almost certainly contaminated by legitimate baseload (refrigeration, pool/recirc pumps, water-heater standby) and imperfect EV subtraction — <b>it is not $1,800 of recoverable "vampire" waste.</b> Treat it as a prompt to spot-check with a plug meter on AV gear, a spare fridge/freezer, and pool equipment rather than a bankable saving. A realistic recoverable figure is more likely $100–300/yr.</div>
 
-<h2>10 · Actual bills: reconciliation, gas &amp; electrification</h2>
+<h2 id="s10">10 · Actual bills: reconciliation, gas &amp; electrification</h2>
 
 <p>All 12 detailed electric bills (Jul 2025–Jun 2026) were parsed line-by-line. Three findings:</p>
 <table>
@@ -242,13 +253,82 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <div class="note"><b>Model vs. actual — the honest reconciliation.</b> The bill audit initially covered 338 days ($3,004) with a 27-day gap; the <b>October 2025 statement closed it</b> (its 10/1–10/27 period added $83.71 delivery + $194.64 CEA generation), giving a complete <b>365-day actual of $3,282/yr (~$274/mo)</b>. (The bills also show semi-annual CA Climate Credits of ~$81 that reduce out-of-pocket cost but aren't usage charges.) The original model said $4,861; proper NEM 2.0 monthly per-period netting brings it to ~$4,675. The remaining model-vs-actual gap is <b>NOT primarily NEM export crediting</b> — the netting methods agree to ~0.3%. The real driver: the model prices the whole year at <b>current 6/1/2026 rates</b>, while your actual bills were billed largely on <b>cheaper 2025 tariffs</b> (SDG&amp;E rates rose over the period, most in summer — exactly where the model reads high). So the model is a forward-looking "at today's rates" estimate; the bills are historical. <b>Why the recommendations stand:</b> behavior and battery savings are computed as <i>differences</i> — energy physically moved between intervals and re-billed — driven by on-peak arbitrage priced identically either way. We anchor absolute dollars to your actual bills and use the model only for deltas (which, being at current rates, are the right forward-looking estimates). <span class="small">Validated models: <code>analysis/billing_model_nem.py</code>, <code>analysis/behavior_rebuild.py</code>.</span></div>
 
 <h3>Gas usage &amp; cost</h3>
-<p>Gas is a genuine second energy system here: <b>342 therms/yr</b>, ranging from ~6–14 therms/month in summer (water heater + cooking baseline) up to <b>66–71 therms in Dec–Jan</b> (space heating). Split: ~<b>143 therms/yr non-heating</b> (water heater + range) and ~<b>199 therms/yr space heating</b>. Actual gas billing ran <b>~$922/yr</b> ($2.70/therm all-in) (from ~$12 in a mild spring month to ~$203 in January). <b>Combined household energy ≈ $4,204/yr actual</b> ($3,282 electric + $922 gas).</p>
+<p>Gas is a genuine second energy system here: <b>342 therms/yr</b>, ranging from ~6–14 therms/month in summer (water heater + cooking baseline) up to <b>66–71 therms in Dec–Jan</b> (space heating). Split: ~<b>143 therms/yr non-heating</b> (water heater + range) and ~<b>199 therms/yr space heating</b>. Actual gas billing ran <b>~$922/yr</b> ($2.70/therm all-in) (from ~$23 in the mildest month to ~$203 in January). <b>Combined household energy ≈ $4,204/yr actual</b> ($3,282 electric + $922 gas).</p>
 
 <h3>Should you electrify? A heat-pump water heater is the one that pencils</h3>
 <p>Your gas water heater burns ~90–95 therms/yr. Replacing it with a heat-pump water heater (HPWH) on a 10am–2pm timer running on your ~10¢ midday solar surplus: gas saved ≈ <b>$224/yr</b>, electricity added ≈ $59/yr, <b>net ≈ $165/yr</b> — plus it consumes some of the low-value exported solar rather than importing at peak. At ~$1,800–3,500 installed (minus any HPWH rebate), payback is long on energy savings alone, so treat it as a <b>replace-on-failure</b> move rather than an early retirement, and check for a TECH Clean California / SDG&amp;E HPWH rebate first. <b>Space heating electrification (heat pump) is a bigger project</b> — your ~199 therms/yr is modest (mild climate), and a heat pump would add winter electric load at 51¢ evening rates unless carefully scheduled; worth bundling with an eventual HVAC replacement, not standalone.</p>
 <p><b>Going all-electric — with a correction from the bills:</b> all 12 gas statements confirm your gas is billed <b>GR-Residential at ~$2.00/therm baseline + ~$2.38 non-baseline</b>, plus seasonal procurement — <b>essentially purely volumetric</b>. A regression of the 12 bills shows a near-zero fixed floor, so (contrary to a common assumption) there is <b>no meaningful standing monthly gas charge to eliminate</b> by closing the account — the savings from going all-electric are the therm charges themselves, not a connection-fee windfall. That makes electrification a straightforward usage swap: convert the water heater (saves ~$250/yr of gas), later the furnace (saves the ~$500/yr heating gas), and you can close the gas account once both are done — but the driver is the therm savings and appliance economics, not a fixed-charge escape. You're also on AutoPay, worth noting when you change accounts.</p>
 
-<h2>11 · Methodology, sources &amp; caveats</h2>
+<h2 id="s11">11 · Lifetime value: the system has already paid for itself</h2>
+<p>The install invoice shows <b>$37,845, paid in full December 2019</b>, with PTO on 12/27/2019. Valuing each year's <i>actual metered production</i> at that year's blended $/kWh (computed from a no-solar counterfactual on the bill-validated netting model, then scaled by SDG&amp;E's published average-rate history — rates roughly ~10%/yr increases 2016–2023 per the CA State Auditor):</p>
+<table>
+<thead><tr><th>Year</th><th>Production (kWh)</th><th>Value that year</th><th>Cumulative</th></tr></thead>
+<tbody>
+<tr><td>2020</td><td>17,373</td><td>~$5,700</td><td>$5,700</td></tr>
+<tr><td>2021</td><td>17,421</td><td>~$6,100</td><td>$11,900</td></tr>
+<tr><td>2022</td><td>17,749</td><td>~$6,800</td><td>$18,700</td></tr>
+<tr><td>2023</td><td>15,570</td><td>~$6,600</td><td>$25,300</td></tr>
+<tr><td>2024</td><td>16,654</td><td>~$7,600</td><td>$32,800</td></tr>
+<tr class="win"><td>2025</td><td>16,509</td><td>~$7,900</td><td>$40,700 — <b>crosses $37,845 ~Aug 2025</b></td></tr>
+<tr><td>2026 (thru Jul 23)</td><td>9,893</td><td>~$3,100</td><td>~$43,800</td></tr>
+</tbody>
+</table>
+<p class="small">Cumulative column computed from unrounded values (yearly figures rounded to $100, so adjacent rows may differ by ±$100 from adding the rounded numbers).</p>
+<div class="rec"><b>The $37,845 gross cost was recovered around August 2025</b> — and if the 30% federal ITC was claimed (2019 systems qualified; net cost ~$26,500), payoff happened in <b>early 2024</b>. The system now earns its keep free and clear: at today's rates the no-solar counterfactual bills at $9,876/yr vs $4,675 with solar — <b>solar is worth ~$5,201/yr right now</b> (blended $0.315/kWh; it was ~$0.50/kWh under the pre-2026 TOU structure, which is why past years were worth more per kWh). Caveat: the historical rate index is approximate — read the crossover as mid-2025 ± a few months, not a specific week.</div>
+
+<h2 id="s12">12 · Panel cleaning &amp; soiling — measured, not assumed</h2>
+<h3>The 8/12/2024 cleaning ($200): unmistakably real, +11.8%</h3>
+<p>Comparing the 30 days before vs after the cleaning, against the identical calendar windows in four control years (which capture the normal seasonal decline):</p>
+<table>
+<thead><tr><th>Year</th><th>Pre-window median (kWh/day)</th><th>Post-window median</th><th>Post ÷ pre</th></tr></thead>
+<tbody>
+<tr><td>2021</td><td>61.0</td><td>56.2</td><td>0.922</td></tr>
+<tr><td>2022</td><td>59.6</td><td>56.7</td><td>0.951</td></tr>
+<tr><td>2023</td><td>60.0</td><td>56.8</td><td>0.947</td></tr>
+<tr class="win"><td>2024 — cleaned Aug 12</td><td>57.8 (dirtiest pre-window of all 5 yrs)</td><td>60.7</td><td><b>1.051</b></tr>
+<tr><td>2025</td><td>59.8</td><td>56.2</td><td>0.940</td></tr>
+</tbody>
+</table>
+<p><span class="small">(2025 pre-window covers 19 days — its daily record starts 7/24/25; all windows in <code>data/cleaning_study_daily.csv</code>, peaks in <code>data/cleaning_study_peaks_2024.csv</code>.)</span> Every normal year drops 5–8% across this window; the cleaned year <i>rose</i> 5%. Difference-in-differences: <b>+11.8%</b> (median; +10.9% on clear-sky p90 days). Corroboration: the meter recorded <b>0 kWh on 8/12/2024</b> (system off during the wash) and top-10 daily peak power jumped 8,263 → 8,971 W (<b>+8.6%</b>). At 2024's blended value (~$0.455/kWh pre-TOU-change), the ~350–450 kWh recovered before the fall rains was worth roughly <b>$150–200 — the $200 cleaning approximately paid for itself</b>.</p>
+<h3>How fast do the panels re-soil? Honest answer: the evidence splits</h3>
+<p>An independent soiling study (<code>analysis/soiling_analysis.py</code>: NOAA airport-gauge precipitation + clear-sky-normalized production) finds rain events after long dry spells recovered only <b>0–3.4%</b> this past year, and a days-since-rain regression gives ~0.45–0.64%/month — yet the 2024 cleaning implies <b>~10.6% accumulated over 134 dry days (~2.4%/month)</b>. Both can't describe the same steady process; possible explanations (undetermined from available data): 2024 was an unusually dusty year, partial rain-cleaning, or soiling saturation. We carry the honest bracket: <b>~0.5–2.4%/month</b>, i.e. $68–348/yr of gross soiling loss at blended value.</p>
+<h3>Best cadence and month — and a caution about today's rates</h3>
+<p>Modeling soiling accumulation over the Apr–Nov dry season against your actual daily production curve: the optimal <b>single</b> cleaning lands at <b>mid-July</b> (recovers the most because it precedes the peak-value late-summer months with a fresh array); the optimal <b>two-cleaning</b> schedule is ~Jun 12 + Aug 21, but the second cleaning adds only $10–51/yr of value across all soiling scenarios — <b>bi-annual is not justified</b>. The bigger caution: since the June 2026 TOU change, a marginal <i>midday</i> kWh (which is what cleaning recovers) is credited at only ~8–13¢, so at midday-marginal value a cleaning recovers only ~$7–52/yr going forward (even at the full blended value, the committed cadence model caps the best case at $126/yr) — <b>below the $200 price in every scenario</b>. Verdict: on the numbers, routine paid cleaning <b>no longer pays at $200 under the 2026 TOU</b>. If you clean anyway (aesthetics, inspection, a visible step-down in Enlighten), do it <b>once, early-to-mid July</b> — and shop below ~$125. Re-evaluate if TOU rules or NEM status change midday value.</p>
+
+<h2 id="s13">13 · Grid carbon, NEM 2.0's dollar value, escalation &amp; the price map</h2>
+<h3>Grid-carbon timing — the cheapest hours are the dirtiest (real CAISO data)</h3>
+<div class="chartbox"><canvas id="carbon" height="110"></canvas></div>
+<p>From CAISO's official Today's Outlook history (5-min CO₂-by-source + demand, four mid-season days inside this analysis year): overnight 00–06h grid power averages <b>279 kg CO₂/MWh</b> (gas + imports) while solar-rich midday 10–14h averages just <b>125</b>. Your grid imports currently emit ~<b>5,490 kg CO₂/yr</b>. The 2,575 kWh of mistimed EV charging: moved to overnight super-off-peak it would emit <b>+239 kg/yr more</b> than today; moved to <b>midday</b> it emits <b>153 kg/yr less</b> — a 391 kg/yr swing. And here's the free lunch: on 2026 EV-TOU-5, <b>weekday 10am–2pm is the same super-off-peak price as overnight</b> — so plugging in at midday on home-days gets the identical ~$1,180/yr saving with the cleanest power on the grid. Your solar exports meanwhile avoid ~1,217 kg CO₂/yr. <span class="small">Caveats: 4 sampled days (one per season), grid-average not marginal intensity — marginal accounting would favor midday even more.</span></p>
+<h3>What NEM 2.0 grandfathering is worth: ~$2,000–2,500/yr</h3>
+<p>Re-billing this exact year with exports credited at NBT-style flat rates instead of NEM 2.0 netting: $6,655/yr (at 8¢ export) to $7,151/yr (at 3¢) versus $4,675 under NEM 2.0 — your grandfathered status (through ~2039) is worth <b>~$1,980–2,476 every year</b> at current rates. This is the hard number behind §8's warning: never risk it for a marginal system change.</p>
+<h3>Battery payback vs rate escalation</h3>
+<table>
+<thead><tr><th>SDG&amp;E annual rate escalation</th><th>Battery-alone payback</th><th>10-yr NPV (5% discount)</th></tr></thead>
+<tbody>
+<tr><td>3%/yr</td><td>7.8 yr</td><td>+$102</td></tr>
+<tr><td>5%/yr</td><td>7.3 yr</td><td>+$1,373</td></tr>
+<tr class="win"><td>8%/yr (≈ recent SDG&amp;E history)</td><td>6.8 yr</td><td>+$3,535</td></tr>
+<tr><td>12%/yr</td><td>6.2 yr</td><td>+$6,973</td></tr>
+</tbody>
+</table>
+<p class="small">Base: $1,743/yr battery-alone saving (post-EV-fix netting model), $14,500 install, 1%/yr capacity fade. The older Monte Carlo (in the deep-analysis workpapers, data/deep_results.json) used the earlier $1,347/yr estimate and is therefore more pessimistic (median 9.4 yr) — the truth likely sits between. Escalation is the swing variable: at SDG&amp;E's recent ~8–10%/yr trajectory the battery turns clearly NPV-positive.</p>
+<h3>Phantom baseload — decomposed</h3>
+<p>On the 44 nights with zero EV charging, the 1–5am import floor has median <b>1.025 kW</b> (p10 0.785, p90 1.36) ≈ <b>~9,000 kWh/yr (~$1,800/yr at period-weighted prices)</b>. New structure findings: it <i>cycles</i> (median within-night std 0.14 kW — a compressor-like duty-cycling component, e.g. fridge/freezer/pool equipment, not one flat load); it's <i>seasonal</i> — Sep–Oct nights run 1.37 kW vs 0.845 kW in May, a ~0.5 kW swing suggesting scheduled equipment with seasonal runtimes; and the lowest occupied-day import floor is 10.7–11.7 kWh/day. Practical read: roughly half looks irreducible (refrigeration, network, standby), but the ~0.5 kW seasonal component is findable with a plug meter and worth up to several hundred $/yr.</p>
+<h3>The marginal price map — what one kWh costs or earns, right now</h3>
+<table>
+<thead><tr><th>Season · period</th><th>Import (all-in)</th><th>Export credit</th></tr></thead>
+<tbody>
+<tr><td>Summer · on-peak 4–9pm</td><td>$0.868</td><td>$0.819</td></tr>
+<tr><td>Summer · off-peak</td><td>$0.511</td><td>$0.462</td></tr>
+<tr><td>Summer · super-off-peak</td><td>$0.125</td><td>$0.076</td></tr>
+<tr><td>Winter · on-peak 4–9pm</td><td>$0.605</td><td>$0.556</td></tr>
+<tr><td>Winter · off-peak</td><td>$0.519</td><td>$0.470</td></tr>
+<tr><td>Winter · super-off-peak</td><td>$0.127</td><td>$0.078</td></tr>
+</tbody>
+</table>
+<p class="small">Bill-validated 6/1/2026 rates (UDC + CEA generation + NBC + PCIA; exports credit delivery + generation). Every household timing decision is a lookup in this table: a summer on-peak kWh avoided is worth 7× a super-off-peak one. True-up ledger cross-check: the October 2025 statement's YTD NEM figures ($1,005.31 charges − $492.91 credits = $512.40 net) reconcile exactly; a full true-up audit awaits the Dec 28 settlement statement.</p>
+
+<h2 id="s14">14 · Methodology, sources &amp; caveats</h2>
 <ul>
 <li><b>Grid data:</b> SDG&amp;E Green Button 15-min export (37,248 intervals, separate import/export channels); last 365 days analyzed.</li>
 <li><b>Solar/load data:</b> Enphase SAM 8760 hourly consumption (2025+2026 stitched), Enphase Site Energy Production daily report, PVOutput daily records — three production sources within ±2%, 0.9999 daily correlation; night-time residual of the derived series ≈ 0.</li>
@@ -257,13 +337,18 @@ Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1,
 <li><b>Battery model:</b> 90% round-trip; charges from would-be exports (cost = forgone credit) + overnight super-off-peak top-up; discharges against on-peak imports; power/capacity limits per spec. On the bill-validated netting model, 1×PW3 earns $1,873/yr on current behavior, $1,743/yr after the EV fix (overlap only $130). The §4/§6 tables show the original interval-sim values ($1,669) — same physics, slightly different dispatch caps; both bracket the honest range.</li>
 <li><b>Behavior model:</b> EV sessions detected as contiguous ≥30-min runs ≥2.5 kW above a rolling 24-h baseline with ≥8 kW peak excess; shifted energy physically added to same/next-day super-off-peak intervals under an 11.5 kW charger cap, then the modified year re-billed (energy conserved to the Wh; verified). This replaces the earlier "cap at 2.5 kW, lump-sum credit" approximation, which mixed in less-movable house load.</li>
 <li><b>Package math:</b> savings are deltas from <code>analysis/behavior_rebuild.py</code> — energy physically moved into destination super-off-peak intervals (11.5 kW charger cap respected, energy conserved to the Wh) and re-billed with the monthly per-TOU-period NEM netting model at current 6/1/2026 rates; absolute bills anchored to the $3,282 actual (§10). Paybacks are simple (no discounting, no rate escalation — SDG&amp;E's recent high-single-digit annual increases would shorten them). No federal ITC (expired 2025); SGIP not assumed.</li>
-<li><b>Bill validation:</b> 13 detailed electric statements parsed, covering the full 365 days; generation rates matched to the penny; CCA product confirmed "Clean Impact Plus" with no relief credit; climate zone confirmed Coastal; actual annual current charges $3,282 (§10).</li>
-<li><b>Caveats:</b> rates change Jan/Jun (SDG&amp;E) and Feb/Jun (CEA); TOU-DR-P event surcharges not simulated; installed prices are estimates — get quotes. Gas-bill PDFs pending; gas figures from usage + billing-history data.</li>
+<li><b>Bill validation:</b> 12 detailed electric statements (13 billing periods — one statement splits at a rate change) parsed, covering the full 365 days; generation rates matched to the penny; CCA product confirmed "Clean Impact Plus" with no relief credit; climate zone confirmed Coastal; actual annual current charges $3,282 (§10).</li>
+<li><b>Caveats:</b> rates change Jan/Jun (SDG&amp;E) and Feb/Jun (CEA); TOU-DR-P event surcharges not simulated; installed prices are estimates — get quotes. All 12 gas bill PDFs parsed line-by-line.</li>
+<li><b>Cleaning diff-in-diff (§12):</b> 30-day pre/post windows around 8/12/2024 vs identical calendar windows in 2021/2022/2023/2025 (PVOutput daily records, <code>data/cleaning_study_daily.csv</code>); effect = cleaned-year post/pre ratio ÷ control-mean ratio. Soiling study: <code>analysis/soiling_analysis.py</code> — NOAA/RCC ACIS airport-gauge precipitation, Haurwitz clear-sky normalization, clear-day filter, seasonal harmonics.</li>
+<li><b>Lifetime payback (§11):</b> yearly actual production × blended $/kWh from the no-solar counterfactual (SAM hourly load re-billed on the netting model, old-TOU structure for pre-2026 years), scaled by SDG&amp;E's published average-rate history; ±10% on crossover timing. Invoice and PTO date from source documents.</li>
+<li><b>Carbon (§13):</b> CAISO Today's Outlook history CSVs (co2.csv + demand.csv, 5-min, four mid-season days in the analysis year); intensity = total CO₂ ÷ demand per hour, applied to 15-min imports by season+hour (<code>analysis/carbon_timing.py</code>). Grid-average, not marginal.</li>
+<li><b>NBT counterfactual &amp; price map (§13):</b> same netting engine with exports at flat 3/5/8¢ (NBT-style) vs NEM 2.0 netting; price map is the bill-validated rate table itself (<code>data/extra_results.json</code>).</li>
+<li><b>Phantom decomposition (§13):</b> nights with max 1–5am demand &lt; 2 kW (no EV) → per-night median import power; cycling = within-night std; seasonality = monthly medians of those quiet nights.</li>
 </ul>
 <p class="small"><b>Data sources:</b> SDG&amp;E My Energy Center — Green Button 15-minute interval export and plan-comparison tool capture · Enphase Enlighten — SAM 8760 hourly consumption reports (2025 &amp; 2026), Site Energy Production daily report (CT meter), Devices inventory (30 × IQ7X, IQ Gateway, production + consumption meters) · PVOutput — public daily generation records (10.05 kW DC system).<br>
-<b>Rate &amp; tariff sources:</b> SDG&amp;E Total Rates Tables eff. 6/1/2026 (sdge.com regulatory PDFs) · CEA Adopted Residential Rate Schedule eff. 6/1/2026 · SDG&amp;E–CEA Joint Rate Comparison Feb 2026 · SDG&amp;E Schedule DR (baseline allowances) · SDG&amp;E Pricing Plans TOU definitions · 2026 battery pricing/incentive research (SolarReviews, NuWatt, SGIP program status).<br>
-This is an independent analysis, not advice from SDG&amp;E, CEA, Enphase, or Tesla; verify current rates and prices before acting.<br>
-<b>How this report was produced:</b> generated with <b>Claude Cowork (Fable&nbsp;5)</b>; the data, methodology, and conclusions were then independently reviewed with <b>Claude Code (Fable&nbsp;5)</b> and adversarially reviewed with <b>Codex (GPT&#8209;5.6&nbsp;Sol)</b>; the analysis was subsequently re-worked in Claude Cowork to incorporate the findings of both reviews.</p>
+<b>Rate &amp; tariff sources:</b> SDG&amp;E Total Rates Tables eff. 6/1/2026 (sdge.com regulatory PDFs) · CEA Adopted Residential Rate Schedule eff. 6/1/2026 · SDG&amp;E–CEA Joint Rate Comparison Feb 2026 · SDG&amp;E Schedule DR (baseline allowances) · SDG&amp;E Pricing Plans TOU definitions · 2026 battery pricing/incentive research (SolarReviews, NuWatt, SGIP program status) · SDG&amp;E average-rate history (CA State Auditor Aug 2023 chart via publicpowersd.org; solar.com rate summaries) for the §11 payback index.<br>
+<b>Environmental sources:</b> NOAA/RCC ACIS daily precipitation (data.rcc-acis.org, coastal airport gauge) · CAISO Today's Outlook history (caiso.com/outlook — CO₂ by source + demand, 5-min).<br>
+This is an independent analysis, not advice from SDG&amp;E, CEA, Enphase, or Tesla; verify current rates and prices before acting.</p>
 
 <script>
 const D = {
@@ -277,7 +362,8 @@ const D = {
  mCost:[87,595,682,557,314,352,351,226,267,208,256,381,284],
  bat_now_S:[10.67,9.63,6.93,3.33,2.82,5.03,3.3,3.25,2.17,1.14,0.61,0.72,0.54,0.39,0.09,0.41,0.92,1.89,3.05,3.89,4.02,2.46,2.32,2.15],
  bat_pw3_S:[16.73,9.63,6.93,3.33,2.82,5.03,3.3,3.25,2.17,1.14,0.61,0.72,0.54,0.39,0.09,0.41,0.03,0.24,0.45,1.27,1.8,2.46,2.32,2.15],
- bat_pw3x_S:[14.79,10.36,6.93,3.33,2.82,5.03,3.3,3.25,2.17,1.14,0.61,0.72,0.54,0.39,0.09,0.41,0.03,0.06,0.17,0.37,0.54,2.46,2.32,2.15]
+ bat_pw3x_S:[14.79,10.36,6.93,3.33,2.82,5.03,3.3,3.25,2.17,1.14,0.61,0.72,0.54,0.39,0.09,0.41,0.03,0.06,0.17,0.37,0.54,2.46,2.32,2.15],
+ carb:[266.2,277.5,286.9,293.1,283.6,266.7,228.4,203.2,153.5,131.4,121.3,123.0,126.9,129.4,125.2,116.8,134.1,154.1,169.3,178.3,184.1,195.6,217.9,242.2]
 };
 const gridCol='#334155', tickCol='#94a3b8';
 Chart.defaults.color=tickCol; Chart.defaults.borderColor=gridCol;
@@ -293,6 +379,9 @@ new Chart(document.getElementById('battery'),{type:'line',data:{labels:hrs,datas
  {label:'With 1 × Powerwall 3',data:D.bat_pw3_S,borderColor:'#34d399',borderWidth:2,tension:.3},
  {label:'With PW3 + Expansion (27 kWh)',data:D.bat_pw3x_S,borderColor:'#60a5fa',borderDash:[5,3],tension:.3}]},
  options:{plugins:{title:{display:true,text:'Projected grid import with a battery — the 4–9pm peak (red) is erased; overnight rises slightly as the battery tops up on cheap power',color:'#e2e8f0'}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}}});
+new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
+ {label:'CAISO grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.12)',fill:true,tension:.3}]},
+ options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:'#e2e8f0'}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}}});
 new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:'rgba(96,165,250,.7)'},
  {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:'rgba(52,211,153,.7)'},
@@ -300,7 +389,7 @@ new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  options:{plugins:{title:{display:true,text:'Monthly energy flows and modeled cost (* partial months)',color:'#e2e8f0'}},
  scales:{y:{title:{display:true,text:'kWh'}},y2:{position:'right',grid:{display:false},title:{display:true,text:'$'}}}}});
 new Chart(document.getElementById('periods'),{type:'bar',data:{
- labels:['Super off-peak (62% of imports)','Off-peak (19%)','On-peak 4–9pm (17%)'],
+ labels:['Super off-peak (64% of imports)','Off-peak (19%)','On-peak 4–9pm (17%)'],
  datasets:[{label:'Annual import kWh',data:[14811,4478,3989],backgroundColor:'rgba(96,165,250,.7)'},
   {label:'Annual import cost $',data:[1869,2284,2951],backgroundColor:'rgba(248,113,113,.7)'}]},
  options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of the energy causes ~42% of gross import cost — the on-peak problem in one picture',color:'#e2e8f0'}}}});

@@ -10,14 +10,13 @@ install. (Alternate ways to view it: clone/download this repo and double-click `
 which is fully self-contained with data inlined and Chart.js from CDN. Note that GitHub's own
 file viewer shows the HTML *source*, not the rendered report — use the link above instead.)
 
-> **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
-> reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
-> then re-worked in Claude Cowork to incorporate the findings of both reviews.
-
 Interactive report comparing all eligible SDG&E residential rate plans against 365 days of
 15-minute Green Button interval data for a solar + EV home in the SDG&E Coastal climate zone (NEM 2.0, CEA generation),
-plus behavior-savings analysis, a home-battery deep-dive (Enphase vs Tesla Powerwall), solar-expansion and
-inverter-clipping verdicts, weather-normalized cooling, a 12-month detailed-bill audit, and gas/electrification analysis.
+plus lifetime solar payback, a measured panel-cleaning effect (multi-year diff-in-diff), a soiling/rain-recovery
+study with an optimal-cleaning-cadence model, grid-carbon timing from real CAISO data, a phantom-baseload
+decomposition, the dollar value of NEM 2.0 grandfathering, behavior-savings analysis, a home-battery deep-dive
+(Enphase vs Tesla Powerwall) with rate-escalation sensitivity, solar-expansion and inverter-clipping verdicts,
+weather-normalized cooling, a 12-month detailed-bill audit, and gas/electrification analysis.
 
 > **Note on solar monitoring:** this analysis happened to pull production data from **Enphase
 > Enlighten**, but the method is vendor-agnostic. SolarEdge, Tesla, SMA, Fronius, PVOutput, and
@@ -39,6 +38,12 @@ inverter-clipping verdicts, weather-normalized cooling, a 12-month detailed-bill
 | `data/pvoutput_daily.csv` | PVOutput daily generation (public record), Jul 2025–Jul 2026 |
 | `data/enphase_daily_production.csv` | Enphase daily production (CT meter), Jul 2025–Jul 2026 |
 | `data/pvoutput_5min_sample.csv` | PVOutput 5-minute production sample day |
+| `data/behavior_rebuild.json` | Session-based EV/behavior shift scenarios + battery-after-behavior marginals |
+| `data/electric_bill_summary.csv` | De-identified per-period totals parsed from the 12 detailed electric bills |
+| `data/cleaning_study_daily.csv` | Multi-year daily production windows around the 2024 panel cleaning (diff-in-diff inputs) |
+| `data/soiling_results.json` | Soiling/rain-recovery study results (rain events, regressions, annual economics) |
+| `data/carbon_results.json` | Grid-carbon timing results (CAISO hourly intensity, household footprint, EV-timing deltas) |
+| `data/extra_results.json` | Phantom-baseload decomposition, rate-escalation ladder, marginal price map, NBT re-billing, cleaning-cadence model |
 | `TECHNICAL.md` | **Full technical/reproducibility documentation** — every script, data schema, algorithm, and chart pipeline, methods-section style |
 | `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
 | `analysis/analyze.py` | The plan billing model (Python/pandas) — rerun against a fresh Green Button CSV |
@@ -46,6 +51,8 @@ inverter-clipping verdicts, weather-normalized cooling, a 12-month detailed-bill
 | `analysis/billing_model_nem.py` | Bill-validated NEM 2.0 monthly per-TOU-period netting model |
 | `analysis/behavior_rebuild.py` | Session-based EV/behavior shift model — physically moves kWh and re-bills (supersedes the crude cap approach) |
 | `analysis/battery_backup_sims.py` | Battery arbitrage + backup endurance simulations |
+| `analysis/soiling_analysis.py` | Soiling from rain-recovery events + days-since-rain regression (NOAA/RCC ACIS precipitation) |
+| `analysis/carbon_timing.py` | Grid-carbon timing from CAISO Today's Outlook history data (CO2 + demand) |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |

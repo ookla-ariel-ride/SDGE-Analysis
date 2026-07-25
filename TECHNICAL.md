@@ -43,7 +43,12 @@ private/1-raw-data/  (gitignored — never committed)
 │ package_sims.py            │ package_results.json                        │
 │ deep_analyses.py           │ deep_results.json                           │
 │ billing_model_nem.py       │ (stdout: bill-validated annual baseline)     │
-│ in-session steps (see §3.7)│ report_data.json, weather_results.json,     │
+│ behavior_rebuild.py        │ behavior_rebuild.json                        │
+│ soiling_analysis.py        │ soiling_results.json                         │
+│ carbon_timing.py           │ carbon_results.json                          │
+│ in-session steps (§3.7/§3.11)│ extra_results.json,                        │
+│                            │ cleaning_study_daily.csv,                    │
+│                            │ report_data.json, weather_results.json,     │
 │                            │ threeway_production_validation.csv,          │
 │                            │ electric/gas_bill_summary.csv, pvoutput_*,   │
 │                            │ enphase_daily_production.csv,                │
@@ -52,7 +57,7 @@ private/1-raw-data/  (gitignored — never committed)
         │
         │  numbers hand-transcribed into the inlined `const D = {...}` block
         ▼
-index.html  →  four Chart.js canvases: #hourly, #battery, #monthly, #periods
+index.html  →  five Chart.js canvases: #hourly, #battery, #monthly, #periods, #carbon
                (plus HTML tables/cards populated from the same data/ artifacts)
 ```
 
@@ -166,7 +171,7 @@ scripts expect files in the working directory under fixed names:
 Also edit the window anchor `end = dt.datetime(2026,7,24)` (the exclusive end of the 365-day
 window) in every script to the day after your last full data day.
 
-### 3.0 Shared preprocessing and constants (identical logic in all six scripts)
+### 3.0 Shared preprocessing and constants (identical logic in the six original scripts; §3.8–3.10 reuse the same loading, window, and TOU rules)
 
 **Loading.** `read_csv(skiprows=13)`; strip column whitespace; build `dt` from `Date` +
 `Start Time`; coerce `Consumption`/`Generation` (and `Net` in `analyze*.py`) to numeric; filter
@@ -386,7 +391,7 @@ for each (season, period) cell within the month compute `net = Σ imports − Σ
 is the "monthly per-TOU-period NEM netting" referred to throughout the report.
 
 **Output.** Prints the modeled annual baseline (~$4.7k at 6/1/2026 rates) against the actual
-billed ~$3,004 — the reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary
+billed $3,282 (365-day audit) — the reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary
 import/export column names) to re-score behavior or battery scenarios on the validated netting.
 
 **Run:** `python3 billing_model_nem.py` next to `usage.csv`.
@@ -416,6 +421,161 @@ than by a committed script; they are documented here so they can be regenerated:
   `enphase_daily_production.csv`** — portal exports/scrapes, reformatted to the schemas in §2.
 - **`gas_monthly_therms.csv`, `weather_daily_tmean.csv`** — monthly resample of the gas Green
   Button file; Open-Meteo pull (§2.5–2.6).
+
+### 3.8 `analysis/behavior_rebuild.py` — session-based EV/behavior shift model
+
+**Purpose.** Supersedes the crude 2.5 kW-cap shift (§3.4/§6.4): detects EV sessions
+explicitly, physically moves their energy into destination intervals, and re-bills the
+modified year on the bill-validated NEM netting.
+
+**Inputs.** `usage.csv` only. Rates are identical to `billing_model_nem.py` (bill-read
+EV-TOU-5 + CEA "Clean Impact Plus", 6/1/2026); billing uses the same monthly per-TOU-period
+NEM netting (`bill_monthly()`).
+
+**EV detection.** Import power (kW = Consumption × 4) minus a centered rolling-24 h
+(96-interval) 20th-percentile baseline (tracks the always-on house floor, immune to
+multi-hour charge blocks); candidate intervals have excess ≥ 2.5 kW; a session is a
+contiguous candidate run ≥ 30 min whose *peak* excess ≥ 8 kW (the EV charges at ~11.5 kW;
+nothing else in the house sustains 8 kW); EV kWh per interval = clip(excess, 0, 11.5 kW) ×
+0.25 h, capped at the interval's actual import. Detected: 560 sessions, 13,723 kWh/yr
+(vs ~13,100 expected), of which 878 kWh on-peak, 1,697 off-peak, 11,148 already
+super-off-peak.
+
+**Scenario ladder (energy conserved, not lump-summed).** Shifted kWh are removed from their
+source intervals and poured into super-off-peak intervals starting at the next midnight,
+honoring the 11.5 kW charger cap net of EV charging already present in the destination.
+(a) EV-only, 100% compliance: 2,575 kWh moved, **$1,180/yr** saved; (b) EV-only, 80%
+compliance (seeded RNG): $1,004; (c) + 25% of remaining on-peak house load: $1,659;
+(d) stretch, + 50%: $2,138. A 13.5 kWh / 11.5 kW / 90%-RTE battery re-simulated on top of
+(a): $1,873/yr marginal on the baseline → **$1,743/yr after behavior** ($130/yr of
+double-counting avoided).
+
+**Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,675.20
+vs `actual_billed` $3,282 — use deltas, per the in-file note; `month_min/max`;
+`imports_kwh`, `exports_kwh`, `onpeak_import_kwh`); `detection` (rule string, `sessions`,
+`ev_kwh_total/expected/onpeak/offpeak/sop_already`, `avg_session_kwh`); `scenarios.a–d`
+(`label`, `bill`, `saved`, `month_min/max`, `kwh_moved`, plus `sessions_moved` /
+`house_kwh_moved` where applicable); `battery` (`spec`, `marginal_on_baseline`,
+`marginal_after_scenario_a`, `double_count_avoided`); `note`.
+
+### 3.9 `analysis/soiling_analysis.py` — soiling loss from rain-recovery events
+
+**Purpose.** Quantify panel-soiling losses without a dedicated soiling station, using rain
+events as natural cleanings. Pure Python (stdlib only — its own OLS and t-distribution
+p-values via the incomplete beta function).
+
+**Inputs.** `pvoutput_daily.csv` and the Enphase daily production export; daily
+precipitation transcribed verbatim into the script from the **NOAA/RCC ACIS** web service
+(`data.rcc-acis.org/StnData`, nearest airport gauge — free, no key). ACIS was used because
+the Open-Meteo archive API returned empty bodies through the sanctioned fetch proxy for
+every query variant, so no satellite irradiance exists and normalization is deterministic.
+
+**Algorithm.**
+1. Normalize each day's kWh by a deterministic clear-sky GHI (Haurwitz model, pure solar
+   geometry with Spencer declination, 120 s integration) → daily performance index; drop
+   near-zero outage days.
+2. Flag **clear days**: performance ≥ 95% of the local ±10-day 90th percentile.
+3. **Rain events** (≥ 5 mm after a dry spell; wet clusters merged): compare pre vs post
+   10-day clear-day medians, raw and seasonally adjusted (harmonic-regression residuals).
+   Seasonally adjusted recoveries across the four events: **0 to +3.4%**.
+4. **Days-since-rain regression** on clear days: log(perf) ~ seasonal harmonics (sin/cos of
+   day-of-year, two orders) + days-since-rain, with a VIF diagnostic (≈ 5.2 — the soiling
+   term is partly collinear with season, hence the humility). Result: 0.45%/month (PVOutput
+   series) / 0.64%/month (Enphase series) — vs **2.4%/month implied by the verified 2024
+   cleaning** (+11.8% gain after 134 dry days). The two lines of evidence disagree and are
+   honestly reported as a **~0.45–2.4%/month bracket**.
+5. **Annual economics**, modeling loss(t) = rate × days-since-rain (capped): scenario A
+   (this year's evidence) 216 kWh ≈ $68/yr; scenario B (2024-cleaning evidence) 1,106 kWh ≈
+   $348/yr, both at the $0.315/kWh blended value.
+
+**Output `data/soiling_results.json`.** Keys: `meta` (window, sources, thresholds);
+`production_crosscheck`; `pvoutput` / `enphase` (each with `n_days_used`, `n_clear_days`,
+`monthly_median_clearday_perf_kwh_per_kwhm2`, `events[]` — id, wet window, event_mm,
+dry_days_before, n_clear_pre/post, `recovery_pct_raw`, `recovery_pct_seasonal_adj`,
+`implied_soiling_rate_pct_per_month` — and `regression`); `sanity_check_2024_cleaning`;
+`annual_economics` (both scenarios + caveat).
+
+### 3.10 `analysis/carbon_timing.py` — grid-carbon timing (real CAISO data)
+
+**Purpose.** When is a grid kWh cleanest for this household, and what do EV-charging-time
+choices cost in CO2? Imports `behavior_rebuild.py` and reuses its `load()` and
+`detect_sessions()` exactly.
+
+**Intensity source (real ISO data, no synthetic curves).** CAISO "Today's Outlook" history
+endpoints — `https://www.caiso.com/outlook/history/YYYYMMDD/co2.csv` (5-min CO2 by source,
+metric tonnes/hour) and `.../demand.csv` (5-min demand, MW) — for four mid-season sample
+days inside the analysis year (mid-Oct 2025; mid-Jan, mid-Apr, mid-Jul 2026). Hourly
+grid-average intensity: kg CO2/MWh = 1000 × mean(total CO2 mT/h, all sources incl. imports)
+÷ mean(demand MW), applied to the household's 15-minute data by season and hour of day. Raw
+CSVs are cached in a local `caiso_data/` directory (not committed).
+
+**Results (in `data/carbon_results.json`).** Overnight 00–06 h averages **279 kg CO2/MWh**
+vs **125** at solar midday 10–14 h (on-peak 16–21 h: 164) — overnight charging is the
+dirtiest window, midday the cleanest. Household import footprint: **5,490 kg CO2/yr**.
+Moving the 2,575 mistimed EV kWh to midday saves 153 kg/yr, while moving it overnight would
+ADD 239 kg/yr (midday beats overnight by 391 kg/yr). Solar exports avoid ~**1,217 kg/yr**.
+Cost cross-check: on the post-May-2026 EV-TOU-5 windows, weekday 10–14 h is super-off-peak
+at the SAME price as overnight — the cleaner choice is free on weekdays.
+
+**Output schema.** `source` (endpoints, sample days, method); `intensity_kg_per_mwh`
+(`annual_avg_by_hour` [24], `by_season_by_hour` {DJF/MAM/JJA/SON × 24},
+`window_means_annual`); `household_inputs`; `footprints_kg_co2_per_yr` (scenarios a/b/c +
+`detail` deltas); `solar_exports_avoided_kg_co2_per_yr`; `cost_vs_carbon` (simple reprice
+vs the netting-correct $1,179.93 from §3.8 scenario a); `caveats` (4 sample days, not 365;
+grid-average not marginal intensity; displacement assumption for exports).
+
+### 3.11 In-session studies: cleaning effect, lifetime payback, and `extra_results.json`
+
+**Panel-cleaning diff-in-diff (`data/cleaning_study_daily.csv`).** The array was
+professionally cleaned on **2024-08-12** ($200). Daily generation for windows around that
+date was pulled for 2021–2024 via the PVOutput **`getoutput`** API (donor feature; the
+public daily list works too). CSV schema: `date` (YYYYMMDD), `generated_kwh` — 60 rows
+(30-day pre + post windows) per control year 2021–2023, a wider 100-day window for the
+2024 cleaning year (280 data rows); the 2025 control window is already in
+`data/pvoutput_daily.csv`. Method: compute the post/pre production ratio across the Aug 12
+boundary in the cleaned year and in each uncleaned control year — the controls estimate the
+pure seasonal decline (they fall 5–8%); the cleaned year *rose* 5%. Diff-in-diff result:
+**+11.8% median cleaning effect** (+10.9% on clear-sky p90 days; peak power +8.6%). The
+array logged 0 kWh on the cleaning day itself (panels offline during the wash),
+corroborating the date.
+
+**Lifetime payback.** Install invoice: **$37,845 paid Dec 2019** (PTO 2019-12-27).
+Cumulative value = each year's ACTUAL production × a blended $/kWh value scaled by the
+utility's rate history (a rate index — NOT today's rates back-cast over history). The curve
+crosses $37,845 around **Aug 2025** (gross), or in **early 2024** if the 30% federal ITC
+was claimed (net cost $26,492). Current-year value of solar: **$5,201/yr** — a no-solar
+counterfactual re-billed on the validated netting model costs $9,876/yr vs the actual
+$4,675/yr. Caveat: the rate-index scaling of historical value is approximate; treat the
+crossover dates as **±10%** (several months either way).
+
+**`data/extra_results.json` keys** (all from in-session computations on the same
+15-minute dataset and bill-validated rates):
+
+- `phantom` — baseload decomposed from **44 EV-free quiet nights**: median **1.025 kW**
+  (p10 0.785, p90 1.36); `monthly_kw` seasonal profile peaking Sep–Oct (1.37 kW) with a May
+  low (0.845); `cycling_std_kw` 0.142 (compressor-like duty cycling present);
+  `annual_kwh_at_median` 8,979; `lowest5_daily_import_kwh` — the lowest occupied-day import
+  floor is ~10.7–11.7 kWh/day.
+- `escalation` — battery rate-escalation ladder ($14,500 installed, $1,743/yr base saving
+  from §3.8, 1%/yr capacity fade, 5% discount): 3%/yr → 7.8 yr payback / NPV10 +$102;
+  5% → 7.3 / +$1,373; 8% → 6.8 / +$3,535; 12% → 6.2 / +$6,973.
+- `price_map` — all-in **import and export $/kWh for all six season × TOU-period cells**
+  from bill-validated rates (e.g. `S_on` 0.8681/0.8189, `S_sop` 0.125/0.0757, `W_on`
+  0.6053/0.556).
+- `nbt` — the same year re-billed under NBT-style flat export credits at 3/5/8¢:
+  $7,151 / $6,953 / $6,655 vs NEM 2.0's $4,675 → `gf_value`: **NEM 2.0 grandfathering is
+  worth ~$1,980–2,476/yr** at current rates.
+- `cleaning` — optimal-cadence model at soiling rates 0.45 / 1.5 / 2.4%/month (the §3.9
+  bracket): no-clean season soiling loss **$59 / $195 / $283/yr** at the $0.315/kWh blended
+  value; best single cleaning ~mid-July (saves $29 / $97 / $126); best pair ~Jun 12 +
+  Aug 21 (saves $39 / $129 / $177; the second cleaning's marginal value is only
+  $10 / $32 / $51). Since a post-2026-TOU *marginal* midday kWh is worth only ~$0.08–0.13
+  (see `price_map` sop cells), a $200 professional cleaning is break-even at best.
+- `trueup` — annual true-up cross-check (charges $1,005.31, credits $492.91, net $512.40).
+
+**System-size verification (in-session).** Registration: 30 × Panasonic 335 W modules =
+**10.05 kW DC**; 30 × Enphase IQ7X microinverters ≈ **9.45 kW AC**. Measured multi-year
+peak powers of 9,204–9,233 W ≈ 97–98% of the AC ceiling — registration and physics agree.
 
 ---
 
@@ -460,7 +620,7 @@ treat them as "rides out typical outages," not fortnights.
 
 ## 5. Chart generation (`index.html`)
 
-Chart.js 4.4.3 is loaded from CDN; the four canvases read the inlined `const D = {...}` object.
+Chart.js 4.4.3 is loaded from CDN; the five canvases read the inlined `const D = {...}` object.
 Mapping of every canvas id → `D` arrays → producing computation:
 
 | Canvas id | Type | `D` arrays (length) | Units | Produced by |
@@ -469,6 +629,7 @@ Mapping of every canvas id → `D` arrays → producing computation:
 | `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the §4 dispatch applied to summer intervals and re-averaged by hour (battery-sim session run; regenerate by hourly-averaging the dispatch-adjusted import series from `package_sims.py`) |
 | `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the modeled EV-TOU-5+CEA energy cost per month (excludes the daily BSC) |
 | `periods` | horizontal bar ×2 | inline literals: kWh `[14811, 4478, 3989]`, $ `[1869, 2284, 2951]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → period_split` summed across seasons for kWh (sop 6,628+8,183; off 2,238+2,240; on 2,109+1,880); the on-peak $2,951 matches `report_data.json → onpeak.import_cost` |
+| `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_timing.py`, real CAISO Today's Outlook history CSVs) |
 
 Everything else in the report (plan table §3, battery tables §4/§6, package cards §7, deep-dive
 figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`,
@@ -492,8 +653,11 @@ summer on/off/sop). The audit corrected two model assumptions: the CEA relief cr
 apply (product is "Clean Impact Plus" — hence `analyze_norelief.py` is the published model), and
 the climate zone is Coastal (affects only the baseline-credit plans, which lose regardless).
 
-**6.3 Model-vs-actual reconciliation.** The bills on hand total $3,004 over 338 covered days
-(~$3,244/yr annualized; one 27-day shoulder-season bill is missing). The interval model said
+**6.3 Model-vs-actual reconciliation.** The audit initially covered 338 days ($3,004) with a
+27-day gap; the October 2025 statement closed it, giving a complete 365-day actual of
+**$3,282/yr** (12 statements, 13 billing periods — see `data/electric_bill_summary.csv`,
+whose `days` column sums to 365 and whose delivery+generation columns sum to $3,282.22).
+The interval model said
 $4,861; proper monthly per-TOU-period netting (`billing_model_nem.py`) gives ~$4,675 — i.e. the
 **netting method itself agrees to ~0.3%** and is not the source of the gap. The remaining gap is
 mostly that the model prices the *entire* year at current **6/1/2026 rates**, while the actual
@@ -514,7 +678,7 @@ treat seven holidays as weekends for TOU assignment; `battery_backup_sims.py`,
 `package_sims.py`, `deep_analyses.py`, and `billing_model_nem.py` do not. Seven days × the
 sop/off rate difference is dollar-negligible, but expect tiny discrepancies if you diff outputs.
 
-**6.6 Other limitations** (from report §11): rate tables go stale on SDG&E (Jan/Jun) and CEA
+**6.6 Other limitations** (from report §14): rate tables go stale on SDG&E (Jan/Jun) and CEA
 (Feb/Jun) revision cycles; TOU-DR-P event surcharges are only modeled in the §3.5 wildcard;
 battery installed prices are estimates; simple paybacks in `package_sims.json` use no
 discounting or escalation (the Monte Carlo in §3.5 handles both); the endurance sims' full-SOC
