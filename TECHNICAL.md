@@ -719,6 +719,50 @@ escalation ladder in report §13 is seeded from the post-behavior $2,245 margina
 intervals carrying both import and export, discharge-window imports are served rather than
 banking low-value surplus.
 
+### 3.14 `analysis/extended_findings.py` — extended findings batch (`data/extended_results.json`)
+
+One script computes the report's extended findings (§6 VPP/resilience framing, §9 dividend
+workups, §10 AB 205 + gas HDD decomposition, §13 2039 strategy, battery-payback tornado).
+**Inputs:** the committed artifacts only — `behavior_rebuild.json` (EV kWh, session
+detection, shift savings), `battery_dispatch_policies.json` (battery marginals),
+`extra_results.json` (price map, NBT re-billing, ev_fleet), `gas_monthly_therms.csv` +
+`gas_bill_summary.csv` (daily/monthly therms, $/therm), the Open-Meteo daily temperatures
+(HDD base 65°F), and `rates.py` constants — plus **cited external constants** recorded with
+sources in `research/extended-research-notes.md`: EIA California gasoline 12-month mean
+$4.65/gal, FHWA Highway Statistics VM-1 on-road fleet economy 23.4 mpg, supercharger price
+estimate $0.45/kWh (labeled estimate), DSGS/Tesla VPP program terms ($150–350/season),
+SDG&E 2024 reliability report SAIDI figures, CPUC D.24-05-028 / Resolution E-5355 (BSC
+$24.15/mo = $0.79343/day, matching `rates.py` exactly). **Outputs**
+(`data/extended_results.json` keys): `ab205`, `electrification_dividend`, `away_days`,
+`supercharge_delta`, `weekend_sop`, `representative_year`, `gas_decomposition` (364-day
+HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
+therms/yr), `nbt_2039` (price-aware battery marginal $2,504–2,539/yr under 3–8¢ flat
+exports vs $2,325 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.3 yr >
+install quote 2.1 > escalation 0.9 > DSGS 0.8 > EV-fix interaction 0.3 around the 6.2-yr
+base). Figures derived purely from external program terms (DSGS dollars, outage-hour
+exposure) carry **estimated** pills in the report; artifact-derived ones carry
+**modeled**/**measured** per source. The report's "What to do Monday" appendix is
+**content-only** — it cites §5/§6/§9/§13 figures and introduces no new artifacts.
+
+### 3.15 `analysis/carbon_fullyear.py` — expanded CAISO carbon sampling (`data/carbon_fullyear_results.json`)
+
+Upgrades the §13 carbon workup from 4 seasonal days to **28 covered days** (~2 per calendar
+month across the Jul 2025–Jul 2026 window, including the original 4 seasonal days from
+`carbon_results.json`). Per covered day: hourly kg CO₂/MWh = 1000 × mean(total CO₂ mT/h,
+all sources incl. imports) ÷ mean(CAISO demand MW) from the Today's Outlook history CSVs.
+The **337 uncovered days are interpolated with month-hour means** of covered days in the
+same calendar month, then the per-date-per-hour intensity table
+(`data/caiso_hourly_intensity.csv`, committed) is applied to the household's 15-minute
+import/export data by date and hour. **Label rule:** results are tagged
+`estimated · 28 days sampled` — never "measured" — because 28 of 365 days are observed and
+the rest interpolated. Headline outputs: import footprint 5,359.7 kg/yr; export
+displacement 880.0 kg/yr (−28% vs the 4-day estimate — fuller sampling catches sunny spring
+middays where CAISO's import-inclusive accounting drives intensity to ~0); mistimed-EV
+shift +249.1 kg/yr (to overnight) vs −184.5 (to midday), gap 433.6 kg/yr; window means
+271.2 / 103.9 / 156.6 kg/MWh (overnight 00–06 / midday 10–14 / on-peak 16–21). Grid-average
+(not marginal) intensity; the dollar side of EV retiming is unchanged (both destination
+windows are super-off-peak on EV-TOU-5).
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py` (REMOVED — superseded by the integrated pipeline),
