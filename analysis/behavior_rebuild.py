@@ -37,13 +37,8 @@ import pandas as pd
 CSV = "usage.csv"  # SDG&E Green Button 15-min (skiprows=13)
 
 # ---- rates: identical to billing_model_nem.py (actual bills, 6/1/2026) ----
-UDC = {"S": {"on": 0.30203, "off": 0.30203, "sop": 0.02606},
-       "W": {"on": 0.31174, "off": 0.31174, "sop": 0.02606}}
-CEA = {"S": {"on": 0.51684, "off": 0.15975, "sop": 0.04961},
-       "W": {"on": 0.24430, "off": 0.15782, "sop": 0.05187}}
-NBC = 0.021; PCIA = 0.02828; BSC = 0.79343
-retail = lambda s, p: UDC[s][p] + CEA[s][p] + NBC + PCIA
-credit = lambda s, p: UDC[s][p] + CEA[s][p]
+from rates import UDC, CEA, NBC, PCIA, BSC, energy, credit  # canonical bill-derived rates
+retail = energy  # netted energy rate (NBC applied on gross imports in bill_monthly)
 
 # ---- detection / shifting parameters ----
 BASE_WIN = 96          # rolling-baseline window (24 h of 15-min intervals)
@@ -92,7 +87,7 @@ def bill_monthly(frame, imp="imp", exp="exp"):
     """Monthly per-TOU-period NEM netting -> {month: $}. Sum = annual bill."""
     out = {}
     for ym, m in frame.groupby("ym"):
-        tot = m.dt.dt.date.nunique() * BSC
+        tot = m.dt.dt.date.nunique() * BSC + m[imp].sum() * NBC
         for s in ("S", "W"):
             for p in ("on", "off", "sop"):
                 sub = m[(m.seas == s) & (m.p == p)]
