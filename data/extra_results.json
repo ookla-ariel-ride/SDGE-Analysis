@@ -206,6 +206,18 @@
     "home_sessions": 612,
     "rated_miles_added": 41221
    }
+  },
+  "wall_charger_daily": {
+   "source": "Tesla Wall Connector daily energy export (data/wall_charger_daily.csv), Jul 1-24 2026, wall-side kWh",
+   "clean_window_jul1_20": {
+    "charger_kwh": 708.9,
+    "detector_kwh": 706.1,
+    "agreement": 0.996,
+    "daily_correlation_r": 0.985,
+    "mean_abs_daily_diff_kwh": 2.4
+   },
+   "tail_note": "Jul 21-23 rows show batched/shifted upload (charger 188.7 vs detector 142.9); full aligned Jul 1-23 agreement 94.6%",
+   "verdict": "wall-vs-wall daily validation of the session detector; no charging-loss conversion involved"
   }
  }
 }
