@@ -10,6 +10,10 @@ install. (Alternate ways to view it: clone/download this repo and double-click `
 which is fully self-contained with data inlined and Chart.js from CDN. Note that GitHub's own
 file viewer shows the HTML *source*, not the rendered report — use the link above instead.)
 
+> **How this report was produced:** generated with **Claude Cowork (Fable 5)**, independently
+> reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
+> then re-worked in Claude Cowork to incorporate the findings of both reviews.
+
 An interactive, evidence-based report for a solar + EV home in the SDG&E Coastal climate zone
 (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data,
 a full-year detailed-bill audit, six years of production records, and real weather + grid data.
