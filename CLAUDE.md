@@ -85,6 +85,52 @@ Ask clarifying questions before large work. Keep a task list. Use subagents for 
 sub-analyses and for an adversarial verification pass over the math before presenting. Verify
 programmatically. Do not expand scope silently.
 
+## 9. Pre-publication gates — run ALL of these before any report ships.
+Round-three review found every one of these violated. Check them mechanically, not by memory:
+- **Artifact–prose diff:** every figure in the report must match the committed data artifacts
+  (data/*.json, *.csv). When prose is re-based, REGENERATE the artifacts — a stale
+  package_results.json kept publishing a retired 5.4-yr payback long after the prose fixed it.
+- **Code-implements-its-docs:** verify each model's docstring against its code. Our netting
+  model described NBC on gross imports but netted it (−$208/yr). Non-bypassable charges are
+  charged on GROSS imported kWh under NEM — verify against a bill line, then implement it.
+- **One rate vintage per projection:** never subtract current-rate model deltas from
+  prior-year actual bills to project a future bill — that mixes tariff vintages. Project on
+  one basis (the current-rate model), label it "at constant current rates," and note that the
+  historical actual was billed on older tariffs.
+- **A script per headline number:** every headline figure needs a committed script that
+  reproduces it (our lifetime-payback date initially had none → analysis/lifetime_payback.py).
+- **Confidence labels:** precision must match evidence density. Tag thin-evidence sections
+  visibly: measured (meters/bills/multi-source), modeled (validated model, current rates),
+  estimated (scaled history, single events, sampled days). One cleaning event, four CAISO
+  days, and a rate-index extrapolation must not read with the same authority as a year of
+  15-minute data.
+- **Process narrative stays out of the report:** the report presents data → analysis →
+  conclusions only. Corrections, superseded drafts, and "we fixed X" belong in commits/PRs,
+  never in the published document.
+
+## 10. Report navigation requirements (index.html — keep on every regeneration).
+Single self-contained file, vanilla CSS/JS, Chart.js CDN only. Sticky TOC in three labeled
+groups — Verdict (Bottom line, Plans, Battery×plan, Packages), Evidence (Data, System, Usage,
+Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning, Carbon/NEM,
+Methodology) — with uppercase eyebrow labels and compact pills. Scroll-spy via ONE
+IntersectionObserver on h2s (no scroll listeners); active pill in --acc. h2
+scroll-margin-top ≥ nav height; smooth scrolling gated by prefers-reduced-motion. The three
+heaviest audit sections (Deep dives, Cleaning, Carbon/NEM) are native <details>/<summary>,
+closed by default, summary = h2 + one-line conclusion teaser; hashchange/load JS opens a
+collapsed section before jumping; charts inside collapsed sections lazy-init on first open.
+Quiet back-to-top button (appears after §1, aria-label). Mobile ≤800px: grouped TOC ≤ ~2 rows
+(horizontal scroll). Keyboard :focus-visible on pills/summaries. Page must degrade cleanly
+with JS disabled.
+
+## 11. Production-provenance note (REQUIRED in every regeneration).
+index.html §Methodology's closing small-print paragraph must end with:
+"How this report was produced: generated with Claude Cowork (Fable 5); the data, methodology,
+and conclusions were then independently reviewed with Claude Code (Fable 5) and adversarially
+reviewed with Codex (GPT-5.6 Sol); the analysis was subsequently re-worked in Claude Cowork to
+incorporate the findings of both reviews."
+README.md carries the equivalent blockquote immediately before the report-description
+paragraph. Never drop or reword these when regenerating either file.
+
 ## Repo map (what's public vs private)
 - Public: `index.html`, `README.md`, `CLAUDE.md`, `reusable-prompt.md`,
   `DATA-SOURCES-CHEATSHEET.md`, `data/` (de-identified), `analysis/` (scripts), `research/`.

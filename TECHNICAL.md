@@ -43,6 +43,7 @@ private/1-raw-data/  (gitignored — never committed)
 │ package_sims.py            │ package_results.json                        │
 │ deep_analyses.py           │ deep_results.json                           │
 │ billing_model_nem.py       │ (stdout: bill-validated annual baseline)     │
+│ lifetime_payback.py        │ (stdout: cumulative-value table, crossovers) │
 │ behavior_rebuild.py        │ behavior_rebuild.json                        │
 │ soiling_analysis.py        │ soiling_results.json                         │
 │ carbon_timing.py           │ carbon_results.json                          │
@@ -69,9 +70,11 @@ Two things to understand about the flow:
    the `D` block and the prose figures (see `CLAUDE.md` §3 on keeping figures consistent).
 2. **Two generations of billing model coexist.** `analyze*.py` price every 15-minute interval
    independently (interval netting). `billing_model_nem.py` implements true NEM 2.0 monthly
-   per-TOU-period netting and was validated against the 12 actual bills; the two methods agree
-   to ~0.3% on this dataset (§6). Plan *rankings* and battery/behavior *deltas* come from the
-   interval models; absolute dollar levels in the report are anchored to actual bills.
+   per-TOU-period netting with non-bypassable charges on gross imports, and was validated
+   against the 12 actual bills; the two methods agree to ~0.5% on this dataset ($4,861 vs
+   $4,884 — §6). Plan *rankings* and battery/behavior *deltas* come from the interval models;
+   absolute dollar levels in the report are anchored to actual bills, and forward projections
+   are stated on the single §3.6 basis at constant 6/1/2026 rates.
 
 ---
 
@@ -331,18 +334,34 @@ charges − export credits − battery on-peak offset + forgone export credit + 
 monthly series = interval net grouped by month + days × BSC; annual total = interval net sum +
 moved-load cost + 365 × BSC + baseline credit (TOU-DR1 only, same rule as §3.1).
 
-**Outputs (`package_results.json`).**
+**Outputs (script stdout/JSON).**
 - `plan_battery_matrix`: EV-TOU-5 / EV-TOU-2 / TOU-DR1 × {no_battery, with_PW3, battery_value}
   (e.g. EV-TOU-5: $4,861 → $3,192, battery worth $1,669/yr).
 - `baseline`: annual cost $4,861, average/min/max modeled monthly bill.
 - `moved_kwh`: 2507.
-- `packages`: LOW (behavior only, $0 hardware), MID (behavior + 1× PW3, hardware $14,500),
-  HIGH (behavior + PW3+Expansion, $20,400) — each with `annual_cost`, `annual_savings` vs
-  baseline, simple `payback_yr` = hardware ÷ savings, and monthly bill range.
 - `battery_marginal_after_behavior`: the battery's own savings measured *after* behavior fixes
   (PW3 $1,347/yr; PW3X $1,351/yr) — the honest asset-alone figure required by `CLAUDE.md` §2.
 
-**Run:** `python3 package_sims.py` next to `usage.csv`.
+**The committed `data/package_results.json` was REGENERATED** on the superseding basis
+(session-based shifts from `behavior_rebuild.py` §3.8 + netting-model battery dispatch, NBC on
+gross imports, 6/1/2026 rates) after the pre-publication artifact–prose gate (`CLAUDE.md` §9)
+caught the stale script output still carrying a retired package-payback framing. Its schema:
+
+- `basis` — provenance string (also records the actual 365-day billed baseline $3,282 on
+  2025-vintage tariffs);
+- `model_baseline_current_rates`: **4884** (= §3.6 output);
+- `packages.LOW`: `cost` 0, `savings_yr` 1180, `savings_range` [1004, 1659], `note`,
+  `projected_bill_current_rates_yr` **3704**;
+- `packages.MID`: `cost` 14500, `savings_yr` 2923, `battery_alone_yr` 1743,
+  `battery_alone_payback_yr` **8.3**, `battery_monte_carlo_median_yr` 9.4,
+  `projected_bill_current_rates_yr` **1961**, `note` (overlap $130 already excluded);
+- `packages.HIGH`: `cost` 20400, `savings_yr_vs_mid` "5-15", `note` (expansion buys outage
+  endurance, not savings);
+- `superseded` — records that dividing hardware cost by combined behavior+battery savings is
+  invalid; battery-alone payback is the honest hardware metric.
+
+**Run:** `python3 package_sims.py` next to `usage.csv` (script output only; rebuild the
+committed artifact from §3.6/§3.8 results as above).
 
 ### 3.5 `analysis/deep_analyses.py` — five targeted studies
 
@@ -381,18 +400,26 @@ performs under NEM 2.0, and reconcile the model against the 12 real bills.
 
 **Rates (read off the detailed bills, EV-TOU-5 + CEA "Clean Impact Plus", 6/1/2026).** UDC:
 summer on/off 0.30203, winter on/off 0.31174, super-off-peak 0.02606 both seasons; CEA
-generation as in §3.0; NBC 0.021 flat; PCIA 0.02828; BSC 0.79343/day. `retail(s,p) =
-UDC + CEA + NBC + PCIA`; `credit(s,p) = UDC + CEA` (exports are credited at delivery +
-generation only — NBC and PCIA are not refunded).
+generation as in §3.0; NBC 0.021 flat; PCIA 0.02828; BSC 0.79343/day. `energy(s,p) =
+UDC + CEA + PCIA` (the netted energy rate — NBC is handled separately); `credit(s,p) =
+UDC + CEA` (exports are credited at delivery + generation only — PCIA and NBC are never
+refunded).
 
-**Algorithm (`bill()`).** For each billing month (calendar month here): add `days × BSC`; then
-for each (season, period) cell within the month compute `net = Σ imports − Σ exports`; if
-`net ≥ 0` charge `net × retail(s,p)`, else credit `net × credit(s,p)`. Sum across months. This
-is the "monthly per-TOU-period NEM netting" referred to throughout the report.
+**Algorithm (`bill()`).** For each billing month (calendar month here): add `days × BSC` plus
+**NBC × GROSS imported kWh** for the month — non-bypassable charges (~$0.021/kWh incl. the
+wildfire fund) are levied on gross imports and are NOT netted against exports, matching the
+bills' line items (e.g. a "Wildfire Fund Charge 308 kWh" line on a period with 224 kWh net
+usage). Then for each (season, period) cell within the month compute `net = Σ imports −
+Σ exports`; if `net ≥ 0` charge `net × energy(s,p)`, else credit `net × credit(s,p)`. Sum
+across months. This is the "monthly per-TOU-period NEM netting" referred to throughout the
+report. An earlier revision netted the NBC along with the energy charges — a
+code-vs-docstring bug caught by the `CLAUDE.md` §9 gate; the correction adds
+NBC × (gross imports − Σ positive period nets) ≈ **+$208/yr** on this dataset.
 
-**Output.** Prints the modeled annual baseline (~$4.7k at 6/1/2026 rates) against the actual
-billed $3,282 (365-day audit) — the reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary
-import/export column names) to re-score behavior or battery scenarios on the validated netting.
+**Output.** Prints the modeled annual baseline **$4,884** at 6/1/2026 rates (the retired
+netted-NBC variant gave $4,675) against the actual billed $3,282 (365-day audit) — the
+reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary import/export column
+names) to re-score behavior or battery scenarios on the validated netting.
 
 **Run:** `python3 billing_model_nem.py` next to `usage.csv`.
 
@@ -451,7 +478,10 @@ compliance (seeded RNG): $1,004; (c) + 25% of remaining on-peak house load: $1,6
 double-counting avoided).
 
 **Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,675.20
-vs `actual_billed` $3,282 — use deltas, per the in-file note; `month_min/max`;
+— the pre-correction netted-NBC baseline; the published baseline is §3.6's **$4,884** with
+NBC on gross imports. The scenario *deltas* are unaffected because load shifts preserve gross
+imports, so the NBC term cancels — vs `actual_billed` $3,282 — use deltas, per the in-file
+note; `month_min/max`;
 `imports_kwh`, `exports_kwh`, `onpeak_import_kwh`); `detection` (rule string, `sessions`,
 `ev_kwh_total/expected/onpeak/offpeak/sop_already`, `avg_session_kwh`); `scenarios.a–d`
 (`label`, `bill`, `saved`, `month_min/max`, `kwh_moved`, plus `sessions_moved` /
@@ -486,7 +516,9 @@ every query variant, so no satellite irradiance exists and normalization is dete
    honestly reported as a **~0.45–2.4%/month bracket**.
 5. **Annual economics**, modeling loss(t) = rate × days-since-rain (capped): scenario A
    (this year's evidence) 216 kWh ≈ $68/yr; scenario B (2024-cleaning evidence) 1,106 kWh ≈
-   $348/yr, both at the $0.315/kWh blended value.
+   $348/yr, both at the script's $0.315/kWh blended value (an earlier blended estimate,
+   retained in the committed artifact; `lifetime_payback.py` §3.12 later refined the
+   current-TOU blended value to $0.3025/kWh — immaterial to the order-of-magnitude verdict).
 
 **Output `data/soiling_results.json`.** Keys: `meta` (window, sources, thresholds);
 `production_crosscheck`; `pvoutput` / `enphase` (each with `n_days_used`, `n_clear_days`,
@@ -539,14 +571,16 @@ pure seasonal decline (they fall 5–8%); the cleaned year *rose* 5%. Diff-in-di
 array logged 0 kWh on the cleaning day itself (panels offline during the wash),
 corroborating the date.
 
-**Lifetime payback.** Install invoice: **$37,845 paid Dec 2019** (PTO 2019-12-27).
-Cumulative value = each year's ACTUAL production × a blended $/kWh value scaled by the
-utility's rate history (a rate index — NOT today's rates back-cast over history). The curve
-crosses $37,845 around **Aug 2025** (gross), or in **early 2024** if the 30% federal ITC
-was claimed (net cost $26,492). Current-year value of solar: **$5,201/yr** — a no-solar
-counterfactual re-billed on the validated netting model costs $9,876/yr vs the actual
-$4,675/yr. Caveat: the rate-index scaling of historical value is approximate; treat the
-crossover dates as **±10%** (several months either way).
+**Lifetime payback.** Install invoice: **$37,845 paid Dec 2019** (PTO 2019-12-27). Initially
+an in-session computation; now reproduced by the committed `analysis/lifetime_payback.py`
+(§3.12 — the "script per headline number" gate, `CLAUDE.md` §9). Cumulative value = each
+year's ACTUAL production × a blended $/kWh value under the TOU structure in force that year,
+scaled by the utility's rate history (a rate index — NOT today's rates back-cast over
+history). The curve crosses $37,845 in **~fall 2025** (gross), or **~early 2024** if the 30%
+federal ITC was claimed (net cost $26,492). Current-year value of solar: **$4,992/yr** — a
+no-solar counterfactual re-billed on the validated netting model (NBC on gross imports) costs
+$9,876/yr vs the modeled $4,884/yr baseline. Caveat: the rate-index scaling of historical
+value is approximate; treat the crossover dates as **±10%** (several months either way).
 
 **`data/extra_results.json` keys** (all from in-session computations on the same
 15-minute dataset and bill-validated rates):
@@ -562,20 +596,55 @@ crossover dates as **±10%** (several months either way).
 - `price_map` — all-in **import and export $/kWh for all six season × TOU-period cells**
   from bill-validated rates (e.g. `S_on` 0.8681/0.8189, `S_sop` 0.125/0.0757, `W_on`
   0.6053/0.556).
-- `nbt` — the same year re-billed under NBT-style flat export credits at 3/5/8¢:
-  $7,151 / $6,953 / $6,655 vs NEM 2.0's $4,675 → `gf_value`: **NEM 2.0 grandfathering is
-  worth ~$1,980–2,476/yr** at current rates.
+- `nbt` — the same year re-billed under NBT-style flat export credits at 3/5/8¢, NBC charged
+  on gross imports in all variants (`note`): `nbt3c` $7,151 / `nbt5c` $6,953 / `nbt8c` $6,655
+  vs `nem2_nbc_gross` **$4,884** → `gf_value` [1772, 2268]: **NEM 2.0 grandfathering is
+  worth ~$1,772–2,268/yr** at current rates.
 - `cleaning` — optimal-cadence model at soiling rates 0.45 / 1.5 / 2.4%/month (the §3.9
-  bracket): no-clean season soiling loss **$59 / $195 / $283/yr** at the $0.315/kWh blended
-  value; best single cleaning ~mid-July (saves $29 / $97 / $126); best pair ~Jun 12 +
-  Aug 21 (saves $39 / $129 / $177; the second cleaning's marginal value is only
-  $10 / $32 / $51). Since a post-2026-TOU *marginal* midday kWh is worth only ~$0.08–0.13
-  (see `price_map` sop cells), a $200 professional cleaning is break-even at best.
+  bracket): no-clean season soiling loss **$59 / $195 / $283/yr** at the earlier $0.315/kWh
+  blended estimate (see the §3.9 note); best single cleaning ~mid-July (saves $29 / $97 /
+  $126); best pair ~Jun 12 + Aug 21 (saves $39 / $129 / $177; the second cleaning's marginal
+  value is only $10 / $32 / $51). Since a post-2026-TOU *marginal* midday kWh is worth only
+  ~$0.08–0.13 (see `price_map` sop cells), a $200 professional cleaning is break-even at best.
 - `trueup` — annual true-up cross-check (charges $1,005.31, credits $492.91, net $512.40).
+- `lifetime` — headline outputs of §3.12: `blended_old_tou` 0.4866, `blended_new_tou` 0.3025
+  ($/kWh), `solar_value_today` 4992, `nosolar_bill` 9876, `crossover_gross`
+  "~Sep–Oct 2025", `crossover_net_itc` "~Mar 2024".
 
 **System-size verification (in-session).** Registration: 30 × Panasonic 335 W modules =
 **10.05 kW DC**; 30 × Enphase IQ7X microinverters ≈ **9.45 kW AC**. Measured multi-year
 peak powers of 9,204–9,233 W ≈ 97–98% of the AC ceiling — registration and physics agree.
+
+### 3.12 `analysis/lifetime_payback.py` — lifetime solar payback (blended-value method)
+
+**Purpose.** The committed reproduction of the lifetime-payback headline (§3.11): when did
+cumulative solar value cross the install invoice? Stdlib-only; prints a year-by-year table
+with crossover markers.
+
+**Method (documented in the docstring).**
+1. **Blended $/kWh today** = (no-solar counterfactual bill − with-solar bill) ÷ annual
+   production, both computed with the §3.6 netting model (`billing_model_nem.bill`) at
+   current rates — computed under BOTH TOU structures: the pre-2026 windows (sop
+   midnight–6 am, plus 10 am–2 pm in Mar/Apr only) for historical years, and the current
+   windows for the present year. The no-solar load series is the hourly whole-home
+   consumption (monitoring consumption meter) re-billed as if all imported.
+2. **Each historical year's value** = that year's ACTUAL metered production × the
+   old-structure blended $/kWh × (that year's utility average residential rate ÷ the current
+   average rate) — a published-rate index, never today's rates back-cast.
+3. **Crossovers**: cumulative value vs invoice gross, and vs invoice × 0.70 (30% federal ITC
+   for 2019 systems).
+
+**Constants at the top of the file** (edit for your system): `INVOICE` 37845.0, `ITC` 0.30,
+`PROD` {2020–2026 actual kWh; 2026 partial}, `RATE_IDX` {approx. SDG&E average residential
+¢/kWh by year, 32→48}, `BLENDED_OLD` **0.4866** $/kWh (pre-2026 TOU structure at current
+rates), `BLENDED_NEW` **0.3025** $/kWh (current TOU structure).
+
+**Results.** Gross crossover **~fall 2025** (~Sep–Oct, 73% through the year); net-of-ITC
+crossover **~early 2024** (~Mar). Headline values are mirrored in
+`data/extra_results.json → lifetime` (§3.11). Caveat printed with the results: the rate
+index is approximate — crossover dates carry roughly ±10% (a few months).
+
+**Run:** `python3 analysis/lifetime_payback.py` (no inputs; constants inline).
 
 ---
 
@@ -637,6 +706,24 @@ figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`
 `weather_results.json`, and the bill summaries. After any rerun, update both the `D` block and
 the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §3).
 
+**Report structure conventions (preserve on regeneration; specs in `CLAUDE.md` §§9–11).**
+
+- **One rate vintage per projection:** the §7 package cards state projected bills **at
+  constant 6/1/2026 rates** — LOW ~$3,700/yr, MID ~$1,960/yr vs the ~$4,880/yr no-change
+  model baseline — never against the $3,282 actual (billed largely on 2025 tariffs), which
+  is noted as non-comparable.
+- **Confidence labels:** inline pills tag claims as `measured` (meters/bills/multi-source),
+  `modeled` (validated model at current rates), or `estimated` (rate index, single cleaning
+  event, four sampled CAISO days). §§1–10 are measured/modeled throughout; pills appear in
+  §§11–13 where evidence is thinner, and §14 defines the legend.
+- **Navigation:** sticky TOC grouped Verdict / Evidence / Audit with scroll-spy (one
+  IntersectionObserver); the three heaviest audit sections (§9 deep dives, §12 cleaning,
+  §13 carbon/NEM) are native `<details>` blocks, closed by default with one-line conclusion
+  teasers; charts inside them lazy-init on first open; back-to-top button; JS-off degradation.
+- **Provenance note:** the closing small-print of §14 (and the equivalent README blockquote)
+  carries the required "How this report was produced" statement — generation, independent
+  review, adversarial review, rework. It must survive every regeneration.
+
 ---
 
 ## 6. Validation and known limitations
@@ -658,8 +745,9 @@ the climate zone is Coastal (affects only the baseline-credit plans, which lose 
 **$3,282/yr** (12 statements, 13 billing periods — see `data/electric_bill_summary.csv`,
 whose `days` column sums to 365 and whose delivery+generation columns sum to $3,282.22).
 The interval model said
-$4,861; proper monthly per-TOU-period netting (`billing_model_nem.py`) gives ~$4,675 — i.e. the
-**netting method itself agrees to ~0.3%** and is not the source of the gap. The remaining gap is
+$4,861; proper monthly per-TOU-period netting with NBC on gross imports
+(`billing_model_nem.py`) gives **$4,884** — i.e. the **netting method itself agrees to
+~0.5%** and is not the source of the gap. The remaining gap is
 mostly that the model prices the *entire* year at current **6/1/2026 rates**, while the actual
 bills were mostly rendered on cheaper 2025 tariffs (rates rose through the period, most in
 summer, exactly where the model runs high). The model is therefore a forward-looking "at
@@ -680,8 +768,9 @@ sop/off rate difference is dollar-negligible, but expect tiny discrepancies if y
 
 **6.6 Other limitations** (from report §14): rate tables go stale on SDG&E (Jan/Jun) and CEA
 (Feb/Jun) revision cycles; TOU-DR-P event surcharges are only modeled in the §3.5 wildcard;
-battery installed prices are estimates; simple paybacks in `package_sims.json` use no
-discounting or escalation (the Monte Carlo in §3.5 handles both); the endurance sims' full-SOC
+battery installed prices are estimates; the simple 8.3-yr battery-alone payback in
+`package_results.json` uses no discounting or escalation (the Monte Carlo in §3.5 and the
+escalation ladder in `extra_results.json` handle both); the endurance sims' full-SOC
 and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347` from a prior
 `package_sims.py` run — rerun order matters (§7).
 
@@ -710,7 +799,10 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
    4. edit `base_save` in `deep_analyses.py` to that marginal value, then run it;
    5. `billing_model_nem.py` → compare its output to your actual bills before quoting any
       absolute dollar figure (per `CLAUDE.md` §1; expect it to read high if it prices history
-      at current rates).
+      at current rates). Verify against a bill line that non-bypassable charges are billed on
+      GROSS imported kWh, and that the code does the same (`CLAUDE.md` §9);
+   6. `lifetime_payback.py` (if you have solar and the install invoice) → update its
+      `INVOICE`/`PROD`/`RATE_IDX`/blended constants first (§3.12).
 5. **Rebuild the derived artifacts** (§3.7): daily-production cross-validation, weather
    regression, bill-summary CSVs — or skip them for a plan/battery-only analysis.
 6. **Refresh `index.html`**: replace every array in the `D = {...}` block from the new
