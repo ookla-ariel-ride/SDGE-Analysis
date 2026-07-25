@@ -42,7 +42,8 @@
  "weekend_sop": {
   "weekend_house_kwh_outside_sop": 1434,
   "value_if_half_shifts_yr": 387,
-  "value_if_all_shifts_yr": 774,
+  "value_if_all_shifts_yr": 772,
+  "method": "physically moved: weekend non-EV import in hours >=14 relocated into the same day's 0-14 super-off-peak intervals (uniform spread), baseline and shifted series both billed with rates.bill_nem (monthly per-period NEM netting, NBC on gross imports); deltas, not kWh x rate-difference",
   "note": "weekend 0-14 window is super-off-peak year-round; realistic capture is a fraction (laundry/dish/pool timing), so half-shift is quoted"
  },
  "representative_year": {

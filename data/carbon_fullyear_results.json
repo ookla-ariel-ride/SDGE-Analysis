@@ -65,7 +65,7 @@
    102.3,
    99.1,
    93.2,
-   93.5,
+   93.6,
    114.8,
    138.0,
    163.6,
@@ -78,7 +78,7 @@
   "window_means_annual": {
    "sop_overnight_00_06": 271.2,
    "solar_midday_10_14": 103.9,
-   "on_peak_16_21": 156.6
+   "on_peak_16_21": 156.5
   }
  },
  "household_inputs": {
@@ -128,7 +128,7 @@
    "new": 433.6
   }
  },
- "cost_note": "On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and 00:00-06:00 are BOTH super-off-peak at the same price; the netting-correct dollar saving for fixing mistimed charging is scenario 'a' in behavior_rebuild.json ($1,179.93/yr), unchanged by this carbon rerun.",
+ "cost_note": "On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and 00:00-06:00 are BOTH super-off-peak at the same price; the netting-correct dollar saving for fixing mistimed charging is scenario 'a' in behavior_rebuild.json ($1,192.83/yr), unchanged by this carbon rerun.",
  "caveats": [
   "Intensity measured on 28 real CAISO days; the other 337 days use month-hour means of covered days (day-to-day weather/hydro/outage variation only partially captured).",
   "Grid-AVERAGE intensity, not marginal; marginal overnight emissions (usually gas on the margin) would widen the overnight-vs-midday gap.",
