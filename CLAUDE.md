@@ -181,6 +181,31 @@ Mono data — with system fallbacks).
 - Header meta: the household / window / sources facts under the h1 render as the `.meta`
   ledger rows (mono uppercase `.meta-k` labels + `.meta-v` values, hairline rules,
   single-column on mobile) — never as a run-on `.sub` paragraph.
+
+**Formatting & navigation mechanics (implemented in the template — keep ALL of these):**
+- Skip-link ("Skip to the bottom line") as the first element in <body>.
+- "⌂ Top" home pill leads the Verdict nav group (href="#top", id="top" on the h1) — readers
+  can always return to the full report from any section.
+- Reading-progress hairline inside the sticky nav (passive rAF scroll handler — the
+  no-scroll-listener rule applies to the scroll-SPY, which stays IntersectionObserver).
+- Nav compacts after the reader passes §1 (only eyebrows + active pill + home pill remain;
+  hover/focus-within expands) — reuses the existing #s2 observer.
+- "▾ collapse audit" control in the Audit nav group toggles the three <details> sections.
+- Hover-revealed # copy-links on every h2/h3 with an id — give h3s ids when adding them.
+- Tables become their own horizontal scroll containers at ≤800px — never page-level
+  horizontal scroll.
+- .rec/.note boxes carry mono eyebrow labels (Verdict/Caveat defaults; override with
+  data-label="..."); print adds break-inside:avoid on .chartbox/table/.rec/.note/.pkg.
+
+**Content formatting rules (apply during every prose regeneration):**
+- No paragraph over ~800 characters. Findings use the .finding pattern: one bold claim
+  sentence → a compact table.evidence (source | value | agreement) → a .small caveat line.
+- Every h2 section opens with a one-line .verdict ("In one sentence: ...") — the teaser
+  pattern extended to the non-collapsible sections.
+- Every "§N" reference in prose is a real <a href="#sN"> link.
+- Chart.js titles stay terse; the narrative conclusion goes in a .small caption below the
+  .chartbox — never crammed into the chart title.
+
 - Print stylesheet hides nav/toggle buttons. Sticky TOC in three labeled
 groups — Verdict (Bottom line, Plans, Battery×plan, Packages), Evidence (Data, System, Usage,
 Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning, Carbon/NEM,

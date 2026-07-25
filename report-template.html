@@ -153,12 +153,35 @@
     .toc-eyebrow{min-width:54px}
     nav.toc a{font-size:.68rem;padding:2px 8px;flex:0 0 auto}
   }
+
+  /* --- formatting & navigation additions (keep on every regeneration) --- */
+  .skiplink{position:absolute;left:-9999px;top:0;z-index:50;font-family:var(--mono);font-size:.8rem;background:var(--card);color:var(--ink);border:1px solid var(--sop);border-radius:4px;padding:8px 14px}
+  .skiplink:focus{left:12px;top:12px}
+  @media(max-width:800px){.wrap table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}}
+  .rec::before{content:"Verdict"}
+  .note::before{content:"Caveat"}
+  [data-label].rec::before,[data-label].note::before{content:attr(data-label)}
+  .rec::before,.note::before{display:block;font-family:var(--mono);font-size:.62rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--sub);margin-bottom:4px}
+  .verdict{display:block;font-style:italic;color:var(--sub);font-size:.95rem;margin:-6px 0 12px}
+  .finding{margin:14px 0}
+  .finding .claim{font-weight:600}
+  table.evidence{max-width:560px;font-size:.84rem}
+  .hlink{opacity:0;margin-left:9px;font-family:var(--mono);font-weight:400;font-size:.75em;text-decoration:none;color:var(--sub)}
+  h2:hover .hlink,h3:hover .hlink,.hlink:focus{opacity:1}
+  .progress{position:absolute;left:0;bottom:-1px;height:2px;background:var(--ink);width:0;pointer-events:none}
+  .toc-collapse{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);background:none;border:1px dashed var(--line);border-radius:999px;padding:2px 9px;cursor:pointer;margin-left:auto}
+  .toc-collapse:hover{color:var(--sop);border-color:var(--sop)}
+  nav.toc.compact .toc-group a:not(.active):not(.toc-home){display:none}
+  nav.toc.compact:hover .toc-group a,nav.toc.compact:focus-within .toc-group a{display:inline-block}
+  .toc-home{font-weight:700;border-color:var(--ink)!important;color:var(--ink)!important}
+  @media print{.chartbox,table,.rec,.note,.pkg{break-inside:avoid}.hlink,.skiplink{display:none}}
 </style>
 </head>
 <body>
+<a class="skiplink" href="#s0">Skip to the bottom line</a>
 <div class="wrap">
 
-<h1>Home Energy Optimization — Rate Plan + Battery Analysis</h1>
+<h1 id="top">Home Energy Optimization — Rate Plan + Battery Analysis</h1>
 <div class="meta">
   <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">{{HOME_DESCRIPTION}} · {{UTILITY_NAME}} {{CLIMATE_ZONE}} climate zone · {{SYSTEM_SIZE_KW_DC}} kW solar + {{OTHER_MAJOR_LOADS}} · {{NEM_STATUS}} · {{GENERATION_PROVIDER}} generation</span></div>
   <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · rates effective {{RATES_EFFECTIVE_DATE}} · report generated {{REPORT_DATE}}</span></div>
@@ -184,9 +207,10 @@
 </div>
 
 <nav class="toc" id="toc">
-<div class="toc-group"><span class="toc-eyebrow">Verdict</span><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a></div>
 <div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#s8">8 Array upgrades</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
+<div class="progress" id="progress"></div>
 </nav>
 
 <div class="note" style="border-left-color:var(--acc);background:rgba(52,211,153,.06)">
@@ -516,6 +540,7 @@ This is an independent analysis, not advice from any utility, provider, or manuf
 <b>How this report was produced:</b> generated with <b>{{GENERATION_TOOL}}</b>; the data, methodology, and conclusions were then independently reviewed with <b>{{REVIEW_TOOL_1}}</b> and adversarially reviewed with <b>{{REVIEW_TOOL_2}}</b>; the analysis was subsequently re-worked in {{GENERATION_TOOL}} to incorporate the findings of both reviews.</p>
 
 <button class="totop" id="totop" aria-label="Back to top">↑ Top</button>
+<button class="themetoggle" id="themetoggle" aria-label="Switch between light and dark theme">◐ theme</button>
 
 <script>
 // D holds every number the charts draw. ALL values must come from the analysis
@@ -623,7 +648,34 @@ const totop=document.getElementById('totop');
 totop.addEventListener('click',()=>scrollTo(0,0));
 new IntersectionObserver(([en])=>{
  totop.classList.toggle('show',!en.isIntersecting&&en.boundingClientRect.top<0);
+ toc.classList.toggle('compact',!en.isIntersecting&&en.boundingClientRect.top<0);
 }).observe(document.getElementById('s2'));
+
+// Heading copy-links: every h2/h3 with an id gets a hover-revealed # anchor.
+document.querySelectorAll('h2[id],h3[id]').forEach(h=>{
+ const a=document.createElement('a');a.className='hlink';a.href='#'+h.id;a.textContent='#';
+ a.setAttribute('aria-label','Link to this section');h.appendChild(a);
+});
+// Reading-progress hairline under the sticky nav (passive + rAF; not a scroll-spy).
+const prog=document.getElementById('progress');
+let ticking=false;
+addEventListener('scroll',()=>{if(!ticking){requestAnimationFrame(()=>{
+ const d=document.documentElement;prog.style.width=(100*d.scrollTop/(d.scrollHeight-d.clientHeight))+'%';ticking=false});ticking=true}},{passive:true});
+// Collapse/expand the audit <details> sections from the nav.
+const collapser=document.getElementById('toccollapse');
+if(collapser)collapser.addEventListener('click',()=>{
+ const secs=[...document.querySelectorAll('details.sec')];
+ const anyOpen=secs.some(s=>s.open);
+ secs.forEach(s=>s.open=!anyOpen);
+ collapser.textContent=anyOpen?'\u25b8 expand audit':'\u25be collapse audit';
+});
+
+// Theme toggle: charts read the palette at init, so persist the choice and reload.
+document.getElementById('themetoggle').addEventListener('click',()=>{
+ localStorage.setItem('sdge-theme',document.documentElement.dataset.theme==='dark'?'light':'dark');
+ location.reload();
+});
+
 </script>
 </div>
 </body>

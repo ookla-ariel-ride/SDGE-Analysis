@@ -229,6 +229,23 @@ tokens — never hardcode hex), use the semantic palette for TOU-mapped series, 
 pinned with an SRI integrity hash — keep integrity/crossorigin attributes, and recompute the
 sha384 if the Chart.js version ever changes.
 
+**Formatting & navigation mechanics (implemented in the template — keep all):** skip-link
+first in <body>; "⌂ Top" home pill leading the Verdict nav group (href="#top", id on the
+h1); reading-progress hairline in the sticky nav; nav compaction after §1 (eyebrows +
+active pill + home pill; hover/focus expands); a "▾ collapse audit" control toggling the
+three <details> sections; hover-revealed # copy-links on h2/h3 (give h3s ids); tables
+scroll horizontally inside their own container at ≤800px (never page-level); .rec/.note
+boxes carry mono eyebrow labels (Verdict/Caveat defaults, data-label overrides); print
+break-inside:avoid on .chartbox/table/.rec/.note/.pkg.
+
+**Content formatting rules (apply on every prose regeneration):** no paragraph over ~800
+characters — findings use the .finding pattern (bold claim sentence → compact
+table.evidence of source|value|agreement rows → .small caveat); every h2 section opens
+with a one-line .verdict ("In one sentence: …"); every "§N" reference in prose is a real
+<a href="#sN"> link; Chart.js titles stay terse with the narrative conclusion in a .small
+caption below the .chartbox; the masthead carries only title, identity line, day-band,
+.meta ledger rows, and nav.
+
 **Provenance note (required; must survive every regeneration).** The methodology section's
 closing small-print in `index.html` ends with a "How this report was produced" sentence, and
 `README.md` carries the equivalent blockquote immediately before the report description.
