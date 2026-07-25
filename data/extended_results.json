@@ -1,0 +1,131 @@
+{
+ "ab205": {
+  "status": "already_in_effect_and_in_model",
+  "bsc_model_daily": 0.79343,
+  "bsc_adopted_monthly": 24.15,
+  "bsc_adopted_daily": 0.79343,
+  "model_matches_adopted": true,
+  "ev_tou5_bsf_replaced": true,
+  "note": "June 2026 rates are post-restructure; scenario run is a verification. No adopted escalation of the fixed charge exists (AB 23 failed Feb 2026).",
+  "fixed_charge_sensitivity_per_12_per_mo": 144
+ },
+ "electrification_dividend": {
+  "home_ev_kwh": 13723,
+  "home_ev_cost_current_rates": 2942,
+  "supercharge_kwh": 1300,
+  "supercharge_cost_est": 585,
+  "total_ev_fuel_cost": 3527,
+  "gas_counterfactual_cost": 6756,
+  "gas_price": 4.65,
+  "mpg": 23.4,
+  "miles_yr": 34000,
+  "dividend_yr": 3230,
+  "home_ev_cost_if_all_sop": 1732,
+  "dividend_yr_post_fix": 4440,
+  "label": "estimated (gasoline price + mpg + SC price are cited external constants)"
+ },
+ "away_days": {
+  "n_away": 12,
+  "away_median_import_kwh_day": 19.0,
+  "occupied_median_import_kwh_day": 63.3,
+  "note": "away-day import is grid import only; unattended LOAD also eats solar midday, so this is a lower bound on unattended consumption",
+  "implied_unattended_kw": 0.79
+ },
+ "supercharge_delta": {
+  "sc_kwh": 1300,
+  "sc_price_est": 0.45,
+  "home_sop_allin": 0.125,
+  "delta_per_kwh": 0.325,
+  "full_shift_value_yr": 423,
+  "note": "upper bound; road-trip supercharging away from home cannot shift"
+ },
+ "weekend_sop": {
+  "weekend_house_kwh_outside_sop": 1434,
+  "value_if_half_shifts_yr": 387,
+  "value_if_all_shifts_yr": 774,
+  "note": "weekend 0-14 window is super-off-peak year-round; realistic capture is a fraction (laundry/dish/pool timing), so half-shift is quoted"
+ },
+ "representative_year": {
+  "load_jan_jun_2025_kwh": 12534,
+  "load_jan_jun_2026_kwh": 13885,
+  "delta_pct": 10.8,
+  "note": "whole-home load, same-months comparison across the two SAM-8760 calendar files; production side already weather-normalized in \u00a79"
+ },
+ "gas_decomposition": {
+  "days_regressed": 364,
+  "floor_therms_day": 0.376,
+  "slope_therms_per_hdd": 0.1812,
+  "annual_floor_therms": 137,
+  "annual_heating_therms": 206,
+  "heating_gas_cost_yr": 557,
+  "hp_heating_kwh": 1726,
+  "hp_heating_cost_at_midday_value": 173,
+  "hp_heating_saving_yr": 384,
+  "hpwh_kwh": 919,
+  "hpwh_saving_yr": 205,
+  "label": "modeled (COP and midday value assumed; gas $/therm from bills)"
+ },
+ "nbt_2039": {
+  "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
+  "battery_marginal_under_nem2": 2325,
+  "battery_marginal_under_nbt": {
+   "3c": {
+    "battery_marginal_yr": 2539
+   },
+   "5c": {
+    "battery_marginal_yr": 2525
+   },
+   "8c": {
+    "battery_marginal_yr": 2504
+   }
+  },
+  "note": "under flat-credit exports the price-aware battery is worth MORE than under NEM 2.0 (stored surplus displaces ~51-87c imports instead of earning 3-8c credits); a 2026 PW3's 10-yr warranty ends 2036, three years before expiry \u2014 sequencing risk is modest and NBT raises, not lowers, its end-of-life value. NEM 2.0 transfers with the property on sale (worth ~$1,772-2,268/yr to a buyer at current rates)."
+ },
+ "tornado_battery": {
+  "base_payback_yr": 6.2,
+  "levers": {
+   "install_cost": {
+    "payback_range_yr": [
+     5.2,
+     7.3
+    ],
+    "swing_yr": 2.1
+   },
+   "dispatch_policy": {
+    "payback_range_yr": [
+     6.2,
+     8.5
+    ],
+    "swing_yr": 2.3
+   },
+   "post_behavior": {
+    "payback_range_yr": [
+     6.2,
+     6.5
+    ],
+    "swing_yr": 0.3
+   },
+   "dsgs_revenue": {
+    "payback_range_yr": [
+     5.4,
+     6.2
+    ],
+    "swing_yr": 0.8
+   },
+   "escalation_5yr_avg": {
+    "payback_range_yr": [
+     5.3,
+     6.2
+    ],
+    "swing_yr": 0.9
+   }
+  },
+  "ranked_by_swing": [
+   "dispatch_policy",
+   "install_cost",
+   "escalation_5yr_avg",
+   "dsgs_revenue",
+   "post_behavior"
+  ]
+ }
+}
