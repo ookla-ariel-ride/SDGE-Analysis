@@ -131,6 +131,15 @@ hourly kg CO2/MWh and apply to my 15-minute imports/exports: annual footprint, C
 exports, and the emissions delta of moving mistimed EV charging overnight vs to solar midday.
 Cross carbon with tariff — if midday and overnight price the same, the cleaner choice is free.
 
+**9b. Carbon depth & honest labeling (addendum to 9).** Sample as many real ISO days as the
+fetch channel practically allows — our run started at 4 seasonal days and was later expanded
+to 28 (~2 per calendar month). Interpolate uncovered days with **month-hour means** of the
+covered days in the same calendar month, commit the per-day hourly intensity table alongside
+the results, and **label the output by coverage** ("estimated · N days sampled" — never
+"measured" unless coverage is near-complete). Fuller sampling matters: it caught sunny spring
+middays where CAISO's import-inclusive accounting drives intensity to ~0, cutting our
+export-displacement estimate by 28% versus the 4-day version.
+
 **10. Gas + electrification (if I have gas).** Gas Green Button daily therms + rate
 schedule; split non-heating baseline from space heating; model a heat-pump water heater on a
 midday-solar timer; note heat-pump space heating as a bundle-with-HVAC move. Check the bills
@@ -147,6 +156,72 @@ was nearly the whole gap; the netting methods agreed to well under 1%), and cove
 Anchor absolute dollars to the bills; trust the model for RANKINGS and DELTAS. Cross-check
 the bills' NEM year-to-date ledger arithmetic, and compare against the utility's own
 plan-comparison tool.
+
+**12. Battery revenue programs — research CURRENT terms; count only what I can enroll in.**
+Survey the demand-response/VPP landscape for my territory and battery brand as of today (for
+California: the CEC **DSGS** options via the manufacturer's virtual power plant, utility
+**ELRP** VPP pilots, CCA storage programs, and **SGIP** status — its general-market budget
+closed 12/31/2025). Record closed or ineligible programs explicitly at $0 with the reason;
+save program terms and source URLs in a research note and quote them in the report verbatim.
+State the caveats: whether VPP export requires a **Rule 21** interconnection modification
+(non-export agreements do), and that storage additions don't affect NEM grandfathering.
+Stack only revenue the program explicitly permits alongside TOU arbitrage (DSGS does), and
+show battery payback with and without it. In our run DSGS Option 3 via the Tesla app was the
+one enrollable program (~$150–350/season; payback ~6.2 → ~5.4–5.6 yr).
+
+**13. Resilience pricing — bound backup value instead of leaving it $0-or-infinite.** Pull
+the utility's **Electric System Reliability Annual Report** (SAIDI/SAIFI, by district where
+published) and the regulator's **PSPS post-event reports** for my district; convert to
+expected outage-hours/yr for my circuit type, then multiply by a household outage-cost
+bracket ($/h) to get a $/yr resilience-value bracket, labeled estimated. In our run: coastal
+district ~57 SAIDI min/yr including major events and ~zero PSPS exposure → ~1–2.5
+outage-hours/yr → ~$40–250/yr — real but small.
+
+**14. Fixed-charge restructure — VERIFY it isn't already in the bills before modeling it as
+a future.** Where a restructure like California's AB 205 income-graduated fixed charge
+exists (CPUC D.24-05-028 plus the utility's implementation resolution), check the bill's
+fixed-charge line and the rates module FIRST: in our run the $24.15/mo Base Services Charge
+had billed since October 2025, REPLACED the EV plan's prior $16/mo fee, and was already in
+`rates.py` — so the "scenario" was a verification. Then add the sensitivity for future
+changes: every +$12/mo of fixed charge = +$144/yr on every scenario equally, so rankings and
+all marginal behavior/battery figures are unchanged by construction.
+
+**15. Gas HDD decomposition (extends 10).** Regress daily therms on heating degree-days
+(base 65°F): the intercept is the weather-independent floor (water heating/cooking) and the
+slope × annual HDD is space heating; cross-validate the split against the bills' seasonal
+pattern. Then price the heat-pump ladder on that split — HPWH against the floor, heat-pump
+space heating against the slope — valuing the added electricity at the **marginal
+midday-surplus value**, not the blended rate.
+
+**16. Electrification dividend (if I drive EVs).** Measured EV charging cost (detected
+session kWh × the validated all-in rates, plus any DC fast-charging at an estimated price,
+labeled as such) versus the gasoline counterfactual: odometer-derived annual miles ÷ a cited
+fleet fuel economy (FHWA Highway Statistics VM-1) × the cited state gasoline price (EIA
+monthly series). Label the result estimated (its external constants are cited, not
+measured), and state it both at current charging times and post-schedule-fix.
+
+**17. Cheap cross-checks that harden the story:** (a) **away-day baseload** — days with no
+EV charging and imports well below the median give an unattended-house floor (a lower bound:
+unattended load also eats solar midday); (b) **supercharging-vs-home delta** — DC-fast kWh ×
+(estimated DCFC price − home super-off-peak all-in), an upper bound since road-trip energy
+can't shift home; (c) **weekend super-off-peak window** — house kWh sitting outside the
+weekend sop window and its half-shift value (quote the half-shift, not the fantasy full
+shift); (d) **representative-year check** — same-months whole-home load across two
+monitoring calendar years, so the report can say how typical the analysis year was.
+
+**18. Post-grandfathering (NBT-era) battery value + sequencing.** Re-bill the battery year
+under flat export credits (a 3/5/8¢ bracket — a flat-rate sensitivity, NOT a full Avoided
+Cost Calculator run) to test whether the battery's marginal value falls when NEM
+grandfathering expires. Ours ROSE ($2,325 → $2,504–2,539/yr) because stored surplus then
+displaces 51–87¢ imports instead of earning 3–8¢ credits. State the expiry date (PTO +
+20 yr), the hardware-warranty overlap (a battery bought today is out of warranty before
+expiry), and that NEM 2.0 transfers with the property on sale.
+
+**19. Tornado sensitivity on the battery payback.** Recompute the battery-alone payback
+swinging one lever at a time — dispatch policy, install quote, rate escalation, program
+revenue, behavior interaction — rank the levers by swing, and present the ranking with the
+hardware verdict (ours: dispatch policy 2.3 yr > install quote 2.1 > escalation 0.9 > DSGS
+0.8 > EV-fix interaction 0.3, around a 6.2-yr base).
 
 ## PHASE C — PRE-PUBLICATION GATES (run ALL, mechanically — not from memory)
 
@@ -176,6 +251,13 @@ spliced across models).
    Corrections and superseded drafts live in commits, never in the published document.
 7. **Adversarial verification.** Spawn a subagent to attack the math, rates, and claims
    end-to-end; resolve every finding before anything ships.
+8. **Fail-closed artifact discipline.** Derived-results scripts COMPUTE every figure from
+   the engines and upstream artifacts — never hard-code a previously computed number.
+   Assert cross-artifact consistency at run time (our extended-findings script re-runs the
+   dispatch engine and aborts if its battery figures drift more than ~$1.50 from the
+   committed dispatch artifact — a mismatch means a stale upstream artifact; regenerate it
+   first). Validate every required output section before writing, and write artifacts
+   atomically (tmp file + `os.replace`) so a partial or failed run changes nothing on disk.
 
 ## PHASE D — DELIVERABLES
 
@@ -229,23 +311,6 @@ tokens — never hardcode hex), use the semantic palette for TOU-mapped series, 
 pinned with an SRI integrity hash — keep integrity/crossorigin attributes, and recompute the
 sha384 if the Chart.js version ever changes.
 
-**Formatting & navigation mechanics (implemented in the template — keep all):** skip-link
-first in <body>; "⌂ Top" home pill leading the Verdict nav group (href="#top", id on the
-h1); reading-progress hairline in the sticky nav; nav compaction after §1 (eyebrows +
-active pill + home pill; hover/focus expands); a "▾ collapse audit" control toggling the
-three <details> sections; hover-revealed # copy-links on h2/h3 (give h3s ids); tables
-scroll horizontally inside their own container at ≤800px (never page-level); .rec/.note
-boxes carry mono eyebrow labels (Verdict/Caveat defaults, data-label overrides); print
-break-inside:avoid on .chartbox/table/.rec/.note/.pkg.
-
-**Content formatting rules (apply on every prose regeneration):** no paragraph over ~800
-characters — findings use the .finding pattern (bold claim sentence → compact
-table.evidence of source|value|agreement rows → .small caveat); every h2 section opens
-with a one-line .verdict ("In one sentence: …"); every "§N" reference in prose is a real
-<a href="#sN"> link; Chart.js titles stay terse with the narrative conclusion in a .small
-caption below the .chartbox; the masthead carries only title, identity line, day-band,
-.meta ledger rows, and nav.
-
 **Provenance note (required; must survive every regeneration).** The methodology section's
 closing small-print in `index.html` ends with a "How this report was produced" sentence, and
 `README.md` carries the equivalent blockquote immediately before the report description.
@@ -272,5 +337,17 @@ After each commit, verify it actually landed on the remote before moving on.
 **Also deliver TECHNICAL.md and GLOSSARY.md** (the README links to both): TECHNICAL.md is the methods-section documentation — every script, data schema, algorithm, chart pipeline, and validation chain, written so the analysis can be audited or rebuilt; GLOSSARY.md defines every term of art in plain homeowner English with links to authoritative sources.
 
 **Plan wildcards:** where the utility offers an event-based plan (e.g. SDG&E TOU-DR-P with Reduce Your Use event-day surcharges), simulate it explicitly — price the event-day exposure and test whether a battery that dodges events changes the answer — rather than excluding it silently.
+
+**"What to do Monday" implementation appendix (required):** close the report with a short
+content-only appendix — no new analysis; every item cites the section that justifies it —
+containing: (1) the concrete schedule changes (charger windows, load staggering to respect
+the service's coincident-draw limit, the midday-plug-in habit); (2) the pre-battery
+checklist (panel/service headroom check, Rule 21 export-capability check, VPP/DSGS
+enrollment step); (3) **pre-registered success metrics** for the behavior fix — current
+value → target → which bill/cycle to check them on — logged BEFORE the change so the
+evaluation can't be gamed; and (4) a **re-run triggers table**: utility and CCA rate-change
+dates (SDG&E Jan 1/Jun 1, CEA Feb/Jun), regulator changes to the fixed charge,
+fleet/appliance changes, and before-quotes/after-install for a battery — plus a standing
+quarterly re-run if the tooling supports scheduled tasks.
 
 **Privacy tooling (create it, don't just describe it):** set up the mechanical enforcement the README documents — a gitleaks pre-commit hook under .githooks/ (enabled via git config core.hooksPath .githooks), a committed .gitleaks.toml with generic account-format rules, a CI workflow that rescans full history on push, a local-only private/pii-rules.toml carrying my person-specific patterns (never committed), and a committed requirements.txt for the Python environment.

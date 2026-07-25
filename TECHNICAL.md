@@ -48,6 +48,10 @@ private/1-raw-data/  (gitignored — never committed)
 │ battery_dispatch_policies.py│ battery_dispatch_policies.json              │
 │ soiling_analysis.py        │ soiling_results.json                         │
 │ carbon_timing.py           │ carbon_results.json                          │
+│ carbon_fullyear.py         │ carbon_fullyear_results.json,                │
+│                            │ caiso_hourly_intensity.csv                   │
+│ extended_findings.py       │ extended_results.json                        │
+│ package_results.py         │ package_results.json (recomposition)         │
 │ in-session steps (§3.7/§3.11)│ extra_results.json,                        │
 │                            │ cleaning_study_daily.csv,                    │
 │                            │ report_data.json, weather_results.json,     │
@@ -568,6 +572,10 @@ at the SAME price as overnight — the cleaner choice is free on weekdays.
 vs the netting-correct $1,179.93 from §3.8 scenario a); `caveats` (4 sample days, not 365;
 grid-average not marginal intensity; displacement assumption for exports).
 
+**Status.** Superseded as the report's §13 carbon basis by the 28-day sampling in
+`carbon_fullyear.py` (§3.15); this 4-day study remains the workpaper and supplies the four
+legacy seasonal days that `carbon_fullyear.py` reconstructs from `carbon_results.json`.
+
 ### 3.11 In-session studies: cleaning effect, lifetime payback, and `extra_results.json`
 
 **Panel-cleaning diff-in-diff (`data/cleaning_study_daily.csv`).** The array was
@@ -723,16 +731,44 @@ banking low-value surplus.
 
 One script computes the report's extended findings (§6 VPP/resilience framing, §9 dividend
 workups, §10 AB 205 + gas HDD decomposition, §13 2039 strategy, battery-payback tornado).
-**Inputs:** the committed artifacts only — `behavior_rebuild.json` (EV kWh, session
-detection, shift savings), `battery_dispatch_policies.json` (battery marginals),
-`extra_results.json` (price map, NBT re-billing, ev_fleet), `gas_monthly_therms.csv` +
-`gas_bill_summary.csv` (daily/monthly therms, $/therm), the Open-Meteo daily temperatures
-(HDD base 65°F), and `rates.py` constants — plus **cited external constants** recorded with
-sources in `research/extended-research-notes.md`: EIA California gasoline 12-month mean
+It is built **fail-closed**: it computes, validates, and only then publishes — a partial or
+failed run changes nothing on disk.
+
+**Inputs.** `usage.csv` (the Green Button export) beside the script, the two SAM-8760 files
+and the gas Green Button CSV under `private/1-raw-data/`, `data/weather_daily_tmean.csv`
+(HDD base 65°F), the committed `data/battery_dispatch_policies.json` (as the
+cross-artifact assertion target), and the imported modules `behavior_rebuild.py`,
+`battery_dispatch_policies.py`, and `rates.py` — plus **cited external constants** recorded
+with sources in `research/extended-research-notes.md`: EIA California gasoline 12-month mean
 $4.65/gal, FHWA Highway Statistics VM-1 on-road fleet economy 23.4 mpg, supercharger price
 estimate $0.45/kWh (labeled estimate), DSGS/Tesla VPP program terms ($150–350/season),
 SDG&E 2024 reliability report SAIDI figures, CPUC D.24-05-028 / Resolution E-5355 (BSC
-$24.15/mo = $0.79343/day, matching `rates.py` exactly). **Outputs**
+$24.15/mo = $0.79343/day, matching `rates.py` exactly).
+
+**Fail-closed design (the load-bearing part):**
+
+- **Battery figures are computed, never hard-coded.** The script re-runs the dispatch
+  engine itself (`bp.run_batt`/`bp.billed` from the imported `battery_dispatch_policies`
+  module) for all three PW3 policies, plus the integrated post-behavior case (EV shift via
+  `behavior_rebuild.shift_ev` first, then the price-aware battery, re-billed end-to-end),
+  and **asserts every result within ±$1.50 of the committed
+  `battery_dispatch_policies.json`** (`pw3.{evening,twowin,greedy}.save` and
+  `post_behavior.mid.battery_marginal`). A mismatch aborts with "regenerate
+  battery_dispatch_policies.json first" — the tornado and NBT sections are then built only
+  from those computed values.
+- **Input validation fails closed:** empty/truncated SAM-8760 files, a gas/weather merge
+  under 300 days, or a non-physical gas floor/heating split each abort the run.
+- **Publication gate + atomic write:** before writing, all nine required output sections
+  must exist (`ab205`, `electrification_dividend`, `away_days`, `supercharge_delta`,
+  `weekend_sop`, `representative_year`, `gas_decomposition`, `nbt_2039`,
+  `tornado_battery`), the dividend must be positive, `rates.py`'s BSC must equal the
+  adopted $24.15/mo fixed charge, and each NBT battery marginal must be within sanity
+  bounds of the NEM 2.0 marginal. The JSON is then written to a temp file and `os.replace`d
+  into `data/extended_results.json` — never a partial artifact. The `CLAUDE.md` Commands
+  regeneration gate re-runs the script and requires `git diff --exit-code` on the
+  committed artifact.
+
+**Outputs**
 (`data/extended_results.json` keys): `ab205`, `electrification_dividend`, `away_days`,
 `supercharge_delta`, `weekend_sop`, `representative_year`, `gas_decomposition` (364-day
 HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
@@ -755,7 +791,8 @@ same calendar month, then the per-date-per-hour intensity table
 (`data/caiso_hourly_intensity.csv`, committed) is applied to the household's 15-minute
 import/export data by date and hour. **Label rule:** results are tagged
 `estimated · 28 days sampled` — never "measured" — because 28 of 365 days are observed and
-the rest interpolated. Headline outputs: import footprint 5,359.7 kg/yr; export
+the rest interpolated (the script's `COVERED_LABEL_MIN` only permits a `measured` label at
+≥300 covered days). Headline outputs: import footprint 5,359.7 kg/yr; export
 displacement 880.0 kg/yr (−28% vs the 4-day estimate — fuller sampling catches sunny spring
 middays where CAISO's import-inclusive accounting drives intensity to ~0); mistimed-EV
 shift +249.1 kg/yr (to overnight) vs −184.5 (to midday), gap 433.6 kg/yr; window means
@@ -813,12 +850,16 @@ Mapping of every canvas id → `D` arrays → producing computation:
 | `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.greedy_profile_S` (on-peak imports fall 3,989 → 850 kWh/yr with PW3, → 321 with the expansion) |
 | `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the modeled EV-TOU-5+CEA energy cost per month (excludes the daily BSC) |
 | `periods` | horizontal bar ×2 | inline literals: kWh `[14811, 4478, 3989]`, $ `[1869, 2284, 2951]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → period_split` summed across seasons for kWh (sop 6,628+8,183; off 2,238+2,240; on 2,109+1,880); the on-peak $2,951 matches `report_data.json → onpeak.import_cost` |
-| `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_timing.py`, real CAISO Today's Outlook history CSVs) |
+| `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 28 sampled CAISO days + month-hour-mean interpolation; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
 
 Everything else in the report (plan table §3, battery tables §4/§6, package cards §7, deep-dive
 figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`,
 `package_results.json`, `battery_sim.json`, `backup_endurance.json`, `deep_results.json`,
-`weather_results.json`, and the bill summaries. After any rerun, update both the `D` block and
+`weather_results.json`, and the bill summaries. The extended findings woven into §6
+(VPP/resilience, tornado), §9 (dividend, away-days, supercharge/weekend workups), §10
+(AB 205, gas HDD decomposition), §13 (2039 NBT strategy, 28-day carbon) and the
+"What to do Monday" appendix are transcribed the same way from `extended_results.json` and
+`carbon_fullyear_results.json`. After any rerun, update both the `D` block and
 the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §3).
 
 **Report structure conventions (preserve on regeneration; specs in `CLAUDE.md` §§9–11).**
@@ -829,8 +870,10 @@ the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §
   2025 tariffs), which is noted as non-comparable.
 - **Confidence labels:** inline pills tag claims as `measured` (meters/bills/multi-source),
   `modeled` (validated model at current rates), or `estimated` (rate index, single cleaning
-  event, four sampled CAISO days). §§1–10 are measured/modeled throughout; pills appear in
-  §§11–13 where evidence is thinner, and §14 defines the legend.
+  event, 28 sampled CAISO days, cited external program terms). §§1–10 are measured/modeled
+  throughout; pills appear in §§11–13 where evidence is thinner, plus on the extended
+  findings inside §6 (VPP revenue / resilience value — estimated), §9 (dividend —
+  estimated) and §10 (AB 205 — measured), and §14 defines the legend.
 - **Navigation:** sticky TOC grouped Verdict / Evidence / Audit with scroll-spy (one
   IntersectionObserver); the three heaviest audit sections (§9 deep dives, §12 cleaning,
   §13 carbon/NEM) are native `<details>` blocks, OPEN by default (collapsible) with one-line conclusion
@@ -924,7 +967,15 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
       then `package_results.py` → composes `data/package_results.json` (the LOW/MID/HIGH
       package artifact) from the behavior + dispatch artifacts, no new computation;
    8. `lifetime_payback.py` (if you have solar and the install invoice) → update its
-      `INVOICE`/`PROD`/`RATE_IDX`/blended constants first (§3.12).
+      `INVOICE`/`PROD`/`RATE_IDX`/blended constants first (§3.12);
+   9. `extended_findings.py` → the extended-findings batch (§3.14). Run it only after
+      `behavior_rebuild.json` and `battery_dispatch_policies.json` are current: it
+      recomputes the battery dispatch figures from the engine and aborts if they drift
+      more than ±$1.50 from the committed dispatch artifact, then writes
+      `extended_results.json` atomically (tmp + `os.replace`);
+   10. `carbon_timing.py` (4 seasonal days) and/or `carbon_fullyear.py` (§3.15 — the
+      report's carbon basis; needs the cached per-day CAISO CSVs in `caiso_raw/` plus
+      `carbon_results.json` for the reconstructed legacy days) → the §13 carbon artifacts.
 5. **Rebuild the derived artifacts** (§3.7): daily-production cross-validation, weather
    regression, bill-summary CSVs — or skip them for a plan/battery-only analysis.
 6. **Refresh `index.html`** — when regenerating from scratch, start from

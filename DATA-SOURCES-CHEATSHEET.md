@@ -56,10 +56,15 @@ Legend: 📥 = file you download · 🔗 = link to note · ✍️ = value to wri
 - **Daily temperatures:** Open-Meteo archive API (for the cooling regression).
 - **Daily precipitation:** NOAA/RCC ACIS (`data.rcc-acis.org`, nearest airport gauge) — for the soiling/rain-recovery study; also the fallback when Open-Meteo is unreachable.
 - **Grid CO2 (carbon timing):** CAISO Today's Outlook history CSVs — `caiso.com/outlook/history/YYYYMMDD/co2.csv` + `demand.csv`.
+- **Grid CO2 — bulk sampling:** the same CAISO history endpoints accept any `YYYYMMDD` — sample as many days as your fetch channel allows (~2 per calendar month beats 4 seasonal days), interpolate the rest by month-hour means, and label the result by coverage.
+- **Reliability / resilience:** 🔗 the utility's **Electric System Reliability Annual Report** (SAIDI/SAIFI, by district where published — SDG&E's is on sdge.com with a CPUC copy) + **CPUC PSPS post-event reports** for your district — turns "what is backup worth?" into expected outage-hours/yr.
+- **Fuel constants (electrification dividend):** ✍️ EIA state gasoline monthly price series (eia.gov) + FHWA Highway Statistics **VM-1** on-road fleet mpg — the cited constants for the gasoline counterfactual. Record source URLs and capture dates.
 
 ## H. Battery / incentive research (auto — Claude web-searches current data)
 - Current installed prices for candidate batteries (Enphase IQ 5P/10C, Tesla Powerwall 3, etc.).
 - Incentive status: federal residential ITC, CA SGIP (both change — do not assume they exist).
+- **Battery revenue programs** (count only what you can actually enroll in TODAY): the CEC **DSGS** program page (energy.ca.gov; administrator portal dsgs.olivineinc.com) + your battery vendor's VPP pages (e.g. tesla.com/support/energy/virtual-power-plant) + your CCA's program list. Record closed/ineligible programs at $0 with the reason; note whether VPP export needs a Rule 21 interconnection modification and whether TOU-arbitrage stacking is permitted.
+- **Fixed-charge status:** CPUC **D.24-05-028** + your utility's implementation resolution (SDG&E: **Resolution E-5355**) — check whether the income-graduated fixed charge is ALREADY on your bills (and in your rates module) before modeling it as a future scenario.
 
 ---
 
