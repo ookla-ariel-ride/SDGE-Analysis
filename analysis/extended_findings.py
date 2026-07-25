@@ -27,7 +27,7 @@ plus ../data/weather_daily_tmean.csv, ../private/1-raw-data/gas.csv, and the two
 SAM-8760 files in ../private/1-raw-data/ (run from the private/verify sandbox with
 paths adjusted, or beside the private folder per CLAUDE.md Commands).
 """
-import json, pathlib
+import json, os, pathlib
 import numpy as np, pandas as pd
 import behavior_rebuild as br
 import battery_dispatch_policies as bp
@@ -55,6 +55,29 @@ imp0 = d.Consumption.values.astype(float)
 gen0 = d.Generation.values.astype(float)
 base_bill = bp.billed(d, imp0, gen0)
 
+# ---- battery dispatch savings: COMPUTED, never hard-coded -------------------
+ev, sessions = br.detect_sessions(d)
+POL_SAVE = {}
+for _pol in ("evening", "twowin", "greedy"):
+    _i, _e, _, _ = bp.run_batt(d, imp0, gen0, 13.5, _pol)
+    POL_SAVE[_pol] = base_bill - bp.billed(d, _i, _e)
+G = POL_SAVE["greedy"]
+# post-behavior marginal (EV shift first, then battery — bp's integrated pipeline)
+_sop_idx, _sop_ts = br.build_sop_index(d)
+_imp_sh, _ = br.shift_ev(d, ev, sessions, [True] * len(sessions), _sop_idx, _sop_ts)
+_b_sh = bp.billed(d, _imp_sh, gen0)
+_i3, _e3, _, _ = bp.run_batt(d, _imp_sh, gen0, 13.5, "greedy")
+G_POST = _b_sh - bp.billed(d, _i3, _e3)
+# consistency gate: computed values must match the committed dispatch artifact;
+# a mismatch means battery_dispatch_policies.json is stale — regenerate it FIRST.
+_bdp = json.load(open(DATA / "battery_dispatch_policies.json"))
+for _pol in ("evening", "twowin", "greedy"):
+    assert abs(POL_SAVE[_pol] - _bdp["pw3"][_pol]["save"]) <= 1.5, (
+        f"{_pol} save {POL_SAVE[_pol]:.0f} != committed "
+        f"{_bdp['pw3'][_pol]['save']} — regenerate battery_dispatch_policies.json first")
+assert abs(G_POST - _bdp["post_behavior"]["mid"]["battery_marginal"]) <= 1.5, (
+    "post-behavior marginal drifted from committed artifact — regenerate it first")
+
 # ---------- A. AB 205 verification + fixed-charge escalation sensitivity ----
 # The restructure is in effect (Oct 2025) and rates.py's BSC/day already equals it.
 bsc_daily_model = R.BSC
@@ -73,7 +96,6 @@ out["ab205"] = {
 }
 
 # ---------- B. Electrification dividend ------------------------------------
-ev, sessions = br.detect_sessions(d)
 p = d.p.values
 ev_cost = 0.0
 for per in ("on", "off", "sop"):
@@ -155,54 +177,52 @@ out["weekend_sop"] = {
 }
 
 # ---------- F. Representative-year check (SAM 8760 overlap) -----------------
-try:
-    s25 = pd.read_csv(PRIV / "enphase_sam8760_2025.csv").iloc[:, 0].astype(float)
-    s26 = pd.read_csv(PRIV / "enphase_sam8760_2026.csv").iloc[:, 0].astype(float)
-    # compare Jan-Jun (h 0..4343) of each calendar year, both fully populated
-    h = 24 * 181
-    j25, j26 = float(s25[:h].sum()), float(s26[:h].sum())
-    out["representative_year"] = {
-        "load_jan_jun_2025_kwh": round(j25), "load_jan_jun_2026_kwh": round(j26),
-        "delta_pct": round((j26 - j25) / j25 * 100, 1),
-        "note": ("whole-home load, same-months comparison across the two SAM-8760 "
-                 "calendar files; production side already weather-normalized in §9"),
-    }
-except Exception as e:  # pragma: no cover
-    out["representative_year"] = {"error": str(e)}
+# fail closed: any missing/malformed input aborts the run (no partial artifact)
+s25 = pd.read_csv(PRIV / "enphase_sam8760_2025.csv").iloc[:, 0].astype(float)
+s26 = pd.read_csv(PRIV / "enphase_sam8760_2026.csv").iloc[:, 0].astype(float)
+h = 24 * 181  # compare Jan-Jun of each calendar year, both fully populated
+j25, j26 = float(s25[:h].sum()), float(s26[:h].sum())
+assert j25 > 1000 and j26 > 1000, "SAM-8760 files look empty/truncated"
+out["representative_year"] = {
+    "load_jan_jun_2025_kwh": round(j25), "load_jan_jun_2026_kwh": round(j26),
+    "delta_pct": round((j26 - j25) / j25 * 100, 1),
+    "note": ("whole-home load, same-months comparison across the two SAM-8760 "
+             "calendar files; production side already weather-normalized in §9"),
+}
 
 # ---------- G. Gas decomposition (HDD regression) ---------------------------
-try:
-    gas = pd.read_csv(PRIV / "gas.csv", skiprows=13)  # SDG&E gas Green Button:
-    # 13 metadata lines then Meter Number, Date, Start Time, Duration, Consumption
-    gas.columns = [c.strip().lower() for c in gas.columns]
-    gas["date"] = pd.to_datetime(gas["date"]).dt.date
-    gas["therms"] = pd.to_numeric(gas["consumption"], errors="coerce")
-    w = pd.read_csv(DATA / "weather_daily_tmean.csv", skiprows=1,
-                    names=["date", "tf"])  # index header row, then date,tmean(F)
-    w["date"] = pd.to_datetime(w["date"]).dt.date
-    m = gas.merge(w[["date", "tf"]], on="date").dropna()
-    m["hdd"] = np.clip(65 - m.tf.astype(float), 0, None)
-    slope, floor = np.polyfit(m.hdd, m.therms, 1)
-    ann_floor = floor * 365
-    ann_heat = float(m.therms.sum() * (365 / len(m))) - ann_floor
-    hp_kwh = ann_heat * KWH_PER_THERM / HP_COP
-    hpwh_kwh = ann_floor * 0.8 * KWH_PER_THERM / HPWH_COP  # ~80% of floor = DHW
-    out["gas_decomposition"] = {
-        "days_regressed": int(len(m)),
-        "floor_therms_day": round(float(floor), 3),
-        "slope_therms_per_hdd": round(float(slope), 4),
-        "annual_floor_therms": round(ann_floor),
-        "annual_heating_therms": round(ann_heat),
-        "heating_gas_cost_yr": round(ann_heat * THERM_ALLIN),
-        "hp_heating_kwh": round(hp_kwh),
-        "hp_heating_cost_at_midday_value": round(hp_kwh * MIDDAY_VALUE),
-        "hp_heating_saving_yr": round(ann_heat * THERM_ALLIN - hp_kwh * MIDDAY_VALUE),
-        "hpwh_kwh": round(hpwh_kwh),
-        "hpwh_saving_yr": round(ann_floor * 0.8 * THERM_ALLIN - hpwh_kwh * MIDDAY_VALUE),
-        "label": "modeled (COP and midday value assumed; gas $/therm from bills)",
-    }
-except Exception as e:  # pragma: no cover
-    out["gas_decomposition"] = {"error": str(e)}
+# fail closed: any missing/malformed input aborts the run (no partial artifact)
+gas = pd.read_csv(PRIV / "gas.csv", skiprows=13)  # SDG&E gas Green Button:
+# 13 metadata lines then Meter Number, Date, Start Time, Duration, Consumption
+gas.columns = [c.strip().lower() for c in gas.columns]
+gas["date"] = pd.to_datetime(gas["date"]).dt.date
+gas["therms"] = pd.to_numeric(gas["consumption"], errors="coerce")
+w = pd.read_csv(DATA / "weather_daily_tmean.csv", skiprows=1,
+                names=["date", "tf"])  # index header row, then date,tmean(F)
+w["date"] = pd.to_datetime(w["date"]).dt.date
+m = gas.merge(w[["date", "tf"]], on="date").dropna()
+assert len(m) >= 300, f"gas/weather merge too small ({len(m)} days) — schema drift?"
+m["hdd"] = np.clip(65 - m.tf.astype(float), 0, None)
+slope, floor = np.polyfit(m.hdd, m.therms, 1)
+ann_floor = floor * 365
+ann_heat = float(m.therms.sum() * (365 / len(m))) - ann_floor
+assert ann_floor > 0 and ann_heat > 0, "gas decomposition produced non-physical split"
+hp_kwh = ann_heat * KWH_PER_THERM / HP_COP
+hpwh_kwh = ann_floor * 0.8 * KWH_PER_THERM / HPWH_COP  # ~80% of floor = DHW
+out["gas_decomposition"] = {
+    "days_regressed": int(len(m)),
+    "floor_therms_day": round(float(floor), 3),
+    "slope_therms_per_hdd": round(float(slope), 4),
+    "annual_floor_therms": round(ann_floor),
+    "annual_heating_therms": round(ann_heat),
+    "heating_gas_cost_yr": round(ann_heat * THERM_ALLIN),
+    "hp_heating_kwh": round(hp_kwh),
+    "hp_heating_cost_at_midday_value": round(hp_kwh * MIDDAY_VALUE),
+    "hp_heating_saving_yr": round(ann_heat * THERM_ALLIN - hp_kwh * MIDDAY_VALUE),
+    "hpwh_kwh": round(hpwh_kwh),
+    "hpwh_saving_yr": round(ann_floor * 0.8 * THERM_ALLIN - hpwh_kwh * MIDDAY_VALUE),
+    "label": "modeled (COP and midday value assumed; gas $/therm from bills)",
+}
 
 # ---------- H. 2039 NBT transition ------------------------------------------
 def bill_flat_export(dd, imp, exp, credit):
@@ -227,7 +247,7 @@ for credit in (0.03, 0.05, 0.08):
     nbt[f"{int(credit*100)}c"] = {"battery_marginal_yr": round(b0 - b1)}
 out["nbt_2039"] = {
     "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
-    "battery_marginal_under_nem2": bp and 2325,
+    "battery_marginal_under_nem2": round(G),
     "battery_marginal_under_nbt": nbt,
     "note": ("under flat-credit exports the price-aware battery is worth MORE than "
              "under NEM 2.0 (stored surplus displaces ~51-87c imports instead of "
@@ -238,11 +258,14 @@ out["nbt_2039"] = {
 }
 
 # ---------- I. Tornado sensitivity on battery payback ------------------------
-G = 2325.0  # greedy marginal, baseline year
+# All savings figures below are the COMPUTED dispatch results from the top of
+# this script (POL_SAVE / G / G_POST) — never literals.
 levers = {
     "install_cost": [(12000, 12000 / G), (14500, 14500 / G), (17000, 17000 / G)],
-    "dispatch_policy": [(1708, 14500 / 1708), (1946, 14500 / 1946), (G, 14500 / G)],
-    "post_behavior": [(2245, 14500 / 2245), (G, 14500 / G)],
+    "dispatch_policy": [(round(POL_SAVE["evening"]), 14500 / POL_SAVE["evening"]),
+                        (round(POL_SAVE["twowin"]), 14500 / POL_SAVE["twowin"]),
+                        (round(G), 14500 / G)],
+    "post_behavior": [(round(G_POST), 14500 / G_POST), (round(G), 14500 / G)],
     "dsgs_revenue": [(0, 14500 / G), (250, 14500 / (G + 250)), (350, 14500 / (G + 350))],
     "escalation_5yr_avg": [(0.0, 14500 / G), (0.05, 14500 / (G * 1.104)),
                            (0.08, 14500 / (G * 1.17))],  # avg uplift over payback horizon
@@ -258,6 +281,18 @@ out["tornado_battery"] = {
     "ranked_by_swing": sorted(tor, key=lambda k: -tor[k]["swing_yr"]),
 }
 
-with open(DATA / "extended_results.json", "w") as f:
+# ---- publication gate: validate everything, then write ATOMICALLY ----------
+REQUIRED = ("ab205", "electrification_dividend", "away_days", "supercharge_delta",
+            "weekend_sop", "representative_year", "gas_decomposition", "nbt_2039",
+            "tornado_battery")
+for _k in REQUIRED:
+    assert _k in out and "error" not in out[_k], f"section missing/failed: {_k}"
+assert out["electrification_dividend"]["dividend_yr"] > 0
+assert out["ab205"]["model_matches_adopted"], "rates.py BSC != adopted fixed charge"
+for _v in out["nbt_2039"]["battery_marginal_under_nbt"].values():
+    assert _v["battery_marginal_yr"] > out["nbt_2039"]["battery_marginal_under_nem2"] * 0.8
+_tmp = DATA / "extended_results.json.tmp"
+with open(_tmp, "w") as f:
     json.dump(out, f, indent=1)
+os.replace(_tmp, DATA / "extended_results.json")  # atomic: no partial artifact
 print(json.dumps(out, indent=1))
