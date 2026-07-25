@@ -204,9 +204,10 @@ measured), and state it both at current charging times and post-schedule-fix.
 EV charging and imports well below the median give an unattended-house floor (a lower bound:
 unattended load also eats solar midday); (b) **supercharging-vs-home delta** — DC-fast kWh ×
 (estimated DCFC price − home super-off-peak all-in), an upper bound since road-trip energy
-can't shift home; (c) **weekend super-off-peak window** — house kWh sitting outside the
-weekend sop window and its half-shift value (quote the half-shift, not the fantasy full
-shift); (d) **representative-year check** — same-months whole-home load across two
+can't shift home; (c) **weekend super-off-peak window** — house (non-EV) kWh sitting
+outside the weekend sop window, valued by **physically moving it into the same day's sop
+intervals and re-billing both the baseline and shifted years with the billing engine**
+(never kWh × rate-delta); quote the half-shift, not the fantasy full shift; (d) **representative-year check** — same-months whole-home load across two
 monitoring calendar years, so the report can say how typical the analysis year was.
 
 **18. Post-grandfathering (NBT-era) battery value + sequencing.** Re-bill the battery year

@@ -40,7 +40,6 @@ private/1-raw-data/  (gitignored — never committed)
 │ analyze_norelief.py        │ monthly.csv, stats.json (superset:           │
 │                            │ report_data.json from the as-run variant)    │
 │ battery_backup_sims.py     │ battery_sim.json, backup_endurance.json      │
-│ package_sims.py            │ package_results.json                        │
 │ deep_analyses.py           │ deep_results.json                           │
 │ billing_model_nem.py       │ (stdout: bill-validated annual baseline)     │
 │ lifetime_payback.py        │ (stdout: cumulative-value table, crossovers) │
@@ -341,7 +340,10 @@ moved-load cost + 365 × BSC + baseline credit (TOU-DR1 only, same rule as §3.1
 
 **Outputs (script stdout/JSON).**
 - `plan_battery_matrix`: EV-TOU-5 / EV-TOU-2 / TOU-DR1 × {no_battery, with_PW3, battery_value}
-  (e.g. EV-TOU-5: $4,861 → $3,192, battery worth $1,669/yr).
+  (e.g. EV-TOU-5: $4,861 → $3,192, battery worth $1,669/yr). **Labeling:** since the
+  generating script is retired, report §4 marks these per-plan battery cells in-page as a
+  legacy workpaper result — ranking-only, not regenerable; the published battery economics
+  are the §3.13 integrated-pipeline figures, which independently support §4's conclusion.
 - `baseline`: annual cost $4,861, average/min/max modeled monthly bill.
 - `moved_kwh`: 2507.
 - `battery_marginal_after_behavior`: the battery's own savings measured *after* behavior fixes
@@ -569,7 +571,9 @@ at the SAME price as overnight — the cleaner choice is free on weekdays.
 (`annual_avg_by_hour` [24], `by_season_by_hour` {DJF/MAM/JJA/SON × 24},
 `window_means_annual`); `household_inputs`; `footprints_kg_co2_per_yr` (scenarios a/b/c +
 `detail` deltas); `solar_exports_avoided_kg_co2_per_yr`; `cost_vs_carbon` (simple reprice
-vs the netting-correct $1,179.93 from §3.8 scenario a); `caveats` (4 sample days, not 365;
+vs the netting-correct §3.8 scenario-a saving — the artifact's stored $1,179.93 is the
+scenario-a value as of that run; the current committed `behavior_rebuild.json` says
+$1,192.83); `caveats` (4 sample days, not 365;
 grid-average not marginal intensity; displacement assumption for exports).
 
 **Status.** Superseded as the report's §13 carbon basis by the 28-day sampling in
@@ -744,6 +748,9 @@ $4.65/gal, FHWA Highway Statistics VM-1 on-road fleet economy 23.4 mpg, supercha
 estimate $0.45/kWh (labeled estimate), DSGS/Tesla VPP program terms ($150–350/season),
 SDG&E 2024 reliability report SAIDI figures, CPUC D.24-05-028 / Resolution E-5355 (BSC
 $24.15/mo = $0.79343/day, matching `rates.py` exactly).
+All repo paths (`data/`, `private/1-raw-data/`) resolve against the repo root, found by
+walking up from the CWD (then from the script's location), so the documented
+`private/verify` copy-and-run sandbox needs no path edits.
 
 **Fail-closed design (the load-bearing part):**
 
@@ -770,7 +777,11 @@ $24.15/mo = $0.79343/day, matching `rates.py` exactly).
 
 **Outputs**
 (`data/extended_results.json` keys): `ab205`, `electrification_dividend`, `away_days`,
-`supercharge_delta`, `weekend_sop`, `representative_year`, `gas_decomposition` (364-day
+`supercharge_delta`, `weekend_sop` (CLAUDE.md §1b compliant: weekend non-EV import in
+hours ≥14 is **physically moved** into the same day's 0–14 super-off-peak intervals,
+spread uniformly, and both the baseline and the shifted year are re-billed with
+`rates.bill_nem` — half-shift $387/yr, full shift $772/yr; never kWh × rate-delta),
+`representative_year`, `gas_decomposition` (364-day
 HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
 therms/yr), `nbt_2039` (price-aware battery marginal $2,504–2,539/yr under 3–8¢ flat
 exports vs $2,325 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.3 yr >
@@ -789,14 +800,29 @@ all sources incl. imports) ÷ mean(CAISO demand MW) from the Today's Outlook his
 The **337 uncovered days are interpolated with month-hour means** of covered days in the
 same calendar month, then the per-date-per-hour intensity table
 (`data/caiso_hourly_intensity.csv`, committed) is applied to the household's 15-minute
-import/export data by date and hour. **Label rule:** results are tagged
+import/export data by date and hour.
+
+**Intensity-source resolution order (fail-closed, atomic).** The script resolves its
+intensity input in this order: (1) the raw per-day CAISO cache
+`private/1-raw-data/caiso_raw/` (gitignored local archive; the 4 legacy seasonal days are
+reconstructed from `carbon_results.json` as before); (2) if the raw cache is absent, the
+**committed `data/caiso_hourly_intensity.csv`** — which holds every covered day × 24 h and
+is sufficient to recompute `carbon_fullyear_results.json` **byte-identically** (covered-day
+arrays are canonicalized to the CSV's 0.1 kg/MWh resolution in both modes, so the two paths
+produce the same artifacts). **Fail-closed:** if the available coverage (either source) has
+fewer covered days than the committed results artifact records, the script aborts rather
+than silently rebuilding a degraded artifact; a truncated/empty aggregate CSV also aborts.
+**Atomic dual-write:** all outputs are validated first, then the CSV and JSON are written
+to temp files and `os.replace`d together — a failed run changes nothing on disk. All paths
+resolve against the repo root (found by walking up from the CWD, then from the script), so
+the `private/verify` sandbox pattern needs no path edits. **Label rule:** results are tagged
 `estimated · 28 days sampled` — never "measured" — because 28 of 365 days are observed and
 the rest interpolated (the script's `COVERED_LABEL_MIN` only permits a `measured` label at
 ≥300 covered days). Headline outputs: import footprint 5,359.7 kg/yr; export
 displacement 880.0 kg/yr (−28% vs the 4-day estimate — fuller sampling catches sunny spring
 middays where CAISO's import-inclusive accounting drives intensity to ~0); mistimed-EV
 shift +249.1 kg/yr (to overnight) vs −184.5 (to midday), gap 433.6 kg/yr; window means
-271.2 / 103.9 / 156.6 kg/MWh (overnight 00–06 / midday 10–14 / on-peak 16–21). Grid-average
+271.2 / 103.9 / 156.5 kg/MWh (overnight 00–06 / midday 10–14 / on-peak 16–21). Grid-average
 (not marginal) intensity; the dollar side of EV retiming is unchanged (both destination
 windows are super-off-peak on EV-TOU-5).
 
@@ -916,8 +942,10 @@ absolute dollars are anchored to actual bills; the model is trusted for **rankin
 **6.4 The 2.5 kW behavior cap is partly aspirational.** `behavior_adjust()` moves *all* import
 energy above 2.5 kW in the on-peak and 6–9 am windows, but only ~931 kWh of on-peak session
 energy is identifiably the EV (§3.5); the rest includes house loads (HVAC, cooking) that may not
-be movable. The report therefore brackets the behavior saving (~$300–800/yr reliable EV-timing
-floor, ~$1,330/yr stretch) rather than promising the full modeled figure.
+be movable. That crude cap is superseded: the published behavior bracket comes from the
+§3.8 session-based model — **$1,012–1,193/yr** for EV-timing alone (80–100% compliance),
+**$1,672/yr** adding a 25% flexible-house-load shift ($2,151/yr at the aggressive 50%
+stretch) — rather than the full crude-cap figure.
 
 **6.5 Holiday handling is inconsistent by design debt.** `analyze.py`/`analyze_norelief.py`
 treat seven holidays as weekends for TOU assignment; `battery_backup_sims.py`,
@@ -974,8 +1002,10 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
       more than ±$1.50 from the committed dispatch artifact, then writes
       `extended_results.json` atomically (tmp + `os.replace`);
    10. `carbon_timing.py` (4 seasonal days) and/or `carbon_fullyear.py` (§3.15 — the
-      report's carbon basis; needs the cached per-day CAISO CSVs in `caiso_raw/` plus
-      `carbon_results.json` for the reconstructed legacy days) → the §13 carbon artifacts.
+      report's carbon basis; uses the raw day-cache `private/1-raw-data/caiso_raw/` when
+      present, else rebuilds exactly from the committed `data/caiso_hourly_intensity.csv`;
+      `carbon_results.json` supplies the reconstructed legacy days in raw mode) → the §13
+      carbon artifacts.
 5. **Rebuild the derived artifacts** (§3.7): daily-production cross-validation, weather
    regression, bill-summary CSVs — or skip them for a plan/battery-only analysis.
 6. **Refresh `index.html`** — when regenerating from scratch, start from

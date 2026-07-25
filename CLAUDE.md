@@ -23,15 +23,23 @@ cp ../1-raw-data/Electric_15_Minute_*.csv usage.csv
 ../../.venv/bin/python behavior_rebuild.py            # regenerates behavior_rebuild.json
 ../../.venv/bin/python battery_dispatch_policies.py   # regenerates battery_dispatch_policies.json
 
-# The §9 regeneration gate — run after ANY script or artifact change:
-cmp private/verify/behavior_rebuild.json data/behavior_rebuild.json
-cmp private/verify/battery_dispatch_policies.json data/battery_dispatch_policies.json
+# The §9 regeneration gate — run after ANY script or artifact change (still inside
+# private/verify; extended_findings.py, package_results.py and carbon_fullyear.py find
+# the repo root themselves by walking up from the CWD, so no path edits are needed):
+cmp behavior_rebuild.json ../../data/behavior_rebuild.json
+cmp battery_dispatch_policies.json ../../data/battery_dispatch_policies.json
 ../../.venv/bin/python package_results.py && git diff --exit-code ../../data/package_results.json
 ../../.venv/bin/python extended_findings.py && git diff --exit-code ../../data/extended_results.json
 # (must be byte-identical; a diff means a stale artifact or an unreproducible script.
 #  extended_findings.py fails closed: it computes all battery figures from the dispatch
 #  engine, asserts them against battery_dispatch_policies.json, validates every required
 #  section, and writes the artifact atomically — a partial/failed run changes nothing.)
+
+# Carbon artifacts (rerun when needed): carbon_fullyear.py uses the raw CAISO day-cache
+# private/1-raw-data/caiso_raw/ when present, otherwise rebuilds exactly from the
+# committed data/caiso_hourly_intensity.csv; it fails closed if coverage would shrink
+# and writes both artifacts atomically (TECHNICAL.md §3.15):
+../../.venv/bin/python carbon_fullyear.py && git diff --exit-code ../../data/carbon_fullyear_results.json ../../data/caiso_hourly_intensity.csv
 
 # Full-history secret scan (CI runs the generic rules automatically on every push):
 gitleaks git --config .gitleaks.toml .                # committed generic rules
