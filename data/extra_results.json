@@ -74,14 +74,15 @@
   }
  },
  "nbt": {
-  "nem2": 4675,
+  "nem2_nbc_gross": 4884,
   "nbt3c": 7151,
   "nbt5c": 6953,
   "nbt8c": 6655,
   "gf_value": [
-   1980,
-   2476
-  ]
+   1772,
+   2268
+  ],
+  "note": "NBC charged on gross imports in all variants"
  },
  "cleaning": {
   "0.45": {
@@ -123,5 +124,13 @@
   "credits": 492.91,
   "net": 512.4,
   "ok": true
+ },
+ "lifetime": {
+  "blended_old_tou": 0.4866,
+  "blended_new_tou": 0.3025,
+  "solar_value_today": 4992,
+  "nosolar_bill": 9876,
+  "crossover_gross": "~Sep-Oct 2025 (73% through 2025)",
+  "crossover_net_itc": "~Mar 2024 (23% through 2024)"
  }
 }
