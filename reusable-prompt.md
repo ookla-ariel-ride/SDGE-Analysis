@@ -100,14 +100,19 @@ history at today's rates — and find the gross and net-of-ITC crossover dates. 
 solar is worth per year TODAY by re-billing a no-solar counterfactual on the bill-validated
 netting model. Flag the rate-history scaling as approximate (±10% on crossover timing).
 
-**6. Behavior analysis (with $/yr each).** On-peak (4–9pm) import volume and cost; high-power
-(>2.5 kW) loads by TOU period (EV-charging discipline; charging that spills past the 6am
-super-off-peak boundary); an EV charging-session "report card" (sessions, kWh, cost vs
-perfectly-timed cost, dollars lost to mistiming); a phantom/always-on baseload DECOMPOSITION
-from EV-free quiet nights — median/p10/p90 kW, duty-cycling signature, seasonal profile, and
-the lowest occupied-day import floor (present it cautiously — largely legitimate baseload, not
-all recoverable); load-shifting scenarios (25%/50% of on-peak → super-off-peak); midday
-self-consumption vs export economics.
+**6. Behavior analysis (with $/yr each) — move energy physically, never as lump sums.**
+Detect EV charging sessions explicitly (contiguous runs above a rolling baseline with a
+realistic peak-power signature), then model shifts by PHYSICALLY placing the moved kWh into
+destination intervals (respecting the charger's kW cap, verifying energy conservation) and
+re-billing the modified year with the validated netting model — a "shifted kWh × average
+rate" credit misprices the shift. Report a compliance ladder (EV-only at 100% and 80%;
++ flexible house load as a labeled stretch), and note how much of on-peak load is actually
+EV vs house (much house load can't move). Also: an EV charging-session "report card"
+(sessions, kWh, dollars lost to mistiming, and WHERE — daytime off-peak charging can cost
+more than the 4–9pm window); a phantom/always-on baseload DECOMPOSITION from EV-free quiet
+nights — median/p10/p90 kW, duty-cycling signature, seasonal profile, lowest occupied-day
+import floor (present cautiously — largely legitimate baseload); midday self-consumption vs
+export economics.
 
 **7. Weather normalization.** Pull daily temperatures for my area (Open-Meteo archive API,
 free, no key) and regress non-EV daily load on cooling/heating degree-days to isolate A/C
@@ -125,9 +130,10 @@ current incentive status (federal ITC, SGIP) — DO NOT assume they still exist.
 implications of adding storage. Run a Monte Carlo on battery payback (vary rate escalation,
 capacity fade, install price) AND an explicit rate-escalation sensitivity ladder (e.g.
 3/5/8/12%/yr → payback and 10-yr NPV) so I can see how the answer depends on that one
-assumption. Label paybacks honestly: PACKAGE payback (battery + free
-behavior fixes) is NOT the same as BATTERY-ALONE payback — report both, don't credit free
-behavior savings to hardware.
+assumption. Compute the battery's marginal saving on the POST-behavior-fix year (behavior and
+battery overlap — state the overlap $ so nothing is double-counted). Label paybacks honestly:
+PACKAGE payback (battery + free behavior fixes) is NOT the same as BATTERY-ALONE payback —
+report both, don't credit free behavior savings to hardware.
 
 **9. Solar expansion / repowering / microinverter upgrade — answer with data.** Should I add
 panels, install higher-capacity panels, or upgrade microinverters? Value a marginal midday
@@ -158,12 +164,17 @@ monthly detailed bill PDF (electric AND gas, ~12 months each) into my Downloads 
 each line-by-line (pdfplumber). This: (a) validates your modeled rates to the penny, (b)
 resolves ambiguities your model can't — e.g. whether a CCA relief credit actually applies,
 the exact product name, the real climate zone, (c) reconciles MODEL vs ACTUAL billed cost.
-Expect the interval model to overstate absolute cost because utility NEM export crediting is
-often more generous than a conservative interval model captures — quantify the gap, explain
-it (NEM period-netting, generation credits), and tell me to anchor absolute-dollar figures to
-my real bill while trusting the model for plan RANKINGS and PERCENTAGE savings. Also compare
-against the utility's OWN plan-comparison tool (My Energy Center → Pricing Plans) and explain
-any differences.
+Audit coverage in DAYS, not statements: sum the billing-period days to exactly 365 (a
+statement can contain multiple billing periods split at a rate change, and a missing
+shoulder-month bill hides easily). If the model and the bills disagree, find the REAL driver
+before writing a story — test the candidates separately: netting methodology (compare
+annual- vs monthly-netting variants), rate vintage (a model priced entirely at current rates
+reads high against a year billed on older, cheaper tariffs), and coverage gaps. Don't default
+to "NEM export crediting" as the explanation; in our run the netting methods agreed to ~0.3%
+and rate vintage was nearly the whole gap. Anchor absolute dollars to the bills; trust the
+model for RANKINGS and DELTAS. Cross-check the bills' NEM year-to-date ledger arithmetic
+(charges − applied credits = stated net). Also compare against the utility's OWN
+plan-comparison tool (My Energy Center → Pricing Plans) and explain any differences.
 
 **13. Deliverables — one folder, GitHub-Pages-ready.**
 - `index.html`: ONE unified, self-contained interactive report (dark theme, Chart.js from CDN)

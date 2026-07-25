@@ -10,13 +10,29 @@ install. (Alternate ways to view it: clone/download this repo and double-click `
 which is fully self-contained with data inlined and Chart.js from CDN. Note that GitHub's own
 file viewer shows the HTML *source*, not the rendered report — use the link above instead.)
 
-Interactive report comparing all eligible SDG&E residential rate plans against 365 days of
-15-minute Green Button interval data for a solar + EV home in the SDG&E Coastal climate zone (NEM 2.0, CEA generation),
-plus lifetime solar payback, a measured panel-cleaning effect (multi-year diff-in-diff), a soiling/rain-recovery
-study with an optimal-cleaning-cadence model, grid-carbon timing from real CAISO data, a phantom-baseload
-decomposition, the dollar value of NEM 2.0 grandfathering, behavior-savings analysis, a home-battery deep-dive
-(Enphase vs Tesla Powerwall) with rate-escalation sensitivity, solar-expansion and inverter-clipping verdicts,
-weather-normalized cooling, a 12-month detailed-bill audit, and gas/electrification analysis.
+An interactive, evidence-based report for a solar + EV home in the SDG&E Coastal climate zone
+(NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data,
+a full-year detailed-bill audit, six years of production records, and real weather + grid data.
+
+## What the report covers
+
+| § | Section | What's in it |
+|---|---|---|
+| — | Bottom line | Integrated recommendation: plan, EV-timing fix, baseload hunt, battery verdict, solar-expansion verdict, payback status, carbon tip |
+| 1 | The data | Triple-verified inputs: meter flows, whole-home load, production (3 independent sources, ±2%, 0.9999 correlation) |
+| 2 | Your solar system today | Hardware inventory, size verification against measured peak power, health/degradation signals |
+| 3 | Rate plan comparison | All eligible SDG&E plans priced against actual 15-min usage, CCA vs bundled, validated within 1% of SDG&E's own tool |
+| 4 | Battery × plan matrix | Whether a battery changes the best-plan answer (it doesn't — it strengthens it) |
+| 5 | Usage profile | Where the money goes by hour/period/month, with charts; EV-charging findings |
+| 6 | Battery hardware | Arbitrage simulations of 6 real configurations + outage-endurance tiers |
+| 7 | Three costed packages | Low ($0 behavior) / Mid (+1 battery) / High (+expansion): savings, projected bills, honest asset-alone paybacks |
+| 8 | Array upgrades | More panels? Higher-capacity panels? Microinverter upgrade for clipping? All answered with measured data |
+| 9 | Deeper analyses | 6-yr degradation, weather-normalized cooling, EV session report card, plan wildcards, vacation detection |
+| 10 | Actual bills | 365-day bill audit, model-vs-actual reconciliation (rate-vintage, not methodology), gas usage + electrification (HPWH) |
+| 11 | Lifetime payback | Install invoice vs cumulative production value by year — gross and net-of-ITC break-even dates |
+| 12 | Cleaning & soiling | Measured cleaning effect (multi-year diff-in-diff), rain-recovery soiling study, optimal cleaning month & cadence economics |
+| 13 | Carbon · NEM · prices | Grid-carbon timing from real CAISO data (with chart), $/yr value of NEM 2.0 grandfathering, battery vs rate-escalation ladder, phantom-baseload decomposition, marginal price map |
+| 14 | Methodology | Every model, source, and caveat — plus the validation chain |
 
 > **Note on solar monitoring:** this analysis happened to pull production data from **Enphase
 > Enlighten**, but the method is vendor-agnostic. SolarEdge, Tesla, SMA, Fronius, PVOutput, and
