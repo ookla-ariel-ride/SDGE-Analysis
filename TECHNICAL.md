@@ -648,6 +648,24 @@ index is approximate — crossover dates carry roughly ±10% (a few months).
 
 ---
 
+
+### 3.13 `battery_dispatch_policies.py` — dispatch-policy comparison (published battery basis)
+
+Simulates three dispatch policies per 15-minute interval for both configurations
+(13.5 kWh Powerwall 3 and 27 kWh PW3+Expansion, 11.5 kW, 90% RTE): **evening-only**
+(discharge 4–9pm; overnight top-up to 60%), **two-window** (+6–9am house load), and
+**price-aware** (discharge against every non-super-off-peak import; top-up toward full in
+any super-off-peak gap). Rationale: stored energy costs ~8.4¢/kWh (surplus) to ~13.9¢
+(grid top-up) while all non-super-off-peak imports price at 51–87¢, so every such import
+is worth serving. Ordering matters: solar surplus charges first (10am–2pm is both
+super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW outside on-peak) are
+excluded from service. Results (`data/battery_dispatch_policies.json`): 1×PW3
+$1,729 / $1,980 / $2,330 per year; 27 kWh $2,062 / $2,312 / $2,726; price-aware runs
+~0.96 / 0.55 cycles per day. The report's battery economics use the price-aware policy
+(~$2,200/yr post-EV-fix after the measured $130 overlap deduction); the §4 plan matrix
+retains the older evening-only interval sim ($1,669) for cross-plan comparison. The
+escalation ladder in report §13 is rebased on the $2,330 figure.
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py`,
