@@ -132,5 +132,42 @@
   "nosolar_bill": 9876,
   "crossover_gross": "~Sep-Oct 2025 (73% through 2025)",
   "crossover_net_itc": "~Mar 2024 (23% through 2024)"
+ },
+ "ev_fleet": {
+  "source": "owner-provided odometer readings and purchase dates (2026-07-24); charging energy from behavior_rebuild.py session detection",
+  "vehicles": [
+   {
+    "model": "Tesla Model 3 Long Range AWD",
+    "purchased": "2021-08-06",
+    "odometer_mi": 92338,
+    "annualized_mi_per_yr": 18603
+   },
+   {
+    "model": "Tesla Model Y Long Range AWD (2022)",
+    "purchased": "2022-06-10",
+    "odometer_mi": 63594,
+    "annualized_mi_per_yr": 15434
+   }
+  ],
+  "combined_mi_per_yr": 34036,
+  "household_ice_vehicles": 0,
+  "home_charging_setup": "one home charger; second car primarily supercharges away from home",
+  "crosscheck": {
+   "implied_wall_kwh_all_driving_at_260_330_wh_per_mi": [
+    8849,
+    11232
+   ],
+   "measured_home_charging_kwh": 13723,
+   "residual_kwh": [
+    2491,
+    4874
+   ],
+   "candidate_explanations": [
+    "idle/Sentry/preconditioning drain (~730-1,100 kWh/yr for two cars)",
+    "real-world efficiency below rated on highway/heat",
+    "possible partial over-attribution of >=2.5 kW house-load combinations by the session detector"
+   ],
+   "note": "home charging alone exceeds the implied need for ALL driving, consistent with the 'one charger + occasional supercharging' setup only if residual loads above are real; labeled estimated"
+  }
  }
 }
