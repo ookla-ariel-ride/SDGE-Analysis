@@ -104,11 +104,23 @@ Round-three review found every one of these violated. Check them mechanically, n
   estimated (scaled history, single events, sampled days). One cleaning event, four CAISO
   days, and a rate-index extrapolation must not read with the same authority as a year of
   15-minute data.
+- **One canonical rates module:** all analysis scripts import rate constants and the
+  billing engine from a single module (analysis/rates.py, bill-derived). Two scripts with
+  independently declared rates WILL drift (ours disagreed by $209/yr on the same house —
+  rate-table vs bill-derived values). Legacy cross-plan ranking may keep table rates, labeled.
+- **Every committed artifact regenerable by its committed script:** run the script, diff its
+  output against the committed JSON/CSV. A truncated script that can't reproduce its own
+  artifact (ours imported json and never wrote it) fails this gate.
+- **One pipeline per package figure:** composite results (behavior + hardware) come from a
+  single integrated simulation re-billed end-to-end, never by adding numbers from different
+  models and subtracting an overlap estimated in a third.
 - **Process narrative stays out of the report:** the report presents data → analysis →
   conclusions only. Corrections, superseded drafts, and "we fixed X" belong in commits/PRs,
   never in the published document.
 
 ## 10. Report navigation requirements (index.html — keep on every regeneration).
+Start from `report-template.html` — it implements everything below plus the chart scaffolds,
+confidence pills, and provenance slot; replace {{TOKENS}} with script-produced values only.
 Single self-contained file, vanilla CSS/JS, Chart.js CDN only. Sticky TOC in three labeled
 groups — Verdict (Bottom line, Plans, Battery×plan, Packages), Evidence (Data, System, Usage,
 Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning, Carbon/NEM,
@@ -132,7 +144,9 @@ README.md carries the equivalent blockquote immediately before the report-descri
 paragraph. Never drop or reword these when regenerating either file.
 
 ## Repo map (what's public vs private)
-- Public: `index.html`, `README.md`, `CLAUDE.md`, `reusable-prompt.md`,
-  `DATA-SOURCES-CHEATSHEET.md`, `data/` (de-identified), `analysis/` (scripts), `research/`.
+- Public: `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`,
+  `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `data/` (de-identified),
+  `analysis/` (scripts), `research/`.
 - Private (gitignored): `private/` — raw Green Button, bill PDFs, monitoring exports, as-run
-  scripts with personal headers.
+  scripts with personal headers. Exception: `private/README.md` is committed as a placeholder
+  documenting what's withheld.

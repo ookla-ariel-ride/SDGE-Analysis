@@ -150,6 +150,12 @@ plan-comparison tool.
 
 ## PHASE C — PRE-PUBLICATION GATES (run ALL, mechanically — not from memory)
 
+Also enforce: **one canonical rates module** (every script imports constants + billing engine
+from a single `rates.py`; independently declared rates drift), **every committed artifact must
+be regenerable by its committed script** (run it, diff the output), and **one pipeline per
+package figure** (behavior + hardware = one integrated simulation re-billed end-to-end, never
+spliced across models).
+
 1. **Artifact–prose diff.** Every figure in the report must match the committed data
    artifacts (`data/*.json`, `*.csv`). When prose is re-based, REGENERATE the artifacts — a
    stale results JSON will keep publishing a retired number long after the prose is fixed.
@@ -173,10 +179,12 @@ plan-comparison tool.
 
 ## PHASE D — DELIVERABLES
 
-**One GitHub-Pages-ready folder:** `index.html`, `README.md`, `analysis/*.py`, de-identified
-aggregates in `data/`, `rates-reference.md` + notes in `research/`, this prompt and the
-cheatsheet, and a `.gitignore`d `private/` folder holding ALL raw PII (Green Button CSVs,
-bill PDFs, monitoring exports) — never pushed.
+**Start `index.html` from `report-template.html` (in this repo) — do not build the shell from scratch.** The template already contains the finished dark-theme CSS, the grouped Verdict/Evidence/Audit sticky TOC with scroll-spy, the collapsible audit sections with lazy-chart init, the five chart scaffolds, confidence-pill examples, hanging-indent bottom line, and the provenance slot. Your job is to replace every `{{TOKEN}}` with a script-produced value and fill the TODO blocks with your findings — never invent a number to fill a token, and never strip the navigation/provenance machinery.
+
+**One GitHub-Pages-ready folder:** `index.html`, `report-template.html`, `README.md`,
+`analysis/*.py`, de-identified aggregates in `data/`, `rates-reference.md` + notes in
+`research/`, this prompt and the cheatsheet, and a `.gitignore`d `private/` folder holding
+ALL raw PII (Green Button CSVs, bill PDFs, monitoring exports) — never pushed.
 
 **index.html** — one self-contained interactive report (vanilla CSS/JS, Chart.js CDN only),
 ordered: bottom line → data & validation → solar system profile → plan comparison → does-a-

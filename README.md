@@ -31,7 +31,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | 6 | Battery hardware | Arbitrage simulations of 6 real configurations, a three-policy dispatch comparison (evening-only / two-window / price-aware — the published basis), and outage-endurance tiers |
 | 7 | Three costed packages | Low ($0 behavior) / Mid (+1 battery) / High (+expansion): savings, projected bills, honest asset-alone paybacks |
 | 8 | Array upgrades | More panels? Higher-capacity panels? Microinverter upgrade for clipping? All answered with measured data |
-| 9 | Deeper analyses | 6-yr degradation, weather-normalized cooling, EV session report card, plan wildcards, vacation detection |
+| 9 | Deeper analyses | 6-yr degradation, clipping check, weather-normalized cooling, EV session report card, TOU-DR-P wildcard, phantom-load flag |
 | 10 | Actual bills | 365-day bill audit, model-vs-actual reconciliation (rate-vintage, not methodology), gas usage + electrification (HPWH) |
 | 11 | Lifetime payback | Install invoice vs cumulative production value by year — gross and net-of-ITC break-even dates |
 | 12 | Cleaning & soiling | Measured cleaning effect (multi-year diff-in-diff), rain-recovery soiling study, optimal cleaning month & cadence economics |
@@ -49,6 +49,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | File | What it is |
 |---|---|
 | `index.html` | The interactive report (plan comparison, charts, behavior findings, SDG&E-tool comparison, battery deep-dive) |
+| `report-template.html` | De-personalized report skeleton (`{{TOKEN}}` placeholders) — start here when regenerating `index.html` (see `reusable-prompt.md` Phase D and `CLAUDE.md` §10) |
 | `data/plan_results.csv` | Modeled annual cost per plan (CEA and SDG&E-bundled scenarios) |
 | `data/report_data.json` | All computed statistics used by the report |
 | `data/hourly_profile.csv`, `data/monthly.csv` | Aggregated usage profiles |
@@ -68,6 +69,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
 | `analysis/analyze.py` | The plan billing model (Python/pandas) — rerun against a fresh Green Button CSV |
 | `analysis/analyze_norelief.py` | Variant: prices CEA generation without the Rate Relief Credit |
+| `analysis/rates.py` | **Canonical rate constants + billing engine** (bill-derived; imported by all current models) |
 | `analysis/billing_model_nem.py` | Bill-validated NEM 2.0 monthly per-TOU-period netting model |
 | `analysis/behavior_rebuild.py` | Session-based EV/behavior shift model — physically moves kWh and re-bills (supersedes the crude cap approach) |
 | `analysis/battery_backup_sims.py` | Battery arbitrage + backup endurance simulations |
@@ -109,11 +111,11 @@ Your report will be live at `https://<you>.github.io/sdge-rate-analysis/` within
 
 | Path | Pushed to GitHub? | Contents |
 |---|---|---|
-| `index.html`, `README.md`, `reusable-prompt.md` | ✅ yes | Report + docs (PII-free) |
+| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md` | ✅ yes | Report, template, and docs (PII-free) |
 | `data/`, `analysis/`, `research/` | ✅ yes | Data, scripts, and rate research (PII-free) |
 | `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns) |
 | `private/3-analysis-extras/` | ❌ gitignored | As-run script copy with personal header |
-| `private/README.md` | ❌ gitignored | Map of the private archive |
+| `private/README.md` | ✅ yes (placeholder) | Map of the private archive — the one file under `private/` that is committed, so the repo documents what's withheld |
 
 ## The private inputs — and how to obtain your own
 
