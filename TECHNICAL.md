@@ -482,9 +482,12 @@ compliance (seeded RNG): $1,012; (c) + 25% of remaining on-peak house load: $1,6
 `rates.py`.) A 13.5 kWh / 11.5 kW / 90%-RTE battery re-simulated on top of
 (a): $1,876/yr marginal on the baseline → **$1,752/yr after behavior** ($124/yr of
 double-counting avoided). NOTE: these battery figures are the **evening-only dispatch
-variant, retired as the published basis** — the report's battery economics now come from the
-price-aware dispatch of §3.13 ($2,325/yr baseline, $2,245/yr post-EV-fix from the
-same $130 overlap). The $130 overlap measurement is what this script still contributes.
+variant, retired as the published basis**. The published battery economics come from the
+integrated pipeline in `battery_dispatch_policies.py` (§3.13), which runs the EV shift
+first and then the price-aware battery on the shifted load, re-billing end-to-end
+($2,325/yr baseline marginal; $2,245/yr post-behavior marginal) — no overlap subtraction
+is involved anywhere. This script's evening-only overlap figures remain only as a
+workpaper illustration of *why* behavior and hardware must be simulated in one pipeline.
 
 **Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,883.54
 — regenerated on the canonical NBC-on-gross engine, matching §3.6's **$4,884**; earlier netted-NBC builds carried $4,675.20 (
@@ -576,8 +579,9 @@ public daily list works too). CSV schema: `date` (YYYYMMDD), `generated_kwh` —
 `data/pvoutput_daily.csv`. Method: compute the post/pre production ratio across the Aug 12
 boundary in the cleaned year and in each uncleaned control year — the controls estimate the
 pure seasonal decline (they fall 5–8%); the cleaned year *rose* 5%. Diff-in-diff result:
-**+11.8% median cleaning effect** (+10.9% on clear-sky p90 days; peak power +8.6%). The
-array logged 0 kWh on the cleaning day itself (panels offline during the wash),
+**+11.8% median cleaning effect** (+10.9% on clear-sky p90 days; peak power +8.6% —
+daily peak-power records in `data/cleaning_study_peaks_2024.csv`, columns `date,peak_w`).
+The array logged 0 kWh on the cleaning day itself (panels offline during the wash),
 corroborating the date.
 
 **Lifetime payback.** Install invoice: **$37,845 paid Dec 2019** (PTO 2019-12-27). Initially
@@ -673,23 +677,26 @@ absolute dollars; this is why its $4,861 differs from the canonical $4,884 basel
 
 ### 3.12c EV-fleet validation data (in `extra_results.json → ev_fleet` + `wall_charger_daily.csv`)
 
-Three independent sources validate the session detector's EV attribution:
-`data/cleaning_study_peaks_2024.csv` (date, peak_w) holds the daily peak-power records for the 2024 cleaning windows — the +8.6% peak-power corroboration in report §12.
+The session detector's EV attribution is meter-derived and cross-checked by vehicle and
+charger telemetry (two energy cross-checks plus an odometer scale sanity-check — not three
+independent energy measurements):
 
 1. **Tesla app Charge Stats** (trailing 12 months, Aug 2025–Jul 2026, battery-side kWh,
    captured 2026-07-24): combined home 12,828 kWh across 612 sessions, supercharging
    1,300 kWh (9% of total), rated miles added 41,221. Against the detector's 13,723 kWh
-   wall-side, the implied charging loss is 6.5% (typical AC loss 8–12%) — agreement within
-   ~4%. Blended app peak share ~5.8% vs detector on-peak 6.4%.
+   wall-side, the implied wall-to-battery gap is 6.5% — plausibly (not provably) charging
+   loss, since typical AC loss is 8–12% and the app window and meter year overlap heavily
+   but are not identical. Blended app peak share ~5.8% vs detector on-peak 6.4%.
 2. **Tesla Wall Connector daily export** (`data/wall_charger_daily.csv`: columns `date,kwh`,
-   wall-side, Jul 1–24 2026): clean window Jul 1–20 charger 708.9 vs detector 706.1 kWh —
-   99.6% agreement, r = 0.985 daily, mean |diff| 2.4 kWh/day. The export's final rows show
-   the Wall Connector's batched-upload lag (excluded from the clean window; full aligned
-   period agrees to 94.6%).
+   wall-side, Jul 1–24 2026): a short clean window — 20 July days (Jul 1–20) — charger
+   708.9 vs detector 706.1 kWh: 99.6% aggregate agreement, r = 0.985 daily; individual
+   days scatter more (mean |diff| 2.4 kWh/day, ~7% of a typical charging day), so the
+   agreement is at the totals level. The export's final rows show the Wall Connector's
+   batched-upload lag (excluded from the clean window; full aligned period agrees to 94.6%).
 3. **Owner odometers** (Model 3 LR AWD, Model Y LR AWD; ~34,000 driven mi/yr lifetime
-   average): with the app's energy totals this yields ~420 Wh/mi battery-side effective
-   consumption (~83% of rated) — resolving the earlier odometer residual as real-world
-   consumption, not detector over-attribution.
+   average): a scale sanity-check only. With the app's energy totals this yields ~420 Wh/mi
+   battery-side effective consumption (~83% of rated) — consistent with real-world AWD
+   consumption rather than detector over-attribution.
 The `ev_fleet` JSON block records all three plus per-car TOU splits and the household's
 zero-ICE status.
 
@@ -866,9 +873,12 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
       absolute dollar figure (per `CLAUDE.md` §1; expect it to read high if it prices history
       at current rates). Verify against a bill line that non-bypassable charges are billed on
       GROSS imported kWh, and that the code does the same (`CLAUDE.md` §9);
-   6. `behavior_rebuild.py` → session-based shift ladder + the behavior/battery overlap;
+   6. `behavior_rebuild.py` → session-based shift ladder (imported by the integrated
+      battery pipeline; its standalone evening-only overlap figures are workpaper-only);
    7. `battery_dispatch_policies.py` → the three-policy comparison whose **price-aware**
       results are the published battery basis and escalation ladder (§3.13);
+      then `package_results.py` → composes `data/package_results.json` (the LOW/MID/HIGH
+      package artifact) from the behavior + dispatch artifacts, no new computation;
    8. `lifetime_payback.py` (if you have solar and the install invoice) → update its
       `INVOICE`/`PROD`/`RATE_IDX`/blended constants first (§3.12).
 5. **Rebuild the derived artifacts** (§3.7): daily-production cross-validation, weather
