@@ -28,7 +28,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | 3 | Rate plan comparison | All eligible SDG&E plans priced against actual 15-min usage, CCA vs bundled, validated within 1% of SDG&E's own tool |
 | 4 | Battery × plan matrix | Whether a battery changes the best-plan answer (it doesn't — it strengthens it) |
 | 5 | Usage profile | Where the money goes by hour/period/month, with charts; EV-charging findings |
-| 6 | Battery hardware | Arbitrage simulations of 6 real configurations + outage-endurance tiers |
+| 6 | Battery hardware | Arbitrage simulations of 6 real configurations, a three-policy dispatch comparison (evening-only / two-window / price-aware — the published basis), and outage-endurance tiers |
 | 7 | Three costed packages | Low ($0 behavior) / Mid (+1 battery) / High (+expansion): savings, projected bills, honest asset-alone paybacks |
 | 8 | Array upgrades | More panels? Higher-capacity panels? Microinverter upgrade for clipping? All answered with measured data |
 | 9 | Deeper analyses | 6-yr degradation, weather-normalized cooling, EV session report card, plan wildcards, vacation detection |
@@ -73,6 +73,9 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | `analysis/battery_backup_sims.py` | Battery arbitrage + backup endurance simulations |
 | `analysis/soiling_analysis.py` | Soiling from rain-recovery events + days-since-rain regression (NOAA/RCC ACIS precipitation) |
 | `analysis/carbon_timing.py` | Grid-carbon timing from CAISO Today's Outlook history data (CO2 + demand) |
+| `analysis/battery_dispatch_policies.py` | Battery dispatch-policy comparison — evening-only vs two-window vs price-aware (the report's battery basis) |
+| `analysis/lifetime_payback.py` | Lifetime solar payback: cumulative production value vs install invoice, with crossover dates |
+| `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |

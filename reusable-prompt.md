@@ -117,6 +117,7 @@ rate-escalation ladder (e.g. 3/5/8/12%/yr → payback and 10-yr NPV). Compute th
 marginal saving on the POST-behavior-fix year and state the behavior/battery overlap in
 dollars. Label paybacks honestly: PACKAGE payback ≠ BATTERY-ALONE payback — report both,
 never credit free behavior savings to hardware.
+**Dispatch policy is the biggest modeling lever — simulate at least three:** evening-only (discharge on-peak only), two-window (+morning house load), and **price-aware** (discharge against every import priced above the battery's stored-energy cost — typically all non-super-off-peak hours; a stored kWh costs only the forgone export credit ÷ RTE, or the super-off-peak rate ÷ RTE). Exclude EV-spillover intervals from battery service (the free schedule fix moves that load; don't double-pay for it), always charge from solar surplus before grid, and report kWh served and cycles/day per policy. In our run the price-aware policy was worth ~35% more per year than evening-only — publish it as the basis and show the others as the conservative bracket.
 
 **8. Solar expansion / repowering / inverter upgrade.** Value a marginal midday kWh at its
 ACTUAL export credit (often ~10¢ post-2024) vs cost; factor NEM expansion limits (adding
