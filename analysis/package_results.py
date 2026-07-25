@@ -14,7 +14,23 @@ Run AFTER behavior_rebuild.py and battery_dispatch_policies.py.
 """
 import json, pathlib
 
-DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
+def _repo_root():
+    """Locate the repo root: the nearest ancestor directory containing BOTH an
+    analysis/ and a data/ subdirectory. Walk up from the CWD first (so the
+    documented private/verify copy-and-run sandbox works unchanged), then from
+    this file's own location (running in place from analysis/)."""
+    for start in (pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent):
+        p = start
+        while True:
+            if (p / "analysis").is_dir() and (p / "data").is_dir():
+                return p
+            if p.parent == p:
+                break
+            p = p.parent
+    raise SystemExit("repo root not found: no ancestor of the CWD or of this "
+                     "script contains both analysis/ and data/")
+
+DATA = _repo_root() / "data"
 PW3_COST = 14500          # installed, research/battery-research-notes.md
 EXPANSION_COST = 5900     # PW3 expansion increment
 HIGH_COST = PW3_COST + EXPANSION_COST

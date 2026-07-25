@@ -8,7 +8,9 @@ Computes, from data already in the archive plus cited public constants:
   B. Electrification dividend: measured EV charging cost vs gasoline counterfactual.
   C. Away-day natural experiment: unattended baseload from low-use days.
   D. Supercharging vs home delta: value of topping up at home before trips.
-  E. Weekend super-off-peak exploitation: weekend load sitting outside the 0-14 window.
+  E. Weekend super-off-peak exploitation: weekend non-EV load in hours >=14 is
+     physically moved into the same day's 0-14 sop window and the year re-billed
+     with the canonical engine (never kWh x rate-delta; CLAUDE.md 1b).
   F. Representative-year check: SAM-8760 load, overlapping calendar years.
   G. Gas decomposition: water-heating floor vs space-heating slope (HDD regression),
      and the heat-pump electrification ladder priced at midday-surplus value.
@@ -23,9 +25,10 @@ Cited constants (sources in research notes / report prose):
   DSGS VPP $150-350/season (Tesla-stated cap $350, 2026 30% capacity bonus).
 
 Writes data/extended_results.json. Requires usage.csv (Green Button) beside it,
-plus ../data/weather_daily_tmean.csv, ../private/1-raw-data/gas.csv, and the two
-SAM-8760 files in ../private/1-raw-data/ (run from the private/verify sandbox with
-paths adjusted, or beside the private folder per CLAUDE.md Commands).
+plus data/weather_daily_tmean.csv, private/1-raw-data/gas.csv, and the two
+SAM-8760 files in private/1-raw-data/ — all resolved against the repo root,
+which is found by walking up from the CWD (then from this file), so the
+documented private/verify copy-and-run sandbox works with no path edits.
 """
 import json, os, pathlib
 import numpy as np, pandas as pd
@@ -33,9 +36,25 @@ import behavior_rebuild as br
 import battery_dispatch_policies as bp
 import rates as R
 
-HERE = pathlib.Path(__file__).resolve().parent
-DATA = HERE.parent / "data"
-PRIV = HERE.parent / "private" / "1-raw-data"
+def _repo_root():
+    """Locate the repo root: the nearest ancestor directory containing BOTH an
+    analysis/ and a data/ subdirectory. Walk up from the CWD first (so the
+    documented private/verify copy-and-run sandbox works unchanged), then from
+    this file's own location (running in place from analysis/)."""
+    for start in (pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent):
+        p = start
+        while True:
+            if (p / "analysis").is_dir() and (p / "data").is_dir():
+                return p
+            if p.parent == p:
+                break
+            p = p.parent
+    raise SystemExit("repo root not found: no ancestor of the CWD or of this "
+                     "script contains both analysis/ and data/")
+
+ROOT = _repo_root()
+DATA = ROOT / "data"
+PRIV = ROOT / "private" / "1-raw-data"
 
 GAS_USD_GAL = 4.65      # EIA CA regular, Jun 2025-May 2026 published 12-mo mean
 FLEET_MPG = 23.4        # FHWA Highway Statistics VM-1 (2024), on-road light-duty
@@ -155,23 +174,45 @@ out["supercharge_delta"] = {
 }
 
 # ---------- E. Weekend super-off-peak exploitation --------------------------
-wk = d[d.wkend]
-wk_imp = wk.Consumption.values.astype(float)
-wk_ev = ev[d.wkend.values]
-house = wk_imp - wk_ev
-hours = wk.hour.values
-seasw = wk.seas.values
-mask_nonsop = (hours >= 14) & (hours < 24)  # weekend sop is 0-14; rest is off/on
-kwh_mov = float(house[mask_nonsop].sum())
-val = 0.0
-for s in ("S", "W"):
-    for per in ("on", "off"):
-        m = mask_nonsop & (seasw == s) & (wk.p.values == per)
-        val += float(house[m].sum()) * (R.allin(s, per) - R.allin(s, "sop"))
+# CLAUDE.md 1b: move the energy PHYSICALLY and re-bill — never kWh x rate-delta.
+# Weekend house-load (non-EV) import in hours >= 14 is moved into the SAME
+# day's super-off-peak window (weekends are sop 0-14), spread uniformly across
+# that day's 0-14 intervals, and the modified year is re-billed with the same
+# canonical engine (bp.billed -> rates.bill_nem) as the baseline.
+_wkend = d.wkend.values
+_hrs = d.hour.values
+_house = np.clip(imp0 - ev, 0, None)          # non-EV import per interval
+_src = _wkend & (_hrs >= 14)                  # weekend off/on-peak house load
+_dst = _wkend & (_hrs < 14)                   # that day's sop window
+kwh_mov = float(_house[_src].sum())
+_daykeys = d.dt.dt.normalize().values
+
+def _weekend_shift_bill(frac):
+    take = np.where(_src, _house, 0.0) * frac
+    imp = imp0 - take
+    add = np.zeros(len(d))
+    for day in np.unique(_daykeys[_wkend]):
+        m_day = _daykeys == day
+        amt = float(take[m_day].sum())
+        if amt <= 1e-12:
+            continue
+        idx = np.where(m_day & _dst)[0]
+        add[idx] += amt / len(idx)
+    imp2 = imp + add
+    assert abs(float(imp2.sum()) - float(imp0.sum())) < 1e-6  # energy conserved
+    return bp.billed(d, imp2, gen0)
+
+_wk_full = base_bill - _weekend_shift_bill(1.0)
+_wk_half = base_bill - _weekend_shift_bill(0.5)
 out["weekend_sop"] = {
     "weekend_house_kwh_outside_sop": round(kwh_mov),
-    "value_if_half_shifts_yr": round(val * 0.5),
-    "value_if_all_shifts_yr": round(val),
+    "value_if_half_shifts_yr": round(_wk_half),
+    "value_if_all_shifts_yr": round(_wk_full),
+    "method": ("physically moved: weekend non-EV import in hours >=14 relocated "
+               "into the same day's 0-14 super-off-peak intervals (uniform "
+               "spread), baseline and shifted series both billed with "
+               "rates.bill_nem (monthly per-period NEM netting, NBC on gross "
+               "imports); deltas, not kWh x rate-difference"),
     "note": ("weekend 0-14 window is super-off-peak year-round; realistic capture "
              "is a fraction (laundry/dish/pool timing), so half-shift is quoted"),
 }

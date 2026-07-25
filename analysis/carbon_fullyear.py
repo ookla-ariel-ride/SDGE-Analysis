@@ -14,24 +14,39 @@ Carbon-intensity source (REAL DATA, no synthetic curves):
   Total CO2 = Biogas+Biomass+Natural Gas+Coal+Imports+Geothermal (imports may be
   negative when CAISO is net-exporting; CAISO's own accounting).
 
+Intensity-source resolution order (documented in TECHNICAL.md 3.15):
+  1. RAW day-cache private/1-raw-data/caiso_raw/ (gitignored, local archive of the
+     per-day CAISO CSVs) — used when present; the 4 original seasonal days are
+     reconstructed from data/carbon_results.json as before.
+  2. COMMITTED aggregate data/caiso_hourly_intensity.csv (all covered days x 24 h,
+     0.1 kg/MWh) — a clean checkout rebuilds the results artifact exactly from it.
+  Covered-day arrays are canonicalized to 0.1 kg/MWh (the committed CSV's
+  resolution) in BOTH modes, so the two paths produce byte-identical artifacts.
+
+Fail-closed + atomic (CLAUDE.md 9):
+  * if the available coverage (raw cache or committed CSV) has FEWER covered days
+    than the committed carbon_fullyear_results.json, the script ABORTS — it never
+    silently rebuilds a degraded artifact;
+  * all outputs are validated first, then BOTH artifacts (CSV + JSON) are written
+    to temp files and os.replace'd — a failed run changes nothing on disk.
+
 Coverage model:
   * covered days -> their own measured hourly intensity;
   * uncovered days -> month-hour mean of the covered days in the same calendar month
     (every month has >= 2 covered days).
-  The 4 original seasonal days (raw files no longer cached) are reconstructed from the
-  hourly arrays preserved in data/carbon_results.json (rounded to 0.1 kg/MWh there).
 
 Household side: SDG&E Green Button 15-min usage.csv (same file the bill-validated
 models use), EV sessions re-detected with the exact algorithm from behavior_rebuild.py.
 
-Run from private/verify with usage.csv, behavior_rebuild.py, rates.py and caiso_raw/
-beside it; public artifacts are written to the repo data/ directory:
+Run from private/verify with usage.csv, behavior_rebuild.py and rates.py beside it
+(repo paths resolve automatically); public artifacts are written to the repo data/:
   data/caiso_hourly_intensity.csv    (date, hour, kgco2_per_mwh - aggregated ISO data)
   data/carbon_fullyear_results.json
 """
 import glob
 import json
 import os
+import pathlib
 import re
 
 import numpy as np
@@ -39,9 +54,30 @@ import pandas as pd
 
 import behavior_rebuild as br  # reuse load() and detect_sessions() exactly
 
-CAISO_DIR = "caiso_raw"
-OUT_DATA = "../../data" if os.path.isdir("../../data") else "."
-OLD_RESULTS = os.path.join(OUT_DATA, "carbon_results.json")
+
+def _repo_root():
+    """Locate the repo root: the nearest ancestor directory containing BOTH an
+    analysis/ and a data/ subdirectory. Walk up from the CWD first (so the
+    documented private/verify copy-and-run sandbox works unchanged), then from
+    this file's own location (running in place from analysis/)."""
+    for start in (pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent):
+        p = start
+        while True:
+            if (p / "analysis").is_dir() and (p / "data").is_dir():
+                return p
+            if p.parent == p:
+                break
+            p = p.parent
+    raise SystemExit("repo root not found: no ancestor of the CWD or of this "
+                     "script contains both analysis/ and data/")
+
+
+ROOT = _repo_root()
+DATA = ROOT / "data"
+CAISO_DIR = ROOT / "private" / "1-raw-data" / "caiso_raw"  # raw day-cache (gitignored)
+HOURLY_CSV = DATA / "caiso_hourly_intensity.csv"           # committed aggregate
+OLD_RESULTS = DATA / "carbon_results.json"                 # 4-day legacy artifact
+RESULTS_JSON = DATA / "carbon_fullyear_results.json"       # committed results artifact
 
 YEAR_START, YEAR_END = "2025-07-24", "2026-07-23"
 CO2_COLS = ["Biogas CO2", "Biomass CO2", "Natural Gas CO2",
@@ -66,8 +102,16 @@ def hourly_intensity(day):
     return (1000.0 * g.co2 / g.mw)                       # kg/MWh, index 0..23
 
 
-def build_covered():
-    """{pd.Timestamp date: np.array(24) kg/MWh} for every day with raw or legacy data."""
+def _check(day, v):
+    # negative hourly values are legitimate: CAISO books negative import CO2 when
+    # net-exporting, which can outweigh in-state gas on sunny spring middays
+    assert np.isfinite(v).all() and (v > -200).all() and (v < 900).all(), day
+    return v
+
+
+def build_covered_from_raw():
+    """{pd.Timestamp date: np.array(24) kg/MWh} from the raw per-day cache, plus
+    the 4 legacy seasonal days preserved in carbon_results.json."""
     covered = {}
     for f in sorted(glob.glob(f"{CAISO_DIR}/caiso_co2_*.csv")):
         day = re.search(r"caiso_co2_(\d{8})\.csv", f).group(1)
@@ -77,10 +121,7 @@ def build_covered():
         if set(s.index) != set(range(24)):
             print(f"  skipping {day}: hours present {sorted(s.index)}")
             continue
-        v = s.sort_index().values
-        # negative hourly values are legitimate: CAISO books negative import CO2 when
-        # net-exporting, which can outweigh in-state gas on sunny spring middays
-        assert np.isfinite(v).all() and (v > -200).all() and (v < 900).all(), day
+        v = _check(day, s.sort_index().values)
         covered[pd.Timestamp(f"{day[:4]}-{day[4:6]}-{day[6:]}")] = v
     # legacy 4 seasonal days, preserved (rounded to 0.1) in the old results artifact
     with open(OLD_RESULTS) as fh:
@@ -90,31 +131,66 @@ def build_covered():
         if dt_ not in covered:
             covered[dt_] = np.asarray(old["intensity_kg_per_mwh"]
                                          ["by_season_by_hour"][seas], dtype=float)
-    return covered, old
+    return covered
+
+
+def build_covered_from_committed_csv():
+    """{pd.Timestamp date: np.array(24) kg/MWh} rebuilt from the committed
+    aggregate data/caiso_hourly_intensity.csv (all covered days x 24 h)."""
+    tab = pd.read_csv(HOURLY_CSV)
+    if list(tab.columns) != ["date", "hour", "kgco2_per_mwh"]:
+        raise SystemExit(f"{HOURLY_CSV}: unexpected schema {list(tab.columns)}")
+    covered = {}
+    for day, g in tab.groupby("date"):
+        g = g.sort_values("hour")
+        if list(g.hour) != list(range(24)):
+            raise SystemExit(f"{HOURLY_CSV}: {day} does not have hours 0..23 — "
+                             "truncated/corrupt aggregate; refusing to rebuild")
+        covered[pd.Timestamp(day)] = _check(
+            day, g.kgco2_per_mwh.astype(float).values)
+    return covered
 
 
 def main():
-    covered, old = build_covered()
+    # ---------- intensity source resolution (raw cache, else committed CSV) ----
+    if CAISO_DIR.is_dir() and glob.glob(f"{CAISO_DIR}/caiso_co2_*.csv"):
+        covered, mode = build_covered_from_raw(), f"raw cache ({CAISO_DIR})"
+    elif HOURLY_CSV.exists():
+        covered, mode = build_covered_from_committed_csv(), f"committed CSV ({HOURLY_CSV})"
+    else:
+        raise SystemExit("no intensity source available: neither the raw cache "
+                         f"{CAISO_DIR} nor the committed {HOURLY_CSV} exists")
+    # canonicalize to the committed CSV's 0.1 kg/MWh so both source modes are
+    # bit-identical (the legacy 4 days were already stored at 0.1)
+    covered = {k: np.round(v, 1) for k, v in covered.items()}
+    with open(OLD_RESULTS) as fh:
+        old = json.load(fh)
 
-    # ---------- public aggregated artifact: measured hourly intensity ----------
-    rows = [(dt_.strftime("%Y-%m-%d"), h, round(v[h], 1))
-            for dt_, v in sorted(covered.items()) for h in range(24)]
-    tab = pd.DataFrame(rows, columns=["date", "hour", "kgco2_per_mwh"])
-    tab.to_csv(os.path.join(OUT_DATA, "caiso_hourly_intensity.csv"), index=False)
+    days = pd.date_range(YEAR_START, YEAR_END, freq="D")
+    n_cov = sum(1 for dt_ in days if dt_ in covered)
 
-    # ---------- full-year intensity: covered day -> itself, else month-hour mean ----------
+    # ---------- FAIL CLOSED: never rebuild with less coverage than committed ----
+    if RESULTS_JSON.exists():
+        prev_cov = json.load(open(RESULTS_JSON)).get("coverage", {}) \
+                                                .get("days_covered", 0)
+        if n_cov < prev_cov:
+            raise SystemExit(
+                f"FAIL-CLOSED: available coverage is {n_cov} day(s) but the "
+                f"committed {RESULTS_JSON.name} was built from {prev_cov}; "
+                "refusing to silently rebuild a degraded artifact. Restore "
+                f"{CAISO_DIR} or the committed {HOURLY_CSV.name} first.")
+
+    # ---------- full-year intensity: covered day -> itself, else month-hour mean ----
     cov = pd.DataFrame({"date": [d for d in covered for _ in range(24)],
                         "hour": list(range(24)) * len(covered),
                         "kg": np.concatenate([covered[d] for d in covered])})
     cov["month"] = cov.date.dt.month
     mh_mean = cov.groupby(["month", "hour"]).kg.mean()    # (month, hour) -> kg/MWh
 
-    days = pd.date_range(YEAR_START, YEAR_END, freq="D")
     inten_map = {}                                        # date -> np.array(24)
     for dt_ in days:
         inten_map[dt_] = covered[dt_] if dt_ in covered else \
             mh_mean.loc[dt_.month].sort_index().values
-    n_cov = sum(1 for dt_ in days if dt_ in covered)
 
     # ---------- household 15-min data + EV detection (identical to behavior_rebuild) ----------
     d = br.load()
@@ -228,7 +304,7 @@ def main():
         "cost_note": ("On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and "
                       "00:00-06:00 are BOTH super-off-peak at the same price; the netting-"
                       "correct dollar saving for fixing mistimed charging is scenario 'a' in "
-                      "behavior_rebuild.json ($1,179.93/yr), unchanged by this carbon rerun."),
+                      "behavior_rebuild.json ($1,192.83/yr), unchanged by this carbon rerun."),
         "caveats": [
             f"Intensity measured on {n_cov} real CAISO days; the other {365 - n_cov} days "
             "use month-hour means of covered days (day-to-day weather/hydro/outage "
@@ -243,9 +319,25 @@ def main():
             "Moved EV energy assumed spread uniformly across the destination window on its "
             "own day."]}
 
-    with open(os.path.join(OUT_DATA, "carbon_fullyear_results.json"), "w") as fh:
-        json.dump(results, fh, indent=1)
+    # ---------- validate, then write BOTH artifacts atomically ----------
+    rows = [(dt_.strftime("%Y-%m-%d"), h, round(v[h], 1))
+            for dt_, v in sorted(covered.items()) for h in range(24)]
+    tab = pd.DataFrame(rows, columns=["date", "hour", "kgco2_per_mwh"])
+    assert len(tab) == 24 * len(covered) and np.isfinite(tab.kgco2_per_mwh).all()
+    assert np.isfinite(annual).all() and base_kg > 0 and export_avoided_kg > 0
+    for k in ("source", "coverage", "label", "intensity_kg_per_mwh",
+              "household_inputs", "footprints_kg_co2_per_yr",
+              "solar_exports_avoided_kg_co2_per_yr", "old_vs_new"):
+        assert k in results, f"results section missing: {k}"
 
+    tmp_csv, tmp_json = f"{HOURLY_CSV}.tmp", f"{RESULTS_JSON}.tmp"
+    tab.to_csv(tmp_csv, index=False)
+    with open(tmp_json, "w") as fh:
+        json.dump(results, fh, indent=1)
+    os.replace(tmp_csv, HOURLY_CSV)                       # atomic pair: a failed
+    os.replace(tmp_json, RESULTS_JSON)                    # run changes nothing
+
+    print(f"intensity source: {mode}")
     print(f"coverage: {n_cov}/365 days ({100 * n_cov / 365:.1f}%) -> label: {label}")
     print("annual avg intensity by hour (kg/MWh):")
     print("  " + " ".join(f"{h:02d}:{annual[h]:.0f}" for h in range(24)))
