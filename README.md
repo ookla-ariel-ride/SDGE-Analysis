@@ -274,6 +274,12 @@ With your own two files above plus current rates, the scripts regenerate every n
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D — or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
 
+## License
+
+[MIT](LICENSE) — the scripts, template, and documentation are free to reuse and adapt.
+The committed `data/*` artifacts and `index.html` are one household's results, included
+as worked examples; regenerate them from your own data rather than republishing these.
+
 ---
 
 *Last reviewed: 2026-07-25, against commit `e637892`.*
