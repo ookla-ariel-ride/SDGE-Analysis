@@ -35,10 +35,22 @@ before concluding. No figure appears in the report unless a committed script pro
 
 Walk me through **DATA-SOURCES-CHEATSHEET.md section by section (A–H)**: household basics,
 interval data, rate PDFs, detailed bills, solar production + install invoice + cleaning
-history, gas, weather/grid data, battery research. For each section confirm: what I already
+history, gas, weather/grid data, battery research. **Drive the interview from the
+cheatsheet's per-field yaml blocks** — ask each field's `question` by its `id`, honoring
+`required_if` (set has_solar / has_ev / has_gas / has_battery_interest first, from section
+A) and `privacy`. For each section confirm: what I already
 have, what you will pull from my logged-in portals (I'll have Chrome open and logged in —
 you drive via the browser extension, but **NEVER type my password**; single clicks only, and
 confirm which window holds the session), and what to skip (no solar → E; no gas → F).
+
+**Record the answers as you go:** write per-house values into gitignored
+`private/household.yaml` (schema template: `household.example.yaml` at the repo root — the
+analysis scripts read it via `analysis/household.py` and fail closed without it), and keep
+`private/intake-status.md` current — one line per cheatsheet field id, marked
+gathered/skipped. Privacy tiers are binding: `private-only` answers (odometers, invoice
+amounts, street-level or billing-account context) exist ONLY under `private/`; `secret`
+answers (PVOutput API key, monitoring tokens) go ONLY into a gitignored `.env` — never into
+`household.yaml`, and neither tier may ever appear in a committed artifact.
 
 Verify every file actually loads: row counts, date coverage, gaps — tell me if a month is
 missing. **Check bill coverage in DAYS, not number of files**: sum the billing-period days to
@@ -47,8 +59,10 @@ periods, not files, and dedupe. A hidden shoulder-month gap silently skews every
 figure. From the detailed bill, record my rate plan, NEM version + true-up date, generation
 provider, and climate zone.
 
-**Gate:** sections A + B in hand, every one of C–H explicitly confirmed in-use or skipped,
-all files verified. Only then start Phase B.
+**Gate (mechanical):** sections A + B in hand, every one of C–H explicitly confirmed in-use
+or skipped, all files verified, `private/household.yaml` written, and every line in
+`private/intake-status.md` marked gathered or skipped. **Phase B may not start while any
+required field is missing per intake-status.md.**
 
 ## PHASE B — ANALYSIS
 

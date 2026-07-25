@@ -11,8 +11,17 @@ and any agent.
 # One-time setup on any fresh clone — enable the secret/PII pre-commit gate:
 git config core.hooksPath .githooks       # requires: brew install gitleaks
 
-# Python environment (scripts need pandas/numpy):
+# Python environment (scripts need pandas/numpy/pyyaml):
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
+
+# Data intake (Phase A) — create private/household.yaml BEFORE running analysis:
+# walk the interview spec in DATA-SOURCES-CHEATSHEET.md (per-field yaml blocks:
+# id/question/type/required_if/where/privacy) and fill the schema template
+# household.example.yaml into gitignored private/household.yaml; log progress in
+# private/intake-status.md. Analysis scripts fail closed (SystemExit via
+# analysis/household.py) without it. Secrets (PVOutput API key, monitoring
+# tokens) go ONLY to a gitignored .env — never household.yaml.
+cp household.example.yaml private/household.yaml   # then replace every placeholder
 
 # Running analysis scripts: each expects usage.csv (the raw Green Button 15-min
 # export) in its working directory. The raw file lives in private/1-raw-data/ —
@@ -22,12 +31,15 @@ cp ../../analysis/*.py .
 cp ../1-raw-data/Electric_15_Minute_*.csv usage.csv
 ../../.venv/bin/python behavior_rebuild.py            # regenerates behavior_rebuild.json
 ../../.venv/bin/python battery_dispatch_policies.py   # regenerates battery_dispatch_policies.json
+../../.venv/bin/python battery_plan_matrix.py         # regenerates data/battery_plan_matrix.json in place
 
 # The §9 regeneration gate — run after ANY script or artifact change (still inside
-# private/verify; extended_findings.py, package_results.py and carbon_fullyear.py find
-# the repo root themselves by walking up from the CWD, so no path edits are needed):
+# private/verify; extended_findings.py, package_results.py, carbon_fullyear.py and
+# battery_plan_matrix.py find the repo root themselves by walking up from the CWD,
+# so no path edits are needed):
 cmp behavior_rebuild.json ../../data/behavior_rebuild.json
 cmp battery_dispatch_policies.json ../../data/battery_dispatch_policies.json
+git diff --exit-code ../../data/battery_plan_matrix.json
 ../../.venv/bin/python package_results.py && git diff --exit-code ../../data/package_results.json
 ../../.venv/bin/python extended_findings.py && git diff --exit-code ../../data/extended_results.json
 # (must be byte-identical; a diff means a stale artifact or an unreproducible script.
@@ -51,6 +63,9 @@ Every number, claim, and conclusion in the report MUST be traceable to (a) a dat
 loaded, (b) a rate/figure read off an official source or bill, or (c) a calculation you ran
 and can show. If you cannot compute or cite it, do not state it — say "not determined" and
 list what data would settle it.
+- The report records events only AFTER they have happened. Never include future or scheduled
+  events (an upcoming panel cleaning, a bill or evaluation date that hasn't arrived yet) — a
+  data point enters the report when it exists, not when it is planned or anticipated.
 - Never infer a value you can read directly. Climate zone, rate plan, CCA product, credits,
   baseline allowance, meter/account facts → read them off the **detailed bill**, don't guess
   from ZIP or assumptions. (We wrongly assumed "Inland" — the bill said Coastal. We assumed a
@@ -114,6 +129,11 @@ after the sim said $1,669.) After any figure change, grep the report for the old
   still eyeball push-bound files for: name, street address, account/meter/RIN numbers,
   email, phone, exact coordinates, utility/solar/PVOutput account IDs, API keys.
   (We twice nearly leaked a name/meter number.)
+- **Intake privacy tiers are binding:** every DATA-SOURCES-CHEATSHEET.md field is tagged
+  public-ok / private-only / secret — no private-only or secret answer may ever be written
+  into any committed artifact (report, data/, scripts, README, commit messages); private-only
+  values live in gitignored private/household.yaml, secrets ONLY in gitignored .env (never
+  household.yaml).
 - Never type the user's password or enter credentials. The user logs in; you drive.
 - git history is permanent — if PII is ever committed, recommend delete+recreate over scrubbing.
 
@@ -244,8 +264,9 @@ paragraph. Never drop or reword these when regenerating either file.
 
 ## Repo map (what's public vs private)
 - Public: `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`,
-  `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `data/` (de-identified),
-  `analysis/` (scripts), `research/`.
+  `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml` (placeholders
+  only — the filled copy lives at `private/household.yaml`), `requirements.txt`,
+  `data/` (de-identified), `analysis/` (scripts), `research/`.
 - Private (gitignored): `private/` — raw Green Button, bill PDFs, monitoring exports, as-run
   scripts with personal headers. Exception: `private/README.md` is committed as a placeholder
   documenting what's withheld.
@@ -267,5 +288,5 @@ diff-check -> report-template.html), never the retired analyze.py/D-block flow.
 Any future edit of CLAUDE.md must keep: the "Commands" section at the top (hook setup,
 venv/requirements.txt, the private/verify sandbox pattern, the regeneration gate, gitleaks
 scan invocations), the mechanical-enforcement text in section 4, and the reference to the
-committed requirements.txt (pandas, numpy). These encode the working developer setup;
+committed requirements.txt (pandas, numpy, pyyaml). These encode the working developer setup;
 dropping them in a regeneration silently breaks the privacy gate and the reproduction path.

@@ -68,7 +68,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `data/electric_bill_summary.csv` | De-identified per-period totals parsed from the 12 detailed electric bills |
 | `data/cleaning_study_daily.csv` | Multi-year daily production windows around the 2024 panel cleaning (diff-in-diff inputs) |
 | `data/soiling_results.json` | Soiling/rain-recovery study results (rain events, regressions, annual economics) |
-| `data/carbon_results.json` | Grid-carbon timing results (CAISO hourly intensity, household footprint, EV-timing deltas — original 4-day study) |
+| `data/carbon_results.json` | Grid-carbon timing results (CAISO hourly intensity, household footprint, EV-timing deltas) — the retired 4-day study, kept as a workpaper; its stored cost note predates the canonical-engine rebase (`TECHNICAL.md` §3.10) |
 | `data/carbon_fullyear_results.json` | Expanded carbon results: 28 sampled CAISO days + month-hour-mean interpolation (the report's §13 carbon basis) |
 | `data/caiso_hourly_intensity.csv` | Per-day hourly CAISO CO₂ intensity table behind the 28-day carbon sampling |
 | `data/extra_results.json` | Phantom-baseload decomposition, rate-escalation ladder, marginal price map, NBT re-billing, cleaning-cadence model |
@@ -94,9 +94,11 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `analysis/extended_findings.py` | Extended-findings computations (AB 205, electrification dividend, gas HDD decomposition, 2039 strategy, tornado) → `data/extended_results.json` |
 | `analysis/deep_analyses.py` | Deep-dive script: TOU-DR-P wildcard, phantom load, EV sessions, vacation detection, Monte Carlo |
 | `analysis/battery_dispatch_policies.py` | Battery dispatch-policy comparison — evening-only vs two-window vs price-aware (the report's battery basis) |
+| `analysis/battery_plan_matrix.py` | Battery × plan matrix (§4): the price-aware PW3 dispatch billed under each top-3 plan's rate-table values → `data/battery_plan_matrix.json` |
 | `analysis/package_results.py` | Composes `data/package_results.json` from the behavior + dispatch artifacts (no new computation) |
 | `analysis/lifetime_payback.py` | Lifetime solar payback: cumulative production value vs install invoice, with crossover dates |
-| `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder |
+| `data/battery_dispatch_policies.json` | Dispatch-policy results: savings, kWh served, cycles/day, hourly profiles, escalation ladder, §6 serviceable-load inputs |
+| `data/battery_plan_matrix.json` | The §4 battery × plan matrix: no-battery / with-battery / battery-value per top-3 plan (table rates, cross-plan ranking; canonical-engine cross-check included) |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/extended-research-notes.md` | AB 205 / DSGS-VPP / outage-exposure / fuel-constant research (sources + captured figures) backing the extended findings |

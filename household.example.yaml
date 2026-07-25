@@ -1,0 +1,59 @@
+# household.example.yaml — TEMPLATE for private/household.yaml
+# ---------------------------------------------------------------------------
+# This committed file contains ONLY generic placeholders. Copy it to
+# private/household.yaml and fill in YOUR values by walking the intake
+# interview in DATA-SOURCES-CHEATSHEET.md (field ids there map onto the
+# keys here). private/ is gitignored: the filled file never leaves your
+# machine, and no private-only answer may ever be written into a committed
+# artifact. SECRETS (PVOutput API key, monitoring tokens) never belong in
+# household.yaml at all — they go ONLY into a gitignored .env file.
+#
+# Analysis scripts read this through analysis/household.py and FAIL CLOSED
+# (SystemExit pointing back at the cheatsheet) if the file or a required
+# key is missing — there are no silent defaults for required fields.
+# ---------------------------------------------------------------------------
+
+household:
+  climate_zone: "Coastal"            # read off the DETAILED BILL — never guessed from ZIP
+  utility: "SDG&E"                   # SDG&E / PG&E / SCE / other
+  cca: "Example Community Energy"    # generation provider + product; null if utility-bundled
+  plan: "EV-TOU-5"                   # current rate plan, from the bill header
+  nem_version: "NEM 2.0"             # NEM 1.0 / NEM 2.0 / NBT (Solar Billing Plan)
+  pto_date: 2019-01-01               # permission-to-operate date (placeholder)
+
+solar:                               # omit only if you have no solar (has_solar: false)
+  kw_dc: 7.50                        # nameplate DC size (registered with the utility)
+  module_count: 20                   # modules x watts should equal kw_dc — verify
+  inverter_model: "Example IQ Micro" # microinverter or string-inverter model
+  inverter_count: 20
+  kw_ac: 6.00                        # AC ceiling: inverter count x rating
+  install_invoice_usd: 30000         # total installed price (private-only in the real file)
+  install_paid_date: 2019-01         # month the invoice was paid
+  itc_claimed: null                  # true / false / null; null = not determined — the
+                                     # payback script reports BOTH crossovers (gross and
+                                     # net-of-ITC) as scenarios, so null is fine
+
+vehicles:                            # one entry per EV; [] if none (has_ev: false)
+  - make_model: "Example EV Long Range"
+    in_service_date: 2021-01-01
+    odometer: 99999                  # REAL reading goes ONLY in private/household.yaml
+  - make_model: "Example EV Compact"
+    in_service_date: 2022-01-01
+    odometer: 88888
+
+charger:
+  kw: 11.5                           # home EV charger max power — the behavior model's
+                                     # destination cap when it re-places shifted charging
+
+cleaning_history:                    # PAST panel cleanings only (CLAUDE.md §0: events are
+                                     # recorded AFTER they happen — never list a scheduled
+                                     # or planned cleaning here)
+  - date: 2023-01-01
+    cost_usd: 150
+
+gas:                                 # omit only if you have no gas service (has_gas: false)
+  therm_allin_usd: 2.50              # all-in $/therm computed from ~12 detailed gas bills
+
+misc:
+  miles_per_year: 12000              # odometer-derived annualized driven miles, all EVs
+  supercharge_kwh_yr: 500            # DC fast-charging kWh/yr (vehicle app charge stats)
