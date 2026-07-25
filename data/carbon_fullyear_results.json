@@ -1,0 +1,139 @@
+{
+ "source": {
+  "name": "CAISO Today's Outlook (official ISO data)",
+  "endpoints": [
+   "https://www.caiso.com/outlook/history/YYYYMMDD/co2.csv",
+   "https://www.caiso.com/outlook/history/YYYYMMDD/demand.csv"
+  ],
+  "fetched": "2026-07-25",
+  "method": "per covered day: hourly kg CO2/MWh = 1000 * mean(total CO2 mT/h, all sources incl. imports) / mean(CAISO demand MW); uncovered days use the month-hour mean of covered days in the same calendar month; applied to the household's 15-min data by date and hour",
+  "legacy_seasonal_days": "4 original days reused from carbon_results.json hourly arrays (raw 5-min files no longer cached)",
+  "public_intensity_table": "data/caiso_hourly_intensity.csv"
+ },
+ "coverage": {
+  "analysis_year": "2025-07-24 .. 2026-07-23 (365 days)",
+  "days_covered": 28,
+  "pct_of_year": 7.7,
+  "covered_dates": [
+   "2025-07-28",
+   "2025-08-08",
+   "2025-08-22",
+   "2025-09-08",
+   "2025-09-22",
+   "2025-10-08",
+   "2025-10-15",
+   "2025-10-22",
+   "2025-11-08",
+   "2025-11-22",
+   "2025-12-08",
+   "2025-12-22",
+   "2026-01-08",
+   "2026-01-15",
+   "2026-01-22",
+   "2026-02-08",
+   "2026-02-22",
+   "2026-03-10",
+   "2026-03-22",
+   "2026-04-08",
+   "2026-04-15",
+   "2026-04-22",
+   "2026-05-08",
+   "2026-05-22",
+   "2026-06-08",
+   "2026-06-22",
+   "2026-07-08",
+   "2026-07-15"
+  ],
+  "days_interpolated_month_hour_mean": 337,
+  "why_not_365": "CAISO endpoints unreachable from the sandboxed analysis environment (proxy allowlist); days were fetched individually through the permitted fetch channel, so coverage was capped at ~2 days per calendar month plus the 4 original seasonal days"
+ },
+ "label": "estimated (28 days sampled)",
+ "intensity_kg_per_mwh": {
+  "annual_avg_by_hour": [
+   261.3,
+   270.7,
+   280.1,
+   282.1,
+   273.9,
+   259.0,
+   230.5,
+   192.7,
+   140.2,
+   117.4,
+   108.5,
+   105.8,
+   102.3,
+   99.1,
+   93.2,
+   93.5,
+   114.8,
+   138.0,
+   163.6,
+   179.5,
+   186.8,
+   195.7,
+   222.1,
+   243.7
+  ],
+  "window_means_annual": {
+   "sop_overnight_00_06": 271.2,
+   "solar_midday_10_14": 103.9,
+   "on_peak_16_21": 156.6
+  }
+ },
+ "household_inputs": {
+  "window": "2025-07-24 .. 2026-07-23 (365 days)",
+  "imports_kwh": 23277.8,
+  "exports_kwh": 9921.6,
+  "ev_kwh_detected": 13722.7,
+  "ev_kwh_mistimed_on_off_peak": 2575.0
+ },
+ "footprints_kg_co2_per_yr": {
+  "a_current_imports": 5359.7,
+  "b_mistimed_ev_moved_to_sop_00_06": 5608.8,
+  "c_mistimed_ev_moved_to_midday_10_14": 5175.2,
+  "detail": {
+   "mistimed_ev_kg_at_current_hours": 412.6,
+   "mistimed_ev_kg_if_charged_00_06": 661.7,
+   "mistimed_ev_kg_if_charged_10_14": 228.1,
+   "delta_b_vs_a": 249.1,
+   "delta_c_vs_a": -184.5,
+   "midday_cleaner_than_overnight_by": 433.6
+  }
+ },
+ "solar_exports_avoided_kg_co2_per_yr": 880.0,
+ "old_vs_new": {
+  "old_basis": "4 seasonal sample days (carbon_results.json)",
+  "new_basis": "28 sampled days + month-hour-mean interpolation",
+  "annual_import_footprint_kg": {
+   "old": 5489.8,
+   "new": 5359.7,
+   "delta": -130.1
+  },
+  "exports_avoided_kg": {
+   "old": 1217.0,
+   "new": 880.0,
+   "delta": -337.0
+  },
+  "ev_shift_delta_to_sop_kg": {
+   "old": 238.6,
+   "new": 249.1
+  },
+  "ev_shift_delta_to_midday_kg": {
+   "old": -152.7,
+   "new": -184.5
+  },
+  "midday_cleaner_than_overnight_by_kg": {
+   "old": 391.4,
+   "new": 433.6
+  }
+ },
+ "cost_note": "On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and 00:00-06:00 are BOTH super-off-peak at the same price; the netting-correct dollar saving for fixing mistimed charging is scenario 'a' in behavior_rebuild.json ($1,179.93/yr), unchanged by this carbon rerun.",
+ "caveats": [
+  "Intensity measured on 28 real CAISO days; the other 337 days use month-hour means of covered days (day-to-day weather/hydro/outage variation only partially captured).",
+  "Grid-AVERAGE intensity, not marginal; marginal overnight emissions (usually gas on the margin) would widen the overnight-vs-midday gap.",
+  "Export credit uses the same grid-average intensity at export hours (standard displacement assumption).",
+  "CAISO CO2 includes estimated import emissions (can be negative when exporting); on sunny spring days midday hourly intensity goes slightly negative under this accounting, which the 4-day version never sampled.",
+  "Moved EV energy assumed spread uniformly across the destination window on its own day."
+ ]
+}
