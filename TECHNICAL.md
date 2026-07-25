@@ -1,0 +1,557 @@
+# TECHNICAL.md — Methods and Reproduction Reference
+
+This document specifies, at reproduction-grade detail, every script in `analysis/`, the exact
+schema of every input and output file, and the provenance of every chart in `index.html`. It is
+written for someone who wants to run the same analysis on their own home. It deliberately does
+not repeat the narrative context in `README.md` (what the project is), `DATA-SOURCES-CHEATSHEET.md`
+(where to download each input), or `CLAUDE.md` (operating rules and lessons learned) — read those
+first; this file is the methods section.
+
+Subject system, stated once: a single-family home in the SDG&E Coastal climate zone with a
+10.05 kW DC rooftop array (30 microinverters, ~9.45 kW AC), one EV, NEM 2.0, and Clean Energy
+Alliance (CEA) generation on the EV-TOU-5 rate. Analysis window: the 365 days 2025-07-24 through
+2026-07-23. All raw inputs containing personal identifiers live in `private/` (gitignored); only
+de-identified aggregates are committed under `data/`.
+
+---
+
+## 1. Pipeline overview
+
+The pipeline has three stages: raw exports from utility/monitoring portals (private), Python
+scripts that reduce them to de-identified aggregates and simulation results (`analysis/` →
+`data/`), and a single self-contained HTML report whose charts read an inlined JavaScript object
+`D = {...}` (`index.html`).
+
+```
+private/1-raw-data/  (gitignored — never committed)
+│
+├── Electric_15_Minute_<range>.csv   SDG&E Green Button, 15-min imports/exports
+├── enphase_sam8760_2025.csv         Enphase SAM 8760 hourly whole-home load, cal. 2025
+├── enphase_sam8760_2026.csv         Enphase SAM 8760 hourly whole-home load, cal. 2026
+├── gas_daily_jul25-jul26.csv        SDG&E gas Green Button, daily therms
+├── electric-bills/*.pdf             12 detailed electric bill PDFs
+├── gas-bills/*.pdf                  12 detailed gas bill PDFs
+└── bill_summary.json                parsed bill lines (pdfplumber output)
+        │
+        │  analysis/ scripts (pandas/numpy; rate tables hard-coded from tariff PDFs)
+        ▼
+┌────────────────────────────┬──────────────────────────────────────────────┐
+│ analyze.py /               │ plan_results.csv, hourly_profile.csv,        │
+│ analyze_norelief.py        │ monthly.csv, stats.json (superset:           │
+│                            │ report_data.json from the as-run variant)    │
+│ battery_backup_sims.py     │ battery_sim.json, backup_endurance.json      │
+│ package_sims.py            │ package_results.json                        │
+│ deep_analyses.py           │ deep_results.json                           │
+│ billing_model_nem.py       │ (stdout: bill-validated annual baseline)     │
+│ in-session steps (see §3.7)│ report_data.json, weather_results.json,     │
+│                            │ threeway_production_validation.csv,          │
+│                            │ electric/gas_bill_summary.csv, pvoutput_*,   │
+│                            │ enphase_daily_production.csv,                │
+│                            │ gas_monthly_therms.csv, weather_daily_*.csv  │
+└────────────────────────────┴──────────────────────────────────────────────┘
+        │
+        │  numbers hand-transcribed into the inlined `const D = {...}` block
+        ▼
+index.html  →  four Chart.js canvases: #hourly, #battery, #monthly, #periods
+               (plus HTML tables/cards populated from the same data/ artifacts)
+```
+
+Two things to understand about the flow:
+
+1. **The report does not fetch `data/` at runtime.** `index.html` is fully self-contained: the
+   chart arrays are copied into the `D` object, and every table/card number is static HTML. The
+   `data/` folder is the audit trail. When you rerun the scripts you must manually refresh both
+   the `D` block and the prose figures (see `CLAUDE.md` §3 on keeping figures consistent).
+2. **Two generations of billing model coexist.** `analyze*.py` price every 15-minute interval
+   independently (interval netting). `billing_model_nem.py` implements true NEM 2.0 monthly
+   per-TOU-period netting and was validated against the 12 actual bills; the two methods agree
+   to ~0.3% on this dataset (§6). Plan *rankings* and battery/behavior *deltas* come from the
+   interval models; absolute dollar levels in the report are anchored to actual bills.
+
+---
+
+## 2. Input data formats
+
+### 2.1 SDG&E Green Button electric interval CSV (`Electric_15_Minute_<range>.csv`)
+
+The file begins with **13 metadata rows** (two comma-separated fields each: Name, Address,
+Account Number, Disclaimer, Title, Resource, Meter Number, Interval UOM, Reading Start, Reading
+End, Total Duration, Total Usage, UOM). These rows contain the personal identifiers that make
+the file private. Every script skips them with `pd.read_csv(..., skiprows=13)`.
+
+Row 14 is the header; each subsequent row is one 15-minute interval, all fields quoted:
+
+| Column | Format | Meaning |
+|---|---|---|
+| `Meter Number` | string | meter ID (unused by the scripts) |
+| `Date` | `M/D/YYYY` | interval date, local time |
+| `Start Time` | `h:mm AM/PM` | interval start, local time |
+| `Duration` | `15` | minutes |
+| `Consumption` | kWh, 4 decimals | **grid imports** during the interval |
+| `Generation` | kWh, 4 decimals | **grid exports** (solar surplus) during the interval |
+| `Net` | kWh | `Consumption − Generation` |
+
+Critical semantics: `Consumption` is *grid import*, not household load, and `Generation` is
+*grid export*, not solar production. Self-consumed solar is invisible to this file — that is why
+the Enphase consumption data (§2.2) is required for load/production analysis. The export used
+here covered 2025-07-01 through 2026-07-23 (37,248 interval rows); all scripts then window to
+the last 365 days. Timestamps are parsed with
+`pd.to_datetime(Date + " " + Start Time, format="%m/%d/%Y %I:%M %p")`.
+
+### 2.2 Enphase SAM 8760 hourly consumption (`enphase_sam8760_<year>.csv`)
+
+One file per calendar year. A single column with header `kWh` and exactly 8,760 hourly values
+(8,761 lines including the header), representing whole-home consumption from Jan 1 00:00 to
+Dec 31 23:00 **local time**; hours in the future of the current year are zero. No identifiers.
+`battery_backup_sims.py` and `deep_analyses.py` assign the values to
+`pd.date_range("<year>-01-01", periods=8760, freq="h")` and stitch the two years into the
+rolling 365-day window. Requires Enphase consumption CTs ("load with solar" metering).
+
+### 2.3 Enphase daily production (`data/enphase_daily_production.csv`)
+
+Committed (de-identified). Columns: `Date/Time` (`MM/DD/YYYY`), `Energy Delivered (kWh)` —
+revenue-grade production-CT daily totals, one row per day of the analysis window (366 data rows).
+
+### 2.4 PVOutput records (committed under `data/`)
+
+- `pvoutput_daily.csv`: `date` (ISO), `generated_kwh` — daily gross generation from the
+  microinverter fleet as published to PVOutput, same window.
+- `pvoutput_5min_sample.csv`: one sample day (288 five-minute rows) with columns
+  `DATE, TIME, ENERGY_OUT, POWER_OUT, ENERGY_IN, POWER_IN, TEMPERATURE, VOLTAGE` (PVOutput
+  donation-API intraday format; `POWER_OUT` in watts is the field used for the clipping check).
+- `pvoutput_yearly_2020-2025.csv`: `year, kwh_generated, kwh_exported, avg_eff_kwh_per_kw_day,
+  days` — per-year statistics used for the degradation trend (e.g. 2021 efficiency 4.749,
+  2025 4.501 kWh/kW/day).
+
+### 2.5 Gas Green Button daily CSV (`gas_daily_jul25-jul26.csv`)
+
+Same envelope as §2.1: 13 metadata rows (with `Interval UOM = Day`, `UOM = Therms`), then header
+`Meter Number, Date, Start Time, Duration, Consumption` with `Duration = "Day"` and
+`Consumption` in therms per day (read at ~6:59 AM). Aggregated in-session to
+`data/gas_monthly_therms.csv` (`month` as `YYYY-MM`, `therms`); the window total is 342 therms.
+
+### 2.6 Open-Meteo daily temperature
+
+Daily mean temperatures were pulled from the Open-Meteo archive API (JSON response with parallel
+daily arrays of dates and temperatures) for the home's approximate coordinates, and persisted as
+`data/weather_daily_tmean.csv`: an unnamed date index column plus one unnamed value column
+(header `0`) holding the daily mean temperature in °F (e.g. 2025-07-24 → 67.6). The cooling
+regression (§3.7) uses degree-day bases of 65 °F (CDD) and 60 °F (HDD).
+
+### 2.7 Detailed bill PDFs
+
+Twelve electric and twelve gas monthly "detailed bill" PDFs from the utility portal, parsed with
+**pdfplumber** in-session. The extracted electric fields are archived privately as
+`private/1-raw-data/bill_summary.json` (a list of 12 objects with keys `period` (e.g.
+`"10/28/25 - 11/25/25"`), `days`, `net_kwh`, `gross_kwh`, `sdge_delivery`, `cca_generation`,
+`current_charges`) and committed de-identified as `data/electric_bill_summary.csv` (same columns).
+Gas bills reduce to `data/gas_bill_summary.csv`: `file_month, therms, total_gas_service,
+baseline_rate, nonbaseline_rate` (e.g. Jan 2026: 72 therms, $203.25, baseline $2.02136/therm,
+non-baseline $2.37552/therm).
+
+---
+
+## 3. Script-by-script reference
+
+All scripts are Python 3 requiring only `pandas` and `numpy` (`billing_model_nem.py` needs only
+those two; nothing else imports anything beyond the standard library). None takes command-line
+arguments; input paths are constants at the top of each file. `analyze*.py` contain an absolute
+path from the original session — edit `CSV = ...` to your Green Button file. The other four
+scripts expect files in the working directory under fixed names:
+
+- `usage.csv` → your Green Button 15-minute export (§2.1)
+- `samA.csv` → SAM 8760 for the **current** calendar year (here 2026)
+- `samB.csv` → SAM 8760 for the **prior** calendar year (here 2025)
+
+Also edit the window anchor `end = dt.datetime(2026,7,24)` (the exclusive end of the 365-day
+window) in every script to the day after your last full data day.
+
+### 3.0 Shared preprocessing and constants (identical logic in all six scripts)
+
+**Loading.** `read_csv(skiprows=13)`; strip column whitespace; build `dt` from `Date` +
+`Start Time`; coerce `Consumption`/`Generation` (and `Net` in `analyze*.py`) to numeric; filter
+to `end − 365 days ≤ dt < end`.
+
+**Season.** `summer ("S")` = months **June–October** (`month in {6,7,8,9,10}`); all other months
+are winter (`"W"`).
+
+**TOU period assignment** (3-period plans; windows effective May 2026, identical for SDG&E and
+CEA), computed per 15-minute interval from fractional hour `h`:
+
+- **on-peak**: 16:00–21:00 (4–9 pm), every day of the year;
+- **super-off-peak (sop)**: weekdays `h < 6` or `10 ≤ h < 14`; weekends `h < 14`;
+- **off-peak**: everything else (weekdays 6–10, 14–16, 21–24; weekends 14–16, 21–24).
+
+For the 2-period plan TOU-DR2, `analyze*.py` use simply on = 16–21, off = otherwise.
+
+**Holidays.** `analyze.py`/`analyze_norelief.py` treat seven holidays as weekend days for TOU
+purposes (New Year's, Presidents' Day = 3rd Mon Feb, Memorial Day = last Mon May, July 4, Labor
+Day = 1st Mon Sep, Veterans Day, Thanksgiving = 4th Thu Nov, Christmas). The four newer scripts
+use only `weekday >= 5` — a known, dollar-negligible inconsistency (§6.5).
+
+**Rate constants** (all $/kWh unless noted; sources and effective dates in
+`research/rates-reference.md`):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `WFNBC_DWR` | 0.00591 | Wildfire Fund NBC + DWR bond charge |
+| `PCIA` | 0.02828 | Power Charge Indifference Adjustment, 2023-vintage CCA customer |
+| `NBC` | 0.01515 + 0.00000 − 0.00007 + 0.00591 ≈ 0.02099 | non-bypassable charges (PPP + ND + CTC + WF-NBC/DWR) — **not** credited on exports |
+| `BSC` | 0.79343 $/day | Base Services Charge, all residential plans |
+| `CEA_RELIEF` | −0.03871 | CEA Clean Impact rate-relief credit (bill audit later proved it does **not** apply to this account — see §3.2/§6.2) |
+| `BASELINE_CREDIT` | −0.10663 | credit on net consumption up to 130% of baseline (TOU-DR1/DR2/DR-P only) |
+| `BASELINE` | S 10.4 / W 9.6 kWh/day | baseline allowance **as coded** — an initial climate-zone assumption; the bill audit fixed the home in the SDG&E Coastal zone, whose allowances the report states as 9.0/9.2. Immaterial to conclusions because the winning plan (EV-TOU-5) has no baseline credit; substitute your own zone's allowance from Schedule DR. |
+
+**SDG&E delivery (UDC) totals, effective 6/1/2026** (from `analyze*.py`; S = summer, W = winter;
+same value on/off where the plan doesn't differentiate delivery):
+
+| Plan | S on | S off | S sop | W on | W off | W sop |
+|---|---|---|---|---|---|---|
+| EV-TOU-5 | 0.31711 | 0.31711 | 0.04114 | 0.31711 | 0.31711 | 0.04114 |
+| EV-TOU-2 | 0.30372 | 0.30372 | 0.16275 | 0.30372 | 0.30372 | 0.16275 |
+| TOU-DR1 | 0.32948 | 0.32948 | 0.32948 | 0.32948 | 0.32948 | 0.32948 |
+| TOU-DR2 | 0.33396 | 0.32750 | — | 0.32948 | 0.32948 | — |
+| TOU-DR-P | 0.32948 | 0.32948 | 0.32948 | 0.32948 | 0.32948 | 0.32948 |
+| TOU-ELEC | 0.25317 | 0.25317 | 0.25317 | 0.25317 | 0.25317 | 0.25317 |
+
+**CEA generation, effective 6/1/2026** (Clean Impact schedule):
+
+| Plan | S on | S off | S sop | W on | W off | W sop |
+|---|---|---|---|---|---|---|
+| EV-TOU-5 / EV-TOU-2 / TOU-ELEC | 0.51684 | 0.15975 | 0.04961 | 0.24430 | 0.15782 | 0.05187 |
+| TOU-DR1 | 0.55397 | 0.22298 | 0.04914 | 0.19791 | 0.08433 | 0.05138 |
+| TOU-DR2 | 0.53685 | 0.14663 | — | 0.19180 | 0.06703 | — |
+| TOU-DR-P | 0.38778 | 0.15609 | 0.04914 | 0.13854 | 0.05903 | 0.05138 |
+
+**SDG&E bundled generation (EECC), effective 6/1/2026** (used only for the "what if you left the
+CCA" comparison):
+
+| Plan | S on | S off | S sop | W on | W off | W sop |
+|---|---|---|---|---|---|---|
+| EV-TOU-5 / EV-TOU-2 | 0.47019 | 0.17311 | 0.08147 | 0.19990 | 0.14337 | 0.07410 |
+| TOU-DR1 | 0.34920 | 0.12853 | 0.04121 | 0.27475 | 0.19304 | 0.10228 |
+| TOU-DR2 | 0.34920 | 0.08432 | — | 0.27475 | 0.13777 | — |
+| TOU-DR-P | 0.19848 | 0.15523 | 0.08247 | 0.25057 | 0.17606 | 0.09329 |
+| TOU-ELEC | 0.45690 | 0.12945 | 0.08637 | 0.24311 | 0.11774 | 0.07856 |
+
+The all-in retail rate per interval is `UDC + WFNBC_DWR + PCIA + CEA_gen` for a CCA customer, or
+`UDC + WFNBC_DWR + EECC` bundled. Export credit per kWh is `max(rate − NBC, 0)` (NEM 2.0:
+retail minus non-bypassable charges).
+
+### 3.1 `analysis/analyze.py` — plan billing model (interval netting, with relief credit)
+
+**Purpose.** Price the 365-day usage record under all six eligible TOU plans, for both CEA and
+bundled-SDG&E generation, and emit the aggregate usage profiles.
+
+**Inputs.** The Green Button CSV only (path constant `CSV`).
+
+**Algorithm.**
+1. Load and window as in §3.0; assign `p3` (3-period TOU with holiday handling) and `p2`
+   (2-period, for TOU-DR2).
+2. For each of the six plans × {CEA, SDGE}: build the per-interval rate vector; charges =
+   Σ(`Consumption` × rate); credits = Σ(`Generation` × max(rate − NBC, 0)); energy = charges −
+   credits. The CEA runs in this script add `CEA_RELIEF` to the generation rate.
+3. Baseline credit (TOU-DR1/DR2/DR-P only): group by calendar month; if monthly `Net` sum > 0,
+   credit `min(net, 1.3 × BASELINE[season] × days) × BASELINE_CREDIT`.
+4. Fixed charge = `BSC × 365`. Total = energy + baseline credit + fixed.
+5. Usage statistics: annual import/export/net totals; import/export kWh by (season, period);
+   the all-in EV-TOU-5+CEA rate applied per interval to get on-peak import cost; night
+   (<6 am) import kWh; mean import/export/net per 15-minute interval grouped by hour of day;
+   calendar-month sums.
+
+**Outputs.** `plan_results.csv` (columns `plan, provider, energy, baseline_credit, fixed,
+total`), `hourly_profile.csv` (`dt` = hour 0–23; `imp, exp, net` = **mean kWh per 15-minute
+interval** at that hour — multiply by 4 for average kW), `monthly.csv` (`dt` = `YYYY-MM`;
+`imp, exp, net` kWh — 13 rows because the window makes the first and last calendar months
+partial), and `stats.json` (as-run superset committed as `data/report_data.json`, §3.7).
+
+**Run:** edit `CSV`, then `python3 analysis/analyze.py`.
+
+### 3.2 `analysis/analyze_norelief.py` — the published variant (no relief credit)
+
+Byte-for-byte the same model as `analyze.py` with one change: the CEA runs call
+`bill(p, "CEA", relief=False)`, i.e. the −$0.03871/kWh relief credit is **not** applied. The
+bill audit later confirmed this is the correct model for this account (the bills show CEA
+product "Clean Impact Plus" with only a +$0.001/kWh adder and no relief line), so **the
+committed `data/plan_results.csv` is this script's output** — e.g. EV-TOU-5/CEA energy
+$4,559.04 + fixed $289.60 = total $4,848.65, matching the report's $4,849. Keep `analyze.py` if
+your CCA product does earn a credit; otherwise run this one.
+
+### 3.3 `analysis/battery_backup_sims.py` — arbitrage value + outage endurance
+
+**Inputs.** `usage.csv`, `samA.csv` (2026), `samB.csv` (2025).
+
+**Rates.** EV-TOU-5 only: `UDC + WFNBC + PCIA + CEA` per interval, no relief credit; NBC as in
+§3.0.
+
+**Part 1 — arbitrage `sim(cap, pwr, name, eff=0.90)`.** Dispatch is described in §4. Simulated
+configurations `(usable kWh, power kW)`: 1× Enphase IQ 5P (5, 3.84); 1× IQ 10C (10, 7.08);
+1× Tesla Powerwall 3 (13.5, 11.5); 3× IQ 5P (15, 7.68); 2× IQ 10C (20, 7.08); PW3 + 1 Expansion
+(27, 11.5). Output `battery_sim.json`: per config, `onpeak_offset_value`,
+`forgone_export_credits`, `grid_charge_cost`, `net_annual_savings` (= offset − forgone − grid),
+`equiv_full_cycles` (Σ discharge ÷ capacity). Example: 1× PW3 → offset $2,252, forgone $382,
+grid $201, net $1,669/yr, 228 cycles.
+
+**Part 2 — backup endurance.** (a) Stitch the two SAM 8760 series onto hourly indexes for 2025
+and 2026 and slice the window 2025-07-24 → 2026-07-23 23:00 → hourly whole-home load `load`.
+(b) Resample the Green Button data to hourly sums of imports/exports. (c) Derive hourly solar
+production as `prod = clip(load − imports + exports, 0)` — the identity load = production +
+imports − exports. (d) EV heuristic: hours with `load > 7` kWh are EV-charging hours; EV
+component = `load − 1.5`; `nonev = load − ev`. (e) Two backup tiers: `t1` (essentials) =
+`min(nonev, 0.7)` — a 0.7 kW cap; `t2` = whole house minus EV. (f) Endurance loop per §4.
+Output `backup_endurance.json`: keys `"<config>|<tier>"` → `{median_h, p10_h}` over all
+simulated outage starts (e.g. `"PW3|t1"` → median 336 h = the 14-day cap, 10th percentile 90 h;
+`"PW3|t2"` → median 7 h). Configs here: IQ 5P, IQ 10C, PW3, PW3+Exp.
+
+**Run:** `python3 battery_backup_sims.py` from a directory containing the three input files.
+
+### 3.4 `analysis/package_sims.py` — plan × battery matrix and LOW/MID/HIGH packages
+
+**Inputs.** `usage.csv` only. **Baseline scenario:** EV-TOU-5, CEA generation **without** relief
+credit, current behavior.
+
+**Behavior adjustment `behavior_adjust(cons)`.** Cap = 0.625 kWh per 15-minute interval
+(= 2.5 kW). Two edits to the import series: (1) any **on-peak** interval above the cap is
+trimmed to the cap; (2) any **off-peak 6–9 am** interval above the cap (charging spill-over past
+6 am) is trimmed to the cap. All trimmed energy (`moved_kwh` = 2,507 kWh/yr on this dataset) is
+assumed re-consumed overnight and billed at the plan's super-off-peak all-in rate, averaged
+across seasons. See §6.4 for the honesty caveat.
+
+**Battery dispatch.** Same greedy logic as §4 (charge condition here is "any non-on-peak period
+with exports", which is equivalent to the other scripts' sop/off condition since exports are
+zero after 4 pm in practice). Configurations: PW3 (13.5, 11.5) and PW3+Expansion (27, 11.5).
+
+**Annual cost `annual_cost(plan, cons, gen, battery, moved_kwh)`.** Interval net cost =
+charges − export credits − battery on-peak offset + forgone export credit + grid-charge cost;
+monthly series = interval net grouped by month + days × BSC; annual total = interval net sum +
+moved-load cost + 365 × BSC + baseline credit (TOU-DR1 only, same rule as §3.1).
+
+**Outputs (`package_results.json`).**
+- `plan_battery_matrix`: EV-TOU-5 / EV-TOU-2 / TOU-DR1 × {no_battery, with_PW3, battery_value}
+  (e.g. EV-TOU-5: $4,861 → $3,192, battery worth $1,669/yr).
+- `baseline`: annual cost $4,861, average/min/max modeled monthly bill.
+- `moved_kwh`: 2507.
+- `packages`: LOW (behavior only, $0 hardware), MID (behavior + 1× PW3, hardware $14,500),
+  HIGH (behavior + PW3+Expansion, $20,400) — each with `annual_cost`, `annual_savings` vs
+  baseline, simple `payback_yr` = hardware ÷ savings, and monthly bill range.
+- `battery_marginal_after_behavior`: the battery's own savings measured *after* behavior fixes
+  (PW3 $1,347/yr; PW3X $1,351/yr) — the honest asset-alone figure required by `CLAUDE.md` §2.
+
+**Run:** `python3 package_sims.py` next to `usage.csv`.
+
+### 3.5 `analysis/deep_analyses.py` — five targeted studies
+
+**Inputs.** `usage.csv`, `samB.csv`, `samA.csv`. Rates: EV-TOU-5 + CEA (no relief). All results
+land in `deep_results.json`.
+
+1. **TOU-DR-P + battery wildcard.** TOU-DR-P priced with UDC 0.32948 flat and the CEA TOU-DR-P
+   generation row (§3.0), plus a Reduce-Your-Use surcharge of **$1.16/kWh** on 15 assumed event
+   days (the 15 summer days with the highest on-peak imports), 4–9 pm. Three scenarios: TOU-DR-P
+   with a PW3 that dodges every event ($6,719), EV-TOU-5 with the same PW3 ($3,192), TOU-DR-P
+   with no battery and all events hit ($7,483).
+2. **Phantom/baseload.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
+   charging); baseload kW = 25th percentile × 4 → 1.02 kW; annualized at a blended $0.20/kWh →
+   $1,787/yr (flagged in the report as an upper bound, not recoverable waste).
+3. **EV charging sessions.** Interval kW = `Consumption × 4`; intervals with kW > 6.5 are
+   charger-on; contiguous runs form sessions; session kWh = Σ imports − 0.4 kW house base ×
+   duration; sessions < 3 kWh discarded. Results: 576 sessions, 14,158 kWh, $3,081/yr at actual
+   timing vs $1,780 if all charging were at a $0.1257/kWh blended super-off-peak rate → $1,301/yr
+   lost to mistimed charging; 931 kWh of session energy fell on-peak, 1,718 kWh off-peak.
+4. **Vacation detection.** Daily sums of the SAM hourly load excluding hours > 7 kWh (crude
+   non-EV load); away threshold = max(10th percentile, 20 kWh/day) = 26.3; 37 away-days detected
+   against a 37.7 kWh/day non-EV median.
+5. **Monte Carlo battery ROI.** N = 5,000 draws, `numpy` RNG seed 42; annual rate escalation ~
+   U(0, 10%); capacity fade ~ U(0.5%, 2.5%)/yr; installed price ~ U($12,500, $17,000); year-1
+   marginal savings fixed at **$1,347** (the PW3 after-behavior figure from §3.4 — update this
+   constant if you rerun `package_sims.py`); 25-year horizon; payback linearly interpolated;
+   NPV over 10 years at 4% discount. Results: median payback 9.4 yr (p10 8.1, p90 11.6), 64.5%
+   probability of payback within a 10-year warranty, median 10-yr NPV −$2,158.
+
+**Run:** `python3 deep_analyses.py` next to the three inputs.
+
+### 3.6 `analysis/billing_model_nem.py` — bill-validated NEM 2.0 monthly netting
+
+**Purpose.** Replace the interval-netting approximation with the netting SDG&E actually
+performs under NEM 2.0, and reconcile the model against the 12 real bills.
+
+**Rates (read off the detailed bills, EV-TOU-5 + CEA "Clean Impact Plus", 6/1/2026).** UDC:
+summer on/off 0.30203, winter on/off 0.31174, super-off-peak 0.02606 both seasons; CEA
+generation as in §3.0; NBC 0.021 flat; PCIA 0.02828; BSC 0.79343/day. `retail(s,p) =
+UDC + CEA + NBC + PCIA`; `credit(s,p) = UDC + CEA` (exports are credited at delivery +
+generation only — NBC and PCIA are not refunded).
+
+**Algorithm (`bill()`).** For each billing month (calendar month here): add `days × BSC`; then
+for each (season, period) cell within the month compute `net = Σ imports − Σ exports`; if
+`net ≥ 0` charge `net × retail(s,p)`, else credit `net × credit(s,p)`. Sum across months. This
+is the "monthly per-TOU-period NEM netting" referred to throughout the report.
+
+**Output.** Prints the modeled annual baseline (~$4.7k at 6/1/2026 rates) against the actual
+billed ~$3,004 — the reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary
+import/export column names) to re-score behavior or battery scenarios on the validated netting.
+
+**Run:** `python3 billing_model_nem.py` next to `usage.csv`.
+
+### 3.7 In-session artifacts (no committed generator script)
+
+Several `data/` files were produced by short ad-hoc steps during the analysis session rather
+than by a committed script; they are documented here so they can be regenerated:
+
+- **`report_data.json`** — output of the as-run extended variant of `analyze.py` (archived
+  privately in `private/3-analysis-extras/`). Superset of `stats.json`: all-in EV-TOU-5 rates
+  per season/period (`rates_ev5`, e.g. summer on-peak 0.86814, sop 0.12494 — these *include*
+  the relief credit, an as-run artifact); seasonal 24-hour average-kW import/export profiles
+  (`hourly_S`, `hourly_W`); monthly labels/imports/exports/modeled cost; per-(season, period)
+  import/export/cost split (`period_split`); on-peak summary (3,989 kWh imported, $2,951 gross
+  cost, 41.5% of energy cost); EV proxy stats (kWh above 2.5 kW by period and by start hour);
+  early battery estimate (`battery.net` $1,939 — superseded by `battery_sim.json`'s $1,669);
+  annual totals (imports 23,278, exports 9,922 kWh).
+- **`threeway_production_validation.csv`** — date-indexed daily `pvoutput` vs `enphase_meter`
+  production (the third series, derived production = load − imports + exports from §3.3, is
+  computed in-script and summarized in the report: 16,660 kWh vs 16,839 and 16,502).
+- **`weather_results.json`** — OLS regression of daily non-EV load on Open-Meteo degree-days:
+  base 42.2 kWh/day, +3.0 kWh per CDD65, −1.23 per HDD60, R² 0.45, 1,738 kWh/yr cooling,
+  pre-cool shift value $233/yr, setpoint value $104/yr.
+- **`electric_bill_summary.csv` / `gas_bill_summary.csv`** — pdfplumber extractions (§2.7).
+- **`pvoutput_daily.csv`, `pvoutput_5min_sample.csv`, `pvoutput_yearly_2020-2025.csv`,
+  `enphase_daily_production.csv`** — portal exports/scrapes, reformatted to the schemas in §2.
+- **`gas_monthly_therms.csv`, `weather_daily_tmean.csv`** — monthly resample of the gas Green
+  Button file; Open-Meteo pull (§2.5–2.6).
+
+---
+
+## 4. Battery simulation methodology
+
+**Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py`,
+`deep_analyses.py`).** State: `soc` (kWh), starts at 0. For each 15-minute interval
+(`step = 0.25` h), in order:
+
+1. **Charge from would-be exports first.** If the period is not on-peak, `Generation > 0`, and
+   `soc < cap`: charge `min(Generation, power × 0.25, cap − soc)`. This energy is not free — the
+   sim books its **forgone export credit** `charge × max(rate − NBC, 0)` as a cost.
+2. **Otherwise, overnight super-off-peak top-up to a 60% cap.** If the period is super-off-peak,
+   the hour is < 6, and `soc < 0.6 × cap`: charge `min(power × 0.25, 0.6 × cap − soc)` from the
+   grid at the full super-off-peak retail rate (booked as **grid-charge cost**). The 60% ceiling
+   reserves headroom for the next day's free solar surplus.
+3. **Discharge on-peak.** If the period is on-peak, `Consumption > 0`, and `soc > 0`: discharge
+   `min(Consumption, power × 0.25, soc × eff)` with `eff = 0.90`; `soc` decreases by
+   `discharge / eff` (the 90% round-trip efficiency is applied entirely at discharge); the
+   avoided cost `discharge × rate` is booked as **on-peak offset value**.
+
+Net annual savings = offset − forgone credits − grid-charge cost. The battery never exports to
+the grid, never discharges off-peak, and rates are EV-TOU-5 + CEA (no relief). Configurations
+simulated are listed in §3.3 (arbitrage: six configs from 5 to 27 kWh usable) and §3.4
+(packages: PW3 and PW3+Expansion only).
+
+**Backup endurance (Part 2 of `battery_backup_sims.py`) differs in kind.** It is an hourly
+outage survival simulation, not a tariff simulation. An outage is started at **18:00 (6 pm) of
+every day** in the window. Each run: `soc` starts at **full capacity**; each hour the backed-up
+load (capped at inverter power) nets against derived solar production; a deficit drains
+`net × 1.05` from the battery (5% inverter loss) and the run ends ("lights out") when the
+battery cannot cover the hour; a surplus recharges at 90% efficiency up to capacity. The run is
+**capped at 14 days (336 h)**. Reported per config × tier: median and 10th-percentile endurance
+hours across all ~365 outage starts.
+
+Two honest caveats, also printed in the report: the **full state-of-charge at outage start is
+optimistic** (a battery doing daily arbitrage will often be partially discharged at 6 pm), and
+median values equal to 336 h mean "hit the 14-day simulation cap", not literally 14 days —
+treat them as "rides out typical outages," not fortnights.
+
+---
+
+## 5. Chart generation (`index.html`)
+
+Chart.js 4.4.3 is loaded from CDN; the four canvases read the inlined `const D = {...}` object.
+Mapping of every canvas id → `D` arrays → producing computation:
+
+| Canvas id | Type | `D` arrays (length) | Units | Produced by |
+|---|---|---|---|---|
+| `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average kW by hour of day, split summer/winter | `report_data.json → hourly_S / hourly_W` (as-run `analyze.py` variant; equals `hourly_profile.csv` values × 4, split by season) |
+| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the §4 dispatch applied to summer intervals and re-averaged by hour (battery-sim session run; regenerate by hourly-averaging the dispatch-adjusted import series from `package_sims.py`) |
+| `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the modeled EV-TOU-5+CEA energy cost per month (excludes the daily BSC) |
+| `periods` | horizontal bar ×2 | inline literals: kWh `[14811, 4478, 3989]`, $ `[1869, 2284, 2951]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → period_split` summed across seasons for kWh (sop 6,628+8,183; off 2,238+2,240; on 2,109+1,880); the on-peak $2,951 matches `report_data.json → onpeak.import_cost` |
+
+Everything else in the report (plan table §3, battery tables §4/§6, package cards §7, deep-dive
+figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`,
+`package_results.json`, `battery_sim.json`, `backup_endurance.json`, `deep_results.json`,
+`weather_results.json`, and the bill summaries. After any rerun, update both the `D` block and
+the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §3).
+
+---
+
+## 6. Validation and known limitations
+
+**6.1 Three-way production cross-validation.** Annual solar production agrees across three
+independent measurements: the Enphase revenue-grade production CT (16,502 kWh), PVOutput's
+microinverter-reported records (16,839 kWh), and a derived series (load − imports + exports)
+that touches neither (16,660 kWh) — within ±2%, with 0.9999 daily correlation and near-zero
+nighttime residual in the derived series (`data/threeway_production_validation.csv`; report §1).
+
+**6.2 Bill-audit validation.** All 12 detailed electric bills were parsed. The modeled CEA
+generation rates matched the billed rates **to the penny** ($0.51684 / $0.15975 / $0.04961
+summer on/off/sop). The audit corrected two model assumptions: the CEA relief credit does not
+apply (product is "Clean Impact Plus" — hence `analyze_norelief.py` is the published model), and
+the climate zone is Coastal (affects only the baseline-credit plans, which lose regardless).
+
+**6.3 Model-vs-actual reconciliation.** The bills on hand total $3,004 over 338 covered days
+(~$3,244/yr annualized; one 27-day shoulder-season bill is missing). The interval model said
+$4,861; proper monthly per-TOU-period netting (`billing_model_nem.py`) gives ~$4,675 — i.e. the
+**netting method itself agrees to ~0.3%** and is not the source of the gap. The remaining gap is
+mostly that the model prices the *entire* year at current **6/1/2026 rates**, while the actual
+bills were mostly rendered on cheaper 2025 tariffs (rates rose through the period, most in
+summer, exactly where the model runs high). The model is therefore a forward-looking "at
+today's rates" estimate and reads high against history. Consequence adopted throughout:
+absolute dollars are anchored to actual bills; the model is trusted for **rankings and deltas**
+(savings), which are driven by on-peak arbitrage priced identically in every variant.
+
+**6.4 The 2.5 kW behavior cap is partly aspirational.** `behavior_adjust()` moves *all* import
+energy above 2.5 kW in the on-peak and 6–9 am windows, but only ~931 kWh of on-peak session
+energy is identifiably the EV (§3.5); the rest includes house loads (HVAC, cooking) that may not
+be movable. The report therefore brackets the behavior saving (~$300–800/yr reliable EV-timing
+floor, ~$1,330/yr stretch) rather than promising the full modeled figure.
+
+**6.5 Holiday handling is inconsistent by design debt.** `analyze.py`/`analyze_norelief.py`
+treat seven holidays as weekends for TOU assignment; `battery_backup_sims.py`,
+`package_sims.py`, `deep_analyses.py`, and `billing_model_nem.py` do not. Seven days × the
+sop/off rate difference is dollar-negligible, but expect tiny discrepancies if you diff outputs.
+
+**6.6 Other limitations** (from report §11): rate tables go stale on SDG&E (Jan/Jun) and CEA
+(Feb/Jun) revision cycles; TOU-DR-P event surcharges are only modeled in the §3.5 wildcard;
+battery installed prices are estimates; simple paybacks in `package_sims.json` use no
+discounting or escalation (the Monte Carlo in §3.5 handles both); the endurance sims' full-SOC
+and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347` from a prior
+`package_sims.py` run — rerun order matters (§7).
+
+---
+
+## 7. Reproduction checklist
+
+1. **Gather inputs** per `DATA-SOURCES-CHEATSHEET.md`: Green Button 15-minute electric CSV
+   (13 months), two calendar years of hourly whole-home consumption (Enphase SAM 8760 or your
+   monitoring platform's equivalent), daily production export, ~12 detailed electric (and gas)
+   bill PDFs, gas Green Button daily CSV, and your tariff PDFs (SDG&E Total Rates Tables +
+   CCA schedule, current revision).
+2. **Place raw files in `private/1-raw-data/`** and verify `.gitignore` covers them
+   (`git status --ignored`). Nothing in `private/` is ever committed.
+3. **Update the constants** at the top of each script: the `CSV` path (`analyze*.py`) or copy
+   your files to `usage.csv` / `samA.csv` / `samB.csv` in the working directory; the window
+   anchor `end = dt.datetime(...)`; the UDC/EECC/CEA rate tables, `PCIA` (your vintage),
+   `NBC`/`WFNBC_DWR`, `BSC`, baseline allowances for *your* climate zone, and whether any CCA
+   credit applies (check your detailed bill, not the CCA marketing page). Battery configs and
+   hardware prices in `battery_backup_sims.py`/`package_sims.py` as quoted to you.
+4. **Run the scripts in dependency order** (Python 3 with `pandas` and `numpy`):
+   1. `analyze_norelief.py` (and/or `analyze.py` if your CCA credit applies) → plan table,
+      profiles;
+   2. `battery_backup_sims.py` → arbitrage + endurance;
+   3. `package_sims.py` → matrix + packages; note `battery_marginal_after_behavior`;
+   4. edit `base_save` in `deep_analyses.py` to that marginal value, then run it;
+   5. `billing_model_nem.py` → compare its output to your actual bills before quoting any
+      absolute dollar figure (per `CLAUDE.md` §1; expect it to read high if it prices history
+      at current rates).
+5. **Rebuild the derived artifacts** (§3.7): daily-production cross-validation, weather
+   regression, bill-summary CSVs — or skip them for a plan/battery-only analysis.
+6. **Refresh `index.html`**: replace every array in the `D = {...}` block from the new
+   `report_data.json`/`monthly.csv`/dispatch output, then update the static tables and prose
+   figures; grep the HTML for each superseded number.
+7. **Before committing anything**, run the PII grep required by `CLAUDE.md` §4 over every
+   push-bound file (names, addresses, account/meter numbers, coordinates, system IDs, API
+   keys) and confirm zero matches.

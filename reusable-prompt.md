@@ -13,7 +13,31 @@ solar, and whether electrifying gas appliances pays off — ending in ONE unifie
 HTML report I can publish to GitHub Pages. Ask me clarifying questions (solar? EV? CCA?
 gas service? report format?) before starting, keep a task list, use subagents for independent
 sub-analyses and for an adversarial math-verification pass, and verify every number
-programmatically before presenting. Follow this plan:
+programmatically before presenting.
+
+**EVIDENCE-BASED ONLY — no guesses, no hallucination.** Every number, claim, and conclusion
+must trace to a datum you loaded, a figure read off an official source or my bill, or a
+calculation you ran and can show me. If you can't compute or cite it, don't state it — say so
+and tell me what data would settle it. Read facts (climate zone, rate plan, CCA product,
+credits, baseline) off my detailed BILL rather than inferring them. Label MODELED vs ACTUAL
+everywhere and anchor absolute dollars to my real bills. Validate your billing model against
+my actual statements before quoting absolute costs. Report asset-alone paybacks, never crediting
+free behavior savings to hardware. Keep every figure consistent across the whole document.
+My solar happens to be Enphase, but treat production data generically — SolarEdge/Tesla/SMA/
+Fronius/PVOutput all expose equivalent feeds; describe the DATA you need, not one vendor's menu.
+
+**0. Data intake gate — do this FIRST, before any analysis.** The companion checklist
+[`DATA-SOURCES-CHEATSHEET.md`](https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/DATA-SOURCES-CHEATSHEET.md)
+lists every input (sections A–H: household basics, interval data, rate PDFs, detailed bills,
+solar production, gas, weather, battery research). Walk me through it section by section and
+ask me for each piece: confirm what I already have gathered, what you should pull from my
+logged-in portals, and what to skip (no solar → skip E; no gas → skip F). Verify each file
+actually loads (row counts, date coverage, no gaps — tell me if a month is missing) before
+proceeding. Do NOT start modeling until section A + B are in hand and you've told me exactly
+which of C–H we're using and which we're skipping. A missing month of bills silently skews
+every annual figure — check coverage in DAYS, not number of files.
+
+Follow this plan:
 
 **1. Electric usage — 15-minute interval data.** I'll have my utility portal open and logged
 in in Chrome (use the Claude-in-Chrome extension). Export the last 13 months of Green Button
