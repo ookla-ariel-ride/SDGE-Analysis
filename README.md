@@ -14,6 +14,8 @@ file viewer shows the HTML *source*, not the rendered report — use the link ab
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
 
+New to the jargon? **[GLOSSARY.md](GLOSSARY.md)** defines every term (NEM, TOU, PCIA, CAISO, phantom load…) in plain English.
+
 An interactive, evidence-based report for a solar + EV home in the SDG&E Coastal climate zone
 (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data,
 a full-year detailed-bill audit, six years of production records, and real weather + grid data.
@@ -83,6 +85,7 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |
 | `reusable-prompt.md` | Full prompt to reproduce this entire analysis (plan + solar + battery + gas + bill audit) in Claude Cowork |
 | `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
+| `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
 
 ## Publish with GitHub Pages
 

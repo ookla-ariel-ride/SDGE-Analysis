@@ -354,11 +354,11 @@ carrying a retired package-payback framing. Its schema:
 - `model_baseline_current_rates`: **4884** (= §3.6 output);
 - `packages.LOW`: `cost` 0, `savings_yr` 1193, `savings_range` [1012, 1672], `note`,
   `projected_bill_current_rates_yr` **3691**;
-- `packages.MID`: `cost` 14500, `savings_yr` **3368**, `battery_alone_yr` **2259**
-  (price-aware; `battery_alone_post_ev_fix_yr` **2175**), `battery_alone_payback_yr` **6.4**
-  (`battery_alone_payback_evening_only_yr` 8.8), `battery_monte_carlo_median_yr` 9.4,
-  `projected_bill_current_rates_yr` **1516**, `note` (single integrated shift-then-battery run);
-- `packages.HIGH`: `cost` 20400, `marginal_vs_mid_yr` **186** post-behavior (~32-yr marginal payback on the
+- `packages.MID`: `cost` 14500, `savings_yr` **3438**, `battery_alone_yr` **2325**
+  (price-aware; `battery_alone_post_ev_fix_yr` **2245**), `battery_alone_payback_yr` **6.2**
+  (`battery_alone_payback_evening_only_yr` 8.5), `battery_monte_carlo_median_yr` 9.4,
+  `projected_bill_current_rates_yr` **1445**, `note` (single integrated shift-then-battery run);
+- `packages.HIGH`: `cost` 20400, `marginal_vs_mid_yr` **216** post-behavior (~27-yr marginal payback on the
   $5,900 expansion — buys outage endurance, not savings);
 - `superseded` — records that dividing hardware cost by combined behavior+battery savings is
   invalid; battery-alone payback is the honest hardware metric.
@@ -390,11 +390,11 @@ land in `deep_results.json`.
 5. **Monte Carlo battery ROI.** N = 5,000 draws, `numpy` RNG seed 42; annual rate escalation ~
    U(0, 10%); capacity fade ~ U(0.5%, 2.5%)/yr; installed price ~ U($12,500, $17,000); year-1
    marginal savings fixed at **$1,347** (the PW3 after-behavior figure from §3.4 — update this
-   constant if you rerun `package_sims.py`); 25-year horizon; payback linearly interpolated;
+   constant if you rerun `package_sims.py` (REMOVED — superseded by the integrated pipeline)); 25-year horizon; payback linearly interpolated;
    NPV over 10 years at 4% discount. Results: median payback 9.4 yr (p10 8.1, p90 11.6), 64.5%
    probability of payback within a 10-year warranty, median 10-yr NPV −$2,158. The report
    keeps this deliberately conservative Monte Carlo as the downside bracket alongside the
-   §3.13 price-aware basis (~6–7 yr simple payback at $2,259/yr).
+   §3.13 price-aware basis (~6.2–6.5 yr simple payback at $2,245–2,325/yr).
 
 **Run:** `python3 deep_analyses.py` next to the three inputs.
 
@@ -483,7 +483,7 @@ compliance (seeded RNG): $1,012; (c) + 25% of remaining on-peak house load: $1,6
 (a): $1,876/yr marginal on the baseline → **$1,752/yr after behavior** ($124/yr of
 double-counting avoided). NOTE: these battery figures are the **evening-only dispatch
 variant, retired as the published basis** — the report's battery economics now come from the
-price-aware dispatch of §3.13 ($2,259/yr baseline, $2,175/yr post-EV-fix after deducting the
+price-aware dispatch of §3.13 ($2,325/yr baseline, $2,245/yr post-EV-fix from the
 same $130 overlap). The $130 overlap measurement is what this script still contributes.
 
 **Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,675.20
@@ -604,8 +604,8 @@ value is approximate; treat the crossover dates as **±10%** (several months eit
   fade, 5% discount): 3%/yr → 7.8 yr payback / NPV10 +$102; 5% → 7.3 / +$1,373;
   8% → 6.8 / +$3,535; 12% → 6.2 / +$6,973. The **published ladder** (report §13) is
   `data/battery_dispatch_policies.json → escalation_greedy_pw3`, rebased on the §3.13
-  price-aware $2,259/yr saving: 3% → 5.9 yr / +$5,020; 5% → 5.7 / +$6,718;
-  8% → 5.3 / +$9,608; 12% → 5.0 / +$14,205.
+  post-behavior $2,245/yr marginal: 3% → 6.1 yr / +$4,308; 5% → 5.9 / +$5,944;
+  8% → 5.5 / +$8,729; 12% → 5.1 / +$13,158.
 - `price_map` — all-in **import and export $/kWh for all six season × TOU-period cells**
   from bill-validated rates (e.g. `S_on` 0.8681/0.8189, `S_sop` 0.125/0.0757, `W_on`
   0.6053/0.556).
@@ -682,15 +682,17 @@ any super-off-peak gap). Rationale: stored energy costs ~8.4¢/kWh (surplus) to 
 is worth serving. Ordering matters: solar surplus charges first (10am–2pm is both
 super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW outside on-peak) are
 excluded from service. Results (`data/battery_dispatch_policies.json`): 1×PW3
-$1,729 / $1,980 / $2,259 per year; 27 kWh $2,062 / $2,312 / $2,726; price-aware runs
-~0.99 / 0.58 cycles per day. The report's battery economics use the price-aware policy
+$1,708 / $1,946 / $2,325 per year; 27 kWh $2,043 / $2,279 / $2,780; price-aware runs
+~1.01 / 0.60 cycles per day. The report's battery economics use the price-aware policy
 ($2,175/yr post-EV-fix after the measured $130 overlap deduction); the §4 plan matrix
 retains the older evening-only interval sim ($1,669) for cross-plan comparison. The
-escalation ladder in report §13 is rebased on the $2,259 figure.
+escalation ladder in report §13 is seeded from the post-behavior $2,245 marginal. In the 6.3% of
+intervals carrying both import and export, discharge-window imports are served rather than
+banking low-value surplus.
 
 ## 4. Battery simulation methodology
 
-**Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py`,
+**Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py` (REMOVED — superseded by the integrated pipeline),
 `deep_analyses.py`).** State: `soc` (kWh), starts at 0. For each 15-minute interval
 (`step = 0.25` h), in order:
 
@@ -803,7 +805,7 @@ floor, ~$1,330/yr stretch) rather than promising the full modeled figure.
 
 **6.5 Holiday handling is inconsistent by design debt.** `analyze.py`/`analyze_norelief.py`
 treat seven holidays as weekends for TOU assignment; `battery_backup_sims.py`,
-`package_sims.py`, `deep_analyses.py`, and `billing_model_nem.py` do not. Seven days × the
+`package_sims.py` (REMOVED — superseded by the integrated pipeline), `deep_analyses.py`, and `billing_model_nem.py` do not. Seven days × the
 sop/off rate difference is dollar-negligible, but expect tiny discrepancies if you diff outputs.
 
 **6.6 Other limitations** (from report §14): rate tables go stale on SDG&E (Jan/Jun) and CEA
@@ -813,7 +815,7 @@ battery installed prices are estimates; the simple 6.2-yr price-aware battery-al
 Carlo in §3.5 and the published escalation ladder in `battery_dispatch_policies.json` §3.13
 handle both); the endurance sims' full-SOC
 and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347` from a prior
-`package_sims.py` run — rerun order matters (§7).
+`package_sims.py` (REMOVED — superseded by the integrated pipeline) run — rerun order matters (§7).
 
 ---
 
@@ -831,12 +833,12 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
    anchor `end = dt.datetime(...)`; the UDC/EECC/CEA rate tables, `PCIA` (your vintage),
    `NBC`/`WFNBC_DWR`, `BSC`, baseline allowances for *your* climate zone, and whether any CCA
    credit applies (check your detailed bill, not the CCA marketing page). Battery configs and
-   hardware prices in `battery_backup_sims.py`/`package_sims.py` as quoted to you.
+   hardware prices in `battery_backup_sims.py`/`package_sims.py` (REMOVED — superseded by the integrated pipeline) as quoted to you.
 4. **Run the scripts in dependency order** (Python 3 with `pandas` and `numpy`):
    1. `analyze_norelief.py` (and/or `analyze.py` if your CCA credit applies) → plan table,
       profiles;
    2. `battery_backup_sims.py` → arbitrage + endurance;
-   3. `package_sims.py` → matrix + packages; note `battery_marginal_after_behavior`;
+   3. `package_sims.py` (REMOVED — superseded by the integrated pipeline) → matrix + packages; note `battery_marginal_after_behavior`;
    4. edit `base_save` in `deep_analyses.py` to that marginal value, then run it;
    5. `billing_model_nem.py` → compare its output to your actual bills before quoting any
       absolute dollar figure (per `CLAUDE.md` §1; expect it to read high if it prices history
