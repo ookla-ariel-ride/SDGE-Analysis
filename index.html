@@ -97,8 +97,9 @@
   @media print{nav.toc,.totop,.themetoggle{display:none}body{font-size:.92rem}}
   @media (prefers-reduced-motion:no-preference){
     html{scroll-behavior:smooth}
-    nav.toc a{transition:color .15s,border-color .15s}
+    nav.toc a{transition:color .15s,border-color .15s,opacity .15s}
     .totop{transition:opacity .2s,visibility .2s}
+    details.advanced>summary::after{transition:transform .15s}
   }
   @media(max-width:800px){
     nav.toc{padding:6px 12px;gap:4px}
@@ -130,6 +131,18 @@
   .toc-home{font-weight:700;border-color:var(--ink)!important;color:var(--ink)!important}
   @media (hover:none){.hlink{display:none}}
   @media print{.chartbox,table,.rec,.note,.pkg{break-inside:avoid}.hlink,.skiplink{display:none}}
+
+  /* --- basic/advanced tier (keep on every regeneration) --- */
+  details.advanced>summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:16px;margin:46px 0 14px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  details.advanced>summary::-webkit-details-marker{display:none}
+  details.advanced>summary .adv-eyebrow,details.advanced>summary .adv-head,details.advanced>summary .adv-inv{grid-column:1}
+  details.advanced>summary::after{content:"▸";grid-column:2;grid-row:1/span 3;align-self:center;font-family:var(--mono);font-size:1.5rem;color:var(--sub)}
+  details.advanced[open]>summary::after{transform:rotate(90deg)}
+  details.advanced>summary:hover .adv-head,details.advanced>summary:hover::after{color:var(--sop)}
+  .adv-eyebrow{font-family:var(--mono);font-size:.66rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--sub)}
+  .adv-head{font-family:var(--disp);font-weight:700;font-size:1.55rem;letter-spacing:-.015em;line-height:1.2}
+  .adv-inv{font-family:var(--disp);color:var(--sub);font-size:.88rem;margin-top:2px}
+  nav.toc.tier-closed a.adv{opacity:.55}
 </style>
 </head>
 <body>
@@ -163,8 +176,8 @@
 
 <nav class="toc" id="toc">
 <div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a><a href="#s15">Do Monday</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#s8">8 Array upgrades</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Solar payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
+<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a class="adv" href="#s8">8 Array upgrades</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Audit</span><a class="adv" href="#s9">9 Deep dives</a><a class="adv" href="#s10">10 Bills &amp; gas</a><a class="adv" href="#s11">11 Solar payback</a><a class="adv" href="#s12">12 Cleaning</a><a class="adv" href="#s13">13 Carbon · NEM · prices</a><a class="adv" href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
 <div class="progress" id="progress"></div>
 </nav>
 
@@ -368,7 +381,52 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 </div>
 </div>
 
-<div class="rec"><b>Recommendation: LOW today, MID if you value backup power.</b> The EV-charging fix is free, immediate, and worth ~$1,193/yr — do it this week regardless. One Powerwall 3 adds ~$2,245/yr of its own savings with price-aware dispatch (~6.5 yr payback) plus genuine outage resilience. The expansion pack adds only ~$216/yr once the EV fix is in — a ~27-yr marginal payback, so it is strictly a resilience purchase. Sequence: reprogram EV charging (especially eliminating daytime off-peak sessions), verify panel/service capacity, get PW3 and IQ 10C quotes, enroll in the DSGS VPP in the Tesla app once installed (SGIP closed 12/31/2025) — the step-by-step version is the "What to do Monday" appendix before §14. (The bills confirm no CEA relief credit applies; see §10.)</div>
+<div class="rec"><b>Recommendation: LOW today, MID if you value backup power.</b> The EV-charging fix is free, immediate, and worth ~$1,193/yr — do it this week regardless. One Powerwall 3 adds ~$2,245/yr of its own savings with price-aware dispatch (~6.5 yr payback) plus genuine outage resilience. The expansion pack adds only ~$216/yr once the EV fix is in — a ~27-yr marginal payback, so it is strictly a resilience purchase. Sequence: reprogram EV charging (especially eliminating daytime off-peak sessions), verify panel/service capacity, get PW3 and IQ 10C quotes, enroll in the DSGS VPP in the Tesla app once installed (SGIP closed 12/31/2025) — the step-by-step version is the "What to do Monday" appendix immediately after this section. (The bills confirm no CEA relief credit applies; see §10.)</div>
+
+<h2 id="s15">What to do Monday — the implementation appendix</h2>
+<p>The whole analysis reduces to this short checklist. Nothing here is new analysis — each item cites the section that justifies it.</p>
+<h3>1 · Reprogram charging (this week, $0)</h3>
+<ul>
+<li><b>Set scheduled charging in the Tesla app: midnight–6am, weekdays</b> — the fix behind the ~$1,193/yr in §9. For top-ups, use the other super-off-peak windows: <b>10am–2pm weekdays</b> and <b>midnight–2pm weekends</b>.</li>
+<li><b>Stagger the two cars</b> (and, later, the battery top-up): two 11.5 kW draws stacked at midnight approach the ~23 kW (~96 A at 240 V) coincident-draw risk flagged in §6. Car A midnight–3am, car B 3–6am costs nothing extra — both windows are 12.5¢.</li>
+<li><b>Build the home-day midday habit:</b> when a car is home on a weekday, plug in 10am–2pm — same price as overnight, the cleanest grid of the day, and it soaks up solar that would otherwise export at ~7.6¢ (§13).</li>
+</ul>
+<h3>2 · Before any battery quote</h3>
+<ul>
+<li><b>Panel/service capacity check first:</b> greedy overnight dispatch pulls ~21–23 kW at midnight with the EV charging — have an electrician confirm panel and service headroom <i>before</i> collecting quotes (§6).</li>
+<li><b>Confirm export-capable Rule 21 interconnection</b> — a non-export agreement needs a modification before VPP participation can export (§6).</li>
+<li><b>Enroll in DSGS in the Tesla app</b> once the battery is installed — ~$150–350/season, stacks with arbitrage (§6).</li>
+</ul>
+<h3>3 · Pre-registered success metrics for the EV fix <span class="pill y">modeled targets</span></h3>
+<p>Logged before the change so the evaluation can't be gamed. Check at the <b>next bill</b> and again after <b>two full billing cycles</b>:</p>
+<table class="evidence">
+<thead><tr><th>Metric</th><th>Now</th><th>Target</th></tr></thead>
+<tbody>
+<tr><td>On-peak share of grid imports</td><td>17%</td><td>~4%*</td></tr>
+<tr><td>EV energy landing in super-off-peak</td><td>81%</td><td>≥95%</td></tr>
+<tr><td>Measured saving vs predicted</td><td>—</td><td>$1,193/yr pace</td></tr>
+</tbody>
+</table>
+<p class="small">*The ~4% on-peak target is the full MID package (EV fix + price-aware battery: on-peak imports 3,989 → 850 kWh/yr, §5–6); the EV fix alone removes its 878 on-peak kWh.</p>
+<h3>4 · When to re-run this analysis</h3>
+<table class="evidence">
+<thead><tr><th>Trigger</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>SDG&amp;E rate changes</td><td>Jan 1 · Jun 1</td></tr>
+<tr><td>CEA rate changes</td><td>Feb · Jun</td></tr>
+<tr><td>CPUC changes the Base Services Charge</td><td>as decided</td></tr>
+<tr><td>Fleet/appliance changes (second-EV pattern, HPWH, heat pump)</td><td>on change</td></tr>
+<tr><td>Battery purchase</td><td>before quotes + after install</td></tr>
+</tbody>
+</table>
+<p class="small">A quarterly scheduled re-run of the pipeline already exists; the triggers above are the off-cycle reasons not to wait for it. Refresh procedure: the README's "Refreshing this analysis" section.</p>
+
+<details id="advanced" class="advanced">
+<summary>
+ <span class="adv-eyebrow">Advanced analysis</span>
+ <span class="adv-head">The full evidence</span>
+ <span class="adv-inv">7 sections · the full audit trail · every figure traceable to a script and a data artifact</span>
+</summary>
 
 <h2 id="s8">8 · Array upgrades: more panels, bigger panels, or new microinverters? No, no, and not yet.</h2>
 <p><b>More panels: the numbers say no.</b> The constraint isn't generation — it's timing. The array already exports 60% of what it makes (9,922 kWh/yr) because production peaks midday while the EV charges at night, and since the 2026 TOU change those midday exports credit at only ~10.4¢/kWh. A marginal new-panel kWh therefore earns ~10–12¢, while the marginal import it would offset (overnight super-off-peak) costs just 12.5¢ — nearly a wash. At typical retrofit pricing (~$2.50–3.00/W), added capacity returns roughly $170–190 per kW per year: a <b>13–16 year payback</b>. A battery is the better use of the same sunlight — it monetizes those midday kWh at 60–87¢ instead of 10¢, and adds backup value.</p>
@@ -514,44 +572,6 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <p class="small">Bill-validated 6/1/2026 rates (UDC + CEA generation + NBC + PCIA; exports credit delivery + generation). Windows, year-round: on-peak 4–9pm daily; <b>super-off-peak midnight–6am + 10am–2pm weekdays</b> (midnight–2pm weekends); off-peak all other hours. The weekday 10am–2pm super-off-peak cell is the standout: 12.5¢ grid power at the exact hours your array over-produces and the grid runs cleanest. Every household timing decision is a lookup in this table: a summer on-peak kWh avoided is worth 7× a super-off-peak one. True-up ledger cross-check: the October 2025 statement's YTD NEM figures ($1,005.31 charges − $492.91 credits = $512.40 net) reconcile exactly; a full true-up audit awaits the annual true-up settlement statement (not yet rendered when the data was pulled).</p>
 </details>
 
-<h2 id="s15">What to do Monday — the implementation appendix</h2>
-<p>Everything above reduces to a short checklist. Nothing here is new analysis — each item cites the section that justifies it.</p>
-<h3>1 · Reprogram charging (this week, $0)</h3>
-<ul>
-<li><b>Set scheduled charging in the Tesla app: midnight–6am, weekdays</b> — the fix behind the ~$1,193/yr in §9. For top-ups, use the other super-off-peak windows: <b>10am–2pm weekdays</b> and <b>midnight–2pm weekends</b>.</li>
-<li><b>Stagger the two cars</b> (and, later, the battery top-up): two 11.5 kW draws stacked at midnight approach the ~23 kW (~96 A at 240 V) coincident-draw risk flagged in §6. Car A midnight–3am, car B 3–6am costs nothing extra — both windows are 12.5¢.</li>
-<li><b>Build the home-day midday habit:</b> when a car is home on a weekday, plug in 10am–2pm — same price as overnight, the cleanest grid of the day, and it soaks up solar that would otherwise export at ~7.6¢ (§13).</li>
-</ul>
-<h3>2 · Before any battery quote</h3>
-<ul>
-<li><b>Panel/service capacity check first:</b> greedy overnight dispatch pulls ~21–23 kW at midnight with the EV charging — have an electrician confirm panel and service headroom <i>before</i> collecting quotes (§6).</li>
-<li><b>Confirm export-capable Rule 21 interconnection</b> — a non-export agreement needs a modification before VPP participation can export (§6).</li>
-<li><b>Enroll in DSGS in the Tesla app</b> once the battery is installed — ~$150–350/season, stacks with arbitrage (§6).</li>
-</ul>
-<h3>3 · Pre-registered success metrics for the EV fix <span class="pill y">modeled targets</span></h3>
-<p>Logged before the change so the evaluation can't be gamed. Check at the <b>next bill</b> and again after <b>two full billing cycles</b>:</p>
-<table class="evidence">
-<thead><tr><th>Metric</th><th>Now</th><th>Target</th></tr></thead>
-<tbody>
-<tr><td>On-peak share of grid imports</td><td>17%</td><td>~4%*</td></tr>
-<tr><td>EV energy landing in super-off-peak</td><td>81%</td><td>≥95%</td></tr>
-<tr><td>Measured saving vs predicted</td><td>—</td><td>$1,193/yr pace</td></tr>
-</tbody>
-</table>
-<p class="small">*The ~4% on-peak target is the full MID package (EV fix + price-aware battery: on-peak imports 3,989 → 850 kWh/yr, §5–6); the EV fix alone removes its 878 on-peak kWh.</p>
-<h3>4 · When to re-run this analysis</h3>
-<table class="evidence">
-<thead><tr><th>Trigger</th><th>When</th></tr></thead>
-<tbody>
-<tr><td>SDG&amp;E rate changes</td><td>Jan 1 · Jun 1</td></tr>
-<tr><td>CEA rate changes</td><td>Feb · Jun</td></tr>
-<tr><td>CPUC changes the Base Services Charge</td><td>as decided</td></tr>
-<tr><td>Fleet/appliance changes (second-EV pattern, HPWH, heat pump)</td><td>on change</td></tr>
-<tr><td>Battery purchase</td><td>before quotes + after install</td></tr>
-</tbody>
-</table>
-<p class="small">A quarterly scheduled re-run of the pipeline already exists; the triggers above are the off-cycle reasons not to wait for it. Refresh procedure: the README's "Refreshing this analysis" section.</p>
-
 <h2 id="s14">14 · Methodology, sources &amp; caveats</h2>
 <ul>
 <li><b>Grid data:</b> SDG&amp;E Green Button 15-min export (37,248 intervals, separate import/export channels); last 365 days analyzed.</li>
@@ -578,6 +598,8 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <b>Environmental sources:</b> NOAA/RCC ACIS daily precipitation (data.rcc-acis.org, coastal airport gauge) · CAISO Today's Outlook history (caiso.com/outlook — CO₂ by source + demand, 5-min; 28 sampled days across the analysis year).<br>
 This is an independent analysis, not advice from SDG&amp;E, CEA, Enphase, or Tesla; verify current rates and prices before acting.<br>
 <b>How this report was produced:</b> generated with <b>Claude Cowork (Fable&nbsp;5)</b>; the data, methodology, and conclusions were then independently reviewed with <b>Claude Code (Fable&nbsp;5)</b> and adversarially reviewed with <b>Codex (GPT&#8209;5.6&nbsp;Sol)</b>; the analysis was subsequently re-worked in Claude Cowork to incorporate the findings of both reviews.</p>
+
+</details>
 
 <button class="totop" id="totop" aria-label="Back to top">↑ Top</button>
 <button class="themetoggle" id="themetoggle" aria-label="Switch between light and dark theme">◐ theme</button>
@@ -608,6 +630,7 @@ const onpeakBand={id:'onpeakBand',beforeDraw(c){const{ctx,chartArea:ar,scales:{x
  ctx.save();ctx.fillStyle=A(PAL.on,.07);
  ctx.fillRect(x.getPixelForValue(16),ar.top,x.getPixelForValue(21)-x.getPixelForValue(16),ar.bottom-ar.top);ctx.restore();}};
 const hrs=[...Array(24).keys()].map(h=>h+':00');
+const adv=document.getElementById('advanced');
 new Chart(document.getElementById('hourly'),{type:'line',data:{labels:hrs,datasets:[
  {label:'Summer import (avg kW)',data:D.hourlyS_imp,borderColor:PAL.on,backgroundColor:A(PAL.on,.10),fill:true,tension:.3,pointRadius:0},
  {label:'Summer solar export (avg kW)',data:D.hourlyS_exp,borderColor:PAL.solar,borderDash:[6,3],tension:.3,pointRadius:0},
@@ -619,17 +642,6 @@ new Chart(document.getElementById('battery'),{type:'line',data:{labels:hrs,datas
  {label:'With 1 × Powerwall 3',data:D.bat_pw3_S,borderColor:PAL.sop,borderWidth:2,tension:.3,pointRadius:0},
  {label:'With PW3 + Expansion (27 kWh)',data:D.bat_pw3x_S,borderColor:PAL.off,borderDash:[5,3],tension:.3,pointRadius:0}]},
  options:{plugins:{title:{display:true,text:'Projected grid import with a battery — the shaded 4–9pm peak is erased; overnight rises as the battery tops up on cheap power',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
-// #carbon lives inside the collapsed §13 <details>: lazy-init it on first open so it sizes correctly.
-let carbonChart=null;
-function initCarbon(){
- if(carbonChart)return;
- carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
-  {label:'CAISO grid CO₂ intensity (28-day-sampled annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3,pointRadius:0}]},
-  options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data, 28 sampled days) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
-}
-const sec13=document.getElementById('sec13');
-sec13.addEventListener('toggle',()=>{if(sec13.open)initCarbon();});
-if(sec13.open)initCarbon();
 new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:A(PAL.sub,.55)},
  {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:A(PAL.solar,.75)},
@@ -641,6 +653,20 @@ new Chart(document.getElementById('periods'),{type:'bar',data:{
  datasets:[{label:'Annual import kWh',data:[14811,4478,3989],backgroundColor:A(PAL.sub,.55)},
   {label:'Annual import cost $',data:[1869,2284,2951],backgroundColor:A(PAL.on,.75)}]},
  options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of the energy causes ~42% of gross import cost — the on-peak problem in one picture',color:PAL.ink}}}});
+// #carbon lives inside the §13 <details>, itself inside the closed-by-default #advanced tier:
+// lazy-init it once BOTH are open so it sizes correctly (flag guards double init).
+let carbonChart=null;
+function initCarbon(){
+ if(carbonChart)return;
+ carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
+  {label:'CAISO grid CO₂ intensity (28-day-sampled annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3,pointRadius:0}]},
+  options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data, 28 sampled days) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
+}
+const sec13=document.getElementById('sec13');
+const maybeCarbon=()=>{if(adv.open&&sec13.open)initCarbon();};
+sec13.addEventListener('toggle',maybeCarbon);
+adv.addEventListener('toggle',maybeCarbon);
+maybeCarbon();
 
 // --- Navigation enhancements (progressive: page works fully without this script) ---
 // Anchor offset: measure the sticky nav's real height and feed it to h2{scroll-margin-top}.
@@ -660,15 +686,19 @@ const spy=new IntersectionObserver(entries=>{
 },{rootMargin:'-130px 0px -60% 0px'});
 document.querySelectorAll('h2[id]').forEach(h=>spy.observe(h));
 
-// Deep links into a collapsed <details> open it first (§9/§12/§13 anchors sit in the summary,
-// but any anchor whose target is inside a closed details gets it opened, then re-scrolled).
+// Deep links into collapsed content open it first (covers load-with-hash AND hashchange):
+// a target inside the #advanced tier opens the tier (and inits its charts) FIRST, then any
+// closed inner details, then re-scrolls.
 function openHashTarget(){
  const id=decodeURIComponent(location.hash.slice(1));
  if(!id)return;
  const el=document.getElementById(id);
  if(!el)return;
+ let opened=false;
+ if(adv.contains(el)&&!adv.open){adv.open=true;opened=true;}
  const det=el.closest('details');
- if(det&&!det.open){det.open=true;el.scrollIntoView();}
+ if(det&&det!==adv&&!det.open){det.open=true;opened=true;}
+ if(opened){maybeCarbon();el.scrollIntoView();}
 }
 addEventListener('hashchange',openHashTarget);
 addEventListener('load',openHashTarget);
@@ -700,6 +730,17 @@ const markScrollables=()=>document.querySelectorAll('.wrap table').forEach(t=>{
  if(!over&&t.hasAttribute('tabindex')){t.removeAttribute('tabindex');t.removeAttribute('role');t.removeAttribute('aria-label');}
 });
 markScrollables();addEventListener('resize',markScrollables);
+// Advanced-tier nav dimming: pills whose sections live inside #advanced dim while the tier is
+// closed (they still navigate — openHashTarget opens the tier first); driven by the native
+// toggle event, which also fires on programmatic opens.
+const syncTier=()=>toc.classList.toggle('tier-closed',!adv.open);
+adv.addEventListener('toggle',()=>{syncTier();if(adv.open)markScrollables();});
+syncTier();
+// Printing must emit the full report: force-open the tier and every inner details
+// (CSS alone cannot open a <details>); matchMedia('print') is the beforeprint fallback.
+const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);maybeCarbon()};
+addEventListener('beforeprint',openForPrint);
+matchMedia('print').addEventListener('change',e=>{if(e.matches)openForPrint()});
 // Collapse/expand the audit <details> sections from the nav.
 const collapser=document.getElementById('toccollapse');
 if(collapser){

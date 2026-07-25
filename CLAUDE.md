@@ -215,6 +215,35 @@ Mono data — with system fallbacks).
   ledger rows (mono uppercase `.meta-k` labels + `.meta-v` values, hairline rules,
   single-column on mobile) — never as a run-on `.sub` paragraph.
 
+**Basic/advanced tier structure (keep on every regeneration):**
+- BASIC tier (always visible) = header + .meta ledger + day-band + Bottom line (§0) +
+  §1–§7 (including the four §5 charts: #hourly #battery #monthly #periods) + the
+  "What to do Monday" appendix (id="s15"), which sits directly AFTER §7's section.
+  The basic tier carries the decision narrative and the majority of the charts.
+- ADVANCED tier = §8–§14 only — the audit trail (array upgrades, deep dives sec9, bills,
+  lifetime payback, cleaning sec12, carbon sec13, methodology) — wrapped in ONE native
+  `<details id="advanced" class="advanced">`, CLOSED by default (no persistence, no
+  position:sticky). Its <summary> is a loud full-width section divider: mono uppercase
+  eyebrow "ADVANCED ANALYSIS" + display-font headline "The full evidence" + inventory
+  line "7 sections · the full audit trail · every figure traceable to a script and a
+  data artifact" + a ▸ affordance that rotates 90° when open (details[open]); hairline
+  top/bottom rules like .meta rows; :focus-visible outline; cursor:pointer.
+- REQUIRED mitigations (all four, wired in JS; verify on every regeneration):
+  1. Every deep link into the tier auto-opens it — on load-with-hash AND hashchange —
+     before scrolling (openHashTarget opens #advanced first, then any closed inner
+     details, then re-scrolls).
+  2. Nav pills whose targets sit inside the tier (the Audit-group pills s9–s14 and the
+     Array-upgrades pill s8 in Evidence) dim to ~55% opacity while it is closed
+     (nav.tier-closed class, driven by the details' native toggle event) but still
+     navigate — hash navigation goes through openHashTarget, which opens the tier.
+     Verdict-group pills never dim.
+  3. The tier's chart (#carbon, the only canvas inside it) lazy-inits on the first time
+     the tier AND sec13 are both open, double-init guarded; the four §5 basic-tier
+     charts keep initializing on load.
+  4. Printing force-opens the tier and all inner details via a beforeprint listener
+     (plus a matchMedia('print') change fallback) so print always emits the full
+     report — CSS alone cannot open a details element.
+
 **Formatting & navigation mechanics (implemented in the template — keep ALL of these):**
 - Skip-link ("Skip to the bottom line") as the first element in <body>.
 - "⌂ Top" home pill leads the Verdict nav group (href="#top", id="top" on the h1) — readers
@@ -240,15 +269,18 @@ Mono data — with system fallbacks).
   .chartbox — never crammed into the chart title.
 
 - Print stylesheet hides nav/toggle buttons. Sticky TOC in three labeled
-groups — Verdict (Bottom line, Plans, Battery×plan, Packages), Evidence (Data, System, Usage,
-Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning, Carbon/NEM,
-Methodology) — with uppercase eyebrow labels and compact pills. Scroll-spy via ONE
+groups — Verdict (Bottom line, Plans, Battery×plan, Packages, Do Monday), Evidence (Data,
+System, Usage, Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning,
+Carbon/NEM, Methodology) — with uppercase eyebrow labels and compact pills. Scroll-spy via ONE
 IntersectionObserver on h2s (no scroll listeners); active pill in --acc. h2
 scroll-margin-top ≥ nav height; smooth scrolling gated by prefers-reduced-motion. The three
-heaviest audit sections (Deep dives, Cleaning, Carbon/NEM) are native <details>/<summary>,
-OPEN by default (collapsible — closed-by-default made readers think the content was
-missing), summary = h2 + one-line conclusion teaser; hashchange/load JS opens a
-collapsed section before jumping; charts inside collapsed sections lazy-init on first open.
+heaviest audit sections (Deep dives, Cleaning, Carbon/NEM) are native <details>/<summary>
+and remain OPEN by default WITHIN the advanced tier (closed-by-default inner sections made
+readers think the content was missing); the advanced tier itself is the single intentional
+closed-by-default boundary, made discoverable by the loud divider summary — which is why the
+closed-by-default lesson does not apply to it. Summary = h2 + one-line conclusion teaser;
+hashchange/load JS opens a collapsed section (and the tier around it) before jumping; charts
+inside collapsed sections lazy-init on first open.
 Quiet back-to-top button (appears after §1, aria-label). Mobile ≤800px: grouped TOC ≤ ~2 rows
 (horizontal scroll). Keyboard :focus-visible on pills/summaries. Page must degrade cleanly
 with JS disabled.

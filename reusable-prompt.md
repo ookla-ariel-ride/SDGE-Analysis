@@ -282,7 +282,7 @@ followed by an enumerated list of the questions it answers, each with a section 
 closing line explaining the measured/modeled/estimated evidence labels. Adapt the question
 list to the analyses actually run (the template carries the reference list).
 
-**Start `index.html` from `report-template.html` (in this repo) — do not build the shell from scratch.** The template already contains the finished dark-theme CSS, the grouped Verdict/Evidence/Audit sticky TOC with scroll-spy, the collapsible audit sections with lazy-chart init, the five chart scaffolds, confidence-pill examples, hanging-indent bottom line, and the provenance slot. Your job is to replace every `{{TOKEN}}` with a script-produced value and fill the TODO blocks with your findings — never invent a number to fill a token, and never strip the navigation/provenance machinery.
+**Start `index.html` from `report-template.html` (in this repo) — do not build the shell from scratch.** The template already contains the finished dark-theme CSS, the grouped Verdict/Evidence/Audit sticky TOC with scroll-spy, the basic/advanced tier structure (the `<details id="advanced">` audit-trail wrapper with its loud divider summary), the collapsible audit sections with lazy-chart init, the five chart scaffolds, confidence-pill examples, hanging-indent bottom line, and the provenance slot. Your job is to replace every `{{TOKEN}}` with a script-produced value and fill the TODO blocks with your findings — never invent a number to fill a token, and never strip the navigation/provenance machinery.
 
 **One GitHub-Pages-ready folder:** `index.html`, `report-template.html`, `README.md`,
 `analysis/*.py`, de-identified aggregates in `data/`, `rates-reference.md` + notes in
@@ -290,20 +290,33 @@ list to the analyses actually run (the template carries the reference list).
 ALL raw PII (Green Button CSVs, bill PDFs, monitoring exports) — never pushed.
 
 **index.html** — one self-contained interactive report (vanilla CSS/JS, Chart.js CDN only),
-ordered: bottom line → data & validation → solar system profile → plan comparison → does-a-
-battery-change-the-plan matrix → usage/behavior findings → battery hardware (arbitrage +
-outage endurance) → three costed packages (Low = behavior-only $0 / Mid = +battery / High =
-+expanded storage; each with annual cost, savings, projected bills at constant current rates,
-honest asset-alone payback, backup capability) → expansion/clipping verdict → deep analyses →
-bill reconciliation + gas + electrification → lifetime payback → cleaning & soiling →
+in TWO tiers. BASIC tier (always visible — the decision narrative and the majority of the
+charts): bottom line → data & validation → solar system profile → plan comparison → does-a-
+battery-change-the-plan matrix → usage/behavior findings (the four §5 charts) → battery
+hardware (arbitrage + outage endurance) → three costed packages (Low = behavior-only $0 /
+Mid = +battery / High = +expanded storage; each with annual cost, savings, projected bills
+at constant current rates, honest asset-alone payback, backup capability) → the "What to do
+Monday" appendix. ADVANCED tier (§8–§14, the audit trail, wrapped in ONE closed-by-default
+`<details id="advanced">`): expansion/clipping verdict → deep analyses → bill reconciliation
++ gas + electrification → lifetime payback → cleaning & soiling →
 carbon/NEM-value/escalation/price-map → methodology & caveats.
 
 **Navigation (build it in, keep it on every regeneration):** sticky TOC in three labeled
 groups — **Verdict / Evidence / Audit** — as compact pills under uppercase eyebrow labels;
 scroll-spy via ONE IntersectionObserver on the h2s (no scroll listeners), active pill
 highlighted; h2 `scroll-margin-top` ≥ nav height; smooth scrolling gated by
-`prefers-reduced-motion`. The heaviest audit sections are native `<details>/<summary>`,
-open by default (collapsible; do not hide content behind closed sections), each summary = the h2 plus a one-line conclusion teaser;
+`prefers-reduced-motion`. The advanced tier (§8–§14) lives inside ONE closed-by-default
+`<details id="advanced">` whose summary is a loud full-width divider — mono uppercase eyebrow
+"ADVANCED ANALYSIS", display-font headline "The full evidence", inventory line ("7 sections ·
+the full audit trail · every figure traceable to a script and a data artifact"), and a ▸
+affordance that rotates when open. Required mitigations: every deep link into the tier
+auto-opens it (load-with-hash AND hashchange) before scrolling; nav pills for tier content
+(s8–s14) dim to ~55% while it is closed but still navigate; the tier's charts lazy-init on
+its first open; a `beforeprint` listener (plus a `matchMedia('print')` fallback) force-opens
+the tier and all inner details so printing emits the full report. WITHIN the tier, the
+heaviest audit sections are native `<details>/<summary>`, open by default (the tier boundary
+is the single intentional closed-by-default element — do not hide content behind additional
+closed sections), each summary = the h2 plus a one-line conclusion teaser;
 hashchange/load JS opens a collapsed section before jumping to it; charts inside collapsed
 sections lazy-init on first open. Quiet back-to-top button (after §1, aria-labeled). Mobile
 ≤800px: grouped TOC collapses to ≤ ~2 rows with horizontal scroll. Keyboard `:focus-visible`
@@ -353,8 +366,10 @@ After each commit, verify it actually landed on the remote before moving on.
 
 **Plan wildcards:** where the utility offers an event-based plan (e.g. SDG&E TOU-DR-P with Reduce Your Use event-day surcharges), simulate it explicitly — price the event-day exposure and test whether a battery that dodges events changes the answer — rather than excluding it silently.
 
-**"What to do Monday" implementation appendix (required):** close the report with a short
-content-only appendix — no new analysis; every item cites the section that justifies it —
+**"What to do Monday" implementation appendix (required):** close the BASIC tier with a short
+content-only appendix (id="s15", placed directly after the packages section §7, before the
+advanced tier's `<details id="advanced">`) — no new analysis; every item cites the section
+that justifies it —
 containing: (1) the concrete schedule changes (charger windows, load staggering to respect
 the service's coincident-draw limit, the midday-plug-in habit); (2) the pre-battery
 checklist (panel/service headroom check, Rule 21 export-capability check, VPP/DSGS

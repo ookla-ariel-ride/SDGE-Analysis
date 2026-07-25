@@ -5,11 +5,16 @@
   What this is:
     A de-personalized skeleton of the finished report (index.html). It preserves
     the hard-won infrastructure — the full stylesheet, the grouped sticky TOC,
-    the collapsed-audit <details> pattern, the five Chart.js charts (including
-    the lazy-init-on-toggle pattern for charts inside collapsed sections), the
-    scroll-spy / anchor-offset / deep-link / back-to-top script machinery, and
-    the 15-section structure — while replacing every household-specific number,
-    date, and finding with {{DOUBLE_BRACE_TOKENS}} or TODO comments.
+    the basic/advanced tier structure (basic tier: header + meta + day-band +
+    Bottom line + §1–§7 + "What to do Monday" — the decision narrative and the
+    majority of the charts; advanced tier: §8–§14, the audit trail, inside the
+    single closed-by-default <details> tier with its loud divider
+    summary #advanced), the collapsed-audit <details> pattern, the five Chart.js charts
+    (four init on load in §5; #carbon lazy-inits on the tier/§13 first open),
+    the scroll-spy / anchor-offset / deep-link / nav-dimming / beforeprint /
+    back-to-top script machinery, and the 16-section structure — while
+    replacing every household-specific number, date, and finding with
+    {{DOUBLE_BRACE_TOKENS}} or TODO comments.
 
   How to use it:
     This is the Phase D starting point in reusable-prompt.md. It must be filled
@@ -26,7 +31,8 @@
     script didn't produce it or a document doesn't show it, it doesn't ship.
     Search for "{{" and "TODO" — both must be gone before publication.
 
-  Section map (h2 ids s0–s14):
+  Section map (h2 ids s0–s15):
+    — BASIC TIER (always visible) —
     s0  Bottom line (7-item verdict list + summary cards)
     s1  The data (verification summary)
     s2  Your solar system today (hardware + performance)
@@ -35,6 +41,8 @@
     s5  Usage profile (charts: #hourly #battery #monthly #periods)
     s6  Battery hardware (arbitrage, dispatch policy, outage endurance)
     s7  The decision: three packages (LOW / MID / HIGH)
+    s15 What to do Monday — implementation appendix (content-only)
+    — ADVANCED TIER (the audit trail; s8–s14 inside the #advanced details, closed by default) —
     s8  Array upgrade verdicts
     s9  Deeper analyses            [COLLAPSIBLE — <details id="sec9">]
     s10 Actual bills, gas & electrification
@@ -143,8 +151,9 @@
   @media print{nav.toc,.totop,.themetoggle{display:none}body{font-size:.92rem}}
   @media (prefers-reduced-motion:no-preference){
     html{scroll-behavior:smooth}
-    nav.toc a{transition:color .15s,border-color .15s}
+    nav.toc a{transition:color .15s,border-color .15s,opacity .15s}
     .totop{transition:opacity .2s,visibility .2s}
+    details.advanced>summary::after{transition:transform .15s}
   }
   @media(max-width:800px){
     nav.toc{padding:6px 12px;gap:4px}
@@ -176,6 +185,18 @@
   .toc-home{font-weight:700;border-color:var(--ink)!important;color:var(--ink)!important}
   @media (hover:none){.hlink{display:none}}
   @media print{.chartbox,table,.rec,.note,.pkg{break-inside:avoid}.hlink,.skiplink{display:none}}
+
+  /* --- basic/advanced tier (keep on every regeneration) --- */
+  details.advanced>summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:16px;margin:46px 0 14px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  details.advanced>summary::-webkit-details-marker{display:none}
+  details.advanced>summary .adv-eyebrow,details.advanced>summary .adv-head,details.advanced>summary .adv-inv{grid-column:1}
+  details.advanced>summary::after{content:"▸";grid-column:2;grid-row:1/span 3;align-self:center;font-family:var(--mono);font-size:1.5rem;color:var(--sub)}
+  details.advanced[open]>summary::after{transform:rotate(90deg)}
+  details.advanced>summary:hover .adv-head,details.advanced>summary:hover::after{color:var(--sop)}
+  .adv-eyebrow{font-family:var(--mono);font-size:.66rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--sub)}
+  .adv-head{font-family:var(--disp);font-weight:700;font-size:1.55rem;letter-spacing:-.015em;line-height:1.2}
+  .adv-inv{font-family:var(--disp);color:var(--sub);font-size:.88rem;margin-top:2px}
+  nav.toc.tier-closed a.adv{opacity:.55}
 </style>
 </head>
 <body>
@@ -208,9 +229,9 @@
 </div>
 
 <nav class="toc" id="toc">
-<div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a href="#s8">8 Array upgrades</a></div>
-<div class="toc-group"><span class="toc-eyebrow">Audit</span><a href="#s9">9 Deep dives</a><a href="#s10">10 Bills &amp; gas</a><a href="#s11">11 Payback</a><a href="#s12">12 Cleaning</a><a href="#s13">13 Carbon · NEM · prices</a><a href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
+<div class="toc-group"><span class="toc-eyebrow">Verdict</span><a class="toc-home" href="#top" aria-label="Back to the top of the report">⌂ Top</a><a href="#s0">Bottom line</a><a href="#s3">3 Plans</a><a href="#s4">4 Battery×plan</a><a href="#s7">7 Packages</a><a href="#s15">Do Monday</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Evidence</span><a href="#s1">1 Data</a><a href="#s2">2 Your system</a><a href="#s5">5 Usage</a><a href="#s6">6 Battery HW</a><a class="adv" href="#s8">8 Array upgrades</a></div>
+<div class="toc-group"><span class="toc-eyebrow">Audit</span><a class="adv" href="#s9">9 Deep dives</a><a class="adv" href="#s10">10 Bills &amp; gas</a><a class="adv" href="#s11">11 Payback</a><a class="adv" href="#s12">12 Cleaning</a><a class="adv" href="#s13">13 Carbon · NEM · prices</a><a class="adv" href="#s14">14 Methodology</a><button class="toc-collapse" id="toccollapse" aria-label="Collapse or expand the audit sections">▾ collapse audit</button></div>
 <div class="progress" id="progress"></div>
 </nav>
 
@@ -399,6 +420,46 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <div class="rec"><b>Recommendation: {{RECOMMENDED_PACKAGE_SUMMARY}}.</b> <!-- TODO: 3–4 sentences in the reference voice — e.g. "The EV-charging fix is free, immediate, and worth ~{{EV_FIX_SAVINGS_100}}/yr — do it this week regardless. One {{BATTERY_MODEL}} adds ~{{BATTERY_MARGINAL_SAVINGS}}/yr of its own savings (…payback) plus genuine outage resilience." Close with the action sequence (reprogram charging, get quotes, join incentive waitlist). --></div>
 
+<h2 id="s15">What to do Monday — the implementation appendix</h2>
+<p>The whole analysis reduces to this short checklist. Nothing here is new analysis — each item cites the section that justifies it.</p>
+<!-- TODO: content-only appendix (reusable-prompt.md Phase D spec) — no new analysis, no new artifacts; every item cites its justifying section. Four parts: -->
+<h3>1 · Reprogram charging (this week, $0)</h3>
+<ul>
+<li><!-- TODO: concrete schedule changes — charger windows ({{CHEAP_WINDOW}}), load staggering to respect the service's coincident-draw limit, the midday plug-in habit. --></li>
+</ul>
+<h3>2 · Before any battery quote</h3>
+<ul>
+<li><!-- TODO: pre-battery checklist — panel/service headroom check, interconnection export-capability check, VPP enrollment step. --></li>
+</ul>
+<h3>3 · Pre-registered success metrics for the behavior fix <span class="pill y">modeled targets</span></h3>
+<p>Logged before the change so the evaluation can't be gamed. Check at the <b>next bill</b> and again after <b>two full billing cycles</b>:</p>
+<table class="evidence">
+<thead><tr><th>Metric</th><th>Now</th><th>Target</th></tr></thead>
+<tbody>
+<tr><td><!-- TODO: metric --></td><td>{{METRIC_NOW}}</td><td>{{METRIC_TARGET}}</td></tr>
+</tbody>
+</table>
+<h3>4 · When to re-run this analysis</h3>
+<table class="evidence">
+<thead><tr><th>Trigger</th><th>When</th></tr></thead>
+<tbody>
+<tr><td><!-- TODO: re-run triggers — utility/CCA rate-change dates, fixed-charge changes, fleet/appliance changes, battery before-quotes/after-install. --></td><td><!-- TODO --></td></tr>
+</tbody>
+</table>
+
+<!-- ADVANCED TIER (CLAUDE.md §10): §8–§14 — the audit trail — live inside this single
+     closed-by-default <details>. The basic tier above it (header + meta + day-band +
+     Bottom line + §1–§7 with the four §5 charts + Monday appendix) is always visible
+     and carries the decision narrative. Required mitigations are wired in the script below: deep links auto-open the tier
+     (load + hashchange), nav pills for tier content dim while it is closed but still navigate,
+     the tier's #carbon chart lazy-inits on first open, and beforeprint force-opens everything. -->
+<details id="advanced" class="advanced">
+<summary>
+ <span class="adv-eyebrow">Advanced analysis</span>
+ <span class="adv-head">The full evidence</span>
+ <span class="adv-inv">7 sections · the full audit trail · every figure traceable to a script and a data artifact</span>
+</summary>
+
 <h2 id="s8">8 · Array upgrades: more panels, bigger panels, or new microinverters? {{S8_VERDICT_SHORT}}</h2>
 <!-- TODO: four verdict paragraphs, each led by a bold claim, in the reference voice:
      1. More panels — marginal-kWh value vs marginal-import cost, retrofit $/W, payback years.
@@ -539,6 +600,7 @@ This is an independent analysis, not advice from any utility, provider, or manuf
      generate -> independent review -> adversarial review -> rework — must be preserved.
      Replace only the tool names with the tools actually used. -->
 <b>How this report was produced:</b> generated with <b>{{GENERATION_TOOL}}</b>; the data, methodology, and conclusions were then independently reviewed with <b>{{REVIEW_TOOL_1}}</b> and adversarially reviewed with <b>{{REVIEW_TOOL_2}}</b>; the analysis was subsequently re-worked in {{GENERATION_TOOL}} to incorporate the findings of both reviews.</p>
+</details>
 
 <button class="totop" id="totop" aria-label="Back to top">↑ Top</button>
 <button class="themetoggle" id="themetoggle" aria-label="Switch between light and dark theme">◐ theme</button>
@@ -575,6 +637,7 @@ const onpeakBand={id:'onpeakBand',beforeDraw(c){const{ctx,chartArea:ar,scales:{x
  ctx.save();ctx.fillStyle=A(PAL.on,.07);
  ctx.fillRect(x.getPixelForValue(16),ar.top,x.getPixelForValue(21)-x.getPixelForValue(16),ar.bottom-ar.top);ctx.restore();}};
 const hrs=[...Array(24).keys()].map(h=>h+':00');
+const adv=document.getElementById('advanced');
 new Chart(document.getElementById('hourly'),{type:'line',data:{labels:hrs,datasets:[
  {label:'Summer import (avg kW)',data:D.hourlyS_imp,borderColor:PAL.on,backgroundColor:A(PAL.on,.10),fill:true,tension:.3},
  {label:'Summer solar export (avg kW)',data:D.hourlyS_exp,borderColor:PAL.solar,borderDash:[6,3],tension:.3},
@@ -588,18 +651,6 @@ new Chart(document.getElementById('battery'),{type:'line',data:{labels:hrs,datas
  {label:'With {{BATTERY_EXPANDED_MODEL}} ({{BATTERY_EXPANDED_KWH}} kWh)',data:D.bat_pw3x_S,borderColor:PAL.off,borderDash:[5,3],tension:.3}]},
  // e.g. "Projected grid import with a battery — the evening peak (red) is erased; overnight rises slightly as the battery tops up on cheap power".
  options:{plugins:{title:{display:true,text:'{{CHART_TITLE_BATTERY}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'grid import avg kW'}}}},plugins:[onpeakBand]});
-// #carbon lives inside the collapsed §13 <details>: lazy-init it on first open so it sizes correctly.
-let carbonChart=null;
-function initCarbon(){
- if(carbonChart)return;
- carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
-  {label:'Grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
-  // e.g. "Grid carbon by hour (real grid-operator data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest".
-  options:{plugins:{title:{display:true,text:'{{CHART_TITLE_CARBON}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
-}
-const sec13=document.getElementById('sec13');
-sec13.addEventListener('toggle',()=>{if(sec13.open)initCarbon();});
-if(sec13.open)initCarbon();
 new Chart(document.getElementById('monthly'),{data:{labels:D.mLabels,datasets:[
  {type:'bar',label:'Grid imports (kWh)',data:D.mImp,backgroundColor:A(PAL.sub,.55)},
  {type:'bar',label:'Solar exports (kWh)',data:D.mExp,backgroundColor:A(PAL.solar,.75)},
@@ -612,6 +663,21 @@ new Chart(document.getElementById('periods'),{type:'bar',data:{
   {label:'Annual import cost $',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
  // e.g. "X% of the energy causes ~Y% of gross import cost — the on-peak problem in one picture".
  options:{indexAxis:'y',plugins:{title:{display:true,text:'{{CHART_TITLE_PERIODS}}',color:PAL.ink}}}});
+// #carbon lives inside the §13 <details>, itself inside the closed-by-default #advanced tier:
+// lazy-init it once BOTH are open so it sizes correctly (flag guards double init).
+let carbonChart=null;
+function initCarbon(){
+ if(carbonChart)return;
+ carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
+  {label:'Grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
+  // e.g. "Grid carbon by hour (real grid-operator data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest".
+  options:{plugins:{title:{display:true,text:'{{CHART_TITLE_CARBON}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
+}
+const sec13=document.getElementById('sec13');
+const maybeCarbon=()=>{if(adv.open&&sec13.open)initCarbon();};
+sec13.addEventListener('toggle',maybeCarbon);
+adv.addEventListener('toggle',maybeCarbon);
+maybeCarbon();
 
 // --- Navigation enhancements (progressive: page works fully without this script) ---
 // Anchor offset: measure the sticky nav's real height and feed it to h2{scroll-margin-top}.
@@ -631,15 +697,19 @@ const spy=new IntersectionObserver(entries=>{
 },{rootMargin:'-130px 0px -60% 0px'});
 document.querySelectorAll('h2[id]').forEach(h=>spy.observe(h));
 
-// Deep links into a collapsed <details> open it first (§9/§12/§13 anchors sit in the summary,
-// but any anchor whose target is inside a closed details gets it opened, then re-scrolled).
+// Deep links into collapsed content open it first (covers load-with-hash AND hashchange):
+// a target inside the #advanced tier opens the tier (and inits its charts) FIRST, then any
+// closed inner details, then re-scrolls.
 function openHashTarget(){
  const id=decodeURIComponent(location.hash.slice(1));
  if(!id)return;
  const el=document.getElementById(id);
  if(!el)return;
+ let opened=false;
+ if(adv.contains(el)&&!adv.open){adv.open=true;opened=true;}
  const det=el.closest('details');
- if(det&&!det.open){det.open=true;el.scrollIntoView();}
+ if(det&&det!==adv&&!det.open){det.open=true;opened=true;}
+ if(opened){maybeCarbon();el.scrollIntoView();}
 }
 addEventListener('hashchange',openHashTarget);
 addEventListener('load',openHashTarget);
@@ -671,6 +741,17 @@ const markScrollables=()=>document.querySelectorAll('.wrap table').forEach(t=>{
  if(!over&&t.hasAttribute('tabindex')){t.removeAttribute('tabindex');t.removeAttribute('role');t.removeAttribute('aria-label');}
 });
 markScrollables();addEventListener('resize',markScrollables);
+// Advanced-tier nav dimming: pills whose sections live inside #advanced dim while the tier is
+// closed (they still navigate — openHashTarget opens the tier first); driven by the native
+// toggle event, which also fires on programmatic opens.
+const syncTier=()=>toc.classList.toggle('tier-closed',!adv.open);
+adv.addEventListener('toggle',()=>{syncTier();if(adv.open)markScrollables();});
+syncTier();
+// Printing must emit the full report: force-open the tier and every inner details
+// (CSS alone cannot open a <details>); matchMedia('print') is the beforeprint fallback.
+const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);maybeCarbon()};
+addEventListener('beforeprint',openForPrint);
+matchMedia('print').addEventListener('change',e=>{if(e.matches)openForPrint()});
 // Collapse/expand the audit <details> sections from the nav.
 const collapser=document.getElementById('toccollapse');
 if(collapser){
