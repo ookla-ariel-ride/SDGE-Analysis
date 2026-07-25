@@ -44,6 +44,15 @@ enphase_sam8760*.csv
 .DS_Store
 Thumbs.db
 
+# AI-tooling artifacts — local agent config, installed skills, and lockfiles.
+# CLAUDE.md is the one committed AI file (the operating rules); these are not.
+.claude/
+.agents/
+skills-lock.json
+
+# Python virtualenv (CLAUDE.md setup creates it at the repo root)
+.venv/
+
 # Aggregated, PII-free data files that raw-export patterns above would
 # otherwise catch (verified clean before each exception was added).
 # Must stay LAST: gitignore is last-match-wins.

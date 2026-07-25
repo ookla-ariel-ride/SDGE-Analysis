@@ -20,7 +20,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
 [**GLOSSARY.md**](GLOSSARY.md) — every term (NEM, TOU, PCIA, CAISO, phantom load…) in plain English ·
-[**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the data-gathering checklist for running this on your own home ·
+[**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the intake interview: every data source you need, field by field, to run this on your own home ·
 [**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
 **In this README:**
@@ -70,7 +70,7 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `TECHNICAL.md` | **Full technical/reproducibility documentation** — every script, data schema, algorithm, and chart pipeline, methods-section style |
 | `CLAUDE.md` | Operating rules for AI-assisted reruns (evidence-based mandate, validation order, privacy gates, known pitfalls) |
 | `reusable-prompt.md` | Full prompt to reproduce this entire analysis (plan + solar + battery + gas + bill audit) in Claude Cowork |
-| `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
+| `DATA-SOURCES-CHEATSHEET.md` | Per-field intake interview spec: every data source needed for your own home, with links and which PDFs/exports to gather |
 | `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
 | `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
 | `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
@@ -173,9 +173,9 @@ containing those values.
   update `analysis/rates.py` from **your** bills (it is the single source of truth; non-SDG&E
   users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
   `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
-  pattern); run `behavior_rebuild.py`, `battery_dispatch_policies.py`, `billing_model_nem.py`,
-  `lifetime_payback.py`; then fill `report-template.html`'s `{{TOKEN}}`s from your regenerated
-  `data/*.json`.
+  pattern); run `behavior_rebuild.py`, `battery_dispatch_policies.py`, `battery_plan_matrix.py`,
+  `billing_model_nem.py`, `lifetime_payback.py`; then fill `report-template.html`'s `{{TOKEN}}`s
+  from your regenerated `data/*.json`.
 
 **4 · Validate before you trust it.** The gates in `CLAUDE.md` §9, in order: your billing
 model must reproduce your actual bills before you quote any absolute dollar; every committed
@@ -215,7 +215,7 @@ Your report will be live at `https://<you>.github.io/my-energy-analysis/` within
 
 | Path | Pushed to GitHub? | Contents |
 |---|---|---|
-| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `GLOSSARY.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md` | ✅ yes | Report, template, and docs (PII-free) |
+| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `GLOSSARY.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml`, `requirements.txt`, `LICENSE` | ✅ yes | Report, template, docs, config schema, and license (PII-free) |
 | `data/`, `analysis/`, `research/` | ✅ yes | Data, scripts, and rate research (PII-free) |
 | `.githooks/`, `.gitleaks.toml`, `.github/workflows/` | ✅ yes | The mechanical privacy enforcement: pre-commit gitleaks hook, generic scan rules, CI full-history re-scan |
 | `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns); CAISO raw day-cache |
@@ -283,4 +283,4 @@ as worked examples; regenerate them from your own data rather than republishing 
 
 ---
 
-*Last reviewed: 2026-07-25, against commit `e637892`.*
+*Last reviewed: 2026-07-25, against commit `dd04495`.*
