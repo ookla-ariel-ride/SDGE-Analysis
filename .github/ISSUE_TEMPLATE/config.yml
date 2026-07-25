@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Read the live report
+    url: https://ookla-ariel-ride.github.io/SDGE-Analysis/
+    about: The interactive report this repo generates and documents.
+  - name: Read the methods documentation first
+    url: https://github.com/ookla-ariel-ride/SDGE-Analysis/blob/main/TECHNICAL.md
+    about: TECHNICAL.md documents every script, artifact, and validation gate. Many questions are answered there.

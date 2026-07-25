@@ -1,0 +1,61 @@
+name: Reproduction problem
+description: You are running this on your own home and something in the pipeline fails.
+title: "[repro] "
+labels: ["reproduction"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: the reproduce flow lives in the README ("Reproduce this for your
+        own home"), the exact commands live in CLAUDE.md "Commands", and every data
+        source is described in DATA-SOURCES-CHEATSHEET.md.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      description: |
+        This is a public repo. Redact everything personal before pasting: your interval
+        CSV's 13-line header contains your name, address, and account and meter numbers.
+      options:
+        - label: I have removed all personal data from this issue, including file paths that contain my name, the Green Button header lines, bill contents, and any account, meter, or API-key values.
+          required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage fails?
+      options:
+        - "Setup (venv, requirements, gitleaks hook)"
+        - "Intake (DATA-SOURCES-CHEATSHEET interview, household.yaml)"
+        - "Data gathering or file formats"
+        - "Running an analysis script"
+        - "Regeneration gates (cmp / git diff checks)"
+        - "Filling report-template.html"
+        - "Publishing (GitHub Pages)"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, and the commit you cloned.
+      placeholder: "e.g. macOS 15, Python 3.12, commit 3a6d77d"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What did you run, and what happened?
+      description: The exact command and the full error output, with personal values redacted.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: data-shape
+    attributes:
+      label: Anything unusual about your data or setup? (optional)
+      description: |
+        Different utility, no consumption metering, a different monitoring platform,
+        non-SDG&E rates, partial-year data, and so on. Describe the shape, not the values.
+    validations:
+      required: false

@@ -151,7 +151,7 @@ Your report will be live at `https://<you>.github.io/my-energy-analysis/` within
 |---|---|---|
 | `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `GLOSSARY.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml`, `requirements.txt`, `LICENSE` | ✅ yes | Report, template, docs, config schema, and license (PII-free) |
 | `data/`, `analysis/`, `research/` | ✅ yes | Data, scripts, and rate research (PII-free) |
-| `.githooks/`, `.gitleaks.toml`, `.github/workflows/` | ✅ yes | The mechanical privacy enforcement: pre-commit gitleaks hook, generic scan rules, CI full-history re-scan |
+| `.githooks/`, `.gitleaks.toml`, `.github/` | ✅ yes | The mechanical privacy enforcement (pre-commit gitleaks hook, generic scan rules, CI full-history re-scan) and the issue templates |
 | `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns); CAISO raw day-cache |
 | `private/household.yaml`, `private/intake-status.md` | ❌ gitignored | Per-house config written by the intake interview (invoice, dates, vehicle specs…) + the per-field gathered/skipped log that gates Phase B |
 | `.env` | ❌ gitignored | Secrets only (PVOutput API key, monitoring tokens) — never in `household.yaml`, never committed |
@@ -298,7 +298,10 @@ With your own two files above plus current rates, the scripts regenerate every n
 The committed `data/*` artifacts and `index.html` are one household's results, included
 as worked examples; regenerate them from your own data rather than republishing these.
 
-Spotted an error in the method, or a number that doesn't reproduce? Open an issue.
+Spotted an error in the method, or a number that doesn't reproduce?
+[Open an issue](https://github.com/ookla-ariel-ride/SDGE-Analysis/issues/new/choose);
+there are templates for figure errors, reproduction problems, and documentation questions,
+each with a privacy checklist so nothing personal lands in a public thread.
 
 ---
 

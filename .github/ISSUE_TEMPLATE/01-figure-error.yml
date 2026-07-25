@@ -1,0 +1,57 @@
+name: Figure or method error
+description: A number in the report doesn't reproduce, or a method looks wrong.
+title: "[figure] "
+labels: ["figure-error"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repo's standing rule is that every figure must trace to a committed script
+        and data artifact. If one doesn't, that is a real bug and we want to know.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      description: This is a public repo. Issues are public forever.
+      options:
+        - label: This issue contains no personal data of mine or anyone else's (no names, addresses, account or meter numbers, raw Green Button rows, bill PDFs, or API keys).
+          required: true
+  - type: input
+    id: location
+    attributes:
+      label: Where is the figure or claim?
+      description: Report section, README line, TECHNICAL.md section, or file and line.
+      placeholder: "e.g. report section 6, battery dispatch table"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What does the repo publish, and what did you get instead?
+      description: Quote the published value and the value you computed or expected.
+      placeholder: |
+        Published: ...
+        Computed:  ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How did you check it?
+      description: |
+        Which script did you run, from which commit, with what inputs? The regeneration
+        gates in CLAUDE.md "Commands" are the canonical way to check a figure. Paste
+        command output rather than screenshots where possible.
+      placeholder: |
+        commit: ...
+        commands run: ...
+        output: ...
+    validations:
+      required: true
+  - type: textarea
+    id: analysis
+    attributes:
+      label: Your read on the cause (optional)
+      description: If you traced it to a specific line, assumption, or rate constant, say so here.
+    validations:
+      required: false
