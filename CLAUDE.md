@@ -1,7 +1,37 @@
 # CLAUDE.md — operating rules for the home-energy analysis
 
-This file focuses the work and encodes the mistakes we already made so they aren't repeated.
-Read it before touching this project. It applies to Claude Cowork, Claude Code, and any agent.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this
+repository. It focuses the work and encodes the mistakes we already made so they aren't
+repeated. Read it before touching this project. It applies to Claude Cowork, Claude Code,
+and any agent.
+
+## Commands
+
+```bash
+# One-time setup on any fresh clone — enable the secret/PII pre-commit gate:
+git config core.hooksPath .githooks       # requires: brew install gitleaks
+
+# Python environment (scripts need pandas/numpy):
+python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
+
+# Running analysis scripts: each expects usage.csv (the raw Green Button 15-min
+# export) in its working directory. The raw file lives in private/1-raw-data/ —
+# NEVER copy it outside private/. Standard pattern (the private/verify/ sandbox):
+mkdir -p private/verify && cd private/verify
+cp ../../analysis/*.py .
+cp ../1-raw-data/Electric_15_Minute_*.csv usage.csv
+../../.venv/bin/python behavior_rebuild.py            # regenerates behavior_rebuild.json
+../../.venv/bin/python battery_dispatch_policies.py   # regenerates battery_dispatch_policies.json
+
+# The §9 regeneration gate — run after ANY script or artifact change:
+cmp private/verify/behavior_rebuild.json data/behavior_rebuild.json
+cmp private/verify/battery_dispatch_policies.json data/battery_dispatch_policies.json
+# (must be byte-identical; a diff means a stale artifact or an unreproducible script)
+
+# Full-history secret scan (CI runs the generic rules automatically on every push):
+gitleaks git --config .gitleaks.toml .                # committed generic rules
+gitleaks git --config private/pii-rules.toml .        # + personal PII rules (local-only)
+```
 
 ## 0. Prime directive: EVIDENCE-BASED ONLY. No guesses, no hallucination.
 Every number, claim, and conclusion in the report MUST be traceable to (a) a datum you
@@ -58,9 +88,19 @@ after the sim said $1,669.) After any figure change, grep the report for the old
 ## 4. Privacy is non-negotiable and verified, not assumed.
 - All raw PII (Green Button CSVs, bill PDFs, solar-monitoring exports) lives in `private/`,
   gitignored, never pushed. Public repo gets only de-identified aggregates.
-- Before EVERY commit, grep push-bound files for: name, street address, account/meter/RIN
-  numbers, email, phone, exact coordinates, utility/solar/PVOutput account IDs, API keys.
-  Prove clean output before committing. (We twice nearly leaked a name/meter number.)
+- **Mechanical enforcement exists — enable it before your first commit:**
+  `git config core.hooksPath .githooks` turns on a gitleaks pre-commit gate that blocks
+  commits containing secrets or account data (it refuses to commit if gitleaks isn't
+  installed). Rules chain: gitleaks defaults → committed `.gitleaks.toml` (generic SDGE
+  account-format patterns) → `private/pii-rules.toml` (person-specific patterns: name,
+  address, actual account/meter numbers — local-only, gitignored, NEVER commit it; it
+  contains the very values it guards). CI re-scans full history on every push with the
+  committed rules only — it cannot check person-specific patterns, so the local hook is
+  the real gate.
+- The hook screens staged changes; for anything it can't see (filenames, images, PDFs),
+  still eyeball push-bound files for: name, street address, account/meter/RIN numbers,
+  email, phone, exact coordinates, utility/solar/PVOutput account IDs, API keys.
+  (We twice nearly leaked a name/meter number.)
 - Never type the user's password or enter credentials. The user logs in; you drive.
 - git history is permanent — if PII is ever committed, recommend delete+recreate over scrubbing.
 
