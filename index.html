@@ -30,6 +30,12 @@
   h3{font-family:var(--disp);font-weight:500;font-size:1.05rem;margin:22px 0 8px}
   p{margin:9px 0}
   .sub{font-family:var(--disp);color:var(--sub);font-size:.92rem}
+  .meta{margin:14px 0 2px;border-top:1px solid var(--line)}
+  .meta-row{display:grid;grid-template-columns:104px 1fr;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .meta-k{font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);padding-top:3px}
+  .meta-v{font-family:var(--disp);font-size:.88rem;line-height:1.55;color:var(--sub)}
+  .meta-v b{color:var(--ink)}
+  @media(max-width:800px){.meta-row{grid-template-columns:1fr;gap:2px}}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:20px 0}
   .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:17px 17px 14px}
   .card .big{font-family:var(--mono);font-weight:600;font-size:1.5rem;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--sop)}
@@ -107,9 +113,11 @@
 <div class="wrap">
 
 <h1>Home Energy Optimization — Rate Plan + Battery Analysis</h1>
-<p class="sub">Single-family home · SDG&amp;E Coastal climate zone · 10.05 kW solar + two EVs (all-electric transportation) · NEM 2.0 · Clean Energy Alliance (CEA) generation<br>
-Analysis window: <b>Jul 24, 2025 → Jul 23, 2026</b> · Rates effective June 1, 2026 · Report generated Jul 24, 2026<br>
-<b>Data sources:</b> SDG&amp;E Green Button 15-min electric + daily gas interval data · 24 detailed bill PDFs (12 electric — 13 billing periods covering a full 365 days — + 12 gas) · Enphase Enlighten (SAM 8760 hourly consumption + daily production) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power, system registration) · Open-Meteo temperatures · NOAA/RCC ACIS precipitation · CAISO Today's Outlook CO₂ + demand history · solar install invoice (2019)</p>
+<div class="meta">
+  <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">Single-family home · SDG&amp;E Coastal climate zone · 10.05 kW solar + two EVs (all-electric transportation) · NEM 2.0 · Clean Energy Alliance (CEA) generation</span></div>
+  <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>Jul 24, 2025 → Jul 23, 2026</b> · rates effective June 1, 2026 · report generated Jul 24, 2026</span></div>
+  <div class="meta-row"><span class="meta-k">Sources</span><span class="meta-v">SDG&amp;E Green Button 15-min electric + daily gas interval data · 24 detailed bill PDFs (12 electric — 13 billing periods covering a full 365 days — + 12 gas) · Enphase Enlighten (SAM 8760 hourly consumption + daily production) · PVOutput generation records (daily 2020–2026, per-year stats, 5-min intraday power, system registration) · Open-Meteo temperatures · NOAA/RCC ACIS precipitation · CAISO Today's Outlook CO₂ + demand history · solar install invoice (2019)</span></div>
+</div>
 
 <div class="dayband" aria-hidden="true">
   <div class="db-strip">

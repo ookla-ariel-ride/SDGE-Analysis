@@ -178,6 +178,9 @@ Mono data — with system fallbacks).
 - Evidence pills are mono uppercase stamps, color-coded measured=sop-green /
   modeled=off-peak-amber / estimated=on-peak-red.
 - All numerals in IBM Plex Mono with tabular-nums (cards, tables, pills).
+- Header meta: the household / window / sources facts under the h1 render as the `.meta`
+  ledger rows (mono uppercase `.meta-k` labels + `.meta-v` values, hairline rules,
+  single-column on mobile) — never as a run-on `.sub` paragraph.
 - Print stylesheet hides nav/toggle buttons. Sticky TOC in three labeled
 groups — Verdict (Bottom line, Plans, Battery×plan, Packages), Evidence (Data, System, Usage,
 Battery HW, Array upgrades), Audit (Deep dives, Bills, Payback, Cleaning, Carbon/NEM,

@@ -76,6 +76,12 @@
   h3{font-family:var(--disp);font-weight:500;font-size:1.05rem;margin:22px 0 8px}
   p{margin:9px 0}
   .sub{font-family:var(--disp);color:var(--sub);font-size:.92rem}
+  .meta{margin:14px 0 2px;border-top:1px solid var(--line)}
+  .meta-row{display:grid;grid-template-columns:104px 1fr;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .meta-k{font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);padding-top:3px}
+  .meta-v{font-family:var(--disp);font-size:.88rem;line-height:1.55;color:var(--sub)}
+  .meta-v b{color:var(--ink)}
+  @media(max-width:800px){.meta-row{grid-template-columns:1fr;gap:2px}}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:20px 0}
   .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:17px 17px 14px}
   .card .big{font-family:var(--mono);font-weight:600;font-size:1.5rem;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--sop)}
@@ -153,9 +159,11 @@
 <div class="wrap">
 
 <h1>Home Energy Optimization — Rate Plan + Battery Analysis</h1>
-<p class="sub">{{HOME_DESCRIPTION}} · {{UTILITY_NAME}} {{CLIMATE_ZONE}} climate zone · {{SYSTEM_SIZE_KW_DC}} kW solar + {{OTHER_MAJOR_LOADS}} · {{NEM_STATUS}} · {{GENERATION_PROVIDER}} generation<br>
-Analysis window: <b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · Rates effective {{RATES_EFFECTIVE_DATE}} · Report generated {{REPORT_DATE}}<br>
-<b>Data sources:</b> {{DATA_SOURCES_SUMMARY}} <!-- TODO: one-line inventory of every source actually used, e.g. "utility Green Button 15-min interval data · N detailed bill PDFs · inverter-platform hourly consumption + daily production · weather/precipitation records · grid-operator CO2 + demand history · solar install invoice" --></p>
+<div class="meta">
+  <div class="meta-row"><span class="meta-k">Household</span><span class="meta-v">{{HOME_DESCRIPTION}} · {{UTILITY_NAME}} {{CLIMATE_ZONE}} climate zone · {{SYSTEM_SIZE_KW_DC}} kW solar + {{OTHER_MAJOR_LOADS}} · {{NEM_STATUS}} · {{GENERATION_PROVIDER}} generation</span></div>
+  <div class="meta-row"><span class="meta-k">Window</span><span class="meta-v"><b>{{ANALYSIS_START_DATE}} → {{ANALYSIS_END_DATE}}</b> · rates effective {{RATES_EFFECTIVE_DATE}} · report generated {{REPORT_DATE}}</span></div>
+  <div class="meta-row"><span class="meta-k">Sources</span><span class="meta-v">{{DATA_SOURCES_SUMMARY}} <!-- TODO: one-line inventory of every source actually used, e.g. "utility Green Button 15-min interval data · N detailed bill PDFs · inverter-platform hourly consumption + daily production · weather/precipitation records · grid-operator CO2 + demand history · solar install invoice" --></span></div>
+</div>
 
 <div class="dayband" aria-hidden="true">
   <div class="db-strip">

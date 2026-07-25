@@ -212,6 +212,23 @@ sections lazy-init on first open. Quiet back-to-top button (after §1, aria-labe
 ≤800px: grouped TOC collapses to ≤ ~2 rows with horizontal scroll. Keyboard `:focus-visible`
 on pills and summaries. The page must degrade cleanly with JS disabled.
 
+**Design system ("Solar ledger" — keep on every regeneration; full spec in CLAUDE.md §10):**
+light-first theme on warm-white paper with a dark variant via `[data-theme="dark"]` tokens
+and a ◐ toggle (localStorage-persisted; honors prefers-color-scheme on first visit). A
+SEMANTIC TOU palette — on-peak #BF3B2B, off-peak #C98A3D, super-off-peak #2E7D6B, solar
+#E9B62F — applied identically wherever a period appears (day-band, chart series, tables,
+price map); never introduce new accent colors for TOU-mapped data. Signature element: the
+pure-CSS 24-hour DAY-BAND strip under the header (segments at 0-6-10-14-16-21, ticks and
+prices). Typography: Space Grotesk (display), Source Serif 4 (body), IBM Plex Mono with
+tabular-nums for every numeral; Google Fonts CDN with system fallbacks. Evidence pills are
+mono uppercase stamps (measured=green / modeled=amber / estimated=red, same .pill.g/.y/.r
+class names). Header household/window/sources facts render as labeled `.meta` ledger rows,
+not a run-on paragraph. Charts take every color from the PAL object (which reads the CSS
+tokens — never hardcode hex), use the semantic palette for TOU-mapped series, and add
+`,plugins:[onpeakBand]` on any hourly time axis so 4–9pm is shaded. The Chart.js CDN tag is
+pinned with an SRI integrity hash — keep integrity/crossorigin attributes, and recompute the
+sha384 if the Chart.js version ever changes.
+
 **Provenance note (required; must survive every regeneration).** The methodology section's
 closing small-print in `index.html` ends with a "How this report was produced" sentence, and
 `README.md` carries the equivalent blockquote immediately before the report description.
