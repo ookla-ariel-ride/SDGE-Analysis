@@ -106,7 +106,9 @@ An interactive, evidence-based report for a solar home with two EVs (all-electri
 | `reusable-prompt.md` | Full prompt to reproduce this entire analysis (plan + solar + battery + gas + bill audit) in Claude Cowork |
 | `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
 | `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
-| `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy) |
+| `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
+| `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
+| `analysis/household.py` | Loader for `private/household.yaml` — analysis scripts read per-house facts (invoice, dates, charger kW, vehicle specs…) through it and **fail closed** with a run-the-intake-interview message if the file or a required key is missing |
 
 ## Reproduce this for your own home — start here
 
@@ -125,10 +127,15 @@ brew install gitleaks                   # or see gitleaks docs for other platfor
 git config core.hooksPath .githooks     # secret/PII scan now blocks every commit
 ```
 
-**1 · Gather your data.** Work through [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md)
-— utility 15-minute interval export, 12 months of detailed bills, solar production records,
-current rate tables. Everything raw goes in `private/1-raw-data/`. (The "private inputs"
-section below shows exactly what the two withheld files look like.)
+**1 · Run the intake interview.** Work through [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md)
+— it is now a per-field interview spec (`id` / `question` / `type` / `required_if` / `where` /
+`privacy` tier). Raw files (interval export, 12 months of detailed bills, production records,
+rate tables) go in `private/1-raw-data/`; per-house facts go in `private/household.yaml`
+(copy `household.example.yaml` and replace every placeholder); log progress per field id in
+`private/intake-status.md`. Secrets (API keys, monitoring tokens) go ONLY into a gitignored
+`.env`. Analysis may not start while any required field is missing — the scripts fail closed
+without `household.yaml`. (The "private inputs" section below shows what the withheld files
+look like.)
 
 **2 · Add your personal PII patterns.** Create `private/pii-rules.toml` with your own name,
 address, and account/meter numbers (see `CLAUDE.md` §4 for the format and the rule chain).
@@ -140,6 +147,7 @@ containing those values.
   into a Claude Cowork or Claude Code session and hand it your gathered files. `CLAUDE.md` is
   the operating manual the agent follows; `report-template.html` is the report shell it fills.
 - **Manual route:** `python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt`;
+  make sure `private/household.yaml` exists (step 1 — the scripts fail closed without it);
   update `analysis/rates.py` from **your** bills (it is the single source of truth — non-SDG&E
   users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
   `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
@@ -187,13 +195,17 @@ Your report will be live at `https://<you>.github.io/sdge-rate-analysis/` within
 |---|---|---|
 | `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md` | ✅ yes | Report, template, and docs (PII-free) |
 | `data/`, `analysis/`, `research/` | ✅ yes | Data, scripts, and rate research (PII-free) |
-| `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns) |
+| `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns); CAISO raw day-cache |
+| `private/household.yaml`, `private/intake-status.md` | ❌ gitignored | Per-house config written by the intake interview (invoice, dates, vehicle specs…) + the per-field gathered/skipped log that gates Phase B |
+| `.env` | ❌ gitignored | Secrets only (PVOutput API key, monitoring tokens) — never in `household.yaml`, never committed |
 | `private/3-analysis-extras/` | ❌ gitignored | As-run script copy with personal header |
 | `private/README.md` | ✅ yes (placeholder) | Map of the private archive — the one file under `private/` that is committed, so the repo documents what's withheld |
 
 ## The private inputs — and how to obtain your own
 
-Only two input datasets are withheld, and anyone can pull their own equivalents in minutes:
+Only two input datasets are withheld (plus the small `private/household.yaml` config the
+intake interview writes — its schema is public in `household.example.yaml`), and anyone can
+pull their own equivalents in minutes:
 
 **1. Utility 15-minute interval export** (`Electric_15_Minute_<range>.csv`)
 - SDG&E customers: My Energy Center (myenergycenter.com) → Usage → **Green Button Download** →
@@ -233,7 +245,8 @@ With your own two files above plus current rates, the scripts regenerate every n
 
 1. My Energy Center → Usage → Green Button Download → last 13 months, CSV → `private/1-raw-data/`.
 2. If SDG&E (Jan/Jun) or CEA (Feb/Jun) issued new rates, update `analysis/rates.py` — the
-   single source of truth all current models import.
+   single source of truth all current models import. If the household changed (vehicle,
+   charger, cleaning event, appliance), update `private/household.yaml` too.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
    each `data/*.json` regenerates cleanly — that diff-check is the acceptance gate.
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D — or
