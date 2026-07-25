@@ -1,0 +1,28 @@
+{
+ "method": "integrated: bill the year with and without the price-aware PW3 dispatch (run_batt 'greedy', 13.5 kWh / 11.5 kW, 90% RTE, EV-spillover exclusion) under each plan's own rate structure",
+ "rates_basis": "published rate tables, CEA generation without relief credit (ranking-only; ties out to data/plan_results.csv, asserted). Holiday-as-weekend TOU assignment per analyze.py (TECHNICAL \u00a76.5).",
+ "plans_selection": "EV-TOU-5 + the two nearest competitors in data/plan_results.csv",
+ "dispatch_note": "all three plans share the same 2026 three-period TOU windows, so one dispatch trace is billed under each plan; kWh served 4705, cycles/day 1.01",
+ "plans": {
+  "EV-TOU-5": {
+   "no_battery": 4849,
+   "with_battery": 2542,
+   "battery_value": 2307
+  },
+  "EV-TOU-2": {
+   "no_battery": 5808,
+   "with_battery": 4151,
+   "battery_value": 1657
+  },
+  "TOU-ELEC": {
+   "no_battery": 6321,
+   "with_battery": 5324,
+   "battery_value": 997
+  }
+ },
+ "canonical_crosscheck_ev_tou_5": {
+  "no_battery": 4884,
+  "battery_value": 2325,
+  "basis": "data/battery_dispatch_policies.json \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, no holiday rule; the published EV-TOU-5 battery economics"
+ }
+}

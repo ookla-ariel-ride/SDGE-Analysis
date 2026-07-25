@@ -1,5 +1,12 @@
 {
  "baseline_bill_current_rates": 4884,
+ "inputs": {
+  "nonsop_import_kwh": 8506,
+  "onpeak_import_kwh": 3989,
+  "servable_offpeak_house_kwh": 1972,
+  "serviceable_total_kwh": 5961,
+  "note": "canonical rates.period assignment (no holiday rule); analyze.py's holiday-as-weekend rule gives nonsop 8,467 (the periods-chart basis)"
+ },
  "pw3": {
   "evening": {
    "save": 1708,
