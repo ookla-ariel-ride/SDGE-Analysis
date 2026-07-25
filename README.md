@@ -14,7 +14,11 @@ file viewer shows the HTML *source*, not the rendered report — use the link ab
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
 
-New to the jargon? **[GLOSSARY.md](GLOSSARY.md)** defines every term (NEM, TOU, PCIA, CAISO, phantom load…) in plain English.
+**Companion documents:**
+[**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
+[**GLOSSARY.md**](GLOSSARY.md) — every term (NEM, TOU, PCIA, CAISO, phantom load…) in plain English ·
+[**DATA-SOURCES-CHEATSHEET.md**](DATA-SOURCES-CHEATSHEET.md) — the data-gathering checklist for running this on your own home ·
+[**reusable-prompt.md**](reusable-prompt.md) — the AI prompt that rebuilds the entire analysis.
 
 An interactive, evidence-based report for a solar + EV home in the SDG&E Coastal climate zone
 (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data,
@@ -87,6 +91,52 @@ a full-year detailed-bill audit, six years of production records, and real weath
 | `DATA-SOURCES-CHEATSHEET.md` | Fill-in-the-blanks checklist of every data source needed (links, which PDFs/exports to gather) for your own home |
 | `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
 
+## Reproduce this for your own home — start here
+
+Nothing here is specific to one house; the machinery is reusable. The committed `data/*` files
+and `index.html` are **this house's results** — yours get regenerated from your own data, so
+don't edit them; replace them.
+
+**0 · Blank slate.** Clone the machinery, drop the history and results, protect yourself:
+
+```bash
+git clone https://github.com/ookla-ariel-ride/SDGE-Analysis.git my-energy-analysis
+cd my-energy-analysis
+rm -rf .git && git init                 # fresh repo: keep the tooling, not this house's history
+mkdir -p private/1-raw-data             # your raw exports land here (gitignored, never pushed)
+brew install gitleaks                   # or see gitleaks docs for other platforms
+git config core.hooksPath .githooks     # secret/PII scan now blocks every commit
+```
+
+**1 · Gather your data.** Work through [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md)
+— utility 15-minute interval export, 12 months of detailed bills, solar production records,
+current rate tables. Everything raw goes in `private/1-raw-data/`. (The "private inputs"
+section below shows exactly what the two withheld files look like.)
+
+**2 · Add your personal PII patterns.** Create `private/pii-rules.toml` with your own name,
+address, and account/meter numbers (see `CLAUDE.md` §4 for the format and the rule chain).
+It stays local — the pre-commit hook picks it up automatically and blocks any commit
+containing those values.
+
+**3 · Run the analysis — two routes:**
+- **AI route (how this repo was built):** paste [`reusable-prompt.md`](reusable-prompt.md)
+  into a Claude Cowork or Claude Code session and hand it your gathered files. `CLAUDE.md` is
+  the operating manual the agent follows; `report-template.html` is the report shell it fills.
+- **Manual route:** `python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt`;
+  update `analysis/rates.py` from **your** bills (it is the single source of truth — non-SDG&E
+  users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
+  `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
+  pattern); run `behavior_rebuild.py`, `battery_dispatch_policies.py`, `billing_model_nem.py`,
+  `lifetime_payback.py`; then fill `report-template.html`'s `{{TOKEN}}`s from your regenerated
+  `data/*.json`.
+
+**4 · Validate before you trust it.** The gates in `CLAUDE.md` §9, in order: your billing
+model must reproduce your actual bills before you quote any absolute dollar; every committed
+artifact must regenerate from its committed script; report deltas, not levels.
+
+**5 · Publish (optional).** Follow the GitHub Pages section below — after reading the
+privacy note.
+
 ## Publish with GitHub Pages
 
 ```bash
@@ -104,7 +154,11 @@ Your report will be live at `https://<you>.github.io/sdge-rate-analysis/` within
 > All sensitive material (raw Green Button CSV with name/address/account number, Enphase
 > exports, rate-research notes containing account details) lives in **`private/`**, which is
 > excluded by `.gitignore` along with defensive filename patterns. **Never `git add -f`
-> anything under `private/`.** Before any push, sanity-check with:
+> anything under `private/`.** Enforcement is mechanical, not manual: a gitleaks pre-commit
+> hook (`git config core.hooksPath .githooks`) blocks commits containing secrets or account
+> data, `.github/workflows/gitleaks.yml` re-scans full history on every push, and
+> person-specific patterns live in the local-only `private/pii-rules.toml` (see `CLAUDE.md`
+> §4). Belt-and-suspenders sanity check before any push:
 > `git status --ignored` and `git ls-files | grep -i -E "private|electric_15|sam_8760"`
 > (the second command should return nothing). The published report mentions city/climate
 > zone only. A **private repo + GitHub Pages** requires GitHub Pro; on a free account,
@@ -144,11 +198,12 @@ Everything else needed to reproduce the analysis — daily production, PVOutput 
 all rate tables (`research/rates-reference.md`), and both models — is in this repo.
 With your own two files above plus current rates, the scripts regenerate every number.
 
-## Refreshing the analysis
+## Refreshing this analysis (same house, new data)
 
-1. My Energy Center → Usage → Green Button Download → last 12 months, CSV.
-2. Replace the CSV path at the top of `analysis/analyze.py`.
-3. Update the rate tables in the script if SDG&E (Jan/Jun) or CEA (Feb/Jun) have issued new rates.
-4. `python3 analyze.py`, then update the `D = {...}` data block in `index.html`.
-
-Or just paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
+1. My Energy Center → Usage → Green Button Download → last 13 months, CSV → `private/1-raw-data/`.
+2. If SDG&E (Jan/Jun) or CEA (Feb/Jun) issued new rates, update `analysis/rates.py` — the
+   single source of truth all current models import.
+3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
+   each `data/*.json` regenerates cleanly — that diff-check is the acceptance gate.
+4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D — or
+   paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
