@@ -34,6 +34,8 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
+import household as hh
+
 CSV = "usage.csv"  # SDG&E Green Button 15-min (skiprows=13)
 
 # ---- rates: identical to billing_model_nem.py (actual bills, 6/1/2026) ----
@@ -46,10 +48,13 @@ BASE_Q = 0.20          # baseline percentile
 EXCESS_KW = 2.5        # candidate threshold above baseline
 PEAK_KW = 8.0          # session must peak >= this above baseline (EV signature)
 MIN_INTERVALS = 2      # >= 30 min sustained
-CHARGER_KW = 11.5      # destination charger power cap
+# destination charger power cap — per-house hardware, from private/household.yaml
+# (analysis/household.py; fails closed — run the intake interview in
+# DATA-SOURCES-CHEATSHEET.md)
+CHARGER_KW = float(hh.get("charger.kw"))
 CAP_KWH = CHARGER_KW * 0.25   # max EV kWh per 15-min interval
 
-# ---- battery parameters ----
+# ---- battery parameters (Powerwall 3 hardware spec, NOT household config) ----
 BATT_KWH = 13.5        # usable
 BATT_KW = 11.5
 BATT_STEP = BATT_KW * 0.25

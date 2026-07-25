@@ -83,6 +83,18 @@ if __name__ == "__main__":
     imp0 = d.Consumption.values.astype(float); gen0 = d.Generation.values.astype(float)
     base = billed(d, imp0, gen0)
     out = {"baseline_bill_current_rates": round(base)}
+    # Serviceable-load inputs behind the report's §6 sentence (canonical-engine period
+    # assignment, rates.period: no holiday rule). The periods-chart basis (report_data.json,
+    # from analyze.py) treats 7 weekday federal holidays as weekends, reclassifying ~40 kWh
+    # of off-peak import as super-off-peak -> its non-SOP total reads 8,467 vs 8,506 here.
+    _p = d.p.values; _kw = imp0 * 4
+    inp = {"nonsop_import_kwh": round(float(imp0[_p != "sop"].sum())),
+           "onpeak_import_kwh": round(float(imp0[_p == "on"].sum())),
+           "servable_offpeak_house_kwh": round(float(imp0[(_p == "off") & (_kw < 2.5)].sum()))}
+    inp["serviceable_total_kwh"] = inp["onpeak_import_kwh"] + inp["servable_offpeak_house_kwh"]
+    inp["note"] = ("canonical rates.period assignment (no holiday rule); analyze.py's "
+                   "holiday-as-weekend rule gives nonsop 8,467 (the periods-chart basis)")
+    out["inputs"] = inp
     for cap, name in [(13.5, "pw3"), (27.0, "pw3x")]:
         row = {}
         for pol in ("evening", "twowin", "greedy"):

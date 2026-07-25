@@ -15,7 +15,7 @@ Computes, from data already in the archive plus cited public constants:
   G. Gas decomposition: water-heating floor vs space-heating slope (HDD regression),
      and the heat-pump electrification ladder priced at midday-surplus value.
   H. 2039 NBT transition: battery marginal value if exports credit at flat 3-8c
-     (NEM 2.0 expiry ~Dec 2039 = PTO 12/27/2019 + 20 yr).
+     (NEM 2.0 expiry = PTO + 20 yr; PTO date from private/household.yaml).
   I. Tornado sensitivity on the battery payback (which lever moves it most).
 
 Cited constants (sources in research notes / report prose):
@@ -34,6 +34,7 @@ import json, os, pathlib
 import numpy as np, pandas as pd
 import behavior_rebuild as br
 import battery_dispatch_policies as bp
+import household as hh
 import rates as R
 
 def _repo_root():
@@ -56,12 +57,16 @@ ROOT = _repo_root()
 DATA = ROOT / "data"
 PRIV = ROOT / "private" / "1-raw-data"
 
+# cited PUBLIC constants (stay here, with sources — not household data):
 GAS_USD_GAL = 4.65      # EIA CA regular, Jun 2025-May 2026 published 12-mo mean
 FLEET_MPG = 23.4        # FHWA Highway Statistics VM-1 (2024), on-road light-duty
 SC_USD_KWH = 0.45       # estimate: typical CA Tesla Supercharger $0.40-0.50
-SC_KWH = 1300           # Tesla app Charge Stats, 12 mo, both cars
-MILES_YR = 34000        # odometer-derived annual driven miles (report §9)
-THERM_ALLIN = 2.70      # $/therm all-in from the 12 gas bills
+# per-HOUSE inputs from private/household.yaml (analysis/household.py; fails
+# closed — run the intake interview in DATA-SOURCES-CHEATSHEET.md):
+SC_KWH = int(hh.get("misc.supercharge_kwh_yr"))     # vehicle-app Charge Stats, 12 mo
+MILES_YR = int(hh.get("misc.miles_per_year"))       # odometer-derived annual miles (report §9)
+THERM_ALLIN = float(hh.get("gas.therm_allin_usd"))  # $/therm all-in from the 12 gas bills
+PTO_DATE = str(hh.get("household.pto_date"))        # NEM 2.0 clock starts here
 KWH_PER_THERM = 29.3
 HP_COP = 3.5            # heat-pump space heating seasonal COP (modeled)
 HPWH_COP = 3.5          # heat-pump water heater COP (modeled)
@@ -286,8 +291,11 @@ for credit in (0.03, 0.05, 0.08):
     i2, e2, _, _ = bp.run_batt(d, imp0, gen0, 13.5, "greedy")
     b1 = bill_flat_export(d, i2, e2, credit)
     nbt[f"{int(credit*100)}c"] = {"battery_marginal_yr": round(b0 - b1)}
+_MON = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 out["nbt_2039"] = {
-    "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
+    "nem2_expiry": (f"~{_MON[int(PTO_DATE[5:7]) - 1]} {int(PTO_DATE[:4]) + 20} "
+                    f"(PTO {PTO_DATE} + 20 yr)"),
     "battery_marginal_under_nem2": round(G),
     "battery_marginal_under_nbt": nbt,
     "note": ("under flat-credit exports the price-aware battery is worth MORE than "

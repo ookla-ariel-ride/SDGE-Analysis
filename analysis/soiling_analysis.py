@@ -32,6 +32,8 @@ import math
 import os
 from datetime import date, timedelta
 
+import household as hh
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAT = None  # withheld
 LON = None  # withheld
@@ -459,8 +461,12 @@ def main():
             },
         }
 
-    # ---- sanity check vs verified 8/12/2024 cleaning (+11.8% diff-in-diff)
-    clean_date = date(2024, 8, 12)
+    # ---- sanity check vs the verified paid cleaning (+11.8% diff-in-diff)
+    # cleaning date from private/household.yaml cleaning_history (PAST events
+    # only, CLAUDE.md §0); fails closed without the intake file
+    _cleanings = hh.get("cleaning_history")
+    clean_date = date.fromisoformat(
+        str(max(_cleanings, key=lambda e: str(e["date"]))["date"]))
     dsr_2024 = days_since_rain(clean_date)  # from fetched 2024 gauge record
     rate = results["pvoutput"]["regression"]["rate_pct_per_month"]
     predicted = rate / 30.44 * dsr_2024 if dsr_2024 else None
@@ -522,8 +528,9 @@ def main():
         "caveat": ("Scenario A assumes no manual cleaning occurred in the "
                    "2025-26 window; whether one occurred before/within the "
                    "window is not determined from available data. The small "
-                   "recovery at E1 (after 214 dry days) vs the 10.6% soiling "
-                   "verified at the 2024-08-12 cleaning (134 dry days) "
+                   f"recovery at E1 (after 214 dry days) vs the "
+                   f"{round(soiling_known, 1)}% soiling "
+                   f"verified at the {clean_date} cleaning ({dsr_2024} dry days) "
                    "suggests either a 2025 cleaning, partial cleaning by the "
                    "11 mm Oct rain, or soiling saturation."),
     }

@@ -19,21 +19,32 @@ Method:
 If the raw inputs (usage.csv + samA.csv/samB.csv) are present in the working directory,
 BLENDED_OLD / BLENDED_NEW are DERIVED by derive_blended(); otherwise the last derived
 values are used as fallbacks (and labeled as such). Derived reference values:
-no-solar counterfactual $9,876/yr, blended new-TOU 0.3024, old-TOU 0.4866.
+no-solar counterfactual $9,876/yr, blended new-TOU 0.3025, old-TOU 0.4866.
 
 Caveat: the rate index is approximate; crossover dates carry roughly +/-10% (a few
 months). Inputs: yearly production (monitoring records), install invoice total + date.
+
+Per-house inputs (invoice, install/PTO dates) come from private/household.yaml via
+analysis/household.py (fails closed without it — run the intake interview in
+DATA-SOURCES-CHEATSHEET.md). Whether the ITC was claimed is treated as a SCENARIO:
+both crossovers (gross invoice, and invoice x 0.70) are always reported, so a null
+solar.itc_claimed is fine. The production-per-year table below is measured DATA
+(monitoring records), not household config — it stays in the script.
 """
 import os
 import numpy as np
 import pandas as pd
+import household as hh
 
-INVOICE = 37845.0; ITC = 0.30
+INVOICE = float(hh.get("solar.install_invoice_usd"))
+PAID = str(hh.get("solar.install_paid_date"))       # month the invoice was paid
+PTO = str(hh.get("household.pto_date"))             # permission-to-operate date
+ITC = 0.30   # federal residential ITC rate for 2019-vintage systems (public constant)
 PROD = {2020: 17373, 2021: 17421, 2022: 17749, 2023: 15570, 2024: 16654,
         2025: 16509, 2026: 9893}                    # 2026 = Jan-Jul 23
 RATE_IDX = {2020: 32, 2021: 34, 2022: 37, 2023: 41, 2024: 44, 2025: 46, 2026: 48}
 FALLBACK_OLD = 0.4866   # $/kWh, pre-2026 TOU structure (derived; see derive_blended)
-FALLBACK_NEW = 0.3024   # $/kWh, current TOU structure
+FALLBACK_NEW = 0.3025   # $/kWh, current TOU structure
 ANNUAL_PRODUCTION = 16502.0   # CT-meter production, rolling 365d
 
 def _per_old(hour, month):
@@ -87,6 +98,7 @@ if __name__ == "__main__":
         BLENDED_OLD, BLENDED_NEW = FALLBACK_OLD, FALLBACK_NEW
         print("raw inputs not present - using last-derived fallback blended values")
     cum = 0.0
+    print(f"invoice ${INVOICE:,.0f} paid {PAID} | PTO {PTO} (private/household.yaml)")
     print(f"{'year':<6}{'prod kWh':>10}{'value $':>10}{'cum $':>10}")
     for y in sorted(PROD):
         bl = BLENDED_NEW if y == 2026 else BLENDED_OLD
