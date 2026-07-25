@@ -1,0 +1,210 @@
+{
+ "meta": {
+  "array_kw": 10.05,
+  "location": "SDG&E Coastal climate zone",
+  "window": [
+   "2025-07-24",
+   "2026-07-23"
+  ],
+  "precip_source": "NOAA/RCC ACIS data.rcc-acis.org StnData, nearby coastal airport gauge (station ID withheld for privacy), fetched 2026-07-24",
+  "open_meteo_note": "Open-Meteo archive API returned empty bodies via the permitted web_fetch tool for all attempted query variants; shortwave_radiation_sum therefore NOT fetched. Normalization uses deterministic Haurwitz clear-sky GHI + clear-day filter + seasonal harmonics.",
+  "rain_clean_threshold_mm": 5.0,
+  "blended_value_usd_per_kwh": 0.315
+ },
+ "production_crosscheck": {
+  "n_common_days": 365,
+  "pvoutput_mean_kwh": 46.14,
+  "enphase_mean_kwh": 45.21,
+  "mean_abs_diff_kwh": 0.933
+ },
+ "pvoutput": {
+  "n_days_used": 362,
+  "n_clear_days": 176,
+  "monthly_median_clearday_perf_kwh_per_kwhm2": {
+   "2025-07": 7.487,
+   "2025-08": 7.41,
+   "2025-09": 8.123,
+   "2025-10": 9.745,
+   "2025-11": 10.137,
+   "2025-12": 10.267,
+   "2026-01": 10.635,
+   "2026-02": 10.044,
+   "2026-03": 9.324,
+   "2026-04": 7.851,
+   "2026-05": 7.282,
+   "2026-06": 7.03,
+   "2026-07": 7.085
+  },
+  "events": [
+   {
+    "id": "E1_2025-10-14",
+    "wet_start": "2025-10-14",
+    "wet_end": "2025-10-14",
+    "event_mm": 11.4,
+    "dry_days_before": 214,
+    "n_clear_pre": 3,
+    "n_clear_post": 6,
+    "recovery_pct_raw": 4.3,
+    "recovery_pct_seasonal_adj": 1.55,
+    "implied_soiling_rate_pct_per_month": 0.22
+   },
+   {
+    "id": "E2_2025-11-15_22",
+    "wet_start": "2025-11-15",
+    "wet_end": "2025-11-22",
+    "event_mm": 60.2,
+    "dry_days_before": 32,
+    "n_clear_pre": 5,
+    "n_clear_post": 8,
+    "recovery_pct_raw": 3.62,
+    "recovery_pct_seasonal_adj": -0.0,
+    "implied_soiling_rate_pct_per_month": -0.0
+   },
+   {
+    "id": "E3_2025-12-23_2026-01-05",
+    "wet_start": "2025-12-23",
+    "wet_end": "2026-01-05",
+    "event_mm": 97.3,
+    "dry_days_before": 33,
+    "n_clear_pre": 3,
+    "n_clear_post": 7,
+    "recovery_pct_raw": 3.33,
+    "recovery_pct_seasonal_adj": 3.43,
+    "implied_soiling_rate_pct_per_month": 3.06
+   },
+   {
+    "id": "E4_2026-02-11_19",
+    "wet_start": "2026-02-11",
+    "wet_end": "2026-02-19",
+    "event_mm": 62.7,
+    "dry_days_before": 37,
+    "n_clear_pre": 6,
+    "n_clear_post": 8,
+    "recovery_pct_raw": -5.13,
+    "recovery_pct_seasonal_adj": 0.65,
+    "implied_soiling_rate_pct_per_month": 0.53
+   }
+  ],
+  "regression": {
+   "n": 176,
+   "dof": 170,
+   "vif_dsr_vs_harmonics": 5.2,
+   "rate_pct_per_month": 0.448,
+   "rate_pct_per_day": 0.0147,
+   "t": -2.2,
+   "p": 0.0292,
+   "r_partial": -0.166,
+   "simple_unadjusted_rate_pct_per_month": 5.372,
+   "simple_unadjusted_r": -0.74,
+   "simple_unadjusted_p": 9.22e-32
+  }
+ },
+ "enphase": {
+  "n_days_used": 361,
+  "n_clear_days": 172,
+  "monthly_median_clearday_perf_kwh_per_kwhm2": {
+   "2025-07": 7.359,
+   "2025-08": 7.422,
+   "2025-09": 7.95,
+   "2025-10": 9.582,
+   "2025-11": 9.934,
+   "2025-12": 10.065,
+   "2026-01": 10.417,
+   "2026-02": 9.891,
+   "2026-03": 9.053,
+   "2026-04": 7.71,
+   "2026-05": 7.156,
+   "2026-06": 6.9,
+   "2026-07": 6.956
+  },
+  "events": [
+   {
+    "id": "E1_2025-10-14",
+    "wet_start": "2025-10-14",
+    "wet_end": "2025-10-14",
+    "event_mm": 11.4,
+    "dry_days_before": 214,
+    "n_clear_pre": 3,
+    "n_clear_post": 6,
+    "recovery_pct_raw": 4.39,
+    "recovery_pct_seasonal_adj": 1.75,
+    "implied_soiling_rate_pct_per_month": 0.24
+   },
+   {
+    "id": "E2_2025-11-15_22",
+    "wet_start": "2025-11-15",
+    "wet_end": "2025-11-22",
+    "event_mm": 60.2,
+    "dry_days_before": 32,
+    "n_clear_pre": 5,
+    "n_clear_post": 8,
+    "recovery_pct_raw": 3.34,
+    "recovery_pct_seasonal_adj": -0.05,
+    "implied_soiling_rate_pct_per_month": -0.05
+   },
+   {
+    "id": "E3_2025-12-23_2026-01-05",
+    "wet_start": "2025-12-23",
+    "wet_end": "2026-01-05",
+    "event_mm": 97.3,
+    "dry_days_before": 33,
+    "n_clear_pre": 3,
+    "n_clear_post": 7,
+    "recovery_pct_raw": 3.18,
+    "recovery_pct_seasonal_adj": 3.21,
+    "implied_soiling_rate_pct_per_month": 2.87
+   },
+   {
+    "id": "E4_2026-02-11_19",
+    "wet_start": "2026-02-11",
+    "wet_end": "2026-02-19",
+    "event_mm": 62.7,
+    "dry_days_before": 37,
+    "n_clear_pre": 6,
+    "n_clear_post": 8,
+    "recovery_pct_raw": -5.13,
+    "recovery_pct_seasonal_adj": 0.5,
+    "implied_soiling_rate_pct_per_month": 0.41
+   }
+  ],
+  "regression": {
+   "n": 172,
+   "dof": 166,
+   "vif_dsr_vs_harmonics": 5.2,
+   "rate_pct_per_month": 0.641,
+   "rate_pct_per_day": 0.0211,
+   "t": -3.25,
+   "p": 0.00139,
+   "r_partial": -0.245,
+   "simple_unadjusted_rate_pct_per_month": 5.217,
+   "simple_unadjusted_r": -0.733,
+   "simple_unadjusted_p": 3.2e-30
+  }
+ },
+ "sanity_check_2024_cleaning": {
+  "cleaning_date": "2024-08-12",
+  "known_cleaning_gain_pct": 11.8,
+  "known_implied_soiling_loss_pct": 10.6,
+  "dry_days_before_cleaning_ge5mm": 134,
+  "last_ge5mm_rain_before": "2024-03-31 (8.6 mm)",
+  "predicted_soiling_from_2025_26_rate_pct": 2.0,
+  "known_rate_equiv_pct_per_month": 2.4
+ },
+ "annual_economics": {
+  "annual_generation_kwh": 16839.0,
+  "soiling_model": "loss(t) = rate x days-since-rain(>=5mm), capped; lost kWh = prod x s/(1-s) summed daily",
+  "scenario_A_this_years_evidence": {
+   "rate_pct_per_month": 0.448,
+   "cap_loss_pct": 3.32,
+   "annual_lost_kwh": 216.0,
+   "annual_lost_usd_at_0.315": 68.0
+  },
+  "scenario_B_2024_cleaning_evidence": {
+   "rate_pct_per_month": 2.4,
+   "cap_loss_pct": 10.6,
+   "annual_lost_kwh": 1106.0,
+   "annual_lost_usd_at_0.315": 348.0
+  },
+  "caveat": "Scenario A assumes no manual cleaning occurred in the 2025-26 window; whether one occurred before/within the window is not determined from available data. The small recovery at E1 (after 214 dry days) vs the 10.6% soiling verified at the 2024-08-12 cleaning (134 dry days) suggests either a 2025 cleaning, partial cleaning by the 11 mm Oct rain, or soiling saturation."
+ }
+}

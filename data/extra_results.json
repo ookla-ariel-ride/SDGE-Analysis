@@ -1,0 +1,127 @@
+{
+ "phantom": {
+  "quiet_nights": 44,
+  "nights_total": 365,
+  "baseload_kw_median": 1.025,
+  "baseload_kw_p10": 0.785,
+  "baseload_kw_p90": 1.36,
+  "monthly_kw": {
+   "1": 1.06,
+   "2": 1.21,
+   "3": 0.98,
+   "4": 1.02,
+   "5": 0.845,
+   "6": 1.025,
+   "7": 1.035,
+   "8": 1.18,
+   "9": 1.37,
+   "10": 1.37,
+   "11": 0.99,
+   "12": 1.14
+  },
+  "cycling_std_kw": 0.142,
+  "annual_kwh_at_median": 8979,
+  "lowest5_daily_import_kwh": [
+   0.0,
+   10.7,
+   11.0,
+   11.7,
+   15.2
+  ]
+ },
+ "escalation": {
+  "3%": {
+   "payback_yr": 7.8,
+   "npv10": 102
+  },
+  "5%": {
+   "payback_yr": 7.3,
+   "npv10": 1373
+  },
+  "8%": {
+   "payback_yr": 6.8,
+   "npv10": 3535
+  },
+  "12%": {
+   "payback_yr": 6.2,
+   "npv10": 6973
+  }
+ },
+ "price_map": {
+  "S_on": {
+   "import": 0.8681,
+   "export": 0.8189
+  },
+  "S_off": {
+   "import": 0.5111,
+   "export": 0.4618
+  },
+  "S_sop": {
+   "import": 0.125,
+   "export": 0.0757
+  },
+  "W_on": {
+   "import": 0.6053,
+   "export": 0.556
+  },
+  "W_off": {
+   "import": 0.5188,
+   "export": 0.4696
+  },
+  "W_sop": {
+   "import": 0.1272,
+   "export": 0.0779
+  }
+ },
+ "nbt": {
+  "nem2": 4675,
+  "nbt3c": 7151,
+  "nbt5c": 6953,
+  "nbt8c": 6655,
+  "gf_value": [
+   1980,
+   2476
+  ]
+ },
+ "cleaning": {
+  "0.45": {
+   "no_clean": 59,
+   "best1": "Jul 17",
+   "save1": 29,
+   "best2": [
+    "Jun 12",
+    "Aug 21"
+   ],
+   "save2": 39,
+   "marginal2nd": 10
+  },
+  "1.5": {
+   "no_clean": 195,
+   "best1": "Jul 17",
+   "save1": 97,
+   "best2": [
+    "Jun 12",
+    "Aug 21"
+   ],
+   "save2": 129,
+   "marginal2nd": 32
+  },
+  "2.4": {
+   "no_clean": 283,
+   "best1": "Jul 17",
+   "save1": 126,
+   "best2": [
+    "Jun 12",
+    "Aug 21"
+   ],
+   "save2": 177,
+   "marginal2nd": 51
+  }
+ },
+ "trueup": {
+  "charges": 1005.31,
+  "credits": 492.91,
+  "net": 512.4,
+  "ok": true
+ }
+}
