@@ -243,7 +243,7 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <p class="small">*2026 typical installed prices — get quotes. Whole-home-incl-EV backup (~82 kWh/day) isn't practical to battery through; in an extended outage, charge the EV midday from the array (~45 kWh/day average production) and let the battery carry the house. <b>Tesla Powerwall 3 (PW3)</b> = best value and power (11.5 kW starts anything; 10-yr warranty; AC-couples fine with the IQ7X fleet). <b>Enphase IQ 10C</b> = single-ecosystem integration with Enlighten, 15-yr warranty, needs IQ System Controller; swap it into any package below at roughly −$1,500 cost and −$270/yr savings. Skip a single 5P.</p>
 
 <h2 id="s7">7 · The decision: three packages</h2>
-<p>All packages keep <b>EV-TOU-5</b>. <b>Baseline = your actual bills: $3,282/yr (~$274/mo), complete 365-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>analysis/behavior_rebuild.py</code>). No year-end lump-sum shortcuts; behavior/battery interaction is modeled so nothing is double-counted (overlap: only $130/yr).</p>
+<p>All packages keep <b>EV-TOU-5</b>. <b>Baseline = your actual bills: $3,282/yr (~$274/mo), complete 365-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>analysis/behavior_rebuild.py</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in ONE integrated pipeline (EV shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
 
 <div class="grid3">
 <div class="pkg">

@@ -43,6 +43,15 @@ Legend: 📥 = file you download · 🔗 = link to note · ✍️ = value to wri
 ## F. Gas usage 📥🔒 (if you have gas)
 - My Energy Center → gas account → Usage → **Green Button Download** → 13 months CSV (daily therms). Note the gas rate schedule name (on the detailed gas bill).
 
+### Also for section E (lifetime payback + size verification)
+- ✍️ **Utility average-rate history** (for back-casting the payback curve): any published multi-year average residential ¢/kWh series (e.g. a state-auditor or public-power rate-history chart) — record the source URL.
+- ✍️ **Panel model and wattage + module count** (size verification: modules × watts should equal registered kW DC).
+
+## E2. EV charging telemetry 📥🔒 (if you have EVs — validates the meter-side analysis)
+- **Tesla app → Charge Stats** (per car): trailing-12-month energy by location (home/Supercharger/other) and TOU bucket — screenshot or note Home + Supercharging kWh. Battery-side kWh (≈ wall × 0.88–0.92).
+- **Wall charger export**: networked chargers (Tesla Wall Connector, etc.) export per-day delivered kWh (wall-side) — the gold standard for validating EV session detection. Watch for batched-upload lag in the final rows.
+- ✍️ Odometer + in-service date per car (annualized miles cross-check). Note any ICE vehicles (or that there are none).
+
 ## G. Weather & grid data (auto — no action needed; all free, no API keys)
 - **Daily temperatures:** Open-Meteo archive API (for the cooling regression).
 - **Daily precipitation:** NOAA/RCC ACIS (`data.rcc-acis.org`, nearest airport gauge) — for the soiling/rain-recovery study; also the fallback when Open-Meteo is unreachable.

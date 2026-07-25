@@ -153,3 +153,17 @@ Plain-English definitions of every term of art used in this home-energy analysis
 **Monte Carlo** — Running a calculation thousands of times with the uncertain inputs randomly varied, to see the range of plausible outcomes rather than one number — used here for a conservative battery-payback range. [Wikipedia: Monte Carlo method](https://en.wikipedia.org/wiki/Monte_Carlo_method)
 
 **Weather normalization** — Adjusting energy figures for how hot, cold, or cloudy a period was (via degree-days or clear-sky models) so that year-to-year comparisons reflect the equipment and behavior, not the weather.
+
+**Charge Stats (Tesla app)** — the per-vehicle charging summary in the Tesla mobile app: trailing-12-month energy added, split by location (home / Supercharger / other) and TOU bucket. Reports battery-side kWh (energy into the pack), which runs 8–12% below wall-side meter readings due to charging losses.
+
+**Wall Connector** — Tesla's hardwired home charging unit. Networked models log per-day delivered energy (wall-side kWh), exportable from the app/portal; note its uploads can batch under poor connectivity, shifting energy across the final days of an export.
+
+**Rated miles** — the range figure a Tesla adds per kWh charged at its EPA-rated efficiency. Real-world consumption typically achieves ~80–90% of rated, so "miles added" in Charge Stats exceeds odometer miles driven.
+
+**MPPT (maximum power point tracking)** — the electronics that continuously adjust a panel's operating voltage to extract the most power available; microinverters do this per panel, so one shaded module doesn't drag down the rest.
+
+**AC coupling** — connecting a battery to the home's AC wiring alongside an existing solar inverter system, rather than sharing the solar DC bus. Lets a battery like the Powerwall 3 work with any existing microinverter fleet without touching the array.
+
+**Rate Relief Credit** — a per-kWh bill credit some CCAs apply to certain products. Whether it applies is read off the detailed bill, not assumed — in this analysis the bills showed it does not apply to this account's product.
+
+**Supercharger** — Tesla's DC fast-charging network; energy delivered there appears in the car's Charge Stats but never on the home meter, which is why it's separated in the EV-fleet validation.
