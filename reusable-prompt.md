@@ -47,7 +47,7 @@ confirm which window holds the session), and what to skip (no solar → E; no ga
 `private/household.yaml` (schema template: `household.example.yaml` at the repo root — the
 analysis scripts read it via `analysis/household.py` and fail closed without it), and keep
 `private/intake-status.md` current — one line per cheatsheet field id, marked
-gathered/skipped. Privacy tiers are binding: `private-only` answers (odometers, invoice
+gathered/skipped. Privacy tiers are binding: `private-only` answers (invoice
 amounts, street-level or billing-account context) exist ONLY under `private/`; `secret`
 answers (PVOutput API key, monitoring tokens) go ONLY into a gitignored `.env` — never into
 `household.yaml`, and neither tier may ever appear in a committed artifact.

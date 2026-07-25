@@ -9,9 +9,9 @@ carries a small fenced `yaml` block: a stable `id`, the homeowner-facing `questi
 answer `type` (string / number / date / file / bool / list), when it's `required_if`
 (always / has_solar / has_ev / has_gas / has_battery_interest), `where` to get it (the
 portal walkthrough), and its `privacy` tier — `public-ok` (may appear in the published
-report: system kW, climate zone, plan name), `private-only` (street-level details, odometer
-readings, invoice amounts, billing-account context — lives only in the gitignored
-`private/`), or `secret` (API keys and monitoring tokens). An agent running Phase A of
+report: system kW, climate zone, plan name, odometer readings), `private-only`
+(street-level details, invoice amounts, billing-account context — lives only in the
+gitignored `private/`), or `secret` (API keys and monitoring tokens). An agent running Phase A of
 `reusable-prompt.md` drives the interview from these field ids, records answers in
 `private/household.yaml` (schema template: `household.example.yaml` at the repo root), and
 logs progress in `private/intake-status.md`. **No `private-only` or `secret` answer may
@@ -367,8 +367,8 @@ id: vehicles
 question: "For each EV: make/model, in-service date, and current odometer reading."
 type: list
 required_if: has_ev
-where: "✍️ Odometer + in-service date per car (annualized miles cross-check). Note any ICE vehicles (or that there are none). Odometer readings are private-only — they go in private/household.yaml, never in a committed artifact."
-privacy: private-only
+where: "✍️ Odometer + in-service date per car (annualized miles cross-check). Note any ICE vehicles (or that there are none)."
+privacy: public-ok
 ```
 
 ```yaml

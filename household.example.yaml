@@ -36,7 +36,7 @@ solar:                               # omit only if you have no solar (has_solar
 vehicles:                            # one entry per EV; [] if none (has_ev: false)
   - make_model: "Example EV Long Range"
     in_service_date: 2021-01-01
-    odometer: 99999                  # REAL reading goes ONLY in private/household.yaml
+    odometer: 99999                  # public-ok tier; real value lives in private/household.yaml
   - make_model: "Example EV Compact"
     in_service_date: 2022-01-01
     odometer: 88888
