@@ -310,7 +310,7 @@ question: "Have the panels ever been professionally cleaned? List each PAST clea
 type: list
 required_if: has_solar
 where: "Panel-cleaning history ✍️ — date(s) and cost per cleaning $______ — enables the measured cleaning-effect study and the cleaning-cadence model. PAST events only (CLAUDE.md §0): never record a scheduled or planned cleaning."
-privacy: private-only
+privacy: public-ok
 ```
 
 ### Also for section E (lifetime payback + size verification)

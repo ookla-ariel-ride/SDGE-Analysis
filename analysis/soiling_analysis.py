@@ -462,27 +462,42 @@ def main():
         }
 
     # ---- sanity check vs the verified paid cleaning (+11.8% diff-in-diff)
-    # cleaning date from private/household.yaml cleaning_history (PAST events
-    # only, CLAUDE.md §0); fails closed without the intake file
-    _cleanings = hh.get("cleaning_history")
-    clean_date = date.fromisoformat(
-        str(max(_cleanings, key=lambda e: str(e["date"]))["date"]))
-    dsr_2024 = days_since_rain(clean_date)  # from fetched 2024 gauge record
+    # The +11.8% gain and the rain metadata below were measured for the
+    # 2024-08-12 cleaning specifically (30-day diff-in-diff vs control years,
+    # data/cleaning_study_daily.csv) — they must never be attributed to any
+    # other event, so this block pins to that exact record in cleaning_history
+    # (PAST events only, CLAUDE.md §0; fails closed without the intake file)
+    # instead of whichever cleaning is latest. Histories without the measured
+    # event (none yet measured, or a different household) get "not determined".
+    MEASURED_CLEANING = "2024-08-12"
     rate = results["pvoutput"]["regression"]["rate_pct_per_month"]
-    predicted = rate / 30.44 * dsr_2024 if dsr_2024 else None
-    cleaning_gain_known = 11.8  # % gain after cleaning (verified prior work)
-    soiling_known = cleaning_gain_known / (100 + cleaning_gain_known) * 100
-    results["sanity_check_2024_cleaning"] = {
-        "cleaning_date": str(clean_date),
-        "known_cleaning_gain_pct": cleaning_gain_known,
-        "known_implied_soiling_loss_pct": round(soiling_known, 1),
-        "dry_days_before_cleaning_ge5mm": dsr_2024,
-        "last_ge5mm_rain_before": "2024-03-31 (8.6 mm)",
-        "predicted_soiling_from_2025_26_rate_pct":
-            None if predicted is None else round(predicted, 1),
-        "known_rate_equiv_pct_per_month":
-            round(soiling_known / dsr_2024 * 30.44, 2) if dsr_2024 else None,
-    }
+    _cleanings = hh.get("cleaning_history") or []
+    _measured = [e for e in _cleanings
+                 if isinstance(e, dict) and str(e.get("date")) == MEASURED_CLEANING]
+    if _measured:
+        clean_date = date.fromisoformat(MEASURED_CLEANING)
+        dsr_2024 = days_since_rain(clean_date)  # from fetched 2024 gauge record
+        predicted = rate / 30.44 * dsr_2024 if dsr_2024 else None
+        cleaning_gain_known = 11.8  # % gain after cleaning (verified prior work)
+        soiling_known = cleaning_gain_known / (100 + cleaning_gain_known) * 100
+        results["sanity_check_2024_cleaning"] = {
+            "cleaning_date": str(clean_date),
+            "known_cleaning_gain_pct": cleaning_gain_known,
+            "known_implied_soiling_loss_pct": round(soiling_known, 1),
+            "dry_days_before_cleaning_ge5mm": dsr_2024,
+            "last_ge5mm_rain_before": "2024-03-31 (8.6 mm)",
+            "predicted_soiling_from_2025_26_rate_pct":
+                None if predicted is None else round(predicted, 1),
+            "known_rate_equiv_pct_per_month":
+                round(soiling_known / dsr_2024 * 30.44, 2) if dsr_2024 else None,
+        }
+    else:
+        results["sanity_check_2024_cleaning"] = {
+            "status": ("not determined — cleaning_history has no entry for "
+                       f"{MEASURED_CLEANING}, the only event with a measured "
+                       "diff-in-diff effect; other cleanings have no measured "
+                       "gain to sanity-check against"),
+        }
 
     # ---- annual economics: day-by-day soiling model s(t)=rate*dsr (capped)
     def annual_loss(rate_pct_month, cap_loss_frac):
@@ -505,10 +520,31 @@ def main():
             if ev["recovery_pct_seasonal_adj"] is not None]
     cap_a = max(c / (100 + c) for c in caps) if caps else None
     lost_a, total_kwh = annual_loss(rate, cap_a if cap_a else 1.0)
-    # Scenario B: rate & cap implied by the verified 2024 cleaning
-    rate_b = results["sanity_check_2024_cleaning"]["known_rate_equiv_pct_per_month"]
-    cap_b = results["sanity_check_2024_cleaning"]["known_implied_soiling_loss_pct"] / 100.0
-    lost_b, _ = annual_loss(rate_b, cap_b)
+    caveat_a = ("Scenario A assumes no manual cleaning occurred in the "
+                "2025-26 window; whether one occurred before/within the "
+                "window is not determined from available data.")
+    if _measured:
+        # Scenario B: rate & cap implied by the verified 2024 cleaning
+        rate_b = results["sanity_check_2024_cleaning"]["known_rate_equiv_pct_per_month"]
+        cap_b = results["sanity_check_2024_cleaning"]["known_implied_soiling_loss_pct"] / 100.0
+        lost_b, _ = annual_loss(rate_b, cap_b)
+        scenario_b = {
+            "rate_pct_per_month": rate_b,
+            "cap_loss_pct": round(cap_b * 100, 1),
+            "annual_lost_kwh": round(lost_b, 0),
+            "annual_lost_usd_at_0.315": round(lost_b * BLENDED_VALUE, 0),
+        }
+        caveat = (caveat_a + " The small "
+                  f"recovery at E1 (after 214 dry days) vs the "
+                  f"{round(soiling_known, 1)}% soiling "
+                  f"verified at the {clean_date} cleaning ({dsr_2024} dry days) "
+                  "suggests either a 2025 cleaning, partial cleaning by the "
+                  "11 mm Oct rain, or soiling saturation.")
+    else:
+        scenario_b = {"status": ("not determined — requires the measured "
+                                 f"{MEASURED_CLEANING} cleaning event (see "
+                                 "sanity_check_2024_cleaning)")}
+        caveat = caveat_a
     results["annual_economics"] = {
         "annual_generation_kwh": round(total_kwh, 0),
         "soiling_model": ("loss(t) = rate x days-since-rain(>=5mm), capped; "
@@ -519,20 +555,8 @@ def main():
             "annual_lost_kwh": round(lost_a, 0),
             "annual_lost_usd_at_0.315": round(lost_a * BLENDED_VALUE, 0),
         },
-        "scenario_B_2024_cleaning_evidence": {
-            "rate_pct_per_month": rate_b,
-            "cap_loss_pct": round(cap_b * 100, 1),
-            "annual_lost_kwh": round(lost_b, 0),
-            "annual_lost_usd_at_0.315": round(lost_b * BLENDED_VALUE, 0),
-        },
-        "caveat": ("Scenario A assumes no manual cleaning occurred in the "
-                   "2025-26 window; whether one occurred before/within the "
-                   "window is not determined from available data. The small "
-                   f"recovery at E1 (after 214 dry days) vs the "
-                   f"{round(soiling_known, 1)}% soiling "
-                   f"verified at the {clean_date} cleaning ({dsr_2024} dry days) "
-                   "suggests either a 2025 cleaning, partial cleaning by the "
-                   "11 mm Oct rain, or soiling saturation."),
+        "scenario_B_2024_cleaning_evidence": scenario_b,
+        "caveat": caveat,
     }
 
     out = os.path.join(HERE, "soiling_results.json")

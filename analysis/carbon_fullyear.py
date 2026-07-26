@@ -48,6 +48,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -334,8 +335,25 @@ def main():
     tab.to_csv(tmp_csv, index=False)
     with open(tmp_json, "w") as fh:
         json.dump(results, fh, indent=1)
-    os.replace(tmp_csv, HOURLY_CSV)                       # atomic pair: a failed
-    os.replace(tmp_json, RESULTS_JSON)                    # run changes nothing
+    # Two os.replace calls are not one atomic action: a failure between them
+    # would leave a new CSV beside the old JSON. Back up the CSV first and
+    # restore it if the JSON replacement fails, so the pair advances or
+    # reverts together (each os.replace is itself atomic; a hard kill between
+    # the replaces leaves the .bak on disk as the recovery copy — and the §9
+    # git-diff regeneration gate catches any mixed state before commit).
+    bak_csv = f"{HOURLY_CSV}.bak"
+    had_old_csv = os.path.exists(HOURLY_CSV)
+    if had_old_csv:
+        shutil.copy2(HOURLY_CSV, bak_csv)
+    os.replace(tmp_csv, HOURLY_CSV)
+    try:
+        os.replace(tmp_json, RESULTS_JSON)
+    except BaseException:
+        if had_old_csv:
+            os.replace(bak_csv, HOURLY_CSV)               # revert to the old pair
+        raise
+    if had_old_csv:
+        os.remove(bak_csv)
 
     print(f"intensity source: {mode}")
     print(f"coverage: {n_cov}/365 days ({100 * n_cov / 365:.1f}%) -> label: {label}")
