@@ -305,6 +305,15 @@ privacy: private-only
 ```
 
 ```yaml
+id: site_latitude
+question: "Site latitude in decimal degrees (2 decimals ≈ 1 km is plenty — it only drives solar-geometry calculations)."
+type: number
+required_if: has_solar
+where: "Any map app — long-press your roof ✍️ lat ______ — feeds the soiling study's clear-sky model (analysis/soiling_analysis.py reads location.lat). Coordinates are PII (CLAUDE.md §4): they live ONLY in private/household.yaml, never in any committed artifact."
+privacy: private-only
+```
+
+```yaml
 id: cleaning_history
 question: "Have the panels ever been professionally cleaned? List each PAST cleaning: date and cost."
 type: list

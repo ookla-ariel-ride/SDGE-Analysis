@@ -21,6 +21,12 @@ household:
   nem_version: "NEM 2.0"             # NEM 1.0 / NEM 2.0 / NBT (Solar Billing Plan)
   pto_date: 2019-01-01               # permission-to-operate date (placeholder)
 
+location:
+  lat: 33.00                         # site latitude, decimal degrees — 2 decimals (~1 km)
+                                     # is plenty; drives the soiling study's clear-sky
+                                     # model only. Coordinates are PII (CLAUDE.md §4):
+                                     # they exist ONLY here in private/, never committed.
+
 solar:                               # omit only if you have no solar (has_solar: false)
   kw_dc: 7.50                        # nameplate DC size (registered with the utility)
   module_count: 20                   # modules x watts should equal kw_dc — verify

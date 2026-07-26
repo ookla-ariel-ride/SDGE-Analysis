@@ -6,8 +6,9 @@ Array: 10.05 kW, SDG&E Coastal climate zone.
 Window analyzed: 2025-07-24 .. 2026-07-23.
 
 DATA PROVENANCE (all fetched or on-disk; nothing estimated):
-- Daily production: pvoutput_daily.csv (kWh) and prod_daily_official.csv
-  (Enphase "Energy Delivered (kWh)"), on disk in this directory.
+- Daily production: pvoutput_daily.csv (kWh) and enphase_daily_production.csv
+  (Enphase "Energy Delivered (kWh)"), on disk in this directory — both are
+  committed de-identified in data/ under the same names.
 - Daily precipitation: NOAA/RCC ACIS web service (data.rcc-acis.org/StnData),
   a nearby coastal airport gauge (station ID withheld for privacy),
   fetched 2026-07-24 via web_fetch for 2024-01-01..2024-08-12,
@@ -35,8 +36,10 @@ from datetime import date, timedelta
 import household as hh
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LAT = None  # withheld
-LON = None  # withheld
+# Site latitude from the private intake file (cheatsheet id: site_latitude;
+# 2 decimals ≈ 1 km is plenty — it only drives the clear-sky solar geometry).
+# Coordinates are PII (CLAUDE.md §4): they live in private/household.yaml only.
+LAT = float(hh.get("location.lat"))
 RAIN_CLEAN_MM = 5.0          # threshold considered "cleaning" rain
 BLENDED_VALUE = 0.315        # $/kWh blended solar value (given)
 
@@ -275,7 +278,7 @@ def days_since_rain(d, threshold=RAIN_CLEAN_MM, search_back=500):
 def main():
     start, end = date(2025, 7, 24), date(2026, 7, 23)
     pv = load_pvoutput(os.path.join(HERE, "pvoutput_daily.csv"))
-    en = load_enphase(os.path.join(HERE, "prod_daily_official.csv"))
+    en = load_enphase(os.path.join(HERE, "enphase_daily_production.csv"))
 
     results = {
         "meta": {
