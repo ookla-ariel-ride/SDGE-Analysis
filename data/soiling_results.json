@@ -6,7 +6,7 @@
    "2025-07-24",
    "2026-07-23"
   ],
-  "precip_source": "NOAA/RCC ACIS data.rcc-acis.org StnData, nearby coastal airport gauge (station ID withheld for privacy), fetched 2026-07-24",
+  "precip_source": "NOAA/RCC ACIS data.rcc-acis.org StnData, nearby coastal airport gauge (station ID withheld), fetched 2026-07-24",
   "open_meteo_note": "Open-Meteo archive API returned empty bodies via the permitted web_fetch tool for all attempted query variants; shortwave_radiation_sum therefore NOT fetched. Normalization uses deterministic Haurwitz clear-sky GHI + clear-day filter + seasonal harmonics.",
   "rain_clean_threshold_mm": 5.0,
   "blended_value_usd_per_kwh": 0.315
@@ -22,15 +22,15 @@
   "n_clear_days": 176,
   "monthly_median_clearday_perf_kwh_per_kwhm2": {
    "2025-07": 7.487,
-   "2025-08": 7.41,
-   "2025-09": 8.123,
-   "2025-10": 9.745,
-   "2025-11": 10.137,
-   "2025-12": 10.267,
-   "2026-01": 10.635,
-   "2026-02": 10.044,
-   "2026-03": 9.324,
-   "2026-04": 7.851,
+   "2025-08": 7.409,
+   "2025-09": 8.121,
+   "2025-10": 9.739,
+   "2025-11": 10.127,
+   "2025-12": 10.256,
+   "2026-01": 10.624,
+   "2026-02": 10.036,
+   "2026-03": 9.32,
+   "2026-04": 7.849,
    "2026-05": 7.282,
    "2026-06": 7.03,
    "2026-07": 7.085
@@ -56,9 +56,9 @@
     "dry_days_before": 32,
     "n_clear_pre": 5,
     "n_clear_post": 8,
-    "recovery_pct_raw": 3.62,
-    "recovery_pct_seasonal_adj": -0.0,
-    "implied_soiling_rate_pct_per_month": -0.0
+    "recovery_pct_raw": 3.6,
+    "recovery_pct_seasonal_adj": -0.01,
+    "implied_soiling_rate_pct_per_month": -0.01
    },
    {
     "id": "E3_2025-12-23_2026-01-05",
@@ -68,7 +68,7 @@
     "dry_days_before": 33,
     "n_clear_pre": 3,
     "n_clear_post": 7,
-    "recovery_pct_raw": 3.33,
+    "recovery_pct_raw": 3.34,
     "recovery_pct_seasonal_adj": 3.43,
     "implied_soiling_rate_pct_per_month": 3.06
    },
@@ -80,7 +80,7 @@
     "dry_days_before": 37,
     "n_clear_pre": 6,
     "n_clear_post": 8,
-    "recovery_pct_raw": -5.13,
+    "recovery_pct_raw": -5.11,
     "recovery_pct_seasonal_adj": 0.65,
     "implied_soiling_rate_pct_per_month": 0.53
    }
@@ -89,14 +89,14 @@
    "n": 176,
    "dof": 170,
    "vif_dsr_vs_harmonics": 5.2,
-   "rate_pct_per_month": 0.448,
-   "rate_pct_per_day": 0.0147,
+   "rate_pct_per_month": 0.449,
+   "rate_pct_per_day": 0.0148,
    "t": -2.2,
-   "p": 0.0292,
-   "r_partial": -0.166,
-   "simple_unadjusted_rate_pct_per_month": 5.372,
+   "p": 0.029,
+   "r_partial": -0.167,
+   "simple_unadjusted_rate_pct_per_month": 5.358,
    "simple_unadjusted_r": -0.74,
-   "simple_unadjusted_p": 9.22e-32
+   "simple_unadjusted_p": 9.26e-32
   }
  },
  "enphase": {
@@ -104,18 +104,18 @@
   "n_clear_days": 172,
   "monthly_median_clearday_perf_kwh_per_kwhm2": {
    "2025-07": 7.359,
-   "2025-08": 7.422,
-   "2025-09": 7.95,
-   "2025-10": 9.582,
-   "2025-11": 9.934,
-   "2025-12": 10.065,
-   "2026-01": 10.417,
-   "2026-02": 9.891,
-   "2026-03": 9.053,
-   "2026-04": 7.71,
+   "2025-08": 7.421,
+   "2025-09": 7.948,
+   "2025-10": 9.577,
+   "2025-11": 9.925,
+   "2025-12": 10.054,
+   "2026-01": 10.407,
+   "2026-02": 9.883,
+   "2026-03": 9.048,
+   "2026-04": 7.708,
    "2026-05": 7.156,
-   "2026-06": 6.9,
-   "2026-07": 6.956
+   "2026-06": 6.901,
+   "2026-07": 6.957
   },
   "events": [
    {
@@ -138,8 +138,8 @@
     "dry_days_before": 32,
     "n_clear_pre": 5,
     "n_clear_post": 8,
-    "recovery_pct_raw": 3.34,
-    "recovery_pct_seasonal_adj": -0.05,
+    "recovery_pct_raw": 3.32,
+    "recovery_pct_seasonal_adj": -0.06,
     "implied_soiling_rate_pct_per_month": -0.05
    },
    {
@@ -150,7 +150,7 @@
     "dry_days_before": 33,
     "n_clear_pre": 3,
     "n_clear_post": 7,
-    "recovery_pct_raw": 3.18,
+    "recovery_pct_raw": 3.19,
     "recovery_pct_seasonal_adj": 3.21,
     "implied_soiling_rate_pct_per_month": 2.87
    },
@@ -162,7 +162,7 @@
     "dry_days_before": 37,
     "n_clear_pre": 6,
     "n_clear_post": 8,
-    "recovery_pct_raw": -5.13,
+    "recovery_pct_raw": -5.1,
     "recovery_pct_seasonal_adj": 0.5,
     "implied_soiling_rate_pct_per_month": 0.41
    }
@@ -171,14 +171,14 @@
    "n": 172,
    "dof": 166,
    "vif_dsr_vs_harmonics": 5.2,
-   "rate_pct_per_month": 0.641,
+   "rate_pct_per_month": 0.642,
    "rate_pct_per_day": 0.0211,
    "t": -3.25,
-   "p": 0.00139,
+   "p": 0.00138,
    "r_partial": -0.245,
-   "simple_unadjusted_rate_pct_per_month": 5.217,
+   "simple_unadjusted_rate_pct_per_month": 5.204,
    "simple_unadjusted_r": -0.733,
-   "simple_unadjusted_p": 3.2e-30
+   "simple_unadjusted_p": 3.21e-30
   }
  },
  "sanity_check_2024_cleaning": {
@@ -194,9 +194,9 @@
   "annual_generation_kwh": 16839.0,
   "soiling_model": "loss(t) = rate x days-since-rain(>=5mm), capped; lost kWh = prod x s/(1-s) summed daily",
   "scenario_A_this_years_evidence": {
-   "rate_pct_per_month": 0.448,
+   "rate_pct_per_month": 0.449,
    "cap_loss_pct": 3.32,
-   "annual_lost_kwh": 216.0,
+   "annual_lost_kwh": 217.0,
    "annual_lost_usd_at_0.315": 68.0
   },
   "scenario_B_2024_cleaning_evidence": {

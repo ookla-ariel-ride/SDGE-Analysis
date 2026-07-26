@@ -535,7 +535,7 @@ every query variant, so no satellite irradiance exists and normalization is dete
    cleaning** (+11.8% gain after 134 dry days). The two lines of evidence disagree and are
    honestly reported as a **~0.45–2.4%/month bracket**.
 5. **Annual economics**, modeling loss(t) = rate × days-since-rain (capped): scenario A
-   (this year's evidence) 216 kWh ≈ $68/yr; scenario B (2024-cleaning evidence) 1,106 kWh ≈
+   (this year's evidence) 217 kWh ≈ $68/yr; scenario B (2024-cleaning evidence) 1,106 kWh ≈
    $348/yr, both at the script's $0.315/kWh blended value (an earlier blended estimate,
    retained in the committed artifact; `lifetime_payback.py` §3.12 later refined the
    current-TOU blended value to $0.3025/kWh — immaterial to the order-of-magnitude verdict).
