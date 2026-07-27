@@ -1,0 +1,376 @@
+{
+  "coverage": {
+    "interval_start": "2025-07-01",
+    "interval_end": "2026-07-23",
+    "interval_days": 388,
+    "periods_audited": 12,
+    "periods_skipped": 14,
+    "audited": [
+      "7/29/25 - 8/26/25",
+      "8/27/25 - 9/25/25",
+      "9/26/25 - 9/30/25",
+      "10/1/25 - 10/27/25",
+      "10/28/25 - 11/25/25",
+      "11/26/25 - 12/26/25",
+      "12/27/25 - 1/27/26",
+      "1/28/26 - 2/26/26",
+      "2/27/26 - 3/27/26",
+      "3/28/26 - 4/28/26",
+      "4/29/26 - 5/28/26",
+      "5/29/26 - 6/26/26"
+    ],
+    "skipped": [
+      {
+        "period": "5/25/24 - 6/25/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "6/26/24 - 7/25/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "7/26/24 - 8/26/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "8/27/24 - 9/25/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "9/26/24 - 10/25/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "10/26/24 - 11/25/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "11/26/24 - 12/26/24",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "12/27/24 - 1/27/25",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "1/28/25 - 2/26/25",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "2/27/25 - 3/27/25",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "3/28/25 - 4/28/25",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "4/29/25 - 5/28/25",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "5/29/25 - 6/26/25",
+        "reason": "outside interval coverage"
+      },
+      {
+        "period": "6/27/25 - 7/28/25",
+        "reason": "outside interval coverage"
+      }
+    ]
+  },
+  "tolerance": {
+    "bucket": "max(1.0 kWh, 0.5%)",
+    "period_total_pct": 0.2,
+    "basis": "statements print whole kWh"
+  },
+  "dst_days": [
+    {
+      "date": "2025-11-02",
+      "intervals": 100
+    },
+    {
+      "date": "2026-03-08",
+      "intervals": 92
+    }
+  ],
+  "midday_sop_changeover": {
+    "statement_period": "2/27/26 - 3/27/26",
+    "best_residual_kwh": 0.54,
+    "indistinguishable_days": [
+      "2026-02-28",
+      "2026-03-01",
+      "2026-03-02"
+    ],
+    "configured": "2026-03-01"
+  },
+  "holiday_evidence": [
+    {
+      "date": "2025-07-04",
+      "weekday": "Friday",
+      "net_kwh_reassigned": -26.6,
+      "inside_an_audited_period": false,
+      "resolvable": false
+    },
+    {
+      "date": "2025-09-01",
+      "weekday": "Monday",
+      "net_kwh_reassigned": 30.0,
+      "inside_an_audited_period": true,
+      "resolvable": true
+    },
+    {
+      "date": "2025-11-11",
+      "weekday": "Tuesday",
+      "net_kwh_reassigned": -16.4,
+      "inside_an_audited_period": true,
+      "resolvable": true
+    },
+    {
+      "date": "2025-11-27",
+      "weekday": "Thursday",
+      "net_kwh_reassigned": -5.1,
+      "inside_an_audited_period": true,
+      "resolvable": true
+    },
+    {
+      "date": "2025-12-25",
+      "weekday": "Thursday",
+      "net_kwh_reassigned": 4.9,
+      "inside_an_audited_period": true,
+      "resolvable": true
+    },
+    {
+      "date": "2026-01-01",
+      "weekday": "Thursday",
+      "net_kwh_reassigned": 4.8,
+      "inside_an_audited_period": true,
+      "resolvable": true
+    },
+    {
+      "date": "2026-02-16",
+      "weekday": "Monday",
+      "net_kwh_reassigned": 28.4,
+      "inside_an_audited_period": true,
+      "resolvable": true
+    },
+    {
+      "date": "2026-05-25",
+      "weekday": "Monday",
+      "net_kwh_reassigned": 2.8,
+      "inside_an_audited_period": true,
+      "resolvable": false
+    }
+  ],
+  "rules": {
+    "as_billed": {
+      "buckets": 42,
+      "buckets_failing": 0,
+      "max_abs_residual_kwh": 0.5,
+      "sum_abs_residual_kwh": 11.7,
+      "net_total_billed_kwh": 12296.0,
+      "net_total_rebuilt_kwh": 12292.7,
+      "net_total_diff_pct": -0.027,
+      "worst_bucket": {
+        "period": "11/26/25 - 12/26/25",
+        "season": "winter",
+        "tou_period": "super_off_peak",
+        "diff_kwh": -0.5
+      },
+      "failing_buckets": []
+    },
+    "canonical": {
+      "buckets": 42,
+      "buckets_failing": 22,
+      "max_abs_residual_kwh": 359.47,
+      "sum_abs_residual_kwh": 4671.7,
+      "net_total_billed_kwh": 12296.0,
+      "net_total_rebuilt_kwh": 12292.7,
+      "net_total_diff_pct": -0.027,
+      "worst_bucket": {
+        "period": "8/27/25 - 9/25/25",
+        "season": "summer",
+        "tou_period": "off_peak",
+        "diff_kwh": 359.47
+      },
+      "failing_buckets": [
+        {
+          "period": "7/29/25 - 8/26/25",
+          "season": "summer",
+          "tou_period": "off_peak",
+          "billed_kwh": -165.0,
+          "rebuilt_kwh": 133.95,
+          "diff_kwh": 298.95
+        },
+        {
+          "period": "7/29/25 - 8/26/25",
+          "season": "summer",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 1129.0,
+          "rebuilt_kwh": 830.07,
+          "diff_kwh": -298.93
+        },
+        {
+          "period": "8/27/25 - 9/25/25",
+          "season": "summer",
+          "tou_period": "off_peak",
+          "billed_kwh": -82.0,
+          "rebuilt_kwh": 277.47,
+          "diff_kwh": 359.47
+        },
+        {
+          "period": "8/27/25 - 9/25/25",
+          "season": "summer",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 1379.0,
+          "rebuilt_kwh": 1019.9,
+          "diff_kwh": -359.1
+        },
+        {
+          "period": "9/26/25 - 9/30/25",
+          "season": "summer",
+          "tou_period": "off_peak",
+          "billed_kwh": -3.0,
+          "rebuilt_kwh": 25.39,
+          "diff_kwh": 28.39
+        },
+        {
+          "period": "9/26/25 - 9/30/25",
+          "season": "summer",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 171.0,
+          "rebuilt_kwh": 142.32,
+          "diff_kwh": -28.68
+        },
+        {
+          "period": "10/1/25 - 10/27/25",
+          "season": "summer",
+          "tou_period": "off_peak",
+          "billed_kwh": -140.0,
+          "rebuilt_kwh": 188.73,
+          "diff_kwh": 328.73
+        },
+        {
+          "period": "10/1/25 - 10/27/25",
+          "season": "summer",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 1026.0,
+          "rebuilt_kwh": 697.2,
+          "diff_kwh": -328.8
+        },
+        {
+          "period": "10/28/25 - 11/25/25",
+          "season": "summer",
+          "tou_period": "off_peak",
+          "billed_kwh": -43.0,
+          "rebuilt_kwh": 32.03,
+          "diff_kwh": 75.03
+        },
+        {
+          "period": "10/28/25 - 11/25/25",
+          "season": "summer",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 151.0,
+          "rebuilt_kwh": 75.12,
+          "diff_kwh": -75.88
+        },
+        {
+          "period": "10/28/25 - 11/25/25",
+          "season": "winter",
+          "tou_period": "off_peak",
+          "billed_kwh": -180.0,
+          "rebuilt_kwh": 96.12,
+          "diff_kwh": 276.12
+        },
+        {
+          "period": "10/28/25 - 11/25/25",
+          "season": "winter",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 752.0,
+          "rebuilt_kwh": 475.19,
+          "diff_kwh": -276.81
+        },
+        {
+          "period": "11/26/25 - 12/26/25",
+          "season": "winter",
+          "tou_period": "off_peak",
+          "billed_kwh": -169.0,
+          "rebuilt_kwh": 171.08,
+          "diff_kwh": 340.08
+        },
+        {
+          "period": "11/26/25 - 12/26/25",
+          "season": "winter",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 1111.0,
+          "rebuilt_kwh": 770.22,
+          "diff_kwh": -340.78
+        },
+        {
+          "period": "12/27/25 - 1/27/26",
+          "season": "winter",
+          "tou_period": "off_peak",
+          "billed_kwh": -29.0,
+          "rebuilt_kwh": 230.11,
+          "diff_kwh": 259.11
+        },
+        {
+          "period": "12/27/25 - 1/27/26",
+          "season": "winter",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 929.0,
+          "rebuilt_kwh": 670.14,
+          "diff_kwh": -258.86
+        },
+        {
+          "period": "1/28/26 - 2/26/26",
+          "season": "winter",
+          "tou_period": "off_peak",
+          "billed_kwh": -293.0,
+          "rebuilt_kwh": 52.98,
+          "diff_kwh": 345.98
+        },
+        {
+          "period": "1/28/26 - 2/26/26",
+          "season": "winter",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 1028.0,
+          "rebuilt_kwh": 681.95,
+          "diff_kwh": -346.05
+        },
+        {
+          "period": "2/27/26 - 3/27/26",
+          "season": "winter",
+          "tou_period": "off_peak",
+          "billed_kwh": 85.0,
+          "rebuilt_kwh": 102.61,
+          "diff_kwh": 17.61
+        },
+        {
+          "period": "2/27/26 - 3/27/26",
+          "season": "winter",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 534.0,
+          "rebuilt_kwh": 516.34,
+          "diff_kwh": -17.66
+        },
+        {
+          "period": "4/29/26 - 5/28/26",
+          "season": "winter",
+          "tou_period": "off_peak",
+          "billed_kwh": 21.0,
+          "rebuilt_kwh": 23.5,
+          "diff_kwh": 2.5
+        },
+        {
+          "period": "4/29/26 - 5/28/26",
+          "season": "winter",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 539.0,
+          "rebuilt_kwh": 536.06,
+          "diff_kwh": -2.94
+        }
+      ]
+    }
+  },
+  "verdict": "the utility's TOU accounting reproduces from raw interval data"
+}
