@@ -1136,8 +1136,29 @@ coverage, and the $3,282.22 annual total are unchanged.
   TOU block's "kWh used" and "Rate/kWh" rows, and the phrase "kWh used" also appears in the
   usage graphic and the glossary. TOU rows are therefore anchored on the
   `<SEASON> USAGE On-Peak` headers and read within a bounded window.
-- *Fail closed.* A period missing its day count, usage figures, charge totals, or TOU rows
-  raises `SystemExit` rather than emitting zeros.
+- *Rate segments inside a period.* When a tariff change lands mid-cycle the bill splits
+  the period into segments ("3 Days Charge ...", then "26 Days Charge ..."), each with its
+  own $/kWh for the same season. Those segments are kept as separate rows, keyed by
+  `segment` with the segment's `segment_days`, because collapsing them would discard the
+  per-bill evidence of a rate vintage change.
+- *Fail closed, corpus-wide.* Per-period checks are not enough: a statement that is absent
+  or misnamed simply would not appear, so the artifacts would be rewritten a few periods
+  short with no error. Before anything is written the script requires every statement the
+  committed summaries are built from, rejects duplicate periods, requires the electric
+  periods to tile the window with no gap, requires TOU rows for every period with unique
+  `period/section/season/segment/tou_period` keys, and reconciles delivery TOU kWh against
+  each period's net usage.
+- *Transactional publication.* The five artifacts are one evidence set. Each is staged to a
+  `.tmp` and swapped in only after every validation passes; if any swap fails, the ones
+  already swapped are restored from backups, so a failed run leaves the committed set
+  exactly as it was rather than half-updated.
+
+**Negative tests** (`analysis/test_parse_bills.py`, run with the venv python). Each builds a
+throwaway repo from the real corpus, breaks one thing, and asserts the parser exits non-zero
+*and* leaves the artifacts untouched: a missing summary statement, a statement missing from
+the middle of the window (caught by continuity, not by the presence check), TOU headers that
+stop matching, and a forced failure part-way through the write sequence to exercise the
+rollback. The suite skips when the gitignored PDFs are not present.
 
 **Validation at time of writing.** 26 electric periods spanning 763 continuous days with no
 gaps between consecutive periods; the 13 periods of the report's audited year sum to 365

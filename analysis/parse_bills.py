@@ -36,6 +36,7 @@ FAIL-CLOSED
     emitting a zero — a silently-zeroed row would corrupt every downstream sum.
 """
 import os
+import shutil
 import pathlib
 import re
 import sys
@@ -167,17 +168,24 @@ def parse_electric(path):
             base_services_charge=bsc,
         ))
 
-        # TOU detail. The PDF is two-column, so extract_text() interleaves unrelated
-        # right-column lines between a block's "kWh used" and "Rate/kWh" rows. Anchor
-        # on the usage row, take the NEXT rate row after it, and read the season from
-        # the nearest preceding "<SEASON> USAGE" header (that header line itself is
-        # sometimes split across the column boundary, so it is looked up separately).
-        # Anchor on the "<SEASON> USAGE On-Peak ..." headers: the phrase "kWh used"
-        # also appears in the usage graphic and the glossary boilerplate, so scanning
-        # for it directly picks up rows that are not TOU tables at all.
+        # TOU detail. Anchor on the "<SEASON> USAGE On-Peak ..." headers: the phrase
+        # "kWh used" also appears in the usage graphic and the glossary boilerplate, so
+        # scanning for it directly picks up rows that are not TOU tables. The PDF is
+        # two-column, so extract_text() interleaves unrelated right-column charge lines
+        # between a block's "kWh used" and "Rate/kWh" rows; both are therefore searched
+        # within a bounded window after the header rather than on adjacent lines.
+        #
+        # A period can hold SEVERAL blocks for the same season: when a tariff change
+        # lands mid-cycle the bill splits the period into rate segments ("3 Days Charge
+        # ..." then "26 Days Charge ..."), each with its own $/kWh. Those segments are
+        # the per-bill evidence of a rate vintage change, so they are kept as separate
+        # rows and distinguished by `segment` (0-based, in bill order) plus the segment's
+        # day count — collapsing them would discard exactly what a year-over-year price
+        # comparison needs.
         gen_marker = re.search(r"Electricity Generation \(Details below\)", chunk)
         gen_at = gen_marker.start() if gen_marker else len(chunk)
-        WINDOW = 600  # chars after a header within which its two data rows appear
+        WINDOW = 600  # chars after a header within which its data rows appear
+        seg_seen = {}
 
         for h in re.finditer(r"(SUMMER|WINTER) USAGE\s+On-Peak", chunk):
             win = chunk[h.end():h.end() + WINDOW]
@@ -189,10 +197,19 @@ def parse_electric(path):
                     f"{path.name} [{period}]: a '{h.group(1)} USAGE' header has no "
                     f"kWh/rate rows within {WINDOW} chars — bill layout changed.")
             section = "generation" if h.start() >= gen_at else "delivery"
+            season = h.group(1).lower()
+            key = (section, season)
+            segment = seg_seen.get(key, 0)
+            seg_seen[key] = segment + 1
+            # "<N> Days Charge $a + $b + $c = total" follows the rate row; it is absent
+            # on bills whose period is not split, where the segment covers every day.
+            dm = re.search(r"(\d+)\s*Days Charge", win[r_row.end():])
+            seg_days = int(dm.group(1)) if dm else days
             for j, tp in enumerate(("on_peak", "off_peak", "super_off_peak")):
                 tou.append(dict(
                     statement_date=stmt, period=period, section=section,
-                    season=h.group(1).lower(), tou_period=tp,
+                    season=season, segment=segment, segment_days=seg_days,
+                    tou_period=tp,
                     kwh=_f(u.group(1 + j)), rate_per_kwh=_f(r_row.group(1 + j)),
                 ))
     return rows, tou
@@ -238,6 +255,116 @@ def parse_gas(path):
 
 
 # ---------------------------------------------------------------------------
+# Corpus-level validation and transactional publication
+# ---------------------------------------------------------------------------
+def _validate(elec, gas, tou):
+    """Refuse to publish anything unless the whole parsed corpus is sound.
+
+    Parsing every PDF that happens to be present is not enough: a statement that is
+    absent, misnamed, or unreadable would simply not appear, and the artifacts would be
+    rewritten a few periods short with no error. Every check below runs BEFORE any file
+    is touched."""
+    # 1. Every statement the committed summaries are built from must be present. This is
+    #    what stops a thinned corpus from quietly truncating the published evidence.
+    for label, have, want in (
+            ("electric", set(elec.statement_date), set(SUMMARY_STATEMENTS_ELEC)),
+            ("gas", set(gas.statement_date), set(SUMMARY_STATEMENTS_GAS))):
+        missing = sorted(want - have)
+        if missing:
+            raise SystemExit(
+                f"{label}: {len(missing)} statement(s) required by the committed summary "
+                f"are missing from the corpus: {missing}. Restore the PDFs before "
+                f"regenerating — writing now would publish a truncated artifact.")
+
+    # 2. Duplicate billing periods would double-count a year (CLAUDE.md §1).
+    for label, df in (("electric", elec), ("gas", gas)):
+        dupes = df.period[df.period.duplicated()].tolist()
+        if dupes:
+            raise SystemExit(f"duplicate {label} billing periods parsed: {dupes}")
+
+    # 3. Electric periods must tile the window with no gap. A missing statement in the
+    #    MIDDLE of the corpus passes check 1 whenever it is outside the summary window,
+    #    so continuity is what catches it.
+    e = elec.copy()
+    e["start"] = pd.to_datetime(e.period.str.split(" - ").str[0], format="%m/%d/%y")
+    e["end"] = pd.to_datetime(e.period.str.split(" - ").str[1], format="%m/%d/%y")
+    e = e.sort_values("start")
+    gaps = [(p, q) for p, q, d in zip(e.period[:-1], e.period[1:],
+                                      (e.start.shift(-1) - e.end).dt.days[:-1]) if d > 1]
+    if gaps:
+        raise SystemExit(
+            f"gap between consecutive electric billing periods: {gaps}. A statement is "
+            f"missing from the corpus; annual totals would be understated.")
+
+    # 4. Every period needs its TOU detail. Requiring rows per period (not merely
+    #    erroring when a season header fails to parse) is what catches a layout change
+    #    that stops the headers matching altogether — that would otherwise yield an
+    #    empty, silently incomplete bill_tou_detail.csv.
+    if tou.empty:
+        raise SystemExit("no TOU detail parsed for any period — bill layout changed.")
+    have_tou = set(tou.period)
+    missing_tou = sorted(set(elec.period) - have_tou)
+    if missing_tou:
+        raise SystemExit(
+            f"{len(missing_tou)} billing period(s) produced no TOU rows: {missing_tou}. "
+            f"The season headers stopped matching — fix the parser.")
+    key_cols = ["period", "section", "season", "segment", "tou_period"]
+    dup_keys = tou[tou.duplicated(key_cols)]
+    if not dup_keys.empty:
+        raise SystemExit(
+            f"duplicate TOU keys parsed ({'/'.join(key_cols)}): "
+            f"{dup_keys[key_cols].to_dict('records')}")
+
+    # Every period must carry delivery detail; generation detail too whenever the bill
+    # prints a generation section (it does for both bundled and CCA periods here).
+    for period, grp in tou.groupby("period"):
+        if "delivery" not in set(grp.section):
+            raise SystemExit(f"[{period}]: TOU rows parsed but none for delivery")
+
+    # 5. Delivery TOU kWh must reconcile against the period's net usage — an independent
+    #    read of the same bill, so a mis-scoped regex shows up here rather than shipping.
+    d = tou[tou.section == "delivery"].groupby("period").kwh.sum()
+    for period, net in elec.set_index("period").net_kwh.items():
+        if period not in d:
+            raise SystemExit(f"[{period}]: no delivery TOU rows parsed")
+        if abs(d[period] - net) > 1.0:
+            raise SystemExit(
+                f"[{period}]: delivery TOU kWh {d[period]:,.0f} does not reconcile with "
+                f"net usage {net:,.0f} — the TOU blocks and the usage total disagree.")
+
+
+def _write_all_atomically(writes):
+    """Publish an artifact SET. Each file is staged to a .tmp, then swapped in; if any
+    swap fails the already-swapped files are restored from backups, so a failed run
+    leaves the committed set exactly as it was rather than half-updated."""
+    staged, backups, done = [], {}, []
+    try:
+        for path, writer in writes:
+            tmp = path.with_name(path.name + ".tmp")
+            writer(tmp)
+            staged.append((path, tmp))
+        for path, tmp in staged:
+            if path.exists():
+                bak = path.with_name(path.name + ".bak")
+                shutil.copy2(path, bak)
+                backups[path] = bak
+            os.replace(tmp, path)
+            done.append(path)
+    except BaseException:
+        for path in done:                       # roll the set back
+            bak = backups.get(path)
+            if bak and bak.exists():
+                os.replace(bak, path)
+        for _, tmp in staged:
+            if tmp.exists():
+                tmp.unlink()
+        raise
+    finally:
+        for bak in backups.values():
+            if bak.exists():
+                bak.unlink()
+
+
 def main():
     for d in (ELEC_DIR, GAS_DIR):
         if not d.is_dir():
@@ -263,29 +390,29 @@ def main():
     gas = pd.DataFrame(gas_rows).sort_values("statement_date")
     tou = pd.DataFrame(tou_rows)
 
-    # Duplicate billing periods would double-count a year (CLAUDE.md §1).
-    dupes = elec.period[elec.period.duplicated()].tolist()
-    if dupes:
-        raise SystemExit(f"duplicate electric billing periods parsed: {dupes}")
+    _validate(elec, gas, tou)
 
-    elec.to_csv(DATA / "bill_periods_electric.csv", index=False)
-    gas.to_csv(DATA / "bill_periods_gas.csv", index=False)
-    tou.to_csv(DATA / "bill_tou_detail.csv", index=False)
-
-    # ---- regenerate the original summaries (the reproduction gate) ----
-    # These two predate this script and were committed with CRLF line endings; they are
-    # rewritten with CRLF so the gate is a genuine byte-for-byte reproduction of the
-    # known-good originals rather than a content-only match. New artifacts above use LF.
     es = elec[elec.statement_date.isin(SUMMARY_STATEMENTS_ELEC)]
     es = es[["period", "days", "net_kwh", "gross_kwh",
              "sdge_delivery", "cca_generation", "current_charges"]]
-    es.to_csv(DATA / "electric_bill_summary.csv", index=False, lineterminator="\r\n")
-
     gs = gas[gas.statement_date.isin(SUMMARY_STATEMENTS_GAS)].copy()
     gs = gs.rename(columns={"period_end_month": "file_month"})
     gs = gs[["file_month", "therms", "total_gas_service",
              "baseline_rate", "nonbaseline_rate"]].sort_values("file_month")
-    gs.to_csv(DATA / "gas_bill_summary.csv", index=False, lineterminator="\r\n")
+
+    # The five artifacts are one evidence set: publish them together or not at all.
+    # electric_bill_summary.csv and gas_bill_summary.csv predate this script and were
+    # committed with CRLF line endings; they keep CRLF so the reproduction gate stays a
+    # byte-for-byte match against the known-good originals. New artifacts use LF.
+    _write_all_atomically([
+        (DATA / "bill_periods_electric.csv", lambda p: elec.to_csv(p, index=False)),
+        (DATA / "bill_periods_gas.csv", lambda p: gas.to_csv(p, index=False)),
+        (DATA / "bill_tou_detail.csv", lambda p: tou.to_csv(p, index=False)),
+        (DATA / "electric_bill_summary.csv",
+         lambda p: es.to_csv(p, index=False, lineterminator="\r\n")),
+        (DATA / "gas_bill_summary.csv",
+         lambda p: gs.to_csv(p, index=False, lineterminator="\r\n")),
+    ])
 
     print(f"electric: {len(elec)} billing periods from "
           f"{elec.statement_date.nunique()} statements "
