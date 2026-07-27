@@ -92,14 +92,137 @@ def _intervals(days, per_day=96, imp=1.0, exp=0.0):
     return out
 
 
+def _day(d, imp=1.0, exp=0.0):
+    """One well-formed day: exactly the slots the calendar requires for that date."""
+    return [(d, h, imp, exp) for h in T.expected_slots(d).elements()]
+
+
 def case_dst_days_do_not_break_bucketing():
-    """A 25-hour day carries 100 intervals and a 23-hour day 92; both must bucket."""
-    long_day = [(dt.date(2025, 11, 2), h * 0.25, 1.0, 0.0) for h in range(100)]
-    short_day = [(dt.date(2026, 3, 8), h * 0.25, 1.0, 0.0) for h in range(92)]
-    for rows, d in ((long_day, dt.date(2025, 11, 2)), (short_day, dt.date(2026, 3, 8))):
+    """A 25-hour day carries 100 slots and a 23-hour day 92; both must bucket."""
+    for d, n in ((dt.date(2025, 11, 2), 100), (dt.date(2026, 3, 8), 92)):
+        rows = _day(d)
+        assert len(rows) == n, (d, len(rows))
         got = T.rebuild(rows, d, d, "as_billed", HOL)
-        assert round(sum(got.values()), 6) == float(len(rows)), (d, got)
+        assert round(sum(got.values()), 6) == float(n), (d, got)
     return "25-hour and 23-hour days conserve energy through the bucketing"
+
+
+def case_dst_dates_are_the_us_transition_sundays():
+    assert T.dst_dates(2026) == (dt.date(2026, 3, 8), dt.date(2026, 11, 1))
+    assert T.dst_dates(2025) == (dt.date(2025, 3, 9), dt.date(2025, 11, 2))
+    return "DST transitions are the 2nd Sunday in March and 1st Sunday in November"
+
+
+def case_wellformed_days_have_no_defect():
+    for d in (dt.date(2026, 4, 8), dt.date(2026, 3, 8), dt.date(2025, 11, 2)):
+        slots = [h for _, h, _, _ in _day(d)]
+        assert T.day_defect(d, slots) is None, (d, T.day_defect(d, slots))
+    return "ordinary, spring-forward and fall-back days all validate as well formed"
+
+
+def case_truncated_day_is_a_defect():
+    d = dt.date(2026, 4, 8)
+    why = T.day_defect(d, [h for _, h, _, _ in _day(d)][:4])
+    assert why and "4 slots, expected 96" in why, why
+    assert "missing" in why
+    return "a day short of slots is reported as malformed, not waved through"
+
+
+def case_duplicated_slots_are_a_defect():
+    d = dt.date(2026, 4, 8)
+    slots = [h for _, h, _, _ in _day(d)]
+    why = T.day_defect(d, slots + slots[:3])
+    assert why and "duplicated" in why, why
+    return "duplicated 15-minute slots are reported as malformed"
+
+
+def case_dst_slot_counts_are_not_accepted_on_ordinary_days():
+    """92 or 100 slots are only legitimate on the actual transition Sundays."""
+    ordinary = dt.date(2026, 4, 8)
+    slots = [h for h in T.CANONICAL_SLOTS if h not in T.SPRING_FORWARD_GAP]
+    assert T.day_defect(ordinary, slots) is not None
+    spring, _ = T.dst_dates(2026)
+    assert T.day_defect(spring, slots) is None
+    return "a 92-slot day is a defect except on the spring-forward Sunday"
+
+
+def case_malformed_day_disqualifies_its_period():
+    period = "4/1/26 - 4/30/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in (_day(d) if d != days[10] else _day(d)[:4])]
+    billed = _billed_from(rows, period, start, end)
+    try:
+        T.audit(rows, billed, [period], HOL)
+    except SystemExit as e:
+        assert "nothing to audit" in str(e), e
+        return "a period containing a truncated day is skipped, not reconciled"
+    raise AssertionError("expected the period with a truncated day to be skipped")
+
+
+def case_missing_billed_bucket_stops_the_run():
+    period = "4/1/26 - 4/30/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in _day(d)]
+    billed = _billed_from(rows, period, start, end)
+    dropped = billed.pop((period, "winter", "off_peak"))
+    assert abs(dropped) > 100, "fixture must drop a bucket holding real energy"
+    try:
+        T.audit(rows, billed, [period], HOL)
+    except SystemExit as e:
+        assert "expected buckets" in str(e) and "off_peak" in str(e), e
+        return "an omitted billed bucket stops the run instead of reconciling"
+    raise AssertionError("expected SystemExit when a billed bucket is missing")
+
+
+def case_unexpected_billed_bucket_stops_the_run():
+    """A summer bucket on an all-winter period means the season boundary moved."""
+    period = "4/1/26 - 4/30/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in _day(d)]
+    billed = _billed_from(rows, period, start, end)
+    billed[(period, "summer", "on_peak")] = 10.0
+    try:
+        T.audit(rows, billed, [period], HOL)
+    except SystemExit as e:
+        assert "unexpected" in str(e), e
+        return "a bucket outside the period's seasons stops the run"
+    raise AssertionError("expected SystemExit on an unexpected billed bucket")
+
+
+def case_period_total_catches_accumulated_bias():
+    """Every bucket inside the 1 kWh floor, yet the period total does not reconcile."""
+    period = "5/20/26 - 6/20/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in _day(d, imp=0.26)]
+    built = T.rebuild(rows, start, end, "as_billed", HOL)
+    billed = {(period, T.SEASON_NAME[s], T.TOU_NAME[t]): round(round(v, 1) - 0.9, 1)
+              for (s, t), v in built.items()}
+    out, _, _, totals, _, _ = T.audit(rows, billed, [period], HOL)
+    s = T.summarise(out, totals, "as_billed")
+    assert s["buckets"] == 6, s["buckets"]
+    assert s["buckets_failing"] == 0, "fixture must keep every bucket inside the floor"
+    assert s["period_totals_failing"] == 1, s
+    assert s["worst_period_total_pct"] > T.REL_TOL_TOTAL * 100
+    return "a period whose buckets each pass but whose total does not is caught"
+
+
+def case_period_total_tolerates_pure_rounding():
+    """Whole-kWh rounding on every bucket must not fail the period total."""
+    period = "5/20/26 - 6/20/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in _day(d, imp=0.26)]
+    built = T.rebuild(rows, start, end, "as_billed", HOL)
+    billed = {(period, T.SEASON_NAME[s], T.TOU_NAME[t]): round(v)
+              for (s, t), v in built.items()}
+    out, _, _, totals, _, _ = T.audit(rows, billed, [period], HOL)
+    s = T.summarise(out, totals, "as_billed")
+    assert s["buckets_failing"] == 0 and s["period_totals_failing"] == 0, s
+    return "rounding-only residuals pass both the bucket and the period-total check"
 
 
 def case_rebuild_respects_period_bounds():
@@ -110,7 +233,13 @@ def case_rebuild_respects_period_bounds():
     return "rebuild includes both endpoints and excludes days outside the period"
 
 
-def _billed_csv(tmp, buckets, gen_override=None):
+def _billed_from(intervals, period, start, end):
+    """Billed buckets that agree exactly with the rebuild, as a clean fixture base."""
+    return {(period, T.SEASON_NAME[s], T.TOU_NAME[t]): round(v)
+            for (s, t), v in T.rebuild(intervals, start, end, "as_billed", HOL).items()}
+
+
+def _billed_csv(tmp, buckets, gen_override=None, skip_generation=()):
     p = tmp / "bill_tou_detail.csv"
     with open(p, "w", newline="") as fh:
         w = csv.writer(fh, lineterminator="\n")
@@ -118,9 +247,26 @@ def _billed_csv(tmp, buckets, gen_override=None):
                     "segment_days", "tou_period", "kwh", "rate_per_kwh"])
         for (period, season, tou), kwh in buckets.items():
             w.writerow(["2026-05-04", period, "delivery", season, 0, 30, tou, kwh, 0.3])
+            if (period, season, tou) in skip_generation:
+                continue
             g = gen_override if gen_override is not None else kwh
             w.writerow(["2026-05-04", period, "generation", season, 0, 30, tou, g, 0.2])
     return p
+
+
+def case_load_billed_rejects_asymmetric_sections():
+    """Key SETS must match, not merely overlap: a both-sections omission must show."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        key = ("4/1/26 - 4/30/26", "winter", "off_peak")
+        p = _billed_csv(tmp, {("4/1/26 - 4/30/26", "winter", "on_peak"): 100.0,
+                              key: 50.0}, skip_generation=(key,))
+        try:
+            T.load_billed(p)
+        except SystemExit as e:
+            assert "different buckets" in str(e), e
+            return "load_billed fails closed when a bucket exists in only one section"
+    raise AssertionError("expected SystemExit on asymmetric delivery/generation keys")
 
 
 def case_load_billed_rejects_inconsistent_parse():
@@ -187,20 +333,36 @@ def case_holiday_set_matches_the_documented_tariff_list():
 
 
 CASES = [
+    # TOU assignment
     case_on_peak_window_edges,
     case_midday_sop_starts_at_changeover,
     case_canonical_rule_ignores_the_changeover,
     case_holiday_takes_weekend_windows,
     case_weekend_super_off_peak_ends_at_14,
+    case_holiday_set_matches_the_documented_tariff_list,
+    # periods and tolerances
     case_period_parse_is_inclusive,
     case_tolerance_floor_protects_small_buckets,
-    case_dst_days_do_not_break_bucketing,
     case_rebuild_respects_period_bounds,
+    # interval-day integrity
+    case_dst_days_do_not_break_bucketing,
+    case_dst_dates_are_the_us_transition_sundays,
+    case_wellformed_days_have_no_defect,
+    case_truncated_day_is_a_defect,
+    case_duplicated_slots_are_a_defect,
+    case_dst_slot_counts_are_not_accepted_on_ordinary_days,
+    case_malformed_day_disqualifies_its_period,
+    # billed-bucket completeness
     case_load_billed_rejects_inconsistent_parse,
+    case_load_billed_rejects_asymmetric_sections,
+    case_missing_billed_bucket_stops_the_run,
+    case_unexpected_billed_bucket_stops_the_run,
+    # coverage and totals
     case_load_intervals_rejects_a_file_with_no_data,
     case_partial_period_is_skipped_not_credited,
     case_interval_gap_inside_period_is_skipped,
-    case_holiday_set_matches_the_documented_tariff_list,
+    case_period_total_catches_accumulated_bias,
+    case_period_total_tolerates_pure_rounding,
 ]
 
 

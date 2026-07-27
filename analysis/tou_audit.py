@@ -42,14 +42,34 @@ are re-derived by this script every run rather than trusted:
 Tolerance. Statements print whole kWh, so a bucket carries up to +/-0.5 kWh of
 rounding before any real disagreement exists. A bucket passes when the residual is
 within max(1.0 kWh, 0.5% of the billed magnitude); the floor keeps small buckets
-from failing on rounding alone. Period totals use 0.2%.
+from failing on rounding alone.
+
+Period totals are checked separately, because per-bucket residuals that each sit
+inside the floor can still accumulate into a period that does not reconcile. A
+period total passes within max(0.5 kWh x buckets, 0.2% of the billed total): the
+first term is the exact worst-case rounding bound for that many printed buckets,
+the second is the reconciliation requirement. Both bucket and total failures count
+towards the verdict.
 
 Coverage. Only billing periods lying wholly inside the interval export are audited.
-Partially covered periods are reported as skipped, never partially credited.
+A period is audited only when every day inside it carries exactly the 15-minute
+slots the calendar requires: 96 unique slots on an ordinary day, 92 on the
+spring-forward Sunday (02:00-02:45 do not exist) and 100 on the fall-back Sunday
+(01:00-01:45 occur twice). A truncated, padded or duplicated day disqualifies its
+whole period, because a day short of slots reconciles against energy that was
+never measured. Partially covered periods are skipped, never partially credited.
+
+Completeness. Statements print one row per TOU period for every season the billing
+period touches, so the expected bucket set is derived from the period's own dates
+and every expected bucket must be present. A missing or unexpected bucket is a
+parser or season-boundary regression rather than an audit result, and stops the run:
+without that check, an omitted bucket would silently drop its energy out of the
+comparison and still report a clean reconciliation.
 
 Run from the private/verify sandbox with the Green Button export as usage.csv.
 Writes data/tou_audit.csv and data/tou_audit_summary.json atomically.
 """
+import collections
 import csv
 import datetime as dt
 import json
@@ -71,6 +91,12 @@ SEASON_NAME = {"S": "summer", "W": "winter"}
 ABS_TOL_KWH = 1.0        # whole-kWh statement rounding floor
 REL_TOL_CELL = 0.005     # 0.5% per bucket
 REL_TOL_TOTAL = 0.002    # 0.2% on period totals
+ROUNDING_PER_BUCKET = 0.5   # worst-case rounding a printed whole-kWh bucket hides
+
+# 15-minute wall-clock slots, and the two the US DST rules move.
+CANONICAL_SLOTS = tuple(i * 0.25 for i in range(96))
+SPRING_FORWARD_GAP = (2.0, 2.25, 2.5, 2.75)     # 02:00-02:45 do not occur
+FALL_BACK_REPEAT = (1.0, 1.25, 1.5, 1.75)       # 01:00-01:45 occur twice
 
 
 def _repo_root():
@@ -116,6 +142,67 @@ def holidays(years):
             c -= dt.timedelta(days=1)
         out.add(c)
     return out
+
+
+def dst_dates(year):
+    """(spring-forward Sunday, fall-back Sunday) under the US rules in force.
+
+    Second Sunday in March and first Sunday in November. Returned as dates so the
+    slot validator can require 92 and 100 slots on exactly those two days and 96
+    everywhere else, rather than waving through any day with an unusual count.
+    """
+    def nth_sunday(month, n):
+        c = dt.date(year, month, 1)
+        return c + dt.timedelta(days=(6 - c.weekday()) % 7 + 7 * (n - 1))
+
+    return nth_sunday(3, 2), nth_sunday(11, 1)
+
+
+def expected_slots(date):
+    """The exact multiset of 15-minute slots this calendar day should carry."""
+    spring, fall = dst_dates(date.year)
+    if date == spring:
+        return collections.Counter({h: 1 for h in CANONICAL_SLOTS
+                                    if h not in SPRING_FORWARD_GAP})
+    if date == fall:
+        return collections.Counter({h: 2 if h in FALL_BACK_REPEAT else 1
+                                    for h in CANONICAL_SLOTS})
+    return collections.Counter({h: 1 for h in CANONICAL_SLOTS})
+
+
+def day_defect(date, slots):
+    """None when the day is well formed, else a short reason naming the problem.
+
+    A day short of slots would reconcile against energy that was never measured,
+    and a day with duplicated slots double-counts it. Either way the day's period
+    must not be audited.
+    """
+    want = expected_slots(date)
+    got = collections.Counter(slots)
+    if got == want:
+        return None
+    missing = sorted(h for h in want if got[h] < want[h])
+    extra = sorted(h for h in got if got[h] > want.get(h, 0))
+    fmt = lambda hs: ", ".join(f"{int(h):02d}:{int(round((h % 1) * 60)):02d}"
+                               for h in hs[:6]) + ("..." if len(hs) > 6 else "")
+    parts = [f"{sum(got.values())} slots, expected {sum(want.values())}"]
+    if missing:
+        parts.append(f"missing {fmt(missing)}")
+    if extra:
+        parts.append(f"duplicated {fmt(extra)}")
+    return "; ".join(parts)
+
+
+def expected_buckets(start, end):
+    """The (season, tou) buckets a statement must print for this period.
+
+    Derived from the period's own dates, so a season-boundary disagreement between
+    the tariff and rates.SUMMER_MONTHS shows up as an unexpected or absent bucket
+    rather than passing unnoticed.
+    """
+    seasons = {"S" if (start + dt.timedelta(days=i)).month in R.SUMMER_MONTHS else "W"
+               for i in range((end - start).days + 1)}
+    return {(SEASON_NAME[s], t) for s in seasons for t in TOU_NAME.values()}
 
 
 def assign(date, hour, rule, hol):
@@ -182,13 +269,22 @@ def load_billed(path):
             tgt[key] = tgt.get(key, 0.0) + float(r["kwh"])
             if r["period"] not in periods:
                 periods.append(r["period"])
-    bad = [k for k in billed if k in gen and abs(billed[k] - gen[k]) > 1e-9]
+    if not billed:
+        raise SystemExit(f"no delivery rows in {path}")
+    # Compare the key SETS, not just the overlap: a bucket dropped from both
+    # sections by the same parser regression would otherwise look consistent.
+    only_del, only_gen = set(billed) - set(gen), set(gen) - set(billed)
+    if only_del or only_gen:
+        raise SystemExit(
+            f"delivery and generation cover different buckets in {path}: "
+            f"{len(only_del)} delivery-only (e.g. {sorted(only_del)[:1]}), "
+            f"{len(only_gen)} generation-only (e.g. {sorted(only_gen)[:1]}) -- the "
+            "bill parse is not internally consistent; fix parse_bills.py")
+    bad = [k for k in billed if abs(billed[k] - gen[k]) > 1e-9]
     if bad:
         raise SystemExit(f"delivery and generation kWh disagree for {len(bad)} "
                          f"bucket(s), e.g. {bad[0]} -- the bill parse is not "
                          "internally consistent; fix parse_bills.py")
-    if not billed:
-        raise SystemExit(f"no delivery rows in {path}")
     return billed, periods
 
 
@@ -207,27 +303,52 @@ def cell_pass(billed, rebuilt):
 
 
 def audit(intervals, billed, periods, hol):
-    covered = {d for d, _, _, _ in intervals}
+    slots_by_day = collections.defaultdict(list)
+    for d, hour, _, _ in intervals:
+        slots_by_day[d].append(hour)
+    covered = set(slots_by_day)
     cov_start, cov_end = min(covered), max(covered)
-    rows, skipped, audited = [], [], []
+
+    rows, skipped, audited, totals = [], [], [], []
     for ptext in periods:
         start, end = parse_period(ptext)
         if start < cov_start or end > cov_end:
             skipped.append({"period": ptext, "reason": "outside interval coverage"})
             continue
-        gaps = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)
-                if start + dt.timedelta(days=i) not in covered]
+        days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+        gaps = [d for d in days if d not in covered]
         if gaps:
             skipped.append({"period": ptext, "reason": "interval gap inside period",
                             "missing_days": [str(x) for x in gaps][:10]})
             continue
+        malformed = [(d, day_defect(d, slots_by_day[d])) for d in days]
+        malformed = [(d, why) for d, why in malformed if why]
+        if malformed:
+            skipped.append({"period": ptext, "reason": "malformed interval day",
+                            "malformed_days": [f"{d}: {why}"
+                                               for d, why in malformed][:10]})
+            continue
+
+        # Every bucket the statement must print has to be there. A silently absent
+        # bucket would drop its energy out of the comparison and still reconcile.
+        want = expected_buckets(start, end)
+        have = {(sn, tn) for (p, sn, tn) in billed if p == ptext}
+        if have != want:
+            raise SystemExit(
+                f"bill_tou_detail.csv does not carry the expected buckets for "
+                f"{ptext}: missing {sorted(want - have)}, unexpected "
+                f"{sorted(have - want)}. Either parse_bills.py dropped rows or the "
+                "tariff's season boundary differs from rates.SUMMER_MONTHS; both "
+                "invalidate the reconciliation, so nothing is published.")
+
         audited.append(ptext)
         built = {r: rebuild(intervals, start, end, r, hol)
                  for r in ("as_billed", "canonical")}
+        raw = {r: {"billed": 0.0, "rebuilt": 0.0} for r in built}
         for s_short, s_name in SEASON_NAME.items():
             for t_short, t_name in TOU_NAME.items():
                 key = (ptext, s_name, t_name)
-                if key not in billed:
+                if (s_name, t_name) not in want:
                     continue
                 b = billed[key]
                 row = {"period": ptext, "season": s_name, "tou_period": t_name,
@@ -239,21 +360,47 @@ def audit(intervals, billed, periods, hol):
                     row[f"{rule}_diff_pct"] = (round(100 * (v - b) / abs(b), 3)
                                                if abs(b) > 1e-9 else "")
                     row[f"{rule}_pass"] = cell_pass(b, v)
+                    raw[rule]["billed"] += b          # unrounded, for the total check
+                    raw[rule]["rebuilt"] += v
                 rows.append(row)
+
+        entry = {"period": ptext, "buckets": len(want)}
+        for rule in ("as_billed", "canonical"):
+            b, v = raw[rule]["billed"], raw[rule]["rebuilt"]
+            tol = max(ROUNDING_PER_BUCKET * len(want), REL_TOL_TOTAL * abs(b))
+            entry[f"{rule}_billed_total_kwh"] = round(b, 2)
+            entry[f"{rule}_rebuilt_total_kwh"] = round(v, 2)
+            entry[f"{rule}_diff_kwh"] = round(v - b, 2)
+            entry[f"{rule}_diff_pct"] = (round(100 * (v - b) / abs(b), 3)
+                                         if abs(b) > 1e-9 else None)
+            entry[f"{rule}_tolerance_kwh"] = round(tol, 2)
+            entry[f"{rule}_pass"] = abs(v - b) <= tol
+        totals.append(entry)
+
     if not audited:
         raise SystemExit("no billing period lies wholly inside the interval "
                          "export; nothing to audit")
-    return rows, audited, skipped, cov_start, cov_end
+    return rows, audited, skipped, totals, cov_start, cov_end
 
 
-def summarise(rows, rule):
+def summarise(rows, totals, rule):
     fails = [r for r in rows if not r[f"{rule}_pass"]]
     worst = max(rows, key=lambda r: abs(r[f"{rule}_diff_kwh"]))
     tot_b = sum(r["billed_kwh"] for r in rows)
     tot_r = sum(r[f"{rule}_kwh"] for r in rows)
+    total_fails = [t for t in totals if not t[f"{rule}_pass"]]
     return {
         "buckets": len(rows),
         "buckets_failing": len(fails),
+        "periods": len(totals),
+        "period_totals_failing": len(total_fails),
+        "failing_period_totals": [
+            {"period": t["period"], "billed_kwh": t[f"{rule}_billed_total_kwh"],
+             "rebuilt_kwh": t[f"{rule}_rebuilt_total_kwh"],
+             "diff_kwh": t[f"{rule}_diff_kwh"], "diff_pct": t[f"{rule}_diff_pct"],
+             "tolerance_kwh": t[f"{rule}_tolerance_kwh"]} for t in total_fails],
+        "worst_period_total_pct": max((abs(t[f"{rule}_diff_pct"] or 0)
+                                       for t in totals), default=0.0),
         "max_abs_residual_kwh": abs(worst[f"{rule}_diff_kwh"]),
         "sum_abs_residual_kwh": round(sum(abs(r[f"{rule}_diff_kwh"]) for r in rows), 1),
         "net_total_billed_kwh": round(tot_b, 1),
@@ -345,7 +492,8 @@ def main():
     covered = {d for d, _, _, _ in intervals}
     hol = holidays(range(min(covered).year, max(covered).year + 1))
 
-    rows, audited, skipped, cov_start, cov_end = audit(intervals, billed, periods, hol)
+    rows, audited, skipped, totals, cov_start, cov_end = audit(
+        intervals, billed, periods, hol)
     dst = sorted(d for d in covered
                  if sum(1 for x, _, _, _ in intervals if x == d) != 96)
 
@@ -354,22 +502,28 @@ def main():
                      "interval_days": len(covered), "periods_audited": len(audited),
                      "periods_skipped": len(skipped), "audited": audited,
                      "skipped": skipped},
-        "tolerance": {"bucket": f"max({ABS_TOL_KWH} kWh, {REL_TOL_CELL * 100}%)",
-                      "period_total_pct": REL_TOL_TOTAL * 100,
-                      "basis": "statements print whole kWh"},
+        "tolerance": {
+            "bucket": f"max({ABS_TOL_KWH} kWh, {REL_TOL_CELL * 100}%)",
+            "period_total": (f"max({ROUNDING_PER_BUCKET} kWh x buckets, "
+                             f"{REL_TOL_TOTAL * 100}%)"),
+            "basis": ("statements print whole kWh, so the per-bucket rounding bound "
+                      "is 0.5 kWh and a period's is 0.5 kWh times its bucket count")},
         "dst_days": [{"date": str(d),
                       "intervals": sum(1 for x, _, _, _ in intervals if x == d)}
                      for d in dst],
         "midday_sop_changeover": refit_changeover(intervals, billed, periods, hol),
         "holiday_evidence": holiday_evidence(intervals, hol, cov_start, cov_end, audited),
-        "rules": {r: summarise(rows, r) for r in ("as_billed", "canonical")},
+        "period_totals": totals,
+        "rules": {r: summarise(rows, totals, r) for r in ("as_billed", "canonical")},
     }
 
-    verdict = out["rules"]["as_billed"]
-    out["verdict"] = (
-        "the utility's TOU accounting reproduces from raw interval data"
-        if verdict["buckets_failing"] == 0 else
-        f"{verdict['buckets_failing']} bucket(s) do not reconcile")
+    v = out["rules"]["as_billed"]
+    if v["buckets_failing"] == 0 and v["period_totals_failing"] == 0:
+        out["verdict"] = "the utility's TOU accounting reproduces from raw interval data"
+    else:
+        out["verdict"] = (f"{v['buckets_failing']} bucket(s) and "
+                          f"{v['period_totals_failing']} period total(s) "
+                          "do not reconcile")
 
     DATA.mkdir(exist_ok=True)
     for path, kind in ((DATA / "tou_audit.csv", "csv"),
@@ -390,10 +544,10 @@ def main():
           f"({cov_start} .. {cov_end}); skipped {len(skipped)}")
     for rule in ("as_billed", "canonical"):
         s = out["rules"][rule]
-        print(f"  {rule:<10} failing {s['buckets_failing']:>2}/{s['buckets']}  "
+        print(f"  {rule:<10} buckets failing {s['buckets_failing']:>2}/{s['buckets']}  "
+              f"period totals failing {s['period_totals_failing']:>2}/{s['periods']}  "
               f"max|residual| {s['max_abs_residual_kwh']:>7.2f} kWh  "
-              f"sum|residual| {s['sum_abs_residual_kwh']:>8.1f} kWh  "
-              f"net total {s['net_total_diff_pct']:+.3f}%")
+              f"worst period total {s['worst_period_total_pct']:.3f}%")
     print(f"  DST days: {[(d['date'], d['intervals']) for d in out['dst_days']]}")
     print(f"  verdict: {out['verdict']}")
 
