@@ -35,6 +35,8 @@ FAIL-CLOSED
     period, day count, usage figure, or charge total raises SystemExit rather than
     emitting a zero — a silently-zeroed row would corrupt every downstream sum.
 """
+import contextlib
+import fcntl
 import os
 import shutil
 import pathlib
@@ -349,8 +351,45 @@ def _validate(elec, gas, tou):
                 f"net usage {net:,.0f} — the TOU blocks and the usage total disagree.")
 
 
+@contextlib.contextmanager
+def _publication_lock(directory):
+    """Serialize publication across processes.
+
+    Without this the leftover-backup check below is an unguarded check-then-act: two
+    runs could both pass it, then fight over the shared staging and backup files —
+    one consuming or deleting the other's, which can leave a half-published set with
+    no recovery copy. The lock is held across the whole publish/rollback/cleanup
+    sequence, not just the check.
+
+    flock is used because the kernel releases it automatically if the process dies, so
+    a crashed run cannot leave a lock nobody can clear. (POSIX only; this pipeline
+    targets macOS and Linux.)"""
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = directory / ".parse_bills.lock"
+    handle = open(lock_path, "w")
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SystemExit(
+                f"another parse_bills run is publishing to {directory} (lock held on "
+                f"{lock_path.name}). Publication is serialized so concurrent runs cannot "
+                f"corrupt each other's staging and backup files — wait for it to finish, "
+                f"then re-run.")
+        yield
+    finally:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def _write_all_atomically(writes):
     """Publish an artifact SET so it advances together or not at all.
+
+    Runs under an exclusive lock (see _publication_lock) and stages through paths that
+    carry this process's pid, so a second run can neither race the leftover-backup check
+    nor consume or delete files this one is using.
 
     Each file is staged to a .tmp, then swapped in. If any swap fails, the files already
     swapped are restored from their backups.
@@ -366,6 +405,14 @@ def _write_all_atomically(writes):
     at all while any of them exists: re-running would back the (stale) artifact up over
     its own recovery copy and destroy the previous evidence for good. Recovery is a
     deliberate manual step, not something a retry should silently paper over."""
+    if not writes:
+        return
+    with _publication_lock(writes[0][0].parent):
+        _publish_locked(writes)
+
+
+def _publish_locked(writes):
+    """The body of _write_all_atomically; assumes the publication lock is held."""
     leftover = [path.with_name(path.name + ".bak") for path, _ in writes
                 if path.with_name(path.name + ".bak").exists()]
     if leftover:
@@ -380,7 +427,8 @@ def _write_all_atomically(writes):
     staged, backups, done = [], {}, []
     try:
         for path, writer in writes:
-            tmp = path.with_name(path.name + ".tmp")
+            # pid-qualified so two runs can never share a staging file
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
             writer(tmp)
             staged.append((path, tmp))
         for path, tmp in staged:

@@ -59,3 +59,4 @@ skills-lock.json
 !data/electric_bill_summary.csv
 !data/enphase_daily_production.csv
 !data/pvoutput_5min_sample.csv
+data/.parse_bills.lock

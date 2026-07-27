@@ -1163,6 +1163,13 @@ coverage, and the $3,282.22 annual total are unchanged.
   function refuses to run at all while any of them exists: a retry would back the stale
   artifact up over its own recovery copy and destroy the previous evidence for good.
   Recovery is a deliberate manual step.
+- *Serialized across processes.* That leftover-backup check is a check-then-act, and every
+  run would otherwise stage through identically-named files, so two concurrent runs could
+  consume or delete each other's staging and backup files. Publication therefore holds an
+  exclusive `flock` on `data/.parse_bills.lock` across the whole publish/rollback/cleanup
+  sequence, and stages through pid-qualified temp paths. Measured before the lock existed:
+  two simultaneous publishers corrupted the artifact set in 11 of 15 runs, several times
+  leaving a mix of both runs' output while one reported success; with the lock, 0 of 15.
 
 **Negative tests** (`analysis/test_parse_bills.py`, run with the venv python). Each builds a
 throwaway repo from the real corpus, breaks one thing, and asserts the parser exits non-zero
@@ -1173,9 +1180,11 @@ that stop matching. Three further cases drive the publication step directly — 
 fails before any swap, an `os.replace` that fails part-way through the swaps (asserting every
 published file is restored), one that fails during the restore too (asserting the backups
 survive and the error explains manual recovery), and a retry after that failure (asserting it
-refuses and leaves the recovery copies byte-intact). Two further cases feed `_validate`
-overlapping electric and gas periods. Eleven cases in total; the corpus-dependent ones skip
-when the gitignored PDFs are not present.
+refuses and leaves the recovery copies byte-intact). Two cases cover concurrency — one
+publishing while the lock is held, and two genuinely simultaneous processes asserting that
+the set ends internally consistent with nothing left behind — and two feed `_validate`
+overlapping electric and gas periods. Thirteen cases in total; the corpus-dependent ones
+skip when the gitignored PDFs are not present.
 
 **Validation at time of writing.** 26 electric periods spanning 763 continuous days with no
 gaps between consecutive periods; the 13 periods of the report's audited year sum to 365

@@ -258,6 +258,71 @@ def case_retry_after_failed_rollback_refuses():
     return "retry after failed rollback -> refuses, backups intact"
 
 
+def case_lock_blocks_second_publisher():
+    """A publication while another holds the lock must refuse, not proceed."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        p = d / "a.csv"
+        p.write_text("OLD\n")
+        with pb._publication_lock(d):                 # someone else is publishing
+            try:
+                pb._write_all_atomically([(p, lambda q: q.write_text("NEW\n"))])
+            except SystemExit as e:
+                msg = str(e)
+            else:
+                raise AssertionError("second publisher ran while the lock was held")
+        assert "another parse_bills run" in msg, f"unhelpful message: {msg}"
+        assert p.read_text() == "OLD\n", "blocked publisher still modified the artifact"
+    return "lock held -> second publisher refuses, artifact untouched"
+
+
+_CONCURRENT_CHILD = '''
+import pathlib, sys, time
+sys.path.insert(0, {here!r})
+import parse_bills as pb
+d = pathlib.Path({dir!r})
+paths = [d / f"a{{i}}.csv" for i in range(4)]
+tag = sys.argv[1]
+
+def slow(dst, tag=tag):
+    time.sleep(0.05)          # widen the window two runs could overlap in
+    dst.write_text(tag + "\\n")
+
+try:
+    pb._write_all_atomically([(p, slow) for p in paths])
+    print("PUBLISHED")
+except SystemExit as e:
+    print("REFUSED")
+'''
+
+
+def case_concurrent_publishers_serialize():
+    """Two processes publishing at once: exactly one wins, the artifact set ends
+    internally consistent, and no staging or backup files are left behind."""
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        paths = [d / f"a{i}.csv" for i in range(4)]
+        for p in paths:
+            p.write_text("OLD\n")
+        child = d / "child.py"
+        child.write_text(_CONCURRENT_CHILD.format(here=str(HERE), dir=str(d)))
+        procs = [subprocess.Popen([PY, str(child), tag],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                 for tag in ("RUN-A", "RUN-B")]
+        outs = [p.communicate()[0].strip() for p in procs]
+        published = [o for o in outs if o == "PUBLISHED"]
+        assert len(published) >= 1, f"neither run published: {outs}"
+        contents = {p.read_text().strip() for p in paths}
+        assert len(contents) == 1, \
+            f"artifact set is internally inconsistent across runs: {contents}"
+        leftovers = sorted(f.name for f in d.iterdir()
+                           if f.suffix in (".tmp", ".bak") or ".tmp" in f.name)
+        assert not leftovers, f"staging/backup files left behind: {leftovers}"
+    return f"concurrent publishers -> serialized, set consistent ({outs})"
+
+
 def _load_artifacts():
     import pandas as pd
     root = ROOT / "data"
@@ -316,6 +381,8 @@ def main():
     cases = corpus_cases + [case_write_rollback, case_rollback_after_partial_swap,
                             case_restore_failure_preserves_backups,
                             case_retry_after_failed_rollback_refuses,
+                            case_lock_blocks_second_publisher,
+                            case_concurrent_publishers_serialize,
                             case_overlapping_electric_periods,
                             case_overlapping_gas_periods]
     failures = 0
