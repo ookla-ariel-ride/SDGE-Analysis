@@ -154,6 +154,25 @@ where: "SDG&E: My Energy Center (🔗 https://myenergycenter.com) → Usage → 
 privacy: private-only
 ```
 
+⚠️ **The 13 months is a hard ceiling, and what falls off it is gone.** Verified
+2026-07-27: the Green Button date picker greys out every date before the ceiling and
+offers no way past it. This is a *different, shorter* window than the ~2 years of
+statements in section D — bills and interval data age out on separate clocks, so a
+period can have a parsed statement with no meter data left to check it against.
+
+**Re-pull monthly and keep every export.** Each file overlaps the last, so the archive
+is what gives you history beyond 13 months; nothing else can reconstruct it. Keep
+superseded exports in `private/1-raw-data/superseded/` rather than overwriting, and
+leave exactly one `Electric_15_Minute_*.csv` at the top level, since the documented
+sandbox step (`cp ../1-raw-data/Electric_15_Minute_*.csv usage.csv`) takes a glob.
+
+UI path, verified 2026-07-27: Usage → **Green Button Download** (the link below the
+chart, not the Excel one) → set **From**/**To** → `.csv` → Download. The date fields are
+read-only and driven by a picker: click its title to jump month view → year view instead
+of stepping back a month at a time. The file lands in `~/Downloads` with no Save-As
+dialog. Before trusting it, check `Reading Start`/`Reading End` in the header and that
+the final day is not the all-zeros placeholder these exports sometimes carry.
+
 ## C. Rate schedules 🔗📥 (required — current PDFs, they change Jan 1 & Jun 1)
 
 ```yaml
