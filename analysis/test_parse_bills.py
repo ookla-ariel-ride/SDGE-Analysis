@@ -10,8 +10,10 @@ parser exits non-zero AND leaves the artifact set untouched. A parser that "succ
 a broken corpus is the failure mode these guard against: it would overwrite committed
 evidence with silently truncated data.
 
-Skips (exit 0) when the private PDFs are not on this machine — the corpus is gitignored,
-so this file cannot run in CI or on a fresh clone.
+Only the corpus-dependent cases need the gitignored PDFs; they report as SKIP when the
+corpus is absent. Everything covering publication, rollback and concurrency runs anywhere
+(temp files, or the committed data/ artifacts), so a broken lock or a lost rollback cannot
+pass in a clean checkout or in CI.
 """
 import os
 import pathlib
@@ -370,33 +372,53 @@ def case_overlapping_gas_periods():
     return "overlapping gas periods -> rejected"
 
 
+# Cases needing the gitignored bill PDFs. Only these can be skipped.
+CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
+                case_mid_corpus_gap, case_mid_corpus_gas_gap,
+                case_tou_headers_stop_matching]
+
+# Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
+# publication, rollback and concurrency guards live here, so they must run in a clean
+# checkout and in CI — skipping the whole suite when the private corpus is absent would
+# let a broken lock or a lost rollback pass the documented command with exit code 0.
+STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
+                    case_restore_failure_preserves_backups,
+                    case_retry_after_failed_rollback_refuses,
+                    case_lock_blocks_second_publisher,
+                    case_concurrent_publishers_serialize,
+                    case_overlapping_electric_periods,
+                    case_overlapping_gas_periods]
+
+
 def main():
-    if not ELEC.is_dir() or not GAS.is_dir() or not any(ELEC.glob("*.pdf")):
-        print("SKIP: private bill PDFs not present on this machine "
-              "(they are gitignored; see DATA-SOURCES-CHEATSHEET.md §D)")
-        return 0
-    corpus_cases = [case_healthy_corpus, case_missing_summary_statement,
-                    case_mid_corpus_gap, case_mid_corpus_gas_gap,
-                    case_tou_headers_stop_matching]
-    cases = corpus_cases + [case_write_rollback, case_rollback_after_partial_swap,
-                            case_restore_failure_preserves_backups,
-                            case_retry_after_failed_rollback_refuses,
-                            case_lock_blocks_second_publisher,
-                            case_concurrent_publishers_serialize,
-                            case_overlapping_electric_periods,
-                            case_overlapping_gas_periods]
-    failures = 0
-    for case in cases:
+    have_corpus = ELEC.is_dir() and GAS.is_dir() and any(ELEC.glob("*.pdf"))
+    failures = skipped = ran = 0
+
+    for case in STANDALONE_CASES:
         try:
-            if case in corpus_cases:
-                with tempfile.TemporaryDirectory() as td:
-                    print(f"PASS  {case(_build(pathlib.Path(td)))}")
-            else:
-                print(f"PASS  {case()}")
+            print(f"PASS  {case()}")
+            ran += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
-    print(f"\n{len(cases) - failures}/{len(cases)} passed")
+
+    for case in CORPUS_CASES:
+        if not have_corpus:
+            print(f"SKIP  {case.__name__} (needs the gitignored bill PDFs; "
+                  f"see DATA-SOURCES-CHEATSHEET.md §D)")
+            skipped += 1
+            continue
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                print(f"PASS  {case(_build(pathlib.Path(td)))}")
+            ran += 1
+        except AssertionError as e:
+            print(f"FAIL  {case.__name__}: {e}")
+            failures += 1
+
+    total = len(STANDALONE_CASES) + len(CORPUS_CASES)
+    tail = f", {skipped} skipped (no private corpus)" if skipped else ""
+    print(f"\n{ran}/{total} passed{tail}")
     return 1 if failures else 0
 
 

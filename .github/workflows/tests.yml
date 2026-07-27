@@ -1,0 +1,22 @@
+name: tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  parse-bills:
+    # The bill corpus is gitignored, so the corpus-dependent cases skip here. Everything
+    # guarding publication — atomic writes, rollback, the recovery-backup rules and the
+    # cross-process lock — runs on temp files or the committed data/ artifacts, so a
+    # regression in those cannot reach main unnoticed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: parse_bills guard tests
+        run: python analysis/test_parse_bills.py

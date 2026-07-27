@@ -1183,8 +1183,11 @@ survive and the error explains manual recovery), and a retry after that failure 
 refuses and leaves the recovery copies byte-intact). Two cases cover concurrency — one
 publishing while the lock is held, and two genuinely simultaneous processes asserting that
 the set ends internally consistent with nothing left behind — and two feed `_validate`
-overlapping electric and gas periods. Thirteen cases in total; the corpus-dependent ones
-skip when the gitignored PDFs are not present.
+overlapping electric and gas periods. Thirteen cases in total. Only the five corpus-dependent
+ones skip when the gitignored PDFs are absent; the eight covering publication, rollback and
+concurrency use temp files or the committed `data/` artifacts and therefore run in a clean
+checkout and in CI (`.github/workflows/tests.yml`) — skipping the whole suite would have let
+a broken lock pass the documented command with exit code 0.
 
 **Validation at time of writing.** 26 electric periods spanning 763 continuous days with no
 gaps between consecutive periods; the 13 periods of the report's audited year sum to 365
