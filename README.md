@@ -22,7 +22,7 @@ instead.)
 > reviewed with **Claude Code (Fable 5)** and adversarially reviewed with **Codex (GPT-5.6 Sol)**,
 > then re-worked in Claude Cowork to incorporate the findings of both reviews.
 
-An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data. It was created for one specific household with every personal identifier removed, and the repo packages the full machinery behind it (scripts, data schemas, report template, intake interview, and privacy gates) so anyone can generate the same in-depth analysis of solar production, battery economics, rate plans, and EV charging from their own data.
+An interactive, evidence-based report for a solar home with two EVs (all-electric transportation) in the SDG&E Coastal climate zone (NEM 2.0, CCA generation), built from 365 days of 15-minute Green Button interval data, a full-year detailed-bill audit, six years of production records, per-vehicle charging telemetry, and real weather + grid data. It was created for one household, with every personal identifier removed. The repo also carries the machinery behind it (scripts, data schemas, report template, intake interview, privacy gates) so anyone can run the same analysis on their own data.
 
 **Companion documents:**
 [**TECHNICAL.md**](TECHNICAL.md) — the full methods documentation: every script, data schema, algorithm, and validation chain, written so the analysis can be audited or rebuilt ·
@@ -107,16 +107,16 @@ containing those values.
   update `analysis/rates.py` from **your** bills (it is the single source of truth; non-SDG&E
   users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
   `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
-  pattern); run the pipeline — `behavior_rebuild.py`, `battery_dispatch_policies.py`,
+  pattern); run the pipeline (`behavior_rebuild.py`, `battery_dispatch_policies.py`,
   `battery_plan_matrix.py`, `package_results.py`, `extended_findings.py`, `carbon_fullyear.py`,
-  plus `soiling_analysis.py`, `billing_model_nem.py`, and `lifetime_payback.py` as applicable —
+  plus `soiling_analysis.py`, `billing_model_nem.py`, and `lifetime_payback.py` as applicable);
   then fill `report-template.html`'s `{{TOKEN}}`s from your regenerated `data/*.json`.
 
 **4 · Validate before you trust it.** The gates in `CLAUDE.md` §9, in order: your billing
 model must reproduce your actual bills before you quote any absolute dollar; every committed
-artifact must regenerate from its committed script; report deltas, not levels. This loop is
-exercised, not aspirational: the regeneration gates have been verified byte-identical from a
-fresh clone of this repo (clean-room run, staged private inputs, new venv).
+artifact must regenerate from its committed script; report deltas, not levels. These gates
+have actually been run end-to-end: from a fresh clone of this repo, with staged private
+inputs and a new venv, the pipeline regenerated every committed artifact byte-identically.
 
 **5 · Publish (optional).** Follow the GitHub Pages section below, after reading the
 privacy note.
@@ -248,8 +248,8 @@ schema and pipeline in depth.
 ## The private inputs — and how to obtain your own
 
 Only three input datasets are withheld (plus the small `private/household.yaml` config the
-intake interview writes; its schema is public in `household.example.yaml`), and anyone can
-pull their own equivalents in minutes:
+intake interview writes; its schema is public in `household.example.yaml`). Your own
+equivalents come straight from your utility and monitoring portals:
 
 **1. Utility 15-minute interval export** (`Electric_15_Minute_<range>.csv`)
 - SDG&E customers: My Energy Center (myenergycenter.com) → Usage → **Green Button Download** →
@@ -301,7 +301,7 @@ where the `private/verify` flow expects them.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
    each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. For the
    strictest check, clone fresh, stage the private inputs with `stage-private-data.sh`, and
-   run the same gates there — the pipeline reproduces byte-identically from a clean clone.
+   run the same gates there: the pipeline reproduces byte-identically from a clean clone.
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D, or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
 

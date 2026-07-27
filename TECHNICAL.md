@@ -1051,3 +1051,34 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
 7. **Before committing anything**, run the PII grep required by `CLAUDE.md` §4 over every
    push-bound file (names, addresses, account/meter numbers, coordinates, system IDs, API
    keys) and confirm zero matches.
+
+## 8. LLM configuration and AI workflow
+
+This analysis was produced with LLM agents operating under written, committed rules. The
+configuration, so a reader can audit the process or reproduce it:
+
+- **Tools and roles.** Generated with Claude Cowork (Fable 5); independently reviewed with
+  Claude Code (Fable 5), which also runs the repo's operations (regeneration gates, privacy
+  scans, deployments); adversarially reviewed with Codex (GPT-5.6 Sol), invoked with an
+  explicit `--base` so the review scope covers everything since the last reviewed commit.
+  The report's §14 provenance note records this chain and survives every regeneration
+  (`CLAUDE.md` §11).
+- **Agent contract.** `CLAUDE.md` is the binding operating manual for any agent working in
+  this repo: the evidence-only mandate (§0), bill-validation-first ordering (§1), payback
+  honesty (§2), privacy enforcement (§4), the pre-publication gates (§9), and the report
+  spec (§10). `reusable-prompt.md` is the entry-point prompt that rebuilds the entire
+  analysis for a new household; `report-template.html` is the report shell it fills.
+- **Review loop.** Work lands on main; adversarial reviews run against the last-reviewed
+  base; every finding is either fixed and verified (with the fix's own regeneration-gate
+  run) or explicitly rejected with a reason. A finding is never closed by description
+  alone — the §9 "code implements its docs" gate exists because that failure recurred.
+- **Prose control.** Report and README prose must end each regeneration with a
+  de-AI-writing pass — the [humanizer skill](https://github.com/blader/humanizer) in
+  Claude Code, whose checklist is Wikipedia's
+  ["Signs of AI writing"](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)
+  (maintained by WikiProject AI Cleanup). Structural em dashes in the report's ledger
+  design (day-band, tables, meta rows) are exempt; the pass targets running prose.
+- **What is NOT configured here.** Model choice, skills, and agent settings live in the
+  operator's environment, not this repo; the repo carries everything an agent needs to
+  behave correctly (`CLAUDE.md`, the cheatsheet, the template, the gates), so the analysis
+  is not tied to any one vendor's tooling.
