@@ -382,7 +382,13 @@ def _billed_from(intervals, period, start, end):
             for (s, t), v in T.rebuild(intervals, start, end, "as_billed", HOL).items()}
 
 
-def _billed_csv(tmp, buckets, gen_override=None, skip_generation=()):
+def _billed_csv(tmp, buckets, gen_override=None, skip_generation=(),
+                periods_override=None):
+    """Write a detail file plus the statement file the audit cross-checks it against.
+
+    periods_override lets a case describe statements the detail file does not
+    cover, which is how a wholly missing period is simulated.
+    """
     p = tmp / "bill_tou_detail.csv"
     with open(p, "w", newline="") as fh:
         w = csv.writer(fh, lineterminator="\n")
@@ -394,7 +400,62 @@ def _billed_csv(tmp, buckets, gen_override=None, skip_generation=()):
                 continue
             g = gen_override if gen_override is not None else kwh
             w.writerow(["2026-05-04", period, "generation", season, 0, 30, tou, g, 0.2])
-    return p
+
+    nets = {}
+    for (period, _, _), kwh in buckets.items():
+        nets[period] = nets.get(period, 0.0) + kwh
+    if periods_override is not None:
+        nets = dict(periods_override)
+    q = tmp / "bill_periods_electric.csv"
+    with open(q, "w", newline="") as fh:
+        w = csv.writer(fh, lineterminator="\n")
+        w.writerow(["statement_date", "period", "days", "generation_provider",
+                    "net_kwh", "gross_kwh", "sdge_delivery", "cca_generation",
+                    "current_charges", "base_services_charge"])
+        for period, net in nets.items():
+            w.writerow(["2026-05-04", period, 30, "CCA", net, net, 0, 0, 0, 0])
+    return p, q
+
+
+def case_missing_period_stops_the_run():
+    """A statement with no TOU rows must not vanish from the audit.
+
+    Everything downstream is driven by the periods discovered in the detail file,
+    so a statement whose rows are gone is never audited and never reported as
+    skipped: the rest reconciles and the run declares success over a corpus with a
+    statement missing from it. The statement file is the independent witness.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        present = "4/1/26 - 4/30/26"
+        buckets = {(present, "winter", t): 100.0 for t in
+                   ("on_peak", "off_peak", "super_off_peak")}
+        p, q = _billed_csv(tmp, buckets,
+                           periods_override={present: 300.0,
+                                             "5/1/26 - 5/31/26": 900.0})
+        try:
+            T.load_billed(p, q)
+        except SystemExit as e:
+            assert "different billing periods" in str(e), e
+            assert "5/1/26 - 5/31/26" in str(e), e
+            return "a statement with no TOU rows stops the run instead of vanishing"
+    raise AssertionError("expected SystemExit when a whole period has no TOU rows")
+
+
+def case_bucket_sums_must_match_the_statement_net():
+    """Partial loss inside a period survives a set comparison; net_kwh catches it."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        period = "4/1/26 - 4/30/26"
+        buckets = {(period, "winter", t): 100.0 for t in
+                   ("on_peak", "off_peak", "super_off_peak")}
+        p, q = _billed_csv(tmp, buckets, periods_override={period: 800.0})
+        try:
+            T.load_billed(p, q)
+        except SystemExit as e:
+            assert "net_kwh" in str(e), e
+            return "buckets that do not sum to the statement's net_kwh stop the run"
+    raise AssertionError("expected SystemExit when buckets disagree with net_kwh")
 
 
 def case_load_billed_rejects_asymmetric_sections():
@@ -402,10 +463,10 @@ def case_load_billed_rejects_asymmetric_sections():
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         key = ("4/1/26 - 4/30/26", "winter", "off_peak")
-        p = _billed_csv(tmp, {("4/1/26 - 4/30/26", "winter", "on_peak"): 100.0,
-                              key: 50.0}, skip_generation=(key,))
+        p, q = _billed_csv(tmp, {("4/1/26 - 4/30/26", "winter", "on_peak"): 100.0,
+                                 key: 50.0}, skip_generation=(key,))
         try:
-            T.load_billed(p)
+            T.load_billed(p, q)
         except SystemExit as e:
             assert "different buckets" in str(e), e
             return "load_billed fails closed when a bucket exists in only one section"
@@ -415,10 +476,10 @@ def case_load_billed_rejects_asymmetric_sections():
 def case_load_billed_rejects_inconsistent_parse():
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        p = _billed_csv(tmp, {("4/1/26 - 4/30/26", "winter", "on_peak"): 100.0},
-                        gen_override=99.0)
+        p, q = _billed_csv(tmp, {("4/1/26 - 4/30/26", "winter", "on_peak"): 100.0},
+                           gen_override=99.0)
         try:
-            T.load_billed(p)
+            T.load_billed(p, q)
         except SystemExit as e:
             assert "disagree" in str(e), e
             return "load_billed fails closed when delivery and generation kWh differ"
@@ -500,6 +561,8 @@ CASES = [
     # billed-bucket completeness
     case_load_billed_rejects_inconsistent_parse,
     case_load_billed_rejects_asymmetric_sections,
+    case_missing_period_stops_the_run,
+    case_bucket_sums_must_match_the_statement_net,
     case_integrity_skip_blocks_a_clean_verdict,
     case_undelivered_declared_day_is_data_loss,
     case_retention_boundary_is_not_data_loss,

@@ -86,6 +86,12 @@ parser or season-boundary regression rather than an audit result, and stops the 
 without that check, an omitted bucket would silently drop its energy out of the
 comparison and still report a clean reconciliation.
 
+The set of statements is taken from bill_periods_electric.csv rather than from the
+detail file, because everything here is driven by the periods discovered in that
+file: a statement whose rows are missing is never audited, never reported as
+skipped, and leaves no trace at all. The two artifacts must list the same periods,
+and each period's buckets must sum to the statement's own net_kwh.
+
 Run from the private/verify sandbox with the Green Button export as usage.csv.
 Writes data/tou_audit.csv and data/tou_audit_summary.json atomically.
 """
@@ -316,12 +322,33 @@ def parse_period(text):
     return f(a), f(b)
 
 
-def load_billed(path):
+def load_billed(path, periods_path):
     """({(period, season, tou): kwh}, [period, ...]) from the delivery section.
 
     Delivery and generation sections carry identical kWh and differ only in rate,
     so delivery is used and generation becomes a parser cross-check.
+
+    The period list cannot come from this file alone. Everything downstream is
+    driven by the periods discovered here, so a statement whose rows are missing
+    is not audited, is not reported as skipped, and leaves no trace: the remaining
+    periods reconcile and the run declares success over a corpus with a statement
+    missing from it. parse_bills.py checks that invariant when it runs, but this
+    script consumes the committed artifact and may be looking at a stale or
+    truncated copy.
+
+    So the authoritative period set comes from bill_periods_electric.csv, an
+    independently produced artifact, and the two must agree exactly. Each period's
+    delivery buckets must also sum to that file's net_kwh, which catches a partial
+    loss the set comparison cannot see.
     """
+    authoritative, net_by_period = [], {}
+    with open(periods_path, newline="") as fh:
+        for r in csv.DictReader(fh):
+            authoritative.append(r["period"])
+            net_by_period[r["period"]] = float(r["net_kwh"])
+    if not authoritative:
+        raise SystemExit(f"no billing periods in {periods_path}")
+
     billed, gen, periods = {}, {}, []
     with open(path, newline="") as fh:
         for r in csv.DictReader(fh):
@@ -346,6 +373,28 @@ def load_billed(path):
         raise SystemExit(f"delivery and generation kWh disagree for {len(bad)} "
                          f"bucket(s), e.g. {bad[0]} -- the bill parse is not "
                          "internally consistent; fix parse_bills.py")
+
+    missing = [p for p in authoritative if p not in periods]
+    extra = [p for p in periods if p not in net_by_period]
+    if missing or extra:
+        raise SystemExit(
+            f"{path.name} and {periods_path.name} describe different billing "
+            f"periods: {len(missing)} with no TOU rows ({missing[:3]}), "
+            f"{len(extra)} with no statement row ({extra[:3]}). A statement "
+            "missing from the detail file would never be audited and would leave "
+            "no trace in the result, so nothing is published. Re-run "
+            "parse_bills.py.")
+
+    for p in authoritative:
+        got = sum(v for (per, _, _), v in billed.items() if per == p)
+        n = sum(1 for (per, _, _) in billed if per == p)
+        tol = max(ABS_TOL_KWH, ROUNDING_PER_BUCKET * n)
+        if abs(got - net_by_period[p]) > tol:
+            raise SystemExit(
+                f"period {p}: TOU buckets sum to {got:.1f} kWh but the statement "
+                f"row reports net_kwh {net_by_period[p]:.1f} (tolerance "
+                f"{tol:.1f}). The two bill artifacts disagree, so the buckets "
+                "cannot be trusted as the billed quantities. Re-run parse_bills.py.")
     return billed, periods
 
 
@@ -609,7 +658,8 @@ def main():
                          "Green Button 15-minute export there (see CLAUDE.md, the "
                          "private/verify sandbox pattern).")
     intervals = load_intervals(usage)
-    billed, periods = load_billed(DATA / "bill_tou_detail.csv")
+    billed, periods = load_billed(DATA / "bill_tou_detail.csv",
+                                 DATA / "bill_periods_electric.csv")
     covered = {d for d, _, _, _ in intervals}
     hol = holidays(range(min(covered).year, max(covered).year + 1))
 
