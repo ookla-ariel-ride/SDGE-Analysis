@@ -287,17 +287,30 @@ def _validate(elec, gas, tou):
     #    summary window, so continuity is the only thing that catches it — and the two
     #    fuels bill on different cycles, so each needs its own check. (Electric periods
     #    print as m/d/yy, gas as "Jun 26, 2024".)
+    #    "Tile" means exactly one day between a period's inclusive end and the next
+    #    period's start: any more is a missing statement (totals understated), any less
+    #    is an overlap that would double-count days, kWh/therms and dollars. Checking
+    #    only for gaps would let an overlap through, and overlapping period STRINGS are
+    #    distinct so the duplicate check above does not see them either.
     for label, df, fmt in (("electric", elec, "%m/%d/%y"), ("gas", gas, "%b %d, %Y")):
         d = df.copy()
         d["start"] = pd.to_datetime(d.period.str.split(" - ").str[0], format=fmt)
         d["end"] = pd.to_datetime(d.period.str.split(" - ").str[1], format=fmt)
         d = d.sort_values("start")
-        gaps = [(p, q) for p, q, n in zip(d.period[:-1], d.period[1:],
-                                          (d.start.shift(-1) - d.end).dt.days[:-1]) if n > 1]
+        adjacent = list(zip(d.period[:-1], d.period[1:],
+                            (d.start.shift(-1) - d.end).dt.days[:-1]))
+        gaps = [(p, q, int(n)) for p, q, n in adjacent if n > 1]
         if gaps:
             raise SystemExit(
-                f"gap between consecutive {label} billing periods: {gaps}. A statement is "
-                f"missing from the corpus; annual totals would be understated.")
+                f"gap between consecutive {label} billing periods: "
+                f"{[(p, q, f'{n - 1} day(s) missing') for p, q, n in gaps]}. A statement "
+                f"is missing from the corpus; annual totals would be understated.")
+        overlaps = [(p, q, int(n)) for p, q, n in adjacent if n < 1]
+        if overlaps:
+            raise SystemExit(
+                f"overlapping {label} billing periods: "
+                f"{[(p, q, f'{1 - n} day(s) counted twice') for p, q, n in overlaps]}. "
+                f"Days, usage and charges would be double-counted.")
 
     # 4. Every period needs its TOU detail. Requiring rows per period (not merely
     #    erroring when a season header fails to parse) is what catches a layout change
@@ -347,7 +360,23 @@ def _write_all_atomically(writes):
     every file published, or every file restored. If a restore itself fails, the
     surviving .bak files are deliberately left on disk and the operator is told exactly
     which artifacts are stale and where their previous contents are — deleting them
-    would turn a partial publication into unrecoverable evidence loss."""
+    would turn a partial publication into unrecoverable evidence loss.
+
+    Because those .bak files ARE the only remaining copy, this function refuses to run
+    at all while any of them exists: re-running would back the (stale) artifact up over
+    its own recovery copy and destroy the previous evidence for good. Recovery is a
+    deliberate manual step, not something a retry should silently paper over."""
+    leftover = [path.with_name(path.name + ".bak") for path, _ in writes
+                if path.with_name(path.name + ".bak").exists()]
+    if leftover:
+        raise SystemExit(
+            "refusing to publish: a previous run failed to roll back and left recovery "
+            f"backups in place ({', '.join(b.name for b in leftover)}). Those .bak files "
+            "hold the only copy of the previous artifacts — re-running now would "
+            "overwrite them with the stale ones. Restore each .bak over its artifact "
+            "(or delete the .bak if the current artifact is already correct), then "
+            "re-run.")
+
     staged, backups, done = [], {}, []
     try:
         for path, writer in writes:

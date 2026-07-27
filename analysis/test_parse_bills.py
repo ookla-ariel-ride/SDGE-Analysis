@@ -219,6 +219,92 @@ def case_restore_failure_preserves_backups():
     return "restore failure -> backups preserved, manual recovery reported"
 
 
+def case_retry_after_failed_rollback_refuses():
+    """After a failed rollback the .bak files are the only copy of the previous
+    artifacts. A second run must REFUSE rather than back the stale artifact up over its
+    own recovery copy."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        paths = [d / f"a{i}.csv" for i in range(4)]
+        for p in paths:
+            p.write_text("OLD\n")
+        writes = [(p, lambda q: q.write_text("NEW\n")) for p in paths]
+
+        patcher, _ = _fail_replace_at({3, 4, 5})     # swap fails, restores fail too
+        with patcher:
+            try:
+                pb._write_all_atomically(writes)
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError("restore failure did not raise")
+        baks = [f for f in d.iterdir() if f.suffix == ".bak"]
+        assert baks, "precondition failed: no backups left to protect"
+        before = {b.name: b.read_text() for b in baks}
+
+        try:                                          # the retry
+            pb._write_all_atomically(writes)
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError("retry proceeded despite leftover recovery backups")
+        assert "refusing to publish" in msg, f"unhelpful message: {msg}"
+        after = {b.name: b.read_text() for b in d.iterdir() if b.suffix == ".bak"}
+        assert after == before, f"retry damaged the recovery backups: {before} -> {after}"
+        assert all(v == "OLD\n" for v in after.values()), \
+            "recovery backups no longer hold the previous contents"
+    return "retry after failed rollback -> refuses, backups intact"
+
+
+def _load_artifacts():
+    import pandas as pd
+    root = ROOT / "data"
+    return (pd.read_csv(root / "bill_periods_electric.csv"),
+            pd.read_csv(root / "bill_periods_gas.csv"),
+            pd.read_csv(root / "bill_tou_detail.csv"))
+
+
+def case_overlapping_electric_periods():
+    """Overlapping periods are distinct STRINGS, so the duplicate check cannot see them;
+    only a continuity check that requires exactly one day between periods catches the
+    double-counting."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    elec, gas, tou = _load_artifacts()
+    victim = elec.index[5]
+    start, end = elec.loc[victim, "period"].split(" - ")
+    import datetime as dt
+    shifted = (dt.datetime.strptime(start, "%m/%d/%y") - dt.timedelta(days=3))
+    elec.loc[victim, "period"] = f"{shifted.strftime('%-m/%-d/%y')} - {end}"
+    try:
+        pb._validate(elec, gas, tou)
+    except SystemExit as e:
+        assert "overlapping electric" in str(e), f"wrong error: {e}"
+    else:
+        raise AssertionError("overlapping electric periods were accepted")
+    return "overlapping electric periods -> rejected"
+
+
+def case_overlapping_gas_periods():
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    elec, gas, tou = _load_artifacts()
+    victim = gas.index[5]
+    start, end = gas.loc[victim, "period"].split(" - ")
+    import datetime as dt
+    shifted = (dt.datetime.strptime(start, "%b %d, %Y") - dt.timedelta(days=3))
+    gas.loc[victim, "period"] = f"{shifted.strftime('%b %-d, %Y')} - {end}"
+    try:
+        pb._validate(elec, gas, tou)
+    except SystemExit as e:
+        assert "overlapping gas" in str(e), f"wrong error: {e}"
+    else:
+        raise AssertionError("overlapping gas periods were accepted")
+    return "overlapping gas periods -> rejected"
+
+
 def main():
     if not ELEC.is_dir() or not GAS.is_dir() or not any(ELEC.glob("*.pdf")):
         print("SKIP: private bill PDFs not present on this machine "
@@ -228,7 +314,10 @@ def main():
                     case_mid_corpus_gap, case_mid_corpus_gas_gap,
                     case_tou_headers_stop_matching]
     cases = corpus_cases + [case_write_rollback, case_rollback_after_partial_swap,
-                            case_restore_failure_preserves_backups]
+                            case_restore_failure_preserves_backups,
+                            case_retry_after_failed_rollback_refuses,
+                            case_overlapping_electric_periods,
+                            case_overlapping_gas_periods]
     failures = 0
     for case in cases:
         try:

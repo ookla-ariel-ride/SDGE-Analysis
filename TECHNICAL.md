@@ -1144,8 +1144,11 @@ coverage, and the $3,282.22 annual total are unchanged.
 - *Fail closed, corpus-wide.* Per-period checks are not enough: a statement that is absent
   or misnamed simply would not appear, so the artifacts would be rewritten a few periods
   short with no error. Before anything is written the script requires every statement the
-  committed summaries are built from, rejects duplicate periods, requires the electric
-  periods to tile the window with no gap, requires TOU rows for every period with unique
+  committed summaries are built from, rejects duplicate periods, requires each fuel's
+  periods to tile its window exactly (one day between a period's inclusive end and the
+  next period's start — more is a missing statement, less is an overlap that would
+  double-count days, usage and dollars, and overlapping period strings are distinct so the
+  duplicate check cannot see them), requires TOU rows for every period with unique
   `period/section/season/segment/tou_period` keys, and reconciles delivery TOU kWh against
   each period's net usage.
 - *Transactional publication.* The five artifacts are one evidence set. Each is staged to a
@@ -1156,7 +1159,10 @@ coverage, and the $3,282.22 annual total are unchanged.
   consistent (all published, or all restored). If a restore itself fails the surviving
   `.bak` files are left on disk on purpose and the error names every stale artifact and
   where its previous contents are — deleting them would turn a partial publication into
-  unrecoverable evidence loss.
+  unrecoverable evidence loss. Because those `.bak` files are then the only copy, the
+  function refuses to run at all while any of them exists: a retry would back the stale
+  artifact up over its own recovery copy and destroy the previous evidence for good.
+  Recovery is a deliberate manual step.
 
 **Negative tests** (`analysis/test_parse_bills.py`, run with the venv python). Each builds a
 throwaway repo from the real corpus, breaks one thing, and asserts the parser exits non-zero
@@ -1165,9 +1171,11 @@ missing from the middle of the window, a GAS statement missing from the middle o
 (the fuels bill on different cycles, so each needs its own continuity check), and TOU headers
 that stop matching. Three further cases drive the publication step directly — a writer that
 fails before any swap, an `os.replace` that fails part-way through the swaps (asserting every
-published file is restored), and one that fails during the restore too (asserting the backups
-survive and the error explains manual recovery). The suite skips when the gitignored PDFs are
-not present.
+published file is restored), one that fails during the restore too (asserting the backups
+survive and the error explains manual recovery), and a retry after that failure (asserting it
+refuses and leaves the recovery copies byte-intact). Two further cases feed `_validate`
+overlapping electric and gas periods. Eleven cases in total; the corpus-dependent ones skip
+when the gitignored PDFs are not present.
 
 **Validation at time of writing.** 26 electric periods spanning 763 continuous days with no
 gaps between consecutive periods; the 13 periods of the report's audited year sum to 365
