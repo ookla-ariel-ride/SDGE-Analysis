@@ -229,6 +229,15 @@ privacy: private-only
 >
 > Batching note for agent-driven runs: browser JavaScript calls time out after about 45
 > seconds, so download in chunks of about five files per call rather than one long loop.
+>
+> **Retention limit (checked 2026-07-27):** the portal holds about 25 statements per
+> account, roughly two years. Three independent checks agreed on the same floor: the
+> billing-history table, the Excel export at
+> `/portal/BillingHistory/GetHistoryDownload?type=Bill`, and the Usage page's date picker,
+> which greys out earlier months and hides its back arrow. There is no pagination or date
+> filter that reaches further. Anything older has to come from your own archive (saved
+> PDFs, paperless-billing emails) or from the utility directly by phone. Pull your history
+> before you need it: each month you wait, the oldest one drops off.
 
 ```yaml
 id: plan_comparison_capture
