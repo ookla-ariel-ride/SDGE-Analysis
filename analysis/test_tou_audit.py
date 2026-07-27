@@ -190,6 +190,52 @@ def case_interior_zero_energy_day_disqualifies_its_period():
     raise AssertionError("expected the interior zero-energy day to skip the period")
 
 
+def _two_periods(corrupt_second):
+    """One clean period and one that is well formed or corrupt, plus their bills."""
+    periods = ["4/1/26 - 4/30/26", "5/1/26 - 5/31/26"]
+    rows, billed = [], {}
+    for period in periods:
+        start, end = T.parse_period(period)
+        days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+        bad = corrupt_second and period == periods[1]
+        chunk = [x for d in days
+                 for x in (_day(d)[:4] if (bad and d == days[10]) else _day(d))]
+        rows += chunk
+        billed.update(_billed_from(chunk, period, start, end))
+    return periods, rows, billed
+
+
+def case_integrity_skip_blocks_a_clean_verdict():
+    """One corrupt period must not be dropped while the rest report success.
+
+    This is the multi-period path: with every period skipped the run already fails
+    closed, but a corrupt period alongside a healthy one used to vanish from the
+    result and leave a passing verdict behind.
+    """
+    periods, rows, billed = _two_periods(corrupt_second=True)
+    out, audited, skipped, totals, _, _ = T.audit(rows, billed, periods, HOL)
+    assert audited == [periods[0]], audited
+    integrity = [s for s in skipped if s["reason"] != T.SKIP_OUT_OF_COVERAGE]
+    assert len(integrity) == 1 and integrity[0]["period"] == periods[1], skipped
+    s = T.summarise(out, totals, "as_billed")
+    assert s["buckets_failing"] == 0 and s["period_totals_failing"] == 0, (
+        "fixture must leave the surviving period reconciling, so the only thing "
+        "that can taint the verdict is the excluded period")
+    return "a corrupt period is reported as an integrity skip, not silently dropped"
+
+
+def case_out_of_coverage_skip_is_not_an_integrity_failure():
+    """Statements the export simply does not reach are an expected coverage fact."""
+    periods, rows, billed = _two_periods(corrupt_second=False)
+    rows = [r for r in rows if r[0] < dt.date(2026, 5, 1)]      # drop period two
+    out, audited, skipped, totals, _, _ = T.audit(rows, billed, periods, HOL)
+    assert audited == [periods[0]], audited
+    assert [s["reason"] for s in skipped] == [T.SKIP_OUT_OF_COVERAGE], skipped
+    integrity = [s for s in skipped if s["reason"] != T.SKIP_OUT_OF_COVERAGE]
+    assert not integrity, integrity
+    return "an out-of-coverage period is an expected skip and does not taint the verdict"
+
+
 def case_missing_billed_bucket_stops_the_run():
     period = "4/1/26 - 4/30/26"
     start, end = T.parse_period(period)
@@ -406,6 +452,8 @@ CASES = [
     # billed-bucket completeness
     case_load_billed_rejects_inconsistent_parse,
     case_load_billed_rejects_asymmetric_sections,
+    case_integrity_skip_blocks_a_clean_verdict,
+    case_out_of_coverage_skip_is_not_an_integrity_failure,
     case_missing_billed_bucket_stops_the_run,
     case_unexpected_billed_bucket_stops_the_run,
     # coverage and totals

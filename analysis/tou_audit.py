@@ -98,6 +98,14 @@ ROUNDING_PER_BUCKET = 0.5   # worst-case rounding a printed whole-kWh bucket hid
 
 # 15-minute wall-clock slots, and the two the US DST rules move.
 CANONICAL_SLOTS = tuple(i * 0.25 for i in range(96))
+
+# Skip reasons. Only the first is expected: it means the export simply does not
+# reach that statement, which is a coverage fact rather than a data fault. Every
+# other reason means the export IS supposed to cover the period but is degraded
+# there, and that must never be quietly excluded from a passing verdict.
+SKIP_OUT_OF_COVERAGE = "outside interval coverage"
+SKIP_GAP = "interval gap inside period"
+SKIP_MALFORMED = "malformed interval day"
 SPRING_FORWARD_GAP = (2.0, 2.25, 2.5, 2.75)     # 02:00-02:45 do not occur
 FALL_BACK_REPEAT = (1.0, 1.25, 1.5, 1.75)       # 01:00-01:45 occur twice
 
@@ -327,12 +335,12 @@ def audit(intervals, billed, periods, hol):
     for ptext in periods:
         start, end = parse_period(ptext)
         if start < cov_start or end > cov_end:
-            skipped.append({"period": ptext, "reason": "outside interval coverage"})
+            skipped.append({"period": ptext, "reason": SKIP_OUT_OF_COVERAGE})
             continue
         days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
         gaps = [d for d in days if d not in covered]
         if gaps:
-            skipped.append({"period": ptext, "reason": "interval gap inside period",
+            skipped.append({"period": ptext, "reason": SKIP_GAP,
                             "missing_days": [str(x) for x in gaps][:10]})
             continue
         malformed = [(d, day_defect(d, slots_by_day[d])
@@ -340,7 +348,7 @@ def audit(intervals, billed, periods, hol):
                           else None)) for d in days]
         malformed = [(d, why) for d, why in malformed if why]
         if malformed:
-            skipped.append({"period": ptext, "reason": "malformed interval day",
+            skipped.append({"period": ptext, "reason": SKIP_MALFORMED,
                             "malformed_days": [f"{d}: {why}"
                                                for d, why in malformed][:10]})
             continue
@@ -558,8 +566,22 @@ def main():
         "rules": {r: summarise(rows, totals, r) for r in ("as_billed", "canonical")},
     }
 
+    # A period skipped for degraded data is NOT a period that reconciled. Only
+    # out-of-coverage skips are expected; a gap, a malformed day or a zero-energy
+    # day means the export was supposed to cover that statement and did not, so no
+    # reconciliation claim can be made over the corpus as a whole.
+    integrity = [s for s in skipped if s["reason"] != SKIP_OUT_OF_COVERAGE]
+    out["integrity_skips"] = integrity
+    out["complete"] = not integrity
+
     v = out["rules"]["as_billed"]
-    if v["buckets_failing"] == 0 and v["period_totals_failing"] == 0:
+    reconciles = v["buckets_failing"] == 0 and v["period_totals_failing"] == 0
+    if integrity:
+        out["verdict"] = (
+            f"INCOMPLETE -- {len(integrity)} in-coverage period(s) excluded for "
+            f"degraded interval data ({', '.join(s['period'] for s in integrity)}); "
+            "no reconciliation claim is made over the corpus")
+    elif reconciles:
         out["verdict"] = "the utility's TOU accounting reproduces from raw interval data"
     else:
         out["verdict"] = (f"{v['buckets_failing']} bucket(s) and "
@@ -590,6 +612,12 @@ def main():
               f"max|residual| {s['max_abs_residual_kwh']:>7.2f} kWh  "
               f"worst period total {s['worst_period_total_pct']:.3f}%")
     print(f"  DST days: {[(d['date'], d['intervals']) for d in out['dst_days']]}")
+    if integrity:
+        print(f"  !! {len(integrity)} in-coverage period(s) excluded for degraded data:")
+        for s in integrity:
+            detail = s.get("malformed_days") or s.get("missing_days") or []
+            print(f"       {s['period']}: {s['reason']}" +
+                  (f" ({detail[0]})" if detail else ""))
     print(f"  verdict: {out['verdict']}")
 
 

@@ -669,5 +669,7 @@
       ]
     }
   },
+  "integrity_skips": [],
+  "complete": true,
   "verdict": "the utility's TOU accounting reproduces from raw interval data"
 }
