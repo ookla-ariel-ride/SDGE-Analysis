@@ -47,6 +47,13 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 #  engine, asserts them against battery_dispatch_policies.json, validates every required
 #  section, and writes the artifact atomically — a partial/failed run changes nothing.)
 
+# Bill artifacts (rerun after adding statements to private/1-raw-data/*-bills/):
+# parse_bills.py finds the repo root itself, so run it from anywhere. It regenerates the
+# two legacy summaries as its own reproduction gate — they must not change:
+../../.venv/bin/python parse_bills.py && git diff --exit-code ../../data/electric_bill_summary.csv \
+    ../../data/gas_bill_summary.csv ../../data/bill_periods_electric.csv \
+    ../../data/bill_periods_gas.csv ../../data/bill_tou_detail.csv
+
 # Carbon artifacts (rerun when needed): carbon_fullyear.py uses the raw CAISO day-cache
 # private/1-raw-data/caiso_raw/ when present, otherwise rebuilds exactly from the
 # committed data/caiso_hourly_intensity.csv; it fails closed if coverage would shrink
