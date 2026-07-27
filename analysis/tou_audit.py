@@ -57,6 +57,15 @@ spring-forward Sunday (02:00-02:45 do not exist) and 100 on the fall-back Sunday
 whole period, because a day short of slots reconciles against energy that was
 never measured. Partially covered periods are skipped, never partially credited.
 
+Skips are not all equal. A statement lying wholly outside the export is an expected
+coverage fact and says nothing about data quality: thirteen 2024 and early-2025
+periods are permanently in that category because the portal keeps roughly thirteen
+months of interval data. A statement the export overlaps but runs short of, or one
+containing a gap, a malformed day or a zero-energy day, is degraded data. Any of
+those forces an INCOMPLETE verdict naming the periods, because a period excluded
+for data loss is not a period that reconciled, and quietly dropping it would turn
+a damaged export into a clean result.
+
 The export's final day is a placeholder: it carries a full set of zero-valued
 slots, so it satisfies the slot check while measuring nothing. It is dropped from
 coverage. Any other zero-energy day disqualifies its period, since a day recording
@@ -104,6 +113,7 @@ CANONICAL_SLOTS = tuple(i * 0.25 for i in range(96))
 # other reason means the export IS supposed to cover the period but is degraded
 # there, and that must never be quietly excluded from a passing verdict.
 SKIP_OUT_OF_COVERAGE = "outside interval coverage"
+SKIP_PARTIAL_COVERAGE = "period truncated by the export boundary"
 SKIP_GAP = "interval gap inside period"
 SKIP_MALFORMED = "malformed interval day"
 SPRING_FORWARD_GAP = (2.0, 2.25, 2.5, 2.75)     # 02:00-02:45 do not occur
@@ -334,10 +344,20 @@ def audit(intervals, billed, periods, hol):
     rows, skipped, audited, totals = [], [], [], []
     for ptext in periods:
         start, end = parse_period(ptext)
-        if start < cov_start or end > cov_end:
+        days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+        # Wholly outside the export is a coverage fact and expected. Overlapping it
+        # but running past either end is data loss: the export was supposed to reach
+        # this statement and stops short, so it must not be filed as benign.
+        if end < cov_start or start > cov_end:
             skipped.append({"period": ptext, "reason": SKIP_OUT_OF_COVERAGE})
             continue
-        days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+        if start < cov_start or end > cov_end:
+            outside = [d for d in days if d < cov_start or d > cov_end]
+            skipped.append({"period": ptext, "reason": SKIP_PARTIAL_COVERAGE,
+                            "days_in_period": len(days),
+                            "days_outside_export": len(outside),
+                            "missing_days": [str(d) for d in outside][:10]})
+            continue
         gaps = [d for d in days if d not in covered]
         if gaps:
             skipped.append({"period": ptext, "reason": SKIP_GAP,

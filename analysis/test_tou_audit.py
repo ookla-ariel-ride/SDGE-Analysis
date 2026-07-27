@@ -224,6 +224,24 @@ def case_integrity_skip_blocks_a_clean_verdict():
     return "a corrupt period is reported as an integrity skip, not silently dropped"
 
 
+def case_boundary_truncated_period_is_an_integrity_failure():
+    """Losing one boundary day is data loss, not an out-of-coverage coverage fact.
+
+    A statement the export overlaps but stops short of used to be filed under the
+    same benign reason as a statement the export never reached, so a truncated
+    boundary left a clean verdict behind.
+    """
+    periods, rows, billed = _two_periods(corrupt_second=False)
+    rows = [r for r in rows if r[0] != dt.date(2026, 5, 31)]   # drop the final day
+    out, audited, skipped, totals, _, _ = T.audit(rows, billed, periods, HOL)
+    assert audited == [periods[0]], audited
+    assert len(skipped) == 1 and skipped[0]["reason"] == T.SKIP_PARTIAL_COVERAGE, skipped
+    assert skipped[0]["missing_days"] == ["2026-05-31"], skipped
+    integrity = [s for s in skipped if s["reason"] != T.SKIP_OUT_OF_COVERAGE]
+    assert integrity, "a boundary-truncated period must taint the verdict"
+    return "a period truncated by the export boundary counts as degraded data"
+
+
 def case_out_of_coverage_skip_is_not_an_integrity_failure():
     """Statements the export simply does not reach are an expected coverage fact."""
     periods, rows, billed = _two_periods(corrupt_second=False)
@@ -453,6 +471,7 @@ CASES = [
     case_load_billed_rejects_inconsistent_parse,
     case_load_billed_rejects_asymmetric_sections,
     case_integrity_skip_blocks_a_clean_verdict,
+    case_boundary_truncated_period_is_an_integrity_failure,
     case_out_of_coverage_skip_is_not_an_integrity_failure,
     case_missing_billed_bucket_stops_the_run,
     case_unexpected_billed_bucket_stops_the_run,
