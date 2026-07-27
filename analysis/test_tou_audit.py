@@ -160,6 +160,36 @@ def case_malformed_day_disqualifies_its_period():
     raise AssertionError("expected the period with a truncated day to be skipped")
 
 
+def case_trailing_placeholder_day_is_dropped_from_coverage():
+    """The export's last day is all zeros; it must not extend coverage."""
+    period = "4/1/26 - 4/30/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days[:-1] for x in _day(d)]
+    rows += _day(days[-1], imp=0.0)          # trailing placeholder: 96 zero slots
+    billed = _billed_from(rows, period, start, end)
+    try:
+        T.audit(rows, billed, [period], HOL)
+    except SystemExit as e:
+        assert "nothing to audit" in str(e), e
+        return "the trailing all-zero placeholder day does not extend coverage"
+    raise AssertionError("expected the placeholder day to be dropped from coverage")
+
+
+def case_interior_zero_energy_day_disqualifies_its_period():
+    period = "4/1/26 - 4/30/26"
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = [x for d in days for x in _day(d, imp=0.0 if d == days[9] else 1.0)]
+    billed = _billed_from(rows, period, start, end)
+    try:
+        T.audit(rows, billed, [period], HOL)
+    except SystemExit as e:
+        assert "nothing to audit" in str(e), e
+        return "a zero-energy day inside a period disqualifies it, not just the last day"
+    raise AssertionError("expected the interior zero-energy day to skip the period")
+
+
 def case_missing_billed_bucket_stops_the_run():
     period = "4/1/26 - 4/30/26"
     start, end = T.parse_period(period)
@@ -352,6 +382,8 @@ CASES = [
     case_duplicated_slots_are_a_defect,
     case_dst_slot_counts_are_not_accepted_on_ordinary_days,
     case_malformed_day_disqualifies_its_period,
+    case_trailing_placeholder_day_is_dropped_from_coverage,
+    case_interior_zero_energy_day_disqualifies_its_period,
     # billed-bucket completeness
     case_load_billed_rejects_inconsistent_parse,
     case_load_billed_rejects_asymmetric_sections,

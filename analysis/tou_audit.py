@@ -59,6 +59,11 @@ spring-forward Sunday (02:00-02:45 do not exist) and 100 on the fall-back Sunday
 whole period, because a day short of slots reconciles against energy that was
 never measured. Partially covered periods are skipped, never partially credited.
 
+The export's final day is a placeholder: it carries a full set of zero-valued
+slots, so it satisfies the slot check while measuring nothing. It is dropped from
+coverage. Any other zero-energy day disqualifies its period, since a day recording
+neither an import nor an export is a data fault rather than a quiet day.
+
 Completeness. Statements print one row per TOU period for every season the billing
 period touches, so the expected bucket set is derived from the period's own dates
 and every expected bucket must be present. A missing or unexpected bucket is a
@@ -304,9 +309,20 @@ def cell_pass(billed, rebuilt):
 
 def audit(intervals, billed, periods, hol):
     slots_by_day = collections.defaultdict(list)
-    for d, hour, _, _ in intervals:
+    energy_by_day = collections.defaultdict(float)
+    for d, hour, imp, exp in intervals:
         slots_by_day[d].append(hour)
+        energy_by_day[d] += abs(imp) + abs(exp)
     covered = set(slots_by_day)
+
+    # A Green Button export's final day is a placeholder carrying a full set of
+    # zero-valued slots, so it passes the slot check while measuring nothing. It is
+    # dropped from coverage rather than trusted. Any OTHER zero-energy day is
+    # treated as malformed below: with a 10 kW array, a day recording neither an
+    # import nor an export is a data fault, not a quiet day.
+    placeholder = max(covered)
+    if energy_by_day[placeholder] == 0.0:
+        covered.discard(placeholder)
     cov_start, cov_end = min(covered), max(covered)
 
     rows, skipped, audited, totals = [], [], [], []
@@ -321,7 +337,9 @@ def audit(intervals, billed, periods, hol):
             skipped.append({"period": ptext, "reason": "interval gap inside period",
                             "missing_days": [str(x) for x in gaps][:10]})
             continue
-        malformed = [(d, day_defect(d, slots_by_day[d])) for d in days]
+        malformed = [(d, day_defect(d, slots_by_day[d])
+                      or ("no energy recorded all day" if energy_by_day[d] == 0.0
+                          else None)) for d in days]
         malformed = [(d, why) for d, why in malformed if why]
         if malformed:
             skipped.append({"period": ptext, "reason": "malformed interval day",

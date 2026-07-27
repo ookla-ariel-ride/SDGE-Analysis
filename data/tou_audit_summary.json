@@ -1,7 +1,7 @@
 {
   "coverage": {
     "interval_start": "2025-07-01",
-    "interval_end": "2026-07-23",
+    "interval_end": "2026-07-22",
     "interval_days": 388,
     "periods_audited": 12,
     "periods_skipped": 14,
