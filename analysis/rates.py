@@ -21,8 +21,22 @@ Billing mechanics (NEM 2.0, matching the bills):
   * non-bypassable charges (NBC) on GROSS imported kWh — never netted
     (bill evidence: wildfire charged on 308 gross kWh vs 224 net)
   * Base Services Charge per day
-TOU windows (year-round, post-June-2026): on-peak 16-21 daily;
-super-off-peak 0-6 + 10-14 weekdays, 0-14 weekends; off-peak otherwise.
+TOU windows as implemented here: on-peak 16-21 daily; super-off-peak 0-6 + 10-14
+weekdays, 0-14 weekends; off-peak otherwise. This is the CURRENT tariff, which is
+what a projection at constant current rates needs, and analysis/tou_audit.py
+reconciles it against the three most recent statements to within 3 kWh.
+
+Two things it deliberately does not do, both established by that audit:
+  * The weekday 10-14 super-off-peak window took effect 2026-03-01; before that
+    those hours were off-peak. Applying today's window to earlier dates is correct
+    for a forward projection and wrong for reproducing a historical statement,
+    where it misallocates 250-360 kWh per period between off-peak and
+    super-off-peak while leaving the period total right. Anything re-billing
+    history needs the historical WINDOWS, not just historical prices.
+  * period() has no holiday rule, but the tariff assigns weekend windows to the
+    eight holidays in research/rates-reference.md, each confirmed against the
+    bills. Worth $11.68/yr on a $4,838 modelled bill (0.24%), so every figure
+    derived from this module carries that much known bias until it is fixed.
 """
 UDC = {"S": {"on": 0.30203, "off": 0.30203, "sop": 0.02606},
        "W": {"on": 0.31174, "off": 0.31174, "sop": 0.02606}}
