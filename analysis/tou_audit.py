@@ -57,14 +57,22 @@ spring-forward Sunday (02:00-02:45 do not exist) and 100 on the fall-back Sunday
 whole period, because a day short of slots reconciles against energy that was
 never measured. Partially covered periods are skipped, never partially credited.
 
-Skips are not all equal. A statement lying wholly outside the export is an expected
-coverage fact and says nothing about data quality: thirteen 2024 and early-2025
-periods are permanently in that category because the portal keeps roughly thirteen
-months of interval data. A statement the export overlaps but runs short of, or one
-containing a gap, a malformed day or a zero-energy day, is degraded data. Any of
-those forces an INCOMPLETE verdict naming the periods, because a period excluded
-for data loss is not a period that reconciled, and quietly dropping it would turn
-a damaged export into a clean result.
+Skips are not all equal, and telling them apart needs the export's own header. A
+statement outside the exported range is an expected coverage fact: thirteen 2024
+and early-2025 periods are permanently in that category because the portal keeps
+roughly thirteen months of interval data. Retention cuts on a date unrelated to
+billing cycles, so a period straddling either end of the file is normal and says
+nothing about data quality.
+
+What does prove data loss is the export failing to deliver the range it declares.
+Green Button files print `Reading Start` and `Reading End`, which is an independent
+statement of what the file was supposed to contain, and every day inside that range
+must be present. Days promised and not supplied, along with any gap, malformed day
+or zero-energy day inside an audited period, force an INCOMPLETE verdict: a period
+excluded for data loss is not a period that reconciled, and quietly dropping it
+would turn a damaged export into a clean result. Without the header the check falls
+back to treating boundary periods as coverage limits, which risks missing a
+truncation but never invents one.
 
 The export's final day is a placeholder: it carries a full set of zero-valued
 slots, so it satisfies the slot check while measuring nothing. It is dropped from
@@ -113,7 +121,6 @@ CANONICAL_SLOTS = tuple(i * 0.25 for i in range(96))
 # other reason means the export IS supposed to cover the period but is degraded
 # there, and that must never be quietly excluded from a passing verdict.
 SKIP_OUT_OF_COVERAGE = "outside interval coverage"
-SKIP_PARTIAL_COVERAGE = "period truncated by the export boundary"
 SKIP_GAP = "interval gap inside period"
 SKIP_MALFORMED = "malformed interval day"
 SPRING_FORWARD_GAP = (2.0, 2.25, 2.5, 2.75)     # 02:00-02:45 do not occur
@@ -269,6 +276,39 @@ def load_intervals(path):
     return rows
 
 
+def read_declared_range(path):
+    """(start, end) the export says it covers, from its own header.
+
+    Green Button exports print `Reading Start` and `Reading End`. That is the only
+    independent statement of what the file was supposed to contain, and without it
+    the covered range can only be inferred from the rows themselves, which cannot
+    distinguish "the export stops here because the portal's retention stops here"
+    from "the export dropped days". Retention cuts on an arbitrary date unrelated
+    to billing cycles, so guessing from row extents would flag a healthy export as
+    degraded every month.
+
+    Returns None when the header is absent, and the caller then falls back to the
+    conservative reading: boundary periods are treated as expected coverage limits
+    rather than as data loss.
+    """
+    start = end = None
+    with open(path, newline="") as fh:
+        for rec in csv.reader(fh):
+            if not rec or len(rec) < 2:
+                continue
+            key = rec[0].strip()
+            if key == "Reading Start":
+                start = rec[1].strip()
+            elif key == "Reading End":
+                end = rec[1].strip()
+            elif key == "Meter Number" and rec[1].strip() == "Date":
+                break     # the DATA header row; a bare "Meter Number,<id>" precedes it
+    if not start or not end:
+        return None
+    f = lambda s: dt.datetime.strptime(s.split()[0], "%m/%d/%Y").date()
+    return f(start), f(end)
+
+
 def parse_period(text):
     """'7/29/25 - 8/26/25' -> (date, date), inclusive of both endpoints."""
     a, b = [s.strip() for s in text.split("-")]
@@ -323,7 +363,7 @@ def cell_pass(billed, rebuilt):
     return abs(rebuilt - billed) <= max(ABS_TOL_KWH, REL_TOL_CELL * abs(billed))
 
 
-def audit(intervals, billed, periods, hol):
+def audit(intervals, billed, periods, hol, declared=None):
     slots_by_day = collections.defaultdict(list)
     energy_by_day = collections.defaultdict(float)
     for d, hour, imp, exp in intervals:
@@ -337,9 +377,25 @@ def audit(intervals, billed, periods, hol):
     # treated as malformed below: with a 10 kW array, a day recording neither an
     # import nor an export is a data fault, not a quiet day.
     placeholder = max(covered)
-    if energy_by_day[placeholder] == 0.0:
+    dropped_placeholder = energy_by_day[placeholder] == 0.0
+    if dropped_placeholder:
         covered.discard(placeholder)
     cov_start, cov_end = min(covered), max(covered)
+
+    # Did the export deliver the range it declared? This is the only check that can
+    # tell a retention limit from a dropped day, and it is made once for the file
+    # rather than inferred per period. A day the export promised and did not supply
+    # is data loss wherever it sits; a period running past the promised range is
+    # simply beyond what this file was ever going to contain.
+    undelivered = []
+    if declared:
+        d_start, d_end = declared
+        if dropped_placeholder and placeholder == d_end:
+            d_end = d_end - dt.timedelta(days=1)   # the trailing placeholder is a known quirk
+        n = (d_end - d_start).days + 1
+        undelivered = [str(d_start + dt.timedelta(days=i)) for i in range(n)
+                       if d_start + dt.timedelta(days=i) not in covered]
+        cov_start, cov_end = max(cov_start, d_start), min(cov_end, d_end)
 
     rows, skipped, audited, totals = [], [], [], []
     for ptext in periods:
@@ -348,15 +404,11 @@ def audit(intervals, billed, periods, hol):
         # Wholly outside the export is a coverage fact and expected. Overlapping it
         # but running past either end is data loss: the export was supposed to reach
         # this statement and stops short, so it must not be filed as benign.
-        if end < cov_start or start > cov_end:
-            skipped.append({"period": ptext, "reason": SKIP_OUT_OF_COVERAGE})
-            continue
         if start < cov_start or end > cov_end:
             outside = [d for d in days if d < cov_start or d > cov_end]
-            skipped.append({"period": ptext, "reason": SKIP_PARTIAL_COVERAGE,
+            skipped.append({"period": ptext, "reason": SKIP_OUT_OF_COVERAGE,
                             "days_in_period": len(days),
-                            "days_outside_export": len(outside),
-                            "missing_days": [str(d) for d in outside][:10]})
+                            "days_outside_export": len(outside)})
             continue
         gaps = [d for d in days if d not in covered]
         if gaps:
@@ -424,7 +476,7 @@ def audit(intervals, billed, periods, hol):
     if not audited:
         raise SystemExit("no billing period lies wholly inside the interval "
                          "export; nothing to audit")
-    return rows, audited, skipped, totals, cov_start, cov_end
+    return rows, audited, skipped, totals, cov_start, cov_end, undelivered
 
 
 def summarise(rows, totals, rule):
@@ -561,8 +613,9 @@ def main():
     covered = {d for d, _, _, _ in intervals}
     hol = holidays(range(min(covered).year, max(covered).year + 1))
 
-    rows, audited, skipped, totals, cov_start, cov_end = audit(
-        intervals, billed, periods, hol)
+    declared = read_declared_range(usage)
+    rows, audited, skipped, totals, cov_start, cov_end, undelivered = audit(
+        intervals, billed, periods, hol, declared)
     dst = sorted(d for d in covered
                  if sum(1 for x, _, _, _ in intervals if x == d) != 96)
 
@@ -592,11 +645,18 @@ def main():
     # reconciliation claim can be made over the corpus as a whole.
     integrity = [s for s in skipped if s["reason"] != SKIP_OUT_OF_COVERAGE]
     out["integrity_skips"] = integrity
-    out["complete"] = not integrity
+    out["declared_range"] = ([str(declared[0]), str(declared[1])] if declared else None)
+    out["days_declared_but_not_delivered"] = undelivered
+    out["complete"] = not integrity and not undelivered
 
     v = out["rules"]["as_billed"]
     reconciles = v["buckets_failing"] == 0 and v["period_totals_failing"] == 0
-    if integrity:
+    if undelivered:
+        out["verdict"] = (
+            f"INCOMPLETE -- the export declares {declared[0]}..{declared[1]} but did "
+            f"not deliver {len(undelivered)} day(s) inside it "
+            f"(e.g. {undelivered[0]}); no reconciliation claim is made")
+    elif integrity:
         out["verdict"] = (
             f"INCOMPLETE -- {len(integrity)} in-coverage period(s) excluded for "
             f"degraded interval data ({', '.join(s['period'] for s in integrity)}); "

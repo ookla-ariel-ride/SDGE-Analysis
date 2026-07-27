@@ -23,55 +23,81 @@
     "skipped": [
       {
         "period": "5/25/24 - 6/25/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 32,
+        "days_outside_export": 32
       },
       {
         "period": "6/26/24 - 7/25/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 30,
+        "days_outside_export": 30
       },
       {
         "period": "7/26/24 - 8/26/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 32,
+        "days_outside_export": 32
       },
       {
         "period": "8/27/24 - 9/25/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 30,
+        "days_outside_export": 30
       },
       {
         "period": "9/26/24 - 10/25/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 30,
+        "days_outside_export": 30
       },
       {
         "period": "10/26/24 - 11/25/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 31,
+        "days_outside_export": 31
       },
       {
         "period": "11/26/24 - 12/26/24",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 31,
+        "days_outside_export": 31
       },
       {
         "period": "12/27/24 - 1/27/25",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 32,
+        "days_outside_export": 32
       },
       {
         "period": "1/28/25 - 2/26/25",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 30,
+        "days_outside_export": 30
       },
       {
         "period": "2/27/25 - 3/27/25",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 29,
+        "days_outside_export": 29
       },
       {
         "period": "3/28/25 - 4/28/25",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 32,
+        "days_outside_export": 32
       },
       {
         "period": "4/29/25 - 5/28/25",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 30,
+        "days_outside_export": 30
       },
       {
         "period": "5/29/25 - 6/26/25",
-        "reason": "outside interval coverage"
+        "reason": "outside interval coverage",
+        "days_in_period": 29,
+        "days_outside_export": 29
       }
     ]
   },
@@ -670,6 +696,11 @@
     }
   },
   "integrity_skips": [],
+  "declared_range": [
+    "2025-06-27",
+    "2026-07-26"
+  ],
+  "days_declared_but_not_delivered": [],
   "complete": true,
   "verdict": "the utility's TOU accounting reproduces from raw interval data"
 }
