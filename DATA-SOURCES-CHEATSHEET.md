@@ -203,6 +203,33 @@ where: "Same Billing History flow on the gas account — ~12 months of gas state
 privacy: private-only
 ```
 
+> **Bulk-downloading the statements (SDG&E My Energy Center, verified 2026-07-27).**
+> Clicking each row's "View Your Detailed Bill PDF" opens a viewer tab one bill at a time,
+> which is slow for a 2-year pull. The portal keeps roughly **25 statements per account**
+> (about 2 years back), and each is fetchable directly at
+> `/portal/BillingHistory/DownloadBillPdf?invoiceId=<ISU…>`.
+>
+> The reliable method, run from the browser's own session (no cookie handling, no `curl`):
+> 1. Open Billing → Billing History and expand nothing; the invoice ids are already in the
+>    DOM as row attributes. Harvest id-to-statement-date pairs by walking each `<tr>` that
+>    carries an `ISU…` attribute value and reading the date text from that row (falling back
+>    to the previous sibling row when a row is an expanded detail panel).
+> 2. For each id, `fetch(url, {credentials:'same-origin'})`, then save the blob with a
+>    temporary `<a download="sdge_electric_YYYY-MM-DD.pdf">` click. Chrome writes straight to
+>    the download folder with no native Save-As dialog, which is what makes this automatable.
+> 3. **Pace it.** The endpoint rate-limits: bursts start returning HTTP 500 and then 403 with
+>    a ~581-byte error body instead of a PDF. Keep a delay of about a second between files,
+>    stop at roughly 25 files, and pause a minute or two before switching accounts. Treat any
+>    response under ~10 KB as a failure and retry it later rather than saving it.
+> 4. Switch accounts (electric ↔ gas) with the "Accounts:" selector at the top right, then
+>    re-harvest ids — they differ per account.
+> 5. Verify every file before trusting the pull: header starts `%PDF-`, size is a couple
+>    hundred KB, and the `/Count` page total is sane (8–10 pages for these statements).
+>    Then move them into gitignored `private/1-raw-data/` (never the repo root).
+>
+> Batching note for agent-driven runs: browser JavaScript calls time out after about 45
+> seconds, so download in chunks of about five files per call rather than one long loop.
+
 ```yaml
 id: plan_comparison_capture
 question: "Run the utility's own plan-comparison tool and screenshot the result."
