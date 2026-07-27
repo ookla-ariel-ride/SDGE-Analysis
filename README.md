@@ -107,13 +107,16 @@ containing those values.
   update `analysis/rates.py` from **your** bills (it is the single source of truth; non-SDG&E
   users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
   `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
-  pattern); run `behavior_rebuild.py`, `battery_dispatch_policies.py`, `battery_plan_matrix.py`,
-  `billing_model_nem.py`, `lifetime_payback.py`; then fill `report-template.html`'s `{{TOKEN}}`s
-  from your regenerated `data/*.json`.
+  pattern); run the pipeline — `behavior_rebuild.py`, `battery_dispatch_policies.py`,
+  `battery_plan_matrix.py`, `package_results.py`, `extended_findings.py`, `carbon_fullyear.py`,
+  plus `soiling_analysis.py`, `billing_model_nem.py`, and `lifetime_payback.py` as applicable —
+  then fill `report-template.html`'s `{{TOKEN}}`s from your regenerated `data/*.json`.
 
 **4 · Validate before you trust it.** The gates in `CLAUDE.md` §9, in order: your billing
 model must reproduce your actual bills before you quote any absolute dollar; every committed
-artifact must regenerate from its committed script; report deltas, not levels.
+artifact must regenerate from its committed script; report deltas, not levels. This loop is
+exercised, not aspirational: the regeneration gates have been verified byte-identical from a
+fresh clone of this repo (clean-room run, staged private inputs, new venv).
 
 **5 · Publish (optional).** Follow the GitHub Pages section below, after reading the
 privacy note.
@@ -149,7 +152,7 @@ Your report will be live at `https://<you>.github.io/my-energy-analysis/` within
 
 | Path | Pushed to GitHub? | Contents |
 |---|---|---|
-| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `GLOSSARY.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml`, `requirements.txt`, `LICENSE` | ✅ yes | Report, template, docs, config schema, and license (PII-free) |
+| `index.html`, `report-template.html`, `README.md`, `TECHNICAL.md`, `GLOSSARY.md`, `CLAUDE.md`, `reusable-prompt.md`, `DATA-SOURCES-CHEATSHEET.md`, `household.example.yaml`, `requirements.txt`, `stage-private-data.sh`, `LICENSE` | ✅ yes | Report, template, docs, config schema, reproduction tooling, and license (PII-free) |
 | `data/`, `analysis/`, `research/` | ✅ yes | Data, scripts, and rate research (PII-free) |
 | `.githooks/`, `.gitleaks.toml`, `.github/` | ✅ yes | The mechanical privacy enforcement (pre-commit gitleaks hook, generic scan rules, CI full-history re-scan) and the issue templates |
 | `private/1-raw-data/` | ❌ gitignored | Raw SDGE Green Button CSV (contains name/address/account/meter); Enphase SAM 8760 hourly consumption (no identifiers, but reveals household occupancy patterns); CAISO raw day-cache |
@@ -175,6 +178,7 @@ schema and pipeline in depth.
 | `GLOSSARY.md` | Plain-English definitions of every term of art (NEM, PCIA, CAISO, phantom load, dispatch policy…), with links to authoritative sources |
 | `requirements.txt` | Python dependencies for the analysis scripts (pandas, numpy, pyyaml) |
 | `household.example.yaml` | Commented schema template for the per-house config — copy to gitignored `private/household.yaml` and replace every placeholder (the intake interview in `DATA-SOURCES-CHEATSHEET.md` walks each field) |
+| `stage-private-data.sh` | Stages the gitignored private inputs (`household.yaml`, interval/SAM/gas exports) from an existing working copy into a fresh clone so the `private/verify` regeneration flow can run there — the script behind the clean-room verification |
 
 </details>
 
@@ -243,7 +247,7 @@ schema and pipeline in depth.
 
 ## The private inputs — and how to obtain your own
 
-Only two input datasets are withheld (plus the small `private/household.yaml` config the
+Only three input datasets are withheld (plus the small `private/household.yaml` config the
 intake interview writes; its schema is public in `household.example.yaml`), and anyone can
 pull their own equivalents in minutes:
 
@@ -277,9 +281,16 @@ no-solar counterfactual behind the lifetime-payback numbers, and the load/produc
   interval export from item 1. Hourly resolution keeps the energy balance honest; the
   derivation caveats are covered in `TECHNICAL.md`.
 
+**3. Gas daily export** (`gas.csv`) — the same Green Button flow as item 1, for the gas
+meter (daily therms). It feeds the gas/electrification analyses in
+`analysis/extended_findings.py`. Skip it if you have no gas service.
+
 Everything else needed to reproduce the analysis (daily production, PVOutput records,
 the rate tables in `research/rates-reference.md`, and both models) is in this repo.
-With your own two files above plus current rates, the scripts regenerate every number.
+With your own files above plus current rates, the scripts regenerate every number.
+Moving your own copy to a second machine or a fresh clone?
+`./stage-private-data.sh <old-working-copy> <new-clone>` places the gitignored inputs
+where the `private/verify` flow expects them.
 
 ## Refreshing this analysis (same house, new data)
 
@@ -288,7 +299,9 @@ With your own two files above plus current rates, the scripts regenerate every n
    single source of truth all current models import. If the household changed (vehicle,
    charger, cleaning event, appliance), update `private/household.yaml` too.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
-   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate.
+   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. For the
+   strictest check, clone fresh, stage the private inputs with `stage-private-data.sh`, and
+   run the same gates there — the pipeline reproduces byte-identically from a clean clone.
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D, or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
 
@@ -305,4 +318,4 @@ each with a privacy checklist so nothing personal lands in a public thread.
 
 ---
 
-*Last reviewed: 2026-07-25, against commit `04aae43`.*
+*Last reviewed: 2026-07-27, against commit `34d57ec`.*

@@ -260,6 +260,11 @@ Mono data — with system fallbacks).
   data-label="..."); print adds break-inside:avoid on .chartbox/table/.rec/.note/.pkg.
 
 **Content formatting rules (apply during every prose regeneration):**
+- Every prose pass over the report (and README) ends with a de-AI-writing edit — in
+  Claude Code, invoke the humanizer skill; elsewhere apply its checklist manually: no
+  inflated symbolism, no promotional language, no rule-of-three padding, no negative
+  parallelisms ("not just X, but Y"), no filler transitions, no em-dash overuse. The
+  report reads like a careful homeowner's engineering notebook, not marketing copy.
 - No paragraph over ~800 characters. Findings use the .finding pattern: one bold claim
   sentence → a compact table.evidence (source | value | agreement) → a .small caveat line.
 - Every h2 section opens with a one-line .verdict ("In one sentence: ...") — the teaser

@@ -276,6 +276,11 @@ spliced across models).
 
 ## PHASE D — DELIVERABLES
 
+**Prose quality pass (required, every regeneration):** finish all report and README prose
+with a de-AI-writing edit (in Claude Code, the humanizer skill; otherwise its checklist:
+no inflated symbolism, no promotional adjectives, no rule-of-three padding, no negative
+parallelisms, no filler transitions). Plain, specific, engineering-notebook voice.
+
 **The report must open with a Purpose block** (above the Bottom line): one paragraph stating
 what the document is — a decision document computed from measured data by committed scripts —
 followed by an enumerated list of the questions it answers, each with a section pointer, and a
