@@ -222,6 +222,25 @@ def case_unexpected_billed_bucket_stops_the_run():
     raise AssertionError("expected SystemExit on an unexpected billed bucket")
 
 
+def case_holiday_evidence_is_leave_one_out():
+    """A holiday is confirmed only when dropping it degrades its period's fit."""
+    period = "8/27/25 - 9/25/25"          # contains Labor Day 2025-09-01
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    # Load only during 06:00-14:00, the hours the weekend rule reassigns, so the
+    # holiday's treatment is the only thing that can move energy between buckets.
+    rows = [(d, h, 1.0, 0.0) for d in days
+            for h in T.expected_slots(d).elements() if 6 <= h < 14]
+    billed = _billed_from(rows, period, start, end)
+    ev = T.holiday_evidence(rows, billed, HOL, [period])
+    labor = [e for e in ev if e["date"] == "2025-09-01"][0]
+    assert labor["inside_an_audited_period"] and labor["confirmed"], labor
+    assert labor["residual_with_holiday_rule_kwh"] < labor["residual_without_kwh"], labor
+    outside = [e for e in ev if not e["inside_an_audited_period"]]
+    assert outside and all(e["confirmed"] is None for e in outside), outside
+    return "holiday evidence confirms by leave-one-out and reports untested dates as such"
+
+
 def case_period_total_catches_accumulated_bias():
     """Every bucket inside the 1 kWh floor, yet the period total does not reconcile."""
     period = "5/20/26 - 6/20/26"
@@ -393,6 +412,7 @@ CASES = [
     case_load_intervals_rejects_a_file_with_no_data,
     case_partial_period_is_skipped_not_credited,
     case_interval_gap_inside_period_is_skipped,
+    case_holiday_evidence_is_leave_one_out,
     case_period_total_catches_accumulated_bias,
     case_period_total_tolerates_pure_rounding,
 ]

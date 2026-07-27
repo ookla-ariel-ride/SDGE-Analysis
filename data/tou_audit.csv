@@ -1,4 +1,7 @@
 period,season,tou_period,billed_kwh,as_billed_kwh,as_billed_diff_kwh,as_billed_diff_pct,as_billed_pass,canonical_kwh,canonical_diff_kwh,canonical_diff_pct,canonical_pass
+6/27/25 - 7/28/25,summer,on_peak,272.0,272.03,0.03,0.011,True,272.03,0.03,0.011,True
+6/27/25 - 7/28/25,summer,off_peak,-329.0,-328.71,0.29,0.09,True,51.74,380.74,115.726,False
+6/27/25 - 7/28/25,summer,super_off_peak,863.0,863.38,0.38,0.044,True,482.94,-380.06,-44.04,False
 7/29/25 - 8/26/25,summer,on_peak,371.0,370.9,-0.1,-0.028,True,370.9,-0.1,-0.028,True
 7/29/25 - 8/26/25,summer,off_peak,-165.0,-165.42,-0.42,-0.258,True,133.95,298.95,181.182,False
 7/29/25 - 8/26/25,summer,super_off_peak,1129.0,1129.45,0.45,0.039,True,830.07,-298.93,-26.477,False

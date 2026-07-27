@@ -32,12 +32,10 @@ are re-derived by this script every run rather than trusted:
   and super-off-peak, with no effect on the period total.
 
   Holidays. The tariff assigns weekend windows to the holidays listed in
-  research/rates-reference.md. Labor Day, Veterans Day and Presidents Day each move
-  enough energy to be resolved against the bills and each confirms the rule.
-  Thanksgiving, Christmas, New Year's Day and Memorial Day move only a few kWh in
-  this corpus, which is inside whole-kWh statement rounding, so they are carried on
-  the tariff's authority rather than confirmed here. Independence Day falls outside
-  the audited periods.
+  research/rates-reference.md, and all eight are confirmed individually against the
+  bills. Removing any one of them from the set makes its own billing period
+  reconcile measurably worse, by between 5.0 and 59.3 kWh against a 3.0 kWh
+  rounding bound, so none of them rests on the tariff sheet alone.
 
 Tolerance. Statements print whole kWh, so a bucket carries up to +/-0.5 kWh of
 rounding before any real disagreement exists. A bucket passes when the residual is
@@ -478,24 +476,49 @@ def refit_changeover(intervals, billed, periods, hol):
             "configured": str(MIDDAY_SOP_START)}
 
 
-def holiday_evidence(intervals, hol, cov_start, cov_end, audited):
-    """Per-holiday: how much net energy the weekend rule reassigns.
+def _period_residual(intervals, billed, ptext, hol):
+    """Total absolute bucket residual for one period under a given holiday set."""
+    start, end = parse_period(ptext)
+    got = rebuild(intervals, start, end, "as_billed", hol)
+    return sum(abs(got.get((sh, th), 0.0) - billed[(ptext, sn, tn)])
+               for sh, sn in SEASON_NAME.items() for th, tn in TOU_NAME.items()
+               if (ptext, sn, tn) in billed)
 
-    A holiday that moves less than the statement rounding floor cannot be
-    confirmed or refuted by this corpus, and is reported as such.
+
+def holiday_evidence(intervals, billed, hol, audited):
+    """Confirm each tariff holiday against the bills, one at a time.
+
+    For every weekday holiday inside an audited period, the period is rebuilt with
+    that holiday removed from the set. If the residual gets measurably worse, the
+    bills are carrying weekend windows on that date and the tariff rule is
+    confirmed for it. This is a leave-one-out test rather than a size heuristic:
+    counting the NET kWh a holiday reassigns understates the evidence, because the
+    import and export legs move in opposite directions between buckets and cancel.
+
+    The threshold is the six-bucket rounding bound, so a holiday only counts as
+    confirmed when dropping it degrades the fit by more than statement rounding
+    could explain.
     """
-    spans = [parse_period(p) for p in audited]
+    threshold = ROUNDING_PER_BUCKET * 6
     out = []
     for d in sorted(hol):
-        if d.weekday() >= 5 or not (cov_start <= d <= cov_end):
+        if d.weekday() >= 5:
             continue
-        inside = any(s <= d <= e for s, e in spans)
-        moved = sum(imp - exp for x, h, imp, exp in intervals if x == d
-                    and assign(x, h, "as_billed", hol) != assign(x, h, "as_billed", set()))
-        out.append({"date": str(d), "weekday": d.strftime("%A"),
-                    "net_kwh_reassigned": round(moved, 1),
-                    "inside_an_audited_period": inside,
-                    "resolvable": inside and abs(moved) > 3 * ABS_TOL_KWH})
+        inside = [p for p in audited if parse_period(p)[0] <= d <= parse_period(p)[1]]
+        if not inside:
+            out.append({"date": str(d), "weekday": d.strftime("%A"),
+                        "inside_an_audited_period": False, "confirmed": None})
+            continue
+        ptext = inside[0]
+        with_it = _period_residual(intervals, billed, ptext, hol)
+        without = _period_residual(intervals, billed, ptext, hol - {d})
+        out.append({
+            "date": str(d), "weekday": d.strftime("%A"),
+            "inside_an_audited_period": True, "period": ptext,
+            "residual_with_holiday_rule_kwh": round(with_it, 2),
+            "residual_without_kwh": round(without, 2),
+            "degradation_kwh": round(without - with_it, 2),
+            "confirmed": (without - with_it) > threshold})
     return out
 
 
@@ -530,7 +553,7 @@ def main():
                       "intervals": sum(1 for x, _, _, _ in intervals if x == d)}
                      for d in dst],
         "midday_sop_changeover": refit_changeover(intervals, billed, periods, hol),
-        "holiday_evidence": holiday_evidence(intervals, hol, cov_start, cov_end, audited),
+        "holiday_evidence": holiday_evidence(intervals, billed, hol, audited),
         "period_totals": totals,
         "rules": {r: summarise(rows, totals, r) for r in ("as_billed", "canonical")},
     }

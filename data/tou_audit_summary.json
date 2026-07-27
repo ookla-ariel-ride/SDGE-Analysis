@@ -1,11 +1,12 @@
 {
   "coverage": {
-    "interval_start": "2025-07-01",
-    "interval_end": "2026-07-22",
-    "interval_days": 388,
-    "periods_audited": 12,
-    "periods_skipped": 14,
+    "interval_start": "2025-06-27",
+    "interval_end": "2026-07-26",
+    "interval_days": 395,
+    "periods_audited": 13,
+    "periods_skipped": 13,
     "audited": [
+      "6/27/25 - 7/28/25",
       "7/29/25 - 8/26/25",
       "8/27/25 - 9/25/25",
       "9/26/25 - 9/30/25",
@@ -71,10 +72,6 @@
       {
         "period": "5/29/25 - 6/26/25",
         "reason": "outside interval coverage"
-      },
-      {
-        "period": "6/27/25 - 7/28/25",
-        "reason": "outside interval coverage"
       }
     ]
   },
@@ -105,63 +102,145 @@
   },
   "holiday_evidence": [
     {
+      "date": "2025-01-01",
+      "weekday": "Wednesday",
+      "inside_an_audited_period": false,
+      "confirmed": null
+    },
+    {
+      "date": "2025-02-17",
+      "weekday": "Monday",
+      "inside_an_audited_period": false,
+      "confirmed": null
+    },
+    {
+      "date": "2025-05-26",
+      "weekday": "Monday",
+      "inside_an_audited_period": false,
+      "confirmed": null
+    },
+    {
       "date": "2025-07-04",
       "weekday": "Friday",
-      "net_kwh_reassigned": -26.6,
-      "inside_an_audited_period": false,
-      "resolvable": false
+      "inside_an_audited_period": true,
+      "period": "6/27/25 - 7/28/25",
+      "residual_with_holiday_rule_kwh": 0.7,
+      "residual_without_kwh": 53.4,
+      "degradation_kwh": 52.7,
+      "confirmed": true
     },
     {
       "date": "2025-09-01",
       "weekday": "Monday",
-      "net_kwh_reassigned": 30.0,
       "inside_an_audited_period": true,
-      "resolvable": true
+      "period": "8/27/25 - 9/25/25",
+      "residual_with_holiday_rule_kwh": 0.61,
+      "residual_without_kwh": 59.91,
+      "degradation_kwh": 59.31,
+      "confirmed": true
     },
     {
       "date": "2025-11-11",
       "weekday": "Tuesday",
-      "net_kwh_reassigned": -16.4,
       "inside_an_audited_period": true,
-      "resolvable": true
+      "period": "10/28/25 - 11/25/25",
+      "residual_with_holiday_rule_kwh": 1.86,
+      "residual_without_kwh": 33.95,
+      "degradation_kwh": 32.1,
+      "confirmed": true
     },
     {
       "date": "2025-11-27",
       "weekday": "Thursday",
-      "net_kwh_reassigned": -5.1,
       "inside_an_audited_period": true,
-      "resolvable": true
+      "period": "11/26/25 - 12/26/25",
+      "residual_with_holiday_rule_kwh": 0.84,
+      "residual_without_kwh": 9.95,
+      "degradation_kwh": 9.12,
+      "confirmed": true
     },
     {
       "date": "2025-12-25",
       "weekday": "Thursday",
-      "net_kwh_reassigned": 4.9,
       "inside_an_audited_period": true,
-      "resolvable": true
+      "period": "11/26/25 - 12/26/25",
+      "residual_with_holiday_rule_kwh": 0.84,
+      "residual_without_kwh": 10.28,
+      "degradation_kwh": 9.44,
+      "confirmed": true
     },
     {
       "date": "2026-01-01",
       "weekday": "Thursday",
-      "net_kwh_reassigned": 4.8,
       "inside_an_audited_period": true,
-      "resolvable": true
+      "period": "12/27/25 - 1/27/26",
+      "residual_with_holiday_rule_kwh": 0.51,
+      "residual_without_kwh": 9.77,
+      "degradation_kwh": 9.25,
+      "confirmed": true
     },
     {
       "date": "2026-02-16",
       "weekday": "Monday",
-      "net_kwh_reassigned": 28.4,
       "inside_an_audited_period": true,
-      "resolvable": true
+      "period": "1/28/26 - 2/26/26",
+      "residual_with_holiday_rule_kwh": 1.32,
+      "residual_without_kwh": 58.17,
+      "degradation_kwh": 56.85,
+      "confirmed": true
     },
     {
       "date": "2026-05-25",
       "weekday": "Monday",
-      "net_kwh_reassigned": 2.8,
       "inside_an_audited_period": true,
-      "resolvable": false
+      "period": "4/29/26 - 5/28/26",
+      "residual_with_holiday_rule_kwh": 0.86,
+      "residual_without_kwh": 5.86,
+      "degradation_kwh": 5.0,
+      "confirmed": true
+    },
+    {
+      "date": "2026-09-07",
+      "weekday": "Monday",
+      "inside_an_audited_period": false,
+      "confirmed": null
+    },
+    {
+      "date": "2026-11-11",
+      "weekday": "Wednesday",
+      "inside_an_audited_period": false,
+      "confirmed": null
+    },
+    {
+      "date": "2026-11-26",
+      "weekday": "Thursday",
+      "inside_an_audited_period": false,
+      "confirmed": null
+    },
+    {
+      "date": "2026-12-25",
+      "weekday": "Friday",
+      "inside_an_audited_period": false,
+      "confirmed": null
     }
   ],
   "period_totals": [
+    {
+      "period": "6/27/25 - 7/28/25",
+      "buckets": 3,
+      "as_billed_billed_total_kwh": 806.0,
+      "as_billed_rebuilt_total_kwh": 806.7,
+      "as_billed_diff_kwh": 0.7,
+      "as_billed_diff_pct": 0.087,
+      "as_billed_tolerance_kwh": 1.61,
+      "as_billed_pass": true,
+      "canonical_billed_total_kwh": 806.0,
+      "canonical_rebuilt_total_kwh": 806.71,
+      "canonical_diff_kwh": 0.71,
+      "canonical_diff_pct": 0.087,
+      "canonical_tolerance_kwh": 1.61,
+      "canonical_pass": true
+    },
     {
       "period": "7/29/25 - 8/26/25",
       "buckets": 3,
@@ -357,17 +436,17 @@
   ],
   "rules": {
     "as_billed": {
-      "buckets": 42,
+      "buckets": 45,
       "buckets_failing": 0,
-      "periods": 12,
+      "periods": 13,
       "period_totals_failing": 0,
       "failing_period_totals": [],
       "worst_period_total_pct": 0.132,
       "max_abs_residual_kwh": 0.5,
-      "sum_abs_residual_kwh": 11.7,
-      "net_total_billed_kwh": 12296.0,
-      "net_total_rebuilt_kwh": 12292.7,
-      "net_total_diff_pct": -0.027,
+      "sum_abs_residual_kwh": 12.4,
+      "net_total_billed_kwh": 13102.0,
+      "net_total_rebuilt_kwh": 13099.4,
+      "net_total_diff_pct": -0.02,
       "worst_bucket": {
         "period": "11/26/25 - 12/26/25",
         "season": "winter",
@@ -377,24 +456,40 @@
       "failing_buckets": []
     },
     "canonical": {
-      "buckets": 42,
-      "buckets_failing": 22,
-      "periods": 12,
+      "buckets": 45,
+      "buckets_failing": 24,
+      "periods": 13,
       "period_totals_failing": 0,
       "failing_period_totals": [],
       "worst_period_total_pct": 0.132,
-      "max_abs_residual_kwh": 359.47,
-      "sum_abs_residual_kwh": 4671.7,
-      "net_total_billed_kwh": 12296.0,
-      "net_total_rebuilt_kwh": 12292.7,
-      "net_total_diff_pct": -0.027,
+      "max_abs_residual_kwh": 380.74,
+      "sum_abs_residual_kwh": 5432.5,
+      "net_total_billed_kwh": 13102.0,
+      "net_total_rebuilt_kwh": 13099.4,
+      "net_total_diff_pct": -0.02,
       "worst_bucket": {
-        "period": "8/27/25 - 9/25/25",
+        "period": "6/27/25 - 7/28/25",
         "season": "summer",
         "tou_period": "off_peak",
-        "diff_kwh": 359.47
+        "diff_kwh": 380.74
       },
       "failing_buckets": [
+        {
+          "period": "6/27/25 - 7/28/25",
+          "season": "summer",
+          "tou_period": "off_peak",
+          "billed_kwh": -329.0,
+          "rebuilt_kwh": 51.74,
+          "diff_kwh": 380.74
+        },
+        {
+          "period": "6/27/25 - 7/28/25",
+          "season": "summer",
+          "tou_period": "super_off_peak",
+          "billed_kwh": 863.0,
+          "rebuilt_kwh": 482.94,
+          "diff_kwh": -380.06
+        },
         {
           "period": "7/29/25 - 8/26/25",
           "season": "summer",
