@@ -86,6 +86,19 @@ def case_mid_corpus_gap(tmp):
     return "mid-corpus gap -> exits, artifacts untouched"
 
 
+def case_mid_corpus_gas_gap(tmp):
+    """A GAS statement outside the summary window is gone. The presence check only
+    covers summary statements, and gas bills on its own cycle, so only a gas-specific
+    continuity check catches this."""
+    victim = tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2024-10-29.pdf"
+    victim.unlink()
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted a corpus with a mid-window gas gap"
+    assert "gas billing periods" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "mid-corpus gas gap -> exits, artifacts untouched"
+
+
 def case_tou_headers_stop_matching(tmp):
     """Simulate a layout change that makes every TOU season header unrecognisable."""
     src = (tmp / "analysis" / "parse_bills.py").read_text()
@@ -132,14 +145,90 @@ def case_write_rollback():
     return "write failure -> full rollback, no temp files left"
 
 
+def _fail_replace_at(fail_calls):
+    """Return (patcher, counter) making os.replace raise on the given 1-based calls."""
+    import unittest.mock as mock
+    real = os.replace
+    state = {"n": 0}
+
+    def flaky(src, dst):
+        state["n"] += 1
+        if state["n"] in fail_calls:
+            raise OSError(f"simulated os.replace failure #{state['n']}")
+        return real(src, dst)
+
+    return mock.patch("os.replace", flaky), state
+
+
+def case_rollback_after_partial_swap():
+    """Failure DURING the swap phase, after files are already published: every
+    already-swapped file must be restored and no temp/backup files left behind."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        paths = [d / f"a{i}.csv" for i in range(4)]
+        for p in paths:
+            p.write_text("OLD\n")
+        writes = [(p, lambda q: q.write_text("NEW\n")) for p in paths]
+        patcher, _ = _fail_replace_at({3})          # 3rd swap fails
+        with patcher:
+            try:
+                pb._write_all_atomically(writes)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("swap failure did not propagate")
+        stale = [p.name for p in paths if p.read_text() != "OLD\n"]
+        assert not stale, f"files left published after rollback: {stale}"
+        leftovers = [f.name for f in d.iterdir() if f.suffix in (".tmp", ".bak")]
+        assert not leftovers, f"temp/backup files left behind: {leftovers}"
+    return "failure mid-swap -> all files restored, nothing left behind"
+
+
+def case_restore_failure_preserves_backups():
+    """Failure during the swap AND during the restore: the surviving .bak files are the
+    only copy of the previous evidence, so they must NOT be deleted, and the operator
+    must be told which artifacts are stale."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        paths = [d / f"a{i}.csv" for i in range(4)]
+        for p in paths:
+            p.write_text("OLD\n")
+        writes = [(p, lambda q: q.write_text("NEW\n")) for p in paths]
+        # 3rd call = the failing swap; 4th/5th = the restore attempts, also failing.
+        patcher, _ = _fail_replace_at({3, 4, 5})
+        with patcher:
+            try:
+                pb._write_all_atomically(writes)
+            except SystemExit as e:
+                msg = str(e)
+            else:
+                raise AssertionError("restore failure did not raise SystemExit")
+        assert "LEFT IN PLACE" in msg and "STALE" in msg, f"unhelpful message: {msg}"
+        baks = sorted(f.name for f in d.iterdir() if f.suffix == ".bak")
+        assert baks, "backups were deleted despite an incomplete rollback"
+        # Every stale artifact must still have its previous contents recoverable.
+        for p in paths:
+            if p.read_text() != "OLD\n":
+                bak = p.with_name(p.name + ".bak")
+                assert bak.exists() and bak.read_text() == "OLD\n", \
+                    f"{p.name} is stale and its backup is missing"
+    return "restore failure -> backups preserved, manual recovery reported"
+
+
 def main():
     if not ELEC.is_dir() or not GAS.is_dir() or not any(ELEC.glob("*.pdf")):
         print("SKIP: private bill PDFs not present on this machine "
               "(they are gitignored; see DATA-SOURCES-CHEATSHEET.md §D)")
         return 0
     corpus_cases = [case_healthy_corpus, case_missing_summary_statement,
-                    case_mid_corpus_gap, case_tou_headers_stop_matching]
-    cases = corpus_cases + [case_write_rollback]
+                    case_mid_corpus_gap, case_mid_corpus_gas_gap,
+                    case_tou_headers_stop_matching]
+    cases = corpus_cases + [case_write_rollback, case_rollback_after_partial_swap,
+                            case_restore_failure_preserves_backups]
     failures = 0
     for case in cases:
         try:

@@ -1151,14 +1151,23 @@ coverage, and the $3,282.22 annual total are unchanged.
 - *Transactional publication.* The five artifacts are one evidence set. Each is staged to a
   `.tmp` and swapped in only after every validation passes; if any swap fails, the ones
   already swapped are restored from backups, so a failed run leaves the committed set
-  exactly as it was rather than half-updated.
+  exactly as it was rather than half-updated. Each rollback is attempted independently, so
+  one failure cannot abort the rest, and the backups are deleted only once the set is known
+  consistent (all published, or all restored). If a restore itself fails the surviving
+  `.bak` files are left on disk on purpose and the error names every stale artifact and
+  where its previous contents are — deleting them would turn a partial publication into
+  unrecoverable evidence loss.
 
 **Negative tests** (`analysis/test_parse_bills.py`, run with the venv python). Each builds a
 throwaway repo from the real corpus, breaks one thing, and asserts the parser exits non-zero
-*and* leaves the artifacts untouched: a missing summary statement, a statement missing from
-the middle of the window (caught by continuity, not by the presence check), TOU headers that
-stop matching, and a forced failure part-way through the write sequence to exercise the
-rollback. The suite skips when the gitignored PDFs are not present.
+*and* leaves the artifacts untouched: a missing summary statement, an electric statement
+missing from the middle of the window, a GAS statement missing from the middle of its window
+(the fuels bill on different cycles, so each needs its own continuity check), and TOU headers
+that stop matching. Three further cases drive the publication step directly — a writer that
+fails before any swap, an `os.replace` that fails part-way through the swaps (asserting every
+published file is restored), and one that fails during the restore too (asserting the backups
+survive and the error explains manual recovery). The suite skips when the gitignored PDFs are
+not present.
 
 **Validation at time of writing.** 26 electric periods spanning 763 continuous days with no
 gaps between consecutive periods; the 13 periods of the report's audited year sum to 365

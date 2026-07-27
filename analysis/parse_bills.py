@@ -282,19 +282,22 @@ def _validate(elec, gas, tou):
         if dupes:
             raise SystemExit(f"duplicate {label} billing periods parsed: {dupes}")
 
-    # 3. Electric periods must tile the window with no gap. A missing statement in the
-    #    MIDDLE of the corpus passes check 1 whenever it is outside the summary window,
-    #    so continuity is what catches it.
-    e = elec.copy()
-    e["start"] = pd.to_datetime(e.period.str.split(" - ").str[0], format="%m/%d/%y")
-    e["end"] = pd.to_datetime(e.period.str.split(" - ").str[1], format="%m/%d/%y")
-    e = e.sort_values("start")
-    gaps = [(p, q) for p, q, d in zip(e.period[:-1], e.period[1:],
-                                      (e.start.shift(-1) - e.end).dt.days[:-1]) if d > 1]
-    if gaps:
-        raise SystemExit(
-            f"gap between consecutive electric billing periods: {gaps}. A statement is "
-            f"missing from the corpus; annual totals would be understated.")
+    # 3. Periods must tile their window with no gap, for BOTH fuels. A statement missing
+    #    from the middle of the corpus passes check 1 whenever it falls outside the
+    #    summary window, so continuity is the only thing that catches it — and the two
+    #    fuels bill on different cycles, so each needs its own check. (Electric periods
+    #    print as m/d/yy, gas as "Jun 26, 2024".)
+    for label, df, fmt in (("electric", elec, "%m/%d/%y"), ("gas", gas, "%b %d, %Y")):
+        d = df.copy()
+        d["start"] = pd.to_datetime(d.period.str.split(" - ").str[0], format=fmt)
+        d["end"] = pd.to_datetime(d.period.str.split(" - ").str[1], format=fmt)
+        d = d.sort_values("start")
+        gaps = [(p, q) for p, q, n in zip(d.period[:-1], d.period[1:],
+                                          (d.start.shift(-1) - d.end).dt.days[:-1]) if n > 1]
+        if gaps:
+            raise SystemExit(
+                f"gap between consecutive {label} billing periods: {gaps}. A statement is "
+                f"missing from the corpus; annual totals would be understated.")
 
     # 4. Every period needs its TOU detail. Requiring rows per period (not merely
     #    erroring when a season header fails to parse) is what catches a layout change
@@ -334,9 +337,17 @@ def _validate(elec, gas, tou):
 
 
 def _write_all_atomically(writes):
-    """Publish an artifact SET. Each file is staged to a .tmp, then swapped in; if any
-    swap fails the already-swapped files are restored from backups, so a failed run
-    leaves the committed set exactly as it was rather than half-updated."""
+    """Publish an artifact SET so it advances together or not at all.
+
+    Each file is staged to a .tmp, then swapped in. If any swap fails, the files already
+    swapped are restored from their backups.
+
+    The backups are the only copy of the previous evidence while a rollback is in
+    progress, so they are deleted ONLY once the set is known to be consistent: either
+    every file published, or every file restored. If a restore itself fails, the
+    surviving .bak files are deliberately left on disk and the operator is told exactly
+    which artifacts are stale and where their previous contents are — deleting them
+    would turn a partial publication into unrecoverable evidence loss."""
     staged, backups, done = [], {}, []
     try:
         for path, writer in writes:
@@ -351,18 +362,40 @@ def _write_all_atomically(writes):
             os.replace(tmp, path)
             done.append(path)
     except BaseException:
-        for path in done:                       # roll the set back
+        # Roll every published file back INDEPENDENTLY: one failure must not abort the
+        # remaining restores, or files nobody tried to restore would stay overwritten.
+        unrestored = []
+        for path in done:
             bak = backups.get(path)
-            if bak and bak.exists():
-                os.replace(bak, path)
-        for _, tmp in staged:
-            if tmp.exists():
-                tmp.unlink()
-        raise
-    finally:
-        for bak in backups.values():
+            try:
+                if bak is None:
+                    path.unlink()          # file did not exist before this run
+                else:
+                    os.replace(bak, path)  # consumes the .bak
+                    backups.pop(path, None)
+            except OSError as exc:
+                unrestored.append((path, bak, exc))
+        for _, tmp in staged:              # best-effort cleanup of unswapped temps
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+        if unrestored:
+            detail = "; ".join(
+                f"{p.name} is STALE, previous contents in {b.name if b else '(none)'} ({e})"
+                for p, b, e in unrestored)
+            raise SystemExit(
+                "publication failed AND rollback could not fully restore the previous "
+                f"artifacts. Backups have been LEFT IN PLACE for manual recovery: {detail}. "
+                "Restore each .bak over its artifact by hand, then re-run.")
+        for bak in backups.values():       # rollback complete; backups now redundant
             if bak.exists():
                 bak.unlink()
+        raise
+    for bak in backups.values():           # published cleanly; drop the backups
+        if bak.exists():
+            bak.unlink()
 
 
 def main():
