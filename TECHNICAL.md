@@ -318,7 +318,17 @@ simulated outage starts (e.g. `"PW3|t1"` → median 336 h = the 14-day cap, 10th
 
 **Run:** `python3 battery_backup_sims.py` from a directory containing the three input files.
 
-### 3.4 `analysis/package_sims.py` — plan × battery matrix and LOW/MID/HIGH packages
+### 3.4 `analysis/package_sims.py` — RETIRED, kept as historical record
+
+> **This script is no longer in the repository** (deleted 2026-07-24, commit `15f14bb`). Its
+> plan × battery matrix is superseded by `battery_plan_matrix.py` (§3.16) and its package
+> figures by the integrated pipeline (§3.13). The section is kept because two things still
+> trace to it: the legacy matrix quoted below as historical record, and the `$1,347/yr`
+> Monte Carlo base still carried as a fixed constant in `deep_analyses.py` (§3.9) — the
+> report labels that figure's provenance in §13. Its behavior method — trimming intervals to
+> a 2.5 kW cap and re-billing the trimmed energy at an averaged super-off-peak rate — is the
+> year-end lump-sum shortcut `CLAUDE.md` §1b now forbids; `behavior_rebuild.py` (§3.12)
+> replaced it with physical energy movement. Do not reuse the method described here.
 
 **Inputs.** `usage.csv` only. **Baseline scenario:** EV-TOU-5, CEA generation **without** relief
 credit, current behavior.

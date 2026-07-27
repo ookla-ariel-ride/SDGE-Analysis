@@ -22,7 +22,7 @@ IQ System Controller for backup islanding.
 - NEM 2.0: adding storage does NOT affect grandfathering (20 yr from PTO 12/27/2019 →
   ~Dec 2039). Solar-charged storage retains retail export credits.
 
-## Simulation results (see 3-analysis/battery_sim.json, backup_endurance.json)
+## Simulation results (see `data/battery_sim.json`, `data/backup_endurance.json`)
 Arbitrage (per-interval, 90% RTE, charge from would-be exports + SOP grid top-up,
 discharge on-peak): 5P $779/yr · 10C $1,401 · PW3 $1,669 · 3×5P $1,737 ·
 2×10C $1,889 · PW3+Exp $2,032.
