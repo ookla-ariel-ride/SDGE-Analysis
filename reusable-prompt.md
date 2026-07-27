@@ -161,7 +161,15 @@ for whether gas has a real fixed monthly charge before claiming an all-electric
 "drop the connection fee" windfall — many gas bills are nearly purely volumetric.
 
 **11. Detailed bill audit — this is where the truth is.** Parse every monthly detailed PDF
-(electric AND gas) line-by-line. This validates modeled rates to the penny, resolves what the
+(electric AND gas) line-by-line **with a committed script, not an ad-hoc extraction** — the
+bill-derived totals anchor every absolute dollar in the report, so they fall under the
+"every artifact regenerable by its committed script" gate like everything else. Have the
+parser read billing periods from the statement TEXT (one statement can hold two periods when
+a rate change splits it), capture gross vs net kWh separately (non-bypassable charges are
+levied on gross), record which entity billed generation if that changes mid-corpus, refuse
+to publish when a statement is missing or periods fail to tile the window, and extract no
+personal identifiers. Where prior summaries exist, regenerating them byte-identically is the
+gate that validates the parser. This validates modeled rates to the penny, resolves what the
 model can't (whether a CCA credit actually applies, exact product, real climate zone), and
 reconciles MODEL vs ACTUAL. If they disagree, find the REAL driver before writing a story —
 test candidates separately: netting methodology, **rate vintage** (a model priced entirely at
@@ -262,8 +270,17 @@ spliced across models).
    **modeled** (validated model at current rates), or **estimated** (scaled history, single
    events, sampled days). One cleaning event or four sampled grid days must not read with the
    same authority as a year of 15-minute data.
-6. **No process narrative.** The report presents data → analysis → conclusions only.
-   Corrections and superseded drafts live in commits, never in the published document.
+6. **No process narrative — the report is a snapshot of the current dataset, not a
+   changelog of the analysis.** It presents data → analysis → conclusions only, and states
+   what the data shows now. Never compare a figure to an earlier version of itself, explain
+   why a number moved between revisions, or cite superseded work: no "X% below the earlier
+   estimate", no "carried from the retired workpaper", no "supersedes the previous model".
+   If a figure changed because the method improved, publish the new figure and why it is
+   right — a reader who never saw the old one must not be able to tell there was an old one.
+   Corrections, retired scripts, and method lineage live in the technical documentation and
+   commit history. Still required, and not process narrative: evidence labels about the
+   current data ("estimated · N days sampled"), and reconciliations between two live methods
+   run on the same data.
 7. **Adversarial verification.** Spawn a subagent to attack the math, rates, and claims
    end-to-end; resolve every finding before anything ships.
 8. **Fail-closed artifact discipline.** Derived-results scripts COMPUTE every figure from

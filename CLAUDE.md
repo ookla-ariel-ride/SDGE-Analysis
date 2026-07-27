@@ -200,6 +200,19 @@ Round-three review found every one of these violated. Check them mechanically, n
 - **Process narrative stays out of the report:** the report presents data → analysis →
   conclusions only. Corrections, superseded drafts, and "we fixed X" belong in commits/PRs,
   never in the published document.
+  **The report is a snapshot of the current dataset, not a changelog of the analysis.**
+  It states what the data shows now. It never compares a figure to an earlier version of
+  itself, explains why a number moved between revisions, or refers to superseded work.
+  Ban these constructions in report prose: "X% below the earlier N-day estimate", "carried
+  from the retired ... workpaper", "supersedes the previous ...", "originally we ...",
+  "this replaces ...", "the legacy ... is kept for reference". If a figure changed because
+  the method improved, publish the new figure and the reason it is right — a reader who
+  never saw the old one must not be able to tell there was an old one. Method lineage,
+  retired scripts, and correction history live in TECHNICAL.md, commit messages, and
+  CLAUDE.md. Two things that are NOT process narrative and must stay: evidence labels
+  about the CURRENT data ("estimated · 28 days sampled", "not artifact-backed"), and
+  reconciliations between two live methods run on the same data ("the netting methods
+  agree to 0.3%"), which §0 requires.
 
 ## 10. Report design & navigation requirements (index.html — keep on every regeneration).
 Start from `report-template.html` — it implements everything below plus the chart scaffolds,
