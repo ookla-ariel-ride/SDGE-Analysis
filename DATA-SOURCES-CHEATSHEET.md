@@ -1,8 +1,17 @@
 # Data Sources Cheatsheet — reproduce this analysis for your own home
 
-Fill in the blanks, gather the files into one folder, then hand them to Claude Cowork with
-`reusable-prompt.md`. Nothing here needs coding — it's all downloads and account logins.
-Items marked **(required)** are the minimum; the rest make the analysis richer.
+Everything the analysis needs, with directions for where each item lives in your utility and
+monitoring portals. Nothing here needs coding — it's all downloads and account logins. Items
+marked **(required)** are the minimum; the rest make the analysis richer.
+
+> **You don't have to work through this document alone — an assistant can walk you through
+> it.** Paste [`reusable-prompt.md`](reusable-prompt.md) into a Claude Cowork or Claude Code
+> session and it drives this cheatsheet section by section (A–H): asking each question in
+> turn, telling you which portal page the answer is on, operating the browser while you
+> handle the logins yourself, writing your answers into gitignored `private/household.yaml`,
+> and tracking what's still outstanding in `private/intake-status.md`. It will not begin the
+> analysis while a required field is unanswered. Reading it yourself works too — the
+> questions and directions below are in gathering order.
 
 **This document doubles as the machine-consumable intake-interview spec.** Every field below
 carries a small fenced `yaml` block: a stable `id`, the homeowner-facing `question`, the

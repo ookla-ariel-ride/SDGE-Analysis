@@ -85,7 +85,9 @@ git config core.hooksPath .githooks     # secret/PII scan now blocks every commi
 
 **1 · Run the intake interview.** Work through [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md),
 a per-field interview spec (`id` / `question` / `type` / `required_if` / `where` /
-`privacy` tier). Raw files (interval export, 12 months of detailed bills, production records,
+`privacy` tier). You can read it yourself, or hand `reusable-prompt.md` to an assistant and
+have it walk you through the questions section by section, operating the portals while you
+handle the logins. Raw files (interval export, 12 months of detailed bills, production records,
 rate tables) go in `private/1-raw-data/`; per-house facts go in `private/household.yaml`
 (copy `household.example.yaml` and replace every placeholder); log progress per field id in
 `private/intake-status.md`. Secrets (API keys, monitoring tokens) go ONLY into a gitignored
