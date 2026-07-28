@@ -34,6 +34,7 @@ figures in a second artifact is how they drift apart.
 
 Run from the private/verify sandbox with the Green Button export as usage.csv.
 """
+import datetime as dt
 import json
 import os
 import pathlib
@@ -66,17 +67,16 @@ def _repo_root():
 def build(d):
     """All report-facing series, from the same frame the rest of the pipeline uses."""
     d = d.copy()
-    # Fail closed on interval gaps. Missing slots would render as zeros in every
-    # mean and monthly bar below -- indistinguishable from low usage, which is
-    # the 27-day October bill gap failure shape (CLAUDE.md section 1) at chart
-    # scale. A calendar day carries 96 slots, 92 on the spring-forward Sunday,
-    # 100 on the fall-back one.
-    counts = d.groupby(d.dt.dt.date).size()
-    bad = counts[~counts.isin((92, 96, 100))]
-    if len(bad):
-        raise SystemExit("interval gaps in the analysis window; refusing to draw "
-                         "charts over missing data: " +
-                         ", ".join(f"{day} has {n} slots" for day, n in bad.items()))
+    # Fail closed on interval gaps -- BOTH directions. A per-day count check
+    # cannot see a wholly missing day (it never appears in the groupby), which
+    # is the 27-day October bill gap failure shape (CLAUDE.md section 1) at
+    # chart scale. The expected calendar comes from the pipeline's fixed
+    # window, not from the data, and each day's slot multiset is checked
+    # against the DST-aware expectation in rates.py.
+    win_end = br.WINDOW_END.date() - dt.timedelta(days=1)
+    win_start = br.WINDOW_END.date() - dt.timedelta(days=365)
+    R.validate_interval_coverage(
+        zip(d.dt.dt.date, d.dt.dt.hour + d.dt.dt.minute / 60), win_start, win_end)
     d["hour_i"] = d.dt.dt.hour
     d["gross_cost"] = [imp * R.allin(s, p)
                        for imp, s, p in zip(d.Consumption, d.seas, d.p)]

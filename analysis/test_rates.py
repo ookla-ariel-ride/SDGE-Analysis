@@ -109,6 +109,55 @@ def case_summer_months_are_owned_by_rates():
     return "the tariff season lives in rates.SUMMER_MONTHS, with no private month lists"
 
 
+def case_interval_coverage_rejects_a_wholly_missing_day():
+    """A day absent from the data never appears in a groupby, so count-based
+    checks pass right over it -- the October-gap failure shape. The validator
+    takes its calendar from the window, not from the data."""
+    start, end = dt.date(2026, 4, 1), dt.date(2026, 4, 3)
+    def day(d): return [(d, h) for h in R.expected_day_hours(d)]
+    good = day(start) + day(dt.date(2026, 4, 2)) + day(end)
+    R.validate_interval_coverage(good, start, end)          # complete: passes
+    for gone in (start, dt.date(2026, 4, 2), end):
+        broken = [x for x in good if x[0] != gone]
+        try:
+            R.validate_interval_coverage(broken, start, end)
+            raise AssertionError(f"missing {gone} was accepted")
+        except SystemExit as e:
+            assert str(gone) in str(e), e
+    return "a wholly missing day is rejected wherever it sits in the window"
+
+
+def case_interval_coverage_rejects_offsetting_slot_errors():
+    """Same count, wrong slots: a duplicated interval hiding an omitted one
+    passes any count check; the multiset comparison catches it."""
+    start = end = dt.date(2026, 4, 8)
+    hours = R.expected_day_hours(start)
+    swapped = hours[:-1] + [hours[0]]           # drop 23:45, duplicate 00:00
+    assert len(swapped) == len(hours)
+    try:
+        R.validate_interval_coverage([(start, h) for h in swapped], start, end)
+        raise AssertionError("offsetting duplicate+omission was accepted")
+    except SystemExit as e:
+        assert "malformed" in str(e), e
+    return "offsetting duplicate and omission on one day is rejected"
+
+
+def case_interval_coverage_accepts_dst_days_and_rejects_extras():
+    spring, fall = R.dst_transition_sundays(2026)
+    assert len(R.expected_day_hours(spring)) == 92
+    assert len(R.expected_day_hours(fall)) == 100
+    start = end = spring
+    R.validate_interval_coverage([(spring, h) for h in R.expected_day_hours(spring)],
+                                 start, end)
+    outside = [(spring, h) for h in R.expected_day_hours(spring)] + [(fall, 0.0)]
+    try:
+        R.validate_interval_coverage(outside, start, end)
+        raise AssertionError("a day outside the window was accepted")
+    except SystemExit as e:
+        assert "outside the window" in str(e), e
+    return "DST slot counts are honored and out-of-window days are rejected"
+
+
 CASES = [
     case_eight_tariff_holidays,
     case_off_peak_day_covers_weekends_and_holidays,
@@ -116,6 +165,9 @@ CASES = [
     case_period_at_matches_period_when_told_the_truth,
     case_holiday_rule_spans_the_reporting_era,
     case_summer_months_are_owned_by_rates,
+    case_interval_coverage_rejects_a_wholly_missing_day,
+    case_interval_coverage_rejects_offsetting_slot_errors,
+    case_interval_coverage_accepts_dst_days_and_rejects_extras,
     case_no_analysis_module_derives_the_day_type_by_weekday_alone,
 ]
 

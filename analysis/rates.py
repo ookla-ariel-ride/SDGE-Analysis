@@ -138,6 +138,61 @@ def period(hour_frac, is_weekend):
     if is_weekend: return "sop" if hour_frac < 14 else "off"
     return "sop" if (hour_frac < 6 or 10 <= hour_frac < 14) else "off"
 
+def dst_transition_sundays(year):
+    """(spring-forward, fall-back) Sundays under the US rules in force."""
+    def nth_sunday(month, n):
+        c = _dt.date(year, month, 1)
+        return c + _dt.timedelta(days=(6 - c.weekday()) % 7 + 7 * (n - 1))
+    return nth_sunday(3, 2), nth_sunday(11, 1)
+
+
+def expected_day_hours(date):
+    """The exact multiset of 15-minute hour_frac slots a calendar day carries.
+
+    96 slots ordinarily; the spring-forward Sunday lacks 02:00-02:45 (92); the
+    fall-back Sunday repeats 01:00-01:45 (100). This is wall-clock tariff
+    arithmetic, so it lives here with the rest of the tariff clock.
+    """
+    spring, fall = dst_transition_sundays(date.year)
+    base = [i * 0.25 for i in range(96)]
+    if date == spring:
+        return sorted(h for h in base if not 2.0 <= h < 3.0)
+    if date == fall:
+        return sorted(base + [1.0, 1.25, 1.5, 1.75])
+    return base
+
+
+def validate_interval_coverage(pairs, start, end):
+    """Fail loudly unless [start, end] is completely and exactly covered.
+
+    `pairs` is an iterable of (date, hour_frac). Checks BOTH directions --
+    every calendar day in the window present, no day outside it -- and each
+    day's slot multiset against expected_day_hours, so a wholly missing day, a
+    truncated day, and an offsetting duplicate-plus-omission (same count,
+    wrong slots) are all rejected. A day absent from the data never shows up
+    in a groupby, which is exactly how the 27-day October bill gap silently
+    understated an annual baseline by 9% (CLAUDE.md section 1).
+    """
+    got = {}
+    for d, h in pairs:
+        got.setdefault(d, []).append(h)
+    want_days = {start + _dt.timedelta(days=i) for i in range((end - start).days + 1)}
+    missing = sorted(want_days - set(got))
+    extra = sorted(set(got) - want_days)
+    if missing or extra:
+        raise SystemExit(
+            f"interval coverage does not match the {start}..{end} window: "
+            f"{len(missing)} day(s) missing entirely "
+            f"({', '.join(map(str, missing[:5]))}{'...' if len(missing) > 5 else ''}), "
+            f"{len(extra)} day(s) outside the window")
+    bad = []
+    for d in sorted(got):
+        if sorted(got[d]) != expected_day_hours(d):
+            bad.append(f"{d} has {len(got[d])} slots or wrong slot times")
+    if bad:
+        raise SystemExit("malformed interval days: " + "; ".join(bad[:5]))
+
+
 def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
     """{month: $} via monthly per-period NEM netting + NBC on gross imports + BSC.
     frame needs columns: dt, seas ('S'/'W'), p ('on'/'off'/'sop'), ym, imp, exp."""

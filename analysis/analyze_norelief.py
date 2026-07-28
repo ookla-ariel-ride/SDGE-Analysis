@@ -181,11 +181,18 @@ stats["night_import_kwh"]=round(night.Consumption.sum(),1)
 # hourly profile
 prof = d.groupby(d.dt.dt.hour).agg(imp=("Consumption","mean"),exp=("Generation","mean"),net=("Net","mean")).round(3)
 print(prof)
-prof.to_csv(_DATA / "hourly_profile.csv")
+_tmp = {n: _DATA / (n + ".tmp" + str(__import__("os").getpid())) for n in ("hourly_profile.csv", "monthly.csv", "plan_results.csv", "stats.json")}
+prof.to_csv(_tmp["hourly_profile.csv"])
 # monthly
 mon = d.groupby(d.dt.dt.to_period("M")).agg(imp=("Consumption","sum"),exp=("Generation","sum"),net=("Net","sum")).round(1)
 print(mon)
-mon.to_csv(_DATA / "monthly.csv")
-res.to_csv(_DATA / "plan_results.csv",index=False)
-json.dump(stats,open(_DATA / "stats.json","w"),indent=1)
+mon.to_csv(_tmp["monthly.csv"])
+res.to_csv(_tmp["plan_results.csv"],index=False)
+with open(_tmp["stats.json"], "w") as _fh:
+    json.dump(stats, _fh, indent=1)
+# every artifact fully serialized -- promote the set; os.replace is atomic
+# per file, so an interruption can truncate nothing and the pre-promotion
+# window leaves the committed artifacts untouched
+for _n, _t in _tmp.items():
+    __import__("os").replace(_t, _DATA / _n)
 print(json.dumps(stats,indent=1))

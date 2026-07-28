@@ -184,29 +184,14 @@ def holidays(years):
 
 
 def dst_dates(year):
-    """(spring-forward Sunday, fall-back Sunday) under the US rules in force.
-
-    Second Sunday in March and first Sunday in November. Returned as dates so the
-    slot validator can require 92 and 100 slots on exactly those two days and 96
-    everywhere else, rather than waving through any day with an unusual count.
-    """
-    def nth_sunday(month, n):
-        c = dt.date(year, month, 1)
-        return c + dt.timedelta(days=(6 - c.weekday()) % 7 + 7 * (n - 1))
-
-    return nth_sunday(3, 2), nth_sunday(11, 1)
+    """(spring-forward Sunday, fall-back Sunday) -- delegates to rates.py, the
+    single home of the tariff clock, so the DST rule cannot fork."""
+    return R.dst_transition_sundays(year)
 
 
 def expected_slots(date):
     """The exact multiset of 15-minute slots this calendar day should carry."""
-    spring, fall = dst_dates(date.year)
-    if date == spring:
-        return collections.Counter({h: 1 for h in CANONICAL_SLOTS
-                                    if h not in SPRING_FORWARD_GAP})
-    if date == fall:
-        return collections.Counter({h: 2 if h in FALL_BACK_REPEAT else 1
-                                    for h in CANONICAL_SLOTS})
-    return collections.Counter({h: 1 for h in CANONICAL_SLOTS})
+    return collections.Counter(R.expected_day_hours(date))
 
 
 def day_defect(date, slots):

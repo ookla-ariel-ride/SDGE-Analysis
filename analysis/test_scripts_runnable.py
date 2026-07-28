@@ -493,6 +493,50 @@ def case_every_generator_is_covered_by_one_of_the_two_tiers():
     return f"every one of the {len(declared)} generators sits in an execution tier"
 
 
+def case_missing_day_fails_the_chart_generator():
+    """Behavioral regression for the whole-day blind spot: delete one calendar
+    day from an otherwise complete fixture and report_data must refuse, naming
+    the coverage problem, instead of drawing charts with a quietly shrunken
+    month."""
+    import re as _re
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _build_throwaway_root(pathlib.Path(td), synthetic=True)
+        usage = tmp / "usage.csv"
+        gone = "2/11/2026"          # a Wednesday inside the fixed window
+        kept = [l for l in usage.read_text().splitlines()
+                if f'"{gone}"' not in l]
+        usage.write_text("\n".join(kept) + "\n")
+        r = subprocess.run([sys.executable, "report_data.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=900)
+        assert r.returncode != 0, "report_data accepted a frame missing a whole day"
+        err = r.stderr + r.stdout
+        assert "2026-02-11" in err and "missing" in err, err[-200:]
+    return "report_data refuses a wholly missing day and names it"
+
+
+def case_publication_failure_leaves_artifacts_untouched():
+    """Failure injection for the staged-write publication: with data/ made
+    read-only, the run must fail without truncating or partially replacing any
+    committed artifact -- no mixed-generation output, no .tmp junk promoted."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _build_throwaway_root(pathlib.Path(td), synthetic=True)
+        data = tmp / "data"
+        before = {f.name: f.read_bytes() for f in data.iterdir() if f.is_file()}
+        os.chmod(data, 0o555)
+        try:
+            r = subprocess.run([sys.executable, "analyze_norelief.py"], cwd=tmp,
+                               capture_output=True, text=True, timeout=900)
+        finally:
+            os.chmod(data, 0o755)
+        assert r.returncode != 0, "expected the run to fail with data/ read-only"
+        after = {f.name: f.read_bytes() for f in data.iterdir() if f.is_file()}
+        assert after == before, (
+            "artifacts changed despite the publication failure: "
+            + str(sorted(set(after) ^ set(before)
+                         | {k for k in after if after.get(k) != before.get(k)}))[:200])
+    return "a publication failure leaves every committed artifact byte-untouched"
+
+
 CASES = [
     case_manifest_is_complete_and_exact,
     case_no_two_generators_own_the_same_artifact,
@@ -504,6 +548,8 @@ CASES = [
     case_the_ci_tier_cannot_skip,
     case_every_generator_is_covered_by_one_of_the_two_tiers,
     case_generators_run_on_synthetic_inputs,
+    case_missing_day_fails_the_chart_generator,
+    case_publication_failure_leaves_artifacts_untouched,
     case_generators_run_on_the_real_archive,
 ]
 

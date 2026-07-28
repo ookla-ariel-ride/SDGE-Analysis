@@ -37,6 +37,7 @@ import pandas as pd
 import household as hh
 
 CSV = "usage.csv"  # SDG&E Green Button 15-min (skiprows=13)
+WINDOW_END = dt.datetime(2026, 7, 24)   # analysis year = the 365 days before this
 
 # ---- rates: identical to billing_model_nem.py (actual bills, 6/1/2026) ----
 import rates as R                                          # canonical module
@@ -69,7 +70,7 @@ def load():
                               format="%m/%d/%Y %I:%M %p")
     for c in ["Consumption", "Generation"]:
         df[c] = pd.to_numeric(df[c])
-    end = dt.datetime(2026, 7, 24)
+    end = WINDOW_END
     df = df[(df.dt >= end - dt.timedelta(days=365)) & (df.dt < end)]
     df = df.sort_values("dt").reset_index(drop=True)
     df["hour"] = df.dt.dt.hour + df.dt.dt.minute / 60
