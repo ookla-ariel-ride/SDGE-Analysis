@@ -20,20 +20,19 @@ Rates read off the actual bills (EV-TOU-5 + CEA Clean Impact Plus, eff. 6/1/2026
 import pandas as pd, numpy as np, datetime as dt
 
 CSV="usage.csv"  # SDG&E Green Button 15-min (skiprows=13)
+import rates as R                                            # canonical TOU assignment
 from rates import UDC, CEA, NBC, PCIA, BSC, energy, credit  # canonical (single source of truth)
 
 def load():
     df=pd.read_csv(CSV,skiprows=13); df.columns=[c.strip() for c in df.columns]
     df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %p")
     for c in ["Consumption","Generation"]: df[c]=pd.to_numeric(df[c])
-    df["hour"]=df.dt.dt.hour; df["wkend"]=df.dt.dt.weekday>=5
+    df["hour"]=df.dt.dt.hour
+    df["wkend"]=df.dt.dt.date.map(R.off_peak_day)
     df["seas"]=np.where(df.dt.dt.month.isin([6,7,8,9,10]),"S","W"); df["ym"]=df.dt.dt.to_period("M")
-    def per(r):
-        h=r.hour
-        if 16<=h<21: return "on"
-        if r.wkend: return "sop" if h<14 else "off"
-        return "sop" if (h<6 or 10<=h<14) else "off"
-    df["p"]=df.apply(per,axis=1); return df
+    # canonical date-aware assignment: derives the holiday rule itself
+    df["p"]=[R.period_at(t) for t in df.dt]
+    return df
 
 def bill(frame, imp="Consumption", exp="Generation"):
     """Annual $: monthly per-period NEM netting + NBC on gross imports + daily BSC."""

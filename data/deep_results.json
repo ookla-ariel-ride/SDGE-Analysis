@@ -1,8 +1,8 @@
 {
  "wildcard": {
-  "TOU-DR-P + PW3 (15 events dodged)": 6758,
-  "EV-TOU-5 + PW3": 3217,
-  "TOU-DR-P no battery (events hit)": 7528
+  "TOU-DR-P + PW3 (15 events dodged)": 6757,
+  "EV-TOU-5 + PW3": 3201,
+  "TOU-DR-P no battery (events hit)": 7527
  },
  "phantom": {
   "baseload_kw": 1.02,
@@ -13,13 +13,13 @@
  "ev_sessions": {
   "count": 580,
   "kwh_total": 14226,
-  "cost_total": 3112,
+  "cost_total": 3109,
   "avg_kwh": 24.5,
   "sessions_touching_onpeak": 50,
   "onpeak_kwh_in_sessions": 958,
-  "offpeak_kwh_in_sessions": 1723,
+  "offpeak_kwh_in_sessions": 1716,
   "cost_if_all_sop": 1788,
-  "wasted_vs_perfect": 1324
+  "wasted_vs_perfect": 1321
  },
  "vacation": {
   "non_ev_daily_median": 37.7,

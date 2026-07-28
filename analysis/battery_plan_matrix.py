@@ -16,13 +16,12 @@ assignment) so the no-battery column ties out to the committed
 data/plan_results.csv to the dollar (asserted below).
 
 Window note: all three plans share the same 2026 three-period TOU windows, so a
-single dispatch trace serves all three; the trace here uses the holiday-aware
-period assignment (analyze.py convention, TECHNICAL.md §6.5) while the
-published EV-TOU-5 battery economics (battery_dispatch_policies.json) use the
-canonical bill-derived engine with no holiday rule — which is why the EV-TOU-5
-column differs from the canonical $4,884 / $2,325 figures; both are recorded in
-the artifact (canonical_crosscheck, asserted against the committed dispatch
-artifact).
+single dispatch trace serves all three. Day types come from rates.off_peak_day,
+the same canonical rule the published EV-TOU-5 economics use, so the two bases
+now agree on which days take weekend windows; what still separates this column
+from the canonical figures is the rate basis (published tables here, bill-derived
+there). Both are recorded in the artifact (canonical_crosscheck, asserted against
+the committed dispatch artifact).
 
 Output: data/battery_plan_matrix.json (repo-root resolved, so the
 private/verify sandbox pattern needs no path edits).
@@ -34,6 +33,7 @@ import os
 import numpy as np
 import pandas as pd
 
+import rates as R                 # canonical TOU assignment
 import behavior_rebuild as br
 from battery_dispatch_policies import run_batt
 
@@ -66,21 +66,8 @@ def repo_root():
     raise SystemExit("repo root not found (data/plan_results.csv)")
 
 
-def holidays(years):
-    H = []
-    for y in years:
-        H += [dt.date(y, 1, 1), dt.date(y, 7, 4), dt.date(y, 11, 11), dt.date(y, 12, 25)]
-
-        def nth_weekday(y, m, wd, n):
-            c = dt.date(y, m, 1)
-            return c + dt.timedelta(days=(wd - c.weekday()) % 7 + 7 * (n - 1))
-
-        H += [nth_weekday(y, 2, 0, 3), nth_weekday(y, 9, 0, 1), nth_weekday(y, 11, 3, 4)]
-        c = dt.date(y, 5, 31)
-        while c.weekday() != 0:
-            c -= dt.timedelta(days=1)
-        H.append(c)
-    return set(H)
+# Holiday calendar comes from rates.off_peak_day (the canonical, bill-confirmed
+# rule); this module used to keep its own copy of the same eight dates.
 
 
 def bill_plan(plan, seas, per, imp, exp):
@@ -94,9 +81,8 @@ if __name__ == "__main__":
     root = repo_root()
     d = br.load()
     # holiday-aware TOU assignment (analyze.py convention -> ties to plan_results.csv)
-    HOL = holidays([2025, 2026])
     h = d.hour.values
-    wk = (d.dt.dt.weekday >= 5) | d.dt.dt.date.isin(HOL)
+    wk = d.dt.dt.date.map(R.off_peak_day)
     d = d.copy()
     d["p"] = np.where((h >= 16) & (h < 21), "on",
                       np.where(wk, np.where(h < 14, "sop", "off"),
@@ -143,8 +129,8 @@ if __name__ == "__main__":
             "no_battery": canon["baseline_bill_current_rates"],
             "battery_value": canon["pw3"]["greedy"]["save"],
             "basis": ("data/battery_dispatch_policies.json — bill-derived rates, "
-                      "rates.bill_nem monthly NEM netting, no holiday rule; the published "
-                      "EV-TOU-5 battery economics")},
+                      "rates.bill_nem monthly NEM netting, canonical holiday rule; "
+                      "the published EV-TOU-5 battery economics")},
     }
     tmp = os.path.join(root, "data", "battery_plan_matrix.json.tmp")
     with open(tmp, "w") as fh:

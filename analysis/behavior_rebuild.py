@@ -81,7 +81,7 @@ def load():
     df["ym"] = df.dt.dt.to_period("M")
 
     # TOU assignment comes from the canonical module, not a local copy of the rule.
-    df["p"] = [R.period(h, w) for h, w in zip(df.hour, df.wkend)]
+    df["p"] = [R.period_at(t) for t in df.dt]
     return df
 
 

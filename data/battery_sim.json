@@ -4,9 +4,9 @@
   "usable_kwh": 5.0,
   "power_kw": 3.84,
   "onpeak_offset_value": 1127,
-  "forgone_export_credits": 212,
+  "forgone_export_credits": 210,
   "grid_charge_cost": 132,
-  "net_annual_savings": 782,
+  "net_annual_savings": 785,
   "equiv_full_cycles": 317
  },
  {
@@ -14,9 +14,9 @@
   "usable_kwh": 10.0,
   "power_kw": 7.08,
   "onpeak_offset_value": 1935,
-  "forgone_export_credits": 329,
+  "forgone_export_credits": 326,
   "grid_charge_cost": 199,
-  "net_annual_savings": 1407,
+  "net_annual_savings": 1410,
   "equiv_full_cycles": 268
  },
  {
@@ -24,9 +24,9 @@
   "usable_kwh": 13.5,
   "power_kw": 11.5,
   "onpeak_offset_value": 2262,
-  "forgone_export_credits": 384,
+  "forgone_export_credits": 381,
   "grid_charge_cost": 201,
-  "net_annual_savings": 1677,
+  "net_annual_savings": 1680,
   "equiv_full_cycles": 229
  },
  {
@@ -34,9 +34,9 @@
   "usable_kwh": 15.0,
   "power_kw": 7.68,
   "onpeak_offset_value": 2345,
-  "forgone_export_credits": 405,
+  "forgone_export_credits": 402,
   "grid_charge_cost": 193,
-  "net_annual_savings": 1747,
+  "net_annual_savings": 1750,
   "equiv_full_cycles": 213
  },
  {
@@ -44,9 +44,9 @@
   "usable_kwh": 20.0,
   "power_kw": 7.08,
   "onpeak_offset_value": 2529,
-  "forgone_export_credits": 464,
+  "forgone_export_credits": 461,
   "grid_charge_cost": 163,
-  "net_annual_savings": 1902,
+  "net_annual_savings": 1905,
   "equiv_full_cycles": 171
  },
  {
@@ -54,9 +54,9 @@
   "usable_kwh": 27.0,
   "power_kw": 11.5,
   "onpeak_offset_value": 2713,
-  "forgone_export_credits": 528,
+  "forgone_export_credits": 526,
   "grid_charge_cost": 134,
-  "net_annual_savings": 2051,
+  "net_annual_savings": 2054,
   "equiv_full_cycles": 136
  }
 ]

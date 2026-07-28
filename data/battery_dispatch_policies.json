@@ -5,7 +5,7 @@
   "onpeak_import_kwh": 4022,
   "servable_offpeak_house_kwh": 1950,
   "serviceable_total_kwh": 5972,
-  "note": "canonical rates.period assignment (no holiday rule); analyze.py's holiday-as-weekend rule gives nonsop 8,467 (the periods-chart basis)"
+  "note": "canonical rates.period_at assignment, including the eight bill-confirmed tariff holidays as weekend days"
  },
  "pw3": {
   "evening": {

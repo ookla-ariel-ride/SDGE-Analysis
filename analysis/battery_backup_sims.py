@@ -5,20 +5,20 @@ hourly consumption 2026/2025). Rates: EV-TOU-5 + CEA eff. 6/1/2026, PCIA 2023 vi
 Outputs: battery_sim.json (arbitrage), backup_endurance.json (outage endurance).
 """
 import pandas as pd, numpy as np, json, datetime as dt
+import sys, pathlib as _pl
+sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+import rates as R   # canonical TOU assignment (holiday rule included)
 
 # ---- load SDGE 15-min ----
 df=pd.read_csv("usage.csv",skiprows=13); df.columns=[c.strip() for c in df.columns]
 df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %p")
 for c in["Consumption","Generation"]: df[c]=pd.to_numeric(df[c])
 end=dt.datetime(2026,7,24); d=df[(df.dt>=end-dt.timedelta(days=365))&(df.dt<end)].copy()
-d["hour"]=d.dt.dt.hour+d.dt.dt.minute/60; d["wkend"]=d.dt.dt.weekday>=5
+d["hour"]=d.dt.dt.hour+d.dt.dt.minute/60
+d["wkend"]=d.dt.dt.date.map(R.off_peak_day)
 d["seas"]=np.where(d.dt.dt.month.isin([6,7,8,9,10]),"S","W")
-def per(r):
-    h=r.hour
-    if 16<=h<21: return "on"
-    if r.wkend: return "sop" if h<14 else "off"
-    return "sop" if (h<6 or 10<=h<14) else "off"
-d["p"]=d.apply(per,axis=1); d["date"]=d.dt.dt.date
+# canonical date-aware assignment: derives the holiday rule itself
+d["p"]=[R.period_at(t) for t in d.dt]; d["date"]=d.dt.dt.date
 WFNBC=0.00591;PCIA=0.02828;NBC=0.01515-0.00007+WFNBC
 UDC={"S":{"on":0.31711,"off":0.31711,"sop":0.04114},"W":{"on":0.31711,"off":0.31711,"sop":0.04114}}
 CEA={"S":{"on":0.51684,"off":0.15975,"sop":0.04961},"W":{"on":0.24430,"off":0.15782,"sop":0.05187}}

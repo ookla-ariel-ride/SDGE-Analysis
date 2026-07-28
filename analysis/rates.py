@@ -88,7 +88,27 @@ def off_peak_day(date):
     return date.weekday() >= 5 or date in _HOL
 
 
+def period_at(ts):
+    """TOU period for a timestamp. THE canonical assignment -- prefer this.
+
+    Takes a datetime (or anything with .hour/.minute and a .date()) and derives
+    both the hour and the weekend-or-holiday status itself, so a caller cannot
+    forget the holiday rule. period() below leaves that flag to the caller, which
+    is exactly how weekday holidays got priced as ordinary weekdays in several
+    scripts for as long as they existed.
+    """
+    d = ts.date() if hasattr(ts, "date") else ts
+    hour = ts.hour + getattr(ts, "minute", 0) / 60
+    return period(hour, off_peak_day(d))
+
+
 def period(hour_frac, is_weekend):
+    """Low-level assignment; the caller supplies the day type.
+
+    Use period_at() unless you are deliberately modelling a different day-type
+    rule (tou_audit.py does this to score the tariff's historical structure). A
+    bare weekday>=5 test here silently drops the confirmed holiday rule.
+    """
     if 16 <= hour_frac < 21: return "on"
     if is_weekend: return "sop" if hour_frac < 14 else "off"
     return "sop" if (hour_frac < 6 or 10 <= hour_frac < 14) else "off"

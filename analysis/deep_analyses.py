@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Deep-dive analyses: TOU-DR-P+battery, phantom load, EV sessions, vacations, Monte Carlo."""
 import pandas as pd, numpy as np, json, datetime as dt
+import sys, pathlib as _pl
+sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+import rates as R   # canonical TOU assignment (holiday rule included)
 
 df=pd.read_csv("usage.csv",skiprows=13); df.columns=[c.strip() for c in df.columns]
 df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %p")
 for c in["Consumption","Generation"]: df[c]=pd.to_numeric(df[c])
 end=dt.datetime(2026,7,24); d=df[(df.dt>=end-dt.timedelta(days=365))&(df.dt<end)].copy().reset_index(drop=True)
-d["hour"]=d.dt.dt.hour+d.dt.dt.minute/60; d["wkend"]=d.dt.dt.weekday>=5
+d["hour"]=d.dt.dt.hour+d.dt.dt.minute/60
+d["wkend"]=d.dt.dt.date.map(R.off_peak_day)
 d["seas"]=np.where(d.dt.dt.month.isin([6,7,8,9,10]),"S","W")
-def per(r):
-    h=r.hour
-    if 16<=h<21: return "on"
-    if r.wkend: return "sop" if h<14 else "off"
-    return "sop" if (h<6 or 10<=h<14) else "off"
-d["p"]=d.apply(per,axis=1); d["date"]=d.dt.dt.date
+# canonical date-aware assignment: derives the holiday rule itself
+d["p"]=[R.period_at(t) for t in d.dt]; d["date"]=d.dt.dt.date
 WFNBC=0.00591;PCIA=0.02828;NBC=0.01515-0.00007+WFNBC;BSC=0.79343
 out={}
 
