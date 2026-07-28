@@ -20,3 +20,18 @@ jobs:
       - run: pip install -r requirements.txt
       - name: parse_bills guard tests
         run: python analysis/test_parse_bills.py
+
+  tou-audit:
+    # The TOU audit reconciles billed kWh against the raw interval export, which is
+    # gitignored. Every test case is synthetic, so the edge handling that carries the
+    # audit — DST-length days, period boundaries, the structural changeover date and
+    # holiday assignment — is guarded here in full.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: tou_audit guard tests
+        run: python analysis/test_tou_audit.py
