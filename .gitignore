@@ -64,6 +64,7 @@ data/.parse_bills.lock
 # Run products of the documented pipeline that are NOT committed artifacts:
 # stats.json is analyze_norelief's superset dump (report_data.json supersedes it);
 # *_relief* are the superseded relief-credit variant's outputs.
+data/.publish.lock
 data/stats.json
 data/*_relief*
 

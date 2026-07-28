@@ -145,12 +145,72 @@ def case_missing_staged_file_refuses_before_touching_anything():
     return "an incompletely staged set is refused before any target is touched"
 
 
+def case_rollback_removes_targets_created_this_run():
+    """First-run shape: none of the targets exist yet (analyze.py's *_relief
+    files). A failure after some promotions must remove the newly created
+    targets again -- 'restore the pre-call state' when the pre-call state is
+    absence. This was a real hole: absent targets had no .bak entry and the
+    rollback left them in place as a partial new set."""
+    for fail_at in range(2, len(NAMES) + 1):
+        with tempfile.TemporaryDirectory() as td:
+            dest, staged = _setup(td)
+            for n in NAMES:                     # pre-call state: nothing exists
+                (dest / n).unlink()
+            real_replace = os.replace
+            calls = {"n": 0}
+
+            def flaky(src, dst, _real=real_replace, _calls=calls, _fail=fail_at):
+                if str(dst).endswith(tuple(NAMES)) and ".bak" not in str(dst):
+                    _calls["n"] += 1
+                    if _calls["n"] == _fail:
+                        raise OSError(28, "injected: no space left on device")
+                return _real(src, dst)
+
+            os.replace = flaky
+            try:
+                publish.promote_set(staged, str(dest))
+                raise AssertionError(f"injected failure at {fail_at} did not raise")
+            except OSError:
+                pass
+            finally:
+                os.replace = real_replace
+            left = [n for n in NAMES if (dest / n).exists()]
+            assert not left, (
+                f"partial new set left after failure at {fail_at}: {left}")
+    return "a failure with absent pre-call targets removes every created file again"
+
+
+def case_concurrent_publisher_is_locked_out():
+    """Two publishers into one directory must serialize; the second refuses
+    while the first holds the lock (parse_bills round-4 lesson: check-then-act
+    without a lock corrupted 11 of 15 raced runs)."""
+    import fcntl
+    with tempfile.TemporaryDirectory() as td:
+        dest, staged = _setup(td)
+        holder = open(dest / publish.LOCK_NAME, "w")
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        try:
+            publish.promote_set(staged, str(dest))
+            raise AssertionError("second publisher ran despite a held lock")
+        except SystemExit as e:
+            assert "serialized" in str(e), e
+        finally:
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            holder.close()
+        assert _generation(dest) == {"OLD"}, "targets touched while locked out"
+        done = publish.promote_set(staged, str(dest))   # and works once released
+        assert sorted(done) == sorted(NAMES)
+    return "a concurrent publisher is refused while the lock is held, runs after"
+
+
 CASES = [
     case_success_promotes_the_full_set,
     case_failure_at_every_promotion_point_leaves_no_mixed_set,
     case_failed_rollback_keeps_the_recovery_copies_and_names_them,
     case_leftover_recovery_copy_blocks_publication,
     case_missing_staged_file_refuses_before_touching_anything,
+    case_rollback_removes_targets_created_this_run,
+    case_concurrent_publisher_is_locked_out,
 ]
 
 
