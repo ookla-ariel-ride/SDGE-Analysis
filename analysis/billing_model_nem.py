@@ -47,5 +47,8 @@ def bill(frame, imp="Consumption", exp="Generation"):
 
 if __name__=="__main__":
     d=load(); end=dt.datetime(2026,7,24); d=d[(d.dt>=end-dt.timedelta(days=365))&(d.dt<end)].copy()
+    R.validate_interval_coverage(zip(d.dt.dt.date, d.dt.dt.hour + d.dt.dt.minute / 60),
+                                 (end - dt.timedelta(days=365)).date(),
+                                 (end - dt.timedelta(days=1)).date())
     print("model baseline at 6/1/2026 rates: $%.0f/yr"%bill(d))
     print("(actual billed, 365-day audit largely on 2025 tariffs: $3,282)")

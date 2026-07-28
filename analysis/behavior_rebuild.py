@@ -73,6 +73,13 @@ def load():
     end = WINDOW_END
     df = df[(df.dt >= end - dt.timedelta(days=365)) & (df.dt < end)]
     df = df.sort_values("dt").reset_index(drop=True)
+    # Fail closed before ANY consumer computes: this loader feeds the dispatch,
+    # package, findings and carbon pipelines, and a wholly missing day silently
+    # shrinks every figure they publish (the October-gap failure shape). The
+    # expected calendar comes from the fixed window, not from the data.
+    R.validate_interval_coverage(
+        zip(df.dt.dt.date, df.dt.dt.hour + df.dt.dt.minute / 60),
+        (end - dt.timedelta(days=365)).date(), (end - dt.timedelta(days=1)).date())
     df["hour"] = df.dt.dt.hour + df.dt.dt.minute / 60
     # Weekend windows also apply on the eight tariff holidays; rates.off_peak_day
     # is the single source of that rule (confirmed against the bills, see

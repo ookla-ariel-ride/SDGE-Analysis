@@ -9,6 +9,7 @@ df=pd.read_csv("usage.csv",skiprows=13); df.columns=[c.strip() for c in df.colum
 df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %p")
 for c in["Consumption","Generation"]: df[c]=pd.to_numeric(df[c])
 end=dt.datetime(2026,7,24); d=df[(df.dt>=end-dt.timedelta(days=365))&(df.dt<end)].copy().reset_index(drop=True)
+R.validate_interval_coverage(zip(d.dt.dt.date, d.dt.dt.hour + d.dt.dt.minute / 60), (end - dt.timedelta(days=365)).date(), (end - dt.timedelta(days=1)).date())
 d["hour"]=d.dt.dt.hour+d.dt.dt.minute/60
 d["seas"]=np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)),"S","W")
 # canonical date-aware assignment: derives the holiday rule itself

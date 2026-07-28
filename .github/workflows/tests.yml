@@ -57,3 +57,5 @@ jobs:
         run: python analysis/test_carbon_fullyear.py
       - name: household intake fail-closed behavior
         run: python analysis/test_household.py
+      - name: transactional set publication
+        run: python analysis/test_publish.py

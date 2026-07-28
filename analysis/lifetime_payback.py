@@ -60,6 +60,11 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     end = pd.Timestamp(window_end)
     # with-solar year (Green Button)
     df = pd.read_csv(usage_csv, skiprows=13); df.columns = [c.strip() for c in df.columns]
+    # this loader spans eras rather than the fixed pipeline year, so the expected
+    # calendar is its own extent: interior gaps and malformed days still fail closed
+    _dts = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
+    R.validate_interval_coverage(zip(_dts.dt.date, _dts.dt.hour + _dts.dt.minute / 60),
+                                 _dts.dt.date.min(), _dts.dt.date.max())
     df["dt"] = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
     for c in ("Consumption", "Generation"): df[c] = pd.to_numeric(df[c])
     df = df[(df.dt >= end - pd.Timedelta(days=365)) & (df.dt < end)].copy()

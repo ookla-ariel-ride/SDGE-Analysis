@@ -55,6 +55,9 @@ print("totals: cons %.1f gen %.1f net %.1f" % (df.Consumption.sum(), df.Generati
 end = dt.datetime(2026,7,24)
 start = end - dt.timedelta(days=365)
 d = df[(df.dt >= start) & (df.dt < end)].copy()
+import rates as _R   # coverage validation only; rate tables here stay published-table by design
+_R.validate_interval_coverage(zip(d.dt.dt.date, d.dt.dt.hour + d.dt.dt.minute / 60),
+                              start.date(), (end - dt.timedelta(days=1)).date())
 print("analysis window:", d.dt.min(), d.dt.max(), "days:", (d.dt.max()-d.dt.min()))
 
 # ---------- calendar ----------
@@ -201,9 +204,10 @@ mon.to_csv(_tmp["monthly_relief.csv"])
 res.to_csv(_tmp["plan_results_relief.csv"],index=False)
 with open(_tmp["stats_relief.json"], "w") as _fh:
     json.dump(stats, _fh, indent=1)
-# every artifact fully serialized -- promote the set; os.replace is atomic
-# per file, so an interruption can truncate nothing and the pre-promotion
-# window leaves the committed artifacts untouched
-for _n, _t in _tmp.items():
-    __import__("os").replace(_t, _DATA / _n)
+# every artifact fully serialized -- promote as a SET via the transactional
+# protocol (analysis/publish.py): all four land, or the originals are restored.
+# A bare per-file replace loop is atomic per file but not per set, and a kill
+# between replacements would leave data/ mixing two runs.
+import publish as _publish
+_publish.promote_set({n: str(t) for n, t in _tmp.items()}, str(_DATA))
 print(json.dumps(stats,indent=1))

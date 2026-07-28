@@ -67,16 +67,8 @@ def _repo_root():
 def build(d):
     """All report-facing series, from the same frame the rest of the pipeline uses."""
     d = d.copy()
-    # Fail closed on interval gaps -- BOTH directions. A per-day count check
-    # cannot see a wholly missing day (it never appears in the groupby), which
-    # is the 27-day October bill gap failure shape (CLAUDE.md section 1) at
-    # chart scale. The expected calendar comes from the pipeline's fixed
-    # window, not from the data, and each day's slot multiset is checked
-    # against the DST-aware expectation in rates.py.
-    win_end = br.WINDOW_END.date() - dt.timedelta(days=1)
-    win_start = br.WINDOW_END.date() - dt.timedelta(days=365)
-    R.validate_interval_coverage(
-        zip(d.dt.dt.date, d.dt.dt.hour + d.dt.dt.minute / 60), win_start, win_end)
+    # Interval completeness is enforced in behavior_rebuild.load(), the shared
+    # loader every frame here comes through; see rates.validate_interval_coverage.
     d["hour_i"] = d.dt.dt.hour
     d["gross_cost"] = [imp * R.allin(s, p)
                        for imp, s, p in zip(d.Consumption, d.seas, d.p)]

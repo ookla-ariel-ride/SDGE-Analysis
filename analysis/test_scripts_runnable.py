@@ -49,6 +49,7 @@ SANDBOX = ROOT / "private" / "verify"
 MANIFEST = {
     "rates.py": "library",
     "household.py": "library",
+    "publish.py": "library",
     "behavior_rebuild.py": "generator",
     "battery_dispatch_policies.py": "generator",
     "battery_plan_matrix.py": "generator",
