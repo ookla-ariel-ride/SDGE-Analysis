@@ -18,6 +18,23 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# carbon_fullyear imports behavior_rebuild, whose module level reads the intake
+# file and fails closed without it -- correct behavior, tested in
+# test_household.py, but it would block THIS suite in a clean checkout (CI).
+# Point the loader at a synthetic household before the import so these cases run
+# identically everywhere. Values are invented; nothing here depends on them.
+import household as _hh
+_HH_DIR = tempfile.TemporaryDirectory()
+_hh.PATH = pathlib.Path(_HH_DIR.name) / "household.yaml"
+_hh.PATH.write_text(
+    "household:\n  pto_date: 2019-12-01\nlocation:\n  lat: 33.0\n"
+    "solar:\n  install_invoice_usd: 30000\n  install_paid_date: 2019-12-01\n"
+    "charger:\n  kw: 11.5\ncleaning_history: []\n"
+    "gas:\n  therm_allin_usd: 2.0\n"
+    "misc:\n  miles_per_year: 12000\n  supercharge_kwh_yr: 500\n")
+_hh._cache = None
+
 import carbon_fullyear as C
 
 
