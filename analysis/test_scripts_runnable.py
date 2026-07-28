@@ -27,6 +27,8 @@ MANIFEST is explicit rather than "everything not retired", so adding a script
 without classifying it fails instead of being silently assumed live.
 """
 import ast
+import datetime as dt
+import math
 import os
 import pathlib
 import re
@@ -35,9 +37,9 @@ import subprocess
 import sys
 import tempfile
 
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ANALYSIS = ROOT / "analysis"
-VENV = ROOT / ".venv" / "bin" / "python"
 SANDBOX = ROOT / "private" / "verify"
 
 # role: "generator" writes a committed artifact and must run; "library" is imported
@@ -148,14 +150,12 @@ def case_tou_assignment_comes_from_the_canonical_module():
 
 
 def _import_check(name):
-    r = subprocess.run([str(VENV), "-c", f"import sys; sys.path.insert(0,'{ANALYSIS}'); "
+    r = subprocess.run([sys.executable, "-c", f"import sys; sys.path.insert(0,'{ANALYSIS}'); "
                         f"import {name[:-3]}"], capture_output=True, text=True, cwd=ROOT)
     return r.returncode, (r.stderr or "").strip().splitlines()[-1:]
 
 
 def case_libraries_import_cleanly():
-    if not VENV.exists():
-        return "SKIP libraries import cleanly (no .venv)"
     bad = []
     for name, role in sorted(MANIFEST.items()):
         if role != "library":
@@ -168,7 +168,101 @@ def case_libraries_import_cleanly():
     return f"all {n} library modules import with no side effects"
 
 
-def _build_throwaway_root(tmp):
+IN_CI = bool(os.environ.get("CI"))
+
+# Generators that need only a Green Button export, a household file and the
+# committed data/ directory. These MUST execute in CI, against synthetic inputs
+# when the private export is absent.
+CI_RUNNABLE = {
+    "behavior_rebuild.py", "battery_dispatch_policies.py", "package_results.py",
+    "report_data.py", "analyze.py", "analyze_norelief.py",
+    "carbon_fullyear.py", "tou_audit.py",
+}
+# Generators that additionally need raw private inputs which have no synthetic
+# stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
+# only where that archive exists, and the reason is recorded rather than implied.
+NEEDS_PRIVATE_ARCHIVE = {
+    "parse_bills.py": "the bill PDF corpus (private/1-raw-data/*-bills/)",
+    "extended_findings.py": "the SAM 8760 exports (private/1-raw-data/enphase_sam8760_*.csv)",
+    "lifetime_payback.py": "the SAM full-year export (samB.csv)",
+    "soiling_analysis.py": "the monitoring production history",
+    "deep_analyses.py": "the SAM full-year export (samB.csv)",
+    "battery_backup_sims.py": "the SAM full-year export (samB.csv)",
+    "battery_plan_matrix.py": ("its fail-closed tie-out compares against "
+                               "battery_dispatch_policies.json, which is built from the "
+                               "real year, so invented inputs must diverge"),
+}
+
+SYNTH_START = dt.date(2025, 7, 20)      # a little before the pipeline's fixed window
+SYNTH_END = dt.date(2026, 7, 26)
+
+
+def _synthetic_usage(path):
+    """A structurally faithful Green Button export with invented numbers.
+
+    Real shape, no real data: the 13-line preamble the loaders skip, the same
+    column header, 96 slots a day, and DST days at 92 and 100 so the audit's
+    calendar checks see what they expect. Values are a crude solar-plus-EV shape,
+    enough for every generator to exercise its real code path.
+    """
+    rows = []
+    d = SYNTH_START
+    while d <= SYNTH_END:
+        slots = [i * 0.25 for i in range(96)]
+        if d == dt.date(2026, 3, 8):
+            slots = [h for h in slots if not 2.0 <= h < 3.0]
+        elif d == dt.date(2025, 11, 2):
+            slots = slots + [1.0, 1.25, 1.5, 1.75]
+        for h in sorted(slots):
+            solar = max(0.0, 3.2 * math.sin(math.pi * (h - 6.5) / 11.5)) if 6.5 < h < 18 else 0.0
+            # an EV charges most nights at the charger's rated power, and on a few
+            # days it starts in the on-peak window; the session detectors key on
+            # exactly that signature, and several generators divide by what they find
+            ev = 0.0
+            if d.toordinal() % 3 != 0 and 0 <= h < 3:
+                ev = 11.5
+            elif d.toordinal() % 7 == 0 and 17 <= h < 19:
+                ev = 11.5
+            base = 0.9 + ev + (0.4 if 16 <= h < 21 else 0.0)
+            imp = round(max(0.0, base - solar) * 0.25, 4)
+            exp = round(max(0.0, solar - base) * 0.25, 4)
+            ampm = "AM" if h < 12 else "PM"
+            hh12 = int(h) % 12 or 12
+            rows.append(f'"09999999","{d.month}/{d.day}/{d.year}",'
+                        f'"{hh12}:{int(round((h % 1) * 60)):02d} {ampm}","15",'
+                        f'"{imp:.4f}","{exp:.4f}","{imp - exp:.4f}"')
+        d += dt.timedelta(days=1)
+    head = ["Name,SYNTHETIC FIXTURE", "Address,SYNTHETIC", "Account Number,000000000",
+            "Disclaimer,synthetic test fixture - no real data", "Title,CSV Export Electric Meter(s)",
+            "Resource,Electric", "Meter Number,09999999", "Interval UOM,Minute(s)",
+            f"Reading Start,{SYNTH_START.month}/{SYNTH_START.day}/{SYNTH_START.year} 00:00",
+            f"Reading End,{SYNTH_END.month}/{SYNTH_END.day}/{SYNTH_END.year} 23:45",
+            f"Total Duration,{(SYNTH_END - SYNTH_START).days + 1} Days", "Total Usage,0",
+            "UOM,kWh",
+            "Meter Number,Date,Start Time,Duration,Consumption,Generation,Net"]
+    path.write_text("\n".join(head + rows) + "\n")
+
+
+SYNTH_HOUSEHOLD = """# synthetic fixture - invented values, no real household data
+household:
+  pto_date: 2019-12-01
+location:
+  lat: 33.0
+solar:
+  install_invoice_usd: 30000
+  install_paid_date: 2019-12-01
+charger:
+  kw: 11.5
+cleaning_history: []
+gas:
+  therm_allin_usd: 2.0
+misc:
+  miles_per_year: 12000
+  supercharge_kwh_yr: 500
+"""
+
+
+def _build_throwaway_root(tmp, synthetic):
     """A repo-shaped root so generators write here instead of into data/."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()
@@ -179,50 +273,87 @@ def _build_throwaway_root(tmp):
     for f in (ROOT / "data").glob("*"):
         if f.is_file():
             shutil.copy(f, tmp / "data" / f.name)
+    for f in (ROOT / "data").glob("*.csv"):
+        shutil.copy(f, tmp / f.name)
+    if synthetic:
+        _synthetic_usage(tmp / "usage.csv")
+        (tmp / "private" / "household.yaml").write_text(SYNTH_HOUSEHOLD)
+        return tmp
     hh = ROOT / "private" / "household.yaml"
     if hh.exists():
         shutil.copy(hh, tmp / "private" / "household.yaml")
-    # The raw archive is large (bill PDFs, the interval export) and read-only to
-    # the generators, so link it rather than copying it per run.
     raw = ROOT / "private" / "1-raw-data"
     if raw.exists():
         os.symlink(raw, tmp / "private" / "1-raw-data")
-    # Several generators read committed CSVs from the working directory, which is
-    # the private/verify sandbox convention.
-    for f in (ROOT / "data").glob("*.csv"):
-        shutil.copy(f, tmp / f.name)
-    usage = SANDBOX / "usage.csv"
-    if usage.exists():
-        shutil.copy(usage, tmp / "usage.csv")
+    shutil.copy(SANDBOX / "usage.csv", tmp / "usage.csv")
     for extra in ("samA.csv", "samB.csv"):
         if (SANDBOX / extra).exists():
             shutil.copy(SANDBOX / extra, tmp / extra)
     return tmp
 
 
-def case_every_generator_runs():
-    """The check the first version of this file was missing.
-
-    Runs each declared generator for real, in a throwaway root, and requires exit
-    0. This is what would have caught analyze.py and carbon_timing.py without
-    anyone having to notice by hand.
-    """
-    usage = SANDBOX / "usage.csv"
-    if not VENV.exists() or not usage.exists():
-        return ("SKIP every generator runs (needs .venv and the private export at "
-                "private/verify/usage.csv; see CLAUDE.md)")
-    gens = [n for n, r in MANIFEST.items() if r == "generator"]
+def _run_generators(names, synthetic):
     failures = []
     with tempfile.TemporaryDirectory() as td:
-        tmp = _build_throwaway_root(pathlib.Path(td))
-        for name in gens:
-            r = subprocess.run([str(VENV), name], cwd=tmp,
+        tmp = _build_throwaway_root(pathlib.Path(td), synthetic)
+        for name in sorted(names):
+            r = subprocess.run([sys.executable, name], cwd=tmp,
                                capture_output=True, text=True, timeout=900)
             if r.returncode != 0:
                 tail = (r.stderr or "").strip().splitlines()[-1:] or ["(no stderr)"]
                 failures.append(f"{name}: {tail[0][:150]}")
+    return failures
+
+
+def case_generators_run_on_synthetic_inputs():
+    """The CI-safe half: real execution, invented data.
+
+    This is the case that has to work where there is no private archive, because
+    that is where it guards main. It builds a structurally faithful Green Button
+    export and household file, then runs every generator that needs nothing more.
+    """
+    failures = _run_generators(CI_RUNNABLE, synthetic=True)
+    assert not failures, "generators that do not run on synthetic inputs:\n  " + "\n  ".join(failures)
+    return f"all {len(CI_RUNNABLE)} CI-runnable generators execute against synthetic inputs"
+
+
+def case_generators_run_on_the_real_archive():
+    """The local half: the remaining generators, against the real private inputs."""
+    usage = SANDBOX / "usage.csv"
+    if not usage.exists():
+        # Skipping here is legitimate: these generators need raw private inputs
+        # that have no synthetic stand-in. The CI guarantee does not rest on this
+        # case -- case_generators_run_on_synthetic_inputs has no skip path at all,
+        # so something always executes wherever this suite runs.
+        return ("SKIP generators needing the private archive (" +
+                ", ".join(sorted(NEEDS_PRIVATE_ARCHIVE)) + ")")
+    failures = _run_generators(set(NEEDS_PRIVATE_ARCHIVE) | CI_RUNNABLE, synthetic=False)
     assert not failures, "generators that do not run:\n  " + "\n  ".join(failures)
-    return f"all {len(gens)} declared generators run to completion against real inputs"
+    n = len(NEEDS_PRIVATE_ARCHIVE) + len(CI_RUNNABLE)
+    return f"all {n} generators execute against the real inputs"
+
+
+def case_the_ci_tier_cannot_skip():
+    """The previous version of this guard skipped everything in CI and passed.
+
+    So state the property directly: the synthetic tier must be non-empty and must
+    have no early return, which is what makes it run wherever the suite runs.
+    """
+    assert CI_RUNNABLE, "the CI-runnable tier is empty; nothing would execute in CI"
+    src = pathlib.Path(__file__).read_text()
+    body = src[src.index("def case_generators_run_on_synthetic_inputs("):
+               src.index("def case_generators_run_on_the_real_archive(")]
+    assert "SKIP" not in body, "the CI-runnable tier has grown a skip path"
+    return f"the CI tier executes {len(CI_RUNNABLE)} generators and has no skip path"
+
+
+def case_every_generator_is_covered_by_one_of_the_two_tiers():
+    declared = {n for n, r in MANIFEST.items() if r == "generator"}
+    covered = CI_RUNNABLE | set(NEEDS_PRIVATE_ARCHIVE)
+    assert declared == covered, (
+        f"generators in no execution tier: {sorted(declared - covered)}; "
+        f"tiers naming unknown scripts: {sorted(covered - declared)}")
+    return f"every one of the {len(declared)} generators sits in an execution tier"
 
 
 CASES = [
@@ -232,7 +363,10 @@ CASES = [
     case_retired_scripts_say_so_and_refuse_to_run,
     case_tou_assignment_comes_from_the_canonical_module,
     case_libraries_import_cleanly,
-    case_every_generator_runs,
+    case_the_ci_tier_cannot_skip,
+    case_every_generator_is_covered_by_one_of_the_two_tiers,
+    case_generators_run_on_synthetic_inputs,
+    case_generators_run_on_the_real_archive,
 ]
 
 
