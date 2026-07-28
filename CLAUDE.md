@@ -63,6 +63,11 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # and writes both artifacts atomically (TECHNICAL.md §3.15):
 ../../.venv/bin/python carbon_fullyear.py && git diff --exit-code ../../data/carbon_fullyear_results.json ../../data/caiso_hourly_intensity.csv
 
+# Coverage gate (local, needs the private archive like the §9 gate): every test
+# suite plus every generator on the real inputs must keep the analysis package
+# at >= 90% statement coverage (currently ~95%):
+./analysis/check_coverage.sh                          # fails under 90%
+
 # Full-history secret scan (CI runs the generic rules automatically on every push):
 gitleaks git --config .gitleaks.toml .                # committed generic rules
 gitleaks git --config private/pii-rules.toml .        # + personal PII rules (local-only)

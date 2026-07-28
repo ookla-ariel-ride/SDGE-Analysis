@@ -66,3 +66,7 @@ data/.parse_bills.lock
 # *_relief* are the superseded relief-credit variant's outputs.
 data/stats.json
 data/*_relief*
+
+# coverage measurement (local gate: analysis/check_coverage.sh)
+.coverage
+.coverage.*

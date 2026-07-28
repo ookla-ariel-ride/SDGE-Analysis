@@ -53,3 +53,7 @@ jobs:
         run: python analysis/test_report_consistency.py
       - name: analysis scripts runnable or explicitly retired
         run: python analysis/test_scripts_runnable.py
+      - name: carbon raw-cache and fail-closed branches
+        run: python analysis/test_carbon_fullyear.py
+      - name: household intake fail-closed behavior
+        run: python analysis/test_household.py
