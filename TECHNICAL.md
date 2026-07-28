@@ -47,7 +47,7 @@ private/1-raw-data/  (gitignored — never committed)
 │ battery_dispatch_policies.py│ battery_dispatch_policies.json              │
 │ battery_plan_matrix.py     │ battery_plan_matrix.json (§4 matrix)         │
 │ soiling_analysis.py        │ soiling_results.json                         │
-│ carbon_timing.py           │ carbon_results.json                          │
+│ carbon_timing.py RETIRED   │ carbon_results.json (now SOURCE data)        │
 │ carbon_fullyear.py         │ carbon_fullyear_results.json,                │
 │                            │ caiso_hourly_intensity.csv                   │
 │ extended_findings.py       │ extended_results.json                        │
@@ -579,6 +579,15 @@ days inside the analysis year (mid-Oct 2025; mid-Jan, mid-Apr, mid-Jul 2026). Ho
 grid-average intensity: kg CO2/MWh = 1000 × mean(total CO2 mT/h, all sources incl. imports)
 ÷ mean(demand MW), applied to the household's 15-minute data by season and hour of day. Raw
 CSVs are cached in a local `caiso_data/` directory (not committed).
+
+> **`carbon_timing.py` is RETIRED (2026-07-27)** and cannot run: the raw CAISO day
+> files it read from `caiso_data/` were never committed. It is kept for provenance,
+> because it documents where the four sample days came from and how their numbers
+> were derived. **`data/carbon_results.json` must not be deleted with it** — that file
+> is not a derived artifact awaiting regeneration but the preserved record of those
+> four days, and `carbon_fullyear.py` still reads it (`build_covered_from_raw`) to
+> reconstruct them. Retiring the pair together, which is the obvious-looking cleanup,
+> would break the live carbon pipeline. Use `carbon_fullyear.py` for grid-carbon work.
 
 **Results (in `data/carbon_results.json`).** Overnight 00–06 h averages **279 kg CO2/MWh**
 vs **125** at solar midday 10–14 h (on-peak 16–21 h: 164) — overnight charging is the

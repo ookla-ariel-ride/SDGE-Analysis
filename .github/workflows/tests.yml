@@ -51,3 +51,5 @@ jobs:
         run: python analysis/test_rates.py
       - name: report/artifact consistency
         run: python analysis/test_report_consistency.py
+      - name: analysis scripts runnable or explicitly retired
+        run: python analysis/test_scripts_runnable.py
