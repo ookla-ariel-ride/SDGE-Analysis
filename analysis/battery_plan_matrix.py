@@ -80,13 +80,12 @@ def bill_plan(plan, seas, per, imp, exp):
 if __name__ == "__main__":
     root = repo_root()
     d = br.load()
-    # holiday-aware TOU assignment (analyze.py convention -> ties to plan_results.csv)
-    h = d.hour.values
-    wk = d.dt.dt.date.map(R.off_peak_day)
+    # TOU assignment from the canonical module. This used to be a vectorised
+    # re-implementation of the same windows; it agreed with rates.period_at only
+    # for as long as nobody moved a boundary, and a window change would have made
+    # the plan-ranking artifact drift away from the published economics silently.
     d = d.copy()
-    d["p"] = np.where((h >= 16) & (h < 21), "on",
-                      np.where(wk, np.where(h < 14, "sop", "off"),
-                               np.where((h < 6) | ((h >= 10) & (h < 14)), "sop", "off")))
+    d["p"] = [R.period_at(t) for t in d.dt]
     seas, per = d.seas.values, d.p.values
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)

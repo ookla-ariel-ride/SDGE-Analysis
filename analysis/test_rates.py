@@ -20,6 +20,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import rates as R
 
 ANALYSIS = pathlib.Path(__file__).resolve().parent
+# Window-shape enforcement lives in test_scripts_runnable.py, which detects the
+# TOU period LABELS via the AST and so catches vectorised rewrites that a text
+# search misses. What remains here is the day-type half: a bare weekday test
+# silently drops the holiday rule even when the windows themselves are canonical.
 # The legacy cross-plan ranking pair keeps its own table rates and its own
 # calendar by design (TECHNICAL.md 3.1/3.2); tou_audit deliberately models
 # alternative day-type rules in order to score them against the bills.
@@ -76,24 +80,11 @@ def case_holiday_rule_spans_the_reporting_era():
     return "the holiday set spans 2019-2040, covering the NEM 2.0 horizon"
 
 
-def case_no_analysis_module_reimplements_the_windows():
-    """A private copy of the window rule is how the holiday bug survived."""
-    sig = re.compile(r"16\s*<=\s*h\w*\s*<\s*21")
-    offenders = []
-    for f in sorted(ANALYSIS.glob("*.py")):
-        if f.name in EXEMPT:
-            continue
-        if sig.search(f.read_text()):
-            offenders.append(f.name)
-    assert not offenders, f"private TOU window logic still in: {offenders}"
-    return "no non-exempt analysis module carries its own copy of the TOU windows"
-
-
 def case_no_analysis_module_derives_the_day_type_by_weekday_alone():
     bare = re.compile(r"weekday\(\)\s*>=\s*5|dt\.weekday\s*>=\s*5")
     offenders = []
     for f in sorted(ANALYSIS.glob("*.py")):
-        if f.name in EXEMPT:
+        if f.name in EXEMPT or f.name.startswith("test_"):
             continue
         if bare.search(f.read_text()):
             offenders.append(f.name)
@@ -107,7 +98,6 @@ CASES = [
     case_period_at_applies_the_holiday_rule,
     case_period_at_matches_period_when_told_the_truth,
     case_holiday_rule_spans_the_reporting_era,
-    case_no_analysis_module_reimplements_the_windows,
     case_no_analysis_module_derives_the_day_type_by_weekday_alone,
 ]
 

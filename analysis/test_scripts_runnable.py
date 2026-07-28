@@ -1,40 +1,88 @@
 #!/usr/bin/env python3
 """Catch analysis scripts that have quietly stopped being runnable.
 
-This repo has been bitten by that three times. analyze.py and analyze_norelief.py
-carried absolute paths into a retired Cowork sandbox and had never run here, which
-left plan_results.csv, hourly_profile.csv and monthly.csv with no working
-generator. carbon_timing.py read a directory that was never committed. In every
-case the script sat in analysis/ looking maintained, and nothing complained until
-someone tried to reproduce an artifact.
+This repo has been bitten three times. analyze.py and analyze_norelief.py carried
+absolute paths into a retired Cowork sandbox and had never run here, which left
+plan_results.csv, hourly_profile.csv and monthly.csv with no working generator.
+carbon_timing.py read a caiso_data/ directory that was never committed. Every
+time the script sat in analysis/ looking maintained and nothing complained.
 
-The failure mode is silence, so these cases are deliberately cheap and structural:
-they parse, they do not import or execute anything, and they need no private data.
-A script is either expected to run or explicitly listed as retired. There is no
-third state.
+The first version of this file only inspected source text, which was not enough:
+a script whose *relative* inputs have gone missing, or whose imports are broken,
+passed every check. carbon_timing.py itself would have passed had it not been
+listed as retired by hand, so the guard could not catch the failure its own
+docstring described.
 
-Run from the repo root:  ./.venv/bin/python analysis/test_scripts_runnable.py
+So there are two tiers here, and the split is honest about what CI can know:
+
+  structural   parses, is classified in MANIFEST, retired scripts say so and fail
+               loudly, no absolute path that does not exist, libraries import
+               cleanly. No private data, runs everywhere.
+  executable   every declared generator is actually run to completion against the
+               real inputs, in a throwaway repo root so nothing in data/ is
+               touched. Needs the private export, so it SKIPS in CI and runs
+               locally, which is where the reproduction claim is made anyway.
+
+MANIFEST is explicit rather than "everything not retired", so adding a script
+without classifying it fails instead of being silently assumed live.
 """
 import ast
+import os
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ANALYSIS = ROOT / "analysis"
+VENV = ROOT / ".venv" / "bin" / "python"
+SANDBOX = ROOT / "private" / "verify"
 
-# Scripts that are kept for provenance and are not expected to run. Each needs a
-# RETIRED marker in its own docstring saying why, so the reason travels with the
-# file rather than living only here.
-RETIRED = {"carbon_timing.py"}
+# role: "generator" writes a committed artifact and must run; "library" is imported
+# by others and must import cleanly with no side effects; "retired" is kept for
+# provenance and must refuse to run.
+MANIFEST = {
+    "rates.py": "library",
+    "household.py": "library",
+    "behavior_rebuild.py": "generator",
+    "battery_dispatch_policies.py": "generator",
+    "battery_plan_matrix.py": "generator",
+    "package_results.py": "generator",
+    "extended_findings.py": "generator",
+    "report_data.py": "generator",
+    "deep_analyses.py": "generator",
+    "battery_backup_sims.py": "generator",
+    "billing_model_nem.py": "library",
+    "lifetime_payback.py": "generator",
+    "analyze.py": "generator",
+    "analyze_norelief.py": "generator",
+    "carbon_fullyear.py": "generator",
+    "soiling_analysis.py": "generator",
+    "parse_bills.py": "generator",
+    "tou_audit.py": "generator",
+    "carbon_timing.py": "retired",
+}
 
-# Paths a script may legitimately reference: the sandbox convention, and anything
-# resolved from the repo root at runtime.
+# Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
+# its own calendar by design (TECHNICAL.md 3.1/3.2); tou_audit scores alternative
+# day-type rules against the bills on purpose; rates.py is where the rule lives.
+TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py"}
+
 ABS_PATH = re.compile(r"""["'](/(?!tmp/)[A-Za-z0-9_.\-]+/[^"']*)["']""")
 
 
 def _scripts():
     return sorted(f for f in ANALYSIS.glob("*.py") if not f.name.startswith("test_"))
+
+
+def case_manifest_is_complete_and_exact():
+    on_disk = {f.name for f in _scripts()}
+    listed = set(MANIFEST)
+    assert not on_disk - listed, f"scripts not classified in MANIFEST: {sorted(on_disk - listed)}"
+    assert not listed - on_disk, f"MANIFEST lists missing scripts: {sorted(listed - on_disk)}"
+    return f"all {len(on_disk)} analysis scripts are explicitly classified"
 
 
 def case_every_script_parses():
@@ -49,65 +97,161 @@ def case_every_script_parses():
 
 
 def case_no_absolute_paths_outside_the_repo():
-    """An absolute path baked into a script is how two generators died."""
     offenders = []
     for f in _scripts():
         for m in ABS_PATH.finditer(f.read_text()):
             path = m.group(1)
-            if path.startswith(str(ROOT)):
+            if path.startswith(str(ROOT)) or not path.startswith("/"):
                 continue
-            if path.startswith("/") and not pathlib.Path(path).exists():
+            if not pathlib.Path(path).exists():
                 offenders.append(f"{f.name}: {path}")
     assert not offenders, f"absolute paths that do not exist: {offenders}"
     return "no analysis script hardcodes an absolute path that is not present"
 
 
-def case_retired_scripts_say_so():
-    for name in sorted(RETIRED):
-        f = ANALYSIS / name
-        assert f.exists(), f"{name} is listed as retired but does not exist"
-        head = ast.get_docstring(ast.parse(f.read_text())) or ""
-        assert "RETIRED" in head, f"{name} is retired but its docstring does not say so"
-    return f"all {len(RETIRED)} retired script(s) carry a RETIRED marker in the docstring"
-
-
-def case_retired_scripts_fail_loudly():
-    """A retired script must explain itself, not die on a stray missing file."""
-    for name in sorted(RETIRED):
+def case_retired_scripts_say_so_and_refuse_to_run():
+    for name, role in sorted(MANIFEST.items()):
+        if role != "retired":
+            continue
         src = (ANALYSIS / name).read_text()
-        assert "RETIRED" in src and "SystemExit" in src, (
-            f"{name} should raise SystemExit with an explanation when run")
-    return "retired scripts raise an explanatory SystemExit rather than crashing"
+        doc = ast.get_docstring(ast.parse(src)) or ""
+        assert "RETIRED" in doc, f"{name}: retired but its docstring does not say so"
+        assert "SystemExit" in src, f"{name}: should raise SystemExit with an explanation"
+    n = sum(1 for r in MANIFEST.values() if r == "retired")
+    return f"{n} retired script(s) carry the marker and refuse to run with an explanation"
 
 
-def case_no_script_is_silently_unlisted():
-    """Every script is either live or retired; the set is closed."""
-    live = {f.name for f in _scripts()} - RETIRED
-    assert live, "no live scripts found — the glob is probably wrong"
-    stale = RETIRED - {f.name for f in ANALYSIS.glob("*.py")}
-    assert not stale, f"RETIRED lists files that no longer exist: {stale}"
-    return f"{len(live)} live and {len(RETIRED)} retired scripts, none unaccounted for"
+def case_tou_assignment_comes_from_the_canonical_module():
+    """AST-level: any module handling TOU period labels must defer to rates.
+
+    The previous text-only check looked for `16 <= h < 21` and so missed
+    battery_plan_matrix.py's vectorised `(h >= 16) & (h < 21)`, which is the same
+    rule written differently. Detecting the period LABELS instead is far harder to
+    evade by rewriting, because any implementation has to name its outputs.
+    """
+    offenders = []
+    for f in _scripts():
+        if f.name in TOU_EXEMPT:
+            continue
+        src = f.read_text()
+        consts = {n.value for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+        if not {"on", "off", "sop"} <= consts:
+            continue
+        # It may call the canonical assignment, or take a frame from the loader
+        # that already did.
+        if "period_at" in src or "behavior_rebuild" in src:
+            continue
+        offenders.append(f.name)
+    assert not offenders, f"modules labelling TOU periods without rates.period_at: {offenders}"
+    return "every non-exempt module gets its TOU labels from rates.period_at"
+
+
+def _import_check(name):
+    r = subprocess.run([str(VENV), "-c", f"import sys; sys.path.insert(0,'{ANALYSIS}'); "
+                        f"import {name[:-3]}"], capture_output=True, text=True, cwd=ROOT)
+    return r.returncode, (r.stderr or "").strip().splitlines()[-1:]
+
+
+def case_libraries_import_cleanly():
+    if not VENV.exists():
+        return "SKIP libraries import cleanly (no .venv)"
+    bad = []
+    for name, role in sorted(MANIFEST.items()):
+        if role != "library":
+            continue
+        code, err = _import_check(name)
+        if code != 0:
+            bad.append(f"{name}: {err}")
+    assert not bad, bad
+    n = sum(1 for r in MANIFEST.values() if r == "library")
+    return f"all {n} library modules import with no side effects"
+
+
+def _build_throwaway_root(tmp):
+    """A repo-shaped root so generators write here instead of into data/."""
+    (tmp / "analysis").mkdir()
+    (tmp / "data").mkdir()
+    (tmp / "private").mkdir()
+    for f in ANALYSIS.glob("*.py"):
+        shutil.copy(f, tmp / "analysis" / f.name)
+        shutil.copy(f, tmp / f.name)          # sandbox convention: run from the root
+    for f in (ROOT / "data").glob("*"):
+        if f.is_file():
+            shutil.copy(f, tmp / "data" / f.name)
+    hh = ROOT / "private" / "household.yaml"
+    if hh.exists():
+        shutil.copy(hh, tmp / "private" / "household.yaml")
+    # The raw archive is large (bill PDFs, the interval export) and read-only to
+    # the generators, so link it rather than copying it per run.
+    raw = ROOT / "private" / "1-raw-data"
+    if raw.exists():
+        os.symlink(raw, tmp / "private" / "1-raw-data")
+    # Several generators read committed CSVs from the working directory, which is
+    # the private/verify sandbox convention.
+    for f in (ROOT / "data").glob("*.csv"):
+        shutil.copy(f, tmp / f.name)
+    usage = SANDBOX / "usage.csv"
+    if usage.exists():
+        shutil.copy(usage, tmp / "usage.csv")
+    for extra in ("samA.csv", "samB.csv"):
+        if (SANDBOX / extra).exists():
+            shutil.copy(SANDBOX / extra, tmp / extra)
+    return tmp
+
+
+def case_every_generator_runs():
+    """The check the first version of this file was missing.
+
+    Runs each declared generator for real, in a throwaway root, and requires exit
+    0. This is what would have caught analyze.py and carbon_timing.py without
+    anyone having to notice by hand.
+    """
+    usage = SANDBOX / "usage.csv"
+    if not VENV.exists() or not usage.exists():
+        return ("SKIP every generator runs (needs .venv and the private export at "
+                "private/verify/usage.csv; see CLAUDE.md)")
+    gens = [n for n, r in MANIFEST.items() if r == "generator"]
+    failures = []
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _build_throwaway_root(pathlib.Path(td))
+        for name in gens:
+            r = subprocess.run([str(VENV), name], cwd=tmp,
+                               capture_output=True, text=True, timeout=900)
+            if r.returncode != 0:
+                tail = (r.stderr or "").strip().splitlines()[-1:] or ["(no stderr)"]
+                failures.append(f"{name}: {tail[0][:150]}")
+    assert not failures, "generators that do not run:\n  " + "\n  ".join(failures)
+    return f"all {len(gens)} declared generators run to completion against real inputs"
 
 
 CASES = [
+    case_manifest_is_complete_and_exact,
     case_every_script_parses,
     case_no_absolute_paths_outside_the_repo,
-    case_retired_scripts_say_so,
-    case_retired_scripts_fail_loudly,
-    case_no_script_is_silently_unlisted,
+    case_retired_scripts_say_so_and_refuse_to_run,
+    case_tou_assignment_comes_from_the_canonical_module,
+    case_libraries_import_cleanly,
+    case_every_generator_runs,
 ]
 
 
 def main():
-    ran = failures = 0
+    ran = skipped = failures = 0
     for case in CASES:
         try:
-            print(f"PASS  {case()}")
-            ran += 1
+            msg = case()
+            if msg.startswith("SKIP"):
+                print(f"SKIP  {msg[5:]}")
+                skipped += 1
+            else:
+                print(f"PASS  {msg}")
+                ran += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0
 
 
