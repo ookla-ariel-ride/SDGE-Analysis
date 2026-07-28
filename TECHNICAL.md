@@ -451,11 +451,20 @@ names) to re-score behavior or battery scenarios on the validated netting.
 Several `data/` files were produced by short ad-hoc steps during the analysis session rather
 than by a committed script; they are documented here so they can be regenerated:
 
-- **`report_data.json`** — output of the as-run extended variant of `analyze.py` (archived
-  privately in `private/3-analysis-extras/`). Superset of `stats.json`: all-in EV-TOU-5 rates
-  per season/period (`rates_ev5`, e.g. summer on-peak 0.86814, sop 0.12494 — these *include*
-  the relief credit, an as-run artifact); seasonal 24-hour average-kW import/export profiles
-  (`hourly_S`, `hourly_W`); monthly labels/imports/exports/modeled cost; per-(season, period)
+- **`report_data.json`** — **now produced by `analysis/report_data.py`** (2026-07-27). It
+  was previously the output of an uncommitted as-run variant of `analyze.py`, which is why
+  it went stale through every refresh while the prose around it moved; `analysis/
+  test_report_consistency.py` now fails if the report's chart arrays drift from it.
+  **Basis change at the same time:** every series is computed from the canonical module
+  (`rates.allin`/`energy`/`credit`, day types from `rates.off_peak_day`) instead of the
+  legacy published rate tables. kWh is unaffected — the old and new generators agree
+  exactly on imports, exports and the hour-of-day profiles — but the money moves, because
+  the charts had been drawn on table rates while every dollar in the prose was bill-derived.
+  On the same input the annual netted energy cost reads $4,093 canonical against $4,559
+  legacy, and gross on-peak import cost $2,969 against $2,951. Contents: all-in EV-TOU-5
+  rates per season/period (`rates_ev5`); seasonal 24-hour average import/export profiles
+  (`hourly_S`, `hourly_W`); monthly labels/imports/exports/netted cost; the `periods_chart`
+  block the §5 chart is drawn from; per-(season, period)
   import/export/cost split (`period_split`); on-peak summary (3,989 kWh imported, $2,951 gross
   cost, 41.5% of energy cost); EV proxy stats (kWh above 2.5 kW by period and by start hour);
   early battery estimate (`battery.net` $1,939 — superseded by `battery_sim.json`'s $1,669);
@@ -744,11 +753,12 @@ intervals carrying both import and export, discharge-window imports are served r
 banking low-value surplus. The artifact also carries an **`inputs` block** — the report §6
 sentence's serviceable-load inputs on the canonical period assignment: non-super-off-peak
 import **8,506 kWh**, on-peak **3,989**, servable off-peak house load (< 2.5 kW) **1,972**,
-serviceable total **5,961**. Reconciliation: the §5 periods chart's non-SOP total reads
-**8,467 kWh** (from `report_data.json`, 23,278 − 14,811) — the ~40 kWh gap exists solely
-because `analyze.py` treats seven weekday federal holidays as weekends for TOU assignment
-(midnight–2 pm super-off-peak; §6.5) while the canonical `rates.period` has no holiday rule;
-on-peak is 3,989 kWh under both conventions.
+serviceable total **5,972**. Reconciliation: the §5 periods chart's non-SOP total reads
+**8,520 kWh** (from `report_data.json`, off-peak + on-peak) against **8,521** here. Both
+now use the canonical period assignment including the eight bill-confirmed tariff holidays,
+so the ~40 kWh convention gap that used to separate them is closed and the 1 kWh residual is
+independent rounding of the same quantity. `analysis/test_report_consistency.py` asserts the
+two stay within 1 kWh of each other.
 
 ### 3.14 `analysis/extended_findings.py` — extended findings batch (`data/extended_results.json`)
 
@@ -912,10 +922,10 @@ Mapping of every canvas id → `D` arrays → producing computation:
 
 | Canvas id | Type | `D` arrays (length) | Units | Produced by |
 |---|---|---|---|---|
-| `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average kW by hour of day, split summer/winter | `report_data.json → hourly_S / hourly_W` (as-run `analyze.py` variant; equals `hourly_profile.csv` values × 4, split by season) |
+| `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average kW by hour of day, split summer/winter | `report_data.json → hourly_S / hourly_W` (from `analysis/report_data.py`; mean kWh per hour-of-day, split by season) |
 | `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.greedy_profile_S` (on-peak imports fall 3,989 → 850 kWh/yr with PW3, → 321 with the expansion) |
-| `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the modeled EV-TOU-5+CEA energy cost per month (excludes the daily BSC) |
-| `periods` | horizontal bar ×2 | inline literals: kWh `[14811, 4478, 3989]`, $ `[1869, 2284, 2951]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → period_split` summed across seasons for kWh (sop 6,628+8,183; off 2,238+2,240; on 2,109+1,880); the on-peak $2,951 matches `report_data.json → onpeak.import_cost` |
+| `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the canonical per-month netted energy cost (bill-derived rates; excludes the non-bypassable charges and the daily BSC) |
+| `periods` | horizontal bar ×2 | inline literals: kWh `[14856, 4498, 4022]`, $ `[1875, 2316, 2998]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → periods_chart`, produced by `analysis/report_data.py`; the on-peak $2,998 matches `report_data.json → onpeak.import_cost`, and `analysis/test_report_consistency.py` asserts both arrays against the artifact |
 | `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 28 sampled CAISO days + month-hour-mean interpolation; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
 
 Everything else in the report (plan table §3, battery tables §4/§6, package cards §7, deep-dive

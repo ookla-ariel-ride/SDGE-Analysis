@@ -49,3 +49,5 @@ jobs:
       - run: pip install -r requirements.txt
       - name: rates guard tests
         run: python analysis/test_rates.py
+      - name: report/artifact consistency
+        run: python analysis/test_report_consistency.py
