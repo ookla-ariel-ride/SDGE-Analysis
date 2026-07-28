@@ -38,11 +38,11 @@ HIGH_COST = PW3_COST + EXPANSION_COST
 br = json.load(open(DATA / "behavior_rebuild.json"))
 bp = json.load(open(DATA / "battery_dispatch_policies.json"))
 
-base = round(br["baseline"]["model_bill"])           # 4884 at 6/1/2026 rates
+base = round(br["baseline"]["model_bill"])           # modelled baseline at 6/1/2026 rates (see behavior_rebuild.json)
 sc = br["scenarios"]
 a, b, c, d = (round(sc[k]["saved"]) for k in ("a", "b", "c", "d"))
 pb = bp["post_behavior"]
-batt_alone = bp["pw3"]["greedy"]["save"]             # 2325 baseline marginal
+batt_alone = bp["pw3"]["greedy"]["save"]             # baseline battery marginal (see battery_dispatch_policies.json)
 batt_post = pb["mid"]["battery_marginal"]            # 2245 post-EV-fix marginal
 evening = bp["pw3"]["evening"]["save"]               # evening-only variant
 

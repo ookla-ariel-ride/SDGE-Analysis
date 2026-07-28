@@ -66,6 +66,17 @@ def _repo_root():
 def build(d):
     """All report-facing series, from the same frame the rest of the pipeline uses."""
     d = d.copy()
+    # Fail closed on interval gaps. Missing slots would render as zeros in every
+    # mean and monthly bar below -- indistinguishable from low usage, which is
+    # the 27-day October bill gap failure shape (CLAUDE.md section 1) at chart
+    # scale. A calendar day carries 96 slots, 92 on the spring-forward Sunday,
+    # 100 on the fall-back one.
+    counts = d.groupby(d.dt.dt.date).size()
+    bad = counts[~counts.isin((92, 96, 100))]
+    if len(bad):
+        raise SystemExit("interval gaps in the analysis window; refusing to draw "
+                         "charts over missing data: " +
+                         ", ".join(f"{day} has {n} slots" for day, n in bad.items()))
     d["hour_i"] = d.dt.dt.hour
     d["gross_cost"] = [imp * R.allin(s, p)
                        for imp, s, p in zip(d.Consumption, d.seas, d.p)]

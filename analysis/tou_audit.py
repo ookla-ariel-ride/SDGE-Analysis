@@ -14,12 +14,17 @@ net-export carry negative kWh.
 Two assignment rules are scored.
 
   as_billed  -- the structure the bills themselves demonstrate (below).
-  canonical  -- rates.period() exactly as the analysis pipeline imports it.
+  canonical  -- the current tariff exactly as the pipeline applies it:
+                rates.period() with rates.off_peak_day() day types (today's
+                windows and the eight tariff holidays) on every date.
 
 Both are reported because they are both correct for different purposes: canonical
-is the current tariff and is the right basis for a forward projection at constant
-current rates, while as_billed is what the utility actually charged and is the only
-basis on which a historical statement can be reproduced.
+is the right basis for a forward projection at constant current rates, while
+as_billed is what the utility actually charged and is the only basis on which a
+historical statement can be reproduced. The two differ only where the tariff
+STRUCTURE changed inside the corpus: canonical applies the post-2026-03-01
+weekday midday super-off-peak window to every date, as_billed only after it
+took effect.
 
 Two structural facts were determined from the bills rather than assumed, and both
 are re-derived by this script every run rather than trusted:
@@ -242,7 +247,9 @@ def expected_buckets(start, end):
 def assign(date, hour, rule, hol):
     """TOU period for one interval under `rule` ('as_billed' or 'canonical')."""
     if rule == "canonical":
-        return R.period(hour, date.weekday() >= 5)
+        # the current tariff exactly as the pipeline applies it: today's windows
+        # on every date, weekend-or-holiday day types via rates.off_peak_day
+        return R.period(hour, R.off_peak_day(date))
     weekend = date.weekday() >= 5 or date in hol
     if 16 <= hour < 21:
         return "on"

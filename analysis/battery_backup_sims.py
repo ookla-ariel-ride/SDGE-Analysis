@@ -15,8 +15,7 @@ df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %
 for c in["Consumption","Generation"]: df[c]=pd.to_numeric(df[c])
 end=dt.datetime(2026,7,24); d=df[(df.dt>=end-dt.timedelta(days=365))&(df.dt<end)].copy()
 d["hour"]=d.dt.dt.hour+d.dt.dt.minute/60
-d["wkend"]=d.dt.dt.date.map(R.off_peak_day)
-d["seas"]=np.where(d.dt.dt.month.isin([6,7,8,9,10]),"S","W")
+d["seas"]=np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)),"S","W")
 # canonical date-aware assignment: derives the holiday rule itself
 d["p"]=[R.period_at(t) for t in d.dt]; d["date"]=d.dt.dt.date
 WFNBC=0.00591;PCIA=0.02828;NBC=0.01515-0.00007+WFNBC

@@ -3,7 +3,7 @@
 
 This script cannot run and is not meant to. It was a one-shot fetch-and-analyse
 pass: it downloaded four CAISO days into a local `caiso_data/` directory that was
-never committed, so the raw inputs no longer exist and it fails on the first read.
+never committed, so the raw inputs no longer exist and it refuses to run.
 
 Do not delete it, and do not delete data/carbon_results.json either. That file is
 NOT a derived artifact awaiting regeneration — it is the preserved record of the
@@ -35,6 +35,18 @@ Carbon-intensity source (REAL DATA, no synthetic curves):
 Household side: SDG&E Green Button 15-min usage.csv (same file the bill-validated models use),
 EV sessions re-detected with the exact algorithm from behavior_rebuild.py.
 """
+import sys
+
+# The retirement guard runs BEFORE the heavy imports: behavior_rebuild reads
+# household config at import time, so in a clean checkout the user would see
+# household's fail-closed message instead of this notice.
+if __name__ == "__main__":
+    raise SystemExit(
+        "carbon_timing.py is RETIRED and cannot run: the raw CAISO day files it "
+        "reads from caiso_data/ were never committed. Its output, "
+        "data/carbon_results.json, is preserved as source data and is still read "
+        "by carbon_fullyear.py. Use carbon_fullyear.py for grid-carbon work.")
+
 import json
 import numpy as np
 import pandas as pd
@@ -69,14 +81,6 @@ def hourly_intensity(day):
     m = m.dropna(subset=["Current demand"])
     g = m.groupby("hr").agg(co2=("total", "mean"), mw=("Current demand", "mean"))
     return (1000.0 * g.co2 / g.mw)                       # kg/MWh, index 0..23
-
-
-def main():
-    raise SystemExit(
-        "carbon_timing.py is RETIRED and cannot run: the raw CAISO day files it "
-        "reads from caiso_data/ were never committed. Its output, "
-        "data/carbon_results.json, is preserved as source data and is still read "
-        "by carbon_fullyear.py. Use carbon_fullyear.py for grid-carbon work.")
 
 
 def _unreachable_original_main():

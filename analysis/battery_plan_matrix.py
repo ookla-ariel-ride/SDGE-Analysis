@@ -118,7 +118,7 @@ if __name__ == "__main__":
                    "exclusion) under each plan's own rate structure"),
         "rates_basis": ("published rate tables, CEA generation without relief credit "
                         "(ranking-only; ties out to data/plan_results.csv, asserted). "
-                        "Holiday-as-weekend TOU assignment per analyze.py (TECHNICAL §6.5)."),
+                        "Canonical TOU assignment via rates.period_at, holidays included."),
         "plans_selection": "EV-TOU-5 + the two nearest competitors in data/plan_results.csv",
         "dispatch_note": ("all three plans share the same 2026 three-period TOU windows, so "
                           "one dispatch trace is billed under each plan; kWh served "

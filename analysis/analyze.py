@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""SDGE rate plan analysis — single-family home, SDGE Inland climate zone.
+"""SDGE rate plan analysis, RELIEF-CREDIT VARIANT — superseded; see analyze_norelief.py.
+
+The bills showed the CEA relief credit does not apply (CLAUDE.md section 0), so
+analyze_norelief.py is the live model and owns the committed plan_results.csv /
+hourly_profile.csv / monthly.csv. This variant is kept for the relief comparison
+only and writes *_relief-suffixed outputs (gitignored) so the two scripts can
+never overwrite each other's artifacts — they used to collide on all four names,
+with whichever ran last winning silently.
+
+SDGE rate plan analysis — single-family home, SDGE Inland climate zone.
 Profile: CEA generation (Clean Impact assumed), NEM 2.0, currently EV-TOU-5.
 Rates: SDGE UDC effective 6/1/2026; CEA generation effective 6/1/2026; PCIA 2023 vintage.
 Input: Green Button 15-minute CSV (path below) — keep the raw CSV out of any public repo:
@@ -183,11 +192,11 @@ stats["night_import_kwh"]=round(night.Consumption.sum(),1)
 # hourly profile
 prof = d.groupby(d.dt.dt.hour).agg(imp=("Consumption","mean"),exp=("Generation","mean"),net=("Net","mean")).round(3)
 print(prof)
-prof.to_csv(_DATA / "hourly_profile.csv")
+prof.to_csv(_DATA / "hourly_profile_relief.csv")
 # monthly
 mon = d.groupby(d.dt.dt.to_period("M")).agg(imp=("Consumption","sum"),exp=("Generation","sum"),net=("Net","sum")).round(1)
 print(mon)
-mon.to_csv(_DATA / "monthly.csv")
-res.to_csv(_DATA / "plan_results.csv",index=False)
-json.dump(stats,open(_DATA / "stats.json","w"),indent=1)
+mon.to_csv(_DATA / "monthly_relief.csv")
+res.to_csv(_DATA / "plan_results_relief.csv",index=False)
+json.dump(stats,open(_DATA / "stats_relief.json","w"),indent=1)
 print(json.dumps(stats,indent=1))

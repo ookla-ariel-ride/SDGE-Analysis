@@ -37,6 +37,9 @@ def _close(a, b, tol, what):
 
 def case_periods_chart_matches_its_artifact():
     pc = RD["periods_chart"]
+    assert pc["order"] == ["sop", "off", "on"], (
+        "periods_chart order changed; the positional indexing below and the "
+        "chart labels both assume sop/off/on")
     kwh = _array("data")            # first `data:` array is the periods chart kWh
     _close(kwh, pc["import_kwh"], 1, "periods chart kWh")
     m = re.search(r"Annual import cost \$',data:(\[[\d,.\s]*\])", HTML)
@@ -62,6 +65,38 @@ def case_hourly_profiles_match_their_artifact():
     return "both seasonal hour-of-day profiles match report_data.json"
 
 
+def case_battery_chart_series_match_their_artifacts():
+    """The three §5 battery series were the one chart family with no pin, and the
+    'today' series survived a re-base carrying pre-correction data as a result.
+    bat_now_S is hourly_S.imp rounded to 2 dp; the PW3 series come from the
+    dispatch artifact's greedy profiles."""
+    _close(_array("bat_now_S"), [round(v, 2) for v in RD["hourly_S"]["imp"]],
+           0.01, "bat_now_S")
+    _close(_array("bat_pw3_S"), DISPATCH["pw3"]["greedy_profile_S"], 0.01, "bat_pw3_S")
+    _close(_array("bat_pw3x_S"), DISPATCH["pw3x"]["greedy_profile_S"], 0.01, "bat_pw3x_S")
+    return "all three battery chart series match their committed artifacts"
+
+
+def case_headline_figures_present_and_stale_ones_absent():
+    """One pinned figure per artifact class, plus absence of the retired value:
+    presence-anywhere alone cannot catch a partial re-base (the §3 failure), but
+    new-present AND old-absent catches every drift this branch actually had."""
+    BR = json.loads((ROOT / "data" / "behavior_rebuild.json").read_text())
+    PK = json.loads((ROOT / "data" / "package_results.json").read_text())
+    checks = [
+        (f"{BR['detection']['sessions']} charging sessions", "560 charging sessions"),
+        (f"${BR['scenarios']['a']['saved']:,.0f}/yr", None),
+        (f"${DISPATCH['pw3']['greedy']['save']:,}", "$2,325"),
+        (f"${PK['packages']['MID']['savings_yr']:,}", "$3,438"),
+        (f"${DISPATCH['baseline_bill_current_rates']:,}", "$4,884"),
+    ]
+    for new_form, old_form in checks:
+        assert new_form in HTML, f"current figure missing from the report: {new_form!r}"
+        if old_form:
+            assert old_form not in HTML, f"stale figure survives in the report: {old_form!r}"
+    return "headline figures per artifact class are present and their stale forms absent"
+
+
 def case_chart_and_dispatch_agree_on_non_super_off_peak():
     """The §6 prose quotes the dispatch artifact; the §5 chart draws report_data.
 
@@ -84,7 +119,8 @@ def case_no_retired_holiday_discrepancy_note():
     Both pipelines now use the canonical rule, so any surviving copy of that
     explanation is false.
     """
-    for phrase in ("8,467", "treats seven weekday holidays as weekends"):
+    for phrase in ("8,467", "treats seven weekday holidays as weekends",
+                   "holiday convention"):
         assert phrase not in HTML, f"retired explanation still present: {phrase!r}"
     return "the retired holiday-convention explanation is gone from the report"
 
@@ -99,6 +135,8 @@ CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
+    case_battery_chart_series_match_their_artifacts,
+    case_headline_figures_present_and_stale_ones_absent,
     case_chart_and_dispatch_agree_on_non_super_off_peak,
     case_no_retired_holiday_discrepancy_note,
     case_report_totals_match_the_artifact,

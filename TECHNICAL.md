@@ -36,9 +36,9 @@ private/1-raw-data/  (gitignored — never committed)
         │  analysis/ scripts (pandas/numpy; rate tables hard-coded from tariff PDFs)
         ▼
 ┌────────────────────────────┬──────────────────────────────────────────────┐
-│ analyze.py /               │ plan_results.csv, hourly_profile.csv,        │
-│ analyze_norelief.py        │ monthly.csv, stats.json (superset:           │
-│                            │ report_data.json from the as-run variant)    │
+│ analyze_norelief.py        │ plan_results.csv, hourly_profile.csv,        │
+│ (analyze.py = relief       │ monthly.csv, stats.json (gitignored);        │
+│  variant, *_relief files)  │ report_data.json: see report_data.py         │
 │ battery_backup_sims.py     │ battery_sim.json, backup_endurance.json      │
 │ deep_analyses.py           │ deep_results.json                           │
 │ billing_model_nem.py       │ (stdout: bill-validated annual baseline)     │
@@ -54,7 +54,7 @@ private/1-raw-data/  (gitignored — never committed)
 │ package_results.py         │ package_results.json (recomposition)         │
 │ in-session steps (§3.7/§3.11)│ extra_results.json,                        │
 │                            │ cleaning_study_daily.csv,                    │
-│                            │ report_data.json, weather_results.json,     │
+│                            │ weather_results.json,                        │
 │                            │ threeway_production_validation.csv,          │
 │                            │ electric/gas_bill_summary.csv, pvoutput_*,   │
 │                            │ enphase_daily_production.csv,                │
@@ -76,8 +76,8 @@ Two things to understand about the flow:
 2. **Two generations of billing model coexist.** `analyze*.py` price every 15-minute interval
    independently (interval netting). `billing_model_nem.py` implements true NEM 2.0 monthly
    per-TOU-period netting with non-bypassable charges on gross imports, and was validated
-   against the 12 actual bills; the two methods agree to ~0.5% on this dataset ($4,861 vs
-   $4,884 — §6). Plan *rankings* and battery/behavior *deltas* come from the interval models;
+   against the 12 actual bills; the two methods agree to ~0.5% on this dataset ($4,882 vs
+   $4,904 — §6). Plan *rankings* and battery/behavior *deltas* come from the interval models;
    absolute dollar levels in the report are anchored to actual bills, and forward projections
    are stated on the single §3.6 basis at constant 6/1/2026 rates.
 
@@ -197,10 +197,13 @@ CEA), computed per 15-minute interval from fractional hour `h`:
 
 For the 2-period plan TOU-DR2, `analyze*.py` use simply on = 16–21, off = otherwise.
 
-**Holidays.** `analyze.py`/`analyze_norelief.py` treat seven holidays as weekend days for TOU
-purposes (New Year's, Presidents' Day = 3rd Mon Feb, Memorial Day = last Mon May, July 4, Labor
-Day = 1st Mon Sep, Veterans Day, Thanksgiving = 4th Thu Nov, Christmas). The four newer scripts
-use only `weekday >= 5` — a known, dollar-negligible inconsistency (§6.5).
+**Holidays.** Eight tariff holidays take weekend TOU windows (New Year's, Presidents' Day =
+3rd Mon Feb, Memorial Day = last Mon May, July 4, Labor Day = 1st Mon Sep, Veterans Day,
+Thanksgiving = 4th Thu Nov, Christmas), each confirmed individually against the bills by
+`analysis/tou_audit.py`. The rule lives in `rates.holidays()`/`rates.off_peak_day()` and every
+pipeline script gets it through `rates.period_at` — the historical per-script inconsistency
+(§6.5) is closed. Whether a weekend-falling holiday shifts to an observed Monday is not yet
+determinable from the corpus (first testable statement: August 2026; see rates.py).
 
 **Rate constants** (all $/kWh unless noted; sources and effective dates in
 `research/rates-reference.md`):
@@ -276,9 +279,9 @@ bundled-SDG&E generation, and emit the aggregate usage profiles.
 total`), `hourly_profile.csv` (`dt` = hour 0–23; `imp, exp, net` = **mean kWh per 15-minute
 interval** at that hour — multiply by 4 for average kW), `monthly.csv` (`dt` = `YYYY-MM`;
 `imp, exp, net` kWh — 13 rows because the window makes the first and last calendar months
-partial), and `stats.json` (as-run superset committed as `data/report_data.json`, §3.7).
+partial), and `stats.json` (gitignored run product; `data/report_data.json` is produced by `analysis/report_data.py`, §3.7).
 
-**Run:** edit `CSV`, then `python3 analysis/analyze.py`.
+**Run:** from the private/verify sandbox (usage.csv present), `python3 analyze_norelief.py` — the live variant that reproduces the committed artifacts. `analyze.py` is the superseded relief-credit variant; it writes gitignored `*_relief` outputs for comparison only.
 
 ### 3.2 `analysis/analyze_norelief.py` — the published variant (no relief credit)
 
@@ -287,7 +290,7 @@ Byte-for-byte the same model as `analyze.py` with one change: the CEA runs call
 bill audit later confirmed this is the correct model for this account (the bills show CEA
 product "Clean Impact Plus" with only a +$0.001/kWh adder and no relief line), so **the
 committed `data/plan_results.csv` is this script's output** — e.g. EV-TOU-5/CEA energy
-$4,559.04 + fixed $289.60 = total $4,848.65, matching the report's $4,849. Keep `analyze.py` if
+$4,592.12 + fixed $289.60 = total $4,881.73, matching the report's $4,882. Keep `analyze.py` if
 your CCA product does earn a credit; otherwise run this one.
 
 ### 3.3 `analysis/battery_backup_sims.py` — arbitrage value + outage endurance
@@ -302,8 +305,8 @@ configurations `(usable kWh, power kW)`: 1× Enphase IQ 5P (5, 3.84); 1× IQ 10C
 1× Tesla Powerwall 3 (13.5, 11.5); 3× IQ 5P (15, 7.68); 2× IQ 10C (20, 7.08); PW3 + 1 Expansion
 (27, 11.5). Output `battery_sim.json`: per config, `onpeak_offset_value`,
 `forgone_export_credits`, `grid_charge_cost`, `net_annual_savings` (= offset − forgone − grid),
-`equiv_full_cycles` (Σ discharge ÷ capacity). Example: 1× PW3 → offset $2,252, forgone $382,
-grid $201, net $1,669/yr, 228 cycles.
+`equiv_full_cycles` (Σ discharge ÷ capacity). Example: 1× PW3 → offset $2,262, forgone $381,
+grid $201, net $1,680/yr, 229 cycles.
 
 **Part 2 — backup endurance.** (a) Stitch the two SAM 8760 series onto hourly indexes for 2025
 and 2026 and slice the window 2025-07-24 → 2026-07-23 23:00 → hourly whole-home load `load`.
@@ -351,7 +354,7 @@ moved-load cost + 365 × BSC + baseline credit (TOU-DR1 only, same rule as §3.1
 
 **Outputs (script stdout/JSON).**
 - `plan_battery_matrix`: EV-TOU-5 / EV-TOU-2 / TOU-DR1 × {no_battery, with_PW3, battery_value}
-  (e.g. EV-TOU-5: $4,861 → $3,192, battery worth $1,669/yr). **Superseded:** report §4 now
+  (e.g. EV-TOU-5: $4,861 → $3,192, battery worth $1,680/yr). **Superseded:** report §4 now
   publishes the regenerable matrix from `battery_plan_matrix.py` (§3.16 — the price-aware
   dispatch billed under each top-3 plan's table rates); this legacy evening-only matrix is
   historical record only. The published battery economics remain the §3.13
@@ -412,7 +415,7 @@ land in `deep_results.json`.
    NPV over 10 years at 4% discount. Results: median payback 9.4 yr (p10 8.1, p90 11.6), 64.5%
    probability of payback within a 10-year warranty, median 10-yr NPV −$2,158. The report
    keeps this deliberately conservative Monte Carlo as the downside bracket alongside the
-   §3.13 price-aware basis (~6.2–6.5 yr simple payback at $2,245–2,325/yr).
+   §3.13 price-aware basis (~6.2–6.5 yr simple payback at $2,238–2,329/yr).
 
 **Run:** `python3 deep_analyses.py` next to the three inputs.
 
@@ -439,7 +442,7 @@ report. An earlier revision netted the NBC along with the energy charges — a
 code-vs-docstring bug caught by the `CLAUDE.md` §9 gate; the correction adds
 NBC × (gross imports − Σ positive period nets) ≈ **+$208/yr** on this dataset.
 
-**Output.** Prints the modeled annual baseline **$4,884** at 6/1/2026 rates (the retired
+**Output.** Prints the modeled annual baseline **$4,904** at 6/1/2026 rates (the retired
 netted-NBC variant gave $4,675) against the actual billed $3,282 (365-day audit) — the
 reconciliation of that gap is §6.3. Adapt `bill()` (it accepts arbitrary import/export column
 names) to re-score behavior or battery scenarios on the validated netting.
@@ -461,14 +464,15 @@ than by a committed script; they are documented here so they can be regenerated:
   exactly on imports, exports and the hour-of-day profiles — but the money moves, because
   the charts had been drawn on table rates while every dollar in the prose was bill-derived.
   On the same input the annual netted energy cost reads $4,093 canonical against $4,559
-  legacy, and gross on-peak import cost $2,969 against $2,951. Contents: all-in EV-TOU-5
+  legacy, and gross on-peak import cost $2,969 against $2,951 — both bases run on the superseded pre-correction export (private/1-raw-data/superseded/), the last input both generators existed for; the current artifact reads $4,124 / $2,998 on the corrected input. Contents: all-in EV-TOU-5
   rates per season/period (`rates_ev5`); seasonal 24-hour average import/export profiles
   (`hourly_S`, `hourly_W`); monthly labels/imports/exports/netted cost; the `periods_chart`
   block the §5 chart is drawn from; per-(season, period)
-  import/export/cost split (`period_split`); on-peak summary (3,989 kWh imported, $2,951 gross
-  cost, 41.5% of energy cost); EV proxy stats (kWh above 2.5 kW by period and by start hour);
-  early battery estimate (`battery.net` $1,939 — superseded by `battery_sim.json`'s $1,669);
-  annual totals (imports 23,278, exports 9,922 kWh).
+  import/export/cost split (`period_split`); on-peak summary (4,022 kWh imported, $2,998 gross
+  cost, 41.7% of energy cost); annual totals (imports 23,376, exports 9,964 kWh). The old
+  `ev`, `battery` and `shift_*` keys are gone: behavior_rebuild.json and
+  battery_dispatch_policies.json model those properly, and report_data.py dropped the
+  duplicates deliberately.
 - **`threeway_production_validation.csv`** — date-indexed daily `pvoutput` vs `enphase_meter`
   production (the third series, derived production = load − imports + exports from §3.3, is
   computed in-script and summarized in the report: 16,660 kWh vs 16,839 and 16,502).
@@ -496,28 +500,28 @@ NEM netting (`bill_monthly()`).
 multi-hour charge blocks); candidate intervals have excess ≥ 2.5 kW; a session is a
 contiguous candidate run ≥ 30 min whose *peak* excess ≥ 8 kW (the EV charges at ~11.5 kW;
 nothing else in the house sustains 8 kW); EV kWh per interval = clip(excess, 0, 11.5 kW) ×
-0.25 h, capped at the interval's actual import. Detected: 560 sessions, 13,723 kWh/yr
-(vs ~13,100 expected), of which 878 kWh on-peak, 1,697 off-peak, 11,148 already
+0.25 h, capped at the interval's actual import. Detected: 563 sessions, 13,806 kWh/yr
+(vs ~13,100 expected), of which 911 kWh on-peak, 1,708 off-peak, 11,188 already
 super-off-peak.
 
 **Scenario ladder (energy conserved, not lump-summed).** Shifted kWh are removed from their
 source intervals and poured into super-off-peak intervals starting at the next midnight,
 honoring the 11.5 kW charger cap net of EV charging already present in the destination.
-(a) EV-only, 100% compliance: 2,575 kWh moved, **$1,193/yr** saved; (b) EV-only, 80%
-compliance (seeded RNG): $1,012; (c) + 25% of remaining on-peak house load: $1,672;
-(d) stretch, + 50%: $2,151. (Canonical engine, NBC on gross imports — the script imports
+(a) EV-only, 100% compliance: 2,618 kWh moved, **$1,221/yr** saved; (b) EV-only, 80%
+compliance (seeded RNG): $1,009; (c) + 25% of remaining on-peak house load: $1,700;
+(d) stretch, + 50%: $2,179. (Canonical engine, NBC on gross imports — the script imports
 `rates.py`.) A 13.5 kWh / 11.5 kW / 90%-RTE battery re-simulated on top of
-(a): $1,876/yr marginal on the baseline → **$1,752/yr after behavior** ($124/yr of
+(a): $1,887/yr marginal on the baseline → **$1,753/yr after behavior** ($135/yr of
 double-counting avoided). NOTE: these battery figures are the **evening-only dispatch
 variant, retired as the published basis**. The published battery economics come from the
 integrated pipeline in `battery_dispatch_policies.py` (§3.13), which runs the EV shift
 first and then the price-aware battery on the shifted load, re-billing end-to-end
-($2,325/yr baseline marginal; $2,245/yr post-behavior marginal) — no overlap subtraction
+($2,329/yr baseline marginal; $2,238/yr post-behavior marginal) — no overlap subtraction
 is involved anywhere. This script's evening-only overlap figures remain only as a
 workpaper illustration of *why* behavior and hardware must be simulated in one pipeline.
 
-**Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,883.54
-— regenerated on the canonical NBC-on-gross engine, matching §3.6's **$4,884**; earlier netted-NBC builds carried $4,675.20 (
+**Output `data/behavior_rebuild.json`.** Keys: `window`; `baseline` (`model_bill` $4,904.13
+— regenerated on the canonical NBC-on-gross engine, matching §3.6's **$4,904**; earlier netted-NBC builds carried $4,675.20 (
 NBC on gross imports. The scenario *deltas* are unaffected because load shifts preserve gross
 imports, so the NBC term cancels — vs `actual_billed` $3,282 — use deltas, per the in-file
 note; `month_min/max`;
@@ -603,7 +607,7 @@ at the SAME price as overnight — the cleaner choice is free on weekdays.
 `detail` deltas); `solar_exports_avoided_kg_co2_per_yr`; `cost_vs_carbon` (simple reprice
 vs the netting-correct §3.8 scenario-a saving — the artifact's stored $1,179.93 is the
 scenario-a value as of that run; the current committed `behavior_rebuild.json` says
-$1,192.83); `caveats` (4 sample days, not 365;
+$1,220.85); `caveats` (4 sample days, not 365;
 grid-average not marginal intensity; displacement assumption for exports).
 
 **Status.** Superseded as the report's §13 carbon basis by the 28-day sampling in
@@ -634,7 +638,7 @@ scaled by the utility's rate history (a rate index — NOT today's rates back-ca
 history). The curve crosses $37,845 in **~fall 2025** (gross), or **~early 2024** if the 30%
 federal ITC was claimed (net cost $26,492). Current-year value of solar: **$4,992/yr** — a
 no-solar counterfactual re-billed on the validated netting model (NBC on gross imports) costs
-$9,876/yr vs the modeled $4,884/yr baseline. Caveat: the rate-index scaling of historical
+$9,876/yr vs the modeled $4,904/yr baseline. Caveat: the rate-index scaling of historical
 value is approximate; treat the crossover dates as **±10%** (several months either way).
 
 **`data/extra_results.json` keys** (all from in-session computations on the same
@@ -650,14 +654,14 @@ value is approximate; treat the crossover dates as **±10%** (several months eit
   fade, 5% discount): 3%/yr → 7.8 yr payback / NPV10 +$102; 5% → 7.3 / +$1,373;
   8% → 6.8 / +$3,535; 12% → 6.2 / +$6,973. The **published ladder** (report §13) is
   `data/battery_dispatch_policies.json → escalation_greedy_pw3_post_behavior`, rebased on the §3.13
-  post-behavior $2,245/yr marginal: 3% → 6.1 yr / +$4,308; 5% → 5.9 / +$5,944;
-  8% → 5.5 / +$8,729; 12% → 5.1 / +$13,158.
+  post-behavior $2,238/yr marginal: 3% → 6.2 yr / +$4,249; 5% → 5.9 / +$5,880;
+  8% → 5.5 / +$8,656; 12% → 5.2 / +$13,072.
 - `price_map` — all-in **import and export $/kWh for all six season × TOU-period cells**
   from bill-validated rates (e.g. `S_on` 0.8681/0.8189, `S_sop` 0.125/0.0757, `W_on`
   0.6053/0.556).
 - `nbt` — the same year re-billed under NBT-style flat export credits at 3/5/8¢, NBC charged
   on gross imports in all variants (`note`): `nbt3c` $7,151 / `nbt5c` $6,953 / `nbt8c` $6,655
-  vs `nem2_nbc_gross` **$4,884** → `gf_value` [1772, 2268]: **NEM 2.0 grandfathering is
+  vs `nem2_nbc_gross` **$4,904** → `gf_value` [1772, 2268]: **NEM 2.0 grandfathering is
   worth ~$1,772–2,268/yr** at current rates.
 - `cleaning` — optimal-cadence model at soiling rates 0.45 / 1.5 / 2.4%/month (the §3.9
   bracket): no-clean season soiling loss **$59 / $195 / $283/yr** at the earlier $0.315/kWh
@@ -715,7 +719,7 @@ Single source of truth for bill-derived rate constants and the NEM billing mecha
 `billing_model_nem.py`, `behavior_rebuild.py`, and `battery_dispatch_policies.py`.
 Legacy `analyze.py` retains published rate-table values (differ slightly from billed
 values, e.g. UDC on-peak 0.31711 vs 0.30203) — acceptable for cross-plan RANKING, not for
-absolute dollars; this is why its $4,861 differs from the canonical $4,884 baseline.
+absolute dollars; this is why its $4,861 differs from the canonical $4,904 baseline.
 
 ### 3.12c EV-fleet validation data (in `extra_results.json → ev_fleet` + `wall_charger_daily.csv`)
 
@@ -725,7 +729,7 @@ independent energy measurements):
 
 1. **Tesla app Charge Stats** (trailing 12 months, Aug 2025–Jul 2026, battery-side kWh,
    captured 2026-07-24): combined home 12,828 kWh across 612 sessions, supercharging
-   1,300 kWh (9% of total), rated miles added 41,221. Against the detector's 13,723 kWh
+   1,300 kWh (9% of total), rated miles added 41,221. Against the detector's 13,806 kWh
    wall-side, the implied wall-to-battery gap is 6.5% — plausibly (not provably) charging
    loss, since typical AC loss is 8–12% and the app window and meter year overlap heavily
    but are not identical. Blended app peak share ~5.8% vs detector on-peak 6.4%.
@@ -753,15 +757,15 @@ any super-off-peak gap). Rationale: stored energy costs ~8.4¢/kWh (surplus) to 
 is worth serving. Ordering matters: solar surplus charges first (10am–2pm is both
 super-off-peak and peak solar). EV-spillover intervals (≥2.5 kW outside on-peak) are
 excluded from service. Results (`data/battery_dispatch_policies.json`): 1×PW3
-$1,708 / $1,946 / $2,325 per year; 27 kWh $2,043 / $2,279 / $2,780; price-aware runs
+$1,720 / $1,955 / $2,329 per year; 27 kWh $2,067 / $2,298 / $2,795; price-aware runs
 ~1.01 / 0.60 cycles per day. The report's battery economics use the price-aware policy
-($2,245/yr post-EV-fix from the integrated shift-then-battery run); the §4 plan matrix is
+($2,238/yr post-EV-fix from the integrated shift-then-battery run); the §4 plan matrix is
 regenerated by `battery_plan_matrix.py` (§3.16). The
-escalation ladder in report §13 is seeded from the post-behavior $2,245 marginal. In the 6.3% of
+escalation ladder in report §13 is seeded from the post-behavior $2,238 marginal. In the 6.3% of
 intervals carrying both import and export, discharge-window imports are served rather than
 banking low-value surplus. The artifact also carries an **`inputs` block** — the report §6
 sentence's serviceable-load inputs on the canonical period assignment: non-super-off-peak
-import **8,506 kWh**, on-peak **3,989**, servable off-peak house load (< 2.5 kW) **1,972**,
+import **8,521 kWh**, on-peak **4,022**, servable off-peak house load (< 2.5 kW) **1,950**,
 serviceable total **5,972**. Reconciliation: the §5 periods chart's non-SOP total reads
 **8,520 kWh** (from `report_data.json`, off-peak + on-peak) against **8,521** here. Both
 now use the canonical period assignment including the eight bill-confirmed tariff holidays,
@@ -821,8 +825,8 @@ spread uniformly, and both the baseline and the shifted year are re-billed with
 `rates.bill_nem` — half-shift $387/yr, full shift $772/yr; never kWh × rate-delta),
 `representative_year`, `gas_decomposition` (364-day
 HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
-therms/yr), `nbt_2039` (price-aware battery marginal $2,504–2,539/yr under 3–8¢ flat
-exports vs $2,325 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.3 yr >
+therms/yr), `nbt_2039` (price-aware battery marginal $2,506–2,540/yr under 3–8¢ flat
+exports vs $2,329 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.2 yr >
 install quote 2.1 > escalation 0.9 > DSGS 0.8 > EV-fix interaction 0.3 around the 6.2-yr
 base). Figures derived purely from external program terms (DSGS dollars, outage-hour
 exposure) carry **estimated** pills in the report; artifact-derived ones carry
@@ -856,10 +860,10 @@ resolve against the repo root (found by walking up from the CWD, then from the s
 the `private/verify` sandbox pattern needs no path edits. **Label rule:** results are tagged
 `estimated · 28 days sampled` — never "measured" — because 28 of 365 days are observed and
 the rest interpolated (the script's `COVERED_LABEL_MIN` only permits a `measured` label at
-≥300 covered days). Headline outputs: import footprint 5,359.7 kg/yr; export
-displacement 880.0 kg/yr (−28% vs the 4-day estimate — fuller sampling catches sunny spring
+≥300 covered days). Headline outputs: import footprint 5,379.4 kg/yr; export
+displacement 882.9 kg/yr (−28% vs the 4-day estimate — fuller sampling catches sunny spring
 middays where CAISO's import-inclusive accounting drives intensity to ~0); mistimed-EV
-shift +249.1 kg/yr (to overnight) vs −184.5 (to midday), gap 433.6 kg/yr; window means
+shift +254.0 kg/yr (to overnight) vs −188.2 (to midday), gap 442.2 kg/yr; window means
 271.2 / 103.9 / 156.5 kg/MWh (overnight 00–06 / midday 10–14 / on-peak 16–21). Grid-average
 (not marginal) intensity; the dollar side of EV retiming is unchanged (both destination
 windows are super-off-peak on EV-TOU-5).
@@ -876,10 +880,10 @@ and billing replicates `analyze_norelief.py` exactly (interval netting, export c
 max(rate − NBC, 0), BSC × 365, holiday-as-weekend TOU assignment) so the no-battery column
 **ties out to the committed `data/plan_results.csv`** — asserted in-script. All three plans
 share the same 2026 three-period TOU windows, so a single dispatch trace is billed under
-each plan. Results: EV-TOU-5 $4,849 → $2,542 (battery value **$2,307/yr**), EV-TOU-2
-$5,808 → $4,151 ($1,657), TOU-ELEC $6,321 → $5,324 ($997) — the battery is worth the most
+each plan. Results: EV-TOU-5 $4,849 → $2,564 (battery value **$2,318/yr**), EV-TOU-2
+$5,843 → $4,176 ($1,667), TOU-ELEC $6,356 → $5,349 ($1,007) — the battery is worth the most
 on EV-TOU-5, so it strengthens (not changes) the plan answer. The artifact also records a
-`canonical_crosscheck_ev_tou_5` block ($4,884 no-battery / $2,325 battery value from
+`canonical_crosscheck_ev_tou_5` block ($4,904 no-battery / $2,329 battery value from
 `battery_dispatch_policies.json`, asserted within $100): the small differences vs the
 table-rate column are the rate basis (published tables vs bill-derived) and the holiday
 convention (§6.5). Run from `private/verify` (repo root found by walking up); writes
@@ -932,7 +936,7 @@ Mapping of every canvas id → `D` arrays → producing computation:
 | Canvas id | Type | `D` arrays (length) | Units | Produced by |
 |---|---|---|---|---|
 | `hourly` | line, 4 series | `hourlyS_imp`, `hourlyS_exp`, `hourlyW_imp`, `hourlyW_exp` (24 each) | average kW by hour of day, split summer/winter | `report_data.json → hourly_S / hourly_W` (from `analysis/report_data.py`; mean kWh per hour-of-day, split by season) |
-| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.greedy_profile_S` (on-peak imports fall 3,989 → 850 kWh/yr with PW3, → 321 with the expansion) |
+| `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.greedy_profile_S` (on-peak imports fall 4,022 → 870 kWh/yr with PW3, → 329 with the expansion) |
 | `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the canonical per-month netted energy cost (bill-derived rates; excludes the non-bypassable charges and the daily BSC) |
 | `periods` | horizontal bar ×2 | inline literals: kWh `[14856, 4498, 4022]`, $ `[1875, 2316, 2998]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → periods_chart`, produced by `analysis/report_data.py`; the on-peak $2,998 matches `report_data.json → onpeak.import_cost`, and `analysis/test_report_consistency.py` asserts both arrays against the artifact |
 | `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 28 sampled CAISO days + month-hour-mean interpolation; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
@@ -990,7 +994,7 @@ the climate zone is Coastal (affects only the baseline-credit plans, which lose 
 whose `days` column sums to 365 and whose delivery+generation columns sum to $3,282.22).
 The interval model said
 $4,861; proper monthly per-TOU-period netting with NBC on gross imports
-(`billing_model_nem.py`) gives **$4,884** — i.e. the **netting method itself agrees to
+(`billing_model_nem.py`) gives **$4,904** — i.e. the **netting method itself agrees to
 ~0.5%** and is not the source of the gap. The remaining gap is
 mostly that the model prices the *entire* year at current **6/1/2026 rates**, while the actual
 bills were mostly rendered on cheaper 2025 tariffs (rates rose through the period, most in
@@ -1003,14 +1007,16 @@ absolute dollars are anchored to actual bills; the model is trusted for **rankin
 energy above 2.5 kW in the on-peak and 6–9 am windows, but only ~931 kWh of on-peak session
 energy is identifiably the EV (§3.5); the rest includes house loads (HVAC, cooking) that may not
 be movable. That crude cap is superseded: the published behavior bracket comes from the
-§3.8 session-based model — **$1,012–1,193/yr** for EV-timing alone (80–100% compliance),
-**$1,672/yr** adding a 25% flexible-house-load shift ($2,151/yr at the aggressive 50%
+§3.8 session-based model — **$1,009–1,221/yr** for EV-timing alone (80–100% compliance),
+**$1,700/yr** adding a 25% flexible-house-load shift ($2,179/yr at the aggressive 50%
 stretch) — rather than the full crude-cap figure.
 
-**6.5 Holiday handling is inconsistent by design debt.** `analyze.py`/`analyze_norelief.py`
-treat seven holidays as weekends for TOU assignment; `battery_backup_sims.py`,
-`package_sims.py` (REMOVED — superseded by the integrated pipeline), `deep_analyses.py`, and `billing_model_nem.py` do not. Seven days × the
-sop/off rate difference is dollar-negligible, but expect tiny discrepancies if you diff outputs.
+**6.5 Holiday handling — RESOLVED.** This section used to record a per-script inconsistency:
+the legacy ranking pair applied a holiday-as-weekend rule while the pipeline scripts used bare
+`weekday >= 5`. The bills settled it (`analysis/tou_audit.py` confirms all eight tariff
+holidays individually), the rule now lives in `rates.off_peak_day`/`period_at`, and every
+pipeline script was migrated; `analysis/test_rates.py` and `analysis/test_scripts_runnable.py`
+guard against a private copy reappearing. Kept as a heading because other sections cite §6.5.
 
 **6.6 Other limitations** (from report §14): rate tables go stale on SDG&E (Jan/Jun) and CEA
 (Feb/Jun) revision cycles; TOU-DR-P event surcharges are only modeled in the §3.5 wildcard;

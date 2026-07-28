@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
-"""Catch analysis scripts that have quietly stopped being runnable.
+"""Catch analysis scripts that have quietly stopped being runnable or producing.
 
-This repo has been bitten three times. analyze.py and analyze_norelief.py carried
-absolute paths into a retired Cowork sandbox and had never run here, which left
-plan_results.csv, hourly_profile.csv and monthly.csv with no working generator.
-carbon_timing.py read a caiso_data/ directory that was never committed. Every
-time the script sat in analysis/ looking maintained and nothing complained.
+This repo has been bitten three times by scripts that sat in analysis/ looking
+maintained while being unrunnable (analyze.py and analyze_norelief.py carried
+absolute paths into a retired sandbox; carbon_timing.py read a directory that was
+never committed), and once by a guard that skipped everywhere it mattered and by
+assertions that checked exit codes while a generator could run and produce
+nothing. Every failure mode was silence, so the tiers below are explicit about
+what executes where and every execution is followed by an assertion on OUTPUT,
+not just on the exit code.
 
-The first version of this file only inspected source text, which was not enough:
-a script whose *relative* inputs have gone missing, or whose imports are broken,
-passed every check. carbon_timing.py itself would have passed had it not been
-listed as retired by hand, so the guard could not catch the failure its own
-docstring described.
+  structural   parses, classified in MANIFEST, retired scripts refuse to run
+               (verified by running them), no absolute paths outside the repo,
+               libraries import cleanly. Runs everywhere.
+  synthetic    the CI_RUNNABLE generators execute against an invented but
+               structurally faithful Green Button fixture, and their outputs are
+               checked for content (artifacts written, sessions detected, DST
+               days seen). No skip path; this is what protects main in CI.
+  real         every generator executes against the private archive, and each
+               artifact it owns must reproduce the committed copy byte-for-byte
+               -- the CLAUDE.md section 9 gate, folded into the suite. Skips
+               only where the private archive is absent.
 
-So there are two tiers here, and the split is honest about what CI can know:
-
-  structural   parses, is classified in MANIFEST, retired scripts say so and fail
-               loudly, no absolute path that does not exist, libraries import
-               cleanly. No private data, runs everywhere.
-  executable   every declared generator is actually run to completion against the
-               real inputs, in a throwaway repo root so nothing in data/ is
-               touched. Needs the private export, so it SKIPS in CI and runs
-               locally, which is where the reproduction claim is made anyway.
-
-MANIFEST is explicit rather than "everything not retired", so adding a script
-without classifying it fails instead of being silently assumed live.
+MANIFEST classifies every script; OWNS declares which committed artifacts each
+generator writes and where, which both drives the byte-diff and forbids two
+generators from claiming the same output file.
 """
 import ast
+import json
 import datetime as dt
 import math
 import os
@@ -67,16 +68,55 @@ MANIFEST = {
     "carbon_timing.py": "retired",
 }
 
+# Which committed artifacts each generator writes, and where it writes them:
+# "cwd" = the sandbox convention (script writes into the working directory; the
+# documented gate compares that copy against data/), "data" = written into
+# ROOT/data directly. Drives the real-tier byte-diff and the no-two-owners check.
+# Not listed: gitignored run products (stats.json, *_relief*) and parse_bills.py,
+# whose five artifacts have their own transactional gate and test suite.
+OWNS = {
+    "behavior_rebuild.py":          [("cwd", "behavior_rebuild.json")],
+    "battery_dispatch_policies.py": [("cwd", "battery_dispatch_policies.json")],
+    "battery_plan_matrix.py":       [("data", "battery_plan_matrix.json")],
+    "package_results.py":           [("data", "package_results.json")],
+    "extended_findings.py":         [("data", "extended_results.json")],
+    "report_data.py":               [("data", "report_data.json")],
+    "deep_analyses.py":             [("cwd", "deep_results.json")],
+    "battery_backup_sims.py":       [("cwd", "battery_sim.json"),
+                                     ("cwd", "backup_endurance.json")],
+    "analyze_norelief.py":          [("data", "plan_results.csv"),
+                                     ("data", "hourly_profile.csv"),
+                                     ("data", "monthly.csv")],
+    "carbon_fullyear.py":           [("data", "carbon_fullyear_results.json"),
+                                     ("data", "caiso_hourly_intensity.csv")],
+    "tou_audit.py":                 [("data", "tou_audit.csv"),
+                                     ("data", "tou_audit_summary.json")],
+}
+
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
 # its own calendar by design (TECHNICAL.md 3.1/3.2); tou_audit scores alternative
 # day-type rules against the bills on purpose; rates.py is where the rule lives.
 TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py"}
 
-ABS_PATH = re.compile(r"""["'](/(?!tmp/)[A-Za-z0-9_.\-]+/[^"']*)["']""")
+ABS_PATH = re.compile(r"""["'](/[A-Za-z0-9_.\-]+/[^"']*)["']""")
 
 
 def _scripts():
     return sorted(f for f in ANALYSIS.glob("*.py") if not f.name.startswith("test_"))
+
+
+def case_no_two_generators_own_the_same_artifact():
+    """analyze.py and analyze_norelief.py used to collide on four filenames, with
+    whichever ran last winning silently. Ownership must be exclusive."""
+    seen = {}
+    for name, artifacts in OWNS.items():
+        for _, fname in artifacts:
+            assert fname not in seen, (
+                f"{fname} claimed by both {seen[fname]} and {name}")
+            seen[fname] = name
+    unknown = set(OWNS) - set(MANIFEST)
+    assert not unknown, f"OWNS lists scripts missing from MANIFEST: {sorted(unknown)}"
+    return f"{len(seen)} owned artifacts, each with exactly one generator"
 
 
 def case_manifest_is_complete_and_exact():
@@ -99,28 +139,40 @@ def case_every_script_parses():
 
 
 def case_no_absolute_paths_outside_the_repo():
+    """Existence-independent: a wrong-but-existing path (or one that exists only
+    on the author's machine) is just as dead as a missing one. Any absolute
+    literal outside the repo is flagged, everywhere, deterministically."""
     offenders = []
     for f in _scripts():
         for m in ABS_PATH.finditer(f.read_text()):
             path = m.group(1)
-            if path.startswith(str(ROOT)) or not path.startswith("/"):
+            if path.startswith(str(ROOT)):
                 continue
-            if not pathlib.Path(path).exists():
-                offenders.append(f"{f.name}: {path}")
-    assert not offenders, f"absolute paths that do not exist: {offenders}"
-    return "no analysis script hardcodes an absolute path that is not present"
+            offenders.append(f"{f.name}: {path}")
+    assert not offenders, f"absolute path literals outside the repo: {offenders}"
+    return "no analysis script hardcodes an absolute path outside the repo"
 
 
 def case_retired_scripts_say_so_and_refuse_to_run():
+    """Behavioral: each retired script is actually RUN and must refuse.
+
+    The previous version grepped the source for the string "SystemExit", which a
+    comment satisfies -- checking for one spelling of a property instead of the
+    property. Running the script is the property.
+    """
     for name, role in sorted(MANIFEST.items()):
         if role != "retired":
             continue
-        src = (ANALYSIS / name).read_text()
-        doc = ast.get_docstring(ast.parse(src)) or ""
+        doc = ast.get_docstring(ast.parse((ANALYSIS / name).read_text())) or ""
         assert "RETIRED" in doc, f"{name}: retired but its docstring does not say so"
-        assert "SystemExit" in src, f"{name}: should raise SystemExit with an explanation"
+        r = subprocess.run([sys.executable, str(ANALYSIS / name)],
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0, f"{name}: retired but exits 0 when run"
+        assert "RETIRED" in (r.stderr + r.stdout), (
+            f"{name}: refuses to run but without naming its retirement: "
+            f"{(r.stderr or r.stdout)[-120:]}")
     n = sum(1 for r in MANIFEST.values() if r == "retired")
-    return f"{n} retired script(s) carry the marker and refuse to run with an explanation"
+    return f"{n} retired script(s) verified by execution to refuse with the notice"
 
 
 def case_tou_assignment_comes_from_the_canonical_module():
@@ -140,9 +192,21 @@ def case_tou_assignment_comes_from_the_canonical_module():
                   if isinstance(n, ast.Constant) and isinstance(n.value, str)}
         if not {"on", "off", "sop"} <= consts:
             continue
-        # It may call the canonical assignment, or take a frame from the loader
-        # that already did.
-        if "period_at" in src or "behavior_rebuild" in src:
+        # It may call the canonical assignment, or import the loader whose frame
+        # already carries it. Both are checked in the AST, not as substrings: a
+        # comment mentioning period_at must not exempt a module (that is the
+        # battery_plan_matrix failure mode this case exists to prevent).
+        tree = ast.parse(src)
+        calls_period_at = any(
+            isinstance(n, ast.Call) and (
+                (isinstance(n.func, ast.Attribute) and n.func.attr == "period_at")
+                or (isinstance(n.func, ast.Name) and n.func.id == "period_at"))
+            for n in ast.walk(tree))
+        imports_loader = any(
+            (isinstance(n, ast.Import) and any(a.name == "behavior_rebuild" for a in n.names))
+            or (isinstance(n, ast.ImportFrom) and n.module == "behavior_rebuild")
+            for n in ast.walk(tree))
+        if calls_period_at or imports_loader:
             continue
         offenders.append(f.name)
     assert not offenders, f"modules labelling TOU periods without rates.period_at: {offenders}"
@@ -167,8 +231,6 @@ def case_libraries_import_cleanly():
     n = sum(1 for r in MANIFEST.values() if r == "library")
     return f"all {n} library modules import with no side effects"
 
-
-IN_CI = bool(os.environ.get("CI"))
 
 # Generators that need only a Green Button export, a household file and the
 # committed data/ directory. These MUST execute in CI, against synthetic inputs
@@ -284,7 +346,9 @@ def _build_throwaway_root(tmp, synthetic):
         shutil.copy(hh, tmp / "private" / "household.yaml")
     raw = ROOT / "private" / "1-raw-data"
     if raw.exists():
-        os.symlink(raw, tmp / "private" / "1-raw-data")
+        # a COPY, not a symlink: a generator that ever writes under
+        # private/1-raw-data must corrupt the throwaway copy, not the archive
+        shutil.copytree(raw, tmp / "private" / "1-raw-data")
     shutil.copy(SANDBOX / "usage.csv", tmp / "usage.csv")
     for extra in ("samA.csv", "samB.csv"):
         if (SANDBOX / extra).exists():
@@ -292,16 +356,49 @@ def _build_throwaway_root(tmp, synthetic):
     return tmp
 
 
-def _run_generators(names, synthetic):
+def _owned_path(tmp, where, fname):
+    return (tmp / fname) if where == "cwd" else (tmp / "data" / fname)
+
+
+def _run_generators(names, synthetic, inspect=None):
+    """Run each generator in a throwaway root; then run `inspect(tmp)` INSIDE the
+    tempdir context (it is deleted on exit) and fold its findings into the
+    failure list. Exit code alone is not success: a generator can run to
+    completion and produce nothing, which is the founding failure of the
+    section 9 gate."""
     failures = []
     with tempfile.TemporaryDirectory() as td:
         tmp = _build_throwaway_root(pathlib.Path(td), synthetic)
         for name in sorted(names):
-            r = subprocess.run([sys.executable, name], cwd=tmp,
-                               capture_output=True, text=True, timeout=900)
+            before = {}
+            for where, fname in OWNS.get(name, ()):
+                path = _owned_path(tmp, where, fname)
+                before[fname] = path.stat().st_mtime_ns if path.exists() else None
+            try:
+                r = subprocess.run([sys.executable, name], cwd=tmp,
+                                   capture_output=True, text=True, timeout=900)
+            except subprocess.TimeoutExpired:
+                failures.append(f"{name}: timed out after 900s")
+                continue
             if r.returncode != 0:
-                tail = (r.stderr or "").strip().splitlines()[-1:] or ["(no stderr)"]
+                err = (r.stderr or "").strip() or (r.stdout or "").strip()
+                tail = err.splitlines()[-1:] or ["(no output)"]
                 failures.append(f"{name}: {tail[0][:150]}")
+                continue
+            # the generator must have WRITTEN every artifact it owns -- exiting 0
+            # while never touching the pre-staged copy is a silent no-op. mtime,
+            # not content: several generators legitimately reproduce the committed
+            # bytes (their inputs ARE the committed artifacts), but a write always
+            # moves the timestamp through the atomic replace.
+            for where, fname in OWNS.get(name, ()):
+                path = _owned_path(tmp, where, fname)
+                if not path.exists():
+                    failures.append(f"{name}: exited 0 without writing {fname}")
+                elif before[fname] is not None and \
+                        path.stat().st_mtime_ns == before[fname]:
+                    failures.append(f"{name}: exited 0 without rewriting {fname}")
+        if inspect is not None and not failures:
+            failures.extend(inspect(tmp))
     return failures
 
 
@@ -312,9 +409,29 @@ def case_generators_run_on_synthetic_inputs():
     that is where it guards main. It builds a structurally faithful Green Button
     export and household file, then runs every generator that needs nothing more.
     """
-    failures = _run_generators(CI_RUNNABLE, synthetic=True)
-    assert not failures, "generators that do not run on synthetic inputs:\n  " + "\n  ".join(failures)
-    return f"all {len(CI_RUNNABLE)} CI-runnable generators execute against synthetic inputs"
+    def inspect(tmp):
+        out = []
+        br = json.loads((tmp / "behavior_rebuild.json").read_text())
+        if br["detection"]["sessions"] <= 0:
+            out.append("behavior_rebuild found no EV sessions in a fixture built "
+                       "around the session signature")
+        if br["detection"]["ev_kwh_onpeak"] <= 0:
+            out.append("behavior_rebuild found no on-peak EV energy despite the "
+                       "fixture's on-peak charge starts")
+        ta = json.loads((tmp / "data" / "tou_audit_summary.json").read_text())
+        dst = {(d["date"], d["intervals"]) for d in ta["dst_days"]}
+        if dst != {("2025-11-02", 100), ("2026-03-08", 92)}:
+            out.append(f"tou_audit did not see the fixture's DST days: {sorted(dst)}")
+        if ta["integrity_skips"]:
+            out.append(f"tou_audit reports integrity skips on a complete fixture: "
+                       f"{ta['integrity_skips']}")
+        return out
+
+    failures = _run_generators(CI_RUNNABLE, synthetic=True, inspect=inspect)
+    assert not failures, ("generators failing on synthetic inputs:\n  "
+                          + "\n  ".join(failures))
+    return (f"all {len(CI_RUNNABLE)} CI-runnable generators execute against "
+            "synthetic inputs and their outputs check out")
 
 
 def case_generators_run_on_the_real_archive():
@@ -327,10 +444,27 @@ def case_generators_run_on_the_real_archive():
         # so something always executes wherever this suite runs.
         return ("SKIP generators needing the private archive (" +
                 ", ".join(sorted(NEEDS_PRIVATE_ARCHIVE)) + ")")
-    failures = _run_generators(set(NEEDS_PRIVATE_ARCHIVE) | CI_RUNNABLE, synthetic=False)
+    def inspect(tmp):
+        """The section 9 gate, folded in: on the real inputs every owned artifact
+        must reproduce the committed copy byte-for-byte."""
+        out = []
+        for name in sorted(set(NEEDS_PRIVATE_ARCHIVE) | CI_RUNNABLE):
+            for where, fname in OWNS.get(name, ()):
+                got = _owned_path(tmp, where, fname)
+                want = ROOT / "data" / fname
+                if not want.exists():
+                    continue
+                if got.read_bytes() != want.read_bytes():
+                    out.append(f"{name}: {fname} does not reproduce the committed "
+                               "artifact byte-for-byte")
+        return out
+
+    failures = _run_generators(set(NEEDS_PRIVATE_ARCHIVE) | CI_RUNNABLE,
+                               synthetic=False, inspect=inspect)
     assert not failures, "generators that do not run:\n  " + "\n  ".join(failures)
     n = len(NEEDS_PRIVATE_ARCHIVE) + len(CI_RUNNABLE)
-    return f"all {n} generators execute against the real inputs"
+    return (f"all {n} generators execute against the real inputs and every owned "
+            "artifact reproduces the committed copy byte-for-byte")
 
 
 def case_the_ci_tier_cannot_skip():
@@ -341,8 +475,11 @@ def case_the_ci_tier_cannot_skip():
     """
     assert CI_RUNNABLE, "the CI-runnable tier is empty; nothing would execute in CI"
     src = pathlib.Path(__file__).read_text()
-    body = src[src.index("def case_generators_run_on_synthetic_inputs("):
-               src.index("def case_generators_run_on_the_real_archive(")]
+    starts = sorted([src.index("def case_generators_run_on_synthetic_inputs(")])
+    end_candidates = [i for i in
+                      (src.find("\ndef ", starts[0] + 1),) if i != -1]
+    body = src[starts[0]:end_candidates[0]] if end_candidates else src[starts[0]:]
+    assert len(body) > 100, "could not isolate the synthetic case body"
     assert "SKIP" not in body, "the CI-runnable tier has grown a skip path"
     return f"the CI tier executes {len(CI_RUNNABLE)} generators and has no skip path"
 
@@ -358,6 +495,7 @@ def case_every_generator_is_covered_by_one_of_the_two_tiers():
 
 CASES = [
     case_manifest_is_complete_and_exact,
+    case_no_two_generators_own_the_same_artifact,
     case_every_script_parses,
     case_no_absolute_paths_outside_the_repo,
     case_retired_scripts_say_so_and_refuse_to_run,

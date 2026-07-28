@@ -63,7 +63,7 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     df["dt"] = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
     for c in ("Consumption", "Generation"): df[c] = pd.to_numeric(df[c])
     df = df[(df.dt >= end - pd.Timedelta(days=365)) & (df.dt < end)].copy()
-    df["seas"] = np.where(df.dt.dt.month.isin([6, 7, 8, 9, 10]), "S", "W")
+    df["seas"] = np.where(df.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     df["ym"] = df.dt.dt.to_period("M")
     hh = df.dt.dt.hour + df.dt.dt.minute / 60
     df["p"] = [R.period_at(t) for t in df.dt]   # canonical: holiday rule included
@@ -77,7 +77,7 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     s = s[(s.index >= end - pd.Timedelta(days=365)) & (s.index < end)]
     L = pd.DataFrame({"Consumption": s, "Generation": 0.0})
     L["dt"] = L.index
-    L["seas"] = np.where(L.index.month.isin([6, 7, 8, 9, 10]), "S", "W")
+    L["seas"] = np.where(L.index.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     L["ym"] = L.index.to_period("M")
     L["p"] = [R.period_at(t) for t in L.index]   # canonical: holiday rule included
     L["p_old"] = [_per_old(t.hour, t.month) for t in L.index]

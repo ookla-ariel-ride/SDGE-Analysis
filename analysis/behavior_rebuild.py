@@ -77,7 +77,7 @@ def load():
     # is the single source of that rule (confirmed against the bills, see
     # analysis/tou_audit.py). A bare weekday test silently drops it.
     df["wkend"] = df.dt.dt.date.map(R.off_peak_day)
-    df["seas"] = np.where(df.dt.dt.month.isin([6, 7, 8, 9, 10]), "S", "W")
+    df["seas"] = np.where(df.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     df["ym"] = df.dt.dt.to_period("M")
 
     # TOU assignment comes from the canonical module, not a local copy of the rule.

@@ -81,7 +81,11 @@ def case_holiday_rule_spans_the_reporting_era():
 
 
 def case_no_analysis_module_derives_the_day_type_by_weekday_alone():
-    bare = re.compile(r"weekday\(\)\s*>=\s*5|dt\.weekday\s*>=\s*5")
+    # every idiomatic spelling of "day type from the calendar position alone":
+    # weekday()/dayofweek/day_of_week, >= 5 / > 4 / isin([5, 6])
+    bare = re.compile(
+        r"(?:weekday\(\)|\.weekday|\.dayofweek|\.day_of_week)\s*(?:>=\s*5|>\s*4)"
+        r"|(?:weekday|dayofweek|day_of_week)[^\n]{0,20}isin\(\s*[\[(]\s*5\s*,\s*6")
     offenders = []
     for f in sorted(ANALYSIS.glob("*.py")):
         if f.name in EXEMPT or f.name.startswith("test_"):
@@ -92,12 +96,26 @@ def case_no_analysis_module_derives_the_day_type_by_weekday_alone():
     return "no non-exempt analysis module derives the day type from weekday alone"
 
 
+def case_summer_months_are_owned_by_rates():
+    """The season rule was a six-module private copy of [6,7,8,9,10] — the same
+    drift shape as the holiday rule. The set is pinned here and modules must
+    reference rates.SUMMER_MONTHS rather than re-listing the months."""
+    assert R.SUMMER_MONTHS == {6, 7, 8, 9, 10}
+    lit = re.compile(r"isin\(\s*\[\s*6\s*,\s*7\s*,\s*8\s*,\s*9\s*,\s*10\s*\]")
+    offenders = [f.name for f in sorted(ANALYSIS.glob("*.py"))
+                 if f.name not in EXEMPT and not f.name.startswith("test_")
+                 and lit.search(f.read_text())]
+    assert not offenders, f"private month lists still in: {offenders}"
+    return "the tariff season lives in rates.SUMMER_MONTHS, with no private month lists"
+
+
 CASES = [
     case_eight_tariff_holidays,
     case_off_peak_day_covers_weekends_and_holidays,
     case_period_at_applies_the_holiday_rule,
     case_period_at_matches_period_when_told_the_truth,
     case_holiday_rule_spans_the_reporting_era,
+    case_summer_months_are_owned_by_rates,
     case_no_analysis_module_derives_the_day_type_by_weekday_alone,
 ]
 

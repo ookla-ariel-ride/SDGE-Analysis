@@ -483,13 +483,13 @@
     },
     "canonical": {
       "buckets": 45,
-      "buckets_failing": 24,
+      "buckets_failing": 22,
       "periods": 13,
       "period_totals_failing": 0,
       "failing_period_totals": [],
       "worst_period_total_pct": 0.132,
-      "max_abs_residual_kwh": 380.74,
-      "sum_abs_residual_kwh": 5432.5,
+      "max_abs_residual_kwh": 382.84,
+      "sum_abs_residual_kwh": 5373.1,
       "net_total_billed_kwh": 13102.0,
       "net_total_rebuilt_kwh": 13099.4,
       "net_total_diff_pct": -0.02,
@@ -497,7 +497,7 @@
         "period": "6/27/25 - 7/28/25",
         "season": "summer",
         "tou_period": "off_peak",
-        "diff_kwh": 380.74
+        "diff_kwh": 382.84
       },
       "failing_buckets": [
         {
@@ -505,16 +505,16 @@
           "season": "summer",
           "tou_period": "off_peak",
           "billed_kwh": -329.0,
-          "rebuilt_kwh": 51.74,
-          "diff_kwh": 380.74
+          "rebuilt_kwh": 53.84,
+          "diff_kwh": 382.84
         },
         {
           "period": "6/27/25 - 7/28/25",
           "season": "summer",
           "tou_period": "super_off_peak",
           "billed_kwh": 863.0,
-          "rebuilt_kwh": 482.94,
-          "diff_kwh": -380.06
+          "rebuilt_kwh": 480.84,
+          "diff_kwh": -382.16
         },
         {
           "period": "7/29/25 - 8/26/25",
@@ -537,16 +537,16 @@
           "season": "summer",
           "tou_period": "off_peak",
           "billed_kwh": -82.0,
-          "rebuilt_kwh": 277.47,
-          "diff_kwh": 359.47
+          "rebuilt_kwh": 269.46,
+          "diff_kwh": 351.46
         },
         {
           "period": "8/27/25 - 9/25/25",
           "season": "summer",
           "tou_period": "super_off_peak",
           "billed_kwh": 1379.0,
-          "rebuilt_kwh": 1019.9,
-          "diff_kwh": -359.1
+          "rebuilt_kwh": 1027.92,
+          "diff_kwh": -351.08
         },
         {
           "period": "9/26/25 - 9/30/25",
@@ -601,64 +601,64 @@
           "season": "winter",
           "tou_period": "off_peak",
           "billed_kwh": -180.0,
-          "rebuilt_kwh": 96.12,
-          "diff_kwh": 276.12
+          "rebuilt_kwh": 96.65,
+          "diff_kwh": 276.65
         },
         {
           "period": "10/28/25 - 11/25/25",
           "season": "winter",
           "tou_period": "super_off_peak",
           "billed_kwh": 752.0,
-          "rebuilt_kwh": 475.19,
-          "diff_kwh": -276.81
+          "rebuilt_kwh": 474.65,
+          "diff_kwh": -277.35
         },
         {
           "period": "11/26/25 - 12/26/25",
           "season": "winter",
           "tou_period": "off_peak",
           "billed_kwh": -169.0,
-          "rebuilt_kwh": 171.08,
-          "diff_kwh": 340.08
+          "rebuilt_kwh": 155.2,
+          "diff_kwh": 324.2
         },
         {
           "period": "11/26/25 - 12/26/25",
           "season": "winter",
           "tou_period": "super_off_peak",
           "billed_kwh": 1111.0,
-          "rebuilt_kwh": 770.22,
-          "diff_kwh": -340.78
+          "rebuilt_kwh": 786.11,
+          "diff_kwh": -324.89
         },
         {
           "period": "12/27/25 - 1/27/26",
           "season": "winter",
           "tou_period": "off_peak",
           "billed_kwh": -29.0,
-          "rebuilt_kwh": 230.11,
-          "diff_kwh": 259.11
+          "rebuilt_kwh": 225.01,
+          "diff_kwh": 254.01
         },
         {
           "period": "12/27/25 - 1/27/26",
           "season": "winter",
           "tou_period": "super_off_peak",
           "billed_kwh": 929.0,
-          "rebuilt_kwh": 670.14,
-          "diff_kwh": -258.86
+          "rebuilt_kwh": 675.24,
+          "diff_kwh": -253.76
         },
         {
           "period": "1/28/26 - 2/26/26",
           "season": "winter",
           "tou_period": "off_peak",
           "billed_kwh": -293.0,
-          "rebuilt_kwh": 52.98,
-          "diff_kwh": 345.98
+          "rebuilt_kwh": 52.17,
+          "diff_kwh": 345.17
         },
         {
           "period": "1/28/26 - 2/26/26",
           "season": "winter",
           "tou_period": "super_off_peak",
           "billed_kwh": 1028.0,
-          "rebuilt_kwh": 681.95,
-          "diff_kwh": -346.05
+          "rebuilt_kwh": 682.76,
+          "diff_kwh": -345.24
         },
         {
           "period": "2/27/26 - 3/27/26",
@@ -675,22 +675,6 @@
           "billed_kwh": 534.0,
           "rebuilt_kwh": 516.34,
           "diff_kwh": -17.66
-        },
-        {
-          "period": "4/29/26 - 5/28/26",
-          "season": "winter",
-          "tou_period": "off_peak",
-          "billed_kwh": 21.0,
-          "rebuilt_kwh": 23.5,
-          "diff_kwh": 2.5
-        },
-        {
-          "period": "4/29/26 - 5/28/26",
-          "season": "winter",
-          "tou_period": "super_off_peak",
-          "billed_kwh": 539.0,
-          "rebuilt_kwh": 536.06,
-          "diff_kwh": -2.94
         }
       ]
     }

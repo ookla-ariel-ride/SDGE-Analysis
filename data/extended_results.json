@@ -44,7 +44,7 @@
   "value_if_half_shifts_yr": 411,
   "value_if_all_shifts_yr": 821,
   "method": "physically moved: weekend non-EV import in hours >=14 relocated into the same day's 0-14 super-off-peak intervals (uniform spread), baseline and shifted series both billed with rates.bill_nem (monthly per-period NEM netting, NBC on gross imports); deltas, not kWh x rate-difference",
-  "note": "weekend 0-14 window is super-off-peak year-round; realistic capture is a fraction (laundry/dish/pool timing), so half-shift is quoted"
+  "note": "weekend 0-14 window is super-off-peak year-round; realistic capture is a fraction (laundry/dish/pool timing), so half-shift is quoted. 'Weekend' means every day taking weekend TOU windows, which under the canonical holiday rule includes the eight tariff holidays; they contribute part of the kWh above"
  },
  "representative_year": {
   "load_jan_jun_2025_kwh": 12534,
