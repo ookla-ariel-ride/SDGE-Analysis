@@ -33,11 +33,14 @@ Two things it deliberately does not do, both established by that audit:
     where it misallocates 250-360 kWh per period between off-peak and
     super-off-peak while leaving the period total right. Anything re-billing
     history needs the historical WINDOWS, not just historical prices.
-  * period() has no holiday rule, but the tariff assigns weekend windows to the
-    eight holidays in research/rates-reference.md, each confirmed against the
-    bills. Worth $11.68/yr on a $4,838 modelled bill (0.24%), so every figure
-    derived from this module carries that much known bias until it is fixed.
+  * The eight tariff holidays in research/rates-reference.md take WEEKEND windows.
+    Each is confirmed against the bills by analysis/tou_audit.py: dropping any one
+    makes its billing period reconcile worse, by 5.0 to 59.3 kWh against a 3.0 kWh
+    rounding bound. Callers get this by passing off_peak_day(date) as period()'s
+    is_weekend argument rather than a bare weekday test.
 """
+import datetime as _dt
+
 UDC = {"S": {"on": 0.30203, "off": 0.30203, "sop": 0.02606},
        "W": {"on": 0.31174, "off": 0.31174, "sop": 0.02606}}
 CEA = {"S": {"on": 0.51684, "off": 0.15975, "sop": 0.04961},
@@ -48,6 +51,42 @@ SUMMER_MONTHS = {6, 7, 8, 9, 10}
 energy = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA      # netted energy rate
 credit = lambda s, p: UDC[s][p] + CEA[s][p]             # export credit
 allin  = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA + NBC  # marginal gross import
+
+def holidays(years):
+    """The eight tariff holidays that take weekend TOU windows.
+
+    Source: research/rates-reference.md. Confirmed against the bills individually
+    by analysis/tou_audit.py -- this is measured, not assumed.
+    """
+    def nth_weekday(y, m, wd, n):
+        c = _dt.date(y, m, 1)
+        return c + _dt.timedelta(days=(wd - c.weekday()) % 7 + 7 * (n - 1))
+
+    out = set()
+    for y in years:
+        out |= {_dt.date(y, 1, 1), _dt.date(y, 7, 4),
+                _dt.date(y, 11, 11), _dt.date(y, 12, 25)}
+        out.add(nth_weekday(y, 2, 0, 3))    # Presidents: 3rd Monday, February
+        out.add(nth_weekday(y, 9, 0, 1))    # Labor: 1st Monday, September
+        out.add(nth_weekday(y, 11, 3, 4))   # Thanksgiving: 4th Thursday, November
+        c = _dt.date(y, 5, 31)              # Memorial: last Monday, May
+        while c.weekday() != 0:
+            c -= _dt.timedelta(days=1)
+        out.add(c)
+    return out
+
+
+_HOL = holidays(range(2019, 2041))
+
+
+def off_peak_day(date):
+    """True when `date` takes weekend TOU windows: a weekend, or a tariff holiday.
+
+    Pass this to period() as is_weekend. Deriving it from weekday() alone drops the
+    holiday rule, which the bills show the tariff applies.
+    """
+    return date.weekday() >= 5 or date in _HOL
+
 
 def period(hour_frac, is_weekend):
     if 16 <= hour_frac < 21: return "on"

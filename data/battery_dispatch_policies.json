@@ -1,40 +1,40 @@
 {
- "baseline_bill_current_rates": 4884,
+ "baseline_bill_current_rates": 4904,
  "inputs": {
-  "nonsop_import_kwh": 8506,
-  "onpeak_import_kwh": 3989,
-  "servable_offpeak_house_kwh": 1972,
-  "serviceable_total_kwh": 5961,
+  "nonsop_import_kwh": 8521,
+  "onpeak_import_kwh": 4022,
+  "servable_offpeak_house_kwh": 1950,
+  "serviceable_total_kwh": 5972,
   "note": "canonical rates.period assignment (no holiday rule); analyze.py's holiday-as-weekend rule gives nonsop 8,467 (the periods-chart basis)"
  },
  "pw3": {
   "evening": {
-   "save": 1708,
-   "kwh_served": 3143,
+   "save": 1720,
+   "kwh_served": 3156,
    "cycles_per_day": 0.67
   },
   "twowin": {
-   "save": 1946,
-   "kwh_served": 3779,
+   "save": 1955,
+   "kwh_served": 3778,
    "cycles_per_day": 0.81
   },
   "greedy": {
-   "save": 2325,
-   "kwh_served": 4729,
+   "save": 2329,
+   "kwh_served": 4720,
    "cycles_per_day": 1.01
   },
   "greedy_profile_S": [
-   21.6,
-   11.7,
-   6.93,
-   3.33,
-   2.82,
-   5.03,
-   2.55,
-   2.73,
+   21.69,
+   11.78,
+   6.94,
+   3.35,
+   2.83,
+   5.1,
+   2.56,
+   2.74,
    1.81,
    1.02,
-   0.74,
+   0.72,
    0.78,
    0.55,
    0.39,
@@ -42,43 +42,43 @@
    0.32,
    0.03,
    0.22,
-   0.41,
-   1.19,
-   1.63,
-   1.95,
-   1.88,
-   1.79
+   0.42,
+   1.24,
+   1.7,
+   2.0,
+   1.92,
+   1.82
   ],
-  "onpeak_after_greedy": 850
+  "onpeak_after_greedy": 870
  },
  "pw3x": {
   "evening": {
-   "save": 2043,
-   "kwh_served": 3669,
+   "save": 2067,
+   "kwh_served": 3695,
    "cycles_per_day": 0.39
   },
   "twowin": {
-   "save": 2279,
-   "kwh_served": 4328,
+   "save": 2298,
+   "kwh_served": 4336,
    "cycles_per_day": 0.46
   },
   "greedy": {
-   "save": 2780,
-   "kwh_served": 5577,
+   "save": 2795,
+   "kwh_served": 5580,
    "cycles_per_day": 0.6
   },
   "greedy_profile_S": [
-   21.63,
-   15.12,
-   7.83,
-   3.33,
-   2.82,
-   5.03,
-   2.55,
-   2.73,
+   21.72,
+   15.2,
+   7.85,
+   3.35,
+   2.83,
+   5.1,
+   2.56,
+   2.74,
    1.81,
    1.02,
-   0.74,
+   0.72,
    0.78,
    0.55,
    0.39,
@@ -88,43 +88,43 @@
    0.06,
    0.16,
    0.31,
-   0.47,
-   1.5,
-   1.42,
-   1.27
+   0.52,
+   1.55,
+   1.47,
+   1.3
   ],
-  "onpeak_after_greedy": 321
+  "onpeak_after_greedy": 329
  },
  "post_behavior": {
-  "behavior_save": 1193,
-  "kwh_moved": 2575,
+  "behavior_save": 1221,
+  "kwh_moved": 2618,
   "mid": {
-   "battery_marginal": 2245,
-   "combined_save": 3438,
+   "battery_marginal": 2238,
+   "combined_save": 3459,
    "bill": 1445
   },
   "high": {
-   "battery_marginal": 2461,
-   "combined_save": 3654,
-   "bill": 1230
+   "battery_marginal": 2454,
+   "combined_save": 3675,
+   "bill": 1229
   }
  },
  "escalation_greedy_pw3_post_behavior": {
   "3%": {
-   "payback": 6.1,
-   "npv10": 4308
+   "payback": 6.2,
+   "npv10": 4249
   },
   "5%": {
    "payback": 5.9,
-   "npv10": 5944
+   "npv10": 5880
   },
   "8%": {
    "payback": 5.5,
-   "npv10": 8729
+   "npv10": 8656
   },
   "12%": {
-   "payback": 5.1,
-   "npv10": 13158
+   "payback": 5.2,
+   "npv10": 13072
   }
  },
  "escalation_note": "seeded from the post-EV-fix battery marginal (the decision-relevant figure)",

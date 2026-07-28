@@ -10,26 +10,26 @@
   "fixed_charge_sensitivity_per_12_per_mo": 144
  },
  "electrification_dividend": {
-  "home_ev_kwh": 13723,
-  "home_ev_cost_current_rates": 2942,
+  "home_ev_kwh": 13806,
+  "home_ev_cost_current_rates": 2981,
   "supercharge_kwh": 1300,
   "supercharge_cost_est": 585,
-  "total_ev_fuel_cost": 3527,
+  "total_ev_fuel_cost": 3566,
   "gas_counterfactual_cost": 6756,
   "gas_price": 4.65,
   "mpg": 23.4,
   "miles_yr": 34000,
-  "dividend_yr": 3230,
-  "home_ev_cost_if_all_sop": 1732,
-  "dividend_yr_post_fix": 4440,
+  "dividend_yr": 3191,
+  "home_ev_cost_if_all_sop": 1742,
+  "dividend_yr_post_fix": 4429,
   "label": "estimated (gasoline price + mpg + SC price are cited external constants)"
  },
  "away_days": {
-  "n_away": 12,
-  "away_median_import_kwh_day": 19.0,
-  "occupied_median_import_kwh_day": 63.3,
+  "n_away": 11,
+  "away_median_import_kwh_day": 19.5,
+  "occupied_median_import_kwh_day": 63.5,
   "note": "away-day import is grid import only; unattended LOAD also eats solar midday, so this is a lower bound on unattended consumption",
-  "implied_unattended_kw": 0.79
+  "implied_unattended_kw": 0.81
  },
  "supercharge_delta": {
   "sc_kwh": 1300,
@@ -40,9 +40,9 @@
   "note": "upper bound; road-trip supercharging away from home cannot shift"
  },
  "weekend_sop": {
-  "weekend_house_kwh_outside_sop": 1434,
-  "value_if_half_shifts_yr": 387,
-  "value_if_all_shifts_yr": 772,
+  "weekend_house_kwh_outside_sop": 1532,
+  "value_if_half_shifts_yr": 411,
+  "value_if_all_shifts_yr": 821,
   "method": "physically moved: weekend non-EV import in hours >=14 relocated into the same day's 0-14 super-off-peak intervals (uniform spread), baseline and shifted series both billed with rates.bill_nem (monthly per-period NEM netting, NBC on gross imports); deltas, not kWh x rate-difference",
   "note": "weekend 0-14 window is super-off-peak year-round; realistic capture is a fraction (laundry/dish/pool timing), so half-shift is quoted"
  },
@@ -68,16 +68,16 @@
  },
  "nbt_2039": {
   "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
-  "battery_marginal_under_nem2": 2325,
+  "battery_marginal_under_nem2": 2329,
   "battery_marginal_under_nbt": {
    "3c": {
-    "battery_marginal_yr": 2539
+    "battery_marginal_yr": 2540
    },
    "5c": {
-    "battery_marginal_yr": 2525
+    "battery_marginal_yr": 2527
    },
    "8c": {
-    "battery_marginal_yr": 2504
+    "battery_marginal_yr": 2506
    }
   },
   "note": "under flat-credit exports the price-aware battery is worth MORE than under NEM 2.0 (stored surplus displaces ~51-87c imports instead of earning 3-8c credits); a 2026 PW3's 10-yr warranty ends 2036, three years before expiry \u2014 sequencing risk is modest and NBT raises, not lowers, its end-of-life value. NEM 2.0 transfers with the property on sale (worth ~$1,772-2,268/yr to a buyer at current rates)."
@@ -95,9 +95,9 @@
    "dispatch_policy": {
     "payback_range_yr": [
      6.2,
-     8.5
+     8.4
     ],
-    "swing_yr": 2.3
+    "swing_yr": 2.2
    },
    "post_behavior": {
     "payback_range_yr": [

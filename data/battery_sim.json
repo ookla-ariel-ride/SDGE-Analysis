@@ -3,60 +3,60 @@
   "config": "1x Enphase IQ 5P",
   "usable_kwh": 5.0,
   "power_kw": 3.84,
-  "onpeak_offset_value": 1123,
-  "forgone_export_credits": 211,
+  "onpeak_offset_value": 1127,
+  "forgone_export_credits": 212,
   "grid_charge_cost": 132,
-  "net_annual_savings": 779,
-  "equiv_full_cycles": 316
+  "net_annual_savings": 782,
+  "equiv_full_cycles": 317
  },
  {
   "config": "1x Enphase IQ 10C",
   "usable_kwh": 10.0,
   "power_kw": 7.08,
-  "onpeak_offset_value": 1927,
-  "forgone_export_credits": 327,
+  "onpeak_offset_value": 1935,
+  "forgone_export_credits": 329,
   "grid_charge_cost": 199,
-  "net_annual_savings": 1401,
-  "equiv_full_cycles": 267
+  "net_annual_savings": 1407,
+  "equiv_full_cycles": 268
  },
  {
   "config": "1x Tesla Powerwall 3",
   "usable_kwh": 13.5,
   "power_kw": 11.5,
-  "onpeak_offset_value": 2252,
-  "forgone_export_credits": 382,
+  "onpeak_offset_value": 2262,
+  "forgone_export_credits": 384,
   "grid_charge_cost": 201,
-  "net_annual_savings": 1669,
-  "equiv_full_cycles": 228
+  "net_annual_savings": 1677,
+  "equiv_full_cycles": 229
  },
  {
   "config": "3x Enphase IQ 5P",
   "usable_kwh": 15.0,
   "power_kw": 7.68,
-  "onpeak_offset_value": 2334,
-  "forgone_export_credits": 403,
+  "onpeak_offset_value": 2345,
+  "forgone_export_credits": 405,
   "grid_charge_cost": 193,
-  "net_annual_savings": 1737,
-  "equiv_full_cycles": 212
+  "net_annual_savings": 1747,
+  "equiv_full_cycles": 213
  },
  {
   "config": "2x Enphase IQ 10C",
   "usable_kwh": 20.0,
   "power_kw": 7.08,
-  "onpeak_offset_value": 2513,
-  "forgone_export_credits": 462,
+  "onpeak_offset_value": 2529,
+  "forgone_export_credits": 464,
   "grid_charge_cost": 163,
-  "net_annual_savings": 1889,
-  "equiv_full_cycles": 170
+  "net_annual_savings": 1902,
+  "equiv_full_cycles": 171
  },
  {
   "config": "PW3 + 1 Expansion",
   "usable_kwh": 27.0,
   "power_kw": 11.5,
-  "onpeak_offset_value": 2692,
-  "forgone_export_credits": 526,
+  "onpeak_offset_value": 2713,
+  "forgone_export_credits": 528,
   "grid_charge_cost": 134,
-  "net_annual_savings": 2032,
-  "equiv_full_cycles": 135
+  "net_annual_savings": 2051,
+  "equiv_full_cycles": 136
  }
 ]
