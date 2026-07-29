@@ -58,14 +58,22 @@ def holidays(years):
     Source: research/rates-reference.md. Confirmed against the bills individually
     by analysis/tou_audit.py -- this is measured, not assumed.
 
-    NOT DETERMINED: whether a holiday falling on a weekend shifts to an observed
-    weekday (following Monday). No holiday in the audited statement corpus falls
-    on a weekend, so the bills cannot answer it yet, and the tariff notes in
-    research/ do not mention a shift. The first testable case is July 4, 2026
-    (a Saturday); its statement arrives in August 2026, and if SDG&E treats
-    Monday July 6 as a weekend day, tou_audit's as_billed reconciliation for
-    that period will fail loudly rather than absorb it. Until then this module
-    deliberately encodes calendar dates only.
+    NOT YET BILL-CONFIRMED: whether a holiday falling on a weekend shifts to an
+    observed weekday. SDG&E's holiday-TOU documentation (sdge.ca/sdge-holiday-rates,
+    read 2026-07-29) states an asymmetric rule: a SUNDAY holiday is observed the
+    following Monday; a SATURDAY holiday does not shift. No holiday in the audited
+    statement corpus falls on a weekend, so the bills cannot confirm this yet.
+    This module deliberately keeps ACTUAL calendar dates until a bill shows the
+    shift: the documented rule and the actual-date calendar are identical for
+    every date in the audited window -- the first divergent date is July 4, 2027
+    (a Sunday, observed 2027-07-05), outside any current analysis window. The
+    operational layers that need future dates (PVOutput's tariff Public Holidays
+    list and the observatory holidays table, both seeded 2026-07-29 for 2026-2027)
+    encode the documented OBSERVED dates. Empirical checks that stay armed:
+    July 4, 2026 is a Saturday -- under the documented rule Monday July 6 stays a
+    weekday, and if SDG&E instead bills it as a weekend day, tou_audit's as_billed
+    reconciliation for the August 2026 statement will fail loudly rather than
+    absorb it.
     """
     def nth_weekday(y, m, wd, n):
         c = _dt.date(y, m, 1)
