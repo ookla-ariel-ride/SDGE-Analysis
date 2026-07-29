@@ -83,7 +83,10 @@ def _promote_locked(staged, dest_dir):
                 created.append(name)
             os.replace(src, dst)
     except BaseException:
-        stale = []
+        # Every recovery action is attempted independently: one failure must not
+        # abort the rest, or a single bad os.remove would strand the displaced
+        # originals in their .baks while masking the promotion failure itself.
+        undeleted = []
         # a target promoted into existence this run has no original to restore;
         # returning to the pre-call state means removing it again
         for name in created:
@@ -91,16 +94,21 @@ def _promote_locked(staged, dest_dir):
                 os.remove(os.path.join(dest_dir, name))
             except FileNotFoundError:
                 pass
+            except OSError:
+                undeleted.append(name)
+        stale = []
         for name, bak in baks.items():
             try:
                 os.replace(bak, os.path.join(dest_dir, name))
             except OSError:
                 stale.append(name)          # keep the .bak: it is the only copy
-        if stale:
+        if stale or undeleted:
             raise SystemExit(
-                "publish: promotion failed AND restoring the originals failed for "
-                f"{stale}; their .bak{pid} files are the only good copies -- do "
-                "not delete them")
+                "publish: promotion failed AND recovery was incomplete -- "
+                + (f"originals not restored for {stale} (their .bak{pid} files "
+                   "are the only good copies, do not delete them)" if stale else "")
+                + ("; " if stale and undeleted else "")
+                + (f"created targets not removed: {undeleted}" if undeleted else ""))
         raise
     for bak in baks.values():
         os.remove(bak)

@@ -203,6 +203,53 @@ def case_concurrent_publisher_is_locked_out():
     return "a concurrent publisher is refused while the lock is held, runs after"
 
 
+def case_remove_failure_during_rollback_does_not_abort_the_restores():
+    """The review's scenario: promotion fails on a mixed set (some targets
+    displaced to .baks, some created fresh), and then os.remove on a created
+    target ALSO fails. The bad remove used to escape as a raw OSError, aborting
+    rollback before any .bak restore ran -- displaced originals stranded, the
+    promotion failure masked. Every recovery action must be attempted
+    independently, and the combined error must name both casualty lists."""
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td) / "data"; dest.mkdir()
+        stage = pathlib.Path(td) / "stage"; stage.mkdir()
+        # mixed pre-state: a exists (displace), b and c absent (create)
+        (dest / "a.csv").write_text("OLD a.csv\n")
+        staged = {}
+        for n in ("a.csv", "b.csv", "c.csv"):
+            q = stage / (n + ".tmp"); q.write_text(f"NEW {n}\n"); staged[n] = str(q)
+        real_replace, real_remove = os.replace, os.remove
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst, _r=real_replace):
+            if str(dst).endswith((".csv",)) and ".bak" not in str(dst):
+                calls["n"] += 1
+                if calls["n"] == 3:                 # fail promoting c.csv
+                    raise OSError(28, "injected: promotion fails")
+            return _r(src, dst)
+
+        def flaky_remove(path, _r=real_remove):
+            if str(path).endswith("b.csv"):
+                raise OSError(5, "injected: remove fails")
+            return _r(path)
+
+        os.replace, os.remove = flaky_replace, flaky_remove
+        try:
+            publish.promote_set(staged, str(dest))
+            raise AssertionError("expected the double failure to raise")
+        except SystemExit as e:
+            msg = str(e)
+            assert "created targets not removed" in msg and "b.csv" in msg, msg
+        finally:
+            os.replace, os.remove = real_replace, real_remove
+        # the .bak restore MUST still have run despite the failed remove
+        assert (dest / "a.csv").read_text() == "OLD a.csv\n", (
+            "displaced original was not restored after the remove failure")
+        assert not list(dest.glob("a.csv.bak*")), (
+            "a.csv restore left its .bak behind despite succeeding")
+    return "a failed created-target removal no longer aborts the .bak restores"
+
+
 CASES = [
     case_success_promotes_the_full_set,
     case_failure_at_every_promotion_point_leaves_no_mixed_set,
@@ -211,6 +258,7 @@ CASES = [
     case_missing_staged_file_refuses_before_touching_anything,
     case_rollback_removes_targets_created_this_run,
     case_concurrent_publisher_is_locked_out,
+    case_remove_failure_during_rollback_does_not_abort_the_restores,
 ]
 
 
