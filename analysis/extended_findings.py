@@ -30,12 +30,20 @@ private/1-raw-data/ — all resolved against the repo root, which is found by
 walking up from the CWD (then from this file), so the documented private/verify
 copy-and-run sandbox works with no path edits.
 
-EV- and gas-conditional inputs (DATA-SOURCES-CHEATSHEET.md required_if:
-has_ev / has_gas): misc.supercharge_kwh_yr, misc.miles_per_year in
-household.yaml, gas.therm_allin_usd plus private/1-raw-data/gas.csv. When
-absent, the dependent sections (B, D, G) are published as explicit
-not_determined stubs naming the missing inputs; when present, they are
-hard-required and the publication gate refuses a stub.
+EV- and gas-domain applicability is governed by the intake flags
+household.has_ev and household.has_gas (household.yaml; DATA-SOURCES-
+CHEATSHEET.md). The FLAGS are the authority — data presence is only a
+consistency check, never an inference:
+  flag true  -> every dependent input is hard-required (EV: misc.
+               supercharge_kwh_yr, misc.miles_per_year; gas: gas.
+               therm_allin_usd plus private/1-raw-data/gas.csv) and a
+               missing one aborts the run — an incomplete intake must not
+               publish a stub in place of a material finding;
+  flag false -> the dependent sections (B, D -> has_ev; G -> has_gas) are
+               published as explicit not_applicable stubs naming the flag,
+               and any dependent input present alongside the false flag is
+               a flag/data contradiction that aborts the run.
+The publication gate re-checks the same contract per section before writing.
 """
 import json, os, pathlib
 import numpy as np, pandas as pd
@@ -71,19 +79,66 @@ SC_USD_KWH = 0.45       # estimate: typical CA Tesla Supercharger $0.40-0.50
 # per-HOUSE inputs from private/household.yaml (analysis/household.py; fails
 # closed — run the intake interview in DATA-SOURCES-CHEATSHEET.md):
 PTO_DATE = str(hh.get("household.pto_date"))        # NEM 2.0 clock starts here
-# EV- and gas-CONDITIONAL inputs (DATA-SOURCES-CHEATSHEET.md tags these
-# required_if: has_ev / has_gas). Presence-based conditionality: when an input
-# is genuinely absent for a household, each section that depends on it is
-# published as an explicit not_determined stub naming the missing input(s) —
-# never a crash, never a guess. When the inputs ARE present the sections are
-# computed and validated exactly as before, and the publication gate refuses
-# a stub (fail closed: present inputs demand the full section).
-_sc_raw = hh.get("misc.supercharge_kwh_yr", required=False)   # vehicle-app Charge Stats, 12 mo
-_miles_raw = hh.get("misc.miles_per_year", required=False)    # odometer-derived annual miles (report §9)
-_therm_raw = hh.get("gas.therm_allin_usd", required=False)    # $/therm all-in from the 12 gas bills
-SC_KWH = None if _sc_raw is None else int(_sc_raw)
-MILES_YR = None if _miles_raw is None else int(_miles_raw)
-THERM_ALLIN = None if _therm_raw is None else float(_therm_raw)
+# EV- and gas-domain APPLICABILITY flags (DATA-SOURCES-CHEATSHEET.md has_ev /
+# has_gas; the dependent inputs are tagged required_if those flags). The flags
+# are the authority — presence of data is only a consistency check:
+#   flag true  -> every dependent input hard-required (incomplete intake
+#                 aborts; it must not publish a stub over a material finding);
+#   flag false -> dependent sections publish not_applicable stubs, and a
+#                 dependent input present anyway is a contradiction (abort).
+
+def _flag(path):
+    """Read a required intake applicability flag; it must be a real boolean."""
+    v = hh.get(path)   # required=True: the intake defines the flag explicitly
+    if v is not True and v is not False:
+        raise SystemExit(
+            f"{path} in private/household.yaml must be a YAML boolean "
+            f"(true/false), got {v!r} — fix the intake before publishing")
+    return v
+
+HAS_EV = _flag("household.has_ev")
+HAS_GAS = _flag("household.has_gas")
+
+GAS_CSV = PRIV / "gas.csv"   # SDG&E gas Green Button daily export (has_gas only)
+
+# probe every dependent input unconditionally so BOTH directions of the flag
+# contract can be checked (missing-under-true AND present-under-false):
+_EV_FIELDS = {
+    "misc.supercharge_kwh_yr":                    # vehicle-app Charge Stats, 12 mo
+        hh.get("misc.supercharge_kwh_yr", required=False),
+    "misc.miles_per_year":                        # odometer-derived annual miles (report §9)
+        hh.get("misc.miles_per_year", required=False),
+}
+_GAS_FIELDS = {
+    "gas.therm_allin_usd":                        # $/therm all-in from the 12 gas bills
+        hh.get("gas.therm_allin_usd", required=False),
+}
+
+def _gate_domain(flag_name, flag, fields, files=()):
+    """Enforce the flag contract for one domain, both directions, fail closed."""
+    present = [k for k, v in fields.items() if v is not None]
+    present += [str(p.relative_to(ROOT)) for p in files if p.is_file()]
+    missing = [k for k, v in fields.items() if v is None]
+    missing += [str(p.relative_to(ROOT)) for p in files if not p.is_file()]
+    if flag and missing:
+        raise SystemExit(
+            f"{flag_name} is true but {', '.join(missing)} "
+            "is absent — complete the intake (DATA-SOURCES-CHEATSHEET.md "
+            f"required_if: {flag_name.split('.')[-1]}); an incomplete intake "
+            "must not publish")
+    if not flag and present:
+        raise SystemExit(
+            f"{flag_name} is false but {', '.join(present)} "
+            "is present — the flag and the data contradict each other; "
+            "reconcile the intake (set the flag true, or remove the stale "
+            "input(s)) and rerun")
+
+_gate_domain("household.has_ev", HAS_EV, _EV_FIELDS)
+_gate_domain("household.has_gas", HAS_GAS, _GAS_FIELDS, files=(GAS_CSV,))
+
+SC_KWH = int(_EV_FIELDS["misc.supercharge_kwh_yr"]) if HAS_EV else None
+MILES_YR = int(_EV_FIELDS["misc.miles_per_year"]) if HAS_EV else None
+THERM_ALLIN = float(_GAS_FIELDS["gas.therm_allin_usd"]) if HAS_GAS else None
 KWH_PER_THERM = 29.3
 HP_COP = 3.5            # heat-pump space heating seasonal COP (modeled)
 HPWH_COP = 3.5          # heat-pump water heater COP (modeled)
@@ -94,39 +149,33 @@ BATT_COST = 14500       # PW3 installed cost, $ — the SAME figure package_resu
                         # PW3 installed ~$14,500). Tornado lever "install_cost"
                         # varies it across the 12k-17k quote range.
 
-GAS_CSV = PRIV / "gas.csv"   # SDG&E gas Green Button daily export (has_gas only)
-
-# Which conditional inputs exist for THIS household, and which sections need
-# which inputs. _missing() drives both the section computation and the
-# publication-gate coherence check, so they cannot disagree.
-_COND_INPUTS = {
-    "misc.supercharge_kwh_yr": SC_KWH is not None,
-    "misc.miles_per_year": MILES_YR is not None,
-    "gas.therm_allin_usd": THERM_ALLIN is not None,
-    "private/1-raw-data/gas.csv": GAS_CSV.is_file(),
-}
-_COND_SECTIONS = {
-    "electrification_dividend": ("misc.supercharge_kwh_yr", "misc.miles_per_year"),
-    "supercharge_delta": ("misc.supercharge_kwh_yr",),
-    "gas_decomposition": ("gas.therm_allin_usd", "private/1-raw-data/gas.csv"),
+# Section -> governing intake flag. Mapping rationale (what each CONSUMES):
+#   electrification_dividend (B): EV charging kWh detected in usage.csv,
+#     misc.miles_per_year, misc.supercharge_kwh_yr. Its "gas" counterfactual
+#     is GASOLINE priced from the cited PUBLIC constants (GAS_USD_GAL,
+#     FLEET_MPG), not the household's natural-gas service -> has_ev only.
+#   supercharge_delta (D): misc.supercharge_kwh_yr vs the home sop rate
+#     -> has_ev.
+#   gas_decomposition (G): private/1-raw-data/gas.csv + gas.therm_allin_usd
+#     -> has_gas.
+_SECTION_FLAG = {
+    "electrification_dividend": ("household.has_ev", HAS_EV),
+    "supercharge_delta": ("household.has_ev", HAS_EV),
+    "gas_decomposition": ("household.has_gas", HAS_GAS),
 }
 
 
-def _missing(section):
-    """The genuinely-absent inputs of a conditional section (empty = computable)."""
-    return [k for k in _COND_SECTIONS[section] if not _COND_INPUTS[k]]
-
-
-def _not_determined(missing):
-    """Explicit stub for a section whose conditional inputs are absent."""
+def _not_applicable(flag_name):
+    """Explicit stub for a section whose governing intake flag is false.
+    not_applicable, NOT not_determined: the intake DID determine the answer —
+    the domain does not exist for this household. (not_determined is reserved
+    for values genuinely undeterminable from the data.)"""
     return {
-        "not_determined": True,
-        "missing_inputs": list(missing),
-        "note": ("conditional input(s) absent for this household: "
-                 + ", ".join(missing)
-                 + " — section omitted rather than guessed (DATA-SOURCES-"
-                 "CHEATSHEET.md required_if; supply the input and rerun to "
-                 "compute it)"),
+        "not_applicable": True,
+        "reason": (f"{flag_name} is false (intake applicability flag, "
+                   "DATA-SOURCES-CHEATSHEET.md) — the section does not apply "
+                   "to this household; set the flag true and complete the "
+                   "intake to compute it"),
     }
 
 
@@ -190,9 +239,8 @@ out["ab205"] = {
 }
 
 # ---------- B. Electrification dividend ------------------------------------
-_b_miss = _missing("electrification_dividend")
-if _b_miss:
-    out["electrification_dividend"] = _not_determined(_b_miss)
+if not HAS_EV:
+    out["electrification_dividend"] = _not_applicable("household.has_ev")
 else:
     p = d.p.values
     ev_cost = 0.0
@@ -243,9 +291,8 @@ out["away_days"] = {
 }
 
 # ---------- D. Supercharging vs home delta ----------------------------------
-_d_miss = _missing("supercharge_delta")
-if _d_miss:
-    out["supercharge_delta"] = _not_determined(_d_miss)
+if not HAS_EV:
+    out["supercharge_delta"] = _not_applicable("household.has_ev")
 else:
     home_sop_allin = R.allin("S", "sop")  # summer sop all-in (winter within 0.3c)
     out["supercharge_delta"] = {
@@ -324,9 +371,8 @@ out["representative_year"] = {
 }
 
 # ---------- G. Gas decomposition (HDD regression) ---------------------------
-_g_miss = _missing("gas_decomposition")
-if _g_miss:
-    out["gas_decomposition"] = _not_determined(_g_miss)
+if not HAS_GAS:
+    out["gas_decomposition"] = _not_applicable("household.has_gas")
 else:
     # fail closed: any missing/malformed input aborts the run (no partial artifact)
     gas = pd.read_csv(GAS_CSV, skiprows=13)  # SDG&E gas Green Button:
@@ -432,30 +478,35 @@ REQUIRED = ("ab205", "electrification_dividend", "away_days", "supercharge_delta
             "tornado_battery")
 for _k in REQUIRED:
     assert _k in out and "error" not in out[_k], f"section missing/failed: {_k}"
-# conditional-section coherence: a not_determined stub is legal ONLY when its
-# inputs are genuinely absent; present inputs demand the fully computed section
-# (fail closed — a stub with its inputs on disk means a broken presence probe).
+# flag-section coherence: the intake flag is the authority. Per section:
+# flag true -> the section must be COMPUTED; flag false -> the section must be
+# the not_applicable stub naming that flag; any mixture -> refuse to publish.
 for _k in REQUIRED:
-    _stub = bool(out[_k].get("not_determined", False))
-    if _k in _COND_SECTIONS:
-        _miss = _missing(_k)
-        if _stub and not _miss:
+    if "not_determined" in out[_k]:
+        raise SystemExit(
+            f"{_k}: carries 'not_determined' — that stub is retired here; "
+            "applicability stubs are 'not_applicable', governed by the intake "
+            "flags (not_determined is reserved for values genuinely "
+            "undeterminable from data); refusing to publish")
+    _stub = bool(out[_k].get("not_applicable", False))
+    if _k in _SECTION_FLAG:
+        _fname, _fval = _SECTION_FLAG[_k]
+        if _fval and _stub:
             raise SystemExit(
-                f"{_k}: published as not_determined but every conditional input "
-                "is present — a stub is legal only when inputs are genuinely "
-                "absent; refusing to publish")
-        if _stub and sorted(out[_k]["missing_inputs"]) != sorted(_miss):
+                f"{_k}: published as not_applicable but {_fname} is true — "
+                "the flag demands the fully computed section; refusing to publish")
+        if not _fval and not _stub:
             raise SystemExit(
-                f"{_k}: stub names missing inputs {out[_k]['missing_inputs']} "
-                f"but the genuinely absent inputs are {_miss}; refusing to publish")
-        if not _stub and _miss:
+                f"{_k}: computed but {_fname} is false — the flag demands a "
+                "not_applicable stub; refusing to publish")
+        if _stub and _fname not in out[_k].get("reason", ""):
             raise SystemExit(
-                f"{_k}: computed despite missing inputs {_miss} — inconsistent "
-                "presence probe; refusing to publish")
+                f"{_k}: not_applicable stub does not name its governing flag "
+                f"{_fname}; refusing to publish")
     elif _stub:
-        raise SystemExit(f"{_k}: not a conditional section — it may never be "
-                         "not_determined; refusing to publish")
-if not out["electrification_dividend"].get("not_determined"):
+        raise SystemExit(f"{_k}: not a flag-governed section — it may never be "
+                         "not_applicable; refusing to publish")
+if HAS_EV:
     _pin(out["electrification_dividend"]["dividend_yr"] > 0,
          "electrification dividend",
          f"dividend_yr = {out['electrification_dividend']['dividend_yr']} — for "

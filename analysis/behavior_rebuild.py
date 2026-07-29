@@ -13,9 +13,12 @@ This model:
        - candidate intervals: import power >= baseline + 2.5 kW;
        - a session = a contiguous candidate run lasting >= 30 min whose PEAK excess
          reaches the charger-derived gate min(8 kW, 0.7 * charger.kw) — derived from
-         charger.kw in private/household.yaml, so a house with a smaller charger is
-         still detected (for this house's 11.5 kW charger the gate is 8 kW; nothing
-         else in the house sustains that);
+         charger.kw in private/household.yaml (for this house's 11.5 kW charger the
+         gate is 8 kW; nothing else in the house sustains that). The derivation
+         fails closed: it REFUSES (SystemExit) unless 0.7 * charger.kw clears the
+         2.5 kW candidate threshold by at least 1 kW, i.e. charger.kw >= 5 —
+         below that the peak gate degenerates into the appliance-noise test and
+         sustained HVAC/oven blocks would be classified as EV charging;
        - EV energy per interval = clip(excess, 0, charger.kw) * 0.25 h, capped at the
          interval's actual import.
   2. Scenario ladder: physically REMOVES shifted kWh from source intervals and ADDS them
@@ -63,14 +66,39 @@ EXCESS_KW = 2.5        # candidate threshold above baseline
 # nameplate, and the 30% margin absorbs voltage derating, ramp edges landing in
 # a 15-min average, and concurrent solar offset. Capped at 8 kW: no house load
 # here sustains 8 kW above baseline, so demanding more of a bigger charger adds
-# nothing. Floored at EXCESS_KW so the gate is never looser than the candidate
-# test. For this house's 11.5 kW charger: min(8.0, max(2.5, 0.7*11.5)) = 8.0,
-# the original bill-validated signature, unchanged.
+# nothing. For this house's 11.5 kW charger: min(8.0, 0.7*11.5) = 8.0, the
+# original bill-validated signature, unchanged.
 # EXCESS_KW itself deliberately does NOT scale with charger.kw: it screens
 # house-load noise above the rolling baseline (HVAC compressors, ovens run
 # 2-4 kW over it), which is a property of the house, not the charger — shrinking
 # it for a small charger would readmit exactly that noise into candidate runs.
-PEAK_KW = min(8.0, max(EXCESS_KW, 0.7 * CHARGER_KW))
+# Fail-closed floor: the peak gate must sit a real margin ABOVE the candidate
+# threshold or it stops discriminating anything — once 0.7*charger.kw falls to
+# EXCESS_KW the "session peak" test collapses into the appliance-noise test and
+# every sustained HVAC/oven block reads as an EV session, silently corrupting
+# the behavior scenarios and every downstream consumer. Require at least
+# PEAK_MARGIN_KW of clearance (0.7*charger.kw >= EXCESS_KW + 1.0, i.e.
+# charger.kw >= 5.0); below that this power-signature detector cannot tell the
+# charger from the house, so it refuses rather than guesses.
+PEAK_MARGIN_KW = 1.0   # minimum clearance of the peak gate over EXCESS_KW
+if 0.7 * CHARGER_KW < EXCESS_KW + PEAK_MARGIN_KW:
+    raise SystemExit(
+        "behavior_rebuild: cannot discriminate EV charging from house load with\n"
+        "charger.kw = %g kW (private/household.yaml).\n"
+        "The session-peak gate would be 0.7 * %g = %.2f kW above the rolling\n"
+        "baseline, less than %g kW clear of the %g kW appliance-noise threshold.\n"
+        "Household loads (HVAC compressors, ovens) run 2-4 kW above baseline, so\n"
+        "at this level a power-signature detector classifies sustained house load\n"
+        "as EV charging and silently corrupts the behavior-savings scenarios and\n"
+        "every downstream consumer. This detector needs 0.7 * charger.kw >= %g kW\n"
+        "(a charger of at least ~5 kW sustained output).\n"
+        "EV-shift analysis is NOT DETERMINED for this hardware. To settle it,\n"
+        "bring independent evidence of when the EV charged instead of inferring\n"
+        "it from whole-house power: the vehicle's or EVSE vendor's charging\n"
+        "records, or a sub-metered (CT-clamped) EVSE circuit."
+        % (CHARGER_KW, CHARGER_KW, 0.7 * CHARGER_KW, PEAK_MARGIN_KW, EXCESS_KW,
+           EXCESS_KW + PEAK_MARGIN_KW))
+PEAK_KW = min(8.0, 0.7 * CHARGER_KW)
 MIN_INTERVALS = 2      # >= 30 min sustained
 
 # ---- battery parameters (Powerwall 3 hardware spec, NOT household config) ----
@@ -282,9 +310,9 @@ def main():
             "  - charger.kw matches the EVSE's real sustained output (circuit or",
             "    vehicle onboard-charger limited, not the wall unit's nameplate);",
             "  - the Green Button export actually covers charging days;",
-            "  - a charger under ~4 kW sits near the %g kW candidate floor and"
-            % (EXCESS_KW,),
-            "    15-min averaging can smear its sessions below the gate.",
+            "  - a charger near the ~5 kW admission floor clears the %g kW peak"
+            % (PEAK_KW,),
+            "    gate only barely; 15-min averaging can smear its peaks below it.",
             "If the house genuinely has no EV, scenarios a/b correctly show $0.",
             bang, "",
         ]), file=sys.stderr)

@@ -44,21 +44,36 @@ def _require(path):
     return path
 
 
+def _set_flag(tmp, has_gas):
+    """Write the throwaway root's SYNTHETIC private/household.yaml. parse_bills.py
+    reads gas applicability from household.has_gas through the analysis/household.py
+    loader, which resolves its repo root by walking up from the CWD — the subprocess
+    runs with cwd=tmp, so the loader finds this file and the real gitignored
+    private/household.yaml is never involved."""
+    (tmp / "private").mkdir(exist_ok=True)
+    (tmp / "private" / "household.yaml").write_text(
+        f"household:\n  has_gas: {'true' if has_gas else 'false'}\n")
+
+
 def _build(tmp):
     """A minimal repo the parser will accept as its root, with the real corpus.
-    gas-bills/ is only staged when the real corpus has one — parse_bills.py treats a
-    MISSING gas dir as a no-gas household and an EMPTY one as corpus loss."""
+    The synthetic household.has_gas flag mirrors the corpus actually staged (true
+    when the real repo has gas PDFs to copy) so the control case passes on gas and
+    no-gas corpora alike; flag-semantics cases overwrite it via _set_flag()."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()
     (tmp / "private" / "1-raw-data" / "electric-bills").mkdir(parents=True)
-    shutil.copy2(HERE / "parse_bills.py", tmp / "analysis" / "parse_bills.py")
+    for name in ("parse_bills.py", "household.py"):
+        shutil.copy2(HERE / name, tmp / "analysis" / name)
+    have_gas_corpus = GAS.is_dir() and any(GAS.glob("*.pdf"))
     srcs = [(ELEC, "electric-bills")]
-    if GAS.is_dir() and any(GAS.glob("*.pdf")):
+    if have_gas_corpus:
         (tmp / "private" / "1-raw-data" / "gas-bills").mkdir(parents=True)
         srcs.append((GAS, "gas-bills"))
     for src, dst in srcs:
         for f in src.glob("*.pdf"):
             shutil.copy2(f, tmp / "private" / "1-raw-data" / dst / f.name)
+    _set_flag(tmp, have_gas_corpus)
     # Pre-existing artifacts, so each case can assert they were not modified.
     for name in ("bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
                  "electric_bill_summary.csv", "gas_bill_summary.csv"):
@@ -139,39 +154,91 @@ def case_tou_headers_stop_matching(tmp):
     return "TOU headers stop matching -> exits, artifacts untouched"
 
 
-def case_no_gas_dir_publishes_electric_only(tmp):
-    """Gas is presence-based (intake: required_if has_gas): with NO gas-bills/ dir the
-    run must succeed, notice loudly, write only the electric artifacts, and leave the
-    committed gas artifacts untouched."""
+def case_missing_household_yaml_fails(tmp):
+    """parse_bills now REQUIRES the intake yaml (household.has_gas): without it the
+    loader must fail closed pointing at the intake interview, touching nothing."""
+    (tmp / "private" / "household.yaml").unlink()
+    r = _run(tmp)
+    assert r.returncode != 0, "parser ran without private/household.yaml"
+    assert "household.yaml" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "missing household.yaml -> exits, artifacts untouched"
+
+
+def case_gas_flag_true_missing_dir_fails(tmp):
+    """household.has_gas true with NO gas-bills/ directory is staging loss, never a
+    no-gas household: the run must fail closed NAMING THE FLAG and touch nothing.
+    (Directory-presence inference is gone — a missing dir proves nothing.)"""
+    _set_flag(tmp, True)
     gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
     if gasdir.exists():
         shutil.rmtree(gasdir)
     r = _run(tmp)
-    assert r.returncode == 0, f"no-gas-dir run failed:\n{r.stderr}"
-    assert "does not exist" in r.stdout and "no gas service" in r.stdout, \
-        f"missing the loud no-gas notice:\n{r.stdout}"
-    for n in ("bill_periods_electric.csv", "bill_tou_detail.csv",
-              "electric_bill_summary.csv"):
-        assert (tmp / "data" / n).read_text() != "SENTINEL\n", \
-            f"electric artifact {n} was not written"
-    for n in ("bill_periods_gas.csv", "gas_bill_summary.csv"):
-        assert (tmp / "data" / n).read_text() == "SENTINEL\n", \
-            f"gas artifact {n} was modified on a no-gas run"
-    return "missing gas-bills/ -> electric-only publish, gas artifacts untouched"
+    assert r.returncode != 0, "parser accepted a missing gas-bills/ despite has_gas: true"
+    assert "household.has_gas is true" in r.stderr and "staging loss" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "flag true + missing gas-bills/ -> exits naming the flag, artifacts untouched"
 
 
-def case_empty_gas_dir_fails(tmp):
-    """An EXISTING-but-empty gas-bills/ is corpus loss, not a no-gas house: the run
-    must fail closed and touch nothing."""
+def case_gas_flag_true_empty_dir_fails(tmp):
+    """household.has_gas true with an EMPTY gas-bills/ is corpus loss: fail closed,
+    touch nothing."""
+    _set_flag(tmp, True)
     gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
     gasdir.mkdir(parents=True, exist_ok=True)
     for f in gasdir.glob("*.pdf"):
         f.unlink()
     r = _run(tmp)
-    assert r.returncode != 0, "parser accepted an existing-but-empty gas-bills/"
-    assert "corpus loss" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert r.returncode != 0, "parser accepted an empty gas-bills/ despite has_gas: true"
+    assert "household.has_gas is true" in r.stderr and "corpus loss" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
     assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
-    return "empty gas-bills/ -> exits, artifacts untouched"
+    return "flag true + empty gas-bills/ -> exits (corpus loss), artifacts untouched"
+
+
+def case_gas_flag_false_retires_gas_artifacts(tmp):
+    """household.has_gas false with no gas-bills/ dir: the run must succeed, notice
+    loudly, write the electric artifacts, and RETIRE the gas artifacts to header-only
+    CSVs in the same publish set — never leave another corpus's stale gas data (the
+    sentinels here) in place."""
+    _set_flag(tmp, False)
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    if gasdir.exists():
+        shutil.rmtree(gasdir)
+    r = _run(tmp)
+    assert r.returncode == 0, f"has_gas-false run failed:\n{r.stderr}"
+    assert "household.has_gas is false" in r.stdout and "header-only" in r.stdout, \
+        f"missing the loud retirement notice:\n{r.stdout}"
+    for n in ("bill_periods_electric.csv", "bill_tou_detail.csv",
+              "electric_bill_summary.csv"):
+        assert (tmp / "data" / n).read_text() != "SENTINEL\n", \
+            f"electric artifact {n} was not written"
+    # The stale (sentinel) gas artifacts must be REPLACED by header-only CSVs with
+    # exactly the real artifacts' schemas and line endings.
+    assert (tmp / "data" / "bill_periods_gas.csv").read_bytes() == (
+        b"statement_date,period,period_end_month,therms,total_gas_service,"
+        b"billed_amount,baseline_rate,nonbaseline_rate\n"), \
+        "bill_periods_gas.csv is not the expected header-only CSV"
+    assert (tmp / "data" / "gas_bill_summary.csv").read_bytes() == (
+        b"file_month,therms,total_gas_service,baseline_rate,nonbaseline_rate\r\n"), \
+        "gas_bill_summary.csv is not the expected header-only CSV"
+    return "flag false + no gas dir -> electric published, gas retired to header-only"
+
+
+def case_gas_flag_false_with_dir_present_fails(tmp):
+    """household.has_gas false while a gas-bills/ directory EXISTS is a contradiction
+    (wrong flag, or a directory that should not be there): fail closed telling the
+    user to fix one or the other, touch nothing."""
+    _set_flag(tmp, False)
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    gasdir.mkdir(parents=True, exist_ok=True)   # presence alone is the contradiction
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted gas-bills/ present despite has_gas: false"
+    assert "household.has_gas is false" in r.stderr and "contradiction" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "flag false + gas-bills/ present -> exits (contradiction), artifacts untouched"
 
 
 def case_write_rollback():
@@ -476,8 +543,11 @@ def case_partial_overlap_still_fails():
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
                 case_tou_headers_stop_matching,
-                case_no_gas_dir_publishes_electric_only,
-                case_empty_gas_dir_fails]
+                case_missing_household_yaml_fails,
+                case_gas_flag_true_missing_dir_fails,
+                case_gas_flag_true_empty_dir_fails,
+                case_gas_flag_false_retires_gas_artifacts,
+                case_gas_flag_false_with_dir_present_fails]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean

@@ -92,19 +92,32 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
                    sam_partial_year="samA.csv", window_end=WINDOW_END):
     """Compute (blended_old, blended_new, nosolar_bill, annual_production_kwh)
     from raw data via rates.bill_nem. Everything, including the production
-    denominator, comes from the same rolling 365-day window ending window_end."""
+    denominator, comes from the same rolling 365-day window ending window_end.
+
+    Fails closed (SystemExit) unless BOTH input series fully cover that exact
+    window and the energy-balance production is physically plausible, so a
+    truncated-but-contiguous input can never shrink the basis silently."""
     import rates as R
     end = pd.Timestamp(window_end)
+    win_start = end - pd.Timedelta(days=365)
     # with-solar year (Green Button)
     df = pd.read_csv(usage_csv, skiprows=13); df.columns = [c.strip() for c in df.columns]
-    # this loader spans eras rather than the fixed pipeline year, so the expected
-    # calendar is its own extent: interior gaps and malformed days still fail closed
+    # First pass, whole file against its OWN extent: the export spans eras rather
+    # than the fixed pipeline year, and this catches interior gaps and malformed
+    # days anywhere in the file, including outside the analysis window.
     _dts = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
     R.validate_interval_coverage(zip(_dts.dt.date, _dts.dt.hour + _dts.dt.minute / 60),
                                  _dts.dt.date.min(), _dts.dt.date.max())
     df["dt"] = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
     for c in ("Consumption", "Generation"): df[c] = pd.to_numeric(df[c])
-    df = df[(df.dt >= end - pd.Timedelta(days=365)) & (df.dt < end)].copy()
+    df = df[(df.dt >= win_start) & (df.dt < end)].copy()
+    # Second pass, sliced frame against the CONFIGURED rolling-365-day calendar:
+    # the whole-file check above accepts a truncated-but-contiguous export, which
+    # would silently shrink the "rolling 365 days ending WINDOW_END" basis the
+    # artifact claims. Validate against exactly that window, not the file extent.
+    R.validate_interval_coverage(
+        zip(df.dt.dt.date, df.dt.dt.hour + df.dt.dt.minute / 60),
+        win_start.date(), (end - pd.Timedelta(days=1)).date())
     df["seas"] = np.where(df.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     df["ym"] = df.dt.dt.to_period("M")
     hh = df.dt.dt.hour + df.dt.dt.minute / 60
@@ -116,7 +129,33 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     y0 = end.year - 1
     s = pd.concat([pd.Series(a, index=pd.date_range(f"{y0}-01-01", periods=len(a), freq="h")),
                    pd.Series(b, index=pd.date_range(f"{end.year}-01-01", periods=len(b), freq="h"))])
-    s = s[(s.index >= end - pd.Timedelta(days=365)) & (s.index < end)]
+    s = s[(s.index >= win_start) & (s.index < end)]
+    # The stitched SAM series must cover the window exactly. Each half is built
+    # from a gap-free date_range starting Jan 1, so a truncated file cannot leave
+    # an interior hole -- it leaves a SHORT slice (missing hours at the stitch
+    # seam or at the window edges). Length plus both endpoints therefore pin the
+    # coverage completely.
+    exp_hours = int((end - win_start) / pd.Timedelta(hours=1))
+    if (len(s) != exp_hours or s.index[0] != win_start
+            or s.index[-1] != end - pd.Timedelta(hours=1)):
+        jan1 = pd.Timestamp(f"{end.year}-01-01")
+        want_b = int((jan1 - win_start) / pd.Timedelta(hours=1))
+        want_a = exp_hours - want_b
+        got_b = int((s.index < jan1).sum())
+        got_a = len(s) - got_b
+        short = []
+        if got_b != want_b:
+            short.append(f"{sam_full_year} supplies {got_b} of {want_b} window hours")
+        if got_a != want_a:
+            short.append(f"{sam_partial_year} supplies {got_a} of {want_a} window hours")
+        raise SystemExit(
+            f"SAM hourly series does not cover the rolling window "
+            f"{win_start}..{end} (exclusive): got {len(s)} of {exp_hours} hours; "
+            + ("; ".join(short) if short else "window endpoints do not match"))
+    if s.isna().any():
+        raise SystemExit(
+            f"SAM hourly series has {int(s.isna().sum())} NaN hour(s) inside the "
+            f"window -- blank kWh cells in {sam_full_year}/{sam_partial_year}")
     L = pd.DataFrame({"Consumption": s, "Generation": 0.0})
     L["dt"] = L.index
     L["seas"] = np.where(L.index.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
@@ -128,7 +167,27 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     # exports. (The numerator is the bill difference between importing the whole
     # load and the actual import/export year, so this is the production that
     # earned it.)
-    annual_production = float(s.sum() - df["Consumption"].sum() + df["Generation"].sum())
+    load = float(s.sum())
+    imports = float(df["Consumption"].sum())
+    exports = float(df["Generation"].sum())
+    annual_production = load - imports + exports
+    # Sanity-gate the energy balance before any caller writes an artifact from it.
+    # By construction production = load - imports + exports, so the checkable
+    # physical invariants are: production positive; production <= load + exports
+    # (violated only by negative total imports); production >= exports, i.e.
+    # load >= imports (a home cannot consume less than it imported).
+    if annual_production <= 0:
+        raise SystemExit(
+            f"energy balance gives non-positive annual production "
+            f"({annual_production:,.0f} kWh = load {load:,.0f} - imports "
+            f"{imports:,.0f} + exports {exports:,.0f}); check that usage.csv and "
+            f"the SAM files describe the same house and window")
+    if annual_production > load + exports or annual_production < exports:
+        raise SystemExit(
+            f"energy balance is physically impossible: production "
+            f"{annual_production:,.0f} kWh vs load {load:,.0f}, imports "
+            f"{imports:,.0f}, exports {exports:,.0f} (requires negative grid "
+            f"import or load below imports); the inputs are inconsistent")
     new = (R.bill_nem(L), R.bill_nem(df))
     old_L, old_d = L.copy(), df.copy()
     old_L["p"], old_d["p"] = old_L["p_old"], old_d["p_old"]
@@ -150,6 +209,11 @@ def _repo_root():
 
 
 if __name__ == "__main__":
+    # Presence of the raw files only selects the derivation PATH; derived=True
+    # holds beyond this point only because derive_blended() fails closed
+    # (SystemExit) on any window-coverage or energy-balance violation, so an
+    # invalid input set exits here -- before the artifact write below -- and can
+    # neither rewrite nor truncate data/lifetime_payback.json.
     derived = all(os.path.exists(f) for f in ("usage.csv", "samA.csv", "samB.csv"))
     if derived:
         BLENDED_OLD, BLENDED_NEW, nosolar, ann_prod = derive_blended()

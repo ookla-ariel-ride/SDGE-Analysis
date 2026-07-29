@@ -10,8 +10,15 @@ WHY THIS EXISTS
     extends the same extraction across the full downloaded corpus.
 
 INPUTS (private, gitignored — see DATA-SOURCES-CHEATSHEET.md §D for how to fetch them)
+    private/household.yaml          REQUIRED. household.has_gas is read through the
+                                    analysis/household.py loader, which fails closed
+                                    (SystemExit pointing at the intake interview) when
+                                    the file or the key is missing — parse_bills now
+                                    requires the intake file like the other analysis
+                                    scripts. The flag is the SINGLE authority on gas
+                                    applicability (see envelope item 6).
     private/1-raw-data/electric-bills/sdge_electric_<statement-date>.pdf
-    private/1-raw-data/gas-bills/sdge_gas_<statement-date>.pdf
+    private/1-raw-data/gas-bills/sdge_gas_<statement-date>.pdf  (household.has_gas: true)
     Filenames carry the STATEMENT date. Periods are read from the PDF text, never
     inferred from the filename: one statement can contain two billing periods when a
     rate change splits it mid-cycle (CLAUDE.md §1 — parse periods, not files).
@@ -23,6 +30,10 @@ OUTPUTS (committed, de-identified)
                                     period → kWh and $/kWh as printed on the bill
     data/electric_bill_summary.csv  regenerated (same schema as the original)
     data/gas_bill_summary.csv       regenerated (same schema as the original)
+    When household.has_gas is false the two gas artifacts are still published — as
+    HEADER-ONLY CSVs (same headers, zero rows), in the same atomic set as the
+    electric ones, so a fork can never keep another corpus's stale gas data
+    sitting next to its own fresh electric data.
 
 APPLICABILITY ENVELOPE — what this parser assumes. Read this before pointing it at
 any other account's bills; every assumption below is load-bearing in a regex.
@@ -43,10 +54,16 @@ any other account's bills; every assumption below is load-bearing in a regex.
        heading needs its printed name added to the detection regex.
     5. Statement-date file naming: sdge_electric_YYYY-MM-DD.pdf and
        sdge_gas_YYYY-MM-DD.pdf (the date is the STATEMENT date, not the period).
-    6. Gas is conditional on PRESENCE (intake spec: required_if has_gas): a missing
-       private/1-raw-data/gas-bills/ directory means a no-gas household and the run
-       writes ONLY the electric artifacts; an existing-but-EMPTY gas-bills/ is
-       treated as corpus loss and fails closed.
+    6. Gas applicability comes from the household.has_gas flag in
+       private/household.yaml (intake spec: gas fields are required_if has_gas) —
+       NEVER from the presence of the gas-bills/ directory. A missing directory is
+       indistinguishable from an incompletely staged or lost corpus, so directory
+       presence is never inferred as (no-)gas service; the flag is the single
+       authority. has_gas TRUE: gas-bills/ AND a parseable corpus are REQUIRED —
+       a missing directory or zero statements is staging/corpus loss and fails
+       closed. has_gas FALSE: a gas-bills/ directory must NOT exist (the
+       contradiction fails closed), and the two gas artifacts are published as
+       header-only CSVs in the same atomic set as the electric ones (see OUTPUTS).
 
     WHAT A FORK MUST CHANGE:
     - SUMMARY_STATEMENTS_ELEC / SUMMARY_STATEMENTS_GAS document THIS repository's
@@ -83,6 +100,8 @@ import sys
 
 import pandas as pd
 import pdfplumber
+
+import household as hh  # gas applicability flag; fails closed without the intake yaml
 
 
 def _repo_root():
@@ -278,6 +297,14 @@ def parse_electric(path):
 _MONTHS = {m: i + 1 for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 
+# Column schemas of the two gas artifacts — shared by the real writers and the
+# header-only "retired" writers (household.has_gas false) so the two can never drift.
+GAS_PERIOD_COLS = ["statement_date", "period", "period_end_month", "therms",
+                   "total_gas_service", "billed_amount", "baseline_rate",
+                   "nonbaseline_rate"]
+GAS_SUMMARY_COLS = ["file_month", "therms", "total_gas_service",
+                    "baseline_rate", "nonbaseline_rate"]
+
 
 def parse_gas(path):
     txt = _text(path)
@@ -322,8 +349,8 @@ def _validate(elec, gas, tou):
     rewritten a few periods short with no error. Every check below runs BEFORE any file
     is touched.
 
-    `gas` may be None: a no-gas household (gas-bills/ absent — see the applicability
-    envelope in the module docstring). All gas checks are then skipped."""
+    `gas` may be None: a no-gas household (household.has_gas false — see the
+    applicability envelope in the module docstring). All gas checks are then skipped."""
     fuels = [("electric", elec, SUMMARY_STATEMENTS_ELEC,
               "SUMMARY_STATEMENTS_ELEC", "%m/%d/%y")]
     if gas is not None:
@@ -555,22 +582,52 @@ def _publish_locked(writes):
 
 
 def main():
+    # Gas applicability is decided by the household.has_gas intake flag, NEVER by
+    # directory presence: a missing gas-bills/ is indistinguishable from an
+    # incompletely staged or lost corpus (see the applicability envelope). The
+    # loader fails closed without private/household.yaml — intended: parse_bills
+    # requires the intake file like the other analysis scripts.
+    has_gas = hh.get("household.has_gas")
+    if not isinstance(has_gas, bool):
+        raise SystemExit(
+            f"household.has_gas in private/household.yaml must be true or false "
+            f"(got {has_gas!r}) — it is the single authority on gas applicability; "
+            f"see the intake interview in DATA-SOURCES-CHEATSHEET.md.")
+
     if not ELEC_DIR.is_dir():
         raise SystemExit(
             f"missing {ELEC_DIR} — download the statements first "
             f"(DATA-SOURCES-CHEATSHEET.md §D describes the bulk-download method)")
 
-    # Gas is presence-based (intake spec: required_if has_gas). A MISSING gas-bills/
-    # directory means a no-gas household: skip gas and publish electric-only. An
-    # EXISTING-but-empty directory is different — someone staged gas once, so an empty
-    # dir is corpus loss and fails closed below.
-    has_gas = GAS_DIR.is_dir()
-    if not has_gas:
-        print(f"NOTICE: {GAS_DIR} does not exist — treating this as a household with "
-              f"no gas service (intake spec: gas is required_if has_gas). Skipping gas "
-              f"parsing; ONLY the electric artifacts will be written and the committed "
-              f"gas artifacts are left untouched. If this house DOES have gas, download "
-              f"the gas statements first (DATA-SOURCES-CHEATSHEET.md §D).")
+    gas_pdfs = None
+    if has_gas:
+        if not GAS_DIR.is_dir():
+            raise SystemExit(
+                f"household.has_gas is true but {GAS_DIR} does not exist — that is "
+                f"staging loss, not a no-gas household. Restore/download the gas "
+                f"statements (DATA-SOURCES-CHEATSHEET.md §D), or set "
+                f"household.has_gas: false in private/household.yaml if this "
+                f"household truly has no gas service.")
+        gas_pdfs = sorted(GAS_DIR.glob("sdge_gas_*.pdf"))
+        if not gas_pdfs:
+            raise SystemExit(
+                f"household.has_gas is true but {GAS_DIR} contains no sdge_gas_*.pdf "
+                f"statements — that is corpus loss, not a no-gas household. Restore "
+                f"the gas PDFs before regenerating, or set household.has_gas: false "
+                f"in private/household.yaml if this household truly has no gas "
+                f"service.")
+    else:
+        if GAS_DIR.exists():
+            raise SystemExit(
+                f"household.has_gas is false but {GAS_DIR} exists — contradiction. "
+                f"If this household HAS gas service, set household.has_gas: true in "
+                f"private/household.yaml; if it does not, remove the gas-bills "
+                f"directory. The flag is the single authority — directory presence "
+                f"is never inferred as gas service.")
+        print("NOTICE: household.has_gas is false — gas artifacts retired to "
+              "header-only CSVs in this publish set; any committed copies carried "
+              "over from another household's corpus are replaced, never left in "
+              "place next to fresh electric data.")
 
     elec_rows, tou_rows = [], []
     for f in sorted(ELEC_DIR.glob("sdge_electric_*.pdf")):
@@ -582,14 +639,8 @@ def main():
 
     gas = None
     if has_gas:
-        gas_rows = [parse_gas(f) for f in sorted(GAS_DIR.glob("sdge_gas_*.pdf"))]
-        if not gas_rows:
-            raise SystemExit(
-                f"{GAS_DIR} exists but contains no sdge_gas_*.pdf statements — that is "
-                f"corpus loss, not a no-gas household. Restore the gas PDFs before "
-                f"regenerating (or remove the directory entirely if this household "
-                f"truly has no gas service).")
-        gas = pd.DataFrame(gas_rows).sort_values("statement_date")
+        gas_rows = [parse_gas(f) for f in gas_pdfs]
+        gas = pd.DataFrame(gas_rows).sort_values("statement_date")[GAS_PERIOD_COLS]
 
     elec = pd.DataFrame(elec_rows)
     # Sort chronologically by the period's start date. Sorting on the period STRING
@@ -608,22 +659,27 @@ def main():
     # electric_bill_summary.csv and gas_bill_summary.csv predate this script and were
     # committed with CRLF line endings; they keep CRLF so the reproduction gate stays a
     # byte-for-byte match against the known-good originals. New artifacts use LF.
-    # A no-gas run publishes only the three electric artifacts as its set.
-    writes = [
-        (DATA / "bill_periods_electric.csv", lambda p: elec.to_csv(p, index=False)),
-    ]
+    # ALL FIVE artifacts are always in the set: when household.has_gas is false the
+    # two gas files are published as header-only CSVs (empty frames, same schemas),
+    # so stale gas data from another corpus is replaced rather than left in place.
     if gas is not None:
         gs = gas[gas.statement_date.isin(SUMMARY_STATEMENTS_GAS)].copy()
         gs = gs.rename(columns={"period_end_month": "file_month"})
-        gs = gs[["file_month", "therms", "total_gas_service",
-                 "baseline_rate", "nonbaseline_rate"]].sort_values("file_month")
-        writes.append((DATA / "bill_periods_gas.csv", lambda p: gas.to_csv(p, index=False)))
-    writes.append((DATA / "bill_tou_detail.csv", lambda p: tou.to_csv(p, index=False)))
-    writes.append((DATA / "electric_bill_summary.csv",
-                   lambda p: es.to_csv(p, index=False, lineterminator="\r\n")))
-    if gas is not None:
-        writes.append((DATA / "gas_bill_summary.csv",
-                       lambda p: gs.to_csv(p, index=False, lineterminator="\r\n")))
+        gs = gs[GAS_SUMMARY_COLS].sort_values("file_month")
+        gas_periods_out, gas_summary_out = gas, gs
+    else:
+        gas_periods_out = pd.DataFrame(columns=GAS_PERIOD_COLS)
+        gas_summary_out = pd.DataFrame(columns=GAS_SUMMARY_COLS)
+    writes = [
+        (DATA / "bill_periods_electric.csv", lambda p: elec.to_csv(p, index=False)),
+        (DATA / "bill_periods_gas.csv",
+         lambda p: gas_periods_out.to_csv(p, index=False)),
+        (DATA / "bill_tou_detail.csv", lambda p: tou.to_csv(p, index=False)),
+        (DATA / "electric_bill_summary.csv",
+         lambda p: es.to_csv(p, index=False, lineterminator="\r\n")),
+        (DATA / "gas_bill_summary.csv",
+         lambda p: gas_summary_out.to_csv(p, index=False, lineterminator="\r\n")),
+    ]
     _write_all_atomically(writes)
 
     print(f"electric: {len(elec)} billing periods from "
@@ -633,6 +689,9 @@ def main():
         print(f"gas:      {len(gas)} billing periods from "
               f"{gas.statement_date.nunique()} statements "
               f"({gas.statement_date.min()} .. {gas.statement_date.max()})")
+    else:
+        print("gas:      not applicable (household.has_gas: false) — "
+              "artifacts published header-only")
     print(f"tou rows: {len(tou)}")
     summary = (f"summary window: electric {len(es)} periods, {es.days.sum()} days, "
                f"${es.current_charges.sum():,.2f}")

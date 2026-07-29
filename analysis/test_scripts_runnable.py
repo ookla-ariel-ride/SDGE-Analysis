@@ -284,26 +284,30 @@ WINDOW_END = _pipeline_window_end()
 SYNTH_START = WINDOW_END - dt.timedelta(days=369)
 SYNTH_END = WINDOW_END + dt.timedelta(days=2)
 
-# The fixture's DST days are derived from the window too (US rule: spring
-# forward the second Sunday of March, fall back the first Sunday of November);
+# The fixture's DST days are derived from the window too, with
+# rates.dst_transition_sundays as the single authority on the US rule;
 # hardcoded dates would silently fall out of a re-pointed window and gut the
-# tou_audit calendar checks.
-def _nth_sunday(year, month, n):
-    d = dt.date(year, month, 1)
-    d += dt.timedelta(days=(6 - d.weekday()) % 7)
-    return d + dt.timedelta(days=7 * (n - 1))
+# tou_audit calendar checks. Transitions are SETS, not one pair: consecutive
+# US spring-forward Sundays can be as little as 364 days apart, so a legitimate
+# WINDOW_END anchored near early March puts TWO spring transitions inside this
+# 372-day fixture range. Every transition inside the range gets its 92/100-slot
+# synthetic day, and the tou_audit expectation is derived from these same sets.
+sys.path.insert(0, str(ANALYSIS))
+import rates as _rates
 
-
-_in_window = lambda days: [d for d in days if SYNTH_START <= d <= SYNTH_END]
-_springs = _in_window([_nth_sunday(y, 3, 2)
-                       for y in range(SYNTH_START.year, SYNTH_END.year + 1)])
-_falls = _in_window([_nth_sunday(y, 11, 1)
-                     for y in range(SYNTH_START.year, SYNTH_END.year + 1)])
-assert len(_springs) == 1 and len(_falls) == 1, (
-    f"the synthetic window {SYNTH_START}..{SYNTH_END} holds {len(_springs)} "
-    f"spring-forward and {len(_falls)} fall-back DST transition(s); the fixture "
-    "needs exactly one of each -- adjust WINDOW_END in behavior_rebuild.py")
-DST_SPRING, DST_FALL = _springs[0], _falls[0]
+_transitions = [_rates.dst_transition_sundays(y)
+                for y in range(SYNTH_START.year, SYNTH_END.year + 1)]
+DST_SPRINGS = frozenset(s for s, _ in _transitions if SYNTH_START <= s <= SYNTH_END)
+DST_FALLS = frozenset(f for _, f in _transitions if SYNTH_START <= f <= SYNTH_END)
+DST_DATES = DST_SPRINGS | DST_FALLS
+# Consecutive same-type transitions sit at most 372 days apart, so a 372-day
+# range always holds at least one of each; an empty set means the window
+# arithmetic or the rule source broke, not a legitimate anchor.
+assert DST_SPRINGS and DST_FALLS, (
+    f"the synthetic window {SYNTH_START}..{SYNTH_END} holds {len(DST_SPRINGS)} "
+    f"spring-forward and {len(DST_FALLS)} fall-back DST transition(s); a 372-day "
+    "range must hold at least one of each -- check WINDOW_END in "
+    "behavior_rebuild.py and rates.dst_transition_sundays")
 
 # REMAINING COUPLING the derived window cannot remove: tou_audit's CI run
 # audits the COMMITTED bill artifacts (data/bill_periods_electric.csv) against
@@ -351,9 +355,9 @@ def _synthetic_usage(path):
     d = SYNTH_START
     while d <= SYNTH_END:
         slots = [i * 0.25 for i in range(96)]
-        if d == DST_SPRING:
+        if d in DST_SPRINGS:
             slots = [h for h in slots if not 2.0 <= h < 3.0]
-        elif d == DST_FALL:
+        elif d in DST_FALLS:
             slots = slots + [1.0, 1.25, 1.5, 1.75]
         for h in sorted(slots):
             solar = max(0.0, 3.2 * math.sin(math.pi * (h - 6.5) / 11.5)) if 6.5 < h < 18 else 0.0
@@ -502,8 +506,11 @@ def case_generators_run_on_synthetic_inputs():
                        "fixture's on-peak charge starts")
         ta = json.loads((tmp / "data" / "tou_audit_summary.json").read_text())
         dst = {(d["date"], d["intervals"]) for d in ta["dst_days"]}
-        if dst != {(DST_FALL.isoformat(), 100), (DST_SPRING.isoformat(), 92)}:
-            out.append(f"tou_audit did not see the fixture's DST days: {sorted(dst)}")
+        expected = ({(d.isoformat(), 92) for d in DST_SPRINGS}
+                    | {(d.isoformat(), 100) for d in DST_FALLS})
+        if dst != expected:
+            out.append(f"tou_audit did not see the fixture's DST days: "
+                       f"{sorted(dst)} != expected {sorted(expected)}")
         if ta["integrity_skips"]:
             out.append(f"tou_audit reports integrity skips on a complete fixture: "
                        f"{ta['integrity_skips']}")
@@ -584,7 +591,7 @@ def case_missing_day_fails_the_chart_generator():
     # Wednesday, never a DST day whose interval count is legitimately not 96)
     # so re-pointing WINDOW_END keeps it inside the fixture automatically.
     gone_date = WINDOW_END - dt.timedelta(days=180)
-    while gone_date.weekday() != 2 or gone_date in (DST_SPRING, DST_FALL):
+    while gone_date.weekday() != 2 or gone_date in DST_DATES:
         gone_date += dt.timedelta(days=1)
     with tempfile.TemporaryDirectory() as td:
         tmp = _build_throwaway_root(pathlib.Path(td), synthetic=True)
@@ -599,6 +606,30 @@ def case_missing_day_fails_the_chart_generator():
         err = r.stderr + r.stdout
         assert gone_date.isoformat() in err and "missing" in err, err[-200:]
     return "report_data refuses a wholly missing day and names it"
+
+
+def case_small_charger_refuses_ev_discrimination():
+    """behavior_rebuild derives its session-peak gate from charger.kw. When
+    0.7 * charger.kw sits within 1 kW of the 2.5 kW candidate threshold the
+    gate cannot tell a charger from HVAC/oven load running 2-4 kW above
+    baseline, so the script must refuse up front (fail closed) instead of
+    classifying house load as EV charging and corrupting every downstream
+    consumer."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _build_throwaway_root(pathlib.Path(td), synthetic=True)
+        hh = tmp / "private" / "household.yaml"
+        hh.write_text(SYNTH_HOUSEHOLD.replace("kw: 11.5", "kw: 3.3"))
+        assert "kw: 3.3" in hh.read_text(), "fixture household edit did not take"
+        r = subprocess.run([sys.executable, "behavior_rebuild.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=300)
+        assert r.returncode != 0, (
+            "behavior_rebuild ran with charger.kw = 3.3, whose derived peak gate "
+            "(0.7 * 3.3 = 2.31 kW) collapses into the appliance-noise test")
+        err = r.stderr + r.stdout
+        assert "cannot discriminate" in err and "charger.kw" in err, (
+            f"refused, but without naming the discrimination failure: {err[-300:]}")
+    return ("behavior_rebuild refuses a charger too small to discriminate from "
+            "house load, naming the cause")
 
 
 def case_publication_failure_leaves_artifacts_untouched():
@@ -636,6 +667,7 @@ CASES = [
     case_every_generator_is_covered_by_one_of_the_two_tiers,
     case_generators_run_on_synthetic_inputs,
     case_missing_day_fails_the_chart_generator,
+    case_small_charger_refuses_ev_discrimination,
     case_publication_failure_leaves_artifacts_untouched,
     case_generators_run_on_the_real_archive,
 ]
