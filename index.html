@@ -225,6 +225,13 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <h2 id="s1">1 · The data (triple-verified)</h2>
 <p>Every 15-minute interval of the last 365 days was analyzed. Grid flows come from SDG&amp;E's meter (23,376 kWh imported, 9,964 kWh exported). Whole-home load comes from Enphase consumption metering (29,857 kWh/yr = ~13,100 EV + ~16,700 house). Solar production is verified across three independent sources — Enphase CT meter (16,502 kWh/yr), PVOutput microinverter records (16,839), and an independently derived series (16,660 — an unarchived workpaper: load − imports + exports, summarized in TECHNICAL §3.7, not artifact-backed) — agreeing within ±2% at 0.9999 daily correlation. Specific yield 1,642 kWh/kW/yr: the 6-year-old array is healthy. Model validation: reconstruction of the actual July 2026 bill's generation charge landed within ~6% (unarchived workpaper, not artifact-backed); the plan rankings match SDG&amp;E's own tool within 1% (see §3).</p>
 
+<div class="finding"><p class="claim">The utility's own TOU accounting reproduces from the raw meter data <span class="pill g">measured</span></p>
+<table class="evidence"><tr><th>source</th><th>value</th><th>agreement</th></tr>
+<tr><td>13 billing statements, kWh per season &amp; TOU period</td><td>45 billed buckets</td><td rowspan="2">0 of 45 buckets differ; max residual 0.50 kWh (= the statements' whole-kWh rounding); worst period total 0.132%</td></tr>
+<tr><td>Re-bucketed 15-minute intervals (<code>analysis/tou_audit.py</code> → <code>data/tou_audit.csv</code>)</td><td>same 45 buckets, rebuilt</td></tr>
+</table>
+<p class="small">Both sides of the ledger are in hand — what SDG&amp;E says it billed per time-of-use bucket, and the raw interval data those buckets came from — so the billing arithmetic itself can be checked, not assumed. It checks out to the rounding digit, on every statement the interval window covers, including both daylight-saving days and all eight tariff holidays. There is no billing discrepancy to pursue.</p></div>
+
 <h2 id="s2">2 · Your solar system today</h2>
 <p>Before any recommendation, the equipment it all rests on: what's on the roof, verified, and how it performed this year.</p>
 <div class="grid2">
