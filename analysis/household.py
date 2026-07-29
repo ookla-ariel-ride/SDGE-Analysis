@@ -32,11 +32,12 @@ def _repo_root():
         while True:
             if (p / "analysis").is_dir() and (p / "data").is_dir():
                 return p
-            if p.parent == p:
+            if p.parent == p:  # pragma: no cover - reachable only outside a checkout
                 break
             p = p.parent
-    raise SystemExit("repo root not found: no ancestor of the CWD or of this "
-                     "script contains both analysis/ and data/")
+    raise SystemExit(  # pragma: no cover - the module's own path always resolves in-repo
+        "repo root not found: no ancestor of the CWD or of this "
+        "script contains both analysis/ and data/")
 
 
 ROOT = _repo_root()
@@ -49,7 +50,7 @@ def _load():
     if _cache is None:
         try:
             import yaml
-        except ImportError:
+        except ImportError:  # pragma: no cover - deps are pinned in requirements.txt
             raise SystemExit("pyyaml not installed — pip install -r requirements.txt")
         if not PATH.is_file():
             raise SystemExit(_MSG % "private/household.yaml")

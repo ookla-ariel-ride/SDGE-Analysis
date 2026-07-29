@@ -1,0 +1,23 @@
+# Coverage configuration for the analysis package.
+# carbon_timing.py is excluded because it is RETIRED and refuses to run by
+# design -- its body below the guard is provenance, deliberately unreachable.
+[run]
+parallel = true
+include =
+    */analysis/*.py
+    */private/verify/*.py
+omit =
+    */test_*.py
+    */carbon_timing.py
+    */pvoutput_*.py
+
+[paths]
+source =
+    analysis/
+    private/verify/
+
+[report]
+precision = 1
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

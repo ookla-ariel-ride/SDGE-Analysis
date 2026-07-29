@@ -35,3 +35,27 @@ jobs:
       - run: pip install -r requirements.txt
       - name: tou_audit guard tests
         run: python analysis/test_tou_audit.py
+
+  rates:
+    # The canonical TOU assignment, including the eight bill-confirmed tariff
+    # holidays. These cases are pure logic plus a grep of the analysis package for
+    # reintroduced private copies of the window rule, so they need no private data.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: rates guard tests
+        run: python analysis/test_rates.py
+      - name: report/artifact consistency
+        run: python analysis/test_report_consistency.py
+      - name: analysis scripts runnable or explicitly retired
+        run: python analysis/test_scripts_runnable.py
+      - name: carbon raw-cache and fail-closed branches
+        run: python analysis/test_carbon_fullyear.py
+      - name: household intake fail-closed behavior
+        run: python analysis/test_household.py
+      - name: transactional set publication
+        run: python analysis/test_publish.py

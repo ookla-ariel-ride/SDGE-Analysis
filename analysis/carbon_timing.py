@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""Grid-carbon-timing analysis for the solar+EV household (CAISO / SDG&E).
+"""RETIRED 2026-07-27 — superseded by carbon_fullyear.py. Kept for provenance.
+
+This script cannot run and is not meant to. It was a one-shot fetch-and-analyse
+pass: it downloaded four CAISO days into a local `caiso_data/` directory that was
+never committed, so the raw inputs no longer exist and it refuses to run.
+
+Do not delete it, and do not delete data/carbon_results.json either. That file is
+NOT a derived artifact awaiting regeneration — it is the preserved record of the
+four CAISO days this script fetched on 2026-07-24, and carbon_fullyear.py still
+reads it to reconstruct those days (see build_covered_from_raw). Retiring the two
+together, the obvious-looking cleanup, would break the live carbon pipeline.
+
+What replaced it: carbon_fullyear.py, which works from the committed
+data/caiso_hourly_intensity.csv, uses the raw day-cache in private/1-raw-data/
+caiso_raw/ when present, fails closed if coverage would shrink, and writes its
+artifacts atomically.
+
+The original description follows, because it documents where carbon_results.json
+came from and how its numbers were derived.
+
+Grid-carbon-timing analysis for the solar+EV household (CAISO / SDG&E).
 
 Carbon-intensity source (REAL DATA, no synthetic curves):
   CAISO "Today's Outlook" official history endpoints, fetched 2026-07-24:
@@ -15,6 +35,18 @@ Carbon-intensity source (REAL DATA, no synthetic curves):
 Household side: SDG&E Green Button 15-min usage.csv (same file the bill-validated models use),
 EV sessions re-detected with the exact algorithm from behavior_rebuild.py.
 """
+import sys
+
+# The retirement guard runs BEFORE the heavy imports: behavior_rebuild reads
+# household config at import time, so in a clean checkout the user would see
+# household's fail-closed message instead of this notice.
+if __name__ == "__main__":
+    raise SystemExit(
+        "carbon_timing.py is RETIRED and cannot run: the raw CAISO day files it "
+        "reads from caiso_data/ were never committed. Its output, "
+        "data/carbon_results.json, is preserved as source data and is still read "
+        "by carbon_fullyear.py. Use carbon_fullyear.py for grid-carbon work.")
+
 import json
 import numpy as np
 import pandas as pd
@@ -51,7 +83,7 @@ def hourly_intensity(day):
     return (1000.0 * g.co2 / g.mw)                       # kg/MWh, index 0..23
 
 
-def main():
+def _unreachable_original_main():
     # ---------- CAISO intensity profiles ----------
     season_int = {}         # season -> np.array(24) kg/MWh
     month_season = {}

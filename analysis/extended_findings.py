@@ -219,7 +219,10 @@ out["weekend_sop"] = {
                "rates.bill_nem (monthly per-period NEM netting, NBC on gross "
                "imports); deltas, not kWh x rate-difference"),
     "note": ("weekend 0-14 window is super-off-peak year-round; realistic capture "
-             "is a fraction (laundry/dish/pool timing), so half-shift is quoted"),
+             "is a fraction (laundry/dish/pool timing), so half-shift is quoted. "
+             "'Weekend' means every day taking weekend TOU windows, which under "
+             "the canonical holiday rule includes the eight tariff holidays; "
+             "they contribute part of the kWh above"),
 }
 
 # ---------- F. Representative-year check (SAM 8760 overlap) -----------------

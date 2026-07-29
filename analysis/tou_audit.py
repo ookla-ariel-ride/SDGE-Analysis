@@ -14,12 +14,17 @@ net-export carry negative kWh.
 Two assignment rules are scored.
 
   as_billed  -- the structure the bills themselves demonstrate (below).
-  canonical  -- rates.period() exactly as the analysis pipeline imports it.
+  canonical  -- the current tariff exactly as the pipeline applies it:
+                rates.period() with rates.off_peak_day() day types (today's
+                windows and the eight tariff holidays) on every date.
 
 Both are reported because they are both correct for different purposes: canonical
-is the current tariff and is the right basis for a forward projection at constant
-current rates, while as_billed is what the utility actually charged and is the only
-basis on which a historical statement can be reproduced.
+is the right basis for a forward projection at constant current rates, while
+as_billed is what the utility actually charged and is the only basis on which a
+historical statement can be reproduced. The two differ only where the tariff
+STRUCTURE changed inside the corpus: canonical applies the post-2026-03-01
+weekday midday super-off-peak window to every date, as_billed only after it
+took effect.
 
 Two structural facts were determined from the bills rather than assumed, and both
 are re-derived by this script every run rather than trusted:
@@ -179,29 +184,14 @@ def holidays(years):
 
 
 def dst_dates(year):
-    """(spring-forward Sunday, fall-back Sunday) under the US rules in force.
-
-    Second Sunday in March and first Sunday in November. Returned as dates so the
-    slot validator can require 92 and 100 slots on exactly those two days and 96
-    everywhere else, rather than waving through any day with an unusual count.
-    """
-    def nth_sunday(month, n):
-        c = dt.date(year, month, 1)
-        return c + dt.timedelta(days=(6 - c.weekday()) % 7 + 7 * (n - 1))
-
-    return nth_sunday(3, 2), nth_sunday(11, 1)
+    """(spring-forward Sunday, fall-back Sunday) -- delegates to rates.py, the
+    single home of the tariff clock, so the DST rule cannot fork."""
+    return R.dst_transition_sundays(year)
 
 
 def expected_slots(date):
     """The exact multiset of 15-minute slots this calendar day should carry."""
-    spring, fall = dst_dates(date.year)
-    if date == spring:
-        return collections.Counter({h: 1 for h in CANONICAL_SLOTS
-                                    if h not in SPRING_FORWARD_GAP})
-    if date == fall:
-        return collections.Counter({h: 2 if h in FALL_BACK_REPEAT else 1
-                                    for h in CANONICAL_SLOTS})
-    return collections.Counter({h: 1 for h in CANONICAL_SLOTS})
+    return collections.Counter(R.expected_day_hours(date))
 
 
 def day_defect(date, slots):
@@ -242,7 +232,9 @@ def expected_buckets(start, end):
 def assign(date, hour, rule, hol):
     """TOU period for one interval under `rule` ('as_billed' or 'canonical')."""
     if rule == "canonical":
-        return R.period(hour, date.weekday() >= 5)
+        # the current tariff exactly as the pipeline applies it: today's windows
+        # on every date, weekend-or-holiday day types via rates.off_peak_day
+        return R.period(hour, R.off_peak_day(date))
     weekend = date.weekday() >= 5 or date in hol
     if 16 <= hour < 21:
         return "on"

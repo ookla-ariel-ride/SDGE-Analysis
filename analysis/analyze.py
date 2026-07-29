@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""SDGE rate plan analysis — single-family home, SDGE Inland climate zone.
+"""SDGE rate plan analysis, RELIEF-CREDIT VARIANT — superseded; see analyze_norelief.py.
+
+The bills showed the CEA relief credit does not apply (CLAUDE.md section 0), so
+analyze_norelief.py is the live model and owns the committed plan_results.csv /
+hourly_profile.csv / monthly.csv. This variant is kept for the relief comparison
+only and writes *_relief-suffixed outputs (gitignored) so the two scripts can
+never overwrite each other's artifacts — they used to collide on all four names,
+with whichever ran last winning silently.
+
+SDGE rate plan analysis — single-family home, SDGE Inland climate zone.
 Profile: CEA generation (Clean Impact assumed), NEM 2.0, currently EV-TOU-5.
 Rates: SDGE UDC effective 6/1/2026; CEA generation effective 6/1/2026; PCIA 2023 vintage.
 Input: Green Button 15-minute CSV (path below) — keep the raw CSV out of any public repo:
@@ -7,7 +16,30 @@ it contains name, service address, and account/meter numbers.
 """
 import pandas as pd, numpy as np, json, datetime as dt
 
-CSV = "/sessions/wizardly-zealous-maxwell/mnt/outputs/usage.csv"
+CSV = "usage.csv"   # the private/verify sandbox convention
+
+import pathlib as _pl
+
+
+def _repo_root():
+    """Locate the repo root: the nearest ancestor directory containing BOTH an
+    analysis/ and a data/ subdirectory. Walk up from the CWD first (so the
+    documented private/verify copy-and-run sandbox works unchanged), then from
+    this file's own location (running in place from analysis/)."""
+    for start in (_pl.Path.cwd(), _pl.Path(__file__).resolve().parent):
+        p = start
+        while True:
+            if (p / "analysis").is_dir() and (p / "data").is_dir():
+                return p
+            if p.parent == p:
+                break
+            p = p.parent
+    raise SystemExit("repo root not found: no ancestor of the CWD or of this "
+                     "script contains both analysis/ and data/")
+
+
+_DATA = _repo_root() / "data"
+
 
 # ---------- load ----------
 df = pd.read_csv(CSV, skiprows=13, quotechar='"')
@@ -23,6 +55,9 @@ print("totals: cons %.1f gen %.1f net %.1f" % (df.Consumption.sum(), df.Generati
 end = dt.datetime(2026,7,24)
 start = end - dt.timedelta(days=365)
 d = df[(df.dt >= start) & (df.dt < end)].copy()
+import rates as _R   # coverage validation only; rate tables here stay published-table by design
+_R.validate_interval_coverage(zip(d.dt.dt.date, d.dt.dt.hour + d.dt.dt.minute / 60),
+                              start.date(), (end - dt.timedelta(days=1)).date())
 print("analysis window:", d.dt.min(), d.dt.max(), "days:", (d.dt.max()-d.dt.min()))
 
 # ---------- calendar ----------
@@ -160,11 +195,19 @@ stats["night_import_kwh"]=round(night.Consumption.sum(),1)
 # hourly profile
 prof = d.groupby(d.dt.dt.hour).agg(imp=("Consumption","mean"),exp=("Generation","mean"),net=("Net","mean")).round(3)
 print(prof)
-prof.to_csv("/sessions/wizardly-zealous-maxwell/mnt/outputs/hourly_profile.csv")
+_tmp = {n: _DATA / (n + ".tmp" + str(__import__("os").getpid())) for n in ("hourly_profile_relief.csv", "monthly_relief.csv", "plan_results_relief.csv", "stats_relief.json")}
+prof.to_csv(_tmp["hourly_profile_relief.csv"])
 # monthly
 mon = d.groupby(d.dt.dt.to_period("M")).agg(imp=("Consumption","sum"),exp=("Generation","sum"),net=("Net","sum")).round(1)
 print(mon)
-mon.to_csv("/sessions/wizardly-zealous-maxwell/mnt/outputs/monthly.csv")
-res.to_csv("/sessions/wizardly-zealous-maxwell/mnt/outputs/plan_results.csv",index=False)
-json.dump(stats,open("/sessions/wizardly-zealous-maxwell/mnt/outputs/stats.json","w"),indent=1)
+mon.to_csv(_tmp["monthly_relief.csv"])
+res.to_csv(_tmp["plan_results_relief.csv"],index=False)
+with open(_tmp["stats_relief.json"], "w") as _fh:
+    json.dump(stats, _fh, indent=1)
+# every artifact fully serialized -- promote as a SET via the transactional
+# protocol (analysis/publish.py): all four land, or the originals are restored.
+# A bare per-file replace loop is atomic per file but not per set, and a kill
+# between replacements would leave data/ mixing two runs.
+import publish as _publish
+_publish.promote_set({n: str(t) for n, t in _tmp.items()}, str(_DATA))
 print(json.dumps(stats,indent=1))

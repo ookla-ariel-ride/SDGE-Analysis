@@ -60,14 +60,18 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     end = pd.Timestamp(window_end)
     # with-solar year (Green Button)
     df = pd.read_csv(usage_csv, skiprows=13); df.columns = [c.strip() for c in df.columns]
+    # this loader spans eras rather than the fixed pipeline year, so the expected
+    # calendar is its own extent: interior gaps and malformed days still fail closed
+    _dts = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
+    R.validate_interval_coverage(zip(_dts.dt.date, _dts.dt.hour + _dts.dt.minute / 60),
+                                 _dts.dt.date.min(), _dts.dt.date.max())
     df["dt"] = pd.to_datetime(df["Date"] + " " + df["Start Time"], format="%m/%d/%Y %I:%M %p")
     for c in ("Consumption", "Generation"): df[c] = pd.to_numeric(df[c])
     df = df[(df.dt >= end - pd.Timedelta(days=365)) & (df.dt < end)].copy()
-    df["seas"] = np.where(df.dt.dt.month.isin([6, 7, 8, 9, 10]), "S", "W")
+    df["seas"] = np.where(df.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     df["ym"] = df.dt.dt.to_period("M")
     hh = df.dt.dt.hour + df.dt.dt.minute / 60
-    wk = df.dt.dt.weekday >= 5
-    df["p"] = [R.period(h, w) for h, w in zip(hh, wk)]
+    df["p"] = [R.period_at(t) for t in df.dt]   # canonical: holiday rule included
     df["p_old"] = [_per_old(int(h), m) for h, m in zip(hh, df.dt.dt.month)]
     # no-solar counterfactual (hourly whole-home load, all imported, zero exports)
     a = pd.read_csv(sam_full_year)["kWh"].values     # full prior calendar year
@@ -78,9 +82,9 @@ def derive_blended(usage_csv="usage.csv", sam_full_year="samB.csv",
     s = s[(s.index >= end - pd.Timedelta(days=365)) & (s.index < end)]
     L = pd.DataFrame({"Consumption": s, "Generation": 0.0})
     L["dt"] = L.index
-    L["seas"] = np.where(L.index.month.isin([6, 7, 8, 9, 10]), "S", "W")
+    L["seas"] = np.where(L.index.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     L["ym"] = L.index.to_period("M")
-    L["p"] = [R.period(t.hour, t.weekday() >= 5) for t in L.index]
+    L["p"] = [R.period_at(t) for t in L.index]   # canonical: holiday rule included
     L["p_old"] = [_per_old(t.hour, t.month) for t in L.index]
     new = (R.bill_nem(L), R.bill_nem(df))
     old_L, old_d = L.copy(), df.copy()

@@ -24,7 +24,7 @@ Billing mechanics (NEM 2.0, matching the bills):
 TOU windows as implemented here: on-peak 16-21 daily; super-off-peak 0-6 + 10-14
 weekdays, 0-14 weekends; off-peak otherwise. This is the CURRENT tariff, which is
 what a projection at constant current rates needs, and analysis/tou_audit.py
-reconciles it against the three most recent statements to within 3 kWh.
+reconciles it against the three most recent statements to within 0.5 kWh.
 
 Two things it deliberately does not do, both established by that audit:
   * The weekday 10-14 super-off-peak window took effect 2026-03-01; before that
@@ -33,26 +33,165 @@ Two things it deliberately does not do, both established by that audit:
     where it misallocates 250-360 kWh per period between off-peak and
     super-off-peak while leaving the period total right. Anything re-billing
     history needs the historical WINDOWS, not just historical prices.
-  * period() has no holiday rule, but the tariff assigns weekend windows to the
-    eight holidays in research/rates-reference.md, each confirmed against the
-    bills. Worth $11.68/yr on a $4,838 modelled bill (0.24%), so every figure
-    derived from this module carries that much known bias until it is fixed.
+  * The eight tariff holidays in research/rates-reference.md take WEEKEND windows.
+    Each is confirmed against the bills by analysis/tou_audit.py: dropping any one
+    makes its billing period reconcile worse, by 5.0 to 59.3 kWh against a 3.0 kWh
+    rounding bound. Callers get this by passing off_peak_day(date) as period()'s
+    is_weekend argument rather than a bare weekday test.
 """
+import datetime as _dt
+
 UDC = {"S": {"on": 0.30203, "off": 0.30203, "sop": 0.02606},
        "W": {"on": 0.31174, "off": 0.31174, "sop": 0.02606}}
 CEA = {"S": {"on": 0.51684, "off": 0.15975, "sop": 0.04961},
        "W": {"on": 0.24430, "off": 0.15782, "sop": 0.05187}}
 NBC = 0.021; PCIA = 0.02828; BSC = 0.79343
-SUMMER_MONTHS = {6, 7, 8, 9, 10}
+SUMMER_MONTHS = {6, 7, 8, 9, 10}   # tariff season; import this, never re-list the months
 
 energy = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA      # netted energy rate
 credit = lambda s, p: UDC[s][p] + CEA[s][p]             # export credit
 allin  = lambda s, p: UDC[s][p] + CEA[s][p] + PCIA + NBC  # marginal gross import
 
+def holidays(years):
+    """The eight tariff holidays that take weekend TOU windows.
+
+    Source: research/rates-reference.md. Confirmed against the bills individually
+    by analysis/tou_audit.py -- this is measured, not assumed.
+
+    NOT DETERMINED: whether a holiday falling on a weekend shifts to an observed
+    weekday (following Monday). No holiday in the audited statement corpus falls
+    on a weekend, so the bills cannot answer it yet, and the tariff notes in
+    research/ do not mention a shift. The first testable case is July 4, 2026
+    (a Saturday); its statement arrives in August 2026, and if SDG&E treats
+    Monday July 6 as a weekend day, tou_audit's as_billed reconciliation for
+    that period will fail loudly rather than absorb it. Until then this module
+    deliberately encodes calendar dates only.
+    """
+    def nth_weekday(y, m, wd, n):
+        c = _dt.date(y, m, 1)
+        return c + _dt.timedelta(days=(wd - c.weekday()) % 7 + 7 * (n - 1))
+
+    out = set()
+    for y in years:
+        out |= {_dt.date(y, 1, 1), _dt.date(y, 7, 4),
+                _dt.date(y, 11, 11), _dt.date(y, 12, 25)}
+        out.add(nth_weekday(y, 2, 0, 3))    # Presidents: 3rd Monday, February
+        out.add(nth_weekday(y, 9, 0, 1))    # Labor: 1st Monday, September
+        out.add(nth_weekday(y, 11, 3, 4))   # Thanksgiving: 4th Thursday, November
+        c = _dt.date(y, 5, 31)              # Memorial: last Monday, May
+        while c.weekday() != 0:
+            c -= _dt.timedelta(days=1)
+        out.add(c)
+    return out
+
+
+_HOL_YEARS = (2019, 2050)          # PTO year .. past the 2039 NEM 2.0 horizon
+_HOL = holidays(range(_HOL_YEARS[0], _HOL_YEARS[1] + 1))
+
+
+def off_peak_day(date):
+    """True when `date` takes weekend TOU windows: a weekend, or a tariff holiday.
+
+    Pass this to period() as is_weekend. Deriving it from weekday() alone drops the
+    holiday rule, which the bills show the tariff applies.
+
+    Fails loudly outside the built holiday calendar rather than treating an
+    uncovered date as a plain weekday: `date in _HOL` cannot distinguish "not a
+    holiday" from "not in the calendar" or "not a date at all" (NaT's year is
+    nan, so the bound check rejects it too). Everything was migrated onto this
+    module precisely so correctness concentrates here; a soft fallback at the
+    chokepoint would spread a silent bias to every caller at once.
+    """
+    if not (_HOL_YEARS[0] <= date.year <= _HOL_YEARS[1]):
+        raise ValueError(f"date {date!r} outside the {_HOL_YEARS[0]}-{_HOL_YEARS[1]} "
+                         "holiday calendar in rates.py; widen _HOL_YEARS rather than "
+                         "letting holidays silently vanish")
+    return date.weekday() >= 5 or date in _HOL
+
+
+def period_at(ts):
+    """TOU period for a timestamp. THE canonical assignment -- prefer this.
+
+    Takes a datetime and derives both the hour and the weekend-or-holiday status
+    itself, so a caller cannot forget the holiday rule. period() below leaves
+    that flag to the caller, which is exactly how weekday holidays got priced as
+    ordinary weekdays in several scripts for as long as they existed.
+
+    No soft fallbacks: a value without .hour/.minute/.date raises. The previous
+    getattr(ts, "minute", 0) defended no real caller and only widened what the
+    function accepted without complaint.
+    """
+    d = ts.date() if hasattr(ts, "date") else ts
+    hour = ts.hour + ts.minute / 60
+    return period(hour, off_peak_day(d))
+
+
 def period(hour_frac, is_weekend):
+    """Low-level assignment; the caller supplies the day type.
+
+    Use period_at() unless you are deliberately modelling a different day-type
+    rule (tou_audit.py does this to score day-type and window variants against
+    the bills). A
+    bare weekday>=5 test here silently drops the confirmed holiday rule.
+    """
     if 16 <= hour_frac < 21: return "on"
     if is_weekend: return "sop" if hour_frac < 14 else "off"
     return "sop" if (hour_frac < 6 or 10 <= hour_frac < 14) else "off"
+
+def dst_transition_sundays(year):
+    """(spring-forward, fall-back) Sundays under the US rules in force."""
+    def nth_sunday(month, n):
+        c = _dt.date(year, month, 1)
+        return c + _dt.timedelta(days=(6 - c.weekday()) % 7 + 7 * (n - 1))
+    return nth_sunday(3, 2), nth_sunday(11, 1)
+
+
+def expected_day_hours(date):
+    """The exact multiset of 15-minute hour_frac slots a calendar day carries.
+
+    96 slots ordinarily; the spring-forward Sunday lacks 02:00-02:45 (92); the
+    fall-back Sunday repeats 01:00-01:45 (100). This is wall-clock tariff
+    arithmetic, so it lives here with the rest of the tariff clock.
+    """
+    spring, fall = dst_transition_sundays(date.year)
+    base = [i * 0.25 for i in range(96)]
+    if date == spring:
+        return sorted(h for h in base if not 2.0 <= h < 3.0)
+    if date == fall:
+        return sorted(base + [1.0, 1.25, 1.5, 1.75])
+    return base
+
+
+def validate_interval_coverage(pairs, start, end):
+    """Fail loudly unless [start, end] is completely and exactly covered.
+
+    `pairs` is an iterable of (date, hour_frac). Checks BOTH directions --
+    every calendar day in the window present, no day outside it -- and each
+    day's slot multiset against expected_day_hours, so a wholly missing day, a
+    truncated day, and an offsetting duplicate-plus-omission (same count,
+    wrong slots) are all rejected. A day absent from the data never shows up
+    in a groupby, which is exactly how the 27-day October bill gap silently
+    understated an annual baseline by 9% (CLAUDE.md section 1).
+    """
+    got = {}
+    for d, h in pairs:
+        got.setdefault(d, []).append(h)
+    want_days = {start + _dt.timedelta(days=i) for i in range((end - start).days + 1)}
+    missing = sorted(want_days - set(got))
+    extra = sorted(set(got) - want_days)
+    if missing or extra:
+        raise SystemExit(
+            f"interval coverage does not match the {start}..{end} window: "
+            f"{len(missing)} day(s) missing entirely "
+            f"({', '.join(map(str, missing[:5]))}{'...' if len(missing) > 5 else ''}), "
+            f"{len(extra)} day(s) outside the window")
+    bad = []
+    for d in sorted(got):
+        if sorted(got[d]) != expected_day_hours(d):
+            bad.append(f"{d} has {len(got[d])} slots or wrong slot times")
+    if bad:
+        raise SystemExit("malformed interval days: " + "; ".join(bad[:5]))
+
 
 def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
     """{month: $} via monthly per-period NEM netting + NBC on gross imports + BSC.

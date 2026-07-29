@@ -1,33 +1,33 @@
 {
- "basis": "integrated pipeline: behavior_rebuild.py EV shift -> battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem (canonical bill-derived rates, NBC on gross imports); baseline $4,884 at 6/1/2026 rates; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
- "model_baseline_current_rates": 4884,
+ "basis": "integrated pipeline: behavior_rebuild.py EV shift -> battery_dispatch_policies.py price-aware dispatch -> rates.bill_nem (canonical bill-derived rates, NBC on gross imports); baseline $4,904 at 6/1/2026 rates; actual 365-day billed baseline $3,282 (2025-vintage tariffs)",
+ "model_baseline_current_rates": 4904,
  "packages": {
   "LOW": {
    "cost": 0,
-   "savings_yr": 1193,
+   "savings_yr": 1221,
    "savings_range": [
-    1012,
-    1672
+    1009,
+    1700
    ],
-   "note": "EV-only 100% compliance; 80% = $1,012; +25% flexible house load = $1,672; stretch (50%) = $2,151",
-   "projected_bill_current_rates_yr": 3691
+   "note": "EV-only 100% compliance; 80% = $1,009; +25% flexible house load = $1,700; stretch (50%) = $2,179",
+   "projected_bill_current_rates_yr": 3683
   },
   "MID": {
    "cost": 14500,
-   "savings_yr": 3438,
-   "battery_alone_yr": 2325,
-   "battery_alone_post_ev_fix_yr": 2245,
+   "savings_yr": 3459,
+   "battery_alone_yr": 2329,
+   "battery_alone_post_ev_fix_yr": 2238,
    "battery_alone_payback_yr": 6.2,
    "battery_alone_payback_post_fix_yr": 6.5,
-   "battery_alone_payback_evening_only_yr": 8.5,
+   "battery_alone_payback_evening_only_yr": 8.4,
    "projected_bill_current_rates_yr": 1445,
    "note": "single integrated run: EV shift then price-aware PW3 dispatch, re-billed end-to-end"
   },
   "HIGH": {
    "cost": 20400,
-   "savings_yr": 3654,
+   "savings_yr": 3675,
    "marginal_vs_mid_yr": 216,
-   "projected_bill_current_rates_yr": 1230,
+   "projected_bill_current_rates_yr": 1229,
    "note": "post-behavior expansion marginal $216/yr (~27-yr marginal payback on $5,900) \u2014 outage endurance is the reason to buy it"
   }
  },

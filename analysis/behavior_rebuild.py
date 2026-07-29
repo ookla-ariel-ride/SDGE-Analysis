@@ -37,8 +37,10 @@ import pandas as pd
 import household as hh
 
 CSV = "usage.csv"  # SDG&E Green Button 15-min (skiprows=13)
+WINDOW_END = dt.datetime(2026, 7, 24)   # analysis year = the 365 days before this
 
 # ---- rates: identical to billing_model_nem.py (actual bills, 6/1/2026) ----
+import rates as R                                          # canonical module
 from rates import UDC, CEA, NBC, PCIA, BSC, energy, credit  # canonical bill-derived rates
 retail = energy  # netted energy rate (NBC applied on gross imports in bill_monthly)
 
@@ -68,23 +70,26 @@ def load():
                               format="%m/%d/%Y %I:%M %p")
     for c in ["Consumption", "Generation"]:
         df[c] = pd.to_numeric(df[c])
-    end = dt.datetime(2026, 7, 24)
+    end = WINDOW_END
     df = df[(df.dt >= end - dt.timedelta(days=365)) & (df.dt < end)]
     df = df.sort_values("dt").reset_index(drop=True)
+    # Fail closed before ANY consumer computes: this loader feeds the dispatch,
+    # package, findings and carbon pipelines, and a wholly missing day silently
+    # shrinks every figure they publish (the October-gap failure shape). The
+    # expected calendar comes from the fixed window, not from the data.
+    R.validate_interval_coverage(
+        zip(df.dt.dt.date, df.dt.dt.hour + df.dt.dt.minute / 60),
+        (end - dt.timedelta(days=365)).date(), (end - dt.timedelta(days=1)).date())
     df["hour"] = df.dt.dt.hour + df.dt.dt.minute / 60
-    df["wkend"] = df.dt.dt.weekday >= 5
-    df["seas"] = np.where(df.dt.dt.month.isin([6, 7, 8, 9, 10]), "S", "W")
+    # Weekend windows also apply on the eight tariff holidays; rates.off_peak_day
+    # is the single source of that rule (confirmed against the bills, see
+    # analysis/tou_audit.py). A bare weekday test silently drops it.
+    df["wkend"] = df.dt.dt.date.map(R.off_peak_day)
+    df["seas"] = np.where(df.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
     df["ym"] = df.dt.dt.to_period("M")
 
-    def per(r):
-        h = r.hour
-        if 16 <= h < 21:
-            return "on"
-        if r.wkend:
-            return "sop" if h < 14 else "off"
-        return "sop" if (h < 6 or 10 <= h < 14) else "off"
-
-    df["p"] = df.apply(per, axis=1)
+    # TOU assignment comes from the canonical module, not a local copy of the rule.
+    df["p"] = [R.period_at(t) for t in df.dt]
     return df
 
 
