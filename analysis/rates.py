@@ -68,27 +68,26 @@ def holidays(years):
     Source: research/rates-reference.md. Confirmed against the bills individually
     by analysis/tou_audit.py -- this is measured, not assumed.
 
-    NOT YET BILL-CONFIRMED: whether a holiday falling on a weekend shifts to an
-    observed weekday. SDG&E's holiday-TOU documentation (sdge.ca/sdge-holiday-rates,
-    read 2026-07-29) states an asymmetric rule: a SUNDAY holiday is observed the
-    following Monday; a SATURDAY holiday does not shift. No holiday in the audited
-    statement corpus falls on a weekend, so the bills cannot confirm this yet.
-    This module deliberately keeps ACTUAL calendar dates until a bill shows the
-    shift: the documented rule and the actual-date calendar are identical for
-    every date in the audited window -- the first divergent date is July 4, 2027
-    (a Sunday, observed 2027-07-05), outside any current analysis window. The
-    operational layers that need future dates (PVOutput's tariff Public Holidays
-    list and the observatory holidays table, both seeded 2026-07-29 for 2026-2027)
-    encode the documented OBSERVED dates.
+    WEEKEND-FALLING HOLIDAYS carry the documented observed-day rule: SDG&E's
+    holiday-TOU documentation (sdge.ca/sdge-holiday-rates, read 2026-07-29) states
+    an asymmetric shift -- a SUNDAY holiday is also observed the following Monday;
+    a SATURDAY holiday does not shift. Only the four fixed-date holidays can fall
+    on a weekend, so the rule is applied to those. This is DOCUMENTATION-SOURCED,
+    not yet bill-confirmed: no holiday in the audited statement corpus falls on a
+    weekend, and the documented rule changes no date inside any current analysis
+    window -- the first date it adds is 2027-07-05 (July 4, 2027 is a Sunday).
+    Encoding it now keeps this calendar aligned with the operational layers that
+    already carry the observed dates (PVOutput's tariff Public Holidays list and
+    the observatory holidays table, both seeded 2026-07-29); leaving it out would
+    fork the calendars and silently mis-bucket every projection past July 2027.
 
-    Empirical check at August 2026 bill intake (July 4, 2026 = Saturday; needs
-    the covering statement AND a fresh GB pull past 7/28): detectability was
-    computed from the interval data and is WEAK this year -- a Fri-7/3 shift
-    (federal convention) moves only ~1.98 kWh in the 6-10 am window against a
-    ~1.65 kWh bucket tolerance (marginal), and a Mon-7/6 shift moves ~0.68 kWh
-    (undetectable). So do NOT trust tou_audit's aggregate pass/fail to surface
-    a shift: score the no-shift, Fri-shift, and Mon-shift rules explicitly
-    against that statement's buckets and compare residuals.
+    The empirical adjudication is EXECUTABLE, not prose: whenever a weekend
+    holiday enters an audited billing period, tou_audit.weekend_shift_evidence()
+    scores the no-shift, observed-Friday and observed-Monday variants against the
+    statement's printed buckets with an explicit identifiability bound, and
+    reports indeterminate when the discriminating energy is inside statement
+    rounding. If a bill ever decisively contradicts the documented rule, that
+    audit fails the run and this set must change to follow the bills.
     """
     def nth_weekday(y, m, wd, n):
         c = _dt.date(y, m, 1)
@@ -96,8 +95,11 @@ def holidays(years):
 
     out = set()
     for y in years:
-        out |= {_dt.date(y, 1, 1), _dt.date(y, 7, 4),
-                _dt.date(y, 11, 11), _dt.date(y, 12, 25)}
+        for fixed in (_dt.date(y, 1, 1), _dt.date(y, 7, 4),
+                      _dt.date(y, 11, 11), _dt.date(y, 12, 25)):
+            out.add(fixed)
+            if fixed.weekday() == 6:            # Sunday: following Monday observed
+                out.add(fixed + _dt.timedelta(days=1))
         out.add(nth_weekday(y, 2, 0, 3))    # Presidents: 3rd Monday, February
         out.add(nth_weekday(y, 9, 0, 1))    # Labor: 1st Monday, September
         out.add(nth_weekday(y, 11, 3, 4))   # Thanksgiving: 4th Thursday, November
