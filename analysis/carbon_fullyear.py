@@ -76,6 +76,17 @@ def _repo_root():
 ROOT = _repo_root()
 DATA = ROOT / "data"
 CAISO_DIR = ROOT / "private" / "1-raw-data" / "caiso_raw"  # raw day-cache (gitignored)
+
+
+def _scenario_a_saved():
+    """Scenario-a dollar saving from the committed behavior artifact.
+
+    The cost_note cites behavior_rebuild.json; reading the figure from that
+    artifact keeps the two from drifting -- a hardcoded copy here once went
+    stale and contradicted the artifact it cited.
+    """
+    with open(DATA / "behavior_rebuild.json") as fh:
+        return json.load(fh)["scenarios"]["a"]["saved"]
 HOURLY_CSV = DATA / "caiso_hourly_intensity.csv"           # committed aggregate
 OLD_RESULTS = DATA / "carbon_results.json"                 # 4-day legacy artifact
 RESULTS_JSON = DATA / "carbon_fullyear_results.json"       # committed results artifact
@@ -305,7 +316,8 @@ def main():
         "cost_note": ("On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and "
                       "00:00-06:00 are BOTH super-off-peak at the same price; the netting-"
                       "correct dollar saving for fixing mistimed charging is scenario 'a' in "
-                      "behavior_rebuild.json ($1,192.83/yr), unchanged by this carbon rerun."),
+                      f"behavior_rebuild.json (${_scenario_a_saved():,.2f}/yr), unchanged "
+                      "by this carbon rerun."),
         "caveats": [
             f"Intensity measured on {n_cov} real CAISO days; the other {365 - n_cov} days "
             "use month-hour means of covered days (day-to-day weather/hydro/outage "

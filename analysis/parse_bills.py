@@ -24,6 +24,44 @@ OUTPUTS (committed, de-identified)
     data/electric_bill_summary.csv  regenerated (same schema as the original)
     data/gas_bill_summary.csv       regenerated (same schema as the original)
 
+APPLICABILITY ENVELOPE — what this parser assumes. Read this before pointing it at
+any other account's bills; every assumption below is load-bearing in a regex.
+    1. SDG&E CONSOLIDATED statements: electric (and optionally gas) on one account,
+       with the "Detail of Current Charges" / "Total Electric Service" /
+       "Total Gas Service" section layout SDG&E prints.
+    2. NEM billing: every electric period must print BOTH a "Total Usage" (net) line
+       and a "Non Bypassable Charges Usage" (gross) line. A non-NEM bill has no NBC
+       usage line and fails closed.
+    3. A 3-period TOU plan: "SUMMER USAGE" / "WINTER USAGE" tables anchored on an
+       "On-Peak" header, with exactly three columns (On-Peak, Off-Peak,
+       Super Off-Peak) in the "kWh used" and "Rate/kWh" rows. Flat-rate plans and
+       plans with a different period count fail closed.
+    4. CCA generation pages are OPTIONAL and recognized by name only: the literal
+       strings "CLEAN ENERGY ALLIANCE" and the generic "CCA Electric Generation" /
+       "Total CCA Electric Generation Charges" headings. Bundled (non-CCA) SDG&E
+       generation is also handled. A different CCA whose pages omit the generic
+       heading needs its printed name added to the detection regex.
+    5. Statement-date file naming: sdge_electric_YYYY-MM-DD.pdf and
+       sdge_gas_YYYY-MM-DD.pdf (the date is the STATEMENT date, not the period).
+    6. Gas is conditional on PRESENCE (intake spec: required_if has_gas): a missing
+       private/1-raw-data/gas-bills/ directory means a no-gas household and the run
+       writes ONLY the electric artifacts; an existing-but-EMPTY gas-bills/ is
+       treated as corpus loss and fails closed.
+
+    WHAT A FORK MUST CHANGE:
+    - SUMMARY_STATEMENTS_ELEC / SUMMARY_STATEMENTS_GAS document THIS repository's
+      corpus. A corpus sharing none of the listed dates is detected as a fork and
+      the reproduction gate (check 1) is skipped with a notice; replace the lists
+      with your own statement dates once your corpus is stable (see the comment on
+      the lists for the exact semantics).
+    - If your bills are not SDG&E NEM 3-period-TOU consolidated statements, the
+      extraction regexes in parse_electric()/parse_gas() must be rewritten for your
+      layout — the fail-closed errors will name this docstring when they trip.
+    - If your CCA is not Clean Energy Alliance, extend the CCA detection regex with
+      the name printed inside your charge detail.
+    - Rename your PDFs to the sdge_<fuel>_YYYY-MM-DD.pdf convention (or change
+      _statement_date() and the glob patterns in main()).
+
 PRIVACY (CLAUDE.md §4)
     The PDFs contain name, service address, account number, meter number, and the
     CCA service-delivery-point id. NONE of those are extracted. Outputs carry only
@@ -67,7 +105,19 @@ ELEC_DIR = ROOT / "private" / "1-raw-data" / "electric-bills"
 GAS_DIR = ROOT / "private" / "1-raw-data" / "gas-bills"
 
 # The original committed summaries covered these statements only (the analysis year).
-# Regenerating exactly this window is the reproduction gate in main().
+# Regenerating exactly this window is the reproduction gate in _validate() check 1.
+#
+# REPLACE-ME SEMANTICS (forks): these lists document THIS repository's corpus — they are
+# an expectation about the statements on disk, not part of the parser. Check 1 compares
+# the corpus against them three ways:
+#   - full overlap            -> the gate runs as normal (this repo);
+#   - PARTIAL overlap         -> fail closed: some documented statements are missing,
+#                                which is real corpus loss, never a fork;
+#   - ZERO overlap            -> the list is not-applicable (you are a fork running on
+#                                your own statements); check 1 is skipped with a loud
+#                                notice. Once your corpus is stable, replace these dates
+#                                with your own statement dates so the gate starts
+#                                protecting YOUR corpus the same way.
 SUMMARY_STATEMENTS_ELEC = [
     "2025-08-01", "2025-09-02", "2025-10-01", "2025-10-31", "2025-12-03",
     "2026-01-06", "2026-02-02", "2026-03-04", "2026-04-02", "2026-05-04",
@@ -135,7 +185,10 @@ def parse_electric(path):
                 if required:
                     raise SystemExit(
                         f"{path.name} [{period}]: could not find {what}. The bill layout "
-                        f"may have changed — fix the parser rather than defaulting a value.")
+                        f"may have changed — fix the parser rather than defaulting a "
+                        f"value — or this statement is not an SDG&E NEM 3-period-TOU "
+                        f"consolidated bill; see the applicability envelope in the "
+                        f"module docstring.")
                 return None
             return _f(hit.group(1))
 
@@ -197,7 +250,9 @@ def parse_electric(path):
             if not u or not r_row:
                 raise SystemExit(
                     f"{path.name} [{period}]: a '{h.group(1)} USAGE' header has no "
-                    f"kWh/rate rows within {WINDOW} chars — bill layout changed.")
+                    f"kWh/rate rows within {WINDOW} chars — bill layout changed, or "
+                    f"this statement is not an SDG&E NEM 3-period-TOU consolidated "
+                    f"bill; see the applicability envelope in the module docstring.")
             section = "generation" if h.start() >= gen_at else "delivery"
             season = h.group(1).lower()
             key = (section, season)
@@ -265,12 +320,33 @@ def _validate(elec, gas, tou):
     Parsing every PDF that happens to be present is not enough: a statement that is
     absent, misnamed, or unreadable would simply not appear, and the artifacts would be
     rewritten a few periods short with no error. Every check below runs BEFORE any file
-    is touched."""
+    is touched.
+
+    `gas` may be None: a no-gas household (gas-bills/ absent — see the applicability
+    envelope in the module docstring). All gas checks are then skipped."""
+    fuels = [("electric", elec, SUMMARY_STATEMENTS_ELEC,
+              "SUMMARY_STATEMENTS_ELEC", "%m/%d/%y")]
+    if gas is not None:
+        fuels.append(("gas", gas, SUMMARY_STATEMENTS_GAS,
+                      "SUMMARY_STATEMENTS_GAS", "%b %d, %Y"))
+
     # 1. Every statement the committed summaries are built from must be present. This is
     #    what stops a thinned corpus from quietly truncating the published evidence.
-    for label, have, want in (
-            ("electric", set(elec.statement_date), set(SUMMARY_STATEMENTS_ELEC)),
-            ("gas", set(gas.statement_date), set(SUMMARY_STATEMENTS_GAS))):
+    #    Fork detection (see the comment on the SUMMARY_STATEMENTS_* lists): if the
+    #    corpus shares NONE of the listed dates, the list documents someone else's
+    #    corpus — skip this check with a notice instead of demanding statements the
+    #    fork can never have. Any PARTIAL overlap still fails closed: that is this
+    #    corpus with statements missing, i.e. real corpus loss.
+    for label, df, want_list, list_name, _fmt in fuels:
+        have, want = set(df.statement_date), set(want_list)
+        if not have & want:
+            print(f"NOTICE: none of the {len(want)} statement dates in {list_name} are "
+                  f"present in the {label} corpus on disk — treating the list as "
+                  f"not-applicable (a FORK running on its own statements) and skipping "
+                  f"reproduction-gate check 1 for {label}. Once your corpus is stable, "
+                  f"replace the SUMMARY_STATEMENTS_* lists at the top of parse_bills.py "
+                  f"with your own statement dates so the gate protects your corpus.")
+            continue
         missing = sorted(want - have)
         if missing:
             raise SystemExit(
@@ -279,7 +355,7 @@ def _validate(elec, gas, tou):
                 f"regenerating — writing now would publish a truncated artifact.")
 
     # 2. Duplicate billing periods would double-count a year (CLAUDE.md §1).
-    for label, df in (("electric", elec), ("gas", gas)):
+    for label, df, *_ in fuels:
         dupes = df.period[df.period.duplicated()].tolist()
         if dupes:
             raise SystemExit(f"duplicate {label} billing periods parsed: {dupes}")
@@ -294,7 +370,7 @@ def _validate(elec, gas, tou):
     #    is an overlap that would double-count days, kWh/therms and dollars. Checking
     #    only for gaps would let an overlap through, and overlapping period STRINGS are
     #    distinct so the duplicate check above does not see them either.
-    for label, df, fmt in (("electric", elec, "%m/%d/%y"), ("gas", gas, "%b %d, %Y")):
+    for label, df, _w, _n, fmt in fuels:
         d = df.copy()
         d["start"] = pd.to_datetime(d.period.str.split(" - ").str[0], format=fmt)
         d["end"] = pd.to_datetime(d.period.str.split(" - ").str[1], format=fmt)
@@ -319,7 +395,10 @@ def _validate(elec, gas, tou):
     #    that stops the headers matching altogether — that would otherwise yield an
     #    empty, silently incomplete bill_tou_detail.csv.
     if tou.empty:
-        raise SystemExit("no TOU detail parsed for any period — bill layout changed.")
+        raise SystemExit(
+            "no TOU detail parsed for any period — bill layout changed, or these "
+            "statements are not SDG&E NEM 3-period-TOU consolidated bills; see the "
+            "applicability envelope in the module docstring.")
     have_tou = set(tou.period)
     missing_tou = sorted(set(elec.period) - have_tou)
     if missing_tou:
@@ -476,28 +555,47 @@ def _publish_locked(writes):
 
 
 def main():
-    for d in (ELEC_DIR, GAS_DIR):
-        if not d.is_dir():
-            raise SystemExit(
-                f"missing {d} — download the statements first "
-                f"(DATA-SOURCES-CHEATSHEET.md §D describes the bulk-download method)")
+    if not ELEC_DIR.is_dir():
+        raise SystemExit(
+            f"missing {ELEC_DIR} — download the statements first "
+            f"(DATA-SOURCES-CHEATSHEET.md §D describes the bulk-download method)")
+
+    # Gas is presence-based (intake spec: required_if has_gas). A MISSING gas-bills/
+    # directory means a no-gas household: skip gas and publish electric-only. An
+    # EXISTING-but-empty directory is different — someone staged gas once, so an empty
+    # dir is corpus loss and fails closed below.
+    has_gas = GAS_DIR.is_dir()
+    if not has_gas:
+        print(f"NOTICE: {GAS_DIR} does not exist — treating this as a household with "
+              f"no gas service (intake spec: gas is required_if has_gas). Skipping gas "
+              f"parsing; ONLY the electric artifacts will be written and the committed "
+              f"gas artifacts are left untouched. If this house DOES have gas, download "
+              f"the gas statements first (DATA-SOURCES-CHEATSHEET.md §D).")
 
     elec_rows, tou_rows = [], []
     for f in sorted(ELEC_DIR.glob("sdge_electric_*.pdf")):
         r, t = parse_electric(f)
         elec_rows.extend(r)
         tou_rows.extend(t)
-    gas_rows = [parse_gas(f) for f in sorted(GAS_DIR.glob("sdge_gas_*.pdf"))]
+    if not elec_rows:
+        raise SystemExit("no electric statements parsed — is the corpus staged?")
 
-    if not elec_rows or not gas_rows:
-        raise SystemExit("no statements parsed — is the corpus staged?")
+    gas = None
+    if has_gas:
+        gas_rows = [parse_gas(f) for f in sorted(GAS_DIR.glob("sdge_gas_*.pdf"))]
+        if not gas_rows:
+            raise SystemExit(
+                f"{GAS_DIR} exists but contains no sdge_gas_*.pdf statements — that is "
+                f"corpus loss, not a no-gas household. Restore the gas PDFs before "
+                f"regenerating (or remove the directory entirely if this household "
+                f"truly has no gas service).")
+        gas = pd.DataFrame(gas_rows).sort_values("statement_date")
 
     elec = pd.DataFrame(elec_rows)
     # Sort chronologically by the period's start date. Sorting on the period STRING
     # would put "10/1/25 - 10/27/25" before "9/26/25 - 9/30/25".
     elec["_start"] = pd.to_datetime(elec.period.str.split(" - ").str[0], format="%m/%d/%y")
     elec = elec.sort_values("_start").drop(columns="_start")
-    gas = pd.DataFrame(gas_rows).sort_values("statement_date")
     tou = pd.DataFrame(tou_rows)
 
     _validate(elec, gas, tou)
@@ -505,35 +603,42 @@ def main():
     es = elec[elec.statement_date.isin(SUMMARY_STATEMENTS_ELEC)]
     es = es[["period", "days", "net_kwh", "gross_kwh",
              "sdge_delivery", "cca_generation", "current_charges"]]
-    gs = gas[gas.statement_date.isin(SUMMARY_STATEMENTS_GAS)].copy()
-    gs = gs.rename(columns={"period_end_month": "file_month"})
-    gs = gs[["file_month", "therms", "total_gas_service",
-             "baseline_rate", "nonbaseline_rate"]].sort_values("file_month")
 
-    # The five artifacts are one evidence set: publish them together or not at all.
+    # The artifacts are one evidence set: publish them together or not at all.
     # electric_bill_summary.csv and gas_bill_summary.csv predate this script and were
     # committed with CRLF line endings; they keep CRLF so the reproduction gate stays a
     # byte-for-byte match against the known-good originals. New artifacts use LF.
-    _write_all_atomically([
+    # A no-gas run publishes only the three electric artifacts as its set.
+    writes = [
         (DATA / "bill_periods_electric.csv", lambda p: elec.to_csv(p, index=False)),
-        (DATA / "bill_periods_gas.csv", lambda p: gas.to_csv(p, index=False)),
-        (DATA / "bill_tou_detail.csv", lambda p: tou.to_csv(p, index=False)),
-        (DATA / "electric_bill_summary.csv",
-         lambda p: es.to_csv(p, index=False, lineterminator="\r\n")),
-        (DATA / "gas_bill_summary.csv",
-         lambda p: gs.to_csv(p, index=False, lineterminator="\r\n")),
-    ])
+    ]
+    if gas is not None:
+        gs = gas[gas.statement_date.isin(SUMMARY_STATEMENTS_GAS)].copy()
+        gs = gs.rename(columns={"period_end_month": "file_month"})
+        gs = gs[["file_month", "therms", "total_gas_service",
+                 "baseline_rate", "nonbaseline_rate"]].sort_values("file_month")
+        writes.append((DATA / "bill_periods_gas.csv", lambda p: gas.to_csv(p, index=False)))
+    writes.append((DATA / "bill_tou_detail.csv", lambda p: tou.to_csv(p, index=False)))
+    writes.append((DATA / "electric_bill_summary.csv",
+                   lambda p: es.to_csv(p, index=False, lineterminator="\r\n")))
+    if gas is not None:
+        writes.append((DATA / "gas_bill_summary.csv",
+                       lambda p: gs.to_csv(p, index=False, lineterminator="\r\n")))
+    _write_all_atomically(writes)
 
     print(f"electric: {len(elec)} billing periods from "
           f"{elec.statement_date.nunique()} statements "
           f"({elec.statement_date.min()} .. {elec.statement_date.max()})")
-    print(f"gas:      {len(gas)} billing periods from "
-          f"{gas.statement_date.nunique()} statements "
-          f"({gas.statement_date.min()} .. {gas.statement_date.max()})")
+    if gas is not None:
+        print(f"gas:      {len(gas)} billing periods from "
+              f"{gas.statement_date.nunique()} statements "
+              f"({gas.statement_date.min()} .. {gas.statement_date.max()})")
     print(f"tou rows: {len(tou)}")
-    print(f"summary window: electric {len(es)} periods, {es.days.sum()} days, "
-          f"${es.current_charges.sum():,.2f}; gas {len(gs)} periods, "
-          f"${gs.total_gas_service.sum():,.2f}")
+    summary = (f"summary window: electric {len(es)} periods, {es.days.sum()} days, "
+               f"${es.current_charges.sum():,.2f}")
+    if gas is not None:
+        summary += f"; gas {len(gs)} periods, ${gs.total_gas_service.sum():,.2f}"
+    print(summary)
 
 
 if __name__ == "__main__":

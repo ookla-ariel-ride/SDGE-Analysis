@@ -95,6 +95,7 @@ OWNS = {
                                      ("data", "caiso_hourly_intensity.csv")],
     "tou_audit.py":                 [("data", "tou_audit.csv"),
                                      ("data", "tou_audit_summary.json")],
+    "lifetime_payback.py":          [("data", "lifetime_payback.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -261,8 +262,81 @@ NEEDS_PRIVATE_ARCHIVE = {
                                "real year, so invented inputs must diverge"),
 }
 
-SYNTH_START = dt.date(2025, 7, 20)      # a little before the pipeline's fixed window
-SYNTH_END = dt.date(2026, 7, 26)
+# The fixture window is DERIVED from the pipeline's anchor date so re-pointing
+# the analysis year updates the fixture automatically. behavior_rebuild.py runs
+# code at import (its module level reads private/household.yaml and fails closed
+# without it -- correct for the generator, fatal for a clean CI checkout), so
+# WINDOW_END is parsed out of the source text instead of imported.
+_WINDOW_END_RE = re.compile(
+    r"^WINDOW_END\s*=\s*dt\.datetime\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\)", re.M)
+
+
+def _pipeline_window_end():
+    m = _WINDOW_END_RE.search((ANALYSIS / "behavior_rebuild.py").read_text())
+    assert m, ("WINDOW_END not found in behavior_rebuild.py -- the synthetic "
+               "fixture derives its date range from it and cannot anchor itself")
+    return dt.date(*map(int, m.groups()))
+
+
+WINDOW_END = _pipeline_window_end()
+# Bracket the analysis year (the 365 days before WINDOW_END) with a few days of
+# slack on each side so the loaders' boundary handling is exercised.
+SYNTH_START = WINDOW_END - dt.timedelta(days=369)
+SYNTH_END = WINDOW_END + dt.timedelta(days=2)
+
+# The fixture's DST days are derived from the window too (US rule: spring
+# forward the second Sunday of March, fall back the first Sunday of November);
+# hardcoded dates would silently fall out of a re-pointed window and gut the
+# tou_audit calendar checks.
+def _nth_sunday(year, month, n):
+    d = dt.date(year, month, 1)
+    d += dt.timedelta(days=(6 - d.weekday()) % 7)
+    return d + dt.timedelta(days=7 * (n - 1))
+
+
+_in_window = lambda days: [d for d in days if SYNTH_START <= d <= SYNTH_END]
+_springs = _in_window([_nth_sunday(y, 3, 2)
+                       for y in range(SYNTH_START.year, SYNTH_END.year + 1)])
+_falls = _in_window([_nth_sunday(y, 11, 1)
+                     for y in range(SYNTH_START.year, SYNTH_END.year + 1)])
+assert len(_springs) == 1 and len(_falls) == 1, (
+    f"the synthetic window {SYNTH_START}..{SYNTH_END} holds {len(_springs)} "
+    f"spring-forward and {len(_falls)} fall-back DST transition(s); the fixture "
+    "needs exactly one of each -- adjust WINDOW_END in behavior_rebuild.py")
+DST_SPRING, DST_FALL = _springs[0], _falls[0]
+
+# REMAINING COUPLING the derived window cannot remove: tou_audit's CI run
+# audits the COMMITTED bill artifacts (data/bill_periods_electric.csv) against
+# the synthetic export, and tou_audit.py dies with "no billing period lies
+# wholly inside the interval coverage" unless at least one committed billing
+# period sits wholly inside [SYNTH_START, SYNTH_END]. The synthetic case
+# asserts this up front (_assert_bill_periods_overlap_the_window) so a fork
+# sees the real cause instead of that cryptic downstream failure.
+
+
+def _assert_bill_periods_overlap_the_window():
+    """Fail fast, with the cause named, when the committed billing periods and
+    the synthetic fixture window have drifted apart."""
+    lines = (ROOT / "data" / "bill_periods_electric.csv").read_text().splitlines()
+    period_col = lines[0].split(",").index("period")
+
+    def _d(s):
+        m, d, y = map(int, s.strip().split("/"))
+        return dt.date(2000 + y, m, d)
+
+    inside = 0
+    for line in lines[1:]:
+        text = line.split(",")[period_col]
+        start, end = (_d(part) for part in text.split(" - "))
+        if SYNTH_START <= start and end <= SYNTH_END:
+            inside += 1
+    assert inside > 0, (
+        "the synthetic fixture window no longer covers the committed billing "
+        f"periods -- no period in data/bill_periods_electric.csv lies wholly "
+        f"inside {SYNTH_START}..{SYNTH_END}. Regenerate the bill artifacts or "
+        "adjust WINDOW_END in behavior_rebuild.py; otherwise tou_audit's CI "
+        "run fails with 'no billing period lies wholly inside the interval "
+        "coverage'.")
 
 
 def _synthetic_usage(path):
@@ -277,9 +351,9 @@ def _synthetic_usage(path):
     d = SYNTH_START
     while d <= SYNTH_END:
         slots = [i * 0.25 for i in range(96)]
-        if d == dt.date(2026, 3, 8):
+        if d == DST_SPRING:
             slots = [h for h in slots if not 2.0 <= h < 3.0]
-        elif d == dt.date(2025, 11, 2):
+        elif d == DST_FALL:
             slots = slots + [1.0, 1.25, 1.5, 1.75]
         for h in sorted(slots):
             solar = max(0.0, 3.2 * math.sin(math.pi * (h - 6.5) / 11.5)) if 6.5 < h < 18 else 0.0
@@ -415,6 +489,8 @@ def case_generators_run_on_synthetic_inputs():
     that is where it guards main. It builds a structurally faithful Green Button
     export and household file, then runs every generator that needs nothing more.
     """
+    _assert_bill_periods_overlap_the_window()
+
     def inspect(tmp):
         out = []
         br = json.loads((tmp / "behavior_rebuild.json").read_text())
@@ -426,7 +502,7 @@ def case_generators_run_on_synthetic_inputs():
                        "fixture's on-peak charge starts")
         ta = json.loads((tmp / "data" / "tou_audit_summary.json").read_text())
         dst = {(d["date"], d["intervals"]) for d in ta["dst_days"]}
-        if dst != {("2025-11-02", 100), ("2026-03-08", 92)}:
+        if dst != {(DST_FALL.isoformat(), 100), (DST_SPRING.isoformat(), 92)}:
             out.append(f"tou_audit did not see the fixture's DST days: {sorted(dst)}")
         if ta["integrity_skips"]:
             out.append(f"tou_audit reports integrity skips on a complete fixture: "
@@ -504,11 +580,16 @@ def case_missing_day_fails_the_chart_generator():
     day from an otherwise complete fixture and report_data must refuse, naming
     the coverage problem, instead of drawing charts with a quietly shrunken
     month."""
-    import re as _re
+    # The probe is derived from the window (mid-analysis-year, advanced to a
+    # Wednesday, never a DST day whose interval count is legitimately not 96)
+    # so re-pointing WINDOW_END keeps it inside the fixture automatically.
+    gone_date = WINDOW_END - dt.timedelta(days=180)
+    while gone_date.weekday() != 2 or gone_date in (DST_SPRING, DST_FALL):
+        gone_date += dt.timedelta(days=1)
     with tempfile.TemporaryDirectory() as td:
         tmp = _build_throwaway_root(pathlib.Path(td), synthetic=True)
         usage = tmp / "usage.csv"
-        gone = "2/11/2026"          # a Wednesday inside the fixed window
+        gone = f"{gone_date.month}/{gone_date.day}/{gone_date.year}"
         kept = [l for l in usage.read_text().splitlines()
                 if f'"{gone}"' not in l]
         usage.write_text("\n".join(kept) + "\n")
@@ -516,7 +597,7 @@ def case_missing_day_fails_the_chart_generator():
                            capture_output=True, text=True, timeout=900)
         assert r.returncode != 0, "report_data accepted a frame missing a whole day"
         err = r.stderr + r.stdout
-        assert "2026-02-11" in err and "missing" in err, err[-200:]
+        assert gone_date.isoformat() in err and "missing" in err, err[-200:]
     return "report_data refuses a wholly missing day and names it"
 
 

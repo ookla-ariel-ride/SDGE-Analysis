@@ -29,14 +29,34 @@ GAS = ROOT / "private" / "1-raw-data" / "gas-bills"
 PY = sys.executable
 
 
+class SkipCase(Exception):
+    """Raised by a case whose preconditions this corpus cannot meet (e.g. a fork whose
+    corpus lacks a statement the case wants to delete). The runner counts it as
+    neither pass nor fail."""
+
+
+def _require(path):
+    """The corpus negative-tests delete specific statements from THIS repo's corpus.
+    On a fork's corpus those filenames don't exist — skip the case instead of
+    crashing with FileNotFoundError."""
+    if not path.exists():
+        raise SkipCase(f"{path.name} is not in this corpus")
+    return path
+
+
 def _build(tmp):
-    """A minimal repo the parser will accept as its root, with the real corpus."""
+    """A minimal repo the parser will accept as its root, with the real corpus.
+    gas-bills/ is only staged when the real corpus has one — parse_bills.py treats a
+    MISSING gas dir as a no-gas household and an EMPTY one as corpus loss."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()
     (tmp / "private" / "1-raw-data" / "electric-bills").mkdir(parents=True)
-    (tmp / "private" / "1-raw-data" / "gas-bills").mkdir(parents=True)
     shutil.copy2(HERE / "parse_bills.py", tmp / "analysis" / "parse_bills.py")
-    for src, dst in ((ELEC, "electric-bills"), (GAS, "gas-bills")):
+    srcs = [(ELEC, "electric-bills")]
+    if GAS.is_dir() and any(GAS.glob("*.pdf")):
+        (tmp / "private" / "1-raw-data" / "gas-bills").mkdir(parents=True)
+        srcs.append((GAS, "gas-bills"))
+    for src, dst in srcs:
         for f in src.glob("*.pdf"):
             shutil.copy2(f, tmp / "private" / "1-raw-data" / dst / f.name)
     # Pre-existing artifacts, so each case can assert they were not modified.
@@ -67,7 +87,8 @@ def case_healthy_corpus(tmp):
 
 def case_missing_summary_statement(tmp):
     """A statement the committed summary is built from is gone."""
-    victim = tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2026-02-02.pdf"
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2026-02-02.pdf")
     victim.unlink()
     r = _run(tmp)
     assert r.returncode != 0, "parser accepted a corpus missing a summary statement"
@@ -79,7 +100,8 @@ def case_missing_summary_statement(tmp):
 def case_mid_corpus_gap(tmp):
     """A statement OUTSIDE the summary window is gone: caught by continuity, not by
     the presence check."""
-    victim = tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2024-10-29.pdf"
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2024-10-29.pdf")
     victim.unlink()
     r = _run(tmp)
     assert r.returncode != 0, "parser accepted a corpus with a mid-window gap"
@@ -92,7 +114,8 @@ def case_mid_corpus_gas_gap(tmp):
     """A GAS statement outside the summary window is gone. The presence check only
     covers summary statements, and gas bills on its own cycle, so only a gas-specific
     continuity check catches this."""
-    victim = tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2024-10-29.pdf"
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2024-10-29.pdf")
     victim.unlink()
     r = _run(tmp)
     assert r.returncode != 0, "parser accepted a corpus with a mid-window gas gap"
@@ -114,6 +137,41 @@ def case_tou_headers_stop_matching(tmp):
         f"unexpected error:\n{r.stderr}"
     assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
     return "TOU headers stop matching -> exits, artifacts untouched"
+
+
+def case_no_gas_dir_publishes_electric_only(tmp):
+    """Gas is presence-based (intake: required_if has_gas): with NO gas-bills/ dir the
+    run must succeed, notice loudly, write only the electric artifacts, and leave the
+    committed gas artifacts untouched."""
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    if gasdir.exists():
+        shutil.rmtree(gasdir)
+    r = _run(tmp)
+    assert r.returncode == 0, f"no-gas-dir run failed:\n{r.stderr}"
+    assert "does not exist" in r.stdout and "no gas service" in r.stdout, \
+        f"missing the loud no-gas notice:\n{r.stdout}"
+    for n in ("bill_periods_electric.csv", "bill_tou_detail.csv",
+              "electric_bill_summary.csv"):
+        assert (tmp / "data" / n).read_text() != "SENTINEL\n", \
+            f"electric artifact {n} was not written"
+    for n in ("bill_periods_gas.csv", "gas_bill_summary.csv"):
+        assert (tmp / "data" / n).read_text() == "SENTINEL\n", \
+            f"gas artifact {n} was modified on a no-gas run"
+    return "missing gas-bills/ -> electric-only publish, gas artifacts untouched"
+
+
+def case_empty_gas_dir_fails(tmp):
+    """An EXISTING-but-empty gas-bills/ is corpus loss, not a no-gas house: the run
+    must fail closed and touch nothing."""
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    gasdir.mkdir(parents=True, exist_ok=True)
+    for f in gasdir.glob("*.pdf"):
+        f.unlink()
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted an existing-but-empty gas-bills/"
+    assert "corpus loss" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "empty gas-bills/ -> exits, artifacts untouched"
 
 
 def case_write_rollback():
@@ -372,10 +430,54 @@ def case_overlapping_gas_periods():
     return "overlapping gas periods -> rejected"
 
 
+def case_fork_corpus_skips_presence_check():
+    """A corpus sharing NONE of the SUMMARY_STATEMENTS_* dates is a fork: check 1 is
+    skipped with a printed notice instead of demanding statements the fork can never
+    have. Every other check still runs."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    elec, gas, tou = _load_artifacts()
+    elec, gas = elec.copy(), gas.copy()
+    elec["statement_date"] = "1900-01-01"      # zero overlap with either list
+    gas["statement_date"] = "1900-01-01"
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        pb._validate(elec, gas, tou)           # must NOT raise
+    out = buf.getvalue()
+    assert "FORK" in out and "SUMMARY_STATEMENTS_ELEC" in out, \
+        f"fork skip ran silently or without the replace-me instruction:\n{out}"
+    assert "SUMMARY_STATEMENTS_GAS" in out, f"gas list skip not noticed:\n{out}"
+    return "fork corpus (zero overlap) -> check 1 skipped with loud notice"
+
+
+def case_partial_overlap_still_fails():
+    """PARTIAL overlap with the summary lists is corpus loss, never a fork: removing
+    one documented statement from an otherwise-matching corpus must still fail closed."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    elec, gas, tou = _load_artifacts()
+    elec = elec.copy()
+    victim = pb.SUMMARY_STATEMENTS_ELEC[0]
+    if victim not in set(elec.statement_date):
+        raise SkipCase("committed artifacts do not cover SUMMARY_STATEMENTS_ELEC")
+    elec.loc[elec.statement_date == victim, "statement_date"] = "1900-01-01"
+    try:
+        pb._validate(elec, gas, tou)
+    except SystemExit as e:
+        assert "missing from the corpus" in str(e), f"wrong error: {e}"
+    else:
+        raise AssertionError("partial overlap with the summary list was accepted")
+    return "partial overlap with the summary list -> still fails closed"
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
-                case_tou_headers_stop_matching]
+                case_tou_headers_stop_matching,
+                case_no_gas_dir_publishes_electric_only,
+                case_empty_gas_dir_fails]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean
@@ -387,17 +489,24 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_lock_blocks_second_publisher,
                     case_concurrent_publishers_serialize,
                     case_overlapping_electric_periods,
-                    case_overlapping_gas_periods]
+                    case_overlapping_gas_periods,
+                    case_fork_corpus_skips_presence_check,
+                    case_partial_overlap_still_fails]
 
 
 def main():
-    have_corpus = ELEC.is_dir() and GAS.is_dir() and any(ELEC.glob("*.pdf"))
+    # The electric corpus is the hard requirement; gas-dependent cases skip themselves
+    # (via SkipCase) when this corpus has no gas statements — a no-gas fork is valid.
+    have_corpus = ELEC.is_dir() and any(ELEC.glob("*.pdf"))
     failures = skipped = ran = 0
 
     for case in STANDALONE_CASES:
         try:
             print(f"PASS  {case()}")
             ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
@@ -412,12 +521,15 @@ def main():
             with tempfile.TemporaryDirectory() as td:
                 print(f"PASS  {case(_build(pathlib.Path(td)))}")
             ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
 
     total = len(STANDALONE_CASES) + len(CORPUS_CASES)
-    tail = f", {skipped} skipped (no private corpus)" if skipped else ""
+    tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{total} passed{tail}")
     return 1 if failures else 0
 

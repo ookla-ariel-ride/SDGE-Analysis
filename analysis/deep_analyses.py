@@ -5,6 +5,16 @@ import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 import rates as R   # canonical TOU assignment (holiday rule included)
 
+def _repo_root():
+    for start in (_pl.Path.cwd(), _pl.Path(__file__).resolve().parent):
+        p = start
+        while True:
+            if (p/"analysis").is_dir() and (p/"data").is_dir(): return p
+            if p.parent == p: break
+            p = p.parent
+    raise SystemExit("repo root not found: no ancestor contains analysis/ and data/")
+DATA=_repo_root()/"data"
+
 df=pd.read_csv("usage.csv",skiprows=13); df.columns=[c.strip() for c in df.columns]
 df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %p")
 for c in["Consumption","Generation"]: df[c]=pd.to_numeric(df[c])
@@ -100,7 +110,11 @@ N=5000
 esc=rng.uniform(0.00,0.10,N)          # annual rate escalation
 fade=rng.uniform(0.005,0.025,N)       # battery capacity fade/yr
 price=rng.uniform(12500,17000,N)      # installed cost
-base_save=1347                         # marginal battery savings after behavior (yr-1)
+# Marginal battery savings after behavior, year 1: read from the integrated
+# dispatch artifact rather than hardcoded -- a stale copy of this input once
+# survived two pipeline reruns and understated the Monte Carlo's base case.
+base_save=json.load(open(DATA/"battery_dispatch_policies.json"))[
+    "post_behavior"]["mid"]["battery_marginal"]
 payback=np.full(N,np.nan); npv10=np.zeros(N)
 for i in range(N):
     cum=0; s=base_save

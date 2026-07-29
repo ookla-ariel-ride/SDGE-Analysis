@@ -125,14 +125,6 @@
   "net": 512.4,
   "ok": true
  },
- "lifetime": {
-  "blended_old_tou": 0.4866,
-  "blended_new_tou": 0.3025,
-  "solar_value_today": 4992,
-  "nosolar_bill": 9876,
-  "crossover_gross": "~Sep-Oct 2025 (73% through 2025)",
-  "crossover_net_itc": "~Mar 2024 (23% through 2024)"
- },
  "ev_fleet": {
   "source": "owner-provided odometer readings and purchase dates (2026-07-24); charging energy from behavior_rebuild.py session detection",
   "vehicles": [

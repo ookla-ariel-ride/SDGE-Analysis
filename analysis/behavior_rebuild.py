@@ -11,14 +11,17 @@ This model:
        - baseline = centered rolling 24 h (96-interval) 20th-percentile of import power
          (tracks the always-on house floor, immune to multi-hour charge blocks);
        - candidate intervals: import power >= baseline + 2.5 kW;
-       - a session = a contiguous candidate run lasting >= 30 min whose PEAK excess is
-         >= 8 kW (this EV charges at ~11.5 kW; nothing else in the house sustains 8 kW);
-       - EV energy per interval = clip(excess, 0, 11.5 kW) * 0.25 h, capped at the
+       - a session = a contiguous candidate run lasting >= 30 min whose PEAK excess
+         reaches the charger-derived gate min(8 kW, 0.7 * charger.kw) — derived from
+         charger.kw in private/household.yaml, so a house with a smaller charger is
+         still detected (for this house's 11.5 kW charger the gate is 8 kW; nothing
+         else in the house sustains that);
+       - EV energy per interval = clip(excess, 0, charger.kw) * 0.25 h, capped at the
          interval's actual import.
   2. Scenario ladder: physically REMOVES shifted kWh from source intervals and ADDS them
      to super-off-peak intervals starting at the next midnight (overnight 0-6 window,
-     spilling into later SOP windows if full), honoring an 11.5 kW charger cap net of any
-     EV charging already present in the destination interval.
+     spilling into later SOP windows if full), honoring the charger.kw power cap net of
+     any EV charging already present in the destination interval.
   3. Re-bills the modified year with the bill-validated monthly per-TOU-period NEM netting
      model (rates read off actual bills, EV-TOU-5 + CEA Clean Impact Plus, 6/1/2026).
   4. Re-runs the battery simulation ON TOP of scenario (a) so behavior and battery savings
@@ -29,6 +32,7 @@ Absolute model dollars run high vs the audited bills ($3,282/yr actual over thes
 use the DELTAS, which are driven by correctly-priced on-peak arbitrage.
 """
 import json
+import sys
 import datetime as dt
 
 import numpy as np
@@ -47,14 +51,27 @@ retail = energy  # netted energy rate (NBC applied on gross imports in bill_mont
 # ---- detection / shifting parameters ----
 BASE_WIN = 96          # rolling-baseline window (24 h of 15-min intervals)
 BASE_Q = 0.20          # baseline percentile
-EXCESS_KW = 2.5        # candidate threshold above baseline
-PEAK_KW = 8.0          # session must peak >= this above baseline (EV signature)
-MIN_INTERVALS = 2      # >= 30 min sustained
-# destination charger power cap — per-house hardware, from private/household.yaml
+# charger power — per-house hardware, from private/household.yaml
 # (analysis/household.py; fails closed — run the intake interview in
-# DATA-SOURCES-CHEATSHEET.md)
+# DATA-SOURCES-CHEATSHEET.md). Used both as the destination cap when shifting
+# and to derive the session-detection gate below.
 CHARGER_KW = float(hh.get("charger.kw"))
 CAP_KWH = CHARGER_KW * 0.25   # max EV kWh per 15-min interval
+EXCESS_KW = 2.5        # candidate threshold above baseline
+# Session gate (EV signature): a session's peak excess over the house baseline
+# must reach ~70% of the charger's nameplate — a real charge block sustains near
+# nameplate, and the 30% margin absorbs voltage derating, ramp edges landing in
+# a 15-min average, and concurrent solar offset. Capped at 8 kW: no house load
+# here sustains 8 kW above baseline, so demanding more of a bigger charger adds
+# nothing. Floored at EXCESS_KW so the gate is never looser than the candidate
+# test. For this house's 11.5 kW charger: min(8.0, max(2.5, 0.7*11.5)) = 8.0,
+# the original bill-validated signature, unchanged.
+# EXCESS_KW itself deliberately does NOT scale with charger.kw: it screens
+# house-load noise above the rolling baseline (HVAC compressors, ovens run
+# 2-4 kW over it), which is a property of the house, not the charger — shrinking
+# it for a small charger would readmit exactly that noise into candidate runs.
+PEAK_KW = min(8.0, max(EXCESS_KW, 0.7 * CHARGER_KW))
+MIN_INTERVALS = 2      # >= 30 min sustained
 
 # ---- battery parameters (Powerwall 3 hardware spec, NOT household config) ----
 BATT_KWH = 13.5        # usable
@@ -246,6 +263,31 @@ def main():
     base_bill = sum(base_monthly.values())
 
     ev, sessions = detect_sessions(d)
+    if not sessions:
+        # Loud but non-fatal: an export from a genuinely EV-free house is a
+        # legitimate zero, but a mis-set charger.kw must never zero out the EV
+        # scenarios silently.
+        bang = "!" * 74
+        print("\n".join([
+            "", bang,
+            "WARNING: ZERO EV charging sessions detected across the whole year.",
+            bang,
+            "Detection is tuned via charger.kw in private/household.yaml:",
+            "  charger.kw = %g kW  ->  session peak gate %g kW above the house"
+            % (CHARGER_KW, PEAK_KW),
+            "  baseline (candidate threshold %g kW, >= %d contiguous 15-min"
+            % (EXCESS_KW, MIN_INTERVALS),
+            "  intervals).",
+            "If this house HAS an EV, check before trusting these results:",
+            "  - charger.kw matches the EVSE's real sustained output (circuit or",
+            "    vehicle onboard-charger limited, not the wall unit's nameplate);",
+            "  - the Green Button export actually covers charging days;",
+            "  - a charger under ~4 kW sits near the %g kW candidate floor and"
+            % (EXCESS_KW,),
+            "    15-min averaging can smear its sessions below the gate.",
+            "If the house genuinely has no EV, scenarios a/b correctly show $0.",
+            bang, "",
+        ]), file=sys.stderr)
     d["ev"] = ev
     p = d.p.values
     ev_tot = ev.sum()
@@ -274,9 +316,10 @@ def main():
                             "imports_kwh": round(float(d.imp.sum()), 1),
                             "exports_kwh": round(float(d.exp.sum()), 1),
                             "onpeak_import_kwh": round(float(d.imp[p == "on"].sum()), 1)},
-               "detection": {"rule": ("power >= rolling-24h-20th-pct baseline + 2.5 kW, "
-                                      ">=30 min contiguous, session peak excess >= 8 kW; "
-                                      "EV kWh = clip(excess,0,11.5kW)*0.25h, <= interval import"),
+               "detection": {"rule": ("power >= rolling-24h-20th-pct baseline + %g kW, "
+                                      ">=30 min contiguous, session peak excess >= %g kW; "
+                                      "EV kWh = clip(excess,0,%gkW)*0.25h, <= interval import"
+                                      % (EXCESS_KW, PEAK_KW, CHARGER_KW)),
                              "sessions": len(sessions),
                              "ev_kwh_total": round(float(ev_tot), 1),
                              "ev_kwh_expected": 13100,

@@ -233,9 +233,11 @@ Mono data — with system fallbacks).
 - SEMANTIC TOU palette, used consistently everywhere (CSS tokens → chart palette via JS):
   on-peak #BF3B2B · off-peak #C98A3D · super-off-peak #2E7D6B · solar #E9B62F. A period's
   color is the same in the day-band, every chart series, tables, and the price map.
-- Signature element: the DAY-BAND — pure-CSS 24-h TOU strip (segments at 0-6-10-14-16-21)
-  with tick marks and prices, full-width under the header; keep it on every regeneration.
-- Every time-axis chart shades the 4-9pm window via the `onpeakBand` Chart.js plugin.
+- Signature element: the DAY-BAND — pure-CSS 24-h TOU strip (segments at the tariff's TOU
+  boundaries — 0-6-10-14-16-21 for this household's EV-TOU-5) with tick marks and prices,
+  full-width under the header; keep it on every regeneration.
+- Every time-axis chart shades the on-peak window (4-9pm on this tariff) via the
+  `onpeakBand` Chart.js plugin.
 - Evidence pills are mono uppercase stamps, color-coded measured=sop-green /
   modeled=off-peak-amber / estimated=on-peak-red.
 - All numerals in IBM Plex Mono with tabular-nums (cards, tables, pills).

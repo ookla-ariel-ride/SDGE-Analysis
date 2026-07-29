@@ -28,10 +28,10 @@
   "note": "days with non-EV load in bottom decile; away-mode savings depend on what stays on"
  },
  "monte_carlo": {
-  "payback_median": 9.4,
-  "payback_p10": 8.1,
-  "payback_p90": 11.6,
-  "prob_payback_within_warranty10yr": 0.645,
-  "npv10_at_4pct_median": -2158
+  "payback_median": 6.0,
+  "payback_p10": 5.3,
+  "payback_p90": 7.0,
+  "prob_payback_within_warranty10yr": 1.0,
+  "npv10_at_4pct_median": 6186
  }
 }
