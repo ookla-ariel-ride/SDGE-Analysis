@@ -69,11 +69,16 @@ def holidays(years):
     (a Sunday, observed 2027-07-05), outside any current analysis window. The
     operational layers that need future dates (PVOutput's tariff Public Holidays
     list and the observatory holidays table, both seeded 2026-07-29 for 2026-2027)
-    encode the documented OBSERVED dates. Empirical checks that stay armed:
-    July 4, 2026 is a Saturday -- under the documented rule Monday July 6 stays a
-    weekday, and if SDG&E instead bills it as a weekend day, tou_audit's as_billed
-    reconciliation for the August 2026 statement will fail loudly rather than
-    absorb it.
+    encode the documented OBSERVED dates.
+
+    Empirical check at August 2026 bill intake (July 4, 2026 = Saturday; needs
+    the covering statement AND a fresh GB pull past 7/28): detectability was
+    computed from the interval data and is WEAK this year -- a Fri-7/3 shift
+    (federal convention) moves only ~1.98 kWh in the 6-10 am window against a
+    ~1.65 kWh bucket tolerance (marginal), and a Mon-7/6 shift moves ~0.68 kWh
+    (undetectable). So do NOT trust tou_audit's aggregate pass/fail to surface
+    a shift: score the no-shift, Fri-shift, and Mon-shift rules explicitly
+    against that statement's buckets and compare residuals.
     """
     def nth_weekday(y, m, wd, n):
         c = _dt.date(y, m, 1)
