@@ -72,17 +72,28 @@ HOW A CELL'S TIMELINE IS BUILT
   raises — this engine never extrapolates.
 
 RE-BILLING
-  rebill_statement(period) re-bills one statement's printed TOU energy lines
-  from its own reported per-TOU kWh at the engine's rates (net-negative
-  buckets at the printed $0, matching every statement in the corpus — under
-  NEM 2.0 in-period exports settle at true-up, not on the monthly statement).
+  rebill_statement(period, mode=...) re-prices ONE statement's printed TOU
+  energy lines from its own reported per-TOU kWh (net-negative buckets at the
+  printed $0, matching every statement in the corpus — under NEM 2.0 in-period
+  exports settle at true-up, not on the monthly statement). The modes and what
+  each one can and cannot prove are in that function's docstring and under
+  "THE RESIDUAL ARTIFACT" below.
+
   bill_nem(frame) / bill_nem_monthly(frame) mirror rates.bill_nem's signature
-  so callers can swap engines, with two documented differences: rates vary by
+  so callers can swap engines, with these documented differences: rates vary by
   date (netting is per maximal constant-rate span within the month, which is
-  exactly how the bills segment a mid-cycle change), and the result is TOU
-  ENERGY dollars only — PCIA, NBC and pre-10/25 BSC are not artifact-sourced,
-  so no per-kWh adders or daily charges are included. Do not compare absolute
-  levels against rates.bill_nem without accounting for that.
+  exactly how the bills segment a mid-cycle change); the result is TOU ENERGY
+  dollars only — PCIA, NBC and pre-10/25 BSC are not artifact-sourced, so no
+  per-kWh adders or daily charges are included; and delivery + generation
+  pricing exists only for BUNDLED dates. Both functions REFUSE, naming the
+  date and the period, any frame that touches a CCA period (12/27/24 onward):
+  there the printed generation TOU table is SDG&E's bundled-generation (EECC)
+  comparison, not the CEA tariff that was charged, so delivery + generation
+  would be a plausible-looking wrong number. delivery_only=True prices the UDC
+  (delivery) component alone and works on any corpus date, CCA included — the
+  result then contains NO generation at all and must be labeled that way.
+  These are not general historical bill replacements: they price TOU energy
+  under the stated restriction, nothing else.
 
   NOTE the caller supplies the TOU period labels, exactly as with
   rates.bill_nem. Historical statements were billed under historical WINDOWS
@@ -90,14 +101,47 @@ RE-BILLING
   rates.py's docstring); assigning period labels to historical intervals is
   the caller's problem, not this module's.
 
+THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
+  data/rate_rebilling_residuals.csv compares two quantities computed from the
+  SAME bill rows. printed_tou_energy_usd is Σ kWh × the rate the statement
+  itself printed on those lines — the reference is the statement's OWN printed
+  TOU energy lines, nothing external. timeline_energy_usd prices those same kWh
+  through the timeline built out of those same rows. Every observation lands
+  inside its own span, so the difference is zero as an algebraic identity — on
+  all 26 statements and for ANY rate values whatsoever. It proves the timeline
+  reconstruction is self-consistent (segment dating, span merging, cell
+  lookup); it CANNOT detect a parser that misread a rate, a column or a
+  segment, and it is not an independent validation of dollars.
+  No independent energy-only total exists in the committed artifacts to tie
+  against: bill_periods_electric.sdge_delivery bundles the non-bypassable
+  charges, PCIA and the base services charge together with delivery energy, and
+  none of those three is sourceable from any committed artifact (RateSet.pcia /
+  RateSet.nbc fail closed), so delivery energy cannot be separated back out of
+  it. An independent per-statement dollar tie-out is therefore NOT available
+  from committed data. Two checks that CAN move are reported beside the
+  identity:
+    * holdout_* — statement S's own kWh priced by a timeline rebuilt from the
+      OTHER 25 statements' rate rows. Independent of S's printed rates, so a
+      misread rate on S moves it. It can price only the cells the rest of the
+      corpus dates: holdout_priced_pct records the share of S's printed dollars
+      that were priceable, and a mid-cycle change visible only on S's own bill
+      (the five split statements) is by definition uncorroborated, which is why
+      those rows carry the largest holdout residuals.
+    * cca_generation_gap_usd — Σ(printed generation kWh × printed rate) minus
+      bill_periods_electric.cca_generation, for CCA statements. This is the
+      measured evidence that the printed generation table is not the tariff
+      charged during CCA periods (1/28/26-2/26/26: $116.09 printed against a
+      $56.82 CCA charge).
+
 Generator outputs (deterministic writers, atomic replace; run twice → identical):
     data/rate_vintages.csv              every cell's spans with evidence tier
                                         (direct / carried / absent) + BSC and
                                         provider timelines
-    data/rate_rebilling_residuals.csv   per-statement billed vs re-billed
-                                        printed TOU energy, piecewise and
-                                        segment-collapsed, worst statement
-                                        flagged in the artifact
+    data/rate_rebilling_residuals.csv   per-statement printed TOU energy, the
+                                        timeline reconstruction of it, the
+                                        holdout re-bill, the two vintage-
+                                        collapse counterfactuals and the CCA
+                                        generation gap; worst statement flagged
 """
 import csv
 import datetime as dt
@@ -179,13 +223,20 @@ class _Span:
 
 
 class _Engine:
-    def __init__(self, periods, tou):
+    def __init__(self, periods, tou, exclude_period=None):
         self.periods = periods                      # chronological period dicts
         self.tou = tou                              # validated TOU detail rows
         self.start = periods[0]["start"]
         self.end = periods[-1]["end"]
+        # exclude_period builds the HOLDOUT timeline: segment dates still come
+        # from every statement (they are calendar facts), but the excluded
+        # statement's rate observations are withheld, so pricing it against this
+        # timeline is independent of its own printed rates.
+        self.exclude_period = exclude_period
         self.segments = self._date_segments(periods, tou)
-        self.timelines = self._timelines(tou)
+        self.timelines = self._timelines(
+            [r for r in tou if r["period"] != exclude_period]
+            if exclude_period is not None else tou)
 
     # -- construction ------------------------------------------------------
     @staticmethod
@@ -261,7 +312,17 @@ class _Engine:
                     merged.append([s, e, rate, [period]])
             spans, prev = [], None
             name = "/".join(cell)
+            # a gap means "no positive-kWh line here"; in a holdout timeline the
+            # withheld statement is a second reason, and the note must say so
+            gap_why = ("net-negative gap" if self.exclude_period is None else
+                       f"gap with {self.exclude_period} held out")
             if not merged:
+                if self.exclude_period is not None:
+                    timelines[cell] = [_Span(
+                        self.start, self.end, None, "absent",
+                        "no positive-kWh line outside the held-out statement "
+                        + self.exclude_period)]
+                    continue
                 raise SystemExit(f"{name}: no positive-kWh line anywhere in the corpus")
             if merged[0][0] > self.start:
                 spans.append(_Span(self.start, merged[0][0] - dt.timedelta(days=1),
@@ -275,7 +336,7 @@ class _Engine:
                         gap1 = s - dt.timedelta(days=1)
                         if prev.rate == rate:
                             spans.append(_Span(gap0, gap1, rate, "carried",
-                                               "net-negative gap; flanking observed "
+                                               f"{gap_why}; flanking observed "
                                                f"rates equal at {rate:.5f}"))
                         else:
                             spans.append(_Span(gap0, gap1, None, "absent",
@@ -308,13 +369,23 @@ class _Engine:
 
 
 _ENGINE = None
+_HOLDOUT = {}
 
 
 def _engine():
     global _ENGINE
     if _ENGINE is None:
+        _HOLDOUT.clear()                 # never serve holdouts of a retired corpus
         _ENGINE = _Engine(*_load())
     return _ENGINE
+
+
+def _holdout_engine(period):
+    """The engine with `period`'s rate observations withheld (see _Engine)."""
+    eng = _engine()
+    if period not in _HOLDOUT:
+        _HOLDOUT[period] = _Engine(eng.periods, eng.tou, exclude_period=period)
+    return _HOLDOUT[period]
 
 
 def _load():
@@ -338,7 +409,11 @@ def _load():
             period=row["period"], statement_date=row["statement_date"],
             start=a, end=b, days=days, provider=row["generation_provider"],
             bsc_total=float(row["base_services_charge"])
-            if row["base_services_charge"] else None))
+            if row["base_services_charge"] else None,
+            # the CCA generation charge actually billed for the period; the
+            # column reads 0.0 on bundled statements, where there is none
+            cca_total=float(row["cca_generation"])
+            if row["cca_generation"] else None))
     periods.sort(key=lambda p: p["start"])
     for p1, p2 in zip(periods, periods[1:]):
         if p2["start"] != p1["end"] + dt.timedelta(days=1):
@@ -467,41 +542,100 @@ def current_vintage():
 # ---------------------------------------------------------------------------
 # Re-billing
 # ---------------------------------------------------------------------------
-def rebill_statement(period, collapse=False):
-    """Re-bill one statement's printed TOU energy lines from its own per-TOU kWh.
+MODES = ("piecewise", "vintage_collapse", "netting_collapse")
 
-    billed    = Σ kWh × printed rate over the period's positive TOU lines (the
-                artifact reference; net-negative buckets print $0 — NEM 2.0
-                in-period exports settle at true-up, not on the statement)
-    rebilled  = the same kWh priced by THIS ENGINE's timeline:
-                collapse=False  each rate segment at the rates the engine holds
-                                for that segment's dates (piecewise, as billed);
-                collapse=True   the single-vintage mistake, for the guard test:
-                                each season block's kWh summed across segments
-                                and priced at the rates in force on the block's
-                                LAST day, re-netting each bucket before the
-                                positive-only rule.
-    Returns {period, statement_date, days, provider, n_segments, billed,
-    rebilled, residual, residual_pct}.
+
+def _block_end(eng, period, section, season):
+    """Last day of a statement's (section, season) block — the vintage a
+    single-vintage re-bill of that block would wrongly use throughout."""
+    return max(e for (per, sec, sea, i), (s, e) in eng.segments.items()
+               if per == period and sec == section and sea == season)
+
+
+def rebill_statement(period, mode="piecewise"):
+    """Re-price one statement's printed TOU energy lines from its own per-TOU kWh.
+
+    printed   = Σ kWh × the rate THIS STATEMENT printed on those lines, over its
+                positive TOU buckets. This is the reference, and it is the
+                statement's own printed table — not an independent dollar total
+                (see the module docstring: none exists in committed data).
+                Net-negative buckets print $0 — NEM 2.0 in-period exports settle
+                at true-up, not on the statement.
+    rebilled  = the same kWh priced through a rate timeline:
+        mode="piecewise"         each segment at the rates the engine holds for
+                                 that segment's dates (as billed). Since the
+                                 timeline is built from these very rows, the
+                                 residual is zero by identity — a reconstruction
+                                 check, not a validation. rebill_holdout() is the
+                                 version that can move.
+        mode="vintage_collapse"  the RATE-ONLY counterfactual: identical segment
+                                 kWh and the identical positive-only rule, the
+                                 ONLY change being the vintage — every row priced
+                                 at the rates in force on the LAST day of its
+                                 (section, season) block. Any residual is
+                                 attributable to collapsing vintages and nothing
+                                 else. This is the piecewise-billing proof. Rows
+                                 whose block-end cell is a flagged absence cannot
+                                 be re-priced at all (the collapsed-to vintage is
+                                 not bill-sourced there); they are dropped from
+                                 BOTH sides and counted in unpriced_rows, so the
+                                 residual stays a like-for-like comparison
+                                 against printed_basis rather than an invented
+                                 rate.
+        mode="netting_collapse"  a NETTING counterfactual, kept separate because
+                                 it changes two things at once: it sums signed
+                                 kWh across the printed segments, re-applies the
+                                 positive-only rule to that sum, and then also
+                                 prices at the block's last day.
+    Returns {period, statement_date, days, provider, n_segments, printed,
+    printed_basis, unpriced_rows, rebilled, residual, residual_pct}, where
+    printed_basis is the printed dollars the mode could actually re-price
+    (== printed except in vintage_collapse) and the residual is against it.
     """
+    if mode not in MODES:
+        raise SystemExit(f"rebill_statement: unknown mode {mode!r} (expected {MODES})")
     eng = _engine()
     p = next((x for x in eng.periods if x["period"] == period), None)
     if p is None:
         raise SystemExit(f"rebill_statement: no billing period {period!r} in the corpus")
     rows = [r for r in eng.tou if r["period"] == period]
-    billed = sum(r["kwh"] * r["rate"] for r in rows if r["kwh"] > 0)
+    printed = sum(r["kwh"] * r["rate"] for r in rows if r["kwh"] > 0)
     # rate segments per season block (2 = a mid-cycle tariff change split the bill)
     per_block = {}
     for r in rows:
         per_block.setdefault((r["section"], r["season"]), set()).add(r["segment"])
     n_segments = max(len(v) for v in per_block.values())
-    if not collapse:
+    basis, unpriced = printed, 0
+    if mode == "netting_collapse":
+        net = {}
+        for r in rows:
+            key = (r["section"], r["season"], r["tou_period"])
+            net[key] = net.get(key, 0.0) + r["kwh"]
+        rebilled = 0.0
+        for (section, season, tp), kwh in sorted(net.items()):
+            if kwh <= 0:
+                continue
+            end = _block_end(eng, period, section, season)
+            rebilled += kwh * RateSet(eng, end)._cell(section, season, tp)
+    elif mode == "vintage_collapse":
+        rebilled = basis = 0.0
+        for r in rows:
+            if r["kwh"] <= 0:
+                continue
+            cell = (r["section"], r["season"], r["tou_period"])
+            span = eng.span_at(cell, _block_end(eng, period, r["section"], r["season"]))
+            if span.tier == "absent":
+                unpriced += 1
+                continue
+            basis += r["kwh"] * r["rate"]
+            rebilled += r["kwh"] * span.rate
+    else:
         rebilled = 0.0
         for r in rows:
             if r["kwh"] <= 0:
                 continue
-            s, e = eng.segments[(period, r["section"], r["season"], r["segment"])]
             cell = (r["section"], r["season"], r["tou_period"])
+            s, e = eng.segments[(period, r["section"], r["season"], r["segment"])]
             first, last = eng.span_at(cell, s), eng.span_at(cell, e)
             if first is not last:
                 raise SystemExit(f"[{period}] {'/'.join(cell)}: the engine's timeline "
@@ -511,35 +645,134 @@ def rebill_statement(period, collapse=False):
                 raise SystemExit(f"[{period}] {'/'.join(cell)}: a billed positive "
                                  f"bucket sits on an absent span — construction bug")
             rebilled += r["kwh"] * first.rate
-    else:
-        net = {}
-        for r in rows:
-            key = (r["section"], r["season"], r["tou_period"])
-            net[key] = net.get(key, 0.0) + r["kwh"]
-        rebilled = 0.0
-        for (section, season, tp), kwh in sorted(net.items()):
-            if kwh <= 0:
-                continue
-            block_end = max(e for (per, sec, sea, i), (s, e) in eng.segments.items()
-                            if per == period and sec == section and sea == season)
-            rebilled += kwh * RateSet(eng, block_end)._cell(section, season, tp)
-    residual = rebilled - billed
+    residual = rebilled - basis
     return dict(period=period, statement_date=p["statement_date"], days=p["days"],
-                provider=p["provider"], n_segments=n_segments, billed=billed,
-                rebilled=rebilled, residual=residual,
-                residual_pct=100.0 * residual / billed)
+                provider=p["provider"], n_segments=n_segments, printed=printed,
+                printed_basis=basis, unpriced_rows=unpriced, rebilled=rebilled,
+                residual=residual,
+                # None, never a division, if the mode could price nothing at all
+                residual_pct=(100.0 * residual / basis) if basis else None)
 
 
-def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
+def rebill_holdout(period):
+    """Re-price one statement against a timeline built WITHOUT its own rate rows.
+
+    The one per-statement check here that can move: the prices come from the
+    other 25 statements, so a misread rate, column or segment on this statement
+    shows up as a residual instead of cancelling out. Rows the rest of the corpus
+    cannot date (an absent holdout span, or a span boundary falling inside the
+    printed segment — which is exactly what a mid-cycle change visible only on
+    this bill looks like) are not priced; they are counted, not guessed.
+
+    Returns {period, printed_priced, rebilled, residual, residual_pct|None,
+    priced_pct, unpriced_rows} where the residual is over the PRICED subset and
+    printed_priced is that subset's printed dollars.
+    """
+    eng = _engine()
+    hold = _holdout_engine(period)
+    rows = [r for r in eng.tou if r["period"] == period]
+    if not rows:
+        raise SystemExit(f"rebill_holdout: no billing period {period!r} in the corpus")
+    printed = sum(r["kwh"] * r["rate"] for r in rows if r["kwh"] > 0)
+    priced = rebilled = 0.0
+    unpriced = 0
+    for r in rows:
+        if r["kwh"] <= 0:
+            continue
+        cell = (r["section"], r["season"], r["tou_period"])
+        s, e = eng.segments[(period, r["section"], r["season"], r["segment"])]
+        first, last = hold.span_at(cell, s), hold.span_at(cell, e)
+        if first is not last or first.tier == "absent":
+            unpriced += 1
+            continue
+        priced += r["kwh"] * r["rate"]
+        rebilled += r["kwh"] * first.rate
+    residual = rebilled - priced
+    return dict(period=period, printed_priced=priced, rebilled=rebilled,
+                residual=residual,
+                residual_pct=(100.0 * residual / priced) if priced else None,
+                priced_pct=(100.0 * priced / printed) if printed else 0.0,
+                unpriced_rows=unpriced)
+
+
+def cca_generation_gap(period):
+    """Printed generation TOU dollars vs the CCA generation charge actually billed.
+
+    Σ(printed generation kWh × printed rate) − bill_periods_electric.cca_generation
+    for a CCA statement. The two are not the same tariff, and this measures by how
+    much: it is the evidence that RateSet.cca_generation() must fail closed rather
+    than reuse the printed comparison table. Returns None for bundled statements,
+    where SDG&E's printed generation table IS what it billed and no CCA charge
+    exists.
+    """
+    eng = _engine()
+    p = next((x for x in eng.periods if x["period"] == period), None)
+    if p is None:
+        raise SystemExit(f"cca_generation_gap: no billing period {period!r} in the corpus")
+    if p["provider"] != "CCA":
+        return None
+    printed = sum(r["kwh"] * r["rate"] for r in eng.tou
+                  if r["period"] == period and r["section"] == "generation"
+                  and r["kwh"] > 0)
+    billed = p["cca_total"]
+    if not billed:
+        raise SystemExit(
+            f"[{period}] is a CCA statement but bill_periods_electric.csv carries no "
+            "cca_generation charge for it — the printed-vs-billed generation gap "
+            "cannot be measured; refusing to report a gap against a missing total.")
+    return dict(period=period, printed_generation=printed, cca_billed=billed,
+                gap=printed - billed, gap_pct=100.0 * (printed - billed) / billed)
+
+
+def _refuse_cca_dates(frame, caller):
+    """Fail closed if any date in the frame falls in a CCA period.
+
+    delivery + generation is a real tariff only while SDG&E was the bundled
+    provider. From 12/27/24 the generation TOU table on the statement is SDG&E's
+    bundled-generation (EECC) COMPARISON, not the CEA rates that were charged;
+    the committed artifacts carry only the CCA period TOTAL
+    (bill_periods_electric.cca_generation), never per-TOU CCA rates, which is why
+    RateSet.cca_generation() also refuses. Also raises (via rates_on) on any date
+    outside the corpus."""
+    for day in sorted({d for d in frame["dt"].dt.date.unique()}):
+        rs = rates_on(day)                              # off-corpus raises here
+        if rs.provider == "CCA":
+            p = rs._period
+            raise SystemExit(
+                f"{caller}: {day} falls in the CCA period {p['period']} (provider "
+                f"{rs.provider}) — the generation TOU table printed on a CCA "
+                "statement is SDG&E's bundled-generation comparison, not the CEA "
+                "tariff that was charged, and the committed artifacts carry only "
+                "that period's CCA generation TOTAL (bill_periods_electric."
+                f"cca_generation = ${p['cca_total']:.2f}), not per-TOU CCA rates "
+                "(RateSet.cca_generation refuses for the same reason). Adding "
+                "printed delivery + printed generation "
+                "here would return a plausible-looking wrong number, so this engine "
+                "refuses. Bundled dates (through 2024-12-26) price normally; pass "
+                "delivery_only=True to price the UDC delivery component alone on "
+                "any date, and label the result as containing no generation.")
+
+
+def bill_nem_monthly(frame, imp="Consumption", exp="Generation", delivery_only=False):
     """{month: $} of TOU ENERGY charges at the historical vintages — the engine-swap
-    counterpart of rates.bill_nem_monthly (same signature; frame needs the same
-    columns: dt, seas 'S'/'W', p 'on'/'off'/'sop', ym, imp, exp).
+    counterpart of rates.bill_nem_monthly (same signature plus delivery_only; frame
+    needs the same columns: dt, seas 'S'/'W', p 'on'/'off'/'sop', ym, imp, exp).
 
-    Differences, both documented in the module docstring: netting is per maximal
-    constant-rate span within the month (how the bills segment a mid-cycle
-    change), net-negative buckets contribute $0 (in-period NEM exports settle at
-    true-up), and NO PCIA/NBC/BSC is added — those are not artifact-sourced.
+    NOT a general historical bill replacement. Differences, all documented in the
+    module docstring: netting is per maximal constant-rate span within the month
+    (how the bills segment a mid-cycle change), net-negative buckets contribute $0
+    (in-period NEM exports settle at true-up), and NO PCIA/NBC/BSC is added —
+    those are not artifact-sourced.
+
+    Default (delivery_only=False) prices delivery + generation and therefore works
+    only on BUNDLED dates: a frame touching any CCA period (12/27/24 onward) is
+    refused, naming the date and the period, because the printed generation table
+    is then SDG&E's comparison rather than the CEA tariff charged. delivery_only=
+    True prices the UDC delivery component ALONE, on any corpus date — the result
+    then excludes all generation and must be labeled that way.
     Raises on any date outside the corpus or any absent cell (fail closed)."""
+    if not delivery_only:
+        _refuse_cca_dates(frame, "bill_nem_monthly")
     out = {}
     for ym, m in frame.groupby("ym"):
         tot = 0.0
@@ -552,6 +785,8 @@ def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
                                  "expected")
             def rate_pair(day):
                 rs = rates_on(day)
+                if delivery_only:
+                    return rs.delivery(season, long_tp)
                 return (rs.delivery(season, long_tp) + rs.generation(season, long_tp))
             spans = {}
             for day, dsub in sub.groupby(sub.dt.dt.date):
@@ -564,9 +799,12 @@ def bill_nem_monthly(frame, imp="Consumption", exp="Generation"):
     return out
 
 
-def bill_nem(frame, imp="Consumption", exp="Generation"):
-    """Annual $ (sum of bill_nem_monthly) — signature-compatible with rates.bill_nem."""
-    return sum(bill_nem_monthly(frame, imp, exp).values())
+def bill_nem(frame, imp="Consumption", exp="Generation", delivery_only=False):
+    """Annual $ (sum of bill_nem_monthly) — signature-compatible with
+    rates.bill_nem, and subject to every restriction in bill_nem_monthly's
+    docstring: TOU energy only, and delivery + generation on bundled dates only
+    (CCA dates refused unless delivery_only=True, which drops generation)."""
+    return sum(bill_nem_monthly(frame, imp, exp, delivery_only).values())
 
 
 # ---------------------------------------------------------------------------
@@ -604,22 +842,47 @@ def _vintage_rows():
 
 def _residual_rows():
     eng = _engine()
-    results = [(rebill_statement(p["period"]), rebill_statement(p["period"], True))
-               for p in eng.periods]
-    # worst = largest |residual|; ties (all-zero residuals) go to the earliest
-    # statement so the label is stable as the corpus grows
+    results = []
+    for p in eng.periods:
+        per = p["period"]
+        results.append((rebill_statement(per),
+                        rebill_statement(per, "vintage_collapse"),
+                        rebill_statement(per, "netting_collapse"),
+                        rebill_holdout(per),
+                        cca_generation_gap(per)))
+    # worst = largest |timeline_residual_pct|. That column is zero by identity
+    # (module docstring), so in practice the tie breaks on the holdout residual —
+    # the per-statement check that can actually move — and then on the statement
+    # date, so the label stays stable as the corpus grows.
     worst = sorted(results, key=lambda t: (-abs(t[0]["residual_pct"]),
+                                           -abs(t[3]["residual_pct"] or 0.0),
                                            t[0]["statement_date"]))[0][0]["period"]
     rows = []
-    for piece, coll in results:
+    for piece, vint, netc, hold, gap in results:
         rows.append([piece["statement_date"], piece["period"], piece["days"],
                      piece["provider"], piece["n_segments"],
-                     f"{piece['billed']:.2f}",
+                     f"{piece['printed']:.2f}",
                      f"{piece['rebilled']:.2f}",
                      _fmt_money(piece["residual"]),
                      _fmt_money(piece["residual_pct"], 4),
-                     f"{coll['rebilled']:.2f}",
-                     _fmt_money(coll["residual_pct"], 4),
+                     f"{hold['printed_priced']:.2f}",
+                     f"{hold['rebilled']:.2f}",
+                     _fmt_money(hold["priced_pct"], 2),
+                     hold["unpriced_rows"],
+                     _fmt_money(hold["residual"]),
+                     "" if hold["residual_pct"] is None
+                     else _fmt_money(hold["residual_pct"], 4),
+                     f"{vint['printed_basis']:.2f}",
+                     f"{vint['rebilled']:.2f}",
+                     vint["unpriced_rows"],
+                     "" if vint["residual_pct"] is None
+                     else _fmt_money(vint["residual_pct"], 4),
+                     f"{netc['rebilled']:.2f}",
+                     _fmt_money(netc["residual_pct"], 4),
+                     "" if gap is None else f"{gap['printed_generation']:.2f}",
+                     "" if gap is None else f"{gap['cca_billed']:.2f}",
+                     "" if gap is None else _fmt_money(gap["gap"], 2),
+                     "" if gap is None else _fmt_money(gap["gap_pct"], 2),
                      "worst" if piece["period"] == worst else ""])
     return rows
 
@@ -632,10 +895,25 @@ def _write_artifacts(dest_dir):
         (dest_dir / "rate_vintages.csv",
          ["section", "season", "tou_period", "vintage_start", "vintage_end",
           "rate_per_kwh", "evidence", "note"], _vintage_rows()),
+        # Column names say what the reference is. printed_tou_energy_usd is the
+        # statement's OWN printed TOU energy lines; timeline_* re-prices those
+        # same kWh through the timeline built from those same rows, so
+        # timeline_residual_* is a reconstruction identity, not a dollar
+        # validation (module docstring). holdout_* withholds the statement's own
+        # rates and CAN move; cca_generation_gap_* is the one independent
+        # comparison the committed artifacts support.
         (dest_dir / "rate_rebilling_residuals.csv",
          ["statement_date", "period", "days", "provider", "n_segments",
-          "billed_energy_usd", "rebilled_energy_usd", "residual_usd",
-          "residual_pct", "collapsed_energy_usd", "collapsed_residual_pct",
+          "printed_tou_energy_usd", "timeline_energy_usd",
+          "timeline_residual_usd", "timeline_residual_pct",
+          "holdout_printed_priced_usd", "holdout_energy_usd",
+          "holdout_priced_pct", "holdout_unpriced_rows",
+          "holdout_residual_usd", "holdout_residual_pct",
+          "vintage_collapse_basis_usd", "vintage_collapse_energy_usd",
+          "vintage_collapse_unpriced_rows", "vintage_collapse_residual_pct",
+          "netting_collapse_energy_usd", "netting_collapse_residual_pct",
+          "printed_generation_usd", "cca_billed_generation_usd",
+          "cca_generation_gap_usd", "cca_generation_gap_pct",
           "worst_residual"], _residual_rows()),
     ]
     for path, header, rows in targets:
