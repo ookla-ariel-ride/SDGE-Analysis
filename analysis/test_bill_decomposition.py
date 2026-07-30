@@ -28,6 +28,29 @@ WHAT IS BEING GUARDED, and why each case exists:
   quantity-only movement, and the interaction term is exactly the spread between
   them when both move.
 
+  ALGEBRA THAT BALANCES IS NOT ALGEBRA THAT MEANS SOMETHING — the two cases below
+  exist because both failure modes reconcile perfectly while saying the wrong
+  thing.
+
+  A VINTAGE TERM NEEDS A BASE TARIFF. On a cell billed as a net export the base
+  effective price is $0 because the energy settled at the annual true-up, not
+  because a tariff said $0. Running q(s1 - g0) there prices the export-to-import
+  regime change and publishes it as a supply vintage, and every identity still
+  holds. case_the_vintage_and_provider_terms_cover_only_the_cells_that_support_
+  them asserts the attributed terms are built from the import-in-both cells alone
+  and that the rest is carried under its own name, netting_regime_usd;
+  case_a_flipped_cell_cannot_be_attributed_to_vintage_or_provider drives the same
+  rule from a synthetic pair where the exporting cell would otherwise have
+  contributed a large, entirely spurious supply vintage.
+
+  A POINT IS NOT A BOUND. Paasche price == Laspeyres price + interaction, so
+  pairing Paasche price with Laspeyres quantity and calling the price figure "the"
+  price effect hands the whole interaction to price while the note beside it says
+  the interaction is not allocated. case_the_published_reading_allocates_none_of_
+  the_interaction asserts the artifact publishes intervals whose width is exactly
+  the interaction, publishes both exact pairings, publishes no bare price_usd or
+  quantity_usd, and that index.html carries the bounds and no point attribution.
+
   THE CCA AUTHORITY BOUNDARY (issue #2, binding here). On a CCA statement SDG&E
   prints a bundled-generation comparison table beside a bill the CCA charged.
   case_the_printed_bundled_comparison_is_never_priced_as_supply asserts it enters
@@ -197,14 +220,19 @@ def case_every_published_identity_holds_exactly():
     ]
     for name, got, want in checks:
         assert abs(got - want) <= 0.01, f"{name}: {got} != {want}"
-    # the published "reading" is one of those identities, stated once
+    # the published "reading" states both exact pairings, and each one sums to the
+    # energy change with no residual
     rd = agg["reading"]
-    assert abs(rd["price_usd"] + rd["quantity_usd"] - d) <= 0.01, rd
+    pairs = {(p["price_basis"], p["quantity_basis"]): p for p in rd["exact_pairings"]}
+    assert set(pairs) == {("laspeyres", "paasche"), ("paasche", "laspeyres")}, pairs
+    for key, p in pairs.items():
+        assert abs(p["price_usd"] + p["quantity_usd"] - p["sum_usd"]) < CENT, p
+        assert abs(p["sum_usd"] - d) <= 0.01, (key, p, d)
     assert abs(rd["of_which_scale_usd"] + rd["of_which_tou_mix_usd"]
-               - rd["quantity_usd"]) <= 0.02, rd
+               - agg["laspeyres"]["quantity_usd"]) <= 0.02, rd
     assert abs(rd["interaction_usd"] - agg["interaction_usd"]) < CENT
     return (f"all {len(checks)} index identities hold to the cent against an energy "
-            f"change of ${d}")
+            f"change of ${d}, and both exact pairings are published")
 
 
 def case_the_decomposition_is_per_cell_not_only_aggregate():
@@ -218,8 +246,9 @@ def case_the_decomposition_is_per_cell_not_only_aggregate():
         for field in ("laspeyres_price_usd", "laspeyres_quantity_usd",
                       "paasche_price_usd", "paasche_quantity_usd", "interaction_usd",
                       "delivery_vintage_usd_paasche", "supply_vintage_usd_paasche",
-                      "provider_usd_paasche", "base_rate_effective",
-                      "current_rate_effective",
+                      "provider_usd_paasche", "netting_regime_usd_paasche",
+                      "netting_regime_usd_laspeyres", "price_split_attributed",
+                      "base_rate_effective", "current_rate_effective",
                       "sdge_bundled_comparison_rate_current_date"):
             assert field in c, f"{c['cell']} has no {field}"
         assert abs(c["current_usd"] - c["base_usd"] - c["change_usd"]) < CENT, c
@@ -308,7 +337,8 @@ def case_provider_and_vintage_are_reported_as_separate_terms():
     agg = _artifact()["decomposition"]["aggregate"]
     for basis in ("price_split_laspeyres_basis", "price_split_paasche_basis"):
         s = agg[basis]
-        assert set(s) == {"delivery_vintage_usd", "supply_vintage_usd", "provider_usd"}, s
+        assert set(s) == {"delivery_vintage_usd", "supply_vintage_usd", "provider_usd",
+                          "netting_regime_usd"}, s
     lasp = agg["price_split_laspeyres_basis"]
     assert abs(sum(lasp.values()) - agg["laspeyres"]["price_usd"]) <= 0.02, lasp
     paas = agg["price_split_paasche_basis"]
@@ -334,6 +364,135 @@ def case_provider_and_vintage_are_reported_as_separate_terms():
     return ("provider and vintage are separate published terms that sum to the price "
             f"effect on both weight bases; read whole the provider effect is "
             f"${whole['provider_effect_usd']} ({whole['provider_effect_pct']}%)")
+
+
+def case_the_vintage_and_provider_terms_cover_only_the_cells_that_support_them():
+    """A vintage term is a difference of two tariffs. On a cell billed as a net export
+    the base effective price is $0 because the energy settled at the annual true-up,
+    not because a tariff said $0 — so q(s1 - g0) there would price the export-to-import
+    regime change and publish it as a supply vintage, with the algebra still balancing.
+    The attributed terms must therefore be built from the like-for-like cells alone,
+    with the rest carried under its own name."""
+    art = _artifact()
+    agg = art["decomposition"]["aggregate"]
+    cells = art["decomposition"]["per_cell"]
+    scope = agg["price_split_scope"]
+    like = {c["cell"] for c in cells if c["both_periods_net_import"]}
+    flip = {c["cell"] for c in cells if not c["both_periods_net_import"]}
+    assert like and flip, "the corpus no longer has both kinds of cell"
+    assert set(scope["attributed_cells"]) == like, (scope["attributed_cells"], like)
+    assert set(scope["unattributed_cells"]) == flip, (scope["unattributed_cells"], flip)
+    assert scope["unattributed_term"] == "netting_regime_usd", scope
+    # per cell: an unattributed cell contributes NOTHING to vintage or provider, and
+    # an attributed cell contributes nothing to the netting-regime term
+    for c in cells:
+        vint = ("delivery_vintage_usd", "supply_vintage_usd", "provider_usd")
+        for basis in ("laspeyres", "paasche"):
+            attributed = [c[f"{t.replace('_usd', '')}_usd_{basis}"] for t in vint]
+            regime = c[f"netting_regime_usd_{basis}"]
+            if c["both_periods_net_import"]:
+                assert regime == 0.0, (c["cell"], basis, regime)
+                assert abs(sum(attributed)
+                           - c[f"{basis}_price_usd"]) <= 0.02, c["cell"]
+            else:
+                assert attributed == [0.0, 0.0, 0.0], (c["cell"], basis, attributed)
+                assert abs(regime - c[f"{basis}_price_usd"]) <= 0.02, (c["cell"], basis)
+    # aggregate: all four terms still sum exactly to the price effect on each basis
+    for basis, total in (("laspeyres", agg["laspeyres"]["price_usd"]),
+                         ("paasche", agg["paasche"]["price_usd"])):
+        s = agg[f"price_split_{basis}_basis"]
+        assert abs(sum(s.values()) - total) <= 0.02, (basis, s, total)
+        attributed = round(s["delivery_vintage_usd"] + s["supply_vintage_usd"]
+                           + s["provider_usd"], 2)
+        want = round(sum(c[f"{basis}_price_usd"] for c in cells
+                         if c["both_periods_net_import"]), 2)
+        assert abs(attributed - want) <= 0.02, (basis, attributed, want)
+        # and they are the same dollars the like-for-like section publishes
+        lfl = art["like_for_like"]["price_effect_split_usd"][basis]
+        assert abs(sum(lfl.values()) - attributed) <= 0.02, (basis, lfl, attributed)
+    # the regime term is not a rounding crumb — this is the term the old all-cell
+    # split was silently folding into "vintage"
+    assert abs(agg["price_split_paasche_basis"]["netting_regime_usd"]) > 10.0, agg
+    return ("the vintage and provider terms are built from the "
+            f"{len(like)} like-for-like cells only; the other {len(flip)} carry "
+            "$%.2f (Laspeyres) / $%.2f (Paasche) under netting_regime_usd, and all "
+            "four terms still sum to the price effect on each basis"
+            % (agg["price_split_laspeyres_basis"]["netting_regime_usd"],
+               agg["price_split_paasche_basis"]["netting_regime_usd"]))
+
+
+def case_a_flipped_cell_cannot_be_attributed_to_vintage_or_provider():
+    """The same rule, driven synthetically: a cell that exports in the base period and
+    imports in the current one must land wholly in the netting-regime term whatever
+    the printed rates say, while a cell that imports in both keeps its split."""
+    base = _cells({("summer", "on_peak"): (100.0, 0.20, 0.30, 0.30),
+                   ("summer", "off_peak"): (-50.0, 0.0, 0.0, 0.0)})
+    cur = _cells({("summer", "on_peak"): (120.0, 0.25, 0.40, 0.35),
+                  ("summer", "off_peak"): (80.0, 0.22, 0.33, 0.31)})
+    agg = B.decompose(base, cur)["aggregate"]
+    for basis in ("laspeyres", "paasche"):
+        s = agg[f"price_split_{basis}_basis"]
+        assert abs(sum(s.values()) - agg[basis]["price_usd"]) < CENT, (basis, s)
+        assert s["netting_regime_usd"] != 0.0, (basis, s)
+    scope = agg["price_split_scope"]
+    assert scope["attributed_cells"] == ["summer.on_peak"], scope
+    assert "summer.off_peak" in scope["unattributed_cells"], scope
+    assert set(scope["attributed_cells"]) | set(scope["unattributed_cells"]) == \
+        {B._key(*k) for k in B.CELLS}, scope
+    # the exporting cell's supply move (0.00 -> 0.33 against a 0.31 comparison) would
+    # have read as +$24.75 of supply vintage on current weights if it were attributed
+    assert agg["price_split_paasche_basis"]["supply_vintage_usd"] == \
+        B._c(120.0 * (0.35 - 0.30)), agg["price_split_paasche_basis"]
+    # every attributed dollar comes from the import-in-both cell alone
+    attributed = sum(agg["price_split_paasche_basis"][t] for t in
+                     ("delivery_vintage_usd", "supply_vintage_usd", "provider_usd"))
+    assert abs(attributed - 120.0 * ((0.25 + 0.40) - (0.20 + 0.30))) < CENT, attributed
+    return ("a cell that flips from net export to net import contributes nothing to "
+            "the vintage or provider terms and all of its price movement to "
+            "netting_regime, while the import-in-both cell keeps its three-way split")
+
+
+def case_the_published_reading_allocates_none_of_the_interaction():
+    """The artifact says the interaction is published and not allocated. The reading it
+    prints has to match that claim: pairing Paasche price with Laspeyres quantity and
+    calling the price figure "the" price effect would hand the whole interaction to
+    price, because Paasche price == Laspeyres price + interaction."""
+    agg = _artifact()["decomposition"]["aggregate"]
+    rd = agg["reading"]
+    assert rd["convention"].startswith("bounds"), rd["convention"]
+    lp, pp = agg["laspeyres"]["price_usd"], agg["paasche"]["price_usd"]
+    lq, pq = agg["laspeyres"]["quantity_usd"], agg["paasche"]["quantity_usd"]
+    inter = agg["interaction_usd"]
+    # the published interval is exactly the two readings, and its width is exactly
+    # the interaction — so neither endpoint is being sold as an attribution
+    assert (rd["price_usd_low"], rd["price_usd_high"]) == (min(lp, pp), max(lp, pp)), rd
+    assert (rd["quantity_usd_low"], rd["quantity_usd_high"]) == \
+        (min(lq, pq), max(lq, pq)), rd
+    assert abs((rd["price_usd_high"] - rd["price_usd_low"]) - abs(inter)) <= 0.02, rd
+    assert abs((rd["quantity_usd_high"] - rd["quantity_usd_low"])
+               - abs(inter)) <= 0.02, rd
+    assert abs(abs(rd["interval_width_usd"]) - abs(inter)) < CENT, rd
+    # no point estimate is published under a name that would read as one
+    assert "price_usd" not in rd and "quantity_usd" not in rd, sorted(rd)
+    for pair in rd["exact_pairings"]:
+        assert pair["price_basis"] != pair["quantity_basis"], pair
+    # and the prose says so, in the artifact and in the report
+    assert "interval" in rd["basis"], rd["basis"]
+    assert "accounts" in rd["basis"] and "no figure" in rd["basis"], rd["basis"]
+    assert "never split" in rd["interaction_note"] or \
+        "never allocated" in rd["interaction_note"], rd["interaction_note"]
+    report = (ROOT / "index.html").read_text()
+    assert "price accounts for" not in report, \
+        "index.html still states a point price attribution"
+    for end in (rd["price_usd_low"], rd["price_usd_high"],
+                rd["quantity_usd_low"], rd["quantity_usd_high"]):
+        assert f"{abs(end):,.2f}" in report, \
+            f"index.html omits the published bound {end}"
+    return (f"price and quantity are published as intervals (price "
+            f"${rd['price_usd_low']} to ${rd['price_usd_high']}, quantity "
+            f"${rd['quantity_usd_low']} to ${rd['quantity_usd_high']}), each exactly "
+            f"${abs(inter)} wide because that is the unallocated interaction, and the "
+            "report states no point attribution either")
 
 
 def case_the_printed_bundled_comparison_is_never_priced_as_supply():
@@ -469,6 +628,9 @@ CASES = [
     case_the_interaction_term_is_the_spread_between_the_two_readings,
     case_an_inconsistent_cell_breaks_the_identity_check,
     case_provider_and_vintage_are_reported_as_separate_terms,
+    case_the_vintage_and_provider_terms_cover_only_the_cells_that_support_them,
+    case_a_flipped_cell_cannot_be_attributed_to_vintage_or_provider,
+    case_the_published_reading_allocates_none_of_the_interaction,
     case_the_printed_bundled_comparison_is_never_priced_as_supply,
     case_a_provider_effect_is_refused_without_a_same_date_comparison,
     case_the_like_for_like_index_is_fixed_weight,

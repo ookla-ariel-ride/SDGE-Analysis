@@ -1293,6 +1293,29 @@ the export settles at true-up):
 | interaction | `Σ (p₁−p₀)(q₁−q₀)` |
 | scale / TOU mix (of the Laspeyres quantity term) | `(Q₁−Q₀)Σp₀w₀` / `Q₁Σp₀(w₁−w₀)` |
 | supply vintage / provider | `q(s₁−g₀)` / `q(g₁−s₁)`, `s₁` = the same-date bundled comparison |
+| netting regime | `q(p₁−p₀)` on every cell where no base tariff is observable |
+
+**Two presentation decisions, both because balancing algebra is not the same as a true
+statement.**
+
+*A vintage term needs a base tariff, so it is not computed everywhere.* On a cell billed as a
+net export the base effective price is $0 because the energy settled at the annual true-up,
+not because a tariff said $0. Evaluating `q(s₁−g₀)` there measures the export-to-import
+settlement change and prints it as a supply vintage, while every identity continues to hold —
+which is what makes it easy to miss. `delivery_vintage`, `supply_vintage` and `provider` are
+therefore computed only over the cells billed as net imports in **both** periods (three of six
+here, the same set `like_for_like` reports), and every other cell's whole price movement is
+published as `netting_regime_usd`, attributed to neither a tariff vintage nor the provider.
+The four terms sum exactly to the price effect on each weight basis, and
+`decomposition.aggregate.price_split_scope` names which cells are in which set and why.
+
+*Price and quantity are published as intervals, not points.* Paasche price ≡ Laspeyres price +
+interaction, so quoting the Paasche figure as "the" price effect hands the entire interaction
+to price while the note beside it says the interaction is not allocated. The artifact publishes
+each effect as the interval between its two readings, whose width is exactly the interaction
+term, plus both exact pairings (`reading.exact_pairings`). There is no bare `price_usd` or
+`quantity_usd` key, and no figure anywhere in the artifact or the report is described as the
+amount price "accounts for".
 
 `Q` is NET kWh, so a cell share can be negative and the scale/mix split is an exact identity
 on those shares rather than a share of consumption; the artifact says so. Everything outside
@@ -1301,14 +1324,18 @@ wildfire, CCA unbundling riders, applied NEM generation credit, taxes, CEA produ
 A statement line the script does not name breaks the reconciliation against
 `bill_periods_electric.current_charges` and the run fails — nothing is absorbed silently.
 
-**Results.** Observed +$350.31, components +$350.31, residual **$0.00**. TOU energy +$178.93
-= price +$109.94 (current quantities) + quantity +$68.99 (2024 prices; scale +$237.86, TOU mix
-−$168.86); the opposite weighting reads −$257.22 / +$436.15 and the $367.15 spread is the
-interaction term, driven by the three cells that flip between net export and net import. The
+**Results.** Observed +$350.31, components +$350.31, residual **$0.00**. TOU energy +$178.93,
+which reads as price −$257.22 with quantity +$436.15 on 2024 weights, or price +$109.94 with
+quantity +$68.99 on 2026 weights; both pairings are exact, and the **$367.15** width of each
+interval is the interaction term, driven by the three cells that flip between net export and
+net import. Splitting the 2024-weight quantity term: scale +$237.86, TOU mix −$168.86. The
 largest single line is the **applied NEM generation credit, +$123.33**: the 2024 statement applied
 $128.39 of credit against a $128.39 energy charge, cancelling it exactly and leaving the bill
 equal to its fixed and non-bypassable block; the 2026 statement applied $5.06. Provider read whole: CEA plus the CCA-only riders $197.97 against
-$180.46 of bundled SDG&E supply, **+$17.51 (9.7%)**. On the three cells billed as imports in
+$180.46 of bundled SDG&E supply, **+$17.51 (9.7%)**. The per-cell price split, on 2026 weights,
+is −$0.63 delivery vintage / +$25.11 supply vintage / −$9.00 provider over the three
+like-for-like cells (−$10.81 / +$16.49 / −$24.36 on 2024 weights), with +$94.46 of netting
+regime over the other three (−$238.53 on 2024 weights). On the three cells billed as imports in
 both periods the fixed-weight price index is −14.6% (Laspeyres) / +7.8% (Paasche) / −4.0%
 (Fisher) over 2.01 years, with super-off-peak delivery −35.1%, on-peak delivery +14.2% and
 SDG&E bundled generation +20.6% to +21.1%. A blended $/kWh over the same cells would read
@@ -1318,11 +1345,21 @@ SDG&E bundled generation +20.6% to +21.1%. A blended $/kWh over the same cells w
 Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs the PDFs), so
 the §9 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_bill_decomposition.py`, 17 cases. Sixteen run in a clean checkout
+**Tests** `analysis/test_bill_decomposition.py`, 20 cases. Nineteen run in a clean checkout
 against the committed artifact and the committed bill artifacts; only the regeneration case
 needs the private archive, and it skips with the reason named. Three synthetic fixtures pin
 what the identities are supposed to do (price-only and quantity-only movement collapse the two
 readings; the interaction term equals the spread when both move), one feeds a cell whose
 dollars contradict its rate and asserts the identity check refuses it, and one removes a cell's
 same-date comparison rate and asserts the provider/vintage split is refused rather than
-estimated.
+estimated. Three more guard the two presentation decisions above:
+`case_the_vintage_and_provider_terms_cover_only_the_cells_that_support_them` asserts per cell
+that an export-flipped cell contributes nothing to vintage or provider and an import-in-both
+cell contributes nothing to the netting-regime term, that the four terms still sum to the price
+effect on each basis, and that the attributed dollars are the same dollars `like_for_like`
+publishes; `case_a_flipped_cell_cannot_be_attributed_to_vintage_or_provider` drives the same
+rule from a synthetic pair where the exporting cell would otherwise have produced a large
+spurious supply vintage; and `case_the_published_reading_allocates_none_of_the_interaction`
+asserts the published intervals are exactly the two readings, that their width equals the
+interaction, that no bare `price_usd`/`quantity_usd` key exists, and that `index.html` carries
+both bounds and states no point attribution.

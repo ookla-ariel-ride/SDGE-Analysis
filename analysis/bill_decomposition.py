@@ -57,6 +57,21 @@ change splits with no estimation:
 where s1 is the printed bundled comparison on the 2026 statement. Delivery is
 SDG&E in both periods, so its whole change is vintage.
 
+THAT SPLIT IS PUBLISHED ONLY WHERE IT MEANS WHAT IT SAYS. It needs a base rate
+that is a tariff, and on a cell billed as a net export the base rate is $0 by
+settlement — the export went to the annual true-up — not by tariff. Running
+q(s1 - g0) there would measure the export-to-import regime change and print it
+as a supply vintage; the algebra would still balance, which is exactly what
+makes it easy to miss. So delivery_vintage, supply_vintage and provider are
+computed ONLY over the cells billed as net imports in BOTH periods (three of
+six here), and every other cell's whole price movement q(p1 - p0) is published
+under its own name, netting_regime_usd: the change in what the netting regime
+billed, attributed to neither a tariff vintage nor the provider. Four terms,
+summing exactly to the price effect on each weight basis:
+
+    price effect  =  delivery_vintage + supply_vintage + provider
+                  +  netting_regime            (the cells with no base tariff)
+
 Two further consequences of the provider break are NOT in that per-cell term, and
 are carried as their own named lines in non_energy_bridge, because the statements
 charge them per period rather than per TOU cell: the riders a CCA customer pays
@@ -94,6 +109,16 @@ rate, the energy change is split by the standard exact identities:
 
     price_L + quantity_L + interaction  ==  price_L + quantity_P
                                         ==  price_P + quantity_L  ==  dEnergy
+
+NEITHER EFFECT IS PUBLISHED AS A POINT. Paasche price == Laspeyres price +
+interaction, so quoting "price accounts for $109.94" (the Paasche figure) hands
+the entire interaction to price while the note beside it says the interaction is
+jointly owned and not allocated. Those two statements cannot both be true. This
+artifact publishes each effect as the INTERVAL between its two readings —
+price -$257.22 to +$109.94, quantity +$68.99 to +$436.15 — whose width is
+exactly the interaction term, together with both exact pairings. The interaction
+is published and never split; nothing here, and nothing in the report, states a
+figure as the amount price or quantity "accounts for".
 
 The quantity effect is split again into scale and TOU mix, exactly, with
 Q = sum q and w = q / Q:
@@ -807,12 +832,20 @@ def _key(season, tou):
 def decompose(base, current):
     """Laspeyres, Paasche and the interaction residual, per season x TOU cell and
     in aggregate, plus the split of the price effect into delivery vintage, supply
-    vintage and provider."""
+    vintage, provider and netting regime.
+
+    The first three of those are causal attributions and are computed only over the
+    cells billed as net imports in BOTH periods, which are the only cells with an
+    observable base tariff. Every other cell's price movement goes to the fourth,
+    netting_regime, which names the export-to-import settlement change rather than
+    dressing it up as a vintage. Price and quantity are published as intervals, not
+    points, because the interaction term is reported and never allocated."""
     per_cell = []
     agg = {k: 0.0 for k in ("price_l", "price_p", "quantity_l", "quantity_p",
                             "interaction", "delivery_vintage_l", "supply_vintage_l",
-                            "provider_l", "delivery_vintage_p", "supply_vintage_p",
-                            "provider_p", "base_usd", "current_usd")}
+                            "provider_l", "netting_regime_l", "delivery_vintage_p",
+                            "supply_vintage_p", "provider_p", "netting_regime_p",
+                            "base_usd", "current_usd")}
     q0_total = sum(c["kwh"] for c in base["cells"].values())
     q1_total = sum(c["kwh"] for c in current["cells"].values())
     scale = mix = 0.0
@@ -831,21 +864,36 @@ def decompose(base, current):
                 f"({season}, {tou}): the current period carries no SDG&E bundled "
                 "comparison rate, so the provider effect cannot be separated from the "
                 "vintage effect for this cell — refusing to estimate one")
+        # The price effect, split by cause — but only where a base tariff exists.
+        # Delivery is SDG&E in both periods, so all of its movement is vintage, and
+        # the supply movement splits at the same-date bundled comparison s1. On a
+        # cell billed as a net export in either period, d0/g0 (or d1/g1) are $0
+        # because the energy settled at true-up, not because a tariff said so, so
+        # the whole of that cell's price movement is published as netting_regime
+        # and none of it is attributed to a vintage or to the provider.
+        like_for_like_cell = q0 > 0 and q1 > 0
+        if like_for_like_cell:
+            split_l = {"delivery_vintage_l": q0 * (d1 - d0),
+                       "supply_vintage_l": q0 * (s1 - g0),
+                       "provider_l": q0 * (g1 - s1),
+                       "netting_regime_l": 0.0}
+            split_p = {"delivery_vintage_p": q1 * (d1 - d0),
+                       "supply_vintage_p": q1 * (s1 - g0),
+                       "provider_p": q1 * (g1 - s1),
+                       "netting_regime_p": 0.0}
+        else:
+            split_l = {"delivery_vintage_l": 0.0, "supply_vintage_l": 0.0,
+                       "provider_l": 0.0, "netting_regime_l": q0 * (p1 - p0)}
+            split_p = {"delivery_vintage_p": 0.0, "supply_vintage_p": 0.0,
+                       "provider_p": 0.0, "netting_regime_p": q1 * (p1 - p0)}
         terms = {
             "price_l": q0 * (p1 - p0),
             "price_p": q1 * (p1 - p0),
             "quantity_l": p0 * (q1 - q0),
             "quantity_p": p1 * (q1 - q0),
             "interaction": (p1 - p0) * (q1 - q0),
-            # the price effect, split by cause. delivery is SDG&E in both periods,
-            # so all of its movement is vintage; the supply movement splits at the
-            # same-date bundled comparison s1.
-            "delivery_vintage_l": q0 * (d1 - d0),
-            "supply_vintage_l": q0 * (s1 - g0),
-            "provider_l": q0 * (g1 - s1),
-            "delivery_vintage_p": q1 * (d1 - d0),
-            "supply_vintage_p": q1 * (s1 - g0),
-            "provider_p": q1 * (g1 - s1),
+            **split_l,
+            **split_p,
             "base_usd": b["usd"],
             "current_usd": c["usd"],
         }
@@ -871,7 +919,7 @@ def decompose(base, current):
             "base_supply_rate": _r(g0, 5),
             "current_supply_rate": _r(g1, 5),
             "sdge_bundled_comparison_rate_current_date": _r(s1, 5),
-            "both_periods_net_import": q0 > 0 and q1 > 0,
+            "both_periods_net_import": like_for_like_cell,
             "laspeyres_price_usd": _c(terms["price_l"]),
             "laspeyres_quantity_usd": _c(terms["quantity_l"]),
             "paasche_price_usd": _c(terms["price_p"]),
@@ -880,11 +928,21 @@ def decompose(base, current):
             "delivery_vintage_usd_laspeyres": _c(terms["delivery_vintage_l"]),
             "supply_vintage_usd_laspeyres": _c(terms["supply_vintage_l"]),
             "provider_usd_laspeyres": _c(terms["provider_l"]),
+            "netting_regime_usd_laspeyres": _c(terms["netting_regime_l"]),
             "delivery_vintage_usd_paasche": _c(terms["delivery_vintage_p"]),
             "supply_vintage_usd_paasche": _c(terms["supply_vintage_p"]),
             "provider_usd_paasche": _c(terms["provider_p"]),
+            "netting_regime_usd_paasche": _c(terms["netting_regime_p"]),
+            "price_split_attributed": like_for_like_cell,
         })
     energy_change = _c(agg["current_usd"] - agg["base_usd"])
+    attributed_cells = [r["cell"] for r in per_cell if r["price_split_attributed"]]
+    unattributed_cells = [r["cell"] for r in per_cell if not r["price_split_attributed"]]
+    if not attributed_cells:
+        raise SystemExit(
+            "no cell is billed as a net import in both periods, so no delivery/supply "
+            "vintage or provider term is observable at all — refusing to publish a "
+            "price split whose every term would be the netting regime under another name")
     out = {
         "per_cell": per_cell,
         "aggregate": {
@@ -906,34 +964,81 @@ def decompose(base, current):
                          "accounting identity on those shares, not a share of "
                          "consumption"),
             },
+            # The causal split of the price effect. delivery_vintage, supply_vintage
+            # and provider are computed ONLY over the cells with an observable base
+            # tariff; netting_regime carries the rest, named for what it is.
+            "price_split_scope": {
+                "attributed_terms": ["delivery_vintage_usd", "supply_vintage_usd",
+                                     "provider_usd"],
+                "attributed_cells": attributed_cells,
+                "unattributed_term": "netting_regime_usd",
+                "unattributed_cells": unattributed_cells,
+                "why": (
+                    "delivery_vintage, supply_vintage and provider are differences of "
+                    "two tariffs, so they are computed only on the cells billed as net "
+                    "imports in BOTH periods. On the other cells the base (or current) "
+                    "effective price is $0 because the energy settled at the annual "
+                    "true-up rather than because a tariff said $0, so attributing their "
+                    "movement to a tariff vintage or to the provider would publish the "
+                    "export-to-import settlement change under someone else's name — and "
+                    "the algebra would still balance. Their whole price movement is "
+                    "netting_regime_usd instead: measured, reconciled, and not "
+                    "decomposed further, because these statements do not observe a "
+                    "like-for-like base tariff for them"),
+                "identity": ("delivery_vintage + supply_vintage + provider + "
+                             "netting_regime == the price effect, on each weight basis"),
+            },
             "price_split_laspeyres_basis": {
                 "delivery_vintage_usd": _c(agg["delivery_vintage_l"]),
                 "supply_vintage_usd": _c(agg["supply_vintage_l"]),
                 "provider_usd": _c(agg["provider_l"]),
+                "netting_regime_usd": _c(agg["netting_regime_l"]),
             },
             "price_split_paasche_basis": {
                 "delivery_vintage_usd": _c(agg["delivery_vintage_p"]),
                 "supply_vintage_usd": _c(agg["supply_vintage_p"]),
                 "provider_usd": _c(agg["provider_p"]),
+                "netting_regime_usd": _c(agg["netting_regime_p"]),
             },
-            # One exact pairing, stated once, so the energy change can be read
-            # without mixing weight bases: Paasche price + Laspeyres quantity is an
-            # identity (so is Laspeyres price + Paasche quantity, whose terms are
-            # above). The spread between the two readings IS the interaction term.
+            # Price and quantity are published as INTERVALS, not as points. Paasche
+            # price == Laspeyres price + interaction, so naming either endpoint as
+            # "the" price effect silently allocates the whole interaction to it while
+            # claiming not to. The interval width IS the interaction term.
             "reading": {
-                "basis": ("price at current quantities (Paasche) + quantity at base "
-                          "prices (Laspeyres) — an exact identity, no residual"),
-                "price_usd": _c(agg["price_p"]),
-                "quantity_usd": _c(agg["quantity_l"]),
+                "convention": "bounds — neither effect is published as a point",
+                "basis": (
+                    "the price effect and the quantity effect are each reported as the "
+                    "interval between their Laspeyres (base-weight) and Paasche "
+                    "(current-weight) readings. Both intervals are exactly as wide as "
+                    "the interaction term, which is published and allocated to neither "
+                    "side; no figure here is the amount price or quantity 'accounts "
+                    "for'. The two endpoints pair exactly, one from each side, and both "
+                    "pairings are stated below"),
+                "price_usd_low": _c(min(agg["price_l"], agg["price_p"])),
+                "price_usd_high": _c(max(agg["price_l"], agg["price_p"])),
+                "quantity_usd_low": _c(min(agg["quantity_l"], agg["quantity_p"])),
+                "quantity_usd_high": _c(max(agg["quantity_l"], agg["quantity_p"])),
+                "interval_width_usd": _c(agg["interaction"]),
+                "exact_pairings": [
+                    {"price_basis": "laspeyres", "price_usd": _c(agg["price_l"]),
+                     "quantity_basis": "paasche", "quantity_usd": _c(agg["quantity_p"]),
+                     "sum_usd": _c(agg["price_l"] + agg["quantity_p"])},
+                    {"price_basis": "paasche", "price_usd": _c(agg["price_p"]),
+                     "quantity_basis": "laspeyres", "quantity_usd": _c(agg["quantity_l"]),
+                     "sum_usd": _c(agg["price_p"] + agg["quantity_l"])},
+                ],
+                "quantity_split_basis": (
+                    "the scale and TOU-mix figures below split the Laspeyres end of the "
+                    "quantity interval; they do not apply to the Paasche end"),
                 "of_which_scale_usd": _c(scale),
                 "of_which_tou_mix_usd": _c(mix),
                 "interaction_usd": _c(agg["interaction"]),
                 "interaction_note": (
-                    "the spread between the two readings. It is concentrated in the "
-                    "three cells that flip between net export and net import: on an "
-                    "export cell SDG&E prints $.00000 and charges $0, so the effective "
-                    "price is 0, and the whole of that cell's change is a joint "
-                    "movement of price and quantity that neither term owns"),
+                    "the spread between the two readings, published and never split. It "
+                    "is concentrated in the three cells that flip between net export and "
+                    "net import: on an export cell SDG&E prints $.00000 and charges $0, "
+                    "so the effective price is 0, and the whole of that cell's change is "
+                    "a joint movement of price and quantity that neither term owns"),
             },
         },
         "identities": {
@@ -946,8 +1051,20 @@ def decompose(base, current):
             "scale_plus_mix_usd": _c(scale + mix),
             "laspeyres_quantity_usd": _c(agg["quantity_l"]),
             "price_split_sum_usd": _c(agg["delivery_vintage_l"]
-                                      + agg["supply_vintage_l"] + agg["provider_l"]),
+                                      + agg["supply_vintage_l"] + agg["provider_l"]
+                                      + agg["netting_regime_l"]),
             "laspeyres_price_usd": _c(agg["price_l"]),
+            "price_split_sum_paasche_usd": _c(agg["delivery_vintage_p"]
+                                              + agg["supply_vintage_p"]
+                                              + agg["provider_p"]
+                                              + agg["netting_regime_p"]),
+            "paasche_price_usd": _c(agg["price_p"]),
+            "attributed_price_split_sum_usd": _c(agg["delivery_vintage_l"]
+                                                 + agg["supply_vintage_l"]
+                                                 + agg["provider_l"]),
+            "attributed_cells_laspeyres_price_usd": _c(
+                sum(r["laspeyres_price_usd"] for r in per_cell
+                    if r["price_split_attributed"])),
         },
     }
     checks = [
@@ -960,9 +1077,16 @@ def decompose(base, current):
          out["identities"]["paasche_price_plus_laspeyres_quantity_usd"], energy_change),
         ("scale + TOU mix", out["identities"]["scale_plus_mix_usd"],
          out["identities"]["laspeyres_quantity_usd"]),
-        ("delivery vintage + supply vintage + provider",
+        ("delivery vintage + supply vintage + provider + netting regime (Laspeyres)",
          out["identities"]["price_split_sum_usd"],
          out["identities"]["laspeyres_price_usd"]),
+        ("delivery vintage + supply vintage + provider + netting regime (Paasche)",
+         out["identities"]["price_split_sum_paasche_usd"],
+         out["identities"]["paasche_price_usd"]),
+        # the attributed terms cover the like-for-like cells and nothing else
+        ("the attributed vintage/provider terms over the like-for-like cells",
+         out["identities"]["attributed_price_split_sum_usd"],
+         out["identities"]["attributed_cells_laspeyres_price_usd"]),
     ]
     for name, got, want in checks:
         if abs(got - want) > 0.01:
@@ -1040,6 +1164,12 @@ def like_for_like(cells, years_apart):
             "paasche": _c(q1p1 - q1p0),
         },
         "price_effect_split_usd": split,
+        "price_effect_split_note": (
+            "these are the same dollars as decomposition.aggregate's "
+            "delivery_vintage/supply_vintage/provider terms — to within a cent of "
+            "rounding, since these sum the per-cell rows — because those terms are "
+            "computed over exactly these cells and nowhere else. The excluded cells' "
+            "price movement is published there as netting_regime_usd"),
     }
 
 
@@ -1112,6 +1242,12 @@ def build():
             + re.sub(r"\s+", " ", bundled_pcia.group(0))),
         "per_cell_term_paasche_usd":
             dec["aggregate"]["price_split_paasche_basis"]["provider_usd"],
+        "per_cell_term_scope": (
+            "the per-cell provider term covers only the cells billed as net imports in "
+            "both periods (" + ", ".join(
+                dec["aggregate"]["price_split_scope"]["attributed_cells"]) + "), so it "
+            "is not comparable in scope to the whole-period figure above, which is a "
+            "same-date comparison on the current period's kWh across every cell"),
     }
 
     observed = _c(current["total_usd"] - base["total_usd"])
@@ -1211,12 +1347,17 @@ def main():
           f"= energy ${r['energy_change_usd']} + non-energy ${r['non_energy_change_usd']}"
           f"  (residual ${r['residual_usd']})")
     rd, ps = d["reading"], d["price_split_paasche_basis"]
-    print(f"energy ${d['energy_change_usd']} = price ${rd['price_usd']} (Paasche) + "
-          f"quantity ${rd['quantity_usd']} (Laspeyres); scale ${rd['of_which_scale_usd']}, "
-          f"TOU mix ${rd['of_which_tou_mix_usd']}; interaction ${rd['interaction_usd']}")
+    print(f"energy ${d['energy_change_usd']}: price ${rd['price_usd_low']} to "
+          f"${rd['price_usd_high']}, quantity ${rd['quantity_usd_low']} to "
+          f"${rd['quantity_usd_high']} (bounds, not points; the "
+          f"${rd['interval_width_usd']} width is the unallocated interaction). "
+          f"Laspeyres quantity splits scale ${rd['of_which_scale_usd']}, TOU mix "
+          f"${rd['of_which_tou_mix_usd']}")
     print(f"price splits (Paasche): delivery vintage ${ps['delivery_vintage_usd']} + "
-          f"supply vintage ${ps['supply_vintage_usd']} + provider ${ps['provider_usd']}; "
-          f"provider read whole "
+          f"supply vintage ${ps['supply_vintage_usd']} + provider ${ps['provider_usd']} "
+          f"over {len(d['price_split_scope']['attributed_cells'])} like-for-like cells, "
+          f"+ netting regime ${ps['netting_regime_usd']} over "
+          f"{len(d['price_split_scope']['unattributed_cells'])}; provider read whole "
           f"${d['provider_effect_read_whole']['provider_effect_usd']}")
     print(f"billing mode: {out['billing_mode']['finding']['answer']}; presentation "
           f"changed on "

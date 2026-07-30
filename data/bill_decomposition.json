@@ -695,12 +695,15 @@
     "paasche_price_usd": 17.34,
     "paasche_quantity_usd": 19.58,
     "interaction_usd": 19.58,
-    "delivery_vintage_usd_laspeyres": -1.25,
-    "supply_vintage_usd_laspeyres": -0.8,
-    "provider_usd_laspeyres": -0.19,
-    "delivery_vintage_usd_paasche": 9.66,
-    "supply_vintage_usd_paasche": 6.2,
-    "provider_usd_paasche": 1.48
+    "delivery_vintage_usd_laspeyres": 0.0,
+    "supply_vintage_usd_laspeyres": 0.0,
+    "provider_usd_laspeyres": 0.0,
+    "netting_regime_usd_laspeyres": -2.24,
+    "delivery_vintage_usd_paasche": 0.0,
+    "supply_vintage_usd_paasche": 0.0,
+    "provider_usd_paasche": 0.0,
+    "netting_regime_usd_paasche": 17.34,
+    "price_split_attributed": false
    },
    {
     "cell": "winter.off_peak",
@@ -726,10 +729,13 @@
     "interaction_usd": 19.93,
     "delivery_vintage_usd_laspeyres": 0.0,
     "supply_vintage_usd_laspeyres": 0.0,
-    "provider_usd_laspeyres": -22.18,
+    "provider_usd_laspeyres": 0.0,
+    "netting_regime_usd_laspeyres": -22.18,
     "delivery_vintage_usd_paasche": 0.0,
     "supply_vintage_usd_paasche": 0.0,
-    "provider_usd_paasche": -2.25
+    "provider_usd_paasche": 0.0,
+    "netting_regime_usd_paasche": -2.25,
+    "price_split_attributed": false
    },
    {
     "cell": "winter.super_off_peak",
@@ -756,9 +762,12 @@
     "delivery_vintage_usd_laspeyres": -2.87,
     "supply_vintage_usd_laspeyres": 2.57,
     "provider_usd_laspeyres": -4.44,
+    "netting_regime_usd_laspeyres": 0.0,
     "delivery_vintage_usd_paasche": -0.39,
     "supply_vintage_usd_paasche": 0.35,
-    "provider_usd_paasche": -0.61
+    "provider_usd_paasche": -0.61,
+    "netting_regime_usd_paasche": 0.0,
+    "price_split_attributed": true
    },
    {
     "cell": "summer.on_peak",
@@ -785,9 +794,12 @@
     "delivery_vintage_usd_laspeyres": 1.88,
     "supply_vintage_usd_laspeyres": 4.1,
     "provider_usd_laspeyres": 2.35,
+    "netting_regime_usd_laspeyres": 0.0,
     "delivery_vintage_usd_paasche": 7.72,
     "supply_vintage_usd_paasche": 16.81,
-    "provider_usd_paasche": 9.63
+    "provider_usd_paasche": 9.63,
+    "netting_regime_usd_paasche": 0.0,
+    "price_split_attributed": true
    },
    {
     "cell": "summer.off_peak",
@@ -811,12 +823,15 @@
     "paasche_price_usd": 79.37,
     "paasche_quantity_usd": 293.48,
     "interaction_usd": 293.48,
-    "delivery_vintage_usd_laspeyres": -140.14,
-    "supply_vintage_usd_laspeyres": -80.31,
-    "provider_usd_laspeyres": 6.34,
-    "delivery_vintage_usd_paasche": 51.95,
-    "supply_vintage_usd_paasche": 29.77,
-    "provider_usd_paasche": -2.35
+    "delivery_vintage_usd_laspeyres": 0.0,
+    "supply_vintage_usd_laspeyres": 0.0,
+    "provider_usd_laspeyres": 0.0,
+    "netting_regime_usd_laspeyres": -214.11,
+    "delivery_vintage_usd_paasche": 0.0,
+    "supply_vintage_usd_paasche": 0.0,
+    "provider_usd_paasche": 0.0,
+    "netting_regime_usd_paasche": 79.37,
+    "price_split_attributed": false
    },
    {
     "cell": "summer.super_off_peak",
@@ -843,9 +858,12 @@
     "delivery_vintage_usd_laspeyres": -9.82,
     "supply_vintage_usd_laspeyres": 9.82,
     "provider_usd_laspeyres": -22.26,
+    "netting_regime_usd_laspeyres": 0.0,
     "delivery_vintage_usd_paasche": -7.95,
     "supply_vintage_usd_paasche": 7.95,
-    "provider_usd_paasche": -18.02
+    "provider_usd_paasche": -18.02,
+    "netting_regime_usd_paasche": 0.0,
+    "price_split_attributed": true
    }
   ],
   "aggregate": {
@@ -868,24 +886,67 @@
     "current_net_kwh": 987.0,
     "note": "shares are of NET kWh, which NEM lets go negative in a cell, so a share is not bounded by [0,1]; this is an exact accounting identity on those shares, not a share of consumption"
    },
+   "price_split_scope": {
+    "attributed_terms": [
+     "delivery_vintage_usd",
+     "supply_vintage_usd",
+     "provider_usd"
+    ],
+    "attributed_cells": [
+     "winter.super_off_peak",
+     "summer.on_peak",
+     "summer.super_off_peak"
+    ],
+    "unattributed_term": "netting_regime_usd",
+    "unattributed_cells": [
+     "winter.on_peak",
+     "winter.off_peak",
+     "summer.off_peak"
+    ],
+    "why": "delivery_vintage, supply_vintage and provider are differences of two tariffs, so they are computed only on the cells billed as net imports in BOTH periods. On the other cells the base (or current) effective price is $0 because the energy settled at the annual true-up rather than because a tariff said $0, so attributing their movement to a tariff vintage or to the provider would publish the export-to-import settlement change under someone else's name \u2014 and the algebra would still balance. Their whole price movement is netting_regime_usd instead: measured, reconciled, and not decomposed further, because these statements do not observe a like-for-like base tariff for them",
+    "identity": "delivery_vintage + supply_vintage + provider + netting_regime == the price effect, on each weight basis"
+   },
    "price_split_laspeyres_basis": {
-    "delivery_vintage_usd": -152.2,
-    "supply_vintage_usd": -64.62,
-    "provider_usd": -40.39
+    "delivery_vintage_usd": -10.81,
+    "supply_vintage_usd": 16.49,
+    "provider_usd": -24.36,
+    "netting_regime_usd": -238.53
    },
    "price_split_paasche_basis": {
-    "delivery_vintage_usd": 60.98,
-    "supply_vintage_usd": 61.08,
-    "provider_usd": -12.12
+    "delivery_vintage_usd": -0.63,
+    "supply_vintage_usd": 25.11,
+    "provider_usd": -9.0,
+    "netting_regime_usd": 94.46
    },
    "reading": {
-    "basis": "price at current quantities (Paasche) + quantity at base prices (Laspeyres) \u2014 an exact identity, no residual",
-    "price_usd": 109.94,
-    "quantity_usd": 68.99,
+    "convention": "bounds \u2014 neither effect is published as a point",
+    "basis": "the price effect and the quantity effect are each reported as the interval between their Laspeyres (base-weight) and Paasche (current-weight) readings. Both intervals are exactly as wide as the interaction term, which is published and allocated to neither side; no figure here is the amount price or quantity 'accounts for'. The two endpoints pair exactly, one from each side, and both pairings are stated below",
+    "price_usd_low": -257.22,
+    "price_usd_high": 109.94,
+    "quantity_usd_low": 68.99,
+    "quantity_usd_high": 436.15,
+    "interval_width_usd": 367.15,
+    "exact_pairings": [
+     {
+      "price_basis": "laspeyres",
+      "price_usd": -257.22,
+      "quantity_basis": "paasche",
+      "quantity_usd": 436.15,
+      "sum_usd": 178.93
+     },
+     {
+      "price_basis": "paasche",
+      "price_usd": 109.94,
+      "quantity_basis": "laspeyres",
+      "quantity_usd": 68.99,
+      "sum_usd": 178.93
+     }
+    ],
+    "quantity_split_basis": "the scale and TOU-mix figures below split the Laspeyres end of the quantity interval; they do not apply to the Paasche end",
     "of_which_scale_usd": 237.86,
     "of_which_tou_mix_usd": -168.86,
     "interaction_usd": 367.15,
-    "interaction_note": "the spread between the two readings. It is concentrated in the three cells that flip between net export and net import: on an export cell SDG&E prints $.00000 and charges $0, so the effective price is 0, and the whole of that cell's change is a joint movement of price and quantity that neither term owns"
+    "interaction_note": "the spread between the two readings, published and never split. It is concentrated in the three cells that flip between net export and net import: on an export cell SDG&E prints $.00000 and charges $0, so the effective price is 0, and the whole of that cell's change is a joint movement of price and quantity that neither term owns"
    },
    "provider_effect_read_whole": {
     "basis": "current quantities only: the riders are charged on this period's kWh, so there is no base-quantity counterfactual for them",
@@ -897,7 +958,8 @@
     "provider_effect_usd": 17.51,
     "provider_effect_pct": 9.7,
     "why_the_riders_belong_on_this_side": "SDG&E's bundled generation charge carries PCIA, which the base statement says on its own face: $1.97 of your Electricity Generation Charge is your bundled PCIA charge",
-    "per_cell_term_paasche_usd": -12.12
+    "per_cell_term_paasche_usd": -9.0,
+    "per_cell_term_scope": "the per-cell provider term covers only the cells billed as net imports in both periods (winter.super_off_peak, summer.on_peak, summer.super_off_peak), so it is not comparable in scope to the whole-period figure above, which is a same-date comparison on the current period's kWh across every cell"
    }
   },
   "identities": {
@@ -907,7 +969,11 @@
    "scale_plus_mix_usd": 68.99,
    "laspeyres_quantity_usd": 68.99,
    "price_split_sum_usd": -257.22,
-   "laspeyres_price_usd": -257.22
+   "laspeyres_price_usd": -257.22,
+   "price_split_sum_paasche_usd": 109.94,
+   "paasche_price_usd": 109.94,
+   "attributed_price_split_sum_usd": -18.68,
+   "attributed_cells_laspeyres_price_usd": -18.68
   }
  },
  "non_energy_bridge": [
@@ -1028,7 +1094,8 @@
     "supply_vintage_usd": 25.11,
     "provider_usd": -9.0
    }
-  }
+  },
+  "price_effect_split_note": "these are the same dollars as decomposition.aggregate's delivery_vintage/supply_vintage/provider terms \u2014 to within a cent of rounding, since these sum the per-cell rows \u2014 because those terms are computed over exactly these cells and nowhere else. The excluded cells' price movement is published there as netting_regime_usd"
  },
  "reconciliation": {
   "observed_change_usd": 350.31,
