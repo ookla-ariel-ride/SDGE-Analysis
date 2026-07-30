@@ -67,10 +67,12 @@ any other account's bills; every assumption below is load-bearing in a regex.
 
     WHAT A FORK MUST CHANGE:
     - SUMMARY_STATEMENTS_ELEC / SUMMARY_STATEMENTS_GAS document THIS repository's
-      corpus. A corpus sharing none of the listed dates is detected as a fork and
-      the reproduction gate (check 1) is skipped with a notice; replace the lists
-      with your own statement dates once your corpus is stable (see the comment on
-      the lists for the exact semantics).
+      corpus. A corpus sharing none of the listed dates is detected as a fork: the
+      reproduction gate (check 1) is skipped with a notice, and the summary
+      artifacts are built from every statement the fork actually parsed instead of
+      being filtered to nothing. Replace the lists with your own statement dates
+      once your corpus is stable (see the comment on the lists for the exact
+      semantics).
     - If your bills are not SDG&E NEM 3-period-TOU consolidated statements, the
       extraction regexes in parse_electric()/parse_gas() must be rewritten for your
       layout — the fail-closed errors will name this docstring when they trip.
@@ -123,20 +125,29 @@ DATA = ROOT / "data"
 ELEC_DIR = ROOT / "private" / "1-raw-data" / "electric-bills"
 GAS_DIR = ROOT / "private" / "1-raw-data" / "gas-bills"
 
-# The original committed summaries covered these statements only (the analysis year).
-# Regenerating exactly this window is the reproduction gate in _validate() check 1.
+# WHY THESE LISTS EXIST: the corpus on disk runs longer than the analysis year, so the
+# two summary artifacts need a pinned window or they would silently widen every time
+# another statement is downloaded — and the reproduction gate would stop being a
+# byte-for-byte match against the committed originals. These dates ARE that window: the
+# statements the original committed summaries covered. They serve two purposes, both in
+# terms of the same overlap test: selecting the summary rows (_summary_frame) and
+# asserting the statements are all present (_validate check 1).
 #
 # REPLACE-ME SEMANTICS (forks): these lists document THIS repository's corpus — they are
-# an expectation about the statements on disk, not part of the parser. Check 1 compares
-# the corpus against them three ways:
-#   - full overlap            -> the gate runs as normal (this repo);
+# an expectation about the statements on disk, not part of the parser. The corpus is
+# compared against them three ways:
+#   - full overlap            -> the gate runs as normal and the summaries are filtered
+#                                to this window (this repo);
 #   - PARTIAL overlap         -> fail closed: some documented statements are missing,
 #                                which is real corpus loss, never a fork;
 #   - ZERO overlap            -> the list is not-applicable (you are a fork running on
 #                                your own statements); check 1 is skipped with a loud
-#                                notice. Once your corpus is stable, replace these dates
-#                                with your own statement dates so the gate starts
-#                                protecting YOUR corpus the same way.
+#                                notice, and the summaries are built from every
+#                                statement the fork parsed rather than filtered to
+#                                nothing. Once your corpus is stable, replace these
+#                                dates with your own statement dates so the gate starts
+#                                protecting YOUR corpus and your summary window is
+#                                pinned the same way.
 SUMMARY_STATEMENTS_ELEC = [
     "2025-08-01", "2025-09-02", "2025-10-01", "2025-10-31", "2025-12-03",
     "2026-01-06", "2026-02-02", "2026-03-04", "2026-04-02", "2026-05-04",
@@ -457,6 +468,37 @@ def _validate(elec, gas, tou):
                 f"net usage {net:,.0f} — the TOU blocks and the usage total disagree.")
 
 
+def _summary_frame(df, want_list, list_name, label):
+    """Select the statements the summary artifact for `label` is built from.
+
+    Normally that is the pinned window the SUMMARY_STATEMENTS_* list names (see the
+    comment on the lists): this repo's corpus is longer than its analysis year, and
+    the summary has to keep reproducing the committed original byte for byte.
+
+    A FORK's corpus shares NONE of those dates — the same zero-overlap test
+    _validate() uses to skip reproduction-gate check 1. Filtering it by another
+    household's statement dates would select nothing and publish a header-only
+    summary, throwing away the billing summary the fork just parsed. So the fork's
+    window is every statement it actually parsed for this fuel: the same frame the
+    periods artifact is built from. That is the honest choice — it is exactly what
+    the list selects for the corpus the list was written for — and it holds only
+    until the fork replaces the list with its own dates, at which point the summary
+    narrows to the fork's chosen window and check 1 starts protecting it.
+
+    Partial overlap never reaches here: _validate() fails closed on it first,
+    because that is real corpus loss rather than a fork.
+    """
+    have = set(df.statement_date)
+    if have & set(want_list):
+        return df[df.statement_date.isin(want_list)]
+    print(f"NOTICE: the {label} summary window is the FULL parsed corpus — "
+          f"{len(have)} statement(s), {min(have)} .. {max(have)} — because "
+          f"{list_name} shares no dates with it and therefore documents another "
+          f"corpus. Replace {list_name} in parse_bills.py with your own statement "
+          f"dates to pin your summary window.")
+    return df
+
+
 @contextlib.contextmanager
 def _publication_lock(directory):
     """Serialize publication across processes.
@@ -651,7 +693,8 @@ def main():
 
     _validate(elec, gas, tou)
 
-    es = elec[elec.statement_date.isin(SUMMARY_STATEMENTS_ELEC)]
+    es = _summary_frame(elec, SUMMARY_STATEMENTS_ELEC,
+                        "SUMMARY_STATEMENTS_ELEC", "electric")
     es = es[["period", "days", "net_kwh", "gross_kwh",
              "sdge_delivery", "cca_generation", "current_charges"]]
 
@@ -663,7 +706,8 @@ def main():
     # two gas files are published as header-only CSVs (empty frames, same schemas),
     # so stale gas data from another corpus is replaced rather than left in place.
     if gas is not None:
-        gs = gas[gas.statement_date.isin(SUMMARY_STATEMENTS_GAS)].copy()
+        gs = _summary_frame(gas, SUMMARY_STATEMENTS_GAS,
+                            "SUMMARY_STATEMENTS_GAS", "gas").copy()
         gs = gs.rename(columns={"period_end_month": "file_month"})
         gs = gs[GAS_SUMMARY_COLS].sort_values("file_month")
         gas_periods_out, gas_summary_out = gas, gs

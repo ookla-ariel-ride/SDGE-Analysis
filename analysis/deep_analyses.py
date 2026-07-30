@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Deep-dive analyses: TOU-DR-P+battery, phantom load, EV sessions, vacations, Monte Carlo."""
+"""Deep-dive analyses: TOU-DR-P+battery, phantom load, EV sessions, vacations, Monte Carlo.
+
+ORDERING CONTRACT (this script runs SECOND):
+  battery_dispatch_policies.py  ->  deep_analyses.py, in the SAME working directory.
+  The Monte Carlo's base case is the post-behavior marginal battery saving, which
+  battery_dispatch_policies.py writes into battery_dispatch_policies.json in the
+  WORKING DIRECTORY; data/battery_dispatch_policies.json is only the last PROMOTED
+  run. The figure is therefore read from this run's copy when one is there, from
+  the committed copy otherwise, and a disagreement between the two is announced
+  loudly rather than resolved in silence (see _base_save). CLAUDE.md's section 9
+  regeneration gate already runs the pair in this order.
+
+Inputs beside it in the CWD: usage.csv, samA.csv, samB.csv, rates.py, and this
+run's battery_dispatch_policies.json.  Output: deep_results.json in the CWD.
+"""
 import pandas as pd, numpy as np, json, datetime as dt
 import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
@@ -14,6 +28,69 @@ def _repo_root():
             p = p.parent
     raise SystemExit("repo root not found: no ancestor contains analysis/ and data/")
 DATA=_repo_root()/"data"
+DISPATCH_JSON="battery_dispatch_policies.json"  # written to the CWD by its generator
+
+def _read_marginal(path):
+    """post_behavior.mid.battery_marginal out of one battery_dispatch_policies.json.
+    Fail-closed: a malformed or unreadable copy is an ERROR, not a reason to fall
+    back to the other one -- falling back past a broken artifact is exactly how a
+    stale number gets published under a citation that looks current."""
+    try:
+        with open(path) as fh: doc=json.load(fh)
+        return float(doc["post_behavior"]["mid"]["battery_marginal"])
+    except (OSError,ValueError,TypeError,KeyError) as e:
+        raise SystemExit(f"{path}: cannot read post_behavior.mid.battery_marginal "
+                         f"({type(e).__name__}: {e}). Regenerate it with "
+                         "battery_dispatch_policies.py; this script will not fall "
+                         "back past a broken artifact.")
+
+def _base_save():
+    """Marginal battery saving after behavior, from THIS run's dispatch artifact.
+
+    Read rather than hardcoded (a stale copy of this input once survived two
+    pipeline reruns and understated the Monte Carlo's base case) -- but read from
+    the CURRENT RUN's copy, not unconditionally from data/. Resolution order:
+      1. current-run copy in the CWD (battery_dispatch_policies.py's product);
+      2. committed data/ copy, only when no current-run copy exists, with a NOTICE;
+      3. both present and DISAGREEING -- this run's copy wins and the mismatch is
+         announced loudly: the committed copy is stale relative to this run, and
+         the section 9 regeneration gate will fail until it is promoted."""
+    run=_pl.Path.cwd()/DISPATCH_JSON; committed=DATA/DISPATCH_JSON
+    if not run.exists():
+        if not committed.exists():
+            raise SystemExit(f"no dispatch artifact: neither a current-run {run} nor "
+                             f"the committed {committed} exists. Run "
+                             "battery_dispatch_policies.py in this working directory "
+                             "first (see the ordering contract above).")
+        v=_read_marginal(committed)
+        print(f"NOTICE: no current-run {DISPATCH_JSON} in {_pl.Path.cwd()}; Monte "
+              f"Carlo base saving ${v:,.2f}/yr read from the committed {committed}. "
+              "If this run's dispatch inputs changed, run "
+              "battery_dispatch_policies.py here FIRST.")
+        return v
+    v=_read_marginal(run)
+    if committed.exists() and run.samefile(committed):
+        print(f"NOTICE: Monte Carlo base saving ${v:,.2f}/yr from {run} "
+              "(the working directory IS the committed data/ directory).")
+        return v
+    if not committed.exists():
+        print(f"NOTICE: Monte Carlo base saving ${v:,.2f}/yr from this run's {run} "
+              f"(no committed {committed} to compare against).")
+        return v
+    c=_read_marginal(committed)
+    if c==v:
+        print(f"NOTICE: Monte Carlo base saving ${v:,.2f}/yr from this run's {run} "
+              f"(agrees with the committed {committed}).")
+        return v
+    bar="!"*72
+    print(bar)
+    print(f"NOTICE -- STALE COMMITTED ARTIFACT: this run's {DISPATCH_JSON} says the "
+          f"post-behavior marginal battery saving is ${v:,.2f}/yr, but the committed "
+          f"{committed} still says ${c:,.2f}/yr.")
+    print(f"  Using THIS RUN's ${v:,.2f}/yr. The committed copy has not been "
+          "promoted; CLAUDE.md's section 9 gate will fail until it is.")
+    print(bar)
+    return v
 
 df=pd.read_csv("usage.csv",skiprows=13); df.columns=[c.strip() for c in df.columns]
 df["dt"]=pd.to_datetime(df["Date"]+" "+df["Start Time"],format="%m/%d/%Y %I:%M %p")
@@ -110,11 +187,9 @@ N=5000
 esc=rng.uniform(0.00,0.10,N)          # annual rate escalation
 fade=rng.uniform(0.005,0.025,N)       # battery capacity fade/yr
 price=rng.uniform(12500,17000,N)      # installed cost
-# Marginal battery savings after behavior, year 1: read from the integrated
-# dispatch artifact rather than hardcoded -- a stale copy of this input once
-# survived two pipeline reruns and understated the Monte Carlo's base case.
-base_save=json.load(open(DATA/"battery_dispatch_policies.json"))[
-    "post_behavior"]["mid"]["battery_marginal"]
+# Marginal battery savings after behavior, year 1: from THIS run's dispatch
+# artifact (see _base_save and the ordering contract in the module docstring).
+base_save=_base_save()
 payback=np.full(N,np.nan); npv10=np.zeros(N)
 for i in range(N):
     cum=0; s=base_save

@@ -15,8 +15,10 @@ corpus is absent. Everything covering publication, rollback and concurrency runs
 (temp files, or the committed data/ artifacts), so a broken lock or a lost rollback cannot
 pass in a clean checkout or in CI.
 """
+import csv
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -90,6 +92,88 @@ def _artifacts_untouched(tmp):
     return all((tmp / "data" / n).read_text() == "SENTINEL\n" for n in (
         "bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
         "electric_bill_summary.csv", "gas_bill_summary.csv"))
+
+
+def _statement_date(path):
+    """The statement date a bill PDF's filename carries (the parser's convention)."""
+    return re.search(r"(\d{4}-\d{2}-\d{2})\.pdf$", path.name).group(1)
+
+
+def _rows(path):
+    """Read a committed artifact CSV as a list of dicts (they are CRLF or LF)."""
+    with open(path, newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def _patch_summary_lists(tmp, elec_dates, gas_dates):
+    """Rewrite the throwaway copy's SUMMARY_STATEMENTS_* lists.
+
+    A fork's situation is "the lists in the script describe a corpus other than the
+    one on disk". Editing the lists in the throwaway copy produces exactly that
+    state without having to fabricate a second bill corpus, and it is the same
+    zero-overlap condition the parser tests."""
+    script = tmp / "analysis" / "parse_bills.py"
+    src = script.read_text()
+    out = src
+    for name, dates in (("SUMMARY_STATEMENTS_ELEC", elec_dates),
+                        ("SUMMARY_STATEMENTS_GAS", gas_dates)):
+        out, n = re.subn(rf"{name} = \[.*?\]",
+                         f"{name} = {dates!r}", out, count=1, flags=re.S)
+        assert n == 1, f"test needs updating: {name} assignment not found"
+    assert out != src, "test needs updating: summary lists unchanged"
+    script.write_text(out)
+
+
+def case_fork_summary_built_from_own_corpus(tmp):
+    """A fork whose corpus shares no statement date with the SUMMARY_STATEMENTS_*
+    lists must still get a REAL summary. Filtering by another household's dates
+    would select nothing and publish a header-only summary, silently discarding the
+    billing summary just parsed. The fork's window is every statement it parsed, so
+    the summary must cover exactly the periods in the periods artifact."""
+    _patch_summary_lists(tmp, ["1900-01-01", "1900-02-01"], ["1900-01-15"])
+    r = _run(tmp)
+    assert r.returncode == 0, f"fork corpus failed to publish:\n{r.stderr}"
+    assert "FULL parsed corpus" in r.stdout and "SUMMARY_STATEMENTS_ELEC" in r.stdout, \
+        f"no notice naming the window actually used:\n{r.stdout}"
+
+    periods = _rows(tmp / "data" / "bill_periods_electric.csv")
+    summary = _rows(tmp / "data" / "electric_bill_summary.csv")
+    assert summary, "fork published an EMPTY electric summary"
+    assert len(summary) == len(periods), \
+        f"summary covers {len(summary)} periods, corpus has {len(periods)}"
+    assert [s["period"] for s in summary] == [p["period"] for p in periods], \
+        "summary periods are not the fork's own parsed periods"
+    # The count in the notice must be the fork's own statement count, not the list's.
+    n_stmts = len({p["statement_date"] for p in periods})
+    assert f"{n_stmts} statement(s)" in r.stdout, \
+        f"notice does not name the {n_stmts}-statement window used:\n{r.stdout}"
+
+    if not (tmp / "private" / "1-raw-data" / "gas-bills").is_dir():
+        return ("fork corpus -> electric summary built from its own statements "
+                "(no gas corpus here)")
+    gperiods = _rows(tmp / "data" / "bill_periods_gas.csv")
+    gsummary = _rows(tmp / "data" / "gas_bill_summary.csv")
+    assert gsummary, "fork published an EMPTY gas summary"
+    assert len(gsummary) == len(gperiods), \
+        f"gas summary covers {len(gsummary)} periods, corpus has {len(gperiods)}"
+    assert {g["file_month"] for g in gsummary} == {p["period_end_month"] for p in gperiods}, \
+        "gas summary months are not the fork's own parsed months"
+    assert "SUMMARY_STATEMENTS_GAS" in r.stdout, f"no gas window notice:\n{r.stdout}"
+    return "fork corpus -> both summaries built from its own statements, non-empty"
+
+
+def case_partial_overlap_corpus_fails(tmp):
+    """End-to-end counterpart of the fork case: PARTIAL overlap is corpus loss, not a
+    fork, so the run must fail closed and publish nothing — the fork path must never
+    become an escape hatch for a thinned corpus."""
+    present = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2026-02-02.pdf")
+    _patch_summary_lists(tmp, [_statement_date(present), "1900-01-01"], ["1900-01-15"])
+    r = _run(tmp)
+    assert r.returncode != 0, "partial overlap with the summary list was accepted"
+    assert "missing from the corpus" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "partial overlap (end to end) -> exits, artifacts untouched"
 
 
 def case_healthy_corpus(tmp):
@@ -547,7 +631,9 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_gas_flag_true_missing_dir_fails,
                 case_gas_flag_true_empty_dir_fails,
                 case_gas_flag_false_retires_gas_artifacts,
-                case_gas_flag_false_with_dir_present_fails]
+                case_gas_flag_false_with_dir_present_fails,
+                case_fork_summary_built_from_own_corpus,
+                case_partial_overlap_corpus_fails]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean

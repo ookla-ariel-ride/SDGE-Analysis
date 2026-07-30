@@ -44,9 +44,20 @@ consistency check, never an inference:
                and any dependent input present alongside the false flag is
                a flag/data contradiction that aborts the run.
 The publication gate re-checks the same contract per section before writing.
+The one EV-dependent input NOT gated here is charger.kw: behavior_rebuild.py
+owns it (it is that module's detection gate) and enforces the same
+both-directions contract on it at import.
 """
 import json, os, pathlib
 import numpy as np, pandas as pd
+# behavior_rebuild is imported at module level, BEFORE the flags below are read,
+# and that is only safe because it supports the no-EV household itself: with
+# household.has_ev false it reads no charger.kw, detects no sessions, and returns
+# an EV-free year (see its docstring). It has to be that way round — this script
+# needs br.load() (the shared Green Button loader with the coverage gate) and
+# br.detect_sessions() for the away-day and weekend-shift sections whatever the
+# flag says, and battery_dispatch_policies imports it too, so deferring the
+# import here would not have kept it out of a no-EV run.
 import behavior_rebuild as br
 import battery_dispatch_policies as bp
 import household as hh
@@ -88,7 +99,13 @@ PTO_DATE = str(hh.get("household.pto_date"))        # NEM 2.0 clock starts here
 #                 dependent input present anyway is a contradiction (abort).
 
 def _flag(path):
-    """Read a required intake applicability flag; it must be a real boolean."""
+    """Read a required intake applicability flag; it must be a real boolean.
+
+    Required here with no fallback: this script PUBLISHES the flag-governed
+    sections, so an intake that never answered the question must not reach the
+    artifact. (behavior_rebuild resolves household.has_ev too, and tolerates its
+    absence by keeping its own hard requirement on charger.kw — the two can only
+    disagree when the flag is missing, and then this call aborts the run.)"""
     v = hh.get(path)   # required=True: the intake defines the flag explicitly
     if v is not True and v is not False:
         raise SystemExit(
