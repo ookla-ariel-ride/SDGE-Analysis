@@ -68,9 +68,12 @@ committed script and data artifact in this repo.
 
 ## Reproduce this for your own home — start here
 
-Nothing here is specific to one house; the machinery is reusable. The committed `data/*` files
-and `index.html` are **this house's results**. Yours get regenerated from your own data, so
-replace them rather than editing them.
+The machinery — the validators, the billing engine's structure, the audit method, the report
+shell — is reusable; the numbers are not. The committed `data/*` files and `index.html` are
+**this house's results**, `analysis/rates.py` carries this house's bill-derived tariff, and a
+handful of per-house parameters live as labeled constants in the scripts (each is marked at
+the point of use; the manual route below names the ones you must change). Yours get
+regenerated from your own data, so replace them rather than editing them.
 
 **0 · Blank slate.** Clone the machinery, drop the history and results, protect yourself:
 
@@ -107,12 +110,22 @@ containing those values.
 - **Manual route:** `python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt`;
   make sure `private/household.yaml` exists (step 1; the scripts fail closed without it);
   update `analysis/rates.py` from **your** bills (it is the single source of truth; non-SDG&E
-  users replace the TOU windows and rate tables wholesale); place your Green Button CSV as
-  `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the `private/verify/` sandbox
-  pattern); run the pipeline (`behavior_rebuild.py`, `battery_dispatch_policies.py`,
-  `battery_plan_matrix.py`, `package_results.py`, `extended_findings.py`, `carbon_fullyear.py`,
-  plus `soiling_analysis.py`, `billing_model_nem.py`, and `lifetime_payback.py` as applicable);
-  then fill `report-template.html`'s `{{TOKEN}}`s from your regenerated `data/*.json`.
+  users replace the TOU windows and rate tables wholesale). **Check the billing vintage
+  first:** the engine implements NEM 2.0 monthly retail netting. If your solar interconnected
+  after April 2023 you are on NEM 3.0 / the Solar Billing Plan (hourly netting, avoided-cost
+  export credits) and the committed engine does not model your bills — the structure in
+  `rates.bill_nem_monthly` must be replaced, not just the constants. Then: **re-point the
+  analysis window** — the pipeline anchors on `WINDOW_END` in `analysis/behavior_rebuild.py`
+  (and the matching anchors TECHNICAL.md §3 lists in the other scripts) at the end of YOUR
+  export; the coverage validator fails closed until the window matches your data. Place your
+  Green Button CSV as `usage.csv` next to the scripts (`CLAUDE.md` "Commands" shows the
+  `private/verify/` sandbox pattern); run the pipeline **in dependency order**
+  (`analyze_norelief.py` first — `battery_plan_matrix.py` ties out against its
+  `plan_results.csv` — then `behavior_rebuild.py`, `battery_dispatch_policies.py`,
+  `battery_plan_matrix.py`, `package_results.py`, `extended_findings.py`,
+  `carbon_fullyear.py`, plus `soiling_analysis.py`, `billing_model_nem.py`, and
+  `lifetime_payback.py` as applicable); then fill `report-template.html`'s `{{TOKEN}}`s from
+  your regenerated `data/*.json`.
 
 **4 · Validate before you trust it.** The gates in `CLAUDE.md` §9, in order: your billing
 model must reproduce your actual bills before you quote any absolute dollar; every committed

@@ -20,6 +20,15 @@ household:
   plan: "EV-TOU-5"                   # current rate plan, from the bill header
   nem_version: "NEM 2.0"             # NEM 1.0 / NEM 2.0 / NBT (Solar Billing Plan)
   pto_date: 2019-01-01               # permission-to-operate date (placeholder)
+  has_ev: true                       # cheatsheet has_ev — APPLICABILITY flag, consumed by
+                                     # the scripts: true requires the EV fields below
+                                     # (charger, misc.miles_per_year, ...); false marks the
+                                     # EV analyses not-applicable. Absence of data is NOT
+                                     # read as "no EV" — this flag is the authority.
+  has_gas: true                      # cheatsheet has_gas — same contract for gas service:
+                                     # true requires gas.* and the gas bill corpus; false
+                                     # marks gas analyses not-applicable and retires the
+                                     # gas artifacts explicitly.
 
 location:
   lat: 33.00                         # site latitude, decimal degrees — 2 decimals (~1 km)

@@ -168,9 +168,9 @@ non-baseline $2.37552/therm).
 
 All scripts are Python 3 requiring only `pandas` and `numpy` (`billing_model_nem.py` needs only
 those two; nothing else imports anything beyond the standard library). None takes command-line
-arguments; input paths are constants at the top of each file. `analyze*.py` contain an absolute
-path from the original session — edit `CSV = ...` to your Green Button file. The other four
-scripts expect files in the working directory under fixed names:
+arguments; input paths are constants at the top of each file (`analyze*.py` read
+`CSV = "usage.csv"` from the working directory like the rest). The scripts expect files in
+the working directory under fixed names:
 
 - `usage.csv` → your Green Button 15-minute export (§2.1)
 - `samA.csv` → SAM 8760 for the **current** calendar year (here 2026)
@@ -410,12 +410,14 @@ land in `deep_results.json`.
    against a 37.7 kWh/day non-EV median.
 5. **Monte Carlo battery ROI.** N = 5,000 draws, `numpy` RNG seed 42; annual rate escalation ~
    U(0, 10%); capacity fade ~ U(0.5%, 2.5%)/yr; installed price ~ U($12,500, $17,000); year-1
-   marginal savings fixed at **$1,347** (the PW3 after-behavior figure from §3.4 — update this
-   constant is retired with `package_sims.py` (REMOVED — superseded by the integrated pipeline); 25-year horizon; payback linearly interpolated;
-   NPV over 10 years at 4% discount. Results: median payback 9.4 yr (p10 8.1, p90 11.6), 64.5%
-   probability of payback within a 10-year warranty, median 10-yr NPV −$2,158. The report
-   keeps this deliberately conservative Monte Carlo as the downside bracket alongside the
-   §3.13 price-aware basis (~6.2–6.5 yr simple payback at $2,238–2,329/yr).
+   marginal savings read from `data/battery_dispatch_policies.json`
+   (`post_behavior.mid.battery_marginal`, currently **$2,238** — the integrated
+   shift-then-battery marginal; the input was previously a hardcoded $1,347 carried from the
+   retired `package_sims.py` and went stale across two pipeline reruns, which is why it now
+   reads the artifact); 25-year horizon; payback linearly interpolated; NPV over 10 years at
+   4% discount. Results: median payback 6.0 yr (p10 5.3, p90 7.0), 100% probability of
+   payback within a 10-year warranty, median 10-yr NPV +$6,186. This distribution brackets
+   the §3.13 price-aware basis (~6.2–6.5 yr simple payback at $2,238–2,329/yr).
 
 **Run:** `python3 deep_analyses.py` next to the three inputs.
 
@@ -561,7 +563,7 @@ every query variant, so no satellite irradiance exists and normalization is dete
    (this year's evidence) 217 kWh ≈ $68/yr; scenario B (2024-cleaning evidence) 1,106 kWh ≈
    $348/yr, both at the script's $0.315/kWh blended value (an earlier blended estimate,
    retained in the committed artifact; `lifetime_payback.py` §3.12 later refined the
-   current-TOU blended value to $0.3025/kWh — immaterial to the order-of-magnitude verdict).
+   current-TOU blended value to $0.3009/kWh — immaterial to the order-of-magnitude verdict).
 
 **Output `data/soiling_results.json`.** Keys: `meta` (window, sources, thresholds);
 `production_crosscheck`; `pvoutput` / `enphase` (each with `n_days_used`, `n_clear_days`,
@@ -636,9 +638,9 @@ an in-session computation; now reproduced by the committed `analysis/lifetime_pa
 year's ACTUAL production × a blended $/kWh value under the TOU structure in force that year,
 scaled by the utility's rate history (a rate index — NOT today's rates back-cast over
 history). The curve crosses $37,845 in **~fall 2025** (gross), or **~early 2024** if the 30%
-federal ITC was claimed (net cost $26,492). Current-year value of solar: **$4,992/yr** — a
+federal ITC was claimed (net cost $26,492). Current-year value of solar: **$4,949/yr** — a
 no-solar counterfactual re-billed on the validated netting model (NBC on gross imports) costs
-$9,876/yr vs the modeled $4,904/yr baseline. Caveat: the rate-index scaling of historical
+$9,853/yr vs the modeled $4,904/yr baseline. Caveat: the rate-index scaling of historical
 value is approximate; treat the crossover dates as **±10%** (several months either way).
 
 **`data/extra_results.json` keys** (all from in-session computations on the same
@@ -670,9 +672,9 @@ value is approximate; treat the crossover dates as **±10%** (several months eit
   value is only $10 / $32 / $51). Since a post-2026-TOU *marginal* midday kWh is worth only
   ~$0.08–0.13 (see `price_map` sop cells), a $200 professional cleaning is break-even at best.
 - `trueup` — annual true-up cross-check (charges $1,005.31, credits $492.91, net $512.40).
-- `lifetime` — headline outputs of §3.12: `blended_old_tou` 0.4866, `blended_new_tou` 0.3025
-  ($/kWh), `solar_value_today` 4992, `nosolar_bill` 9876, `crossover_gross`
-  "~Sep–Oct 2025", `crossover_net_itc` "~Mar 2024".
+- (the former `lifetime` key moved to its own script-owned artifact,
+  `data/lifetime_payback.json`, written by `analysis/lifetime_payback.py` on every derived
+  run and byte-diffed by the §9 gate — the hand-recorded copy here had drifted.)
 
 **System-size verification (in-session).** Registration: 30 × Panasonic 335 W modules =
 **10.05 kW DC**; 30 × Enphase IQ7X microinverters ≈ **9.45 kW AC**. Measured multi-year
@@ -699,12 +701,14 @@ with crossover markers.
 
 **Constants at the top of the file** (edit for your system): `INVOICE` 37845.0, `ITC` 0.30,
 `PROD` {2020–2026 actual kWh; 2026 partial}, `RATE_IDX` {approx. SDG&E average residential
-¢/kWh by year, 32→48}, `BLENDED_OLD` **0.4866** $/kWh (pre-2026 TOU structure at current
-rates), `BLENDED_NEW` **0.3025** $/kWh (current TOU structure).
+¢/kWh by year, 32→48}, `FALLBACK_OLD` **0.4869** $/kWh (pre-2026 TOU structure at current
+rates), `FALLBACK_NEW` **0.3009** $/kWh (current TOU structure) — fallbacks only; when the
+raw inputs are present both blended values and the production denominator are derived from
+the data and written to `data/lifetime_payback.json`.
 
 **Results.** Gross crossover **~fall 2025** (~Sep–Oct, 73% through the year); net-of-ITC
-crossover **~early 2024** (~Mar). Headline values are mirrored in
-`data/extra_results.json → lifetime` (§3.11). Caveat printed with the results: the rate
+crossover **~early 2024** (~Mar). Headline values live in
+`data/lifetime_payback.json` (script-owned, §9-gated). Caveat printed with the results: the rate
 index is approximate — crossover dates carry roughly ±10% (a few months).
 
 **Run:** `python3 analysis/lifetime_payback.py` (no inputs; constants inline).
@@ -1024,8 +1028,9 @@ battery installed prices are estimates; the simple 6.2-yr price-aware battery-al
 `package_results.json` (8.5 yr evening-only) uses no discounting or escalation (the Monte
 Carlo in §3.5 and the published escalation ladder in `battery_dispatch_policies.json` §3.13
 handle both); the endurance sims' full-SOC
-and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347` from a prior
-`package_sims.py` (REMOVED — superseded by the integrated pipeline) run — rerun order matters (§7).
+and 14-day-cap assumptions (§4); `deep_analyses.py` reads `base_save` from
+`battery_dispatch_policies.json` (`post_behavior.mid.battery_marginal`) — rerun order matters
+(§7): regenerate the dispatch artifact before the Monte Carlo.
 
 ---
 
@@ -1048,8 +1053,10 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` hard-codes `base_save=1347`
    1. `analyze_norelief.py` (and/or `analyze.py` if your CCA credit applies) → plan table,
       profiles;
    2. `battery_backup_sims.py` → arbitrage + endurance;
-   3. `package_sims.py` (REMOVED — superseded by the integrated pipeline) → matrix + packages; note `battery_marginal_after_behavior`;
-   4. edit `base_save` in `deep_analyses.py` to that marginal value, then run it;
+   3. `battery_dispatch_policies.py` → dispatch policies and the post-behavior battery
+      marginal (`post_behavior.mid.battery_marginal`);
+   4. `deep_analyses.py` — it reads that marginal from the dispatch artifact itself, so no
+      constant needs editing; just run it after step 3;
    5. `billing_model_nem.py` → compare its output to your actual bills before quoting any
       absolute dollar figure (per `CLAUDE.md` §1; expect it to read high if it prices history
       at current rates). Verify against a bill line that non-bypassable charges are billed on

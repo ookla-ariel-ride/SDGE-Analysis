@@ -154,7 +154,9 @@ where: "SDG&E: My Energy Center (🔗 https://myenergycenter.com) → Usage → 
 privacy: private-only
 ```
 
-⚠️ **The 13 months is a hard ceiling, and what falls off it is gone.** Verified
+⚠️ **The 13 months is a hard ceiling, and what falls off it is gone.** (That figure is
+SDG&E's portal, verified on this account — other utilities retain more or less; find your
+portal's ceiling the same way and treat it with the same urgency.) Verified
 2026-07-27: the Green Button date picker greys out every date before the ceiling and
 offers no way past it. This is a *different, shorter* window than the ~2 years of
 statements in section D — bills and interval data age out on separate clocks, so a
@@ -231,7 +233,9 @@ where: "Same Billing History flow on the gas account — ~12 months of gas state
 privacy: private-only
 ```
 
-> **Bulk-downloading the statements (SDG&E My Energy Center, verified 2026-07-27).**
+> **Bulk-downloading the statements (SDG&E My Energy Center, verified 2026-07-27 — a
+> worked example, not the procedure: other utilities' portals differ; what you need from
+> yours is the same outcome, every statement PDF for the retention window).**
 > Clicking each row's "View Your Detailed Bill PDF" opens a viewer tab one bill at a time,
 > which is slow for a 2-year pull. The portal keeps roughly **25 statements per account**
 > (about 2 years back), and each is fetchable directly at

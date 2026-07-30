@@ -25,13 +25,39 @@ Cited constants (sources in research notes / report prose):
   DSGS VPP $150-350/season (Tesla-stated cap $350, 2026 30% capacity bonus).
 
 Writes data/extended_results.json. Requires usage.csv (Green Button) beside it,
-plus data/weather_daily_tmean.csv, private/1-raw-data/gas.csv, and the two
-SAM-8760 files in private/1-raw-data/ — all resolved against the repo root,
-which is found by walking up from the CWD (then from this file), so the
-documented private/verify copy-and-run sandbox works with no path edits.
+plus data/weather_daily_tmean.csv and the two SAM-8760 files in
+private/1-raw-data/ — all resolved against the repo root, which is found by
+walking up from the CWD (then from this file), so the documented private/verify
+copy-and-run sandbox works with no path edits.
+
+EV- and gas-domain applicability is governed by the intake flags
+household.has_ev and household.has_gas (household.yaml; DATA-SOURCES-
+CHEATSHEET.md). The FLAGS are the authority — data presence is only a
+consistency check, never an inference:
+  flag true  -> every dependent input is hard-required (EV: misc.
+               supercharge_kwh_yr, misc.miles_per_year; gas: gas.
+               therm_allin_usd plus private/1-raw-data/gas.csv) and a
+               missing one aborts the run — an incomplete intake must not
+               publish a stub in place of a material finding;
+  flag false -> the dependent sections (B, D -> has_ev; G -> has_gas) are
+               published as explicit not_applicable stubs naming the flag,
+               and any dependent input present alongside the false flag is
+               a flag/data contradiction that aborts the run.
+The publication gate re-checks the same contract per section before writing.
+The one EV-dependent input NOT gated here is charger.kw: behavior_rebuild.py
+owns it (it is that module's detection gate) and enforces the same
+both-directions contract on it at import.
 """
 import json, os, pathlib
 import numpy as np, pandas as pd
+# behavior_rebuild is imported at module level, BEFORE the flags below are read,
+# and that is only safe because it supports the no-EV household itself: with
+# household.has_ev false it reads no charger.kw, detects no sessions, and returns
+# an EV-free year (see its docstring). It has to be that way round — this script
+# needs br.load() (the shared Green Button loader with the coverage gate) and
+# br.detect_sessions() for the away-day and weekend-shift sections whatever the
+# flag says, and battery_dispatch_policies imports it too, so deferring the
+# import here would not have kept it out of a no-EV run.
 import behavior_rebuild as br
 import battery_dispatch_policies as bp
 import household as hh
@@ -63,15 +89,125 @@ FLEET_MPG = 23.4        # FHWA Highway Statistics VM-1 (2024), on-road light-dut
 SC_USD_KWH = 0.45       # estimate: typical CA Tesla Supercharger $0.40-0.50
 # per-HOUSE inputs from private/household.yaml (analysis/household.py; fails
 # closed — run the intake interview in DATA-SOURCES-CHEATSHEET.md):
-SC_KWH = int(hh.get("misc.supercharge_kwh_yr"))     # vehicle-app Charge Stats, 12 mo
-MILES_YR = int(hh.get("misc.miles_per_year"))       # odometer-derived annual miles (report §9)
-THERM_ALLIN = float(hh.get("gas.therm_allin_usd"))  # $/therm all-in from the 12 gas bills
 PTO_DATE = str(hh.get("household.pto_date"))        # NEM 2.0 clock starts here
+# EV- and gas-domain APPLICABILITY flags (DATA-SOURCES-CHEATSHEET.md has_ev /
+# has_gas; the dependent inputs are tagged required_if those flags). The flags
+# are the authority — presence of data is only a consistency check:
+#   flag true  -> every dependent input hard-required (incomplete intake
+#                 aborts; it must not publish a stub over a material finding);
+#   flag false -> dependent sections publish not_applicable stubs, and a
+#                 dependent input present anyway is a contradiction (abort).
+
+def _flag(path):
+    """Read a required intake applicability flag; it must be a real boolean.
+
+    Required here with no fallback: this script PUBLISHES the flag-governed
+    sections, so an intake that never answered the question must not reach the
+    artifact. (behavior_rebuild resolves household.has_ev too, and tolerates its
+    absence by keeping its own hard requirement on charger.kw — the two can only
+    disagree when the flag is missing, and then this call aborts the run.)"""
+    v = hh.get(path)   # required=True: the intake defines the flag explicitly
+    if v is not True and v is not False:
+        raise SystemExit(
+            f"{path} in private/household.yaml must be a YAML boolean "
+            f"(true/false), got {v!r} — fix the intake before publishing")
+    return v
+
+HAS_EV = _flag("household.has_ev")
+HAS_GAS = _flag("household.has_gas")
+
+GAS_CSV = PRIV / "gas.csv"   # SDG&E gas Green Button daily export (has_gas only)
+
+# probe every dependent input unconditionally so BOTH directions of the flag
+# contract can be checked (missing-under-true AND present-under-false):
+_EV_FIELDS = {
+    "misc.supercharge_kwh_yr":                    # vehicle-app Charge Stats, 12 mo
+        hh.get("misc.supercharge_kwh_yr", required=False),
+    "misc.miles_per_year":                        # odometer-derived annual miles (report §9)
+        hh.get("misc.miles_per_year", required=False),
+}
+_GAS_FIELDS = {
+    "gas.therm_allin_usd":                        # $/therm all-in from the 12 gas bills
+        hh.get("gas.therm_allin_usd", required=False),
+}
+
+def _gate_domain(flag_name, flag, fields, files=()):
+    """Enforce the flag contract for one domain, both directions, fail closed."""
+    present = [k for k, v in fields.items() if v is not None]
+    present += [str(p.relative_to(ROOT)) for p in files if p.is_file()]
+    missing = [k for k, v in fields.items() if v is None]
+    missing += [str(p.relative_to(ROOT)) for p in files if not p.is_file()]
+    if flag and missing:
+        raise SystemExit(
+            f"{flag_name} is true but {', '.join(missing)} "
+            "is absent — complete the intake (DATA-SOURCES-CHEATSHEET.md "
+            f"required_if: {flag_name.split('.')[-1]}); an incomplete intake "
+            "must not publish")
+    if not flag and present:
+        raise SystemExit(
+            f"{flag_name} is false but {', '.join(present)} "
+            "is present — the flag and the data contradict each other; "
+            "reconcile the intake (set the flag true, or remove the stale "
+            "input(s)) and rerun")
+
+_gate_domain("household.has_ev", HAS_EV, _EV_FIELDS)
+_gate_domain("household.has_gas", HAS_GAS, _GAS_FIELDS, files=(GAS_CSV,))
+
+SC_KWH = int(_EV_FIELDS["misc.supercharge_kwh_yr"]) if HAS_EV else None
+MILES_YR = int(_EV_FIELDS["misc.miles_per_year"]) if HAS_EV else None
+THERM_ALLIN = float(_GAS_FIELDS["gas.therm_allin_usd"]) if HAS_GAS else None
 KWH_PER_THERM = 29.3
 HP_COP = 3.5            # heat-pump space heating seasonal COP (modeled)
 HPWH_COP = 3.5          # heat-pump water heater COP (modeled)
 MIDDAY_VALUE = 0.10     # $/kWh marginal midday solar value (report §8)
 BSC_MONTH = 24.15       # Base Services Charge (D.24-05-028), replaced $16 BSF
+BATT_COST = 14500       # PW3 installed cost, $ — the SAME figure package_results.py
+                        # declares as PW3_COST (research/battery-research-notes.md:
+                        # PW3 installed ~$14,500). Tornado lever "install_cost"
+                        # varies it across the 12k-17k quote range.
+
+# Section -> governing intake flag. Mapping rationale (what each CONSUMES):
+#   electrification_dividend (B): EV charging kWh detected in usage.csv,
+#     misc.miles_per_year, misc.supercharge_kwh_yr. Its "gas" counterfactual
+#     is GASOLINE priced from the cited PUBLIC constants (GAS_USD_GAL,
+#     FLEET_MPG), not the household's natural-gas service -> has_ev only.
+#   supercharge_delta (D): misc.supercharge_kwh_yr vs the home sop rate
+#     -> has_ev.
+#   gas_decomposition (G): private/1-raw-data/gas.csv + gas.therm_allin_usd
+#     -> has_gas.
+_SECTION_FLAG = {
+    "electrification_dividend": ("household.has_ev", HAS_EV),
+    "supercharge_delta": ("household.has_ev", HAS_EV),
+    "gas_decomposition": ("household.has_gas", HAS_GAS),
+}
+
+
+def _not_applicable(flag_name):
+    """Explicit stub for a section whose governing intake flag is false.
+    not_applicable, NOT not_determined: the intake DID determine the answer —
+    the domain does not exist for this household. (not_determined is reserved
+    for values genuinely undeterminable from the data.)"""
+    return {
+        "not_applicable": True,
+        "reason": (f"{flag_name} is false (intake applicability flag, "
+                   "DATA-SOURCES-CHEATSHEET.md) — the section does not apply "
+                   "to this household; set the flag true and complete the "
+                   "intake to compute it"),
+    }
+
+
+def _pin(cond, name, detail):
+    """Labeled regression pin. These checks encode relationships verified for
+    THIS dataset — they guard reproduction of this house's artifact, they are
+    not universal physics. Fail closed, but say both things."""
+    if not cond:
+        raise SystemExit(
+            f"regression pin failed [{name}]: {detail}. This check is a "
+            "regression pin for this dataset (it guards byte-exact "
+            "reproduction of the committed artifact); if you are reproducing "
+            "with DIFFERENT household data, this can be a legitimate result "
+            "for your house — review the pin and adjust or remove it rather "
+            "than forcing your data to match.")
 
 out = {}
 d = br.load()
@@ -120,33 +256,36 @@ out["ab205"] = {
 }
 
 # ---------- B. Electrification dividend ------------------------------------
-p = d.p.values
-ev_cost = 0.0
-for per in ("on", "off", "sop"):
-    m = p == per
-    kwh = float(ev[m].sum())
-    # season-weighted all-in import price for that period
-    seas = d.seas.values
-    cost = sum(float(ev[m & (seas == s)].sum()) * R.allin(s, per)
-               for s in ("S", "W"))
-    ev_cost += cost
-sc_cost = SC_KWH * SC_USD_KWH
-gas_cost = MILES_YR / FLEET_MPG * GAS_USD_GAL
-out["electrification_dividend"] = {
-    "home_ev_kwh": round(float(ev.sum())),
-    "home_ev_cost_current_rates": round(ev_cost),
-    "supercharge_kwh": SC_KWH, "supercharge_cost_est": round(sc_cost),
-    "total_ev_fuel_cost": round(ev_cost + sc_cost),
-    "gas_counterfactual_cost": round(gas_cost),
-    "gas_price": GAS_USD_GAL, "mpg": FLEET_MPG, "miles_yr": MILES_YR,
-    "dividend_yr": round(gas_cost - ev_cost - sc_cost),
-    # if all home charging landed super-off-peak (the implemented schedule fix):
-    "home_ev_cost_if_all_sop": round(sum(
-        float(ev[d.seas.values == s].sum()) * R.allin(s, "sop") for s in ("S", "W"))),
-    "dividend_yr_post_fix": round(gas_cost - sc_cost - sum(
-        float(ev[d.seas.values == s].sum()) * R.allin(s, "sop") for s in ("S", "W"))),
-    "label": "estimated (gasoline price + mpg + SC price are cited external constants)",
-}
+if not HAS_EV:
+    out["electrification_dividend"] = _not_applicable("household.has_ev")
+else:
+    p = d.p.values
+    ev_cost = 0.0
+    for per in ("on", "off", "sop"):
+        m = p == per
+        kwh = float(ev[m].sum())
+        # season-weighted all-in import price for that period
+        seas = d.seas.values
+        cost = sum(float(ev[m & (seas == s)].sum()) * R.allin(s, per)
+                   for s in ("S", "W"))
+        ev_cost += cost
+    sc_cost = SC_KWH * SC_USD_KWH
+    gas_cost = MILES_YR / FLEET_MPG * GAS_USD_GAL
+    out["electrification_dividend"] = {
+        "home_ev_kwh": round(float(ev.sum())),
+        "home_ev_cost_current_rates": round(ev_cost),
+        "supercharge_kwh": SC_KWH, "supercharge_cost_est": round(sc_cost),
+        "total_ev_fuel_cost": round(ev_cost + sc_cost),
+        "gas_counterfactual_cost": round(gas_cost),
+        "gas_price": GAS_USD_GAL, "mpg": FLEET_MPG, "miles_yr": MILES_YR,
+        "dividend_yr": round(gas_cost - ev_cost - sc_cost),
+        # if all home charging landed super-off-peak (the implemented schedule fix):
+        "home_ev_cost_if_all_sop": round(sum(
+            float(ev[d.seas.values == s].sum()) * R.allin(s, "sop") for s in ("S", "W"))),
+        "dividend_yr_post_fix": round(gas_cost - sc_cost - sum(
+            float(ev[d.seas.values == s].sum()) * R.allin(s, "sop") for s in ("S", "W"))),
+        "label": "estimated (gasoline price + mpg + SC price are cited external constants)",
+    }
 
 # ---------- C. Away-day natural experiment ----------------------------------
 # Away day: whole-day import < 40% of median daily import AND no EV session kWh.
@@ -169,14 +308,17 @@ out["away_days"] = {
 }
 
 # ---------- D. Supercharging vs home delta ----------------------------------
-home_sop_allin = R.allin("S", "sop")  # summer sop all-in (winter within 0.3c)
-out["supercharge_delta"] = {
-    "sc_kwh": SC_KWH, "sc_price_est": SC_USD_KWH,
-    "home_sop_allin": round(home_sop_allin, 4),
-    "delta_per_kwh": round(SC_USD_KWH - home_sop_allin, 3),
-    "full_shift_value_yr": round(SC_KWH * (SC_USD_KWH - home_sop_allin)),
-    "note": "upper bound; road-trip supercharging away from home cannot shift",
-}
+if not HAS_EV:
+    out["supercharge_delta"] = _not_applicable("household.has_ev")
+else:
+    home_sop_allin = R.allin("S", "sop")  # summer sop all-in (winter within 0.3c)
+    out["supercharge_delta"] = {
+        "sc_kwh": SC_KWH, "sc_price_est": SC_USD_KWH,
+        "home_sop_allin": round(home_sop_allin, 4),
+        "delta_per_kwh": round(SC_USD_KWH - home_sop_allin, 3),
+        "full_shift_value_yr": round(SC_KWH * (SC_USD_KWH - home_sop_allin)),
+        "note": "upper bound; road-trip supercharging away from home cannot shift",
+    }
 
 # ---------- E. Weekend super-off-peak exploitation --------------------------
 # CLAUDE.md 1b: move the energy PHYSICALLY and re-bill — never kWh x rate-delta.
@@ -230,6 +372,12 @@ out["weekend_sop"] = {
 s25 = pd.read_csv(PRIV / "enphase_sam8760_2025.csv").iloc[:, 0].astype(float)
 s26 = pd.read_csv(PRIV / "enphase_sam8760_2026.csv").iloc[:, 0].astype(float)
 h = 24 * 181  # compare Jan-Jun of each calendar year, both fully populated
+for _n, _s in (("enphase_sam8760_2025.csv", s25), ("enphase_sam8760_2026.csv", s26)):
+    if len(_s) < h:
+        raise SystemExit(
+            f"{_n}: only {len(_s)} hourly rows, but the Jan-Jun comparison "
+            f"needs at least {h} (both SAM-8760 files must fully cover January "
+            "through June) — refusing to compare a truncated year")
 j25, j26 = float(s25[:h].sum()), float(s26[:h].sum())
 assert j25 > 1000 and j26 > 1000, "SAM-8760 files look empty/truncated"
 out["representative_year"] = {
@@ -240,38 +388,45 @@ out["representative_year"] = {
 }
 
 # ---------- G. Gas decomposition (HDD regression) ---------------------------
-# fail closed: any missing/malformed input aborts the run (no partial artifact)
-gas = pd.read_csv(PRIV / "gas.csv", skiprows=13)  # SDG&E gas Green Button:
-# 13 metadata lines then Meter Number, Date, Start Time, Duration, Consumption
-gas.columns = [c.strip().lower() for c in gas.columns]
-gas["date"] = pd.to_datetime(gas["date"]).dt.date
-gas["therms"] = pd.to_numeric(gas["consumption"], errors="coerce")
-w = pd.read_csv(DATA / "weather_daily_tmean.csv", skiprows=1,
-                names=["date", "tf"])  # index header row, then date,tmean(F)
-w["date"] = pd.to_datetime(w["date"]).dt.date
-m = gas.merge(w[["date", "tf"]], on="date").dropna()
-assert len(m) >= 300, f"gas/weather merge too small ({len(m)} days) — schema drift?"
-m["hdd"] = np.clip(65 - m.tf.astype(float), 0, None)
-slope, floor = np.polyfit(m.hdd, m.therms, 1)
-ann_floor = floor * 365
-ann_heat = float(m.therms.sum() * (365 / len(m))) - ann_floor
-assert ann_floor > 0 and ann_heat > 0, "gas decomposition produced non-physical split"
-hp_kwh = ann_heat * KWH_PER_THERM / HP_COP
-hpwh_kwh = ann_floor * 0.8 * KWH_PER_THERM / HPWH_COP  # ~80% of floor = DHW
-out["gas_decomposition"] = {
-    "days_regressed": int(len(m)),
-    "floor_therms_day": round(float(floor), 3),
-    "slope_therms_per_hdd": round(float(slope), 4),
-    "annual_floor_therms": round(ann_floor),
-    "annual_heating_therms": round(ann_heat),
-    "heating_gas_cost_yr": round(ann_heat * THERM_ALLIN),
-    "hp_heating_kwh": round(hp_kwh),
-    "hp_heating_cost_at_midday_value": round(hp_kwh * MIDDAY_VALUE),
-    "hp_heating_saving_yr": round(ann_heat * THERM_ALLIN - hp_kwh * MIDDAY_VALUE),
-    "hpwh_kwh": round(hpwh_kwh),
-    "hpwh_saving_yr": round(ann_floor * 0.8 * THERM_ALLIN - hpwh_kwh * MIDDAY_VALUE),
-    "label": "modeled (COP and midday value assumed; gas $/therm from bills)",
-}
+if not HAS_GAS:
+    out["gas_decomposition"] = _not_applicable("household.has_gas")
+else:
+    # fail closed: any missing/malformed input aborts the run (no partial artifact)
+    gas = pd.read_csv(GAS_CSV, skiprows=13)  # SDG&E gas Green Button:
+    # 13 metadata lines then Meter Number, Date, Start Time, Duration, Consumption
+    gas.columns = [c.strip().lower() for c in gas.columns]
+    gas["date"] = pd.to_datetime(gas["date"]).dt.date
+    gas["therms"] = pd.to_numeric(gas["consumption"], errors="coerce")
+    w = pd.read_csv(DATA / "weather_daily_tmean.csv", skiprows=1,
+                    names=["date", "tf"])  # index header row, then date,tmean(F)
+    w["date"] = pd.to_datetime(w["date"]).dt.date
+    m = gas.merge(w[["date", "tf"]], on="date").dropna()
+    assert len(m) >= 300, f"gas/weather merge too small ({len(m)} days) — schema drift?"
+    m["hdd"] = np.clip(65 - m.tf.astype(float), 0, None)
+    slope, floor = np.polyfit(m.hdd, m.therms, 1)
+    ann_floor = floor * 365
+    ann_heat = float(m.therms.sum() * (365 / len(m))) - ann_floor
+    _pin(ann_floor > 0 and ann_heat > 0, "gas decomposition split",
+         f"annual floor {round(ann_floor)} therms / heating {round(ann_heat)} "
+         "therms — this house shows both a water-heating floor and a heating "
+         "slope, so both must be positive (a house with, say, no gas heating "
+         "could legitimately break this)")
+    hp_kwh = ann_heat * KWH_PER_THERM / HP_COP
+    hpwh_kwh = ann_floor * 0.8 * KWH_PER_THERM / HPWH_COP  # ~80% of floor = DHW
+    out["gas_decomposition"] = {
+        "days_regressed": int(len(m)),
+        "floor_therms_day": round(float(floor), 3),
+        "slope_therms_per_hdd": round(float(slope), 4),
+        "annual_floor_therms": round(ann_floor),
+        "annual_heating_therms": round(ann_heat),
+        "heating_gas_cost_yr": round(ann_heat * THERM_ALLIN),
+        "hp_heating_kwh": round(hp_kwh),
+        "hp_heating_cost_at_midday_value": round(hp_kwh * MIDDAY_VALUE),
+        "hp_heating_saving_yr": round(ann_heat * THERM_ALLIN - hp_kwh * MIDDAY_VALUE),
+        "hpwh_kwh": round(hpwh_kwh),
+        "hpwh_saving_yr": round(ann_floor * 0.8 * THERM_ALLIN - hpwh_kwh * MIDDAY_VALUE),
+        "label": "modeled (COP and midday value assumed; gas $/therm from bills)",
+    }
 
 # ---------- H. 2039 NBT transition ------------------------------------------
 def bill_flat_export(dd, imp, exp, credit):
@@ -313,14 +468,15 @@ out["nbt_2039"] = {
 # All savings figures below are the COMPUTED dispatch results from the top of
 # this script (POL_SAVE / G / G_POST) — never literals.
 levers = {
-    "install_cost": [(12000, 12000 / G), (14500, 14500 / G), (17000, 17000 / G)],
-    "dispatch_policy": [(round(POL_SAVE["evening"]), 14500 / POL_SAVE["evening"]),
-                        (round(POL_SAVE["twowin"]), 14500 / POL_SAVE["twowin"]),
-                        (round(G), 14500 / G)],
-    "post_behavior": [(round(G_POST), 14500 / G_POST), (round(G), 14500 / G)],
-    "dsgs_revenue": [(0, 14500 / G), (250, 14500 / (G + 250)), (350, 14500 / (G + 350))],
-    "escalation_5yr_avg": [(0.0, 14500 / G), (0.05, 14500 / (G * 1.104)),
-                           (0.08, 14500 / (G * 1.17))],  # avg uplift over payback horizon
+    "install_cost": [(12000, 12000 / G), (BATT_COST, BATT_COST / G), (17000, 17000 / G)],
+    "dispatch_policy": [(round(POL_SAVE["evening"]), BATT_COST / POL_SAVE["evening"]),
+                        (round(POL_SAVE["twowin"]), BATT_COST / POL_SAVE["twowin"]),
+                        (round(G), BATT_COST / G)],
+    "post_behavior": [(round(G_POST), BATT_COST / G_POST), (round(G), BATT_COST / G)],
+    "dsgs_revenue": [(0, BATT_COST / G), (250, BATT_COST / (G + 250)),
+                     (350, BATT_COST / (G + 350))],
+    "escalation_5yr_avg": [(0.0, BATT_COST / G), (0.05, BATT_COST / (G * 1.104)),
+                           (0.08, BATT_COST / (G * 1.17))],  # avg uplift over payback horizon
 }
 tor = {}
 for k, vals in levers.items():
@@ -328,7 +484,7 @@ for k, vals in levers.items():
     tor[k] = {"payback_range_yr": [min(pays), max(pays)],
               "swing_yr": round(max(pays) - min(pays), 1)}
 out["tornado_battery"] = {
-    "base_payback_yr": round(14500 / G, 1),
+    "base_payback_yr": round(BATT_COST / G, 1),
     "levers": tor,
     "ranked_by_swing": sorted(tor, key=lambda k: -tor[k]["swing_yr"]),
 }
@@ -339,10 +495,51 @@ REQUIRED = ("ab205", "electrification_dividend", "away_days", "supercharge_delta
             "tornado_battery")
 for _k in REQUIRED:
     assert _k in out and "error" not in out[_k], f"section missing/failed: {_k}"
-assert out["electrification_dividend"]["dividend_yr"] > 0
+# flag-section coherence: the intake flag is the authority. Per section:
+# flag true -> the section must be COMPUTED; flag false -> the section must be
+# the not_applicable stub naming that flag; any mixture -> refuse to publish.
+for _k in REQUIRED:
+    if "not_determined" in out[_k]:
+        raise SystemExit(
+            f"{_k}: carries 'not_determined' — that stub is retired here; "
+            "applicability stubs are 'not_applicable', governed by the intake "
+            "flags (not_determined is reserved for values genuinely "
+            "undeterminable from data); refusing to publish")
+    _stub = bool(out[_k].get("not_applicable", False))
+    if _k in _SECTION_FLAG:
+        _fname, _fval = _SECTION_FLAG[_k]
+        if _fval and _stub:
+            raise SystemExit(
+                f"{_k}: published as not_applicable but {_fname} is true — "
+                "the flag demands the fully computed section; refusing to publish")
+        if not _fval and not _stub:
+            raise SystemExit(
+                f"{_k}: computed but {_fname} is false — the flag demands a "
+                "not_applicable stub; refusing to publish")
+        if _stub and _fname not in out[_k].get("reason", ""):
+            raise SystemExit(
+                f"{_k}: not_applicable stub does not name its governing flag "
+                f"{_fname}; refusing to publish")
+    elif _stub:
+        raise SystemExit(f"{_k}: not a flag-governed section — it may never be "
+                         "not_applicable; refusing to publish")
+if HAS_EV:
+    _pin(out["electrification_dividend"]["dividend_yr"] > 0,
+         "electrification dividend",
+         f"dividend_yr = {out['electrification_dividend']['dividend_yr']} — for "
+         "this household home EV charging beats the gasoline counterfactual, so "
+         "the dividend must be positive (different rates/prices/mileage can "
+         "legitimately make it negative)")
 assert out["ab205"]["model_matches_adopted"], "rates.py BSC != adopted fixed charge"
-for _v in out["nbt_2039"]["battery_marginal_under_nbt"].values():
-    assert _v["battery_marginal_yr"] > out["nbt_2039"]["battery_marginal_under_nem2"] * 0.8
+for _n, _v in out["nbt_2039"]["battery_marginal_under_nbt"].items():
+    _pin(_v["battery_marginal_yr"]
+         > out["nbt_2039"]["battery_marginal_under_nem2"] * 0.8,
+         f"NBT battery marginal ({_n})",
+         f"{_v['battery_marginal_yr']} <= 0.8 x NEM2 marginal "
+         f"{out['nbt_2039']['battery_marginal_under_nem2']} — for this dataset "
+         "the battery is worth at least as much under flat-credit exports as "
+         "under NEM 2.0 (a different load/solar shape can legitimately break "
+         "this ratio)")
 _tmp = DATA / "extended_results.json.tmp"
 with open(_tmp, "w") as f:
     json.dump(out, f, indent=1)

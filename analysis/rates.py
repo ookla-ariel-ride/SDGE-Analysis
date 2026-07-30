@@ -26,6 +26,16 @@ weekdays, 0-14 weekends; off-peak otherwise. This is the CURRENT tariff, which i
 what a projection at constant current rates needs, and analysis/tou_audit.py
 reconciles it against the three most recent statements to within 0.5 kWh.
 
+APPLICABILITY (read before reusing for your own house): the netting STRUCTURE
+above is NEM 2.0 -- monthly per-period netting with retail-rate export credit.
+Solar interconnected after April 2023 bills under NEM 3.0 / the Solar Billing
+Plan (hourly netting, avoided-cost export credits): swapping the rate constants
+is NOT enough, bill_nem_monthly()'s structure must be replaced. Likewise the
+window SHAPES in period() and SUMMER_MONTHS are EV-TOU-5-specific: a different
+SDG&E plan (or another utility) changes the windows, not just the prices. In
+every case the gate is CLAUDE.md section 1: the engine must reproduce YOUR
+actual bills before any absolute dollar is quoted.
+
 Two things it deliberately does not do, both established by that audit:
   * The weekday 10-14 super-off-peak window took effect 2026-03-01; before that
     those hours were off-peak. Applying today's window to earlier dates is correct

@@ -10,6 +10,7 @@ those branches directly. No private data; runs in CI.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_carbon_fullyear.py
 """
+import json
 import pathlib
 import sys
 import tempfile
@@ -85,8 +86,17 @@ def case_build_covered_from_raw_reads_the_cache_and_legacy_days():
         got = {ts.strftime("%Y%m%d") for ts in covered}
         assert {"20260113", "20260114"} <= got, got
         assert "20260116" not in got, "day without demand file was not skipped"
-        # the four legacy seasonal days from carbon_results.json ride along
-        assert len(got) == 6, got
+        # Beyond the raw cache, build_covered_from_raw always folds in the legacy
+        # seasonal sample days preserved in data/carbon_results.json under
+        # source.sample_days -- for this dataset, the four days (one per season)
+        # of the original 4-day carbon study that predated the full-year cache.
+        # Derive the expectation from that artifact rather than pinning this
+        # dataset's 4+2=6, so a fork with a different legacy artifact still passes.
+        legacy = set(json.loads(C.OLD_RESULTS.read_text())
+                     ["source"]["sample_days"].values())
+        assert got == {"20260113", "20260114"} | legacy, (
+            f"expected the two parseable synthetic days plus the legacy sample "
+            f"days {sorted(legacy)}, got {sorted(got)}")
         for v in covered.values():
             assert v.shape == (24,)
     return "build_covered_from_raw parses the cache, skips orphans, keeps legacy days"

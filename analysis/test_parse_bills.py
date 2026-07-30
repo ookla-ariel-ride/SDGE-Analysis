@@ -15,8 +15,10 @@ corpus is absent. Everything covering publication, rollback and concurrency runs
 (temp files, or the committed data/ artifacts), so a broken lock or a lost rollback cannot
 pass in a clean checkout or in CI.
 """
+import csv
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -29,16 +31,51 @@ GAS = ROOT / "private" / "1-raw-data" / "gas-bills"
 PY = sys.executable
 
 
+class SkipCase(Exception):
+    """Raised by a case whose preconditions this corpus cannot meet (e.g. a fork whose
+    corpus lacks a statement the case wants to delete). The runner counts it as
+    neither pass nor fail."""
+
+
+def _require(path):
+    """The corpus negative-tests delete specific statements from THIS repo's corpus.
+    On a fork's corpus those filenames don't exist — skip the case instead of
+    crashing with FileNotFoundError."""
+    if not path.exists():
+        raise SkipCase(f"{path.name} is not in this corpus")
+    return path
+
+
+def _set_flag(tmp, has_gas):
+    """Write the throwaway root's SYNTHETIC private/household.yaml. parse_bills.py
+    reads gas applicability from household.has_gas through the analysis/household.py
+    loader, which resolves its repo root by walking up from the CWD — the subprocess
+    runs with cwd=tmp, so the loader finds this file and the real gitignored
+    private/household.yaml is never involved."""
+    (tmp / "private").mkdir(exist_ok=True)
+    (tmp / "private" / "household.yaml").write_text(
+        f"household:\n  has_gas: {'true' if has_gas else 'false'}\n")
+
+
 def _build(tmp):
-    """A minimal repo the parser will accept as its root, with the real corpus."""
+    """A minimal repo the parser will accept as its root, with the real corpus.
+    The synthetic household.has_gas flag mirrors the corpus actually staged (true
+    when the real repo has gas PDFs to copy) so the control case passes on gas and
+    no-gas corpora alike; flag-semantics cases overwrite it via _set_flag()."""
     (tmp / "analysis").mkdir()
     (tmp / "data").mkdir()
     (tmp / "private" / "1-raw-data" / "electric-bills").mkdir(parents=True)
-    (tmp / "private" / "1-raw-data" / "gas-bills").mkdir(parents=True)
-    shutil.copy2(HERE / "parse_bills.py", tmp / "analysis" / "parse_bills.py")
-    for src, dst in ((ELEC, "electric-bills"), (GAS, "gas-bills")):
+    for name in ("parse_bills.py", "household.py"):
+        shutil.copy2(HERE / name, tmp / "analysis" / name)
+    have_gas_corpus = GAS.is_dir() and any(GAS.glob("*.pdf"))
+    srcs = [(ELEC, "electric-bills")]
+    if have_gas_corpus:
+        (tmp / "private" / "1-raw-data" / "gas-bills").mkdir(parents=True)
+        srcs.append((GAS, "gas-bills"))
+    for src, dst in srcs:
         for f in src.glob("*.pdf"):
             shutil.copy2(f, tmp / "private" / "1-raw-data" / dst / f.name)
+    _set_flag(tmp, have_gas_corpus)
     # Pre-existing artifacts, so each case can assert they were not modified.
     for name in ("bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
                  "electric_bill_summary.csv", "gas_bill_summary.csv"):
@@ -57,6 +94,88 @@ def _artifacts_untouched(tmp):
         "electric_bill_summary.csv", "gas_bill_summary.csv"))
 
 
+def _statement_date(path):
+    """The statement date a bill PDF's filename carries (the parser's convention)."""
+    return re.search(r"(\d{4}-\d{2}-\d{2})\.pdf$", path.name).group(1)
+
+
+def _rows(path):
+    """Read a committed artifact CSV as a list of dicts (they are CRLF or LF)."""
+    with open(path, newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def _patch_summary_lists(tmp, elec_dates, gas_dates):
+    """Rewrite the throwaway copy's SUMMARY_STATEMENTS_* lists.
+
+    A fork's situation is "the lists in the script describe a corpus other than the
+    one on disk". Editing the lists in the throwaway copy produces exactly that
+    state without having to fabricate a second bill corpus, and it is the same
+    zero-overlap condition the parser tests."""
+    script = tmp / "analysis" / "parse_bills.py"
+    src = script.read_text()
+    out = src
+    for name, dates in (("SUMMARY_STATEMENTS_ELEC", elec_dates),
+                        ("SUMMARY_STATEMENTS_GAS", gas_dates)):
+        out, n = re.subn(rf"{name} = \[.*?\]",
+                         f"{name} = {dates!r}", out, count=1, flags=re.S)
+        assert n == 1, f"test needs updating: {name} assignment not found"
+    assert out != src, "test needs updating: summary lists unchanged"
+    script.write_text(out)
+
+
+def case_fork_summary_built_from_own_corpus(tmp):
+    """A fork whose corpus shares no statement date with the SUMMARY_STATEMENTS_*
+    lists must still get a REAL summary. Filtering by another household's dates
+    would select nothing and publish a header-only summary, silently discarding the
+    billing summary just parsed. The fork's window is every statement it parsed, so
+    the summary must cover exactly the periods in the periods artifact."""
+    _patch_summary_lists(tmp, ["1900-01-01", "1900-02-01"], ["1900-01-15"])
+    r = _run(tmp)
+    assert r.returncode == 0, f"fork corpus failed to publish:\n{r.stderr}"
+    assert "FULL parsed corpus" in r.stdout and "SUMMARY_STATEMENTS_ELEC" in r.stdout, \
+        f"no notice naming the window actually used:\n{r.stdout}"
+
+    periods = _rows(tmp / "data" / "bill_periods_electric.csv")
+    summary = _rows(tmp / "data" / "electric_bill_summary.csv")
+    assert summary, "fork published an EMPTY electric summary"
+    assert len(summary) == len(periods), \
+        f"summary covers {len(summary)} periods, corpus has {len(periods)}"
+    assert [s["period"] for s in summary] == [p["period"] for p in periods], \
+        "summary periods are not the fork's own parsed periods"
+    # The count in the notice must be the fork's own statement count, not the list's.
+    n_stmts = len({p["statement_date"] for p in periods})
+    assert f"{n_stmts} statement(s)" in r.stdout, \
+        f"notice does not name the {n_stmts}-statement window used:\n{r.stdout}"
+
+    if not (tmp / "private" / "1-raw-data" / "gas-bills").is_dir():
+        return ("fork corpus -> electric summary built from its own statements "
+                "(no gas corpus here)")
+    gperiods = _rows(tmp / "data" / "bill_periods_gas.csv")
+    gsummary = _rows(tmp / "data" / "gas_bill_summary.csv")
+    assert gsummary, "fork published an EMPTY gas summary"
+    assert len(gsummary) == len(gperiods), \
+        f"gas summary covers {len(gsummary)} periods, corpus has {len(gperiods)}"
+    assert {g["file_month"] for g in gsummary} == {p["period_end_month"] for p in gperiods}, \
+        "gas summary months are not the fork's own parsed months"
+    assert "SUMMARY_STATEMENTS_GAS" in r.stdout, f"no gas window notice:\n{r.stdout}"
+    return "fork corpus -> both summaries built from its own statements, non-empty"
+
+
+def case_partial_overlap_corpus_fails(tmp):
+    """End-to-end counterpart of the fork case: PARTIAL overlap is corpus loss, not a
+    fork, so the run must fail closed and publish nothing — the fork path must never
+    become an escape hatch for a thinned corpus."""
+    present = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2026-02-02.pdf")
+    _patch_summary_lists(tmp, [_statement_date(present), "1900-01-01"], ["1900-01-15"])
+    r = _run(tmp)
+    assert r.returncode != 0, "partial overlap with the summary list was accepted"
+    assert "missing from the corpus" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "partial overlap (end to end) -> exits, artifacts untouched"
+
+
 def case_healthy_corpus(tmp):
     """Control: the real corpus must parse and write all five artifacts."""
     r = _run(tmp)
@@ -67,7 +186,8 @@ def case_healthy_corpus(tmp):
 
 def case_missing_summary_statement(tmp):
     """A statement the committed summary is built from is gone."""
-    victim = tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2026-02-02.pdf"
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2026-02-02.pdf")
     victim.unlink()
     r = _run(tmp)
     assert r.returncode != 0, "parser accepted a corpus missing a summary statement"
@@ -79,7 +199,8 @@ def case_missing_summary_statement(tmp):
 def case_mid_corpus_gap(tmp):
     """A statement OUTSIDE the summary window is gone: caught by continuity, not by
     the presence check."""
-    victim = tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2024-10-29.pdf"
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2024-10-29.pdf")
     victim.unlink()
     r = _run(tmp)
     assert r.returncode != 0, "parser accepted a corpus with a mid-window gap"
@@ -92,7 +213,8 @@ def case_mid_corpus_gas_gap(tmp):
     """A GAS statement outside the summary window is gone. The presence check only
     covers summary statements, and gas bills on its own cycle, so only a gas-specific
     continuity check catches this."""
-    victim = tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2024-10-29.pdf"
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2024-10-29.pdf")
     victim.unlink()
     r = _run(tmp)
     assert r.returncode != 0, "parser accepted a corpus with a mid-window gas gap"
@@ -114,6 +236,93 @@ def case_tou_headers_stop_matching(tmp):
         f"unexpected error:\n{r.stderr}"
     assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
     return "TOU headers stop matching -> exits, artifacts untouched"
+
+
+def case_missing_household_yaml_fails(tmp):
+    """parse_bills now REQUIRES the intake yaml (household.has_gas): without it the
+    loader must fail closed pointing at the intake interview, touching nothing."""
+    (tmp / "private" / "household.yaml").unlink()
+    r = _run(tmp)
+    assert r.returncode != 0, "parser ran without private/household.yaml"
+    assert "household.yaml" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "missing household.yaml -> exits, artifacts untouched"
+
+
+def case_gas_flag_true_missing_dir_fails(tmp):
+    """household.has_gas true with NO gas-bills/ directory is staging loss, never a
+    no-gas household: the run must fail closed NAMING THE FLAG and touch nothing.
+    (Directory-presence inference is gone — a missing dir proves nothing.)"""
+    _set_flag(tmp, True)
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    if gasdir.exists():
+        shutil.rmtree(gasdir)
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted a missing gas-bills/ despite has_gas: true"
+    assert "household.has_gas is true" in r.stderr and "staging loss" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "flag true + missing gas-bills/ -> exits naming the flag, artifacts untouched"
+
+
+def case_gas_flag_true_empty_dir_fails(tmp):
+    """household.has_gas true with an EMPTY gas-bills/ is corpus loss: fail closed,
+    touch nothing."""
+    _set_flag(tmp, True)
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    gasdir.mkdir(parents=True, exist_ok=True)
+    for f in gasdir.glob("*.pdf"):
+        f.unlink()
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted an empty gas-bills/ despite has_gas: true"
+    assert "household.has_gas is true" in r.stderr and "corpus loss" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "flag true + empty gas-bills/ -> exits (corpus loss), artifacts untouched"
+
+
+def case_gas_flag_false_retires_gas_artifacts(tmp):
+    """household.has_gas false with no gas-bills/ dir: the run must succeed, notice
+    loudly, write the electric artifacts, and RETIRE the gas artifacts to header-only
+    CSVs in the same publish set — never leave another corpus's stale gas data (the
+    sentinels here) in place."""
+    _set_flag(tmp, False)
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    if gasdir.exists():
+        shutil.rmtree(gasdir)
+    r = _run(tmp)
+    assert r.returncode == 0, f"has_gas-false run failed:\n{r.stderr}"
+    assert "household.has_gas is false" in r.stdout and "header-only" in r.stdout, \
+        f"missing the loud retirement notice:\n{r.stdout}"
+    for n in ("bill_periods_electric.csv", "bill_tou_detail.csv",
+              "electric_bill_summary.csv"):
+        assert (tmp / "data" / n).read_text() != "SENTINEL\n", \
+            f"electric artifact {n} was not written"
+    # The stale (sentinel) gas artifacts must be REPLACED by header-only CSVs with
+    # exactly the real artifacts' schemas and line endings.
+    assert (tmp / "data" / "bill_periods_gas.csv").read_bytes() == (
+        b"statement_date,period,period_end_month,therms,total_gas_service,"
+        b"billed_amount,baseline_rate,nonbaseline_rate\n"), \
+        "bill_periods_gas.csv is not the expected header-only CSV"
+    assert (tmp / "data" / "gas_bill_summary.csv").read_bytes() == (
+        b"file_month,therms,total_gas_service,baseline_rate,nonbaseline_rate\r\n"), \
+        "gas_bill_summary.csv is not the expected header-only CSV"
+    return "flag false + no gas dir -> electric published, gas retired to header-only"
+
+
+def case_gas_flag_false_with_dir_present_fails(tmp):
+    """household.has_gas false while a gas-bills/ directory EXISTS is a contradiction
+    (wrong flag, or a directory that should not be there): fail closed telling the
+    user to fix one or the other, touch nothing."""
+    _set_flag(tmp, False)
+    gasdir = tmp / "private" / "1-raw-data" / "gas-bills"
+    gasdir.mkdir(parents=True, exist_ok=True)   # presence alone is the contradiction
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted gas-bills/ present despite has_gas: false"
+    assert "household.has_gas is false" in r.stderr and "contradiction" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "flag false + gas-bills/ present -> exits (contradiction), artifacts untouched"
 
 
 def case_write_rollback():
@@ -372,10 +581,59 @@ def case_overlapping_gas_periods():
     return "overlapping gas periods -> rejected"
 
 
+def case_fork_corpus_skips_presence_check():
+    """A corpus sharing NONE of the SUMMARY_STATEMENTS_* dates is a fork: check 1 is
+    skipped with a printed notice instead of demanding statements the fork can never
+    have. Every other check still runs."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    elec, gas, tou = _load_artifacts()
+    elec, gas = elec.copy(), gas.copy()
+    elec["statement_date"] = "1900-01-01"      # zero overlap with either list
+    gas["statement_date"] = "1900-01-01"
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        pb._validate(elec, gas, tou)           # must NOT raise
+    out = buf.getvalue()
+    assert "FORK" in out and "SUMMARY_STATEMENTS_ELEC" in out, \
+        f"fork skip ran silently or without the replace-me instruction:\n{out}"
+    assert "SUMMARY_STATEMENTS_GAS" in out, f"gas list skip not noticed:\n{out}"
+    return "fork corpus (zero overlap) -> check 1 skipped with loud notice"
+
+
+def case_partial_overlap_still_fails():
+    """PARTIAL overlap with the summary lists is corpus loss, never a fork: removing
+    one documented statement from an otherwise-matching corpus must still fail closed."""
+    sys.path.insert(0, str(HERE))
+    import parse_bills as pb
+    elec, gas, tou = _load_artifacts()
+    elec = elec.copy()
+    victim = pb.SUMMARY_STATEMENTS_ELEC[0]
+    if victim not in set(elec.statement_date):
+        raise SkipCase("committed artifacts do not cover SUMMARY_STATEMENTS_ELEC")
+    elec.loc[elec.statement_date == victim, "statement_date"] = "1900-01-01"
+    try:
+        pb._validate(elec, gas, tou)
+    except SystemExit as e:
+        assert "missing from the corpus" in str(e), f"wrong error: {e}"
+    else:
+        raise AssertionError("partial overlap with the summary list was accepted")
+    return "partial overlap with the summary list -> still fails closed"
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
-                case_tou_headers_stop_matching]
+                case_tou_headers_stop_matching,
+                case_missing_household_yaml_fails,
+                case_gas_flag_true_missing_dir_fails,
+                case_gas_flag_true_empty_dir_fails,
+                case_gas_flag_false_retires_gas_artifacts,
+                case_gas_flag_false_with_dir_present_fails,
+                case_fork_summary_built_from_own_corpus,
+                case_partial_overlap_corpus_fails]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean
@@ -387,17 +645,24 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_lock_blocks_second_publisher,
                     case_concurrent_publishers_serialize,
                     case_overlapping_electric_periods,
-                    case_overlapping_gas_periods]
+                    case_overlapping_gas_periods,
+                    case_fork_corpus_skips_presence_check,
+                    case_partial_overlap_still_fails]
 
 
 def main():
-    have_corpus = ELEC.is_dir() and GAS.is_dir() and any(ELEC.glob("*.pdf"))
+    # The electric corpus is the hard requirement; gas-dependent cases skip themselves
+    # (via SkipCase) when this corpus has no gas statements — a no-gas fork is valid.
+    have_corpus = ELEC.is_dir() and any(ELEC.glob("*.pdf"))
     failures = skipped = ran = 0
 
     for case in STANDALONE_CASES:
         try:
             print(f"PASS  {case()}")
             ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
@@ -412,12 +677,15 @@ def main():
             with tempfile.TemporaryDirectory() as td:
                 print(f"PASS  {case(_build(pathlib.Path(td)))}")
             ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
 
     total = len(STANDALONE_CASES) + len(CORPUS_CASES)
-    tail = f", {skipped} skipped (no private corpus)" if skipped else ""
+    tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{total} passed{tail}")
     return 1 if failures else 0
 

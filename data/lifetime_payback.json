@@ -1,0 +1,62 @@
+{
+ "basis": "blended $/kWh derived from usage.csv + samA/samB over the rolling 365 days ending 2026-07-24; historical years deflated by the published average-rate index; production table from monitoring records",
+ "blended_old_tou": 0.4869,
+ "blended_new_tou": 0.3009,
+ "nosolar_bill_usd": 9853,
+ "annual_production_kwh": 16444,
+ "invoice_usd": 37845,
+ "years": [
+  {
+   "year": 2020,
+   "production_kwh": 17373,
+   "value_usd": 5639,
+   "cumulative_usd": 5639
+  },
+  {
+   "year": 2021,
+   "production_kwh": 17421,
+   "value_usd": 6008,
+   "cumulative_usd": 11647
+  },
+  {
+   "year": 2022,
+   "production_kwh": 17749,
+   "value_usd": 6661,
+   "cumulative_usd": 18309
+  },
+  {
+   "year": 2023,
+   "production_kwh": 15570,
+   "value_usd": 6475,
+   "cumulative_usd": 24784
+  },
+  {
+   "year": 2024,
+   "production_kwh": 16654,
+   "value_usd": 7433,
+   "cumulative_usd": 32217
+  },
+  {
+   "year": 2025,
+   "production_kwh": 16509,
+   "value_usd": 7703,
+   "cumulative_usd": 39920
+  },
+  {
+   "year": 2026,
+   "production_kwh": 9893,
+   "value_usd": 2977,
+   "cumulative_usd": 42897
+  }
+ ],
+ "crossover": {
+  "net_itc": {
+   "year": 2024,
+   "fraction_through_year": 0.23
+  },
+  "gross": {
+   "year": 2025,
+   "fraction_through_year": 0.73
+  }
+ }
+}

@@ -38,6 +38,15 @@ Coverage model:
 Household side: SDG&E Green Button 15-min usage.csv (same file the bill-validated
 models use), EV sessions re-detected with the exact algorithm from behavior_rebuild.py.
 
+ORDERING CONTRACT (this script runs SECOND):
+  behavior_rebuild.py  ->  carbon_fullyear.py, in the SAME working directory.
+  The cost_note quotes behavior scenario 'a', and behavior_rebuild.py writes its
+  behavior_rebuild.json into the WORKING DIRECTORY; data/behavior_rebuild.json is
+  only the last PROMOTED run. So the figure is read from this run's copy when one
+  is there, from the committed copy otherwise, and a disagreement between the two
+  is announced loudly rather than resolved in silence (see _scenario_a_saved).
+  CLAUDE.md's section 9 regeneration gate already runs the pair in this order.
+
 Run from private/verify with usage.csv, behavior_rebuild.py and rates.py beside it
 (repo paths resolve automatically); public artifacts are written to the repo data/:
   data/caiso_hourly_intensity.csv    (date, hour, kgco2_per_mwh - aggregated ISO data)
@@ -76,6 +85,86 @@ def _repo_root():
 ROOT = _repo_root()
 DATA = ROOT / "data"
 CAISO_DIR = ROOT / "private" / "1-raw-data" / "caiso_raw"  # raw day-cache (gitignored)
+
+
+BEHAVIOR_JSON = "behavior_rebuild.json"    # written to the CWD by behavior_rebuild.py
+
+
+def _read_scenario_a(path):
+    """scenarios.a.saved out of one behavior_rebuild.json.
+
+    Fail-closed: an unreadable or malformed copy is an ERROR, never a licence to
+    fall back to the other one. Falling back past a broken artifact is how a
+    stale figure gets published under a citation that looks current.
+    """
+    try:
+        with open(path) as fh:
+            doc = json.load(fh)
+        return float(doc["scenarios"]["a"]["saved"])
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        raise SystemExit(
+            f"{path}: cannot read scenarios.a.saved from the behavior artifact "
+            f"({type(e).__name__}: {e}). Regenerate it with behavior_rebuild.py; "
+            "this script will not fall back past a broken artifact.")
+
+
+def _scenario_a_saved():
+    """Scenario-a dollar saving, taken from THIS run's behavior artifact.
+
+    The cost_note cites behavior_rebuild.json, so the figure is read rather than
+    hardcoded -- a hardcoded copy here once went stale and contradicted the
+    artifact it cited. But which behavior_rebuild.json? behavior_rebuild.py
+    writes into the WORKING DIRECTORY (the documented private/verify sandbox);
+    data/behavior_rebuild.json changes only when the operator promotes that run.
+    Reading data/ unconditionally would quote the PREVIOUS household's saving
+    while claiming to cite the artifact -- the same drift, one level down.
+
+    Resolution order:
+      1. current-run copy in the CWD (the upstream generator's product) -- used
+         when present;
+      2. committed data/ copy -- used only when there is no current-run copy,
+         with a NOTICE saying so;
+      3. both present and DISAGREEING -- this run's copy wins, and the mismatch
+         is announced loudly: the committed copy is stale relative to this run,
+         and the section 9 regeneration gate will fail until it is promoted.
+    """
+    run = pathlib.Path.cwd() / BEHAVIOR_JSON
+    committed = DATA / BEHAVIOR_JSON
+    if not run.exists():
+        if not committed.exists():
+            raise SystemExit(
+                f"no behavior artifact: neither a current-run {run} nor the "
+                f"committed {committed} exists. Run behavior_rebuild.py in this "
+                "working directory first (see the ordering contract above).")
+        v = _read_scenario_a(committed)
+        print(f"NOTICE: no current-run {BEHAVIOR_JSON} in {pathlib.Path.cwd()}; "
+              f"scenario-a saving ${v:,.2f}/yr read from the committed "
+              f"{committed}. If this run's household inputs or EV detector "
+              "changed, run behavior_rebuild.py here FIRST.")
+        return v
+    v = _read_scenario_a(run)
+    if committed.exists() and run.samefile(committed):
+        print(f"NOTICE: scenario-a saving ${v:,.2f}/yr from {run} "
+              "(the working directory IS the committed data/ directory).")
+        return v
+    if not committed.exists():
+        print(f"NOTICE: scenario-a saving ${v:,.2f}/yr from this run's {run} "
+              f"(no committed {committed} to compare against).")
+        return v
+    c = _read_scenario_a(committed)
+    if c == v:
+        print(f"NOTICE: scenario-a saving ${v:,.2f}/yr from this run's {run} "
+              f"(agrees with the committed {committed}).")
+        return v
+    bar = "!" * 72
+    print(bar)
+    print("NOTICE -- STALE COMMITTED ARTIFACT: this run's "
+          f"{BEHAVIOR_JSON} says scenario a = ${v:,.2f}/yr, but the committed "
+          f"{committed} still says ${c:,.2f}/yr.")
+    print(f"  Using THIS RUN's ${v:,.2f}/yr. The committed copy has not been "
+          "promoted; CLAUDE.md's section 9 gate will fail until it is.")
+    print(bar)
+    return v
 HOURLY_CSV = DATA / "caiso_hourly_intensity.csv"           # committed aggregate
 OLD_RESULTS = DATA / "carbon_results.json"                 # 4-day legacy artifact
 RESULTS_JSON = DATA / "carbon_fullyear_results.json"       # committed results artifact
@@ -161,6 +250,9 @@ def main():
     else:
         raise SystemExit("no intensity source available: neither the raw cache "
                          f"{CAISO_DIR} nor the committed {HOURLY_CSV} exists")
+    # resolve the upstream behavior figure once, up front, so its NOTICE lands
+    # before the run's own output rather than in the middle of it
+    scenario_a = _scenario_a_saved()
     # canonicalize to the committed CSV's 0.1 kg/MWh so both source modes are
     # bit-identical (the legacy 4 days were already stored at 0.1)
     covered = {k: np.round(v, 1) for k, v in covered.items()}
@@ -305,7 +397,8 @@ def main():
         "cost_note": ("On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and "
                       "00:00-06:00 are BOTH super-off-peak at the same price; the netting-"
                       "correct dollar saving for fixing mistimed charging is scenario 'a' in "
-                      "behavior_rebuild.json ($1,192.83/yr), unchanged by this carbon rerun."),
+                      f"behavior_rebuild.json (${scenario_a:,.2f}/yr), unchanged "
+                      "by this carbon rerun."),
         "caveats": [
             f"Intensity measured on {n_cov} real CAISO days; the other {365 - n_cov} days "
             "use month-hour means of covered days (day-to-day weather/hydro/outage "

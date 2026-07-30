@@ -128,7 +128,7 @@
    "new": 442.2
   }
  },
- "cost_note": "On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and 00:00-06:00 are BOTH super-off-peak at the same price; the netting-correct dollar saving for fixing mistimed charging is scenario 'a' in behavior_rebuild.json ($1,192.83/yr), unchanged by this carbon rerun.",
+ "cost_note": "On EV-TOU-5 with post-May-2026 TOU windows, weekday 10:00-14:00 and 00:00-06:00 are BOTH super-off-peak at the same price; the netting-correct dollar saving for fixing mistimed charging is scenario 'a' in behavior_rebuild.json ($1,220.85/yr), unchanged by this carbon rerun.",
  "caveats": [
   "Intensity measured on 28 real CAISO days; the other 337 days use month-hour means of covered days (day-to-day weather/hydro/outage variation only partially captured).",
   "Grid-AVERAGE intensity, not marginal; marginal overnight emissions (usually gas on the margin) would widen the overnight-vs-midday gap.",

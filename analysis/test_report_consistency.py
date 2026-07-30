@@ -21,6 +21,37 @@ HTML = (ROOT / "index.html").read_text()
 RD = json.loads((ROOT / "data" / "report_data.json").read_text())
 DISPATCH = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
 
+# ---------------------------------------------------------------------------
+# FORK NOTE: the two lists below pin RETIRED figures from THIS dataset's
+# revision history -- values that once appeared in index.html, were superseded
+# when an artifact was corrected, and must never resurface in a re-base. They
+# mean nothing for any other house and would false-positive on a fork's
+# legitimate numbers: when reproducing this analysis for your own data, delete
+# the list ENTRIES (keep the empty lists -- the presence checks that pair with
+# them still tie your report to your artifacts).
+# ---------------------------------------------------------------------------
+
+# Figures retired by artifact corrections; checked absent in
+# case_headline_figures_present_and_stale_ones_absent alongside the presence
+# of each figure's current artifact-derived form.
+RETIRED_FIGURES = [
+    "560 charging sessions",   # pre-correction EV session count
+    "$2,325",                  # pre-correction PW3 price-aware annual save
+    "$3,438",                  # pre-correction MID package savings
+    "$4,884",                  # pre-correction baseline bill at current rates
+    "9.4-yr median",           # pre-correction Monte Carlo payback (now 6.0)
+    "median 9.4 yr",           # same retired figure, its other prose form
+]
+
+# The retired holiday-convention explanation; checked absent in
+# case_no_retired_holiday_discrepancy_note. Both pipelines now share the
+# canonical day-type rule, so any surviving copy of this note is false.
+RETIRED_HOLIDAY_PHRASES = [
+    "8,467",
+    "treats seven weekday holidays as weekends",
+    "holiday convention",
+]
+
 
 def _array(name):
     """The numeric array assigned to `name` in the report's const D block."""
@@ -40,7 +71,12 @@ def case_periods_chart_matches_its_artifact():
     assert pc["order"] == ["sop", "off", "on"], (
         "periods_chart order changed; the positional indexing below and the "
         "chart labels both assume sop/off/on")
-    kwh = _array("data")            # first `data:` array is the periods chart kWh
+    # TEMPLATE-ORDER DEPENDENCY: `data` matches the FIRST `data:` array in
+    # index.html, which is the periods chart's kWh series only because that
+    # chart is the first Chart.js config in report-template.html. Adding a
+    # chart above it would silently retarget this match; keep the periods
+    # chart first, or anchor this lookup to its config, if the template changes.
+    kwh = _array("data")
     _close(kwh, pc["import_kwh"], 1, "periods chart kWh")
     m = re.search(r"Annual import cost \$',data:(\[[\d,.\s]*\])", HTML)
     assert m, "periods chart cost series not found"
@@ -83,17 +119,19 @@ def case_headline_figures_present_and_stale_ones_absent():
     new-present AND old-absent catches every drift this branch actually had."""
     BR = json.loads((ROOT / "data" / "behavior_rebuild.json").read_text())
     PK = json.loads((ROOT / "data" / "package_results.json").read_text())
-    checks = [
-        (f"{BR['detection']['sessions']} charging sessions", "560 charging sessions"),
-        (f"${BR['scenarios']['a']['saved']:,.0f}/yr", None),
-        (f"${DISPATCH['pw3']['greedy']['save']:,}", "$2,325"),
-        (f"${PK['packages']['MID']['savings_yr']:,}", "$3,438"),
-        (f"${DISPATCH['baseline_bill_current_rates']:,}", "$4,884"),
+    DP = json.loads((ROOT / "data" / "deep_results.json").read_text())
+    current = [
+        f"{BR['detection']['sessions']} charging sessions",
+        f"${BR['scenarios']['a']['saved']:,.0f}/yr",
+        f"${DISPATCH['pw3']['greedy']['save']:,}",
+        f"${PK['packages']['MID']['savings_yr']:,}",
+        f"${DISPATCH['baseline_bill_current_rates']:,}",
+        f"median payback {DP['monte_carlo']['payback_median']:.1f} yr",
     ]
-    for new_form, old_form in checks:
+    for new_form in current:
         assert new_form in HTML, f"current figure missing from the report: {new_form!r}"
-        if old_form:
-            assert old_form not in HTML, f"stale figure survives in the report: {old_form!r}"
+    for old_form in RETIRED_FIGURES:
+        assert old_form not in HTML, f"stale figure survives in the report: {old_form!r}"
     return "headline figures per artifact class are present and their stale forms absent"
 
 
@@ -119,8 +157,7 @@ def case_no_retired_holiday_discrepancy_note():
     Both pipelines now use the canonical rule, so any surviving copy of that
     explanation is false.
     """
-    for phrase in ("8,467", "treats seven weekday holidays as weekends",
-                   "holiday convention"):
+    for phrase in RETIRED_HOLIDAY_PHRASES:
         assert phrase not in HTML, f"retired explanation still present: {phrase!r}"
     return "the retired holiday-convention explanation is gone from the report"
 
