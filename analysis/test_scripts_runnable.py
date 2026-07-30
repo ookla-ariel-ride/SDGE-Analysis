@@ -66,6 +66,7 @@ MANIFEST = {
     "carbon_fullyear.py": "generator",
     "soiling_analysis.py": "generator",
     "parse_bills.py": "generator",
+    "bill_decomposition.py": "generator",
     "tou_audit.py": "generator",
     "carbon_timing.py": "retired",
 }
@@ -96,6 +97,7 @@ OWNS = {
     "tou_audit.py":                 [("data", "tou_audit.csv"),
                                      ("data", "tou_audit_summary.json")],
     "lifetime_payback.py":          [("data", "lifetime_payback.json")],
+    "bill_decomposition.py":        [("data", "bill_decomposition.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -252,6 +254,9 @@ CI_RUNNABLE = {
 # only where that archive exists, and the reason is recorded rather than implied.
 NEEDS_PRIVATE_ARCHIVE = {
     "parse_bills.py": "the bill PDF corpus (private/1-raw-data/*-bills/)",
+    "bill_decomposition.py": ("the bill PDF corpus (the charged CEA per-TOU rates and "
+                              "the billing-mode sentences are printed nowhere else) and "
+                              "the billing-history export"),
     "extended_findings.py": "the SAM 8760 exports (private/1-raw-data/enphase_sam8760_*.csv)",
     "lifetime_payback.py": "the SAM full-year export (samB.csv)",
     "soiling_analysis.py": "the monitoring production history",

@@ -1247,3 +1247,82 @@ days and $3,282.22, matching §10; delivery TOU kWh ties to `net_kwh` in all 26 
 **Privacy.** The PDFs carry name, service address, account and meter numbers, and the CCA
 service-delivery-point id; none are extracted. How the household pays its bills (arrangements, schedules,
 balances owed) is private-tier and never emitted.
+
+## 10. Year-over-year bill decomposition (`analysis/bill_decomposition.py`)
+
+Added for issue #3. Separates the change between two comparable early-summer billing
+periods — `5/25/24 - 6/25/24` (32 days, bundled, net 346 kWh, $48.25) and
+`5/29/26 - 6/26/26` (29 days, CCA, net 987 kWh, $398.56) — into price, quantity, TOU mix
+and provider. They are the first and last statements in the corpus, both straddle the 6/1
+winter→summer boundary, and one provider break sits between them.
+
+**The cost series is the accrual, not the payment column.** SDG&E's billing-history export
+(`private/1-raw-data/electric_billing_history_2024-2026.csv`) reports `current_charges` of
+$0.00 for the 2024 statement and for every statement through 2025-04-02. Under NEM 2.0 the
+energy component accrues to the annual true-up rather than being billed monthly, so that
+column is a payment series. `billing_mode_scan()` reads every statement before any arithmetic
+runs and records, per statement, the deferral sentence, the `Payment Required This Month`
+flag from the Net Energy Metering Summary page, the true-up date, and whether a separate
+`Net Metering Account Summary` block is printed. Findings: the mode never changed — payment
+is required on exactly two statements, 2024-12-30 and 2026-01-06, each closing a true-up
+year — and both compared periods are accruing statements. What changed, on **2025-05-02**, is
+presentation: the separate NEM ledger block disappears and the same accrued charge starts
+appearing on the Account Summary line the export follows. `export_reconciliation()` explains
+every export row as `period accrual − the part deferred into the NEM ledger + the
+account-level California Climate Credit`; all 25 statements reconcile to $0.00.
+
+**Sources, and the CCA authority boundary.** Delivery and the 2024 generation table come from
+`data/bill_tou_detail.csv`, cross-checked line by line against the PDF. The **charged** CCA
+generation is read from the statement's Community Choice Aggregation page
+(`Generation On-Peak Summer 205 kWh X $0.51684`), which is the only place it appears anywhere
+in the repository — `parse_bills.py` does not extract it, which is why
+`rates_history.cca_generation()` fails closed. The bundled-generation table SDG&E also prints
+on a CCA statement is never priced as supply: the statement cancels it to the cent on the next
+line (`Electricity Generation Credit -180.46` against $180.46 of table), the script asserts
+that cancellation, and the table is used only as the same-date bundled counterfactual in the
+provider term.
+
+**Method.** Per cell `c = (season, TOU period)`, with `q` the net kWh and `p` the *effective
+billed* rate (charge ÷ net kWh — an export cell prints `$.00000` and is charged $0, because
+the export settles at true-up):
+
+| term | formula |
+|---|---|
+| Laspeyres price / quantity | `Σ q₀(p₁−p₀)` / `Σ p₀(q₁−q₀)` |
+| Paasche price / quantity | `Σ q₁(p₁−p₀)` / `Σ p₁(q₁−q₀)` |
+| interaction | `Σ (p₁−p₀)(q₁−q₀)` |
+| scale / TOU mix (of the Laspeyres quantity term) | `(Q₁−Q₀)Σp₀w₀` / `Q₁Σp₀(w₁−w₀)` |
+| supply vintage / provider | `q(s₁−g₀)` / `q(g₁−s₁)`, `s₁` = the same-date bundled comparison |
+
+`Q` is NET kWh, so a cell share can be negative and the scale/mix split is an exact identity
+on those shares rather than a share of consumption; the artifact says so. Everything outside
+the TOU energy lines is carried as its own named term (fixed charge, non-bypassable +
+wildfire, CCA unbundling riders, applied NEM generation credit, taxes, CEA product adders).
+A statement line the script does not name breaks the reconciliation against
+`bill_periods_electric.current_charges` and the run fails — nothing is absorbed silently.
+
+**Results.** Observed +$350.31, components +$350.31, residual **$0.00**. TOU energy +$178.93
+= price +$109.94 (current quantities) + quantity +$68.99 (2024 prices; scale +$237.86, TOU mix
+−$168.86); the opposite weighting reads −$257.22 / +$436.15 and the $367.15 spread is the
+interaction term, driven by the three cells that flip between net export and net import. The
+largest single line is the **applied NEM generation credit, +$123.33**: the 2024 statement applied
+$128.39 of credit against a $128.39 energy charge, cancelling it exactly and leaving the bill
+equal to its fixed and non-bypassable block; the 2026 statement applied $5.06. Provider read whole: CEA plus the CCA-only riders $197.97 against
+$180.46 of bundled SDG&E supply, **+$17.51 (9.7%)**. On the three cells billed as imports in
+both periods the fixed-weight price index is −14.6% (Laspeyres) / +7.8% (Paasche) / −4.0%
+(Fisher) over 2.01 years, with super-off-peak delivery −35.1%, on-peak delivery +14.2% and
+SDG&E bundled generation +20.6% to +21.1%. A blended $/kWh over the same cells would read
++97.8%, almost all of it mix.
+
+**Output** `data/bill_decomposition.json`, written atomically; run twice → byte-identical.
+Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs the PDFs), so
+the §9 byte-for-byte gate covers it locally.
+
+**Tests** `analysis/test_bill_decomposition.py`, 17 cases. Sixteen run in a clean checkout
+against the committed artifact and the committed bill artifacts; only the regeneration case
+needs the private archive, and it skips with the reason named. Three synthetic fixtures pin
+what the identities are supposed to do (price-only and quantity-only movement collapse the two
+readings; the interaction term equals the spread when both move), one feeds a cell whose
+dollars contradict its rate and asserts the identity check refuses it, and one removes a cell's
+same-date comparison rate and asserts the provider/vintage split is refused rather than
+estimated.

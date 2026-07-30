@@ -1,0 +1,1046 @@
+{
+ "generated_by": "analysis/bill_decomposition.py",
+ "question": "what turned a $48.25 early-summer electric bill into $398.56 two years later",
+ "periods": {
+  "base": {
+   "statement_date": "2024-06-27",
+   "period": "5/25/24 - 6/25/24",
+   "days": 32,
+   "generation_provider": "bundled",
+   "net_kwh": 346.0,
+   "gross_kwh": 1438.0,
+   "current_charges": 48.25
+  },
+  "current": {
+   "statement_date": "2026-07-02",
+   "period": "5/29/26 - 6/26/26",
+   "days": 29,
+   "generation_provider": "CCA",
+   "net_kwh": 987.0,
+   "gross_kwh": 1934.0,
+   "current_charges": 398.56
+  },
+  "why_these_two": "first and last statements in the corpus; both early-summer periods straddling the 6/1 winter->summer tariff boundary; 24 months and one provider break apart",
+  "days_differ": {
+   "base_usd_per_day": 1.51,
+   "current_usd_per_day": 13.74
+  }
+ },
+ "billing_mode": {
+  "finding": {
+   "question": "does a 2024 statement bill the energy component monthly, or accrue it to the annual NEM true-up?",
+   "answer": "accrues to the annual true-up",
+   "answer_holds_for_both_compared_periods": true,
+   "established_by": [
+    {
+     "statement_date": "2024-06-27",
+     "role": "the base period of this comparison",
+     "quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+     "net_energy_metering_summary": "Payment Required This Month: No"
+    },
+    {
+     "statement_date": "2026-07-02",
+     "role": "the current period of this comparison",
+     "quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+     "net_energy_metering_summary": "Payment Required This Month: No"
+    },
+    {
+     "statement_date": "2025-04-02",
+     "role": "last statement printing a separate Net Metering Account Summary",
+     "quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+     "net_energy_metering_summary": "Payment Required This Month: No"
+    },
+    {
+     "statement_date": "2025-05-02",
+     "role": "first statement without it \u2014 the presentation change",
+     "quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+     "net_energy_metering_summary": "Payment Required This Month: No"
+    }
+   ],
+   "annual_settlement_statements": [
+    {
+     "statement_date": "2024-12-30",
+     "true_up_period_ends": [
+      "11/26/24 - 12/26/24"
+     ],
+     "net_energy_metering_summary": "Payment Required This Month: Yes"
+    },
+    {
+     "statement_date": "2026-01-06",
+     "true_up_period_ends": [
+      "11/26/25 - 12/26/25"
+     ],
+     "net_energy_metering_summary": "Payment Required This Month: Yes"
+    }
+   ],
+   "statements_accruing": 23,
+   "statements_payable": 2,
+   "what_changed_and_when": {
+    "the_billing_mode_did_not_change": "every statement in the corpus except the two annual settlement statements prints Payment Required This Month: No, and both compared periods are accruing statements. The energy component has accrued to the annual true-up throughout.",
+    "the_presentation_changed_on": "2025-05-02",
+    "presentation_change": "through 2025-04-02 the accrued charge sat in a separate 'Net Metering Account Summary' block and the Account Summary's Current Charges line read $0.00; from 2025-05-02 that block is gone and the same accrued charge appears on the Account Summary line, still not payable. The billing-history export follows the Account Summary line, which is why its current_charges column steps off $0.00 on that date without anything about the billing having changed."
+   }
+  },
+  "per_statement": [
+   {
+    "statement_date": "2024-06-27",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2024",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "total_charges_this_month_usd": 48.25,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 48.25,
+    "periods_on_statement": [
+     "5/25/24 - 6/25/24"
+    ]
+   },
+   {
+    "statement_date": "2024-07-29",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2024",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "total_charges_this_month_usd": 51.69,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 51.69,
+    "periods_on_statement": [
+     "6/26/24 - 7/25/24"
+    ]
+   },
+   {
+    "statement_date": "2024-08-28",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2024",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "total_charges_this_month_usd": 56.67,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 56.67,
+    "periods_on_statement": [
+     "7/26/24 - 8/26/24"
+    ]
+   },
+   {
+    "statement_date": "2024-09-27",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2024",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "total_charges_this_month_usd": 113.24,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 113.24,
+    "periods_on_statement": [
+     "8/27/24 - 9/25/24"
+    ]
+   },
+   {
+    "statement_date": "2024-10-29",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2024",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "total_charges_this_month_usd": null,
+    "california_climate_credit_usd": -78.22,
+    "period_accrual_usd": 61.97,
+    "periods_on_statement": [
+     "9/26/24 - 10/25/24"
+    ]
+   },
+   {
+    "statement_date": "2024-11-27",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2024",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "total_charges_this_month_usd": 69.27,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 69.27,
+    "periods_on_statement": [
+     "10/26/24 - 11/25/24"
+    ]
+   },
+   {
+    "statement_date": "2024-12-30",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "Yes",
+    "true_up_date": null,
+    "deferral_sentence": "Payment Required This Month: Yes",
+    "total_charges_this_month_usd": 218.69,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 218.69,
+    "periods_on_statement": [
+     "11/26/24 - 12/26/24"
+    ]
+   },
+   {
+    "statement_date": "2025-01-31",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "total_charges_this_month_usd": 173.21,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 173.21,
+    "periods_on_statement": [
+     "12/27/24 - 1/27/25"
+    ]
+   },
+   {
+    "statement_date": "2025-03-04",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "total_charges_this_month_usd": 108.9,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 108.9,
+    "periods_on_statement": [
+     "1/28/25 - 2/26/25"
+    ]
+   },
+   {
+    "statement_date": "2025-04-02",
+    "nem_ledger_block_printed": true,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "total_charges_this_month_usd": 116.87,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 116.87,
+    "periods_on_statement": [
+     "2/27/25 - 3/27/25"
+    ]
+   },
+   {
+    "statement_date": "2025-05-02",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 32.79,
+    "california_climate_credit_usd": -81.38,
+    "period_accrual_usd": 114.17,
+    "periods_on_statement": [
+     "3/28/25 - 4/28/25"
+    ]
+   },
+   {
+    "statement_date": "2025-06-03",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 62.01,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 62.01,
+    "periods_on_statement": [
+     "4/29/25 - 5/28/25"
+    ]
+   },
+   {
+    "statement_date": "2025-07-02",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 200.92,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 200.92,
+    "periods_on_statement": [
+     "5/29/25 - 6/26/25"
+    ]
+   },
+   {
+    "statement_date": "2025-08-01",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 168.61,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 168.61,
+    "periods_on_statement": [
+     "6/27/25 - 7/28/25"
+    ]
+   },
+   {
+    "statement_date": "2025-09-02",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 340.65,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 340.65,
+    "periods_on_statement": [
+     "7/29/25 - 8/26/25"
+    ]
+   },
+   {
+    "statement_date": "2025-10-01",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 501.09,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 501.09,
+    "periods_on_statement": [
+     "8/27/25 - 9/25/25"
+    ]
+   },
+   {
+    "statement_date": "2025-10-31",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 258.34,
+    "california_climate_credit_usd": -81.38,
+    "period_accrual_usd": 339.72,
+    "periods_on_statement": [
+     "10/1/25 - 10/27/25",
+     "9/26/25 - 9/30/25"
+    ]
+   },
+   {
+    "statement_date": "2025-12-03",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 26, 2025",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "total_charges_this_month_usd": 168.24,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 168.24,
+    "periods_on_statement": [
+     "10/28/25 - 11/25/25"
+    ]
+   },
+   {
+    "statement_date": "2026-01-06",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "Yes",
+    "true_up_date": null,
+    "deferral_sentence": "Payment Required This Month: Yes",
+    "total_charges_this_month_usd": 130.75,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 130.75,
+    "periods_on_statement": [
+     "11/26/25 - 12/26/25"
+    ]
+   },
+   {
+    "statement_date": "2026-02-02",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "total_charges_this_month_usd": 291.6,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 291.6,
+    "periods_on_statement": [
+     "12/27/25 - 1/27/26"
+    ]
+   },
+   {
+    "statement_date": "2026-03-04",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "total_charges_this_month_usd": 132.14,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 132.14,
+    "periods_on_statement": [
+     "1/28/26 - 2/26/26"
+    ]
+   },
+   {
+    "statement_date": "2026-04-02",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "total_charges_this_month_usd": 275.01,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 275.01,
+    "periods_on_statement": [
+     "2/27/26 - 3/27/26"
+    ]
+   },
+   {
+    "statement_date": "2026-05-04",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "total_charges_this_month_usd": 266.35,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 266.35,
+    "periods_on_statement": [
+     "3/28/26 - 4/28/26"
+    ]
+   },
+   {
+    "statement_date": "2026-06-03",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "total_charges_this_month_usd": 269.5,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 269.5,
+    "periods_on_statement": [
+     "4/29/26 - 5/28/26"
+    ]
+   },
+   {
+    "statement_date": "2026-07-02",
+    "nem_ledger_block_printed": false,
+    "payment_required_this_month": "No",
+    "true_up_date": "Dec 28, 2026",
+    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "total_charges_this_month_usd": 398.56,
+    "california_climate_credit_usd": 0.0,
+    "period_accrual_usd": 398.56,
+    "periods_on_statement": [
+     "5/29/26 - 6/26/26"
+    ]
+   }
+  ],
+  "billing_history_export_reconciliation": {
+   "identity": "export current_charges = period accrual - the part deferred into the Net Metering Account Summary + the account-level California Climate Credit",
+   "max_abs_residual_usd": 0.0,
+   "rows": [
+    {
+     "statement_date": "2024-06-27",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 48.25,
+     "deferred_to_nem_ledger_usd": 48.25,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2024-07-29",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 51.69,
+     "deferred_to_nem_ledger_usd": 51.69,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2024-08-28",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 56.67,
+     "deferred_to_nem_ledger_usd": 56.67,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2024-09-27",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 113.24,
+     "deferred_to_nem_ledger_usd": 113.24,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2024-10-29",
+     "export_current_charges_usd": -78.22,
+     "period_accrual_usd": 61.97,
+     "deferred_to_nem_ledger_usd": 61.97,
+     "california_climate_credit_usd": -78.22,
+     "explained_usd": -78.22,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2024-11-27",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 69.27,
+     "deferred_to_nem_ledger_usd": 69.27,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2024-12-30",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 218.69,
+     "deferred_to_nem_ledger_usd": 218.69,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-01-31",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 173.21,
+     "deferred_to_nem_ledger_usd": 173.21,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-03-04",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 108.9,
+     "deferred_to_nem_ledger_usd": 108.9,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-04-02",
+     "export_current_charges_usd": 0.0,
+     "period_accrual_usd": 116.87,
+     "deferred_to_nem_ledger_usd": 116.87,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 0.0,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-05-02",
+     "export_current_charges_usd": 32.79,
+     "period_accrual_usd": 114.17,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": -81.38,
+     "explained_usd": 32.79,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-06-03",
+     "export_current_charges_usd": 62.01,
+     "period_accrual_usd": 62.01,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 62.01,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-07-02",
+     "export_current_charges_usd": 200.92,
+     "period_accrual_usd": 200.92,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 200.92,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-08-01",
+     "export_current_charges_usd": 168.61,
+     "period_accrual_usd": 168.61,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 168.61,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-09-02",
+     "export_current_charges_usd": 340.65,
+     "period_accrual_usd": 340.65,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 340.65,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-10-01",
+     "export_current_charges_usd": 501.09,
+     "period_accrual_usd": 501.09,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 501.09,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-10-31",
+     "export_current_charges_usd": 258.34,
+     "period_accrual_usd": 339.72,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": -81.38,
+     "explained_usd": 258.34,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2025-12-03",
+     "export_current_charges_usd": 168.24,
+     "period_accrual_usd": 168.24,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 168.24,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-01-06",
+     "export_current_charges_usd": 130.75,
+     "period_accrual_usd": 130.75,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 130.75,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-02-02",
+     "export_current_charges_usd": 291.6,
+     "period_accrual_usd": 291.6,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 291.6,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-03-04",
+     "export_current_charges_usd": 132.14,
+     "period_accrual_usd": 132.14,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 132.14,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-04-02",
+     "export_current_charges_usd": 275.01,
+     "period_accrual_usd": 275.01,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 275.01,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-05-04",
+     "export_current_charges_usd": 266.35,
+     "period_accrual_usd": 266.35,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 266.35,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-06-03",
+     "export_current_charges_usd": 269.5,
+     "period_accrual_usd": 269.5,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 269.5,
+     "residual_usd": 0.0
+    },
+    {
+     "statement_date": "2026-07-02",
+     "export_current_charges_usd": 398.56,
+     "period_accrual_usd": 398.56,
+     "deferred_to_nem_ledger_usd": 0.0,
+     "california_climate_credit_usd": 0.0,
+     "explained_usd": 398.56,
+     "residual_usd": 0.0
+    }
+   ]
+  }
+ },
+ "period_ledgers": {
+  "base": {
+   "total_usd": 48.25,
+   "terms": {
+    "energy_delivery": 49.42,
+    "energy_supply": 78.97,
+    "fixed_charge": 16.0,
+    "non_bypassable": 32.25,
+    "unbundling_riders": 0.0,
+    "applied_nem_generation_credit": -128.39,
+    "taxes_and_fees": 0.0,
+    "cca_product_adders": 0.0,
+    "printed_bundled_comparison_net_of_its_credit": 0.0
+   }
+  },
+  "current": {
+   "total_usd": 398.56,
+   "terms": {
+    "energy_delivery": 138.98,
+    "energy_supply": 168.34,
+    "fixed_charge": 23.01,
+    "non_bypassable": 40.6,
+    "unbundling_riders": 28.34,
+    "applied_nem_generation_credit": -5.06,
+    "taxes_and_fees": 3.06,
+    "cca_product_adders": 1.29,
+    "printed_bundled_comparison_net_of_its_credit": 0.0
+   }
+  }
+ },
+ "decomposition": {
+  "per_cell": [
+   {
+    "cell": "winter.on_peak",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "base_kwh": -4.0,
+    "current_kwh": 31.0,
+    "base_usd": 0.0,
+    "current_usd": 17.34,
+    "change_usd": 17.34,
+    "base_rate_effective": 0.0,
+    "current_rate_effective": 0.55935,
+    "base_delivery_rate": 0.0,
+    "current_delivery_rate": 0.31161,
+    "base_supply_rate": 0.0,
+    "current_supply_rate": 0.24774,
+    "sdge_bundled_comparison_rate_current_date": 0.2,
+    "both_periods_net_import": false,
+    "laspeyres_price_usd": -2.24,
+    "laspeyres_quantity_usd": 0.0,
+    "paasche_price_usd": 17.34,
+    "paasche_quantity_usd": 19.58,
+    "interaction_usd": 19.58,
+    "delivery_vintage_usd_laspeyres": -1.25,
+    "supply_vintage_usd_laspeyres": -0.8,
+    "provider_usd_laspeyres": -0.19,
+    "delivery_vintage_usd_paasche": 9.66,
+    "supply_vintage_usd_paasche": 6.2,
+    "provider_usd_paasche": 1.48
+   },
+   {
+    "cell": "winter.off_peak",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "base_kwh": -138.0,
+    "current_kwh": -14.0,
+    "base_usd": 0.0,
+    "current_usd": -2.25,
+    "change_usd": -2.25,
+    "base_rate_effective": 0.0,
+    "current_rate_effective": 0.16071,
+    "base_delivery_rate": 0.0,
+    "current_delivery_rate": 0.0,
+    "base_supply_rate": 0.0,
+    "current_supply_rate": 0.16071,
+    "sdge_bundled_comparison_rate_current_date": 0.0,
+    "both_periods_net_import": false,
+    "laspeyres_price_usd": -22.18,
+    "laspeyres_quantity_usd": 0.0,
+    "paasche_price_usd": -2.25,
+    "paasche_quantity_usd": 19.93,
+    "interaction_usd": 19.93,
+    "delivery_vintage_usd_laspeyres": 0.0,
+    "supply_vintage_usd_laspeyres": 0.0,
+    "provider_usd_laspeyres": -22.18,
+    "delivery_vintage_usd_paasche": 0.0,
+    "supply_vintage_usd_paasche": 0.0,
+    "provider_usd_paasche": -2.25
+   },
+   {
+    "cell": "winter.super_off_peak",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "base_kwh": 204.0,
+    "current_kwh": 28.0,
+    "base_usd": 20.7,
+    "current_usd": 2.19,
+    "change_usd": -18.51,
+    "base_rate_effective": 0.10147,
+    "current_rate_effective": 0.07821,
+    "base_delivery_rate": 0.04015,
+    "current_delivery_rate": 0.02607,
+    "base_supply_rate": 0.06132,
+    "current_supply_rate": 0.05214,
+    "sdge_bundled_comparison_rate_current_date": 0.07393,
+    "both_periods_net_import": true,
+    "laspeyres_price_usd": -4.74,
+    "laspeyres_quantity_usd": -17.86,
+    "paasche_price_usd": -0.65,
+    "paasche_quantity_usd": -13.77,
+    "interaction_usd": 4.09,
+    "delivery_vintage_usd_laspeyres": -2.87,
+    "supply_vintage_usd_laspeyres": 2.57,
+    "provider_usd_laspeyres": -4.44,
+    "delivery_vintage_usd_paasche": -0.39,
+    "supply_vintage_usd_paasche": 0.35,
+    "provider_usd_paasche": -0.61
+   },
+   {
+    "cell": "summer.on_peak",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "base_kwh": 50.0,
+    "current_kwh": 205.0,
+    "base_usd": 32.63,
+    "current_usd": 167.94,
+    "change_usd": 135.31,
+    "base_rate_effective": 0.6526,
+    "current_rate_effective": 0.81922,
+    "base_delivery_rate": 0.2644,
+    "current_delivery_rate": 0.30205,
+    "base_supply_rate": 0.3882,
+    "current_supply_rate": 0.51717,
+    "sdge_bundled_comparison_rate_current_date": 0.4702,
+    "both_periods_net_import": true,
+    "laspeyres_price_usd": 8.33,
+    "laspeyres_quantity_usd": 101.15,
+    "paasche_price_usd": 34.16,
+    "paasche_quantity_usd": 126.98,
+    "interaction_usd": 25.83,
+    "delivery_vintage_usd_laspeyres": 1.88,
+    "supply_vintage_usd_laspeyres": 4.1,
+    "provider_usd_laspeyres": 2.35,
+    "delivery_vintage_usd_paasche": 7.72,
+    "supply_vintage_usd_paasche": 16.81,
+    "provider_usd_paasche": 9.63
+   },
+   {
+    "cell": "summer.off_peak",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "base_kwh": -464.0,
+    "current_kwh": 172.0,
+    "base_usd": 0.0,
+    "current_usd": 79.37,
+    "change_usd": 79.37,
+    "base_rate_effective": 0.0,
+    "current_rate_effective": 0.46145,
+    "base_delivery_rate": 0.0,
+    "current_delivery_rate": 0.30203,
+    "base_supply_rate": 0.0,
+    "current_supply_rate": 0.15942,
+    "sdge_bundled_comparison_rate_current_date": 0.17308,
+    "both_periods_net_import": false,
+    "laspeyres_price_usd": -214.11,
+    "laspeyres_quantity_usd": 0.0,
+    "paasche_price_usd": 79.37,
+    "paasche_quantity_usd": 293.48,
+    "interaction_usd": 293.48,
+    "delivery_vintage_usd_laspeyres": -140.14,
+    "supply_vintage_usd_laspeyres": -80.31,
+    "provider_usd_laspeyres": 6.34,
+    "delivery_vintage_usd_paasche": 51.95,
+    "supply_vintage_usd_paasche": 29.77,
+    "provider_usd_paasche": -2.35
+   },
+   {
+    "cell": "summer.super_off_peak",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "base_kwh": 698.0,
+    "current_kwh": 565.0,
+    "base_usd": 75.06,
+    "current_usd": 42.73,
+    "change_usd": -32.33,
+    "base_rate_effective": 0.10754,
+    "current_rate_effective": 0.07563,
+    "base_delivery_rate": 0.04013,
+    "current_delivery_rate": 0.02605,
+    "base_supply_rate": 0.06741,
+    "current_supply_rate": 0.04958,
+    "sdge_bundled_comparison_rate_current_date": 0.08147,
+    "both_periods_net_import": true,
+    "laspeyres_price_usd": -22.27,
+    "laspeyres_quantity_usd": -14.3,
+    "paasche_price_usd": -18.03,
+    "paasche_quantity_usd": -10.06,
+    "interaction_usd": 4.24,
+    "delivery_vintage_usd_laspeyres": -9.82,
+    "supply_vintage_usd_laspeyres": 9.82,
+    "provider_usd_laspeyres": -22.26,
+    "delivery_vintage_usd_paasche": -7.95,
+    "supply_vintage_usd_paasche": 7.95,
+    "provider_usd_paasche": -18.02
+   }
+  ],
+  "aggregate": {
+   "base_energy_usd": 128.39,
+   "current_energy_usd": 307.32,
+   "energy_change_usd": 178.93,
+   "laspeyres": {
+    "price_usd": -257.22,
+    "quantity_usd": 68.99
+   },
+   "paasche": {
+    "price_usd": 109.94,
+    "quantity_usd": 436.15
+   },
+   "interaction_usd": 367.15,
+   "quantity_split_laspeyres_basis": {
+    "scale_usd": 237.86,
+    "tou_mix_usd": -168.86,
+    "base_net_kwh": 346.0,
+    "current_net_kwh": 987.0,
+    "note": "shares are of NET kWh, which NEM lets go negative in a cell, so a share is not bounded by [0,1]; this is an exact accounting identity on those shares, not a share of consumption"
+   },
+   "price_split_laspeyres_basis": {
+    "delivery_vintage_usd": -152.2,
+    "supply_vintage_usd": -64.62,
+    "provider_usd": -40.39
+   },
+   "price_split_paasche_basis": {
+    "delivery_vintage_usd": 60.98,
+    "supply_vintage_usd": 61.08,
+    "provider_usd": -12.12
+   },
+   "reading": {
+    "basis": "price at current quantities (Paasche) + quantity at base prices (Laspeyres) \u2014 an exact identity, no residual",
+    "price_usd": 109.94,
+    "quantity_usd": 68.99,
+    "of_which_scale_usd": 237.86,
+    "of_which_tou_mix_usd": -168.86,
+    "interaction_usd": 367.15,
+    "interaction_note": "the spread between the two readings. It is concentrated in the three cells that flip between net export and net import: on an export cell SDG&E prints $.00000 and charges $0, so the effective price is 0, and the whole of that cell's change is a joint movement of price and quantity that neither term owns"
+   },
+   "provider_effect_read_whole": {
+    "basis": "current quantities only: the riders are charged on this period's kWh, so there is no base-quantity counterfactual for them",
+    "cea_charged_supply_usd": 168.34,
+    "cea_product_adders_usd": 1.29,
+    "cca_unbundling_riders_usd": 28.34,
+    "total_paid_for_supply_usd": 197.97,
+    "sdge_bundled_same_date_counterfactual_usd": 180.46,
+    "provider_effect_usd": 17.51,
+    "provider_effect_pct": 9.7,
+    "why_the_riders_belong_on_this_side": "SDG&E's bundled generation charge carries PCIA, which the base statement says on its own face: $1.97 of your Electricity Generation Charge is your bundled PCIA charge",
+    "per_cell_term_paasche_usd": -12.12
+   }
+  },
+  "identities": {
+   "laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd": 178.93,
+   "laspeyres_price_plus_paasche_quantity_usd": 178.93,
+   "paasche_price_plus_laspeyres_quantity_usd": 178.93,
+   "scale_plus_mix_usd": 68.99,
+   "laspeyres_quantity_usd": 68.99,
+   "price_split_sum_usd": -257.22,
+   "laspeyres_price_usd": -257.22
+  }
+ },
+ "non_energy_bridge": [
+  {
+   "term": "fixed_charge",
+   "label": "fixed charge (Monthly Service Fee -> Base Services Charge)",
+   "base_usd": 16.0,
+   "current_usd": 23.01,
+   "change_usd": 7.01
+  },
+  {
+   "term": "non_bypassable",
+   "label": "non-bypassable charges + wildfire fund charge",
+   "base_usd": 32.25,
+   "current_usd": 40.6,
+   "change_usd": 8.35
+  },
+  {
+   "term": "unbundling_riders",
+   "label": "CCA unbundling riders (PCIA, ICA, EDP credit)",
+   "base_usd": 0.0,
+   "current_usd": 28.34,
+   "change_usd": 28.34
+  },
+  {
+   "term": "applied_nem_generation_credit",
+   "label": "applied NEM generation credit",
+   "base_usd": -128.39,
+   "current_usd": -5.06,
+   "change_usd": 123.33
+  },
+  {
+   "term": "taxes_and_fees",
+   "label": "taxes and fees",
+   "base_usd": 0.0,
+   "current_usd": 3.06,
+   "change_usd": 3.06
+  },
+  {
+   "term": "cca_product_adders",
+   "label": "CEA product adders (Clean Impact Plus, surcharge)",
+   "base_usd": 0.0,
+   "current_usd": 1.29,
+   "change_usd": 1.29
+  },
+  {
+   "term": "printed_bundled_comparison_net_of_its_credit",
+   "label": "printed bundled generation comparison, net of the credit that cancels it",
+   "base_usd": 0.0,
+   "current_usd": 0.0,
+   "change_usd": 0.0
+  }
+ ],
+ "like_for_like": {
+  "cells": [
+   {
+    "cell": "winter.super_off_peak",
+    "base_kwh": 204.0,
+    "current_kwh": 28.0,
+    "base_rate_effective": 0.10147,
+    "current_rate_effective": 0.07821,
+    "change_pct": -22.9,
+    "delivery_change_pct": -35.1,
+    "supply_vintage_change_pct": 20.6,
+    "provider_change_pct": -29.5
+   },
+   {
+    "cell": "summer.on_peak",
+    "base_kwh": 50.0,
+    "current_kwh": 205.0,
+    "base_rate_effective": 0.6526,
+    "current_rate_effective": 0.81922,
+    "change_pct": 25.5,
+    "delivery_change_pct": 14.2,
+    "supply_vintage_change_pct": 21.1,
+    "provider_change_pct": 10.0
+   },
+   {
+    "cell": "summer.super_off_peak",
+    "base_kwh": 698.0,
+    "current_kwh": 565.0,
+    "base_rate_effective": 0.10754,
+    "current_rate_effective": 0.07563,
+    "change_pct": -29.7,
+    "delivery_change_pct": -35.1,
+    "supply_vintage_change_pct": 20.9,
+    "provider_change_pct": -39.1
+   }
+  ],
+  "excluded_cells": [
+   "winter.on_peak",
+   "winter.off_peak",
+   "summer.off_peak"
+  ],
+  "exclusion_reason": "net-export in at least one period, where SDG&E prints $.00000 and charges $0 because the export settles at true-up \u2014 no tariff price is observable",
+  "base_kwh": 952.0,
+  "current_kwh": 798.0,
+  "price_index": {
+   "laspeyres_pct": -14.6,
+   "paasche_pct": 7.8,
+   "fisher_pct": -4.0,
+   "fisher_pct_per_year": -2.0,
+   "years_apart": 2.01,
+   "note": "the Laspeyres and Paasche readings straddle zero because the price structure ROTATED rather than shifted \u2014 on-peak up, super-off-peak down \u2014 and the quantity mix rotated the same way"
+  },
+  "price_effect_usd": {
+   "laspeyres": -18.69,
+   "paasche": 15.48
+  },
+  "price_effect_split_usd": {
+   "laspeyres": {
+    "delivery_vintage_usd": -10.81,
+    "supply_vintage_usd": 16.49,
+    "provider_usd": -24.35
+   },
+   "paasche": {
+    "delivery_vintage_usd": -0.62,
+    "supply_vintage_usd": 25.11,
+    "provider_usd": -9.0
+   }
+  }
+ },
+ "reconciliation": {
+  "observed_change_usd": 350.31,
+  "energy_change_usd": 178.93,
+  "non_energy_change_usd": 171.38,
+  "components_sum_usd": 350.31,
+  "residual_usd": 0.0,
+  "tolerance_usd": 1.0
+ },
+ "confidence": {
+  "label": "measured",
+  "basis": "every figure is a printed line on a committed statement or an exact identity over those lines; no rate is modelled, scaled or extrapolated",
+  "not_measured": "nothing here extends beyond the two compared periods \u2014 the corpus starts 5/25/24, so no bill-derived price change is available for any earlier year"
+ }
+}
