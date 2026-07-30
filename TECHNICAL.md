@@ -1309,6 +1309,30 @@ published as `netting_regime_usd`, attributed to neither a tariff vintage nor th
 The four terms sum exactly to the price effect on each weight basis, and
 `decomposition.aggregate.price_split_scope` names which cells are in which set and why.
 
+*The same restriction binds the whole-period provider figure.* SDG&E's printed bundled table
+prices a cell only where that cell was billed as a net import; on a current net-export cell it
+prints $0 because the export settled at the annual true-up, while CEA still books a credit
+there. Netting those two would put a settlement outcome inside a number the report calls a
+provider *price* effect — the identical defect, one level up — so
+`provider_effect_whole_period()` runs over the **current** net-import cells only, and the
+export cells' difference is published beside it as `unallocated_netting_settlement_usd`, named
+so it cannot be read as a price. The riders and the CEA product adders are period-level lines
+charged once on the period's own kWh rather than per TOU cell, so they cannot be restricted to
+a cell set and stay whole on the CEA side; `provider_effect_read_whole.scope` says so. A
+net-export cell carrying a *non-zero* printed comparison would be a genuine observed bundled
+export counterfactual, so the function raises rather than discarding it. Two further guards
+close the same hole elsewhere: an import-in-both cell whose base delivery rate, base supply
+rate or same-date comparison rate is $0 is refused outright (on an import cell a $0 is not a
+tariff), and `quantity_split_laspeyres_basis` names the cells whose base price is a settlement
+$0 together with the net kWh it therefore values at zero, so the low end of the quantity
+interval cannot be misread as a claim that the energy was worth nothing.
+
+*No per-year price figure is published.* The index compares two matched endpoints 2.01 years
+apart with no comparable pair between them, so a compound-equivalent per-year rate would be a
+transformation of two points rather than an observed annual change. `price_index` carries
+`is_total_change_not_a_rate` and `no_annual_rate_path` saying exactly that, and every
+percentage it publishes is a total change over the window.
+
 *Price and quantity are published as intervals, not points.* Paasche price ≡ Laspeyres price +
 interaction, so quoting the Paasche figure as "the" price effect hands the entire interaction
 to price while the note beside it says the interaction is not allocated. The artifact publishes
@@ -1331,8 +1355,11 @@ interval is the interaction term, driven by the three cells that flip between ne
 net import. Splitting the 2024-weight quantity term: scale +$237.86, TOU mix −$168.86. The
 largest single line is the **applied NEM generation credit, +$123.33**: the 2024 statement applied
 $128.39 of credit against a $128.39 energy charge, cancelling it exactly and leaving the bill
-equal to its fixed and non-bypassable block; the 2026 statement applied $5.06. Provider read whole: CEA plus the CCA-only riders $197.97 against
-$180.46 of bundled SDG&E supply, **+$17.51 (9.7%)**. The per-cell price split, on 2026 weights,
+equal to its fixed and non-bypassable block; the 2026 statement applied $5.06. Provider read
+whole, over the five cells billed as net imports in the current period: CEA plus the CCA-only
+riders $200.22 against $180.46 of bundled SDG&E supply, **+$19.76 (10.9%)**, with the
+excluded winter off-peak cell's **−$2.25** published beside it as
+`unallocated_netting_settlement_usd`. The per-cell price split, on 2026 weights,
 is −$0.63 delivery vintage / +$25.11 supply vintage / −$9.00 provider over the three
 like-for-like cells (−$10.81 / +$16.49 / −$24.36 on 2024 weights), with +$94.46 of netting
 regime over the other three (−$238.53 on 2024 weights). On the three cells billed as imports in
@@ -1345,7 +1372,7 @@ SDG&E bundled generation +20.6% to +21.1%. A blended $/kWh over the same cells w
 Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs the PDFs), so
 the §9 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_bill_decomposition.py`, 20 cases. Nineteen run in a clean checkout
+**Tests** `analysis/test_bill_decomposition.py`, 25 cases. Twenty-four run in a clean checkout
 against the committed artifact and the committed bill artifacts; only the regeneration case
 needs the private archive, and it skips with the reason named. Three synthetic fixtures pin
 what the identities are supposed to do (price-only and quantity-only movement collapse the two
@@ -1363,3 +1390,19 @@ spurious supply vintage; and `case_the_published_reading_allocates_none_of_the_i
 asserts the published intervals are exactly the two readings, that their width equals the
 interaction, that no bare `price_usd`/`quantity_usd` key exists, and that `index.html` carries
 both bounds and states no point attribution.
+
+Five more hold the same rule where it recurs.
+`case_a_current_export_cell_cannot_enter_the_whole_provider_comparison` builds a synthetic
+statement with one import cell and one export cell and asserts the export cell's −$2.00 lands
+in `unallocated_netting_settlement_usd` rather than moving the $16.00 provider effect to
+$14.00, that a cell with no counterfactual is refused, that a period with no current import
+cell is refused, and that an export cell carrying a *non-zero* printed comparison raises
+instead of being dropped;
+`case_the_published_provider_effect_is_restricted_to_current_imports` holds the committed
+artifact and `index.html` to the same scope and checks the restricted and excluded parts
+recompose to the unrestricted figure; `case_an_import_cell_priced_at_zero_is_refused_as_a_tariff`
+drives the zero-rate guard from both sides; `case_the_quantity_split_names_its_settlement_zero_base_prices`
+asserts the scale/mix disclosure names the right cells and kWh and still sums to the Laspeyres
+quantity term; and `case_no_per_year_price_figure_is_published` asserts no `*_per_year` key
+exists, that the two-endpoint limit is machine-readable, and that the report never restates the
+Fisher reading as an annual rate.

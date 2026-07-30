@@ -690,6 +690,8 @@
     "current_supply_rate": 0.24774,
     "sdge_bundled_comparison_rate_current_date": 0.2,
     "both_periods_net_import": false,
+    "base_net_import": false,
+    "current_net_import": true,
     "laspeyres_price_usd": -2.24,
     "laspeyres_quantity_usd": 0.0,
     "paasche_price_usd": 17.34,
@@ -722,6 +724,8 @@
     "current_supply_rate": 0.16071,
     "sdge_bundled_comparison_rate_current_date": 0.0,
     "both_periods_net_import": false,
+    "base_net_import": false,
+    "current_net_import": false,
     "laspeyres_price_usd": -22.18,
     "laspeyres_quantity_usd": 0.0,
     "paasche_price_usd": -2.25,
@@ -754,6 +758,8 @@
     "current_supply_rate": 0.05214,
     "sdge_bundled_comparison_rate_current_date": 0.07393,
     "both_periods_net_import": true,
+    "base_net_import": true,
+    "current_net_import": true,
     "laspeyres_price_usd": -4.74,
     "laspeyres_quantity_usd": -17.86,
     "paasche_price_usd": -0.65,
@@ -786,6 +792,8 @@
     "current_supply_rate": 0.51717,
     "sdge_bundled_comparison_rate_current_date": 0.4702,
     "both_periods_net_import": true,
+    "base_net_import": true,
+    "current_net_import": true,
     "laspeyres_price_usd": 8.33,
     "laspeyres_quantity_usd": 101.15,
     "paasche_price_usd": 34.16,
@@ -818,6 +826,8 @@
     "current_supply_rate": 0.15942,
     "sdge_bundled_comparison_rate_current_date": 0.17308,
     "both_periods_net_import": false,
+    "base_net_import": false,
+    "current_net_import": true,
     "laspeyres_price_usd": -214.11,
     "laspeyres_quantity_usd": 0.0,
     "paasche_price_usd": 79.37,
@@ -850,6 +860,8 @@
     "current_supply_rate": 0.04958,
     "sdge_bundled_comparison_rate_current_date": 0.08147,
     "both_periods_net_import": true,
+    "base_net_import": true,
+    "current_net_import": true,
     "laspeyres_price_usd": -22.27,
     "laspeyres_quantity_usd": -14.3,
     "paasche_price_usd": -18.03,
@@ -884,7 +896,14 @@
     "tou_mix_usd": -168.86,
     "base_net_kwh": 346.0,
     "current_net_kwh": 987.0,
-    "note": "shares are of NET kWh, which NEM lets go negative in a cell, so a share is not bounded by [0,1]; this is an exact accounting identity on those shares, not a share of consumption"
+    "note": "shares are of NET kWh, which NEM lets go negative in a cell, so a share is not bounded by [0,1]; this is an exact accounting identity on those shares, not a share of consumption",
+    "cells_priced_at_a_settlement_zero_base_rate": [
+     "winter.on_peak",
+     "winter.off_peak",
+     "summer.off_peak"
+    ],
+    "net_kwh_change_valued_at_zero": 795.0,
+    "settlement_zero_caveat": "scale and mix split the LASPEYRES end of the quantity interval, so they value every kWh at the base period's effective price. On the cells named above that price is $0 because the 2024 export settled at the annual true-up, not because a tariff said $0, so the 795.0 kWh of net swing in those cells is carried here at zero. That is what the base bill charged and it is why this is the LOW end of the interval; it is not a statement that the energy was worth nothing. The Paasche end prices the same kWh at the current tariff, and the whole gap between the two ends is the interaction term, published and allocated to neither side"
    },
    "price_split_scope": {
     "attributed_terms": [
@@ -949,17 +968,85 @@
     "interaction_note": "the spread between the two readings, published and never split. It is concentrated in the three cells that flip between net export and net import: on an export cell SDG&E prints $.00000 and charges $0, so the effective price is 0, and the whole of that cell's change is a joint movement of price and quantity that neither term owns"
    },
    "provider_effect_read_whole": {
-    "basis": "current quantities only: the riders are charged on this period's kWh, so there is no base-quantity counterfactual for them",
-    "cea_charged_supply_usd": 168.34,
+    "basis": "current quantities only, over the cells billed as net imports in the current period: the riders are charged on this period's kWh, so there is no base-quantity counterfactual for them",
+    "scope": {
+     "attributed_cells": [
+      "winter.on_peak",
+      "winter.super_off_peak",
+      "summer.on_peak",
+      "summer.off_peak",
+      "summer.super_off_peak"
+     ],
+     "excluded_cells": [
+      "winter.off_peak"
+     ],
+     "why": "SDG&E's printed bundled table prices a cell only where that cell was billed as a net import. On a current net-export cell it prints $0 because the export settled at the annual true-up, not because the bundled tariff for that cell is zero \u2014 so subtracting it from what CEA booked there would measure the netting regime and publish it as a provider price effect. Those cells are excluded and their difference is reported below as unallocated_netting_settlement_usd, which is a settlement figure and not a provider price effect",
+     "riders_are_not_restricted": "cea_product_adders_usd and cca_unbundling_riders_usd are period-level lines billed once on the period's own kWh, not per TOU cell, so they cannot be restricted to a cell set; they are carried whole on the CEA side of the comparison"
+    },
+    "cea_charged_supply_usd": 170.59,
     "cea_product_adders_usd": 1.29,
     "cca_unbundling_riders_usd": 28.34,
-    "total_paid_for_supply_usd": 197.97,
+    "total_paid_for_supply_usd": 200.22,
     "sdge_bundled_same_date_counterfactual_usd": 180.46,
-    "provider_effect_usd": 17.51,
-    "provider_effect_pct": 9.7,
+    "provider_effect_usd": 19.76,
+    "provider_effect_pct": 10.9,
+    "unallocated_netting_settlement_usd": -2.25,
+    "unallocated_netting_settlement_note": "the current net-export cells' difference between what CEA booked and the $0 SDG&E printed. The $0 is deferred export settlement, not a bundled tariff of zero, so this is neither a provider price effect nor a tariff vintage; it is published here undecomposed",
+    "all_cells_including_settlement_difference_usd": 17.51,
+    "all_cells_note": "what the comparison would read if the current net-export cells were netted in against the $0 SDG&E printed for them. Published for audit only: that $0 is deferred export settlement, so this figure mixes a provider price effect with a settlement outcome and is not quoted as a provider effect anywhere",
+    "per_cell": [
+     {
+      "cell": "winter.on_peak",
+      "current_kwh": 31.0,
+      "current_net_import": true,
+      "cea_charged_usd": 7.68,
+      "sdge_bundled_same_date_usd": 6.2,
+      "difference_usd": 1.48
+     },
+     {
+      "cell": "winter.super_off_peak",
+      "current_kwh": 28.0,
+      "current_net_import": true,
+      "cea_charged_usd": 1.46,
+      "sdge_bundled_same_date_usd": 2.07,
+      "difference_usd": -0.61
+     },
+     {
+      "cell": "summer.on_peak",
+      "current_kwh": 205.0,
+      "current_net_import": true,
+      "cea_charged_usd": 106.02,
+      "sdge_bundled_same_date_usd": 96.39,
+      "difference_usd": 9.63
+     },
+     {
+      "cell": "summer.off_peak",
+      "current_kwh": 172.0,
+      "current_net_import": true,
+      "cea_charged_usd": 27.42,
+      "sdge_bundled_same_date_usd": 29.77,
+      "difference_usd": -2.35
+     },
+     {
+      "cell": "summer.super_off_peak",
+      "current_kwh": 565.0,
+      "current_net_import": true,
+      "cea_charged_usd": 28.01,
+      "sdge_bundled_same_date_usd": 46.03,
+      "difference_usd": -18.02
+     },
+     {
+      "cell": "winter.off_peak",
+      "current_kwh": -14.0,
+      "current_net_import": false,
+      "cea_charged_usd": -2.25,
+      "sdge_bundled_same_date_usd": 0.0,
+      "difference_usd": -2.25
+     }
+    ],
     "why_the_riders_belong_on_this_side": "SDG&E's bundled generation charge carries PCIA, which the base statement says on its own face: $1.97 of your Electricity Generation Charge is your bundled PCIA charge",
     "per_cell_term_paasche_usd": -9.0,
-    "per_cell_term_scope": "the per-cell provider term covers only the cells billed as net imports in both periods (winter.super_off_peak, summer.on_peak, summer.super_off_peak), so it is not comparable in scope to the whole-period figure above, which is a same-date comparison on the current period's kWh across every cell"
+    "per_cell_term_scope": "the per-cell provider term covers only the cells billed as net imports in BOTH periods (winter.super_off_peak, summer.on_peak, summer.super_off_peak), so it is not comparable in scope to the whole-period figure above, which is a same-date comparison on the current period's kWh over the cells billed as net imports in the CURRENT period (winter.on_peak, winter.super_off_peak, summer.on_peak, summer.off_peak, summer.super_off_peak)"
    }
   },
   "identities": {
@@ -1075,8 +1162,9 @@
    "laspeyres_pct": -14.6,
    "paasche_pct": 7.8,
    "fisher_pct": -4.0,
-   "fisher_pct_per_year": -2.0,
    "years_apart": 2.01,
+   "is_total_change_not_a_rate": true,
+   "no_annual_rate_path": "every percentage here is the TOTAL change between two matched endpoints 2.01 years apart, and nothing here is a per-year figure. Two endpoints cannot establish an annual rate path: there is no matched observation between them \u2014 these are the first and last statements in the corpus, and no intermediate pair of periods is comparable on season, provider and TOU mix at once. Any per-year number derived from these by compounding would be a transformation of two points, not an observed yearly change, so none is published",
    "note": "the Laspeyres and Paasche readings straddle zero because the price structure ROTATED rather than shifted \u2014 on-peak up, super-off-peak down \u2014 and the quantity mix rotated the same way"
   },
   "price_effect_usd": {
