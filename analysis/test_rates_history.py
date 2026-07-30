@@ -73,6 +73,22 @@ import rates as R
 import rates_history as H
 
 
+# A residual that is zero as an ALGEBRAIC identity is not bit-zero on every machine:
+# the same sum came back 0.0 here and -2.842e-14 on a CI runner, which reorders the
+# additions and contracts multiply-adds differently. Anything downstream of an
+# arithmetic operation is therefore compared against an epsilon in its own unit.
+# Comparisons of values read VERBATIM from an artifact (a printed rate against a
+# witness's printed rate) stay exact on purpose: there the exactness is the evidence.
+ZERO_USD = 1e-9        # dollars
+ZERO_PCT = 1e-9        # percent
+
+
+def _is_zero(x, eps=ZERO_USD):
+    """True when x is zero to within float noise. None is NOT zero — it means the
+    quantity could not be computed at all, which callers distinguish."""
+    return x is not None and abs(x) <= eps
+
+
 def _raises(fn, *needles):
     """fn must raise SystemExit whose message contains every needle."""
     try:
@@ -566,7 +582,7 @@ def case_rebilling_reproduces_all_26_statements_within_1pct():
     assert len(periods) == 26, len(periods)
     for period in periods:
         r = H.rebill_statement(period)
-        assert r["residual"] == 0.0, (period, r)     # identity, not just ±1%
+        assert _is_zero(r["residual"]), (period, r)  # identity, not just ±1%
         assert abs(r["residual_pct"]) <= 1.0, r      # the AC as written
     printed = priced = 0.0
     worst = 0.0
@@ -888,8 +904,8 @@ def case_rate_only_vintage_collapse_worsens_the_split_statements():
     for period in split:
         piece = H.rebill_statement(period)
         vint = H.rebill_statement(period, "vintage_collapse")
-        assert piece["residual_pct"] == 0.0, (period, piece)
-        if vint["residual_pct"] in (0.0, None):     # None = nothing was priceable
+        assert _is_zero(piece["residual_pct"], ZERO_PCT), (period, piece)
+        if vint["residual_pct"] is None or _is_zero(vint["residual_pct"], ZERO_PCT):
             flat.append((period, vint["unpriced_rows"]))
             continue
         assert abs(vint["residual_pct"]) > abs(piece["residual_pct"]), (period, vint)
@@ -956,7 +972,7 @@ def case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout
                                           r["tou_period"]) == cell and r["kwh"] > 0]
     assert len(base) == 1, base
     kwh, rate = base[0]["kwh"], base[0]["rate"]
-    assert H.rebill_holdout(period)["residual"] == 0.0     # clean before
+    assert _is_zero(H.rebill_holdout(period)["residual"])   # clean before
 
     def mutate(rows):
         hits = [r for r in rows if r["period"] == period
@@ -968,7 +984,7 @@ def case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout
     with _corrupted_corpus(mutate):
         piece = H.rebill_statement(period)
         hold = H.rebill_holdout(period)
-        assert piece["residual"] == 0.0, piece            # blind, by construction
+        assert _is_zero(piece["residual"]), piece         # blind, by construction
         assert hold["priced_pct"] == 100.0, hold
         assert abs(hold["residual"] - (-kwh * 0.05)) < 1e-9, hold
         assert abs(hold["residual_pct"]) > 4.8, hold
@@ -986,7 +1002,7 @@ def case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout
         bad = [r for r in H.corroboration(period)["rows"] if r["agrees"] is False]
         assert len(bad) == 1 and bad[0]["cell"] == cell, bad
         assert abs(bad[0]["printed_usd"] - bad[0]["witness_usd"] - kwh * 0.05) < 1e-9
-    assert H.rebill_holdout(period)["residual"] == 0.0     # and clean after
+    assert _is_zero(H.rebill_holdout(period)["residual"])   # and clean after
     assert _corroboration_snapshot() == (CORROBORATION, True)
     return (f"a +$0.05/kWh corruption leaves the reconstruction residual at $0, "
             f"moves the holdout residual to ${hold['residual']:.2f} "
@@ -1023,7 +1039,7 @@ def case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated():
         hits[0]["rate_per_kwh"] = f"{float(hits[0]['rate_per_kwh']) + 0.05:.5f}"
 
     with _corrupted_corpus(mutate):
-        assert H.rebill_statement(period)["residual"] == 0.0
+        assert _is_zero(H.rebill_statement(period)["residual"])
         hold = H.rebill_holdout(period)
         assert (hold["residual_pct"], hold["priced_pct"]) == (None, 0.0), hold
         got, exact = _corroboration_snapshot()
@@ -1128,7 +1144,7 @@ def case_a_mis_associated_segment_is_caught_or_pinned():
     with _corrupted_corpus(swap_whole_section):
         piece = H.rebill_statement(period)
         hold = H.rebill_holdout(period)
-        assert piece["residual"] == 0.0, piece
+        assert _is_zero(piece["residual"]), piece
         assert hold["priced_pct"] == 0.0 and hold["uncorroborated_rows"] == 10, hold
         got, exact = _corroboration_snapshot()
         assert exact, "nothing in the corpus can contradict the swapped dates"
