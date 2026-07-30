@@ -63,20 +63,40 @@
      "true_up_period_ends": [
       "11/26/24 - 12/26/24"
      ],
-     "net_energy_metering_summary": "Payment Required This Month: Yes"
+     "net_energy_metering_summary": "Payment Required This Month: Yes",
+     "proved_by": {
+      "quotes": [
+       "Net Energy Metering Annual True-Up Bill",
+       "Your account has been settled and all applicable generation credits have been applied."
+      ],
+      "printed_true_up_date": "12/26/2024",
+      "settles_the_true_up_date_previously_printed": "Dec 26, 2024",
+      "matching_period_end": "11/26/24 - 12/26/24"
+     }
     },
     {
      "statement_date": "2026-01-06",
      "true_up_period_ends": [
       "11/26/25 - 12/26/25"
      ],
-     "net_energy_metering_summary": "Payment Required This Month: Yes"
+     "net_energy_metering_summary": "Payment Required This Month: Yes",
+     "proved_by": {
+      "quotes": [
+       "Net Energy Metering Annual True-Up Bill",
+       "Your account has been settled and all applicable generation credits have been applied."
+      ],
+      "printed_true_up_date": "12/26/2025",
+      "settles_the_true_up_date_previously_printed": "Dec 26, 2025",
+      "matching_period_end": "11/26/25 - 12/26/25"
+     }
     }
    ],
+   "how_each_statement_was_established": "an accruing statement has to carry one of the two recognised true-up deferral sentences; the payment flag alone is not accepted. A settlement statement has to say it is one AND have a billing period ending on the true-up date the preceding statements printed, matching its own 'True-Up Date:' field. Anything else stops the run",
+   "statements_scanned": 25,
    "statements_accruing": 23,
    "statements_payable": 2,
    "what_changed_and_when": {
-    "the_billing_mode_did_not_change": "every statement in the corpus except the two annual settlement statements prints Payment Required This Month: No, and both compared periods are accruing statements. The energy component has accrued to the annual true-up throughout.",
+    "the_billing_mode_did_not_change": "23 of the 25 statements in the corpus print Payment Required This Month: No and carry a true-up deferral sentence naming the date they accrue towards; the other 2 are annual settlements, each closing a true-up the earlier statements named. Both compared periods are accruing statements. The energy component has accrued to the annual true-up throughout.",
     "the_presentation_changed_on": "2025-05-02",
     "presentation_change": "through 2025-04-02 the accrued charge sat in a separate 'Net Metering Account Summary' block and the Account Summary's Current Charges line read $0.00; from 2025-05-02 that block is gone and the same accrued charge appears on the Account Summary line, still not payable. The billing-history export follows the Account Summary line, which is why its current_charges column steps off $0.00 on that date without anything about the billing having changed."
    }
@@ -87,326 +107,417 @@
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2024",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 48.25,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 48.25,
     "periods_on_statement": [
      "5/25/24 - 6/25/24"
-    ]
+    ],
+    "period_accrual_usd": 48.25
    },
    {
     "statement_date": "2024-07-29",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2024",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 51.69,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 51.69,
     "periods_on_statement": [
      "6/26/24 - 7/25/24"
-    ]
+    ],
+    "period_accrual_usd": 51.69
    },
    {
     "statement_date": "2024-08-28",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2024",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 56.67,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 56.67,
     "periods_on_statement": [
      "7/26/24 - 8/26/24"
-    ]
+    ],
+    "period_accrual_usd": 56.67
    },
    {
     "statement_date": "2024-09-27",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2024",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 113.24,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 113.24,
     "periods_on_statement": [
      "8/27/24 - 9/25/24"
-    ]
+    ],
+    "period_accrual_usd": 113.24
    },
    {
     "statement_date": "2024-10-29",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2024",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": null,
     "california_climate_credit_usd": -78.22,
-    "period_accrual_usd": 61.97,
     "periods_on_statement": [
      "9/26/24 - 10/25/24"
-    ]
+    ],
+    "period_accrual_usd": 61.97
    },
    {
     "statement_date": "2024-11-27",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2024",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2024",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 69.27,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 69.27,
     "periods_on_statement": [
      "10/26/24 - 11/25/24"
-    ]
+    ],
+    "period_accrual_usd": 69.27
    },
    {
     "statement_date": "2024-12-30",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "Yes",
     "true_up_date": null,
-    "deferral_sentence": "Payment Required This Month: Yes",
+    "establishing_quote": "Net Energy Metering Annual True-Up Bill",
+    "billing_mode": "annual true-up settlement",
+    "annual_settlement": true,
+    "settlement_evidence": {
+     "quotes": [
+      "Net Energy Metering Annual True-Up Bill",
+      "Your account has been settled and all applicable generation credits have been applied."
+     ],
+     "printed_true_up_date": "12/26/2024",
+     "settles_the_true_up_date_previously_printed": "Dec 26, 2024",
+     "matching_period_end": "11/26/24 - 12/26/24"
+    },
     "total_charges_this_month_usd": 218.69,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 218.69,
     "periods_on_statement": [
      "11/26/24 - 12/26/24"
-    ]
+    ],
+    "period_accrual_usd": 218.69
    },
    {
     "statement_date": "2025-01-31",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 173.21,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 173.21,
     "periods_on_statement": [
      "12/27/24 - 1/27/25"
-    ]
+    ],
+    "period_accrual_usd": 173.21
    },
    {
     "statement_date": "2025-03-04",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 108.9,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 108.9,
     "periods_on_statement": [
      "1/28/25 - 2/26/25"
-    ]
+    ],
+    "period_accrual_usd": 108.9
    },
    {
     "statement_date": "2025-04-02",
     "nem_ledger_block_printed": true,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "establishing_quote": "*Payment not required for NEM charges. Your account will true up on Dec 26, 2025",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 116.87,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 116.87,
     "periods_on_statement": [
      "2/27/25 - 3/27/25"
-    ]
+    ],
+    "period_accrual_usd": 116.87
    },
    {
     "statement_date": "2025-05-02",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 32.79,
     "california_climate_credit_usd": -81.38,
-    "period_accrual_usd": 114.17,
     "periods_on_statement": [
      "3/28/25 - 4/28/25"
-    ]
+    ],
+    "period_accrual_usd": 114.17
    },
    {
     "statement_date": "2025-06-03",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 62.01,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 62.01,
     "periods_on_statement": [
      "4/29/25 - 5/28/25"
-    ]
+    ],
+    "period_accrual_usd": 62.01
    },
    {
     "statement_date": "2025-07-02",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 200.92,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 200.92,
     "periods_on_statement": [
      "5/29/25 - 6/26/25"
-    ]
+    ],
+    "period_accrual_usd": 200.92
    },
    {
     "statement_date": "2025-08-01",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 168.61,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 168.61,
     "periods_on_statement": [
      "6/27/25 - 7/28/25"
-    ]
+    ],
+    "period_accrual_usd": 168.61
    },
    {
     "statement_date": "2025-09-02",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 340.65,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 340.65,
     "periods_on_statement": [
      "7/29/25 - 8/26/25"
-    ]
+    ],
+    "period_accrual_usd": 340.65
    },
    {
     "statement_date": "2025-10-01",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 501.09,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 501.09,
     "periods_on_statement": [
      "8/27/25 - 9/25/25"
-    ]
+    ],
+    "period_accrual_usd": 501.09
    },
    {
     "statement_date": "2025-10-31",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 258.34,
     "california_climate_credit_usd": -81.38,
-    "period_accrual_usd": 339.72,
     "periods_on_statement": [
      "10/1/25 - 10/27/25",
      "9/26/25 - 9/30/25"
-    ]
+    ],
+    "period_accrual_usd": 339.72
    },
    {
     "statement_date": "2025-12-03",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 26, 2025",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 26, 2025.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 168.24,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 168.24,
     "periods_on_statement": [
      "10/28/25 - 11/25/25"
-    ]
+    ],
+    "period_accrual_usd": 168.24
    },
    {
     "statement_date": "2026-01-06",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "Yes",
     "true_up_date": null,
-    "deferral_sentence": "Payment Required This Month: Yes",
+    "establishing_quote": "Net Energy Metering Annual True-Up Bill",
+    "billing_mode": "annual true-up settlement",
+    "annual_settlement": true,
+    "settlement_evidence": {
+     "quotes": [
+      "Net Energy Metering Annual True-Up Bill",
+      "Your account has been settled and all applicable generation credits have been applied."
+     ],
+     "printed_true_up_date": "12/26/2025",
+     "settles_the_true_up_date_previously_printed": "Dec 26, 2025",
+     "matching_period_end": "11/26/25 - 12/26/25"
+    },
     "total_charges_this_month_usd": 130.75,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 130.75,
     "periods_on_statement": [
      "11/26/25 - 12/26/25"
-    ]
+    ],
+    "period_accrual_usd": 130.75
    },
    {
     "statement_date": "2026-02-02",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 28, 2026",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 291.6,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 291.6,
     "periods_on_statement": [
      "12/27/25 - 1/27/26"
-    ]
+    ],
+    "period_accrual_usd": 291.6
    },
    {
     "statement_date": "2026-03-04",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 28, 2026",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 132.14,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 132.14,
     "periods_on_statement": [
      "1/28/26 - 2/26/26"
-    ]
+    ],
+    "period_accrual_usd": 132.14
    },
    {
     "statement_date": "2026-04-02",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 28, 2026",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 275.01,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 275.01,
     "periods_on_statement": [
      "2/27/26 - 3/27/26"
-    ]
+    ],
+    "period_accrual_usd": 275.01
    },
    {
     "statement_date": "2026-05-04",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 28, 2026",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 266.35,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 266.35,
     "periods_on_statement": [
      "3/28/26 - 4/28/26"
-    ]
+    ],
+    "period_accrual_usd": 266.35
    },
    {
     "statement_date": "2026-06-03",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 28, 2026",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 269.5,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 269.5,
     "periods_on_statement": [
      "4/29/26 - 5/28/26"
-    ]
+    ],
+    "period_accrual_usd": 269.5
    },
    {
     "statement_date": "2026-07-02",
     "nem_ledger_block_printed": false,
     "payment_required_this_month": "No",
     "true_up_date": "Dec 28, 2026",
-    "deferral_sentence": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "establishing_quote": "Payment is not required at this time. Your account will true-up on Dec 28, 2026.",
+    "billing_mode": "accrues to the annual true-up",
+    "annual_settlement": false,
+    "settlement_evidence": null,
     "total_charges_this_month_usd": 398.56,
     "california_climate_credit_usd": 0.0,
-    "period_accrual_usd": 398.56,
     "periods_on_statement": [
      "5/29/26 - 6/26/26"
-    ]
+    ],
+    "period_accrual_usd": 398.56
    }
   ],
   "billing_history_export_reconciliation": {
@@ -682,30 +793,18 @@
     "base_usd": 0.0,
     "current_usd": 17.34,
     "change_usd": 17.34,
-    "base_rate_effective": 0.0,
-    "current_rate_effective": 0.55935,
-    "base_delivery_rate": 0.0,
-    "current_delivery_rate": 0.31161,
-    "base_supply_rate": 0.0,
-    "current_supply_rate": 0.24774,
-    "sdge_bundled_comparison_rate_current_date": 0.2,
-    "both_periods_net_import": false,
     "base_net_import": false,
     "current_net_import": true,
-    "laspeyres_price_usd": -2.24,
-    "laspeyres_quantity_usd": 0.0,
-    "paasche_price_usd": 17.34,
-    "paasche_quantity_usd": 19.58,
-    "interaction_usd": 19.58,
-    "delivery_vintage_usd_laspeyres": 0.0,
-    "supply_vintage_usd_laspeyres": 0.0,
-    "provider_usd_laspeyres": 0.0,
-    "netting_regime_usd_laspeyres": -2.24,
-    "delivery_vintage_usd_paasche": 0.0,
-    "supply_vintage_usd_paasche": 0.0,
-    "provider_usd_paasche": 0.0,
-    "netting_regime_usd_paasche": 17.34,
-    "price_split_attributed": false
+    "priced": false,
+    "base_rate_effective": null,
+    "current_rate_effective": 0.55935,
+    "base_delivery_rate": null,
+    "current_delivery_rate": 0.31161,
+    "base_supply_rate": null,
+    "current_supply_rate": 0.24774,
+    "sdge_bundled_comparison_rate_current_date": 0.2,
+    "netting_settlement_usd": 17.34,
+    "why_not_priced": "billed as a net export in the base period, so SDG&E printed $.00000 and charged nothing there \u2014 the energy settled at the annual true-up and no rate is observable to compare"
    },
    {
     "cell": "winter.off_peak",
@@ -716,30 +815,18 @@
     "base_usd": 0.0,
     "current_usd": -2.25,
     "change_usd": -2.25,
-    "base_rate_effective": 0.0,
-    "current_rate_effective": 0.16071,
-    "base_delivery_rate": 0.0,
-    "current_delivery_rate": 0.0,
-    "base_supply_rate": 0.0,
-    "current_supply_rate": 0.16071,
-    "sdge_bundled_comparison_rate_current_date": 0.0,
-    "both_periods_net_import": false,
     "base_net_import": false,
     "current_net_import": false,
-    "laspeyres_price_usd": -22.18,
-    "laspeyres_quantity_usd": 0.0,
-    "paasche_price_usd": -2.25,
-    "paasche_quantity_usd": 19.93,
-    "interaction_usd": 19.93,
-    "delivery_vintage_usd_laspeyres": 0.0,
-    "supply_vintage_usd_laspeyres": 0.0,
-    "provider_usd_laspeyres": 0.0,
-    "netting_regime_usd_laspeyres": -22.18,
-    "delivery_vintage_usd_paasche": 0.0,
-    "supply_vintage_usd_paasche": 0.0,
-    "provider_usd_paasche": 0.0,
-    "netting_regime_usd_paasche": -2.25,
-    "price_split_attributed": false
+    "priced": false,
+    "base_rate_effective": null,
+    "current_rate_effective": null,
+    "base_delivery_rate": null,
+    "current_delivery_rate": null,
+    "base_supply_rate": null,
+    "current_supply_rate": null,
+    "sdge_bundled_comparison_rate_current_date": null,
+    "netting_settlement_usd": -2.25,
+    "why_not_priced": "billed as a net export in both periods, so SDG&E printed $.00000 and charged nothing there \u2014 the energy settled at the annual true-up and no rate is observable to compare"
    },
    {
     "cell": "winter.super_off_peak",
@@ -750,6 +837,9 @@
     "base_usd": 20.7,
     "current_usd": 2.19,
     "change_usd": -18.51,
+    "base_net_import": true,
+    "current_net_import": true,
+    "priced": true,
     "base_rate_effective": 0.10147,
     "current_rate_effective": 0.07821,
     "base_delivery_rate": 0.04015,
@@ -757,9 +847,6 @@
     "base_supply_rate": 0.06132,
     "current_supply_rate": 0.05214,
     "sdge_bundled_comparison_rate_current_date": 0.07393,
-    "both_periods_net_import": true,
-    "base_net_import": true,
-    "current_net_import": true,
     "laspeyres_price_usd": -4.74,
     "laspeyres_quantity_usd": -17.86,
     "paasche_price_usd": -0.65,
@@ -768,12 +855,9 @@
     "delivery_vintage_usd_laspeyres": -2.87,
     "supply_vintage_usd_laspeyres": 2.57,
     "provider_usd_laspeyres": -4.44,
-    "netting_regime_usd_laspeyres": 0.0,
     "delivery_vintage_usd_paasche": -0.39,
     "supply_vintage_usd_paasche": 0.35,
-    "provider_usd_paasche": -0.61,
-    "netting_regime_usd_paasche": 0.0,
-    "price_split_attributed": true
+    "provider_usd_paasche": -0.61
    },
    {
     "cell": "summer.on_peak",
@@ -784,6 +868,9 @@
     "base_usd": 32.63,
     "current_usd": 167.94,
     "change_usd": 135.31,
+    "base_net_import": true,
+    "current_net_import": true,
+    "priced": true,
     "base_rate_effective": 0.6526,
     "current_rate_effective": 0.81922,
     "base_delivery_rate": 0.2644,
@@ -791,9 +878,6 @@
     "base_supply_rate": 0.3882,
     "current_supply_rate": 0.51717,
     "sdge_bundled_comparison_rate_current_date": 0.4702,
-    "both_periods_net_import": true,
-    "base_net_import": true,
-    "current_net_import": true,
     "laspeyres_price_usd": 8.33,
     "laspeyres_quantity_usd": 101.15,
     "paasche_price_usd": 34.16,
@@ -802,12 +886,9 @@
     "delivery_vintage_usd_laspeyres": 1.88,
     "supply_vintage_usd_laspeyres": 4.1,
     "provider_usd_laspeyres": 2.35,
-    "netting_regime_usd_laspeyres": 0.0,
     "delivery_vintage_usd_paasche": 7.72,
     "supply_vintage_usd_paasche": 16.81,
-    "provider_usd_paasche": 9.63,
-    "netting_regime_usd_paasche": 0.0,
-    "price_split_attributed": true
+    "provider_usd_paasche": 9.63
    },
    {
     "cell": "summer.off_peak",
@@ -818,30 +899,18 @@
     "base_usd": 0.0,
     "current_usd": 79.37,
     "change_usd": 79.37,
-    "base_rate_effective": 0.0,
-    "current_rate_effective": 0.46145,
-    "base_delivery_rate": 0.0,
-    "current_delivery_rate": 0.30203,
-    "base_supply_rate": 0.0,
-    "current_supply_rate": 0.15942,
-    "sdge_bundled_comparison_rate_current_date": 0.17308,
-    "both_periods_net_import": false,
     "base_net_import": false,
     "current_net_import": true,
-    "laspeyres_price_usd": -214.11,
-    "laspeyres_quantity_usd": 0.0,
-    "paasche_price_usd": 79.37,
-    "paasche_quantity_usd": 293.48,
-    "interaction_usd": 293.48,
-    "delivery_vintage_usd_laspeyres": 0.0,
-    "supply_vintage_usd_laspeyres": 0.0,
-    "provider_usd_laspeyres": 0.0,
-    "netting_regime_usd_laspeyres": -214.11,
-    "delivery_vintage_usd_paasche": 0.0,
-    "supply_vintage_usd_paasche": 0.0,
-    "provider_usd_paasche": 0.0,
-    "netting_regime_usd_paasche": 79.37,
-    "price_split_attributed": false
+    "priced": false,
+    "base_rate_effective": null,
+    "current_rate_effective": 0.46145,
+    "base_delivery_rate": null,
+    "current_delivery_rate": 0.30203,
+    "base_supply_rate": null,
+    "current_supply_rate": 0.15942,
+    "sdge_bundled_comparison_rate_current_date": 0.17308,
+    "netting_settlement_usd": 79.37,
+    "why_not_priced": "billed as a net export in the base period, so SDG&E printed $.00000 and charged nothing there \u2014 the energy settled at the annual true-up and no rate is observable to compare"
    },
    {
     "cell": "summer.super_off_peak",
@@ -852,6 +921,9 @@
     "base_usd": 75.06,
     "current_usd": 42.73,
     "change_usd": -32.33,
+    "base_net_import": true,
+    "current_net_import": true,
+    "priced": true,
     "base_rate_effective": 0.10754,
     "current_rate_effective": 0.07563,
     "base_delivery_rate": 0.04013,
@@ -859,9 +931,6 @@
     "base_supply_rate": 0.06741,
     "current_supply_rate": 0.04958,
     "sdge_bundled_comparison_rate_current_date": 0.08147,
-    "both_periods_net_import": true,
-    "base_net_import": true,
-    "current_net_import": true,
     "laspeyres_price_usd": -22.27,
     "laspeyres_quantity_usd": -14.3,
     "paasche_price_usd": -18.03,
@@ -870,130 +939,174 @@
     "delivery_vintage_usd_laspeyres": -9.82,
     "supply_vintage_usd_laspeyres": 9.82,
     "provider_usd_laspeyres": -22.26,
-    "netting_regime_usd_laspeyres": 0.0,
     "delivery_vintage_usd_paasche": -7.95,
     "supply_vintage_usd_paasche": 7.95,
-    "provider_usd_paasche": -18.02,
-    "netting_regime_usd_paasche": 0.0,
-    "price_split_attributed": true
+    "provider_usd_paasche": -18.02
    }
   ],
   "aggregate": {
    "base_energy_usd": 128.39,
    "current_energy_usd": 307.32,
    "energy_change_usd": 178.93,
-   "laspeyres": {
-    "price_usd": -257.22,
-    "quantity_usd": 68.99
-   },
-   "paasche": {
-    "price_usd": 109.94,
-    "quantity_usd": 436.15
-   },
-   "interaction_usd": 367.15,
-   "quantity_split_laspeyres_basis": {
-    "scale_usd": 237.86,
-    "tou_mix_usd": -168.86,
-    "base_net_kwh": 346.0,
-    "current_net_kwh": 987.0,
-    "note": "shares are of NET kWh, which NEM lets go negative in a cell, so a share is not bounded by [0,1]; this is an exact accounting identity on those shares, not a share of consumption",
-    "cells_priced_at_a_settlement_zero_base_rate": [
-     "winter.on_peak",
-     "winter.off_peak",
-     "summer.off_peak"
-    ],
-    "net_kwh_change_valued_at_zero": 795.0,
-    "settlement_zero_caveat": "scale and mix split the LASPEYRES end of the quantity interval, so they value every kWh at the base period's effective price. On the cells named above that price is $0 because the 2024 export settled at the annual true-up, not because a tariff said $0, so the 795.0 kWh of net swing in those cells is carried here at zero. That is what the base bill charged and it is why this is the LOW end of the interval; it is not a statement that the energy was worth nothing. The Paasche end prices the same kWh at the current tariff, and the whole gap between the two ends is the interaction term, published and allocated to neither side"
-   },
-   "price_split_scope": {
-    "attributed_terms": [
-     "delivery_vintage_usd",
-     "supply_vintage_usd",
-     "provider_usd"
-    ],
-    "attributed_cells": [
+   "scope": {
+    "priced_cells": [
      "winter.super_off_peak",
      "summer.on_peak",
      "summer.super_off_peak"
     ],
-    "unattributed_term": "netting_regime_usd",
-    "unattributed_cells": [
+    "settlement_cells": [
      "winter.on_peak",
      "winter.off_peak",
      "summer.off_peak"
     ],
-    "why": "delivery_vintage, supply_vintage and provider are differences of two tariffs, so they are computed only on the cells billed as net imports in BOTH periods. On the other cells the base (or current) effective price is $0 because the energy settled at the annual true-up rather than because a tariff said $0, so attributing their movement to a tariff vintage or to the provider would publish the export-to-import settlement change under someone else's name \u2014 and the algebra would still balance. Their whole price movement is netting_regime_usd instead: measured, reconciled, and not decomposed further, because these statements do not observe a like-for-like base tariff for them",
-    "identity": "delivery_vintage + supply_vintage + provider + netting_regime == the price effect, on each weight basis"
+    "what_each_figure_covers": "PRICED CELLS are the ones billed as net imports in BOTH periods, the only cells where a rate is observable at both ends. Every figure under priced_cells \u2014 the price effect, the quantity effect, the interaction, the published bounds, the scale/TOU-mix split and the vintage/provider split \u2014 covers those cells and nothing else. SETTLEMENT CELLS were billed as net exports in at least one period: SDG&E printed $.00000 and charged nothing because the energy settled at the annual true-up, so no rate exists to compare and no index term is defined. Their whole dollar change is carried under netting_settlement, outside both the price and the quantity figures rather than inside either of them."
    },
-   "price_split_laspeyres_basis": {
-    "delivery_vintage_usd": -10.81,
-    "supply_vintage_usd": 16.49,
-    "provider_usd": -24.36,
-    "netting_regime_usd": -238.53
+   "priced_cells": {
+    "cells": [
+     "winter.super_off_peak",
+     "summer.on_peak",
+     "summer.super_off_peak"
+    ],
+    "base_usd": 128.39,
+    "current_usd": 212.86,
+    "change_usd": 84.47,
+    "laspeyres": {
+     "price_usd": -18.68,
+     "quantity_usd": 68.99
+    },
+    "paasche": {
+     "price_usd": 15.48,
+     "quantity_usd": 103.15
+    },
+    "interaction_usd": 34.16,
+    "reading": {
+     "convention": "bounds \u2014 neither effect is published as a point",
+     "covers": "the 3 priced cells (winter.super_off_peak, summer.on_peak, summer.super_off_peak) and nothing else; the settlement cells are outside these figures entirely",
+     "basis": "the price effect and the quantity effect are each reported as the interval between their Laspeyres (base-weight) and Paasche (current-weight) readings. Both intervals are exactly as wide as the interaction term, which is published and allocated to neither side; no figure here is the amount price or quantity 'accounts for'. The two endpoints pair exactly, one from each side, and both pairings are stated below",
+     "price_usd_low": -18.68,
+     "price_usd_high": 15.48,
+     "quantity_usd_low": 68.99,
+     "quantity_usd_high": 103.15,
+     "interval_width_usd": 34.16,
+     "exact_pairings": [
+      {
+       "price_basis": "laspeyres",
+       "price_usd": -18.68,
+       "quantity_basis": "paasche",
+       "quantity_usd": 103.15,
+       "sum_usd": 84.47
+      },
+      {
+       "price_basis": "paasche",
+       "price_usd": 15.48,
+       "quantity_basis": "laspeyres",
+       "quantity_usd": 68.99,
+       "sum_usd": 84.47
+      }
+     ],
+     "sums_to": "priced_cells.change_usd",
+     "quantity_split_basis": "the scale and TOU-mix figures below split the Laspeyres end of the quantity interval; they do not apply to the Paasche end",
+     "of_which_scale_usd": -20.77,
+     "of_which_tou_mix_usd": 89.76,
+     "interaction_usd": 34.16,
+     "interaction_note": "the spread between the two readings, published and never split. It is the part of the priced cells' change that moved because price and quantity moved together, owned jointly by both terms"
+    },
+    "quantity_split_laspeyres_basis": {
+     "scale_usd": -20.77,
+     "tou_mix_usd": 89.76,
+     "base_net_kwh": 952.0,
+     "current_net_kwh": 798.0,
+     "every_base_price_here_is_an_observed_tariff": "scale and mix value every kWh at the base period's effective price, so they are computed over the priced cells only. Both ends of every rate in this split were charged on an import cell; no kWh here is valued at a settlement $0, and none can be \u2014 a settlement non-price raises rather than multiplying",
+     "kwh_note": "these totals are the priced cells' net kWh, not the periods' 346 and 987: the settlement cells are outside this split"
+    },
+    "price_split_laspeyres_basis": {
+     "delivery_vintage_usd": -10.81,
+     "supply_vintage_usd": 16.49,
+     "provider_usd": -24.36
+    },
+    "price_split_paasche_basis": {
+     "delivery_vintage_usd": -0.63,
+     "supply_vintage_usd": 25.11,
+     "provider_usd": -9.0
+    },
+    "price_split_identity": "delivery_vintage + supply_vintage + provider == the price effect over the priced cells, on each weight basis. There is no fourth term: the cells that would have needed one are not in this figure"
    },
-   "price_split_paasche_basis": {
-    "delivery_vintage_usd": -0.63,
-    "supply_vintage_usd": 25.11,
-    "provider_usd": -9.0,
-    "netting_regime_usd": 94.46
-   },
-   "reading": {
-    "convention": "bounds \u2014 neither effect is published as a point",
-    "basis": "the price effect and the quantity effect are each reported as the interval between their Laspeyres (base-weight) and Paasche (current-weight) readings. Both intervals are exactly as wide as the interaction term, which is published and allocated to neither side; no figure here is the amount price or quantity 'accounts for'. The two endpoints pair exactly, one from each side, and both pairings are stated below",
-    "price_usd_low": -257.22,
-    "price_usd_high": 109.94,
-    "quantity_usd_low": 68.99,
-    "quantity_usd_high": 436.15,
-    "interval_width_usd": 367.15,
-    "exact_pairings": [
+   "netting_settlement": {
+    "cells": [
+     "winter.on_peak",
+     "winter.off_peak",
+     "summer.off_peak"
+    ],
+    "change_usd": 94.46,
+    "per_cell": [
      {
-      "price_basis": "laspeyres",
-      "price_usd": -257.22,
-      "quantity_basis": "paasche",
-      "quantity_usd": 436.15,
-      "sum_usd": 178.93
+      "cell": "winter.on_peak",
+      "base_kwh": -4.0,
+      "current_kwh": 31.0,
+      "base_usd": 0.0,
+      "current_usd": 17.34,
+      "change_usd": 17.34,
+      "why_not_priced": "billed as a net export in the base period, so SDG&E printed $.00000 and charged nothing there \u2014 the energy settled at the annual true-up and no rate is observable to compare"
      },
      {
-      "price_basis": "paasche",
-      "price_usd": 109.94,
-      "quantity_basis": "laspeyres",
-      "quantity_usd": 68.99,
-      "sum_usd": 178.93
+      "cell": "winter.off_peak",
+      "base_kwh": -138.0,
+      "current_kwh": -14.0,
+      "base_usd": 0.0,
+      "current_usd": -2.25,
+      "change_usd": -2.25,
+      "why_not_priced": "billed as a net export in both periods, so SDG&E printed $.00000 and charged nothing there \u2014 the energy settled at the annual true-up and no rate is observable to compare"
+     },
+     {
+      "cell": "summer.off_peak",
+      "base_kwh": -464.0,
+      "current_kwh": 172.0,
+      "base_usd": 0.0,
+      "current_usd": 79.37,
+      "change_usd": 79.37,
+      "why_not_priced": "billed as a net export in the base period, so SDG&E printed $.00000 and charged nothing there \u2014 the energy settled at the annual true-up and no rate is observable to compare"
      }
     ],
-    "quantity_split_basis": "the scale and TOU-mix figures below split the Laspeyres end of the quantity interval; they do not apply to the Paasche end",
-    "of_which_scale_usd": 237.86,
-    "of_which_tou_mix_usd": -168.86,
-    "interaction_usd": 367.15,
-    "interaction_note": "the spread between the two readings, published and never split. It is concentrated in the three cells that flip between net export and net import: on an export cell SDG&E prints $.00000 and charges $0, so the effective price is 0, and the whole of that cell's change is a joint movement of price and quantity that neither term owns"
+    "what_this_is": "the complete dollar change of every cell billed as a net export in at least one period \u2014 what the netting regime billed, published whole and undecomposed. It is neither a price effect nor a quantity effect and is not inside either of them: on these cells SDG&E charged $0 because the energy settled at the annual true-up, so there is no rate at one or both ends to build an index term from. Splitting it would require a base tariff these statements do not observe"
    },
-   "provider_effect_read_whole": {
-    "basis": "current quantities only, over the cells billed as net imports in the current period: the riders are charged on this period's kWh, so there is no base-quantity counterfactual for them",
-    "scope": {
-     "attributed_cells": [
-      "winter.on_peak",
-      "winter.super_off_peak",
-      "summer.on_peak",
-      "summer.off_peak",
-      "summer.super_off_peak"
-     ],
+   "energy_identity": {
+    "identity": "energy change = priced cells (price + quantity + interaction) + netting/settlement",
+    "priced_cells_change_usd": 84.47,
+    "netting_settlement_change_usd": 94.46,
+    "energy_change_usd": 178.93
+   },
+   "provider_comparison": {
+    "why_two_figures": "the two sides of this comparison are not charged on the same footing. SDG&E's printed bundled table prices only the cells billed as net imports; the CCA-only riders and CEA's product adders are charged once per period on the period's own kWh and the statements support no allocation of them to a cell set. A single number would mix a cell-restricted quantity scope with a whole-period one, so both readings are published and each says what it covers",
+    "energy_only_on_the_common_cells": {
+     "covers": "energy only, both sides, over the 5 cells the printed bundled table prices (winter.on_peak, winter.super_off_peak, summer.on_peak, summer.off_peak, summer.super_off_peak): CEA's per-TOU generation charges against SDG&E's same-date bundled table on the same kWh. No riders and no product adders on either side",
      "excluded_cells": [
       "winter.off_peak"
      ],
-     "why": "SDG&E's printed bundled table prices a cell only where that cell was billed as a net import. On a current net-export cell it prints $0 because the export settled at the annual true-up, not because the bundled tariff for that cell is zero \u2014 so subtracting it from what CEA booked there would measure the netting regime and publish it as a provider price effect. Those cells are excluded and their difference is reported below as unallocated_netting_settlement_usd, which is a settlement figure and not a provider price effect",
-     "riders_are_not_restricted": "cea_product_adders_usd and cca_unbundling_riders_usd are period-level lines billed once on the period's own kWh, not per TOU cell, so they cannot be restricted to a cell set; they are carried whole on the CEA side of the comparison"
+     "why_excluded": "billed as a net export in the current period, so the printed bundled table shows $0 by deferred settlement rather than a tariff. Subtracting that $0 from what CEA booked there would measure the netting regime and publish it as a provider price effect",
+     "cea_charged_supply_usd": 170.59,
+     "sdge_bundled_same_date_usd": 180.46,
+     "difference_usd": -9.87,
+     "difference_pct": -5.5
     },
-    "cea_charged_supply_usd": 170.59,
-    "cea_product_adders_usd": 1.29,
-    "cca_unbundling_riders_usd": 28.34,
-    "total_paid_for_supply_usd": 200.22,
-    "sdge_bundled_same_date_counterfactual_usd": 180.46,
-    "provider_effect_usd": 19.76,
-    "provider_effect_pct": 10.9,
-    "unallocated_netting_settlement_usd": -2.25,
-    "unallocated_netting_settlement_note": "the current net-export cells' difference between what CEA booked and the $0 SDG&E printed. The $0 is deferred export settlement, not a bundled tariff of zero, so this is neither a provider price effect nor a tariff vintage; it is published here undecomposed",
-    "all_cells_including_settlement_difference_usd": 17.51,
-    "all_cells_note": "what the comparison would read if the current net-export cells were netted in against the $0 SDG&E printed for them. Published for audit only: that $0 is deferred export settlement, so this figure mixes a provider price effect with a settlement outcome and is not quoted as a provider effect anywhere",
+    "whole_period_arrangement": {
+     "covers": "the whole billing period, both sides, supply only: everything the CCA arrangement charged for generation against the whole printed bundled table. This is what the household paid for supply under one arrangement against the other, not a per-kWh price comparison",
+     "cca_side": {
+      "cea_charged_supply_all_cells_usd": 168.34,
+      "cea_product_adders_usd": 1.29,
+      "cca_unbundling_riders_usd": 28.34,
+      "total_usd": 197.97,
+      "note": "the riders (PCIA, the incremental procurement cost adjustment, the economic development program credit) and the product adders are period-level lines charged on the period's own kWh"
+     },
+     "bundled_side": {
+      "sdge_bundled_same_date_table_usd": 180.46,
+      "total_usd": 180.46,
+      "note": "no rider is added: under bundled service PCIA is charged inside the generation rate, which the base statement says on its own face \u2014 see why_the_riders_belong_on_this_side"
+     },
+     "difference_usd": 17.51,
+     "difference_pct": 9.7,
+     "the_two_sides_do_not_price_identical_energy": "the CEA side covers all 6 cells; the bundled table prices only the 5 billed as net imports. The whole of that gap is the winter.off_peak cell(s), where CEA booked $-2.25 and SDG&E printed nothing because the export settled at the annual true-up. That amount is stated here rather than netted away, and it is the reason this figure is labelled an arrangement comparison and not a price effect",
+     "cea_booked_on_the_cells_the_bundled_table_does_not_price_usd": -2.25
+    },
     "per_cell": [
      {
       "cell": "winter.on_peak",
@@ -1040,27 +1153,29 @@
       "current_kwh": -14.0,
       "current_net_import": false,
       "cea_charged_usd": -2.25,
-      "sdge_bundled_same_date_usd": 0.0,
-      "difference_usd": -2.25
+      "sdge_bundled_same_date_usd": null,
+      "difference_usd": null,
+      "why_the_bundled_side_is_absent": "SDG&E printed $0 here because the export settled at the annual true-up, not because its bundled tariff for this cell is zero, so there is no counterfactual dollar figure to subtract"
      }
     ],
     "why_the_riders_belong_on_this_side": "SDG&E's bundled generation charge carries PCIA, which the base statement says on its own face: $1.97 of your Electricity Generation Charge is your bundled PCIA charge",
     "per_cell_term_paasche_usd": -9.0,
-    "per_cell_term_scope": "the per-cell provider term covers only the cells billed as net imports in BOTH periods (winter.super_off_peak, summer.on_peak, summer.super_off_peak), so it is not comparable in scope to the whole-period figure above, which is a same-date comparison on the current period's kWh over the cells billed as net imports in the CURRENT period (winter.on_peak, winter.super_off_peak, summer.on_peak, summer.off_peak, summer.super_off_peak)"
+    "per_cell_term_scope": "the per-cell provider term inside the price split covers a THIRD scope again: only the cells billed as net imports in BOTH periods (winter.super_off_peak, summer.on_peak, summer.super_off_peak), on 2026 weights, because it is one term of a two-period index. It is not comparable to either figure above, both of which are same-date readings on the current period's kWh"
    }
   },
   "identities": {
-   "laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd": 178.93,
-   "laspeyres_price_plus_paasche_quantity_usd": 178.93,
-   "paasche_price_plus_laspeyres_quantity_usd": 178.93,
+   "priced_laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd": 84.47,
+   "priced_laspeyres_price_plus_paasche_quantity_usd": 84.47,
+   "priced_paasche_price_plus_laspeyres_quantity_usd": 84.47,
+   "priced_cells_change_usd": 84.47,
    "scale_plus_mix_usd": 68.99,
-   "laspeyres_quantity_usd": 68.99,
-   "price_split_sum_usd": -257.22,
-   "laspeyres_price_usd": -257.22,
-   "price_split_sum_paasche_usd": 109.94,
-   "paasche_price_usd": 109.94,
-   "attributed_price_split_sum_usd": -18.68,
-   "attributed_cells_laspeyres_price_usd": -18.68
+   "priced_laspeyres_quantity_usd": 68.99,
+   "price_split_sum_laspeyres_usd": -18.68,
+   "priced_laspeyres_price_usd": -18.68,
+   "price_split_sum_paasche_usd": 15.48,
+   "priced_paasche_price_usd": 15.48,
+   "priced_change_plus_netting_settlement_usd": 178.93,
+   "energy_change_usd": 178.93
   }
  },
  "non_energy_bridge": [
@@ -1183,10 +1298,17 @@
     "provider_usd": -9.0
    }
   },
-  "price_effect_split_note": "these are the same dollars as decomposition.aggregate's delivery_vintage/supply_vintage/provider terms \u2014 to within a cent of rounding, since these sum the per-cell rows \u2014 because those terms are computed over exactly these cells and nowhere else. The excluded cells' price movement is published there as netting_regime_usd"
+  "price_effect_split_note": "these are the same dollars as decomposition.aggregate.priced_cells' delivery_vintage/supply_vintage/provider terms \u2014 to within a cent of rounding, since these sum the per-cell rows \u2014 because those terms are computed over exactly these cells and nowhere else. The excluded cells carry no price figure at all; their whole dollar change is published there as netting_settlement"
  },
  "reconciliation": {
+  "identity": "observed change = (price + quantity + interaction, over the priced cells) + netting/settlement + non-energy bridge",
+  "identity_note": "the price and quantity terms here are the Laspeyres pairing, one of the two exact pairings the reading publishes; the Paasche pairing reconciles to the same total. Both cover the priced cells only. The settlement cells enter as their whole dollar change and are inside neither term",
   "observed_change_usd": 350.31,
+  "priced_cells_laspeyres_price_usd": -18.68,
+  "priced_cells_laspeyres_quantity_usd": 68.99,
+  "priced_cells_interaction_usd": 34.16,
+  "priced_cells_change_usd": 84.47,
+  "netting_settlement_usd": 94.46,
   "energy_change_usd": 178.93,
   "non_energy_change_usd": 171.38,
   "components_sum_usd": 350.31,

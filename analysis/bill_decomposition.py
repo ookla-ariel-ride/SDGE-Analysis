@@ -57,90 +57,98 @@ change splits with no estimation:
 where s1 is the printed bundled comparison on the 2026 statement. Delivery is
 SDG&E in both periods, so its whole change is vintage.
 
-THAT SPLIT IS PUBLISHED ONLY WHERE IT MEANS WHAT IT SAYS. It needs a base rate
-that is a tariff, and on a cell billed as a net export the base rate is $0 by
-settlement — the export went to the annual true-up — not by tariff. Running
-q(s1 - g0) there would measure the export-to-import regime change and print it
-as a supply vintage; the algebra would still balance, which is exactly what
-makes it easy to miss. So delivery_vintage, supply_vintage and provider are
-computed ONLY over the cells billed as net imports in BOTH periods (three of
-six here), and every other cell's whole price movement q(p1 - p0) is published
-under its own name, netting_regime_usd: the change in what the netting regime
-billed, attributed to neither a tariff vintage nor the provider. Four terms,
-summing exactly to the price effect on each weight basis:
+A SETTLEMENT $0 IS NOT A PRICE, AND THE CODE MAKES IT UNUSABLE AS ONE.
+Under NEM 2.0 a TOU bucket billed as a net export prints "Rate/kWh $.00000" on
+the SDG&E side and is charged $0: the export went to the annual true-up, so no
+price was charged and none can be read off the statement. That is not the number
+zero, and three successive review passes found it entering a published figure by
+being coerced to one — first in the per-cell price split, then in the headline
+provider figure, then in the price and quantity bounds themselves. Convention did
+not stop it, so the type does. A cell whose rate is not observable carries a
+Settlement object, not 0.0. Every arithmetic operator on Settlement raises
+SettlementNotAPrice; so do float(), round() and bool(), which closes the
+"rate or 0.0" idiom. The only ways to read one are observed_rate(), which refuses
+it by name; is_observed(), which tests for it; and json_price(), which renders it
+as null. Nothing in this module forms a rate or a rate-weighted dollar figure
+except through those three.
 
-    price effect  =  delivery_vintage + supply_vintage + provider
-                  +  netting_regime            (the cells with no base tariff)
+WHAT IS PRICED, AND WHAT IS NOT. A cell is PRICED for this comparison when it was
+billed as a net import in BOTH periods, so a rate is observable at both ends —
+three of the six here. The other three flip between export and import (or export
+in both), and no price index term can be computed on them at all. So:
 
-Two further consequences of the provider break are NOT in that per-cell term, and
-are carried as their own named lines in non_energy_bridge, because the statements
-charge them per period rather than per TOU cell: the riders a CCA customer pays
-separately and a bundled customer pays inside the generation rate (PCIA, the
-incremental procurement cost adjustment, the economic development program
-credit), and CEA's own product adders (Clean Impact Plus, its state surcharge).
-That the bundled rate carries PCIA is on the face of the base statement itself -
-"$1.97 of your Electricity Generation Charge is your bundled PCIA charge" - which
-is quoted into the artifact. decomposition.aggregate.provider_effect_read_whole
-therefore adds the per-cell provider term to those two lines and states the
-comparison directly: what CEA plus the CCA-only riders charged, against what
-SDG&E's own bundled table on the SAME statement would have charged for the SAME
-kWh. That figure exists on current quantities only - the riders are billed on the
-period's own kWh, so there is no base-quantity counterfactual for them.
+  * the price effect, the quantity effect, the interaction, the scale/TOU-mix
+    split, the published bounds and the delivery-vintage/supply-vintage/provider
+    split are ALL computed over the priced cells and nothing else. Every rate in
+    them is a tariff at both ends;
+  * every flipped cell's COMPLETE dollar change (current - base) is carried as
+    its own top-level component, netting_settlement_usd, outside the price and
+    quantity figures rather than inside either of them. It is the change in what
+    the netting regime billed, and it is published undecomposed.
 
-THE SAME RESTRICTION BINDS THAT WHOLE-PERIOD FIGURE, and for the same reason. The
-printed bundled table prices a cell only where the cell was billed as a net
+    energy change = (price + quantity + interaction, over the priced cells)
+                  +  netting/settlement          (the flipped cells, whole)
+
+THE PROVIDER COMPARISON IS PUBLISHED TWICE, BECAUSE ITS TWO HALVES COVER
+DIFFERENT SCOPES. Two consequences of the provider break are charged per period
+rather than per TOU cell: the riders a CCA customer pays separately and a bundled
+customer pays inside the generation rate (PCIA, the incremental procurement cost
+adjustment, the economic development program credit), and CEA's own product
+adders (Clean Impact Plus, its state surcharge). That the bundled rate carries
+PCIA is on the face of the base statement — "$1.97 of your Electricity Generation
+Charge is your bundled PCIA charge" — which is quoted into the artifact. Those
+lines cannot be restricted to a cell set, so adding them to a cell-restricted CEA
+figure and calling the result a comparison "over five cells" would compare two
+different quantity scopes. The statements support no allocation of them to a cell
+set, and this script will not invent one. So provider_effect_whole_period()
+publishes two figures under decomposition.aggregate.provider_comparison, each
+labelled with what it covers:
+
+  energy_only_on_the_common_cells   CEA's per-TOU charges against SDG&E's printed
+                                    same-date bundled table, over exactly the
+                                    cells that table prices — same cells, same
+                                    kWh, energy only, no riders on either side.
+  whole_period_arrangement          everything the CCA arrangement charged for
+                                    supply over the whole period (CEA's per-TOU
+                                    charges on all six cells + the product adders
+                                    + the CCA-only riders) against the whole
+                                    printed bundled table. The two sides do not
+                                    price identical energy, and the artifact says
+                                    by how much and where.
+
+The printed bundled table prices a cell only where the cell was billed as a net
 import; on a current net-export cell it prints $0 because the export settled at
-the annual true-up, while CEA still books a credit there. Netting those two would
-put a settlement outcome inside a number the report calls a provider PRICE effect
-- the identical defect the per-cell split avoids - so the whole-period comparison
-runs over the CURRENT net-import cells only, and the export cells' difference is
-published beside it as unallocated_netting_settlement_usd, named so it cannot be
-read as a price. The riders and the CEA product adders are period-level lines
-charged once on the period's kWh, not per cell, so they cannot be restricted to a
-cell set and stay whole on the CEA side; the artifact says so in scope.
-
-PRICES HERE ARE EFFECTIVE BILLED RATES, NOT TARIFF RATES.
-Under NEM 2.0 a net-negative TOU bucket prints "Rate/kWh $.00000" on the SDG&E
-side: in-period exports settle at true-up, not on the monthly statement. So a
-cell's price is charge / net kWh, which is the rate that actually produced the
-dollars being decomposed, and on an export cell it is $0 on the SDG&E side even
-though a tariff rate exists. Three of the six cells are net-import in BOTH
-periods; those are the only cells where the price change is a like-for-like
-tariff comparison, and like_for_like reports them separately (issue #3's
-"restrict the comparison to like-for-like and say so"). The other three flip
-between export and import, and that flip lands - correctly and visibly - in the
-interaction term, which is why it is reported and never allocated away.
+the annual true-up, while CEA still books a credit there. That $0 is a Settlement
+here too, so it cannot be netted against CEA's credit by accident.
 
 THE DECOMPOSITION.
-Per cell c = (season, TOU period), with q the net kWh and p the effective billed
-rate, the energy change is split by the standard exact identities:
+Per priced cell c = (season, TOU period), with q the net kWh and p the effective
+billed rate (charge / net kWh — the rate that actually produced the dollars), the
+priced-cell change is split by the standard exact identities:
 
     Laspeyres price     sum q0 (p1 - p0)      quantity  sum p0 (q1 - q0)
     Paasche   price     sum q1 (p1 - p0)      quantity  sum p1 (q1 - q0)
     interaction         sum (p1 - p0)(q1 - q0)
 
     price_L + quantity_L + interaction  ==  price_L + quantity_P
-                                        ==  price_P + quantity_L  ==  dEnergy
+                                        ==  price_P + quantity_L  ==  dPriced
 
 NEITHER EFFECT IS PUBLISHED AS A POINT. Paasche price == Laspeyres price +
-interaction, so quoting "price accounts for $109.94" (the Paasche figure) hands
-the entire interaction to price while the note beside it says the interaction is
-jointly owned and not allocated. Those two statements cannot both be true. This
-artifact publishes each effect as the INTERVAL between its two readings —
-price -$257.22 to +$109.94, quantity +$68.99 to +$436.15 — whose width is
+interaction, so quoting the Paasche figure as "the" price effect hands the entire
+interaction to price while the note beside it says the interaction is jointly
+owned and not allocated. Those two statements cannot both be true. This artifact
+publishes each effect as the INTERVAL between its two readings, whose width is
 exactly the interaction term, together with both exact pairings. The interaction
 is published and never split; nothing here, and nothing in the report, states a
 figure as the amount price or quantity "accounts for".
 
 The quantity effect is split again into scale and TOU mix, exactly, with
-Q = sum q and w = q / Q:
+Q = sum q over the priced cells and w = q / Q:
 
     scale  (Q1 - Q0) sum p0 w0        mix  Q1 sum p0 (w1 - w0)
 
-NOTE that Q here is NET kWh (346 and 987): NEM nets exports against imports
-inside each cell, so a cell's q can be negative and a share w is not bounded by
-[0, 1]. The scale/mix split is an exact accounting identity on those shares, not
-a behavioural share of consumption, and the artifact says so.
+Every p0 in that split is an observed tariff, because the split runs over the
+priced cells only; there is no kWh in it valued at a settlement zero.
 
 Everything outside the TOU energy lines is carried as its own named term rather
 than spread over the cells: the fixed charge (a flat $16.00/month Monthly Service
@@ -222,6 +230,120 @@ def _c(x):
 
 def _r(x, n):
     return round(x, n) + 0.0
+
+
+# ---------------------------------------------------------------------------
+# A rate is either observed, or explicitly not a price. Never 0.0 by default.
+# ---------------------------------------------------------------------------
+class SettlementNotAPrice(SystemExit):
+    """A settlement non-price was used where a price was required."""
+
+
+class Settlement:
+    """The value a cell carries INSTEAD of a rate when no rate is observable.
+
+    Under NEM 2.0 a TOU bucket billed as a net export prints "Rate/kWh $.00000"
+    and is charged $0: the in-period export settled at the annual true-up, so
+    nothing was priced. The absence of a charged rate is not the number zero, and
+    every published defect this module has had came from one being written down
+    as one — q*(p1 - p0) with p0 coerced to 0.0 reconciles perfectly while
+    measuring the export-to-import settlement change and printing it as a price.
+
+    So the coercion is made impossible rather than discouraged. Arithmetic,
+    float(), round(), bool() and comparison all raise SettlementNotAPrice, which
+    kills the `rate or 0.0` idiom as well as q*(p1 - p0). The three deliberate
+    readings are observed_rate() (refuse, naming the cell), is_observed() (test),
+    and json_price() (render as null).
+    """
+    __slots__ = ("cell", "what")
+
+    def __init__(self, cell, what):
+        self.cell = cell
+        self.what = what
+
+    def __repr__(self):
+        return f"Settlement({self.cell!r}, {self.what!r})"
+
+    def _refuse(self, op):
+        raise SettlementNotAPrice(
+            f"({self.cell}) has no observable {self.what}: the cell was billed as a net "
+            f"export, so the energy settled at the annual true-up and no rate was "
+            f"charged — '{op}' on it would put a settlement outcome inside a price "
+            "figure. Compute over the priced cells and carry this cell's whole dollar "
+            "change as netting/settlement instead")
+
+
+def _refusing(op):
+    def _op(self, *_args):
+        return self._refuse(op)
+    return _op
+
+
+for _name, _op in (("add", "+"), ("radd", "+"), ("sub", "-"), ("rsub", "-"),
+                   ("mul", "*"), ("rmul", "*"), ("truediv", "/"), ("rtruediv", "/"),
+                   ("pow", "**"), ("rpow", "**"), ("neg", "-x"), ("pos", "+x"),
+                   ("abs", "abs()"), ("round", "round()"), ("float", "float()"),
+                   ("int", "int()"), ("bool", "truth-testing"), ("lt", "<"),
+                   ("le", "<="), ("gt", ">"), ("ge", ">="), ("eq", "=="), ("ne", "!=")):
+    setattr(Settlement, f"__{_name}__", _refusing(_op))
+del _name, _op
+
+
+def is_observed(value):
+    """True when value is a rate that was actually charged and can be read."""
+    return not isinstance(value, Settlement) and value is not None
+
+
+def observed_rate(value, cell, what):
+    """The float behind an observed effective rate — the ONLY way a rate becomes an
+    ordinary number in this module.
+
+    Refuses three things by name rather than returning a usable number: a
+    Settlement (the cell was billed as an export, so no rate exists), a missing
+    rate (the statement did not print the comparison at all), and a $0 on a cell
+    that WAS billed as an import (on an import cell a $0 is a settlement leak or a
+    parsing artefact, never a tariff)."""
+    if isinstance(value, Settlement):
+        raise SettlementNotAPrice(
+            f"({cell}) is billed as a net import in both periods but its {what} is a "
+            "settlement non-price — that combination means the parse is wrong, and "
+            "using it would publish a settlement outcome as a tariff; refusing")
+    if value is None:
+        raise SystemExit(
+            f"({cell}): the current period carries no {what}, so the provider effect "
+            "cannot be separated from the vintage effect for this cell — refusing to "
+            "estimate one")
+    if value == 0:
+        raise SystemExit(
+            f"({cell}) is billed as a net import in both periods but its {what} is $0 — "
+            "on an import cell a $0 is not a tariff, and attributing this cell to a "
+            "vintage or to the provider would publish that $0 as a price; refusing to "
+            "estimate one")
+    return float(value)
+
+
+def json_price(value, digits=5):
+    """A rate as the artifact publishes it: the rounded number, or null when the cell
+    was billed as an export and no rate was charged."""
+    return _r(value, digits) if is_observed(value) else None
+
+
+def _effective_rate(usd, kwh, cell, what):
+    """charge / net kWh on a cell billed as a net import; an explicit Settlement on a
+    cell billed as a net export, where SDG&E printed $.00000 and charged nothing
+    because the energy settled at the annual true-up."""
+    return usd / kwh if kwh > 0 else Settlement(cell, what)
+
+
+def _counterfactual_usd(usd, kwh, cell):
+    """The same-date bundled comparison in DOLLARS. On a cell billed as a net export
+    the printed $0 is deferred settlement, not a bundled tariff of zero, so it is a
+    Settlement and cannot be netted against what CEA booked there. A net-export cell
+    carrying a NON-zero printed comparison would be a genuine observed bundled export
+    counterfactual, so it stays an ordinary number and the caller decides."""
+    if kwh > 0 or usd != 0.0:
+        return usd
+    return Settlement(cell, "same-date bundled comparison in dollars")
 
 
 def _period_dates(period):
@@ -511,30 +633,57 @@ _ACCRUES = re.compile(
 _PAY_REQUIRED = re.compile(r"Payment Required This Month:\s*(Yes|No)")
 _CLIMATE_CREDIT = re.compile(rf"California Climate Credit\s+(-{_NUM})")
 _TOTAL_MONTH = re.compile(rf"Total Charges this Month \$({_NUM})")
+# What a true-up settlement statement says about itself, and the true-up date it
+# prints in its own Net Energy Metering Summary header.
+_TRUE_UP_BILL = re.compile(r"Net Energy Metering Annual True-Up Bill")
+_SETTLED = re.compile(
+    r"Your account has been settled and all applicable generation credits have been "
+    r"applied\.")
+_TRUE_UP_FIELD = re.compile(r"True-Up Date:\s*(\d{1,2}/\d{1,2}/\d{4})")
 
 
-def billing_mode_scan():
-    """Read every statement and record, per statement, whether the energy charge was
-    payable that month or accrued to the annual true-up — and which printed sentence
-    says so. This runs before any arithmetic, over the whole corpus, because the
-    answer decides which column is the cost series."""
-    rows = []
-    per = periods()
-    by_stmt = {}
-    for (stmt, _), p in per.items():
-        by_stmt.setdefault(stmt, []).append(p)
-    for stmt in statement_dates():
-        txt = statement_text(stmt)
-        ledger = _NEM_LEDGER in txt
-        defer = _NEM_DEFER.search(txt)
-        accrue = _ACCRUES.search(txt)
-        payreq = _PAY_REQUIRED.search(txt)
-        month = _TOTAL_MONTH.findall(txt)
-        credit = _CLIMATE_CREDIT.findall(txt)
-        if payreq is None:
-            raise SystemExit(f"{stmt}: no 'Payment Required This Month' line — the "
-                             "Net Energy Metering Summary page is what settles the "
-                             "billing mode and it is not on this statement")
+def _true_up_date(text):
+    """'Dec 26, 2024' -> date. The deferral sentences print this form."""
+    return dt.datetime.strptime(text, "%b %d, %Y").date()
+
+
+def _period_end(period):
+    return _period_dates(period)[1]
+
+
+def classify_statement(stmt, txt, periods_on_statement, expected_true_up):
+    """One statement's billing mode, established from its own text or refused.
+
+    Two rules, both fail-closed, because "Payment Required This Month" alone is a
+    yes/no flag that a wording change or a genuine billing-mode change could flip
+    without this script noticing:
+
+      "No"  must carry one of the two recognised deferral sentences, which name the
+            true-up date the charge is accruing towards. A statement that says
+            payment is not required but never says why is not evidence of accrual,
+            so it raises rather than being counted as an accruing month.
+      "Yes" must prove it is the annual settlement rather than an ordinary payable
+            bill: it has to say so ("Net Energy Metering Annual True-Up Bill", "Your
+            account has been settled ..."), and its period end has to be the true-up
+            date the PREVIOUS statements were accruing towards. A payable statement
+            that is not a true-up settlement means the account stopped accruing, and
+            that must stop the run instead of being relabelled a settlement.
+
+    expected_true_up is the date the last accruing statement named, or None before
+    any has been seen. Returns the scan row."""
+    payreq = _PAY_REQUIRED.search(txt)
+    if payreq is None:
+        raise SystemExit(f"{stmt}: no 'Payment Required This Month' line — the "
+                         "Net Energy Metering Summary page is what settles the "
+                         "billing mode and it is not on this statement")
+    defer = _NEM_DEFER.search(txt)
+    accrue = _ACCRUES.search(txt)
+    row = {
+        "statement_date": stmt,
+        "nem_ledger_block_printed": _NEM_LEDGER in txt,
+        "payment_required_this_month": payreq.group(1),
+    }
+    if payreq.group(1) == "No":
         if defer:
             quote = ("*Payment not required for NEM charges. Your account will true "
                      f"up on {defer.group(1)}")
@@ -544,28 +693,126 @@ def billing_mode_scan():
                      f"true-up on {accrue.group(1)}.")
             true_up = accrue.group(1)
         else:
-            quote = f"Payment Required This Month: {payreq.group(1)}"
-            true_up = None
-        rows.append({
-            "statement_date": stmt,
-            "nem_ledger_block_printed": ledger,
-            "payment_required_this_month": payreq.group(1),
-            "true_up_date": true_up,
-            "deferral_sentence": quote,
-            "total_charges_this_month_usd": _f(month[0]) if month else None,
-            "california_climate_credit_usd":
-                _c(sum(_f(c) for c in dict.fromkeys(credit))) if credit else 0.0,
-            "period_accrual_usd": _c(sum(p["current_charges"]
-                                         for p in by_stmt.get(stmt, []))),
-            "periods_on_statement": sorted(p["period"] for p in by_stmt.get(stmt, [])),
+            raise SystemExit(
+                f"{stmt}: prints 'Payment Required This Month: No' but carries neither "
+                "recognised true-up deferral sentence ('*Payment not required for NEM "
+                "charges. Your account will true up on ...' / 'Payment is not required "
+                "at this time. Your account will true-up on ...'). A payment flag on its "
+                "own does not establish that the energy charge accrued to the annual "
+                "true-up — the wording may have changed, or the account may have stopped "
+                "accruing. Read the statement and extend the patterns; this script will "
+                "not assume accrual")
+        row.update({"true_up_date": true_up, "establishing_quote": quote,
+                    "billing_mode": "accrues to the annual true-up",
+                    "annual_settlement": False, "settlement_evidence": None})
+    else:
+        settlement = [m.group(0) for m in (_TRUE_UP_BILL.search(txt), _SETTLED.search(txt))
+                      if m]
+        if len(settlement) != 2:
+            raise SystemExit(
+                f"{stmt}: prints 'Payment Required This Month: Yes' but does not say it "
+                "is the annual settlement — 'Net Energy Metering Annual True-Up Bill' "
+                "and/or 'Your account has been settled and all applicable generation "
+                "credits have been applied.' is missing. A payable statement that is not "
+                "a true-up settlement means the energy charge stopped accruing, which "
+                "this analysis's cost series depends on; refusing to label it a "
+                "settlement on the payment flag alone")
+        if expected_true_up is None:
+            raise SystemExit(
+                f"{stmt}: claims to be an annual settlement, but no earlier statement "
+                "named a true-up date for it to settle — there is nothing to match its "
+                "period end against, so the claim is unverified")
+        ends = sorted(_period_end(p) for p in periods_on_statement)
+        if expected_true_up not in ends:
+            raise SystemExit(
+                f"{stmt}: claims to be the annual settlement, but none of its billing "
+                f"periods ends on {expected_true_up.strftime('%m/%d/%Y')}, the true-up "
+                "date the preceding statements printed. Its period(s) end "
+                + ", ".join(e.strftime("%m/%d/%Y") for e in ends)
+                + " — the settlement does not line up with the accrual it is supposed to "
+                "close, and this script will not assert that it does")
+        printed = _TRUE_UP_FIELD.search(txt)
+        if printed is None or dt.datetime.strptime(printed.group(1),
+                                                   "%m/%d/%Y").date() != expected_true_up:
+            raise SystemExit(
+                f"{stmt}: claims to be the annual settlement for "
+                f"{expected_true_up.strftime('%m/%d/%Y')}, but its own 'True-Up Date:' "
+                "field reads "
+                f"{printed.group(1) if printed else 'nothing'}")
+        row.update({
+            "true_up_date": None,
+            "establishing_quote": settlement[0],
+            "billing_mode": "annual true-up settlement",
+            "annual_settlement": True,
+            "settlement_evidence": {
+                "quotes": settlement,
+                "printed_true_up_date": printed.group(1),
+                "settles_the_true_up_date_previously_printed":
+                    expected_true_up.strftime("%b ") + str(expected_true_up.day) + ", "
+                    + str(expected_true_up.year),
+                "matching_period_end": next(
+                    p for p in periods_on_statement
+                    if _period_end(p) == expected_true_up),
+            },
         })
+    month = _TOTAL_MONTH.findall(txt)
+    credit = _CLIMATE_CREDIT.findall(txt)
+    row.update({
+        "total_charges_this_month_usd": _f(month[0]) if month else None,
+        "california_climate_credit_usd":
+            _c(sum(_f(c) for c in dict.fromkeys(credit))) if credit else 0.0,
+        "periods_on_statement": sorted(periods_on_statement),
+    })
+    return row
+
+
+def billing_mode_scan():
+    """Read every statement and record, per statement, whether the energy charge was
+    payable that month or accrued to the annual true-up — and which printed sentence
+    says so. This runs before any arithmetic, over the whole corpus, because the
+    answer decides which column is the cost series.
+
+    Statements are read in date order so each claimed annual settlement can be
+    matched against the true-up date the statements before it were accruing towards;
+    classify_statement() refuses anything it cannot establish that way."""
+    rows = []
+    per = periods()
+    by_stmt = {}
+    for (stmt, _), p in per.items():
+        by_stmt.setdefault(stmt, []).append(p)
+    expected_true_up = None
+    for stmt in statement_dates():
+        on_stmt = [p["period"] for p in by_stmt.get(stmt, [])]
+        row = classify_statement(stmt, statement_text(stmt), on_stmt, expected_true_up)
+        row["period_accrual_usd"] = _c(sum(p["current_charges"]
+                                           for p in by_stmt.get(stmt, [])))
+        if row["true_up_date"]:
+            expected_true_up = _true_up_date(row["true_up_date"])
+        elif row["annual_settlement"]:
+            # that true-up is now closed; the next settlement must be justified by a
+            # true-up date printed AFTER it, not by this one again
+            expected_true_up = None
+        rows.append(row)
     return rows
 
 
 def billing_mode_finding(scan):
-    """Turn the scan into the answer, naming the statements that establish it."""
-    accruing = [r for r in scan if r["payment_required_this_month"] == "No"]
-    payable = [r for r in scan if r["payment_required_this_month"] == "Yes"]
+    """Turn the scan into the answer, naming the statements that establish it.
+
+    Every count and every sentence below is derived from the scan rows, which
+    classify_statement() has already refused to produce for any statement whose
+    billing mode is not established by its own text. Nothing here is a constant: if
+    the corpus gains a third settlement, or an accruing statement stops carrying its
+    deferral sentence, the scan raises or these figures move — the prose cannot go on
+    asserting uninterrupted accrual on its own."""
+    accruing = [r for r in scan if r["billing_mode"] == "accrues to the annual true-up"]
+    payable = [r for r in scan if r["annual_settlement"]]
+    if len(accruing) + len(payable) != len(scan):
+        raise SystemExit("a statement was neither classified as accruing nor as an "
+                         "annual settlement — the scan let something through")
+    if not accruing:
+        raise SystemExit("no statement in the corpus accrues to the annual true-up, so "
+                         "the per-period accrual is not the cost series here")
     ledger = [r for r in scan if r["nem_ledger_block_printed"]]
     no_ledger = [r for r in scan if not r["nem_ledger_block_printed"]]
     if not ledger or not no_ledger:
@@ -584,36 +831,49 @@ def billing_mode_finding(scan):
         "established_by": [
             {"statement_date": BASE["statement"],
              "role": "the base period of this comparison",
-             "quote": next(r["deferral_sentence"] for r in scan
+             "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == BASE["statement"]),
              "net_energy_metering_summary": "Payment Required This Month: No"},
             {"statement_date": CURRENT["statement"],
              "role": "the current period of this comparison",
-             "quote": next(r["deferral_sentence"] for r in scan
+             "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == CURRENT["statement"]),
              "net_energy_metering_summary": "Payment Required This Month: No"},
             {"statement_date": last_ledger,
              "role": "last statement printing a separate Net Metering Account Summary",
-             "quote": next(r["deferral_sentence"] for r in scan
+             "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == last_ledger),
              "net_energy_metering_summary": "Payment Required This Month: No"},
             {"statement_date": first_without,
              "role": "first statement without it — the presentation change",
-             "quote": next(r["deferral_sentence"] for r in scan
+             "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == first_without),
              "net_energy_metering_summary": "Payment Required This Month: No"},
         ],
         "annual_settlement_statements": [
             {"statement_date": r["statement_date"],
              "true_up_period_ends": r["periods_on_statement"],
-             "net_energy_metering_summary": "Payment Required This Month: Yes"}
+             "net_energy_metering_summary": "Payment Required This Month: Yes",
+             "proved_by": r["settlement_evidence"]}
             for r in payable],
+        "how_each_statement_was_established": (
+            "an accruing statement has to carry one of the two recognised true-up "
+            "deferral sentences; the payment flag alone is not accepted. A settlement "
+            "statement has to say it is one AND have a billing period ending on the "
+            "true-up date the preceding statements printed, matching its own "
+            "'True-Up Date:' field. Anything else stops the run"),
+        "statements_scanned": len(scan),
         "statements_accruing": len(accruing),
         "statements_payable": len(payable),
         "what_changed_and_when": {
             "the_billing_mode_did_not_change": (
-                "every statement in the corpus except the two annual settlement "
-                "statements prints Payment Required This Month: No, and both compared "
+                f"{len(accruing)} of the {len(scan)} statements in the corpus print "
+                "Payment Required This Month: No and carry a true-up deferral sentence "
+                "naming the date they accrue towards; the other "
+                + (f"{len(payable)} is an annual settlement closing a true-up"
+                   if len(payable) == 1
+                   else f"{len(payable)} are annual settlements, each closing a true-up")
+                + " the earlier statements named. Both compared "
                 "periods are accruing statements. The energy component has accrued to "
                 "the annual true-up throughout."),
             "the_presentation_changed_on": first_without,
@@ -738,8 +998,11 @@ def period_ledger(spec):
                                  f"({season}, {tou})")
             # effective, like every other rate here: comparison dollars / net kWh, so
             # the provider term is a difference of two dollar figures on the same kWh
-            comparison_rate = (comparison["usd"] / d["kwh"]) if d["kwh"] else None
-            comparison_usd = comparison["usd"]
+            comparison_rate = _effective_rate(comparison["usd"], d["kwh"],
+                                              _key(season, tou),
+                                              "same-date bundled comparison rate")
+            comparison_usd = _counterfactual_usd(comparison["usd"], d["kwh"],
+                                                 _key(season, tou))
         else:
             g = printed.get(("generation", season, tou))
             if g is None:
@@ -756,18 +1019,20 @@ def period_ledger(spec):
             "supply_usd": supply["usd"],
             "supply_source": supply["source"],
             "usd": usd,
-            # effective billed rates: charge / net kWh. On the SDG&E side a
-            # net-negative bucket prints $.00000 and is charged $0 (exports settle
-            # at true-up), so the effective rate is 0 there by fact, not by rounding.
-            "delivery_rate_effective": d["usd"] / q if q else None,
-            "supply_rate_effective": supply["usd"] / q if q else None,
-            "rate_effective": usd / q if q else None,
+            # Effective billed rates: charge / net kWh on a cell billed as a net
+            # import. On a net-export cell SDG&E prints $.00000 and charges nothing
+            # because the export settles at true-up, so there is no rate to read and
+            # the cell carries a Settlement — arithmetic on which raises rather than
+            # quietly yielding 0.0.
+            "delivery_rate_effective": _effective_rate(d["usd"], q, _key(season, tou),
+                                                       "delivery rate"),
+            "supply_rate_effective": _effective_rate(supply["usd"], q,
+                                                     _key(season, tou), "supply rate"),
+            "rate_effective": _effective_rate(usd, q, _key(season, tou),
+                                              "effective billed rate"),
             "sdge_bundled_comparison_rate": comparison_rate,
-            # the same-date bundled counterfactual in DOLLARS. On a cell billed as a
-            # net export this is $0 by settlement (the export went to the annual
-            # true-up), not because SDG&E's bundled tariff for that cell is zero, so
-            # provider_effect_whole_period() refuses to net it against what CEA
-            # charged there — see that function.
+            # the same-date bundled counterfactual in DOLLARS, a Settlement wherever
+            # the printed $0 is deferred export settlement rather than a tariff.
             "sdge_bundled_comparison_usd": comparison_usd,
         }
     if len(cells) != len(CELLS):
@@ -850,94 +1115,47 @@ def _key(season, tou):
 
 
 def decompose(base, current):
-    """Laspeyres, Paasche and the interaction residual, per season x TOU cell and
-    in aggregate, plus the split of the price effect into delivery vintage, supply
-    vintage, provider and netting regime.
+    """Split the TOU energy change into a priced-cell index decomposition and a
+    netting/settlement component, with nothing crossing between them.
 
-    The first three of those are causal attributions and are computed only over the
-    cells billed as net imports in BOTH periods, which are the only cells with an
-    observable base tariff. Every other cell's price movement goes to the fourth,
-    netting_regime, which names the export-to-import settlement change rather than
-    dressing it up as a vintage. Price and quantity are published as intervals, not
-    points, because the interaction term is reported and never allocated."""
+    A cell is PRICED when it was billed as a net import in BOTH periods, which is
+    the only condition under which a rate is observable at both ends. Laspeyres,
+    Paasche, the interaction, the scale/TOU-mix split, the published bounds and the
+    delivery-vintage/supply-vintage/provider split are computed over those cells and
+    nothing else — every rate in them is a tariff.
+
+    Every other cell flips between export and import (or exports in both), so at
+    least one end of its price is a Settlement: SDG&E printed $.00000 and charged
+    nothing because the energy went to the annual true-up. No index term exists for
+    such a cell, and the type refuses to fabricate one. Its COMPLETE dollar change
+    is carried as netting_settlement_usd, a top-level component beside the price and
+    quantity figures rather than a sub-key inside either:
+
+        energy change = (price + quantity + interaction over the priced cells)
+                      +  netting/settlement
+
+    Price and quantity are published as intervals, not points, because the
+    interaction term is reported and never allocated."""
     per_cell = []
     agg = {k: 0.0 for k in ("price_l", "price_p", "quantity_l", "quantity_p",
                             "interaction", "delivery_vintage_l", "supply_vintage_l",
-                            "provider_l", "netting_regime_l", "delivery_vintage_p",
-                            "supply_vintage_p", "provider_p", "netting_regime_p",
-                            "base_usd", "current_usd")}
-    q0_total = sum(c["kwh"] for c in base["cells"].values())
-    q1_total = sum(c["kwh"] for c in current["cells"].values())
+                            "provider_l", "delivery_vintage_p", "supply_vintage_p",
+                            "provider_p", "priced_base_usd", "priced_current_usd",
+                            "base_usd", "current_usd", "settlement_change")}
+    priced_keys = [(s, t) for s, t in CELLS
+                   if base["cells"][(s, t)]["kwh"] > 0
+                   and current["cells"][(s, t)]["kwh"] > 0]
+    q0_total = sum(base["cells"][k]["kwh"] for k in priced_keys)
+    q1_total = sum(current["cells"][k]["kwh"] for k in priced_keys)
     scale = mix = 0.0
     for season, tou in CELLS:
+        cell = _key(season, tou)
         b, c = base["cells"][(season, tou)], current["cells"][(season, tou)]
         q0, q1 = b["kwh"], c["kwh"]
-        p0 = b["rate_effective"] or 0.0
-        p1 = c["rate_effective"] or 0.0
-        d0 = b["delivery_rate_effective"] or 0.0
-        d1 = c["delivery_rate_effective"] or 0.0
-        g0 = b["supply_rate_effective"] or 0.0
-        g1 = c["supply_rate_effective"] or 0.0
-        s1 = c["sdge_bundled_comparison_rate"]
-        if s1 is None:
-            raise SystemExit(
-                f"({season}, {tou}): the current period carries no SDG&E bundled "
-                "comparison rate, so the provider effect cannot be separated from the "
-                "vintage effect for this cell — refusing to estimate one")
-        # The price effect, split by cause — but only where a base tariff exists.
-        # Delivery is SDG&E in both periods, so all of its movement is vintage, and
-        # the supply movement splits at the same-date bundled comparison s1. On a
-        # cell billed as a net export in either period, d0/g0 (or d1/g1) are $0
-        # because the energy settled at true-up, not because a tariff said so, so
-        # the whole of that cell's price movement is published as netting_regime
-        # and none of it is attributed to a vintage or to the provider.
-        like_for_like_cell = q0 > 0 and q1 > 0
-        if like_for_like_cell:
-            # A cell that is a net import in both periods should carry three real
-            # tariffs. If any of them prints $0 anyway, that $0 is a settlement or a
-            # parsing artefact rather than a price, and every term built on it —
-            # q(s1 - g0), q(d1 - d0), and like_for_like's percentages, which divide by
-            # these — would be a settlement figure wearing a tariff's name. Refuse.
-            zero = [n for n, v in (("base delivery rate", d0), ("base supply rate", g0),
-                                   ("same-date bundled comparison rate", s1)) if v == 0]
-            if zero:
-                raise SystemExit(
-                    f"({season}, {tou}) is billed as a net import in both periods but its "
-                    + " and ".join(zero) + " is $0 — on an import cell a $0 is not a "
-                    "tariff, and attributing this cell to a vintage or to the provider "
-                    "would publish that $0 as a price; refusing to estimate one")
-            split_l = {"delivery_vintage_l": q0 * (d1 - d0),
-                       "supply_vintage_l": q0 * (s1 - g0),
-                       "provider_l": q0 * (g1 - s1),
-                       "netting_regime_l": 0.0}
-            split_p = {"delivery_vintage_p": q1 * (d1 - d0),
-                       "supply_vintage_p": q1 * (s1 - g0),
-                       "provider_p": q1 * (g1 - s1),
-                       "netting_regime_p": 0.0}
-        else:
-            split_l = {"delivery_vintage_l": 0.0, "supply_vintage_l": 0.0,
-                       "provider_l": 0.0, "netting_regime_l": q0 * (p1 - p0)}
-            split_p = {"delivery_vintage_p": 0.0, "supply_vintage_p": 0.0,
-                       "provider_p": 0.0, "netting_regime_p": q1 * (p1 - p0)}
-        terms = {
-            "price_l": q0 * (p1 - p0),
-            "price_p": q1 * (p1 - p0),
-            "quantity_l": p0 * (q1 - q0),
-            "quantity_p": p1 * (q1 - q0),
-            "interaction": (p1 - p0) * (q1 - q0),
-            **split_l,
-            **split_p,
-            "base_usd": b["usd"],
-            "current_usd": c["usd"],
-        }
-        for k, v in terms.items():
-            agg[k] += v
-        w0 = q0 / q0_total if q0_total else 0.0
-        w1 = q1 / q1_total if q1_total else 0.0
-        mix += q1_total * p0 * (w1 - w0)
-        scale += (q1_total - q0_total) * p0 * w0
-        per_cell.append({
-            "cell": _key(season, tou),
+        agg["base_usd"] += b["usd"]
+        agg["current_usd"] += c["usd"]
+        row = {
+            "cell": cell,
             "season": season,
             "tou_period": tou,
             "base_kwh": q0,
@@ -945,16 +1163,68 @@ def decompose(base, current):
             "base_usd": b["usd"],
             "current_usd": c["usd"],
             "change_usd": _c(c["usd"] - b["usd"]),
-            "base_rate_effective": _r(p0, 5),
-            "current_rate_effective": _r(p1, 5),
-            "base_delivery_rate": _r(d0, 5),
-            "current_delivery_rate": _r(d1, 5),
-            "base_supply_rate": _r(g0, 5),
-            "current_supply_rate": _r(g1, 5),
-            "sdge_bundled_comparison_rate_current_date": _r(s1, 5),
-            "both_periods_net_import": like_for_like_cell,
             "base_net_import": q0 > 0,
             "current_net_import": q1 > 0,
+            "priced": (season, tou) in priced_keys,
+            # nulls here are the statements' own answer, not a missing value: on a
+            # cell billed as a net export no rate was charged.
+            "base_rate_effective": json_price(b["rate_effective"]),
+            "current_rate_effective": json_price(c["rate_effective"]),
+            "base_delivery_rate": json_price(b["delivery_rate_effective"]),
+            "current_delivery_rate": json_price(c["delivery_rate_effective"]),
+            "base_supply_rate": json_price(b["supply_rate_effective"]),
+            "current_supply_rate": json_price(c["supply_rate_effective"]),
+            "sdge_bundled_comparison_rate_current_date":
+                json_price(c["sdge_bundled_comparison_rate"]),
+        }
+        if not row["priced"]:
+            # No index term exists for this cell. Reading a rate off it would raise;
+            # nothing here tries. Its whole dollar change is the settlement component.
+            row["netting_settlement_usd"] = row["change_usd"]
+            row["why_not_priced"] = (
+                "billed as a net export in "
+                + ("both periods" if q0 <= 0 and q1 <= 0
+                   else "the base period" if q0 <= 0 else "the current period")
+                + ", so SDG&E printed $.00000 and charged nothing there — the energy "
+                "settled at the annual true-up and no rate is observable to compare")
+            agg["settlement_change"] += c["usd"] - b["usd"]
+            per_cell.append(row)
+            continue
+
+        # Every rate below is read through observed_rate(), which refuses a
+        # Settlement, a missing comparison and a $0-on-an-import-cell by name.
+        p0 = observed_rate(b["rate_effective"], cell, "base effective billed rate")
+        p1 = observed_rate(c["rate_effective"], cell, "current effective billed rate")
+        d0 = observed_rate(b["delivery_rate_effective"], cell, "base delivery rate")
+        d1 = observed_rate(c["delivery_rate_effective"], cell, "current delivery rate")
+        g0 = observed_rate(b["supply_rate_effective"], cell, "base supply rate")
+        g1 = observed_rate(c["supply_rate_effective"], cell, "current supply rate")
+        s1 = observed_rate(c["sdge_bundled_comparison_rate"], cell,
+                           "same-date bundled comparison rate")
+        # Delivery is SDG&E in both periods, so all of its movement is vintage; the
+        # supply movement splits at the same-date bundled comparison s1.
+        terms = {
+            "price_l": q0 * (p1 - p0),
+            "price_p": q1 * (p1 - p0),
+            "quantity_l": p0 * (q1 - q0),
+            "quantity_p": p1 * (q1 - q0),
+            "interaction": (p1 - p0) * (q1 - q0),
+            "delivery_vintage_l": q0 * (d1 - d0),
+            "supply_vintage_l": q0 * (s1 - g0),
+            "provider_l": q0 * (g1 - s1),
+            "delivery_vintage_p": q1 * (d1 - d0),
+            "supply_vintage_p": q1 * (s1 - g0),
+            "provider_p": q1 * (g1 - s1),
+            "priced_base_usd": b["usd"],
+            "priced_current_usd": c["usd"],
+        }
+        for k, v in terms.items():
+            agg[k] += v
+        w0 = q0 / q0_total if q0_total else 0.0
+        w1 = q1 / q1_total if q1_total else 0.0
+        mix += q1_total * p0 * (w1 - w0)
+        scale += (q1_total - q0_total) * p0 * w0
+        row.update({
             "laspeyres_price_usd": _c(terms["price_l"]),
             "laspeyres_quantity_usd": _c(terms["quantity_l"]),
             "paasche_price_usd": _c(terms["price_p"]),
@@ -963,189 +1233,201 @@ def decompose(base, current):
             "delivery_vintage_usd_laspeyres": _c(terms["delivery_vintage_l"]),
             "supply_vintage_usd_laspeyres": _c(terms["supply_vintage_l"]),
             "provider_usd_laspeyres": _c(terms["provider_l"]),
-            "netting_regime_usd_laspeyres": _c(terms["netting_regime_l"]),
             "delivery_vintage_usd_paasche": _c(terms["delivery_vintage_p"]),
             "supply_vintage_usd_paasche": _c(terms["supply_vintage_p"]),
             "provider_usd_paasche": _c(terms["provider_p"]),
-            "netting_regime_usd_paasche": _c(terms["netting_regime_p"]),
-            "price_split_attributed": like_for_like_cell,
         })
-    energy_change = _c(agg["current_usd"] - agg["base_usd"])
-    # The Laspeyres quantity term — and therefore the scale/mix split of it — values
-    # every kWh at the BASE effective price, which on a base-export cell is $0 by
-    # settlement. That is arithmetically what the base bill charged, and it is why
-    # this end of the quantity interval is the low one; but a reader must not take
-    # $0 there for a base tariff, so the cells and the kWh it prices at zero are
-    # named. The Paasche end prices the same kWh at the current tariff, and the gap
-    # between the two ends is the published, unallocated interaction.
-    zero_base_price_cells = [r["cell"] for r in per_cell
-                             if not r["base_net_import"]]
-    zero_base_price_kwh = _r(sum(r["current_kwh"] - r["base_kwh"] for r in per_cell
-                                 if not r["base_net_import"]), 1)
-    attributed_cells = [r["cell"] for r in per_cell if r["price_split_attributed"]]
-    unattributed_cells = [r["cell"] for r in per_cell if not r["price_split_attributed"]]
-    if not attributed_cells:
+        per_cell.append(row)
+
+    priced_cells = [r["cell"] for r in per_cell if r["priced"]]
+    settlement_cells = [r["cell"] for r in per_cell if not r["priced"]]
+    if not priced_cells:
         raise SystemExit(
-            "no cell is billed as a net import in both periods, so no delivery/supply "
-            "vintage or provider term is observable at all — refusing to publish a "
-            "price split whose every term would be the netting regime under another name")
+            "no cell is billed as a net import in both periods, so no price is "
+            "observable at both ends anywhere and there is no price or quantity "
+            "effect to compute at all — refusing to publish an index whose every "
+            "term would be the netting regime under another name")
+    energy_change = _c(agg["current_usd"] - agg["base_usd"])
+    priced_change = _c(agg["priced_current_usd"] - agg["priced_base_usd"])
+    settlement_change = _c(agg["settlement_change"])
+    scope_note = (
+        "PRICED CELLS are the ones billed as net imports in BOTH periods, the only "
+        "cells where a rate is observable at both ends. Every figure under "
+        "priced_cells — the price effect, the quantity effect, the interaction, the "
+        "published bounds, the scale/TOU-mix split and the vintage/provider split — "
+        "covers those cells and nothing else. SETTLEMENT CELLS were billed as net "
+        "exports in at least one period: SDG&E printed $.00000 and charged nothing "
+        "because the energy settled at the annual true-up, so no rate exists to "
+        "compare and no index term is defined. Their whole dollar change is carried "
+        "under netting_settlement, outside both the price and the quantity figures "
+        "rather than inside either of them.")
     out = {
         "per_cell": per_cell,
         "aggregate": {
             "base_energy_usd": _c(agg["base_usd"]),
             "current_energy_usd": _c(agg["current_usd"]),
             "energy_change_usd": energy_change,
-            "laspeyres": {"price_usd": _c(agg["price_l"]),
-                          "quantity_usd": _c(agg["quantity_l"])},
-            "paasche": {"price_usd": _c(agg["price_p"]),
-                        "quantity_usd": _c(agg["quantity_p"])},
-            "interaction_usd": _c(agg["interaction"]),
-            "quantity_split_laspeyres_basis": {
-                "scale_usd": _c(scale),
-                "tou_mix_usd": _c(mix),
-                "base_net_kwh": q0_total,
-                "current_net_kwh": q1_total,
-                "note": ("shares are of NET kWh, which NEM lets go negative in a cell, "
-                         "so a share is not bounded by [0,1]; this is an exact "
-                         "accounting identity on those shares, not a share of "
-                         "consumption"),
-                "cells_priced_at_a_settlement_zero_base_rate": zero_base_price_cells,
-                "net_kwh_change_valued_at_zero": zero_base_price_kwh,
-                "settlement_zero_caveat": (
-                    "scale and mix split the LASPEYRES end of the quantity interval, so "
-                    "they value every kWh at the base period's effective price. On the "
-                    "cells named above that price is $0 because the 2024 export settled "
-                    "at the annual true-up, not because a tariff said $0, so the "
-                    f"{zero_base_price_kwh} kWh of net swing in those cells is carried "
-                    "here at zero. That is what the base bill charged and it is why this "
-                    "is the LOW end of the interval; it is not a statement that the "
-                    "energy was worth nothing. The Paasche end prices the same kWh at "
-                    "the current tariff, and the whole gap between the two ends is the "
-                    "interaction term, published and allocated to neither side"),
+            "scope": {
+                "priced_cells": priced_cells,
+                "settlement_cells": settlement_cells,
+                "what_each_figure_covers": scope_note,
             },
-            # The causal split of the price effect. delivery_vintage, supply_vintage
-            # and provider are computed ONLY over the cells with an observable base
-            # tariff; netting_regime carries the rest, named for what it is.
-            "price_split_scope": {
-                "attributed_terms": ["delivery_vintage_usd", "supply_vintage_usd",
-                                     "provider_usd"],
-                "attributed_cells": attributed_cells,
-                "unattributed_term": "netting_regime_usd",
-                "unattributed_cells": unattributed_cells,
-                "why": (
-                    "delivery_vintage, supply_vintage and provider are differences of "
-                    "two tariffs, so they are computed only on the cells billed as net "
-                    "imports in BOTH periods. On the other cells the base (or current) "
-                    "effective price is $0 because the energy settled at the annual "
-                    "true-up rather than because a tariff said $0, so attributing their "
-                    "movement to a tariff vintage or to the provider would publish the "
-                    "export-to-import settlement change under someone else's name — and "
-                    "the algebra would still balance. Their whole price movement is "
-                    "netting_regime_usd instead: measured, reconciled, and not "
-                    "decomposed further, because these statements do not observe a "
-                    "like-for-like base tariff for them"),
-                "identity": ("delivery_vintage + supply_vintage + provider + "
-                             "netting_regime == the price effect, on each weight basis"),
-            },
-            "price_split_laspeyres_basis": {
-                "delivery_vintage_usd": _c(agg["delivery_vintage_l"]),
-                "supply_vintage_usd": _c(agg["supply_vintage_l"]),
-                "provider_usd": _c(agg["provider_l"]),
-                "netting_regime_usd": _c(agg["netting_regime_l"]),
-            },
-            "price_split_paasche_basis": {
-                "delivery_vintage_usd": _c(agg["delivery_vintage_p"]),
-                "supply_vintage_usd": _c(agg["supply_vintage_p"]),
-                "provider_usd": _c(agg["provider_p"]),
-                "netting_regime_usd": _c(agg["netting_regime_p"]),
-            },
-            # Price and quantity are published as INTERVALS, not as points. Paasche
-            # price == Laspeyres price + interaction, so naming either endpoint as
-            # "the" price effect silently allocates the whole interaction to it while
-            # claiming not to. The interval width IS the interaction term.
-            "reading": {
-                "convention": "bounds — neither effect is published as a point",
-                "basis": (
-                    "the price effect and the quantity effect are each reported as the "
-                    "interval between their Laspeyres (base-weight) and Paasche "
-                    "(current-weight) readings. Both intervals are exactly as wide as "
-                    "the interaction term, which is published and allocated to neither "
-                    "side; no figure here is the amount price or quantity 'accounts "
-                    "for'. The two endpoints pair exactly, one from each side, and both "
-                    "pairings are stated below"),
-                "price_usd_low": _c(min(agg["price_l"], agg["price_p"])),
-                "price_usd_high": _c(max(agg["price_l"], agg["price_p"])),
-                "quantity_usd_low": _c(min(agg["quantity_l"], agg["quantity_p"])),
-                "quantity_usd_high": _c(max(agg["quantity_l"], agg["quantity_p"])),
-                "interval_width_usd": _c(agg["interaction"]),
-                "exact_pairings": [
-                    {"price_basis": "laspeyres", "price_usd": _c(agg["price_l"]),
-                     "quantity_basis": "paasche", "quantity_usd": _c(agg["quantity_p"]),
-                     "sum_usd": _c(agg["price_l"] + agg["quantity_p"])},
-                    {"price_basis": "paasche", "price_usd": _c(agg["price_p"]),
-                     "quantity_basis": "laspeyres", "quantity_usd": _c(agg["quantity_l"]),
-                     "sum_usd": _c(agg["price_p"] + agg["quantity_l"])},
-                ],
-                "quantity_split_basis": (
-                    "the scale and TOU-mix figures below split the Laspeyres end of the "
-                    "quantity interval; they do not apply to the Paasche end"),
-                "of_which_scale_usd": _c(scale),
-                "of_which_tou_mix_usd": _c(mix),
+            "priced_cells": {
+                "cells": priced_cells,
+                "base_usd": _c(agg["priced_base_usd"]),
+                "current_usd": _c(agg["priced_current_usd"]),
+                "change_usd": priced_change,
+                "laspeyres": {"price_usd": _c(agg["price_l"]),
+                              "quantity_usd": _c(agg["quantity_l"])},
+                "paasche": {"price_usd": _c(agg["price_p"]),
+                            "quantity_usd": _c(agg["quantity_p"])},
                 "interaction_usd": _c(agg["interaction"]),
-                "interaction_note": (
-                    "the spread between the two readings, published and never split. It "
-                    "is concentrated in the three cells that flip between net export and "
-                    "net import: on an export cell SDG&E prints $.00000 and charges $0, "
-                    "so the effective price is 0, and the whole of that cell's change is "
-                    "a joint movement of price and quantity that neither term owns"),
+                # Price and quantity are published as INTERVALS, not as points.
+                # Paasche price == Laspeyres price + interaction, so naming either
+                # endpoint as "the" price effect silently allocates the whole
+                # interaction to it while claiming not to. The width IS the
+                # interaction term.
+                "reading": {
+                    "convention": "bounds — neither effect is published as a point",
+                    "covers": ("the " + str(len(priced_cells)) + " priced cells ("
+                               + ", ".join(priced_cells) + ") and nothing else; the "
+                               "settlement cells are outside these figures entirely"),
+                    "basis": (
+                        "the price effect and the quantity effect are each reported as "
+                        "the interval between their Laspeyres (base-weight) and Paasche "
+                        "(current-weight) readings. Both intervals are exactly as wide "
+                        "as the interaction term, which is published and allocated to "
+                        "neither side; no figure here is the amount price or quantity "
+                        "'accounts for'. The two endpoints pair exactly, one from each "
+                        "side, and both pairings are stated below"),
+                    "price_usd_low": _c(min(agg["price_l"], agg["price_p"])),
+                    "price_usd_high": _c(max(agg["price_l"], agg["price_p"])),
+                    "quantity_usd_low": _c(min(agg["quantity_l"], agg["quantity_p"])),
+                    "quantity_usd_high": _c(max(agg["quantity_l"], agg["quantity_p"])),
+                    "interval_width_usd": _c(agg["interaction"]),
+                    "exact_pairings": [
+                        {"price_basis": "laspeyres", "price_usd": _c(agg["price_l"]),
+                         "quantity_basis": "paasche",
+                         "quantity_usd": _c(agg["quantity_p"]),
+                         "sum_usd": _c(agg["price_l"] + agg["quantity_p"])},
+                        {"price_basis": "paasche", "price_usd": _c(agg["price_p"]),
+                         "quantity_basis": "laspeyres",
+                         "quantity_usd": _c(agg["quantity_l"]),
+                         "sum_usd": _c(agg["price_p"] + agg["quantity_l"])},
+                    ],
+                    "sums_to": "priced_cells.change_usd",
+                    "quantity_split_basis": (
+                        "the scale and TOU-mix figures below split the Laspeyres end of "
+                        "the quantity interval; they do not apply to the Paasche end"),
+                    "of_which_scale_usd": _c(scale),
+                    "of_which_tou_mix_usd": _c(mix),
+                    "interaction_usd": _c(agg["interaction"]),
+                    "interaction_note": (
+                        "the spread between the two readings, published and never "
+                        "split. It is the part of the priced cells' change that moved "
+                        "because price and quantity moved together, owned jointly by "
+                        "both terms"),
+                },
+                "quantity_split_laspeyres_basis": {
+                    "scale_usd": _c(scale),
+                    "tou_mix_usd": _c(mix),
+                    "base_net_kwh": _r(q0_total, 1),
+                    "current_net_kwh": _r(q1_total, 1),
+                    "every_base_price_here_is_an_observed_tariff": (
+                        "scale and mix value every kWh at the base period's effective "
+                        "price, so they are computed over the priced cells only. Both "
+                        "ends of every rate in this split were charged on an import "
+                        "cell; no kWh here is valued at a settlement $0, and none can "
+                        "be — a settlement non-price raises rather than multiplying"),
+                    "kwh_note": (
+                        "these totals are the priced cells' net kWh, not the periods' "
+                        "346 and 987: the settlement cells are outside this split"),
+                },
+                # The causal split of the priced cells' price effect. Delivery is
+                # SDG&E in both periods, so all of its movement is vintage; supply
+                # splits at the same-date bundled comparison.
+                "price_split_laspeyres_basis": {
+                    "delivery_vintage_usd": _c(agg["delivery_vintage_l"]),
+                    "supply_vintage_usd": _c(agg["supply_vintage_l"]),
+                    "provider_usd": _c(agg["provider_l"]),
+                },
+                "price_split_paasche_basis": {
+                    "delivery_vintage_usd": _c(agg["delivery_vintage_p"]),
+                    "supply_vintage_usd": _c(agg["supply_vintage_p"]),
+                    "provider_usd": _c(agg["provider_p"]),
+                },
+                "price_split_identity": (
+                    "delivery_vintage + supply_vintage + provider == the price effect "
+                    "over the priced cells, on each weight basis. There is no fourth "
+                    "term: the cells that would have needed one are not in this figure"),
+            },
+            "netting_settlement": {
+                "cells": settlement_cells,
+                "change_usd": settlement_change,
+                "per_cell": [{"cell": r["cell"], "base_kwh": r["base_kwh"],
+                              "current_kwh": r["current_kwh"], "base_usd": r["base_usd"],
+                              "current_usd": r["current_usd"],
+                              "change_usd": r["change_usd"],
+                              "why_not_priced": r["why_not_priced"]}
+                             for r in per_cell if not r["priced"]],
+                "what_this_is": (
+                    "the complete dollar change of every cell billed as a net export in "
+                    "at least one period — what the netting regime billed, published "
+                    "whole and undecomposed. It is neither a price effect nor a "
+                    "quantity effect and is not inside either of them: on these cells "
+                    "SDG&E charged $0 because the energy settled at the annual true-up, "
+                    "so there is no rate at one or both ends to build an index term "
+                    "from. Splitting it would require a base tariff these statements do "
+                    "not observe"),
+            },
+            "energy_identity": {
+                "identity": ("energy change = priced cells (price + quantity + "
+                             "interaction) + netting/settlement"),
+                "priced_cells_change_usd": priced_change,
+                "netting_settlement_change_usd": settlement_change,
+                "energy_change_usd": energy_change,
             },
         },
         "identities": {
-            "laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd":
+            "priced_laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd":
                 _c(agg["price_l"] + agg["quantity_l"] + agg["interaction"]),
-            "laspeyres_price_plus_paasche_quantity_usd":
+            "priced_laspeyres_price_plus_paasche_quantity_usd":
                 _c(agg["price_l"] + agg["quantity_p"]),
-            "paasche_price_plus_laspeyres_quantity_usd":
+            "priced_paasche_price_plus_laspeyres_quantity_usd":
                 _c(agg["price_p"] + agg["quantity_l"]),
+            "priced_cells_change_usd": priced_change,
             "scale_plus_mix_usd": _c(scale + mix),
-            "laspeyres_quantity_usd": _c(agg["quantity_l"]),
-            "price_split_sum_usd": _c(agg["delivery_vintage_l"]
-                                      + agg["supply_vintage_l"] + agg["provider_l"]
-                                      + agg["netting_regime_l"]),
-            "laspeyres_price_usd": _c(agg["price_l"]),
+            "priced_laspeyres_quantity_usd": _c(agg["quantity_l"]),
+            "price_split_sum_laspeyres_usd": _c(agg["delivery_vintage_l"]
+                                                + agg["supply_vintage_l"]
+                                                + agg["provider_l"]),
+            "priced_laspeyres_price_usd": _c(agg["price_l"]),
             "price_split_sum_paasche_usd": _c(agg["delivery_vintage_p"]
                                               + agg["supply_vintage_p"]
-                                              + agg["provider_p"]
-                                              + agg["netting_regime_p"]),
-            "paasche_price_usd": _c(agg["price_p"]),
-            "attributed_price_split_sum_usd": _c(agg["delivery_vintage_l"]
-                                                 + agg["supply_vintage_l"]
-                                                 + agg["provider_l"]),
-            "attributed_cells_laspeyres_price_usd": _c(
-                sum(r["laspeyres_price_usd"] for r in per_cell
-                    if r["price_split_attributed"])),
+                                              + agg["provider_p"]),
+            "priced_paasche_price_usd": _c(agg["price_p"]),
+            "priced_change_plus_netting_settlement_usd":
+                _c(priced_change + settlement_change),
+            "energy_change_usd": energy_change,
         },
     }
+    ids = out["identities"]
     checks = [
-        ("Laspeyres price + Laspeyres quantity + interaction",
-         out["identities"]["laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd"],
-         energy_change),
-        ("Laspeyres price + Paasche quantity",
-         out["identities"]["laspeyres_price_plus_paasche_quantity_usd"], energy_change),
-        ("Paasche price + Laspeyres quantity",
-         out["identities"]["paasche_price_plus_laspeyres_quantity_usd"], energy_change),
-        ("scale + TOU mix", out["identities"]["scale_plus_mix_usd"],
-         out["identities"]["laspeyres_quantity_usd"]),
-        ("delivery vintage + supply vintage + provider + netting regime (Laspeyres)",
-         out["identities"]["price_split_sum_usd"],
-         out["identities"]["laspeyres_price_usd"]),
-        ("delivery vintage + supply vintage + provider + netting regime (Paasche)",
-         out["identities"]["price_split_sum_paasche_usd"],
-         out["identities"]["paasche_price_usd"]),
-        # the attributed terms cover the like-for-like cells and nothing else
-        ("the attributed vintage/provider terms over the like-for-like cells",
-         out["identities"]["attributed_price_split_sum_usd"],
-         out["identities"]["attributed_cells_laspeyres_price_usd"]),
+        ("Laspeyres price + Laspeyres quantity + interaction, over the priced cells",
+         ids["priced_laspeyres_price_plus_laspeyres_quantity_plus_interaction_usd"],
+         priced_change),
+        ("Laspeyres price + Paasche quantity, over the priced cells",
+         ids["priced_laspeyres_price_plus_paasche_quantity_usd"], priced_change),
+        ("Paasche price + Laspeyres quantity, over the priced cells",
+         ids["priced_paasche_price_plus_laspeyres_quantity_usd"], priced_change),
+        ("scale + TOU mix", ids["scale_plus_mix_usd"],
+         ids["priced_laspeyres_quantity_usd"]),
+        ("delivery vintage + supply vintage + provider (Laspeyres)",
+         ids["price_split_sum_laspeyres_usd"], ids["priced_laspeyres_price_usd"]),
+        ("delivery vintage + supply vintage + provider (Paasche)",
+         ids["price_split_sum_paasche_usd"], ids["priced_paasche_price_usd"]),
+        ("priced-cell change + netting/settlement",
+         ids["priced_change_plus_netting_settlement_usd"], energy_change),
     ]
     for name, got, want in checks:
         if abs(got - want) > 0.01:
@@ -1154,112 +1436,159 @@ def decompose(base, current):
 
 
 def provider_effect_whole_period(cells, cca_product_adders_usd, unbundling_riders_usd):
-    """The provider effect read whole: what the CCA arrangement charged for supply over
-    the current period, against what SDG&E's own bundled table on the SAME statement
-    would have charged for the SAME kWh.
+    """What the CCA arrangement charged for supply, against SDG&E's own bundled table
+    on the SAME statement — published as TWO comparisons, because the two things a
+    reader wants to know cover different scopes and one figure cannot carry both.
 
-    RESTRICTED TO THE CURRENT PERIOD'S NET-IMPORT CELLS, for the same reason the
-    per-cell split is. On a cell billed as a net export the printed bundled comparison
-    is $0 — the export settled at the annual true-up rather than being priced — while
-    CEA still books a credit against it. Netting those two would put a settlement
-    outcome inside a figure the report calls a provider PRICE effect, and the
-    arithmetic would balance while doing it. So the export cells' difference is
-    published separately, under its own name, as unallocated netting/settlement.
+    THE SCOPE PROBLEM, stated plainly. SDG&E's printed bundled table prices a cell
+    only where that cell was billed as a net import; on a current net-export cell it
+    prints $0 because the export settled at the annual true-up, while CEA still books
+    a credit there. That $0 is a Settlement, so it cannot be netted against CEA's
+    credit — the arithmetic raises rather than balancing. Meanwhile the CCA-only
+    riders and CEA's product adders are charged ONCE PER PERIOD on the period's own
+    kWh, not per TOU cell. The statements print no allocation of them to a cell set
+    and this script will not invent one. So a single figure would either compare
+    cell-restricted CEA supply against cell-restricted bundled supply while carrying
+    whole-period riders on one side, or compare whole-period against cell-restricted.
+    Both are mixed-scope. Two figures are published instead:
 
-    The riders and the CEA product adders are NOT restricted, because they are not
-    per-cell quantities: the statements charge them once per period on the period's
-    kWh. They stay whole on the CEA side, which the returned dict says out loud.
+      energy_only_on_the_common_cells   CEA's per-TOU charges against the printed
+                                        bundled table, over exactly the cells that
+                                        table prices. Same cells, same kWh, energy on
+                                        both sides, no riders on either. This is the
+                                        one that is a like-for-like supply-price
+                                        comparison.
+      whole_period_arrangement          everything the CCA arrangement charged for
+                                        supply over the period (CEA on all cells +
+                                        product adders + CCA-only riders) against the
+                                        whole printed bundled table, whose riders sit
+                                        inside its generation rate. The two sides do
+                                        not price identical energy; the dict names the
+                                        gap and its dollar size rather than hiding it.
 
-    A net-export cell whose bundled comparison is NOT $0 would be an observed bundled
-    export counterfactual — a real comparison, which this restriction must not throw
-    away silently — so it raises instead."""
-    attributed, unallocated = [], []
+    A net-export cell whose bundled comparison is NOT a Settlement would be an
+    observed bundled export counterfactual — a real comparison this restriction must
+    not throw away silently — so it raises instead."""
+    common, unpriced = [], []
+    cea_all_cells = 0.0
     for season, tou in CELLS:
         c = cells[(season, tou)]
         cf = c.get("sdge_bundled_comparison_usd")
-        if cf is None:
-            raise SystemExit(
-                f"({season}, {tou}): no same-date SDG&E bundled comparison in dollars, so "
-                "the whole-period provider effect has no counterfactual for this cell — "
-                "refusing to estimate one")
+        cea_all_cells += c["supply_usd"]
         row = {
             "cell": _key(season, tou),
             "current_kwh": c["kwh"],
             "current_net_import": c["kwh"] > 0,
             "cea_charged_usd": _c(c["supply_usd"]),
-            "sdge_bundled_same_date_usd": _c(cf),
-            "difference_usd": _c(c["supply_usd"] - cf),
         }
         if c["kwh"] > 0:
-            attributed.append(row)
+            if cf is None:
+                raise SystemExit(
+                    f"({season}, {tou}): no same-date SDG&E bundled comparison in "
+                    "dollars, so the whole-period provider effect has no counterfactual "
+                    "for this cell — refusing to estimate one")
+            if isinstance(cf, Settlement):
+                raise SettlementNotAPrice(
+                    f"({season}, {tou}) is billed as a net import yet its same-date "
+                    "bundled comparison is a settlement non-price — that combination "
+                    "means the parse is wrong; refusing")
+            row["sdge_bundled_same_date_usd"] = _c(cf)
+            row["difference_usd"] = _c(c["supply_usd"] - cf)
+            common.append(row)
         else:
-            if _c(cf) != 0.0:
+            if not isinstance(cf, Settlement):
                 raise SystemExit(
                     f"({season}, {tou}) is billed as a net export yet carries a printed "
-                    f"bundled comparison of ${_c(cf)} — that is an OBSERVED bundled "
-                    "export counterfactual, which this restriction was written to "
-                    "exclude only because it does not exist; it must not be discarded "
-                    "silently, so the exclusion rule has to be revisited")
-            unallocated.append(row)
-    if not attributed:
+                    f"bundled comparison of ${_c(cf) if cf is not None else None} — that "
+                    "is an OBSERVED bundled export counterfactual, which this "
+                    "restriction was written to exclude only because it does not exist; "
+                    "it must not be discarded silently, so the exclusion rule has to be "
+                    "revisited")
+            row["sdge_bundled_same_date_usd"] = None
+            row["difference_usd"] = None
+            row["why_the_bundled_side_is_absent"] = (
+                "SDG&E printed $0 here because the export settled at the annual "
+                "true-up, not because its bundled tariff for this cell is zero, so "
+                "there is no counterfactual dollar figure to subtract")
+            unpriced.append(row)
+    if not common:
         raise SystemExit(
             "no cell is billed as a net import in the current period, so SDG&E's printed "
             "bundled table prices nothing and there is no provider counterfactual at all "
             "— refusing to publish a provider effect whose whole base is a settlement $0")
-    cea_supply = _c(sum(r["cea_charged_usd"] for r in attributed))
-    counterfactual = _c(sum(r["sdge_bundled_same_date_usd"] for r in attributed))
+    cea_common = _c(sum(r["cea_charged_usd"] for r in common))
+    counterfactual = _c(sum(r["sdge_bundled_same_date_usd"] for r in common))
     if counterfactual <= 0:
         raise SystemExit(
             f"the same-date bundled counterfactual over the net-import cells is "
             f"${counterfactual} — a provider effect cannot be expressed against it")
-    paid = _c(cea_supply + cca_product_adders_usd + unbundling_riders_usd)
-    unallocated_usd = _c(sum(r["difference_usd"] for r in unallocated))
+    cea_all_cells = _c(cea_all_cells)
+    cea_outside_common = _c(cea_all_cells - cea_common)
+    arrangement = _c(cea_all_cells + cca_product_adders_usd + unbundling_riders_usd)
+    common_names = [r["cell"] for r in common]
+    unpriced_names = [r["cell"] for r in unpriced]
     return {
-        "basis": ("current quantities only, over the cells billed as net imports in the "
-                  "current period: the riders are charged on this period's kWh, so there "
-                  "is no base-quantity counterfactual for them"),
-        "scope": {
-            "attributed_cells": [r["cell"] for r in attributed],
-            "excluded_cells": [r["cell"] for r in unallocated],
-            "why": (
-                "SDG&E's printed bundled table prices a cell only where that cell was "
-                "billed as a net import. On a current net-export cell it prints $0 "
-                "because the export settled at the annual true-up, not because the "
-                "bundled tariff for that cell is zero — so subtracting it from what CEA "
-                "booked there would measure the netting regime and publish it as a "
-                "provider price effect. Those cells are excluded and their difference is "
-                "reported below as unallocated_netting_settlement_usd, which is a "
-                "settlement figure and not a provider price effect"),
-            "riders_are_not_restricted": (
-                "cea_product_adders_usd and cca_unbundling_riders_usd are period-level "
-                "lines billed once on the period's own kWh, not per TOU cell, so they "
-                "cannot be restricted to a cell set; they are carried whole on the CEA "
-                "side of the comparison"),
+        "why_two_figures": (
+            "the two sides of this comparison are not charged on the same footing. "
+            "SDG&E's printed bundled table prices only the cells billed as net imports; "
+            "the CCA-only riders and CEA's product adders are charged once per period on "
+            "the period's own kWh and the statements support no allocation of them to a "
+            "cell set. A single number would mix a cell-restricted quantity scope with a "
+            "whole-period one, so both readings are published and each says what it "
+            "covers"),
+        "energy_only_on_the_common_cells": {
+            "covers": (
+                "energy only, both sides, over the " + str(len(common_names))
+                + " cells the printed bundled table prices (" + ", ".join(common_names)
+                + "): CEA's per-TOU generation charges against SDG&E's same-date bundled "
+                "table on the same kWh. No riders and no product adders on either side"),
+            "excluded_cells": unpriced_names,
+            "why_excluded": (
+                "billed as a net export in the current period, so the printed bundled "
+                "table shows $0 by deferred settlement rather than a tariff. Subtracting "
+                "that $0 from what CEA booked there would measure the netting regime and "
+                "publish it as a provider price effect"),
+            "cea_charged_supply_usd": cea_common,
+            "sdge_bundled_same_date_usd": counterfactual,
+            "difference_usd": _c(cea_common - counterfactual),
+            "difference_pct": _r(100.0 * (cea_common / counterfactual - 1.0), 1),
         },
-        "cea_charged_supply_usd": cea_supply,
-        "cea_product_adders_usd": _c(cca_product_adders_usd),
-        "cca_unbundling_riders_usd": _c(unbundling_riders_usd),
-        "total_paid_for_supply_usd": paid,
-        "sdge_bundled_same_date_counterfactual_usd": counterfactual,
-        "provider_effect_usd": _c(paid - counterfactual),
-        "provider_effect_pct": _r(100.0 * (paid / counterfactual - 1.0), 1),
-        "unallocated_netting_settlement_usd": unallocated_usd,
-        "unallocated_netting_settlement_note": (
-            "the current net-export cells' difference between what CEA booked and the $0 "
-            "SDG&E printed. The $0 is deferred export settlement, not a bundled tariff of "
-            "zero, so this is neither a provider price effect nor a tariff vintage; it is "
-            "published here undecomposed"),
-        # The unrestricted difference, published only so the restriction is auditable:
-        # it is the whole-provider figure plus the excluded settlement cells, and it is
-        # NOT a provider price effect, which is why it is not named as one.
-        "all_cells_including_settlement_difference_usd":
-            _c(paid - counterfactual + unallocated_usd),
-        "all_cells_note": (
-            "what the comparison would read if the current net-export cells were netted "
-            "in against the $0 SDG&E printed for them. Published for audit only: that $0 "
-            "is deferred export settlement, so this figure mixes a provider price effect "
-            "with a settlement outcome and is not quoted as a provider effect anywhere"),
-        "per_cell": attributed + unallocated,
+        "whole_period_arrangement": {
+            "covers": (
+                "the whole billing period, both sides, supply only: everything the CCA "
+                "arrangement charged for generation against the whole printed bundled "
+                "table. This is what the household paid for supply under one arrangement "
+                "against the other, not a per-kWh price comparison"),
+            "cca_side": {
+                "cea_charged_supply_all_cells_usd": cea_all_cells,
+                "cea_product_adders_usd": _c(cca_product_adders_usd),
+                "cca_unbundling_riders_usd": _c(unbundling_riders_usd),
+                "total_usd": arrangement,
+                "note": ("the riders (PCIA, the incremental procurement cost adjustment, "
+                         "the economic development program credit) and the product adders "
+                         "are period-level lines charged on the period's own kWh"),
+            },
+            "bundled_side": {
+                "sdge_bundled_same_date_table_usd": counterfactual,
+                "total_usd": counterfactual,
+                "note": ("no rider is added: under bundled service PCIA is charged inside "
+                         "the generation rate, which the base statement says on its own "
+                         "face — see why_the_riders_belong_on_this_side"),
+            },
+            "difference_usd": _c(arrangement - counterfactual),
+            "difference_pct": _r(100.0 * (arrangement / counterfactual - 1.0), 1),
+            "the_two_sides_do_not_price_identical_energy": (
+                "the CEA side covers all " + str(len(CELLS)) + " cells; the bundled table "
+                "prices only the " + str(len(common_names)) + " billed as net imports. "
+                "The whole of that gap is the " + ", ".join(unpriced_names) + " cell(s), "
+                "where CEA booked $" + f"{cea_outside_common:,.2f}" + " and SDG&E printed "
+                "nothing because the export settled at the annual true-up. That amount is "
+                "stated here rather than netted away, and it is the reason this figure is "
+                "labelled an arrangement comparison and not a price effect"),
+            "cea_booked_on_the_cells_the_bundled_table_does_not_price_usd":
+                cea_outside_common,
+        },
+        "per_cell": common + unpriced,
     }
 
 
@@ -1275,24 +1604,32 @@ def like_for_like(cells, years_apart):
     quantities, Fisher is their geometric mean."""
     rows = []
     for row in cells:
-        if not row["both_periods_net_import"]:
+        if not row["priced"]:
             continue
+        # These are the artifact's published rates, already rounded; every one of them
+        # is non-null because the row is priced, and observed_rate() refuses anything
+        # else rather than letting a null or a settlement zero into a denominator.
+        rates = {name: observed_rate(row[name], row["cell"], name.replace("_", " "))
+                 for name in ("base_rate_effective", "current_rate_effective",
+                              "base_delivery_rate", "current_delivery_rate",
+                              "base_supply_rate", "current_supply_rate",
+                              "sdge_bundled_comparison_rate_current_date")}
         rows.append({
             "cell": row["cell"],
             "base_kwh": row["base_kwh"],
             "current_kwh": row["current_kwh"],
-            "base_rate_effective": row["base_rate_effective"],
-            "current_rate_effective": row["current_rate_effective"],
-            "change_pct": _r(100.0 * (row["current_rate_effective"]
-                                      / row["base_rate_effective"] - 1.0), 1),
-            "delivery_change_pct": _r(100.0 * (row["current_delivery_rate"]
-                                               / row["base_delivery_rate"] - 1.0), 1),
+            "base_rate_effective": rates["base_rate_effective"],
+            "current_rate_effective": rates["current_rate_effective"],
+            "change_pct": _r(100.0 * (rates["current_rate_effective"]
+                                      / rates["base_rate_effective"] - 1.0), 1),
+            "delivery_change_pct": _r(100.0 * (rates["current_delivery_rate"]
+                                               / rates["base_delivery_rate"] - 1.0), 1),
             "supply_vintage_change_pct": _r(
-                100.0 * (row["sdge_bundled_comparison_rate_current_date"]
-                         / row["base_supply_rate"] - 1.0), 1),
+                100.0 * (rates["sdge_bundled_comparison_rate_current_date"]
+                         / rates["base_supply_rate"] - 1.0), 1),
             "provider_change_pct": _r(
-                100.0 * (row["current_supply_rate"]
-                         / row["sdge_bundled_comparison_rate_current_date"] - 1.0), 1),
+                100.0 * (rates["current_supply_rate"]
+                         / rates["sdge_bundled_comparison_rate_current_date"] - 1.0), 1),
         })
     if not rows:
         raise SystemExit("no cell is net-import in both periods — there is no "
@@ -1311,8 +1648,7 @@ def like_for_like(cells, years_apart):
             for term in ("delivery_vintage", "supply_vintage", "provider")}
     return {
         "cells": rows,
-        "excluded_cells": [row["cell"] for row in cells
-                           if not row["both_periods_net_import"]],
+        "excluded_cells": [row["cell"] for row in cells if not row["priced"]],
         "exclusion_reason": ("net-export in at least one period, where SDG&E prints "
                              "$.00000 and charges $0 because the export settles at "
                              "true-up — no tariff price is observable"),
@@ -1343,11 +1679,12 @@ def like_for_like(cells, years_apart):
         },
         "price_effect_split_usd": split,
         "price_effect_split_note": (
-            "these are the same dollars as decomposition.aggregate's "
+            "these are the same dollars as decomposition.aggregate.priced_cells' "
             "delivery_vintage/supply_vintage/provider terms — to within a cent of "
             "rounding, since these sum the per-cell rows — because those terms are "
-            "computed over exactly these cells and nowhere else. The excluded cells' "
-            "price movement is published there as netting_regime_usd"),
+            "computed over exactly these cells and nowhere else. The excluded cells "
+            "carry no price figure at all; their whole dollar change is published "
+            "there as netting_settlement"),
     }
 
 
@@ -1384,10 +1721,10 @@ def build():
     dec = decompose(base, current)
     bridge = non_energy_bridge(base, current)
 
-    # The provider effect read whole: what the CCA arrangement charged for supply in
-    # the current period, against what SDG&E's own bundled table on the SAME statement
-    # would have charged for the SAME kWh. Current quantities only — the riders are
-    # billed on this period's kWh, so no base-quantity counterfactual exists for them.
+    # The provider comparison, published as two figures with different scopes: an
+    # energy-only supply-price comparison over the cells SDG&E's printed bundled table
+    # actually prices, and a whole-period arrangement comparison that carries the
+    # period-level riders and adders. Neither is presented as the other.
     if current["printed_bundled_comparison_usd"] is None:
         raise SystemExit("the current period is not a CCA period, so there is no "
                          "provider effect to separate")
@@ -1407,19 +1744,25 @@ def build():
         "SDG&E's bundled generation charge carries PCIA, which the base statement "
         "says on its own face: " + re.sub(r"\s+", " ", bundled_pcia.group(0)))
     whole["per_cell_term_paasche_usd"] = \
-        dec["aggregate"]["price_split_paasche_basis"]["provider_usd"]
+        dec["aggregate"]["priced_cells"]["price_split_paasche_basis"]["provider_usd"]
     whole["per_cell_term_scope"] = (
-        "the per-cell provider term covers only the cells billed as net imports in "
-        "BOTH periods (" + ", ".join(
-            dec["aggregate"]["price_split_scope"]["attributed_cells"]) + "), so it is "
-        "not comparable in scope to the whole-period figure above, which is a same-date "
-        "comparison on the current period's kWh over the cells billed as net imports in "
-        "the CURRENT period (" + ", ".join(whole["scope"]["attributed_cells"]) + ")")
-    dec["aggregate"]["provider_effect_read_whole"] = whole
+        "the per-cell provider term inside the price split covers a THIRD scope again: "
+        "only the cells billed as net imports in BOTH periods ("
+        + ", ".join(dec["aggregate"]["scope"]["priced_cells"]) + "), on 2026 weights, "
+        "because it is one term of a two-period index. It is not comparable to either "
+        "figure above, both of which are same-date readings on the current period's kWh")
+    dec["aggregate"]["provider_comparison"] = whole
 
+    energy = dec["aggregate"]
+    priced_l = energy["priced_cells"]["laspeyres"]
     observed = _c(current["total_usd"] - base["total_usd"])
-    components = _c(dec["aggregate"]["energy_change_usd"]
-                    + sum(t["change_usd"] for t in bridge))
+    non_energy = _c(sum(t["change_usd"] for t in bridge))
+    # The top-level identity, stated as its terms rather than as a total: the priced
+    # cells' index decomposition, the settlement component that is outside it, and the
+    # non-energy bridge. Nothing crosses between the three.
+    components = _c(priced_l["price_usd"] + priced_l["quantity_usd"]
+                    + energy["priced_cells"]["interaction_usd"]
+                    + energy["netting_settlement"]["change_usd"] + non_energy)
     residual = _c(observed - components)
     if abs(residual) > 1.0:
         raise SystemExit(
@@ -1467,9 +1810,23 @@ def build():
             dec["per_cell"],
             _years_apart(BASE["period"], CURRENT["period"])),
         "reconciliation": {
+            "identity": (
+                "observed change = (price + quantity + interaction, over the priced "
+                "cells) + netting/settlement + non-energy bridge"),
+            "identity_note": (
+                "the price and quantity terms here are the Laspeyres pairing, one of the "
+                "two exact pairings the reading publishes; the Paasche pairing "
+                "reconciles to the same total. Both cover the priced cells only. The "
+                "settlement cells enter as their whole dollar change and are inside "
+                "neither term"),
             "observed_change_usd": observed,
-            "energy_change_usd": dec["aggregate"]["energy_change_usd"],
-            "non_energy_change_usd": _c(sum(t["change_usd"] for t in bridge)),
+            "priced_cells_laspeyres_price_usd": priced_l["price_usd"],
+            "priced_cells_laspeyres_quantity_usd": priced_l["quantity_usd"],
+            "priced_cells_interaction_usd": energy["priced_cells"]["interaction_usd"],
+            "priced_cells_change_usd": energy["priced_cells"]["change_usd"],
+            "netting_settlement_usd": energy["netting_settlement"]["change_usd"],
+            "energy_change_usd": energy["energy_change_usd"],
+            "non_energy_change_usd": non_energy,
             "components_sum_usd": components,
             "residual_usd": residual,
             "tolerance_usd": 1.0,
@@ -1510,26 +1867,33 @@ def main():
     print(f"{out['periods']['base']['period']} ${out['periods']['base']['current_charges']}"
           f"  ->  {out['periods']['current']['period']} "
           f"${out['periods']['current']['current_charges']}")
-    print(f"observed change ${r['observed_change_usd']}  "
-          f"= energy ${r['energy_change_usd']} + non-energy ${r['non_energy_change_usd']}"
+    print(f"observed change ${r['observed_change_usd']} = priced cells "
+          f"${r['priced_cells_change_usd']} + netting/settlement "
+          f"${r['netting_settlement_usd']} + non-energy ${r['non_energy_change_usd']}"
           f"  (residual ${r['residual_usd']})")
-    rd, ps = d["reading"], d["price_split_paasche_basis"]
-    print(f"energy ${d['energy_change_usd']}: price ${rd['price_usd_low']} to "
+    pc = d["priced_cells"]
+    rd, ps = pc["reading"], pc["price_split_paasche_basis"]
+    print(f"priced cells ({', '.join(d['scope']['priced_cells'])}) "
+          f"${pc['change_usd']}: price ${rd['price_usd_low']} to "
           f"${rd['price_usd_high']}, quantity ${rd['quantity_usd_low']} to "
           f"${rd['quantity_usd_high']} (bounds, not points; the "
           f"${rd['interval_width_usd']} width is the unallocated interaction). "
           f"Laspeyres quantity splits scale ${rd['of_which_scale_usd']}, TOU mix "
           f"${rd['of_which_tou_mix_usd']}")
     print(f"price splits (Paasche): delivery vintage ${ps['delivery_vintage_usd']} + "
-          f"supply vintage ${ps['supply_vintage_usd']} + provider ${ps['provider_usd']} "
-          f"over {len(d['price_split_scope']['attributed_cells'])} like-for-like cells, "
-          f"+ netting regime ${ps['netting_regime_usd']} over "
-          f"{len(d['price_split_scope']['unattributed_cells'])}; provider read whole "
-          f"${d['provider_effect_read_whole']['provider_effect_usd']} over "
-          f"{len(d['provider_effect_read_whole']['scope']['attributed_cells'])} "
-          f"current-import cells, plus "
-          f"${d['provider_effect_read_whole']['unallocated_netting_settlement_usd']} "
-          "unallocated netting/settlement")
+          f"supply vintage ${ps['supply_vintage_usd']} + provider ${ps['provider_usd']}")
+    print(f"netting/settlement ${d['netting_settlement']['change_usd']} over "
+          f"{', '.join(d['netting_settlement']['cells'])} — whole dollar change, "
+          "outside both the price and the quantity figures")
+    pv = d["provider_comparison"]
+    eo, wp = pv["energy_only_on_the_common_cells"], pv["whole_period_arrangement"]
+    print(f"provider, energy only over "
+          f"{len(pv['per_cell']) - len(eo['excluded_cells'])} common cells: "
+          f"${eo['cea_charged_supply_usd']} CEA vs ${eo['sdge_bundled_same_date_usd']} "
+          f"bundled = ${eo['difference_usd']} ({eo['difference_pct']}%); whole-period "
+          f"arrangement: ${wp['cca_side']['total_usd']} vs "
+          f"${wp['bundled_side']['total_usd']} = ${wp['difference_usd']} "
+          f"({wp['difference_pct']}%)")
     print(f"billing mode: {out['billing_mode']['finding']['answer']}; presentation "
           f"changed on "
           f"{out['billing_mode']['finding']['what_changed_and_when']['the_presentation_changed_on']}")

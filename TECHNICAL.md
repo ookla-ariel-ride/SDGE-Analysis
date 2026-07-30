@@ -1261,11 +1261,29 @@ winter→summer boundary, and one provider break sits between them.
 $0.00 for the 2024 statement and for every statement through 2025-04-02. Under NEM 2.0 the
 energy component accrues to the annual true-up rather than being billed monthly, so that
 column is a payment series. `billing_mode_scan()` reads every statement before any arithmetic
-runs and records, per statement, the deferral sentence, the `Payment Required This Month`
-flag from the Net Energy Metering Summary page, the true-up date, and whether a separate
-`Net Metering Account Summary` block is printed. Findings: the mode never changed — payment
-is required on exactly two statements, 2024-12-30 and 2026-01-06, each closing a true-up
-year — and both compared periods are accruing statements. What changed, on **2025-05-02**, is
+runs and hands each one to `classify_statement()`, which establishes its mode from its own
+text or refuses:
+
+* **`Payment Required This Month: No`** must carry one of the two recognised true-up deferral
+  sentences (`*Payment not required for NEM charges. Your account will true up on …` /
+  `Payment is not required at this time. Your account will true-up on …`), which name the date
+  the charge is accruing towards. The payment flag alone is not accepted as evidence of
+  accrual — a wording change or a real billing-mode change would flip it silently — so a
+  statement without one stops the run, named.
+* **`Payment Required This Month: Yes`** must prove it is the annual settlement rather than an
+  ordinary payable bill. It has to say so (`Net Energy Metering Annual True-Up Bill`, `Your
+  account has been settled and all applicable generation credits have been applied.`), it has
+  to carry a billing period ending on the true-up date the *preceding* statements printed, and
+  its own `True-Up Date:` field has to agree. Any of the four failing stops the run.
+
+Scanning runs in date order so each claimed settlement is matched against the true-up date
+that was actually being accrued towards, and that expectation is cleared once a settlement
+consumes it. Every count and every sentence in `billing_mode_finding()` is then derived from
+the validated rows — nothing is a constant, so the artifact cannot go on asserting
+uninterrupted accrual against its own scan. Findings: the mode never changed — 23 of the 25
+statements accrue and carry their deferral sentence, the other two (2024-12-30 and 2026-01-06)
+are annual settlements, each proved against the true-up date the earlier statements named —
+and both compared periods are accruing statements. What changed, on **2025-05-02**, is
 presentation: the separate NEM ledger block disappears and the same accrued charge starts
 appearing on the Account Summary line the export follows. `export_reconciliation()` explains
 every export row as `period accrual − the part deferred into the NEM ledger + the
@@ -1282,50 +1300,79 @@ line (`Electricity Generation Credit -180.46` against $180.46 of table), the scr
 that cancellation, and the table is used only as the same-date bundled counterfactual in the
 provider term.
 
-**Method.** Per cell `c = (season, TOU period)`, with `q` the net kWh and `p` the *effective
-billed* rate (charge ÷ net kWh — an export cell prints `$.00000` and is charged $0, because
-the export settles at true-up):
+**A settlement $0 is not a price, and the type makes it unusable as one.** Under NEM 2.0 a TOU
+bucket billed as a net export prints `Rate/kWh $.00000` and is charged $0: the export went to
+the annual true-up, so no price was charged and none can be read off the statement. Coercing
+that to `0.0` and multiplying reconciles perfectly while measuring the settlement change and
+printing it as a price. Three successive reviews found the same defect in three different
+published figures here — the per-cell price split, the headline provider figure, and the price
+and quantity bounds themselves — so it is now closed at the representation rather than by
+convention. A cell whose rate is not observable carries a `Settlement` object instead of a
+number. Every arithmetic operator on it raises `SettlementNotAPrice` (a `SystemExit`
+subclass), and so do `float()`, `int()`, `round()`, `bool()` and the comparisons — which kills
+the `rate or 0.0` idiom as well as `q(p₁−p₀)`. `json.dumps` refuses it too, so it cannot reach
+the artifact by accident. There are exactly three deliberate readings: `observed_rate()`, which
+returns the float or refuses by name (a `Settlement`, a missing comparison, or a $0 on a cell
+that *was* an import — on an import cell a $0 is a parsing artefact, never a tariff);
+`is_observed()`, which tests; and `json_price()`, which renders `null`. Every rate in the
+module is constructed by `_effective_rate()` and every dollar counterfactual by
+`_counterfactual_usd()`, so there is no path that produces a bare zero.
 
-| term | formula |
-|---|---|
-| Laspeyres price / quantity | `Σ q₀(p₁−p₀)` / `Σ p₀(q₁−q₀)` |
-| Paasche price / quantity | `Σ q₁(p₁−p₀)` / `Σ p₁(q₁−q₀)` |
-| interaction | `Σ (p₁−p₀)(q₁−q₀)` |
-| scale / TOU mix (of the Laspeyres quantity term) | `(Q₁−Q₀)Σp₀w₀` / `Q₁Σp₀(w₁−w₀)` |
-| supply vintage / provider | `q(s₁−g₀)` / `q(g₁−s₁)`, `s₁` = the same-date bundled comparison |
-| netting regime | `q(p₁−p₀)` on every cell where no base tariff is observable |
+**Method.** A cell is **priced** when it was billed as a net import in **both** periods — the
+only condition under which a rate is observable at both ends (three of six here, the same set
+`like_for_like` reports). Per priced cell `c = (season, TOU period)`, with `q` the net kWh and
+`p` the *effective billed* rate (charge ÷ net kWh):
 
-**Two presentation decisions, both because balancing algebra is not the same as a true
+| term | formula | computed over |
+|---|---|---|
+| Laspeyres price / quantity | `Σ q₀(p₁−p₀)` / `Σ p₀(q₁−q₀)` | priced cells |
+| Paasche price / quantity | `Σ q₁(p₁−p₀)` / `Σ p₁(q₁−q₀)` | priced cells |
+| interaction | `Σ (p₁−p₀)(q₁−q₀)` | priced cells |
+| scale / TOU mix (of the Laspeyres quantity term) | `(Q₁−Q₀)Σp₀w₀` / `Q₁Σp₀(w₁−w₀)` | priced cells |
+| delivery vintage / supply vintage / provider | `q(d₁−d₀)` / `q(s₁−g₀)` / `q(g₁−s₁)`, `s₁` = the same-date bundled comparison | priced cells |
+| netting/settlement | `Σ (current − base)`, the cell's whole dollar change | the other cells |
+
+so the energy change reads
+
+```
+energy change = (price + quantity + interaction, over the priced cells)
+              +  netting/settlement          (the export-flipped cells, whole)
+```
+
+`Q` in the scale/mix split is the **priced cells'** net kWh (952 → 798), not the periods' 346
+and 987. Every `p₀` in it is a rate the 2024 statement actually charged, so no kWh is valued at
+a settlement $0 — and none can be, because the arithmetic on a `Settlement` raises.
+
+**Three presentation decisions, all because balancing algebra is not the same as a true
 statement.**
 
-*A vintage term needs a base tariff, so it is not computed everywhere.* On a cell billed as a
-net export the base effective price is $0 because the energy settled at the annual true-up,
-not because a tariff said $0. Evaluating `q(s₁−g₀)` there measures the export-to-import
-settlement change and prints it as a supply vintage, while every identity continues to hold —
-which is what makes it easy to miss. `delivery_vintage`, `supply_vintage` and `provider` are
-therefore computed only over the cells billed as net imports in **both** periods (three of six
-here, the same set `like_for_like` reports), and every other cell's whole price movement is
-published as `netting_regime_usd`, attributed to neither a tariff vintage nor the provider.
-The four terms sum exactly to the price effect on each weight basis, and
-`decomposition.aggregate.price_split_scope` names which cells are in which set and why.
+*No index term is computed where no price exists — and the flipped cells' money is carried
+outside the index, not renamed inside it.* On a cell billed as a net export at either end there
+is no rate to compare, so there is no price effect, no quantity effect and no vintage or
+provider term for it. Giving such a cell's contribution its own name **inside** the price split
+would still leave it inside the published price figure — a renamed term is still a term — so
+it is taken out instead. Each flipped cell's complete dollar change is a top-level component,
+`decomposition.aggregate.netting_settlement`, published undecomposed beside the price and
+quantity figures. The price split has three terms and no fourth.
+`decomposition.aggregate.scope` names which cells are in which set, and
+`priced_cells.reading.covers` repeats it on the figure itself.
 
-*The same restriction binds the whole-period provider figure.* SDG&E's printed bundled table
-prices a cell only where that cell was billed as a net import; on a current net-export cell it
-prints $0 because the export settled at the annual true-up, while CEA still books a credit
-there. Netting those two would put a settlement outcome inside a number the report calls a
-provider *price* effect — the identical defect, one level up — so
-`provider_effect_whole_period()` runs over the **current** net-import cells only, and the
-export cells' difference is published beside it as `unallocated_netting_settlement_usd`, named
-so it cannot be read as a price. The riders and the CEA product adders are period-level lines
-charged once on the period's own kWh rather than per TOU cell, so they cannot be restricted to
-a cell set and stay whole on the CEA side; `provider_effect_read_whole.scope` says so. A
-net-export cell carrying a *non-zero* printed comparison would be a genuine observed bundled
-export counterfactual, so the function raises rather than discarding it. Two further guards
-close the same hole elsewhere: an import-in-both cell whose base delivery rate, base supply
-rate or same-date comparison rate is $0 is refused outright (on an import cell a $0 is not a
-tariff), and `quantity_split_laspeyres_basis` names the cells whose base price is a settlement
-$0 together with the net kWh it therefore values at zero, so the low end of the quantity
-interval cannot be misread as a claim that the energy was worth nothing.
+*The provider comparison is published twice, because its two halves cover different scopes.*
+SDG&E's printed bundled table prices a cell only where that cell was billed as a net import; on
+a current net-export cell it prints $0 by deferred settlement, which is a `Settlement` here, so
+it cannot be netted against the credit CEA books there. Meanwhile the CCA-only riders (PCIA,
+the incremental procurement cost adjustment, the economic development program credit) and CEA's
+product adders are charged **once per period on the period's own kWh**, not per TOU cell, and
+the statements support no allocation of them to a cell set — inventing a pro-rata rule and
+presenting it as evidence is not an option. Adding whole-period riders to a cell-restricted CEA
+total therefore compares two quantity scopes at once. `provider_effect_whole_period()` publishes
+two figures instead, each stating what it covers: `energy_only_on_the_common_cells` (CEA's
+per-TOU charges against the printed bundled table, over exactly the cells that table prices —
+same cells, same kWh, energy only, no riders on either side) and `whole_period_arrangement`
+(everything the CCA arrangement charged for supply over the period against the whole printed
+table, with the cells the table does not price named along with the CEA dollars booked on them).
+A net-export cell carrying a *non-zero* printed comparison would be a genuine observed bundled
+export counterfactual, so the function raises rather than discarding it.
 
 *No per-year price figure is published.* The index compares two matched endpoints 2.01 years
 apart with no comparable pair between them, so a compound-equivalent per-year rate would be a
@@ -1341,68 +1388,109 @@ term, plus both exact pairings (`reading.exact_pairings`). There is no bare `pri
 `quantity_usd` key, and no figure anywhere in the artifact or the report is described as the
 amount price "accounts for".
 
-`Q` is NET kWh, so a cell share can be negative and the scale/mix split is an exact identity
-on those shares rather than a share of consumption; the artifact says so. Everything outside
-the TOU energy lines is carried as its own named term (fixed charge, non-bypassable +
-wildfire, CCA unbundling riders, applied NEM generation credit, taxes, CEA product adders).
-A statement line the script does not name breaks the reconciliation against
+Everything outside the TOU energy lines is carried as its own named term (fixed charge,
+non-bypassable + wildfire, CCA unbundling riders, applied NEM generation credit, taxes, CEA
+product adders). A statement line the script does not name breaks the reconciliation against
 `bill_periods_electric.current_charges` and the run fails — nothing is absorbed silently.
 
-**Results.** Observed +$350.31, components +$350.31, residual **$0.00**. TOU energy +$178.93,
-which reads as price −$257.22 with quantity +$436.15 on 2024 weights, or price +$109.94 with
-quantity +$68.99 on 2026 weights; both pairings are exact, and the **$367.15** width of each
-interval is the interaction term, driven by the three cells that flip between net export and
-net import. Splitting the 2024-weight quantity term: scale +$237.86, TOU mix −$168.86. The
-largest single line is the **applied NEM generation credit, +$123.33**: the 2024 statement applied
-$128.39 of credit against a $128.39 energy charge, cancelling it exactly and leaving the bill
-equal to its fixed and non-bypassable block; the 2026 statement applied $5.06. Provider read
-whole, over the five cells billed as net imports in the current period: CEA plus the CCA-only
-riders $200.22 against $180.46 of bundled SDG&E supply, **+$19.76 (10.9%)**, with the
-excluded winter off-peak cell's **−$2.25** published beside it as
-`unallocated_netting_settlement_usd`. The per-cell price split, on 2026 weights,
-is −$0.63 delivery vintage / +$25.11 supply vintage / −$9.00 provider over the three
-like-for-like cells (−$10.81 / +$16.49 / −$24.36 on 2024 weights), with +$94.46 of netting
-regime over the other three (−$238.53 on 2024 weights). On the three cells billed as imports in
-both periods the fixed-weight price index is −14.6% (Laspeyres) / +7.8% (Paasche) / −4.0%
-(Fisher) over 2.01 years, with super-off-peak delivery −35.1%, on-peak delivery +14.2% and
-SDG&E bundled generation +20.6% to +21.1%. A blended $/kWh over the same cells would read
-+97.8%, almost all of it mix.
+**Results.** Observed +$350.31, components +$350.31, residual **$0.00**, on the identity
+
+```
++350.31  =  (−18.68 price + 68.99 quantity + 34.16 interaction)   priced cells, +84.47
+          +   94.46                                               netting/settlement
+          +  171.38                                               non-energy bridge
+```
+
+TOU energy is +$178.93 of that: **+$84.47 over the three priced cells** (summer on-peak,
+summer super-off-peak, winter super-off-peak — imports in both periods) and **+$94.46 of
+netting/settlement** over the three that flipped (summer off-peak, winter on-peak, winter
+off-peak). Across the priced cells the two exact pairings read base-weighted price −$18.68
+with current-weighted quantity +$103.15, and current-weighted price +$15.48 with base-weighted
+quantity +$68.99; each sums to $84.47, and the **$34.16** width of each interval is the
+interaction term. Splitting the base-weighted quantity term: scale −$20.77, TOU mix +$89.76,
+on the priced cells' 952 → 798 net kWh. The largest single line in the whole comparison is the
+**applied NEM generation credit, +$123.33**: the 2024 statement applied $128.39 of credit
+against a $128.39 energy charge, cancelling it exactly and leaving the bill equal to its fixed
+and non-bypassable block; the 2026 statement applied $5.06.
+
+The provider comparison, both scopes: **energy only over the five cells the printed bundled
+table prices**, CEA $170.59 against $180.46 of bundled SDG&E supply, **−$9.87 (−5.5%)**; and
+the **whole-period arrangement**, CEA's per-TOU charges on all six cells plus its product
+adders plus the CCA-only riders, $197.97 against the same $180.46, **+$17.51 (+9.7%)**. The
+gap between the two scopes is the winter off-peak cell — a net export in 2026, where CEA
+booked **−$2.25** and the bundled table prints nothing because the export settled at the
+annual true-up. The per-cell price split, on 2026 weights, is −$0.63 delivery vintage /
++$25.11 supply vintage / −$9.00 provider over the three priced cells (−$10.81 / +$16.49 /
+−$24.36 on 2024 weights); those three terms are the whole of the priced cells' price effect
+and there is no fourth. On the same three cells the fixed-weight price index is −14.6%
+(Laspeyres) / +7.8% (Paasche) / −4.0% (Fisher) over 2.01 years, with super-off-peak delivery
+−35.1%, on-peak delivery +14.2% and SDG&E bundled generation +20.6% to +21.1%. A blended
+$/kWh over the same cells would read +97.8%, almost all of it mix.
 
 **Output** `data/bill_decomposition.json`, written atomically; run twice → byte-identical.
 Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs the PDFs), so
 the §9 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_bill_decomposition.py`, 25 cases. Twenty-four run in a clean checkout
+**Tests** `analysis/test_bill_decomposition.py`, 30 cases. Twenty-nine run in a clean checkout
 against the committed artifact and the committed bill artifacts; only the regeneration case
-needs the private archive, and it skips with the reason named. Three synthetic fixtures pin
-what the identities are supposed to do (price-only and quantity-only movement collapse the two
-readings; the interaction term equals the spread when both move), one feeds a cell whose
-dollars contradict its rate and asserts the identity check refuses it, and one removes a cell's
-same-date comparison rate and asserts the provider/vintage split is refused rather than
-estimated. Three more guard the two presentation decisions above:
-`case_the_vintage_and_provider_terms_cover_only_the_cells_that_support_them` asserts per cell
-that an export-flipped cell contributes nothing to vintage or provider and an import-in-both
-cell contributes nothing to the netting-regime term, that the four terms still sum to the price
-effect on each basis, and that the attributed dollars are the same dollars `like_for_like`
-publishes; `case_a_flipped_cell_cannot_be_attributed_to_vintage_or_provider` drives the same
-rule from a synthetic pair where the exporting cell would otherwise have produced a large
-spurious supply vintage; and `case_the_published_reading_allocates_none_of_the_interaction`
-asserts the published intervals are exactly the two readings, that their width equals the
-interaction, that no bare `price_usd`/`quantity_usd` key exists, and that `index.html` carries
-both bounds and states no point attribution.
+needs the private archive, and it skips with the reason named. The synthetic fixtures build
+their cells through the generator's own rate constructors, so an export cell in a fixture
+carries a `Settlement` exactly as a real one does.
 
-Five more hold the same rule where it recurs.
-`case_a_current_export_cell_cannot_enter_the_whole_provider_comparison` builds a synthetic
-statement with one import cell and one export cell and asserts the export cell's −$2.00 lands
-in `unallocated_netting_settlement_usd` rather than moving the $16.00 provider effect to
-$14.00, that a cell with no counterfactual is refused, that a period with no current import
-cell is refused, and that an export cell carrying a *non-zero* printed comparison raises
-instead of being dropped;
-`case_the_published_provider_effect_is_restricted_to_current_imports` holds the committed
-artifact and `index.html` to the same scope and checks the restricted and excluded parts
-recompose to the unrestricted figure; `case_an_import_cell_priced_at_zero_is_refused_as_a_tariff`
-drives the zero-rate guard from both sides; `case_the_quantity_split_names_its_settlement_zero_base_prices`
-asserts the scale/mix disclosure names the right cells and kWh and still sums to the Laspeyres
-quantity term; and `case_no_per_year_price_figure_is_published` asserts no `*_per_year` key
-exists, that the two-endpoint limit is machine-readable, and that the report never restates the
-Fisher reading as an annual rate.
+*The type-level rule.* `case_a_settlement_non_price_refuses_every_arithmetic_use` walks twenty
+arithmetic, coercion and comparison routes on a `Settlement` — including `s or 0.0`, which is
+how the coercion used to happen — and asserts each raises naming the cell and the rate, that
+`observed_rate()` refuses it, that `json_price()` renders `null`, and that `json.dumps` cannot
+emit it. `case_an_import_cell_priced_at_zero_is_refused_as_a_tariff` drives the other side: an
+import-in-both cell whose base delivery, base supply or same-date comparison rate is $0, or is
+a `Settlement`, is refused rather than attributed.
+
+*Scope of the published figures.* `case_the_published_index_covers_only_the_priced_cells`
+asserts every aggregate — both price readings, both quantity readings, the interaction, the
+scale/mix split and all six vintage/provider terms — equals the sum over the priced rows and
+nothing else, that the price split has exactly three keys with no `netting_regime_usd` among
+them, that the quantity split's kWh totals are the priced cells' rather than the periods', and
+that the split's dollars are the same dollars `like_for_like` publishes.
+`case_the_energy_change_is_priced_cells_plus_settlement` asserts each flipped cell's complete
+change is carried as the top-level component, that both exact pairings close on the priced
+cells' change with nothing left over for it, and that the report states it separately.
+`case_a_flipped_cell_is_outside_every_index_term` drives the same rule from a synthetic pair
+where the exporting cell would otherwise have produced a large spurious supply vintage, and
+asserts its row publishes no index key at all. `case_the_decomposition_is_per_cell_not_only_
+aggregate` asserts a settlement row carries no index term — not a zero, not a null — and
+`case_the_quantity_split_prices_no_kwh_at_a_settlement_zero` asserts the scale/mix split now
+values every kWh at an observed tariff and that the disclosure it used to need is gone.
+
+*The two provider scopes.* `case_the_provider_comparison_publishes_two_scopes` asserts both
+readings exist and state what they cover, that the energy-only one is cell-matched on both
+sides with the riders and adders nowhere in it, that the whole-period one carries the ledger's
+own rider and adder lines and names the export cell as the scope gap with its dollar size,
+that the two differ, and that `index.html` quotes both and no longer carries the retired
+mixed-scope figure. `case_a_current_export_cell_cannot_enter_the_provider_comparison` drives
+the exclusion synthetically — the export cell's row carries `null` on the bundled side rather
+than a $0, its −$2.00 appears only inside the whole-period CCA total, a cell with no
+counterfactual is refused, a period with no current import cell is refused, and an export cell
+carrying a *non-zero* printed comparison raises instead of being dropped.
+
+*The billing mode.* `case_an_accruing_statement_needs_its_deferral_sentence` feeds synthetic
+statement text with `Payment Required This Month: No` and no deferral sentence and asserts the
+run stops by name, accepts both printed wordings, and checks every accruing statement in the
+corpus carries one. `case_a_payable_statement_must_prove_it_is_the_annual_settlement` drives
+four refusals — a payable statement that never says it is a settlement, one with no earlier
+true-up date to close, one whose period does not end on that date, and one whose own
+`True-Up Date:` field disagrees — then asserts the valid case records what proved it and that
+both committed settlements carry the matching quotes, period end and printed date.
+`case_the_billing_mode_counts_come_from_the_validated_rows` asserts every published count and
+the prose itself are derived from the scan, and that the retired hard-coded "the two annual
+settlement statements" is gone.
+
+*The identities and the reading.* Three synthetic fixtures pin what the identities are
+supposed to do (price-only and quantity-only movement collapse the two readings; the
+interaction term equals the spread when both move), one feeds a cell whose dollars contradict
+its rate and asserts the identity check refuses it, one removes a cell's same-date comparison
+rate and asserts the split is refused rather than estimated, and
+`case_the_published_reading_allocates_none_of_the_interaction` asserts the published intervals
+are exactly the two readings, that their width equals the interaction, that no bare
+`price_usd`/`quantity_usd` key exists, that the reading names the cells it covers, and that
+`index.html` carries both bounds, states no point attribution, and carries none of the retired
+all-cell figures.
