@@ -19,17 +19,25 @@ WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
         bill_tou_detail.rate_per_kwh where section == "delivery". Matches
         rates.py's UDC table on the final vintage (verified by
         test_rates_history.py to the cent on all six season×TOU cells).
-  * generation $/kWh by season and TOU period — AS PRINTED on the SDG&E bill
-        bill_tou_detail.rate_per_kwh where section == "generation". Read the
-        caveat below: this is what SDG&E's "Electricity Generation (Details
-        below)" TOU table prints. During bundled periods it is what SDG&E
-        actually billed. During CCA periods it is SDG&E's bundled-generation
-        comparison table, NOT the CCA's tariff: summing kWh × printed rate
-        does not reproduce bill_periods_electric.cca_generation (checked:
-        1/28/26–2/26/26 prints $116.09 of generation TOU lines against a
-        $56.82 CCA charge). The CCA's own per-TOU rates appear only on the
-        CCA pages, which parse_bills.py does not extract, so
-        RateSet.cca_generation() fails closed.
+  * generation $/kWh by season and TOU period — BUNDLED PERIODS ONLY
+        bill_tou_detail.rate_per_kwh where section == "generation" is what
+        SDG&E's "Electricity Generation (Details below)" TOU table prints.
+        THE TRUST BOUNDARY: during bundled periods (through 12/26/24) that
+        printed table is the tariff SDG&E charged, and RateSet.generation()
+        returns it. From 12/27/24 the same table is SDG&E's bundled-generation
+        (EECC) COMPARISON printed beside a bill whose generation was charged by
+        the CCA — summing kWh × printed rate does not reproduce
+        bill_periods_electric.cca_generation (checked: 1/28/26–2/26/26 prints
+        $116.09 of generation TOU lines against a $56.82 CCA charge). So
+        RateSet.generation() REFUSES on a CCA date, naming the date, the
+        period, the provider and the gap, and the printed comparison value is
+        reachable only through the deliberately named diagnostic accessor
+        RateSet.generation_comparison_table(), whose only legitimate use is
+        reconstructing PRINTED statement lines (the re-billing, holdout and
+        CCA-gap checks say so in their own docstrings). The CCA's own per-TOU
+        rates appear only on the CCA pages, which parse_bills.py does not
+        extract, so RateSet.cca_generation() fails closed too: on a CCA date
+        this module has NO generation tariff to offer, by either name.
   * provider in force ("bundled" / "CCA")
         bill_periods_electric.generation_provider for the covering period.
         Bundled through 12/26/24; CCA from 12/27/24. In bundled periods
@@ -57,7 +65,11 @@ HOW A CELL'S TIMELINE IS BUILT
   segments with their own $/kWh, and those are kept piecewise, never collapsed.
   A row with kWh > 0 is a direct observation of that cell's rate over the
   segment's dates (a net-negative bucket prints "Rate/kWh $0.00000" and so
-  carries NO rate evidence; the parser records 0.0 there). Observations are
+  carries NO rate evidence; the parser records 0.0 there). Every positive-kWh
+  row must carry a finite, strictly positive $/kWh, and _load() refuses the
+  corpus otherwise, naming the period and the cell: a zero, negative, NaN or
+  infinite rate on a billed bucket is a parser regression, and accepting one
+  would publish a directly-evidenced free (or negative) tariff. Observations are
   merged into maximal constant-rate spans. Gaps between spans:
     * flanked by the SAME rate on both sides → the value is carried across
       (tier "carried"): the corpus is continuous, so any change inside the gap
@@ -122,11 +134,39 @@ THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
   identity:
     * holdout_* — statement S's own kWh priced by a timeline rebuilt from the
       OTHER 25 statements' rate rows. Independent of S's printed rates, so a
-      misread rate on S moves it. It can price only the cells the rest of the
-      corpus dates: holdout_priced_pct records the share of S's printed dollars
-      that were priceable, and a mid-cycle change visible only on S's own bill
-      (the five split statements) is by definition uncorroborated, which is why
-      those rows carry the largest holdout residuals.
+      misread rate on S moves it. It can price only what the rest of the corpus
+      independently witnesses, and the artifact says per statement exactly which
+      printed lines those are (corroboration(), one row per positive-kWh
+      (cell, segment) printed line):
+        holdout_corroborated_rows / _agree_rows / _disagree_rows
+              lines the other 25 statements DO witness across the whole printed
+              segment, and whether the witness rate equals the printed rate
+              exactly. A disagreement is a finding: it means the corpus
+              contradicts this statement's printed rate.
+        holdout_uncorroborated_rows + holdout_uncorroborated_reasons
+              lines no holdout witness can reach, WITH the reason. These are
+              uncorroborated BY CONSTRUCTION, not failures and not passes: a
+              rate whose first appearance in the corpus is the line under test
+              cannot be corroborated by holding that line out, and neither can a
+              line at the corpus edge. The reasons name which shape it is
+              (no witness anywhere for the cell / first witness later / last
+              witness earlier / flanking witnesses disagree so the change in the
+              gap is undated / a witness span boundary falls inside the printed
+              segment). This is why there is no aggregate coverage threshold:
+              a corpus of stable repeated rates would clear one while a
+              corrupted new vintage sat entirely outside it.
+        split_differing_cells / split_differing_corroborated_rows /
+        split_differing_uncorroborated_rows
+              the mid-cycle change itself: the cells whose printed rate is NOT
+              the same in both segments of a split statement, and how many of
+              their lines are corroborated. On this corpus that count is zero on
+              every split statement — the change is printed only on the statement
+              that carries it — so those statements are recorded as
+              uncorroborated rather than as validated.
+      Note what the corroborating witness always IS here: a CARRIED span between
+      two other statements that flank S's dates with the SAME printed rate. No
+      other statement bills S's dates, so a direct witness is impossible by
+      construction, on every one of these rows.
     * cca_generation_gap_usd — Σ(printed generation kWh × printed rate) minus
       bill_periods_electric.cca_generation, for CCA statements. This is the
       measured evidence that the printed generation table is not the tariff
@@ -139,12 +179,16 @@ Generator outputs (deterministic writers, atomic replace; run twice → identica
                                         provider timelines
     data/rate_rebilling_residuals.csv   per-statement printed TOU energy, the
                                         timeline reconstruction of it, the
-                                        holdout re-bill, the two vintage-
-                                        collapse counterfactuals and the CCA
-                                        generation gap; worst statement flagged
+                                        holdout re-bill with its per-line
+                                        corroboration status and the reason for
+                                        every uncorroborated line, the two
+                                        vintage-collapse counterfactuals and the
+                                        CCA generation gap; worst statement
+                                        flagged
 """
 import csv
 import datetime as dt
+import math
 import os
 import pathlib
 import sys
@@ -422,11 +466,28 @@ def _load():
     tou = []
     known = set()
     for row in csv.DictReader(open(tpath, newline="")):
+        kwh, rate = float(row["kwh"]), float(row["rate_per_kwh"])
+        # A billed bucket's printed $/kWh is the module's only rate evidence, so
+        # its shape is checked at the loader, before any timeline exists. Zero,
+        # negative, NaN and infinite are parser regressions, not tariffs: a
+        # positive-kWh row at rate 0 would otherwise become a "direct"
+        # observation and publish an evidenced free rate. (kwh <= 0 rows legally
+        # print $0.00000 — that case is checked in _timelines, which is where the
+        # credit-line assumption lives.)
+        if kwh > 0 and not (math.isfinite(rate) and rate > 0):
+            raise SystemExit(
+                f"[{row['period']}] {row['section']}/{row['season']}/"
+                f"{row['tou_period']}: a billed bucket ({kwh} kWh) carries "
+                f"rate_per_kwh {row['rate_per_kwh']!r} in bill_tou_detail.csv. A "
+                "printed TOU energy line must carry a finite, strictly positive "
+                "$/kWh; zero, negative, NaN and infinite are parser regressions, "
+                "and treating one as a rate observation would publish a "
+                "directly-evidenced free or negative tariff. Refusing the corpus "
+                "— re-run parse_bills.py and re-derive.")
         tou.append(dict(period=row["period"], section=row["section"],
                         season=row["season"], segment=int(row["segment"]),
                         segment_days=int(row["segment_days"]),
-                        tou_period=row["tou_period"], kwh=float(row["kwh"]),
-                        rate=float(row["rate_per_kwh"])))
+                        tou_period=row["tou_period"], kwh=kwh, rate=rate))
         known.add(row["period"])
     missing = [p["period"] for p in periods if p["period"] not in known]
     if not tou or missing:
@@ -465,9 +526,49 @@ class RateSet:
         return self._cell("delivery", season, tou_period)
 
     def generation(self, season, tou_period):
-        """Generation $/kWh AS PRINTED on the SDG&E bill (section='generation').
-        Bundled periods: what SDG&E billed. CCA periods: SDG&E's comparison
-        table, NOT the CCA tariff — see the module docstring and cca_generation()."""
+        """Generation $/kWh SDG&E CHARGED (bill_tou_detail section='generation').
+
+        BUNDLED dates only. On a CCA date this REFUSES: the generation TOU table
+        printed on a CCA statement is SDG&E's bundled-generation (EECC)
+        comparison, not the tariff that was charged, so there is no charged
+        generation rate for this module to return (cca_generation() refuses for
+        the complementary reason — the CCA's per-TOU rates are not in any
+        committed artifact). To reconstruct the PRINTED line instead of the
+        charged tariff, ask for that by name: generation_comparison_table()."""
+        if self.provider == "CCA":
+            billed = self._period["cca_total"]
+            raise SystemExit(
+                f"generation/{season}/{tou_period} on {self.date}: period "
+                f"{self._period['period']} was billed by a CCA "
+                f"(generation_provider={self.provider}), so the generation TOU "
+                "table printed on that statement is SDG&E's bundled-generation "
+                "(EECC) COMPARISON, not the tariff charged — the CCA charged "
+                + (f"${billed:.2f}" if billed else
+                   "an amount bill_periods_electric.csv does not carry")
+                + " of generation for the period, and its per-TOU rates appear "
+                "only on the CCA bill pages, which parse_bills.py does not "
+                "extract (RateSet.cca_generation refuses for that reason; "
+                "cca_generation_gap measures how far the printed table is from "
+                "the charge). Returning the printed comparison rate as the tariff "
+                "would be a plausible-looking wrong number, so this refuses. To "
+                "reconstruct the PRINTED statement line deliberately, call "
+                "generation_comparison_table(season, tou_period).")
+        return self._cell("generation", season, tou_period)
+
+    def generation_comparison_table(self, season, tou_period):
+        """DIAGNOSTIC, NOT A TARIFF: the generation $/kWh this date's statement
+        PRINTED in SDG&E's "Electricity Generation (Details below)" TOU table.
+
+        On a BUNDLED date that is also what SDG&E charged, and generation()
+        returns the same number. On a CCA date it is SDG&E's bundled-generation
+        (EECC) comparison, printed for reference beside a bill whose generation
+        the CCA charged at rates no committed artifact carries: Σ kWh × these
+        rates does not reproduce the CCA charge, and cca_generation_gap()
+        measures by how much (1/28/26-2/26/26 prints $116.09 against a $56.82
+        charge). The only legitimate use is reconstructing PRINTED statement
+        lines — which is what the re-billing, holdout and CCA-gap checks do, and
+        they say so. Never read this as the tariff in force; for that,
+        generation() refuses on CCA dates and so does cca_generation()."""
         return self._cell("generation", season, tou_period)
 
     def cca_generation(self, season, tou_period):
@@ -545,6 +646,33 @@ def current_vintage():
 MODES = ("piecewise", "vintage_collapse", "netting_collapse")
 
 
+def _printed_line_span(eng, cell, day):
+    """The timeline span the PRINTED-line reconstruction should use for one cell.
+
+    Everything under "Re-billing" reconstructs the statements' own printed TOU
+    energy lines, so for section='generation' on a CCA date the value here is
+    SDG&E's bundled-generation comparison table and NOT the CEA tariff that was
+    charged (RateSet.generation refuses to hand that out as a tariff; see
+    RateSet.generation_comparison_table). Callers are reconstructing what the
+    paper said, which is the only thing these rows support."""
+    return eng.span_at(cell, day)
+
+
+def _printed_line_rate(rs, section, season, tou_period):
+    """The $/kWh the statement covering rs.date PRINTED for one TOU cell.
+
+    Deliberately routed through RateSet.generation_comparison_table for
+    generation, because a printed-line reconstruction wants the printed number
+    even on a CCA date, where it is SDG&E's comparison table rather than the
+    tariff charged. Raises (naming the date and the cell) on an absent cell."""
+    if section == "generation":
+        return rs.generation_comparison_table(season, tou_period)
+    if section == "delivery":
+        return rs.delivery(season, tou_period)
+    raise SystemExit(f"_printed_line_rate: unknown section {section!r} "
+                     f"(expected {SECTIONS})")
+
+
 def _block_end(eng, period, section, season):
     """Last day of a statement's (section, season) block — the vintage a
     single-vintage re-bill of that block would wrongly use throughout."""
@@ -554,6 +682,12 @@ def _block_end(eng, period, section, season):
 
 def rebill_statement(period, mode="piecewise"):
     """Re-price one statement's printed TOU energy lines from its own per-TOU kWh.
+
+    A PRINTED-LINE reconstruction throughout: on a CCA statement the generation
+    rows here are SDG&E's bundled-generation comparison table, not the CEA tariff
+    charged (the values come from RateSet.generation_comparison_table /
+    _printed_line_span by name, since RateSet.generation refuses on CCA dates).
+    Nothing in this function is a claim about the CCA's tariff.
 
     printed   = Σ kWh × the rate THIS STATEMENT printed on those lines, over its
                 positive TOU buckets. This is the reference, and it is the
@@ -616,14 +750,15 @@ def rebill_statement(period, mode="piecewise"):
             if kwh <= 0:
                 continue
             end = _block_end(eng, period, section, season)
-            rebilled += kwh * RateSet(eng, end)._cell(section, season, tp)
+            rebilled += kwh * _printed_line_rate(RateSet(eng, end), section, season, tp)
     elif mode == "vintage_collapse":
         rebilled = basis = 0.0
         for r in rows:
             if r["kwh"] <= 0:
                 continue
             cell = (r["section"], r["season"], r["tou_period"])
-            span = eng.span_at(cell, _block_end(eng, period, r["section"], r["season"]))
+            span = _printed_line_span(
+                eng, cell, _block_end(eng, period, r["section"], r["season"]))
             if span.tier == "absent":
                 unpriced += 1
                 continue
@@ -636,7 +771,8 @@ def rebill_statement(period, mode="piecewise"):
                 continue
             cell = (r["section"], r["season"], r["tou_period"])
             s, e = eng.segments[(period, r["section"], r["season"], r["segment"])]
-            first, last = eng.span_at(cell, s), eng.span_at(cell, e)
+            first = _printed_line_span(eng, cell, s)
+            last = _printed_line_span(eng, cell, e)
             if first is not last:
                 raise SystemExit(f"[{period}] {'/'.join(cell)}: the engine's timeline "
                                  f"changes rate inside bill segment {s}..{e} — the "
@@ -654,54 +790,149 @@ def rebill_statement(period, mode="piecewise"):
                 residual_pct=(100.0 * residual / basis) if basis else None)
 
 
+# Why a printed line can have no independent witness. These are properties of the
+# corpus, not verdicts on the rate: none of them can be repaired by trying harder,
+# and none of them may be reported as agreement.
+UNCORROBORATED_REASONS = (
+    "no_witness_anywhere_for_this_cell",                 # cell billed only here
+    "first_witness_is_later_than_this_statement",         # corpus edge (start)
+    "last_witness_is_earlier_than_this_statement",        # corpus edge (end)
+    "flanking_witnesses_disagree_the_change_is_undated",  # 1st appearance of a rate
+    "witness_span_boundary_inside_the_printed_segment",   # holdout dates a change here
+)
+
+
+def corroboration(period):
+    """Per-printed-line corroboration status for one statement: what the REST of the
+    corpus can and cannot independently say about the rates this statement printed.
+
+    One row per positive-kWh TOU energy line (a (cell, segment) pair, priced over
+    that segment's dates). The timeline rebuilt WITHOUT this statement's rate rows
+    is asked for the same cell over the same dates:
+
+      status "corroborated"    the holdout timeline holds ONE rate across the whole
+            printed segment — an independent witness exists. `agrees` is True only
+            if that witness rate equals the printed rate EXACTLY. A disagreement is
+            a finding: the rest of the corpus contradicts this statement's line.
+            The witness is always a CARRIED span, i.e. two other statements flanking
+            these dates that printed the SAME rate; no other statement bills these
+            dates, so a DIRECT witness is impossible by construction and `tier`
+            records which it was rather than implying the stronger one.
+      status "uncorroborated"  no such witness exists, and `reason` (one of
+            UNCORROBORATED_REASONS) says which shape of hole it is.
+
+    This is the honesty constraint the coverage percentage could not express: a rate
+    whose FIRST appearance in the corpus is the line under test cannot be
+    corroborated by holding that line out — the corpus simply has no second opinion
+    — and the same is true at the corpus edges. Those lines are reported as
+    uncorroborated BY CONSTRUCTION. They are neither failures nor passes, and they
+    are never folded into an aggregate that a stable repeated rate could carry.
+
+    Returns {period, rows, corroborated_rows, agree_rows, disagree_rows,
+    uncorroborated_rows, reasons {reason: count}, printed_usd,
+    corroborated_printed_usd, corroborated_witness_usd, direct_witness_rows,
+    differing_cells, differing_corroborated_rows, differing_uncorroborated_rows},
+    where differing_* covers the cells whose printed rate is NOT the same in both
+    segments of a split statement — the mid-cycle change itself, which is exactly
+    the thing a holdout of that statement cannot see.
+    """
+    eng = _engine()
+    if not any(p["period"] == period for p in eng.periods):
+        raise SystemExit(f"corroboration: no billing period {period!r} in the corpus")
+    hold = _holdout_engine(period)
+    billed = [r for r in eng.tou if r["period"] == period and r["kwh"] > 0]
+    # the mid-cycle change on a split statement: cells printing two rates
+    printed_rates = {}
+    for r in billed:
+        printed_rates.setdefault(
+            (r["section"], r["season"], r["tou_period"]), set()).add(r["rate"])
+    differing = {cell for cell, rs in printed_rates.items() if len(rs) > 1}
+    rows, reasons = [], {}
+    for r in billed:
+        cell = (r["section"], r["season"], r["tou_period"])
+        s, e = eng.segments[(period, r["section"], r["season"], r["segment"])]
+        first, last = hold.span_at(cell, s), hold.span_at(cell, e)
+        one_span = first is last and first.tier != "absent"
+        reason = ""
+        if not one_span:
+            if not any(sp.tier == "direct" for sp in hold.timelines[cell]):
+                reason = "no_witness_anywhere_for_this_cell"
+            elif first is not last:
+                reason = "witness_span_boundary_inside_the_printed_segment"
+            elif first.start == hold.start:
+                reason = "first_witness_is_later_than_this_statement"
+            elif first.end == hold.end:
+                reason = "last_witness_is_earlier_than_this_statement"
+            else:
+                reason = "flanking_witnesses_disagree_the_change_is_undated"
+            reasons[reason] = reasons.get(reason, 0) + 1
+        rows.append(dict(
+            cell=cell, segment=r["segment"], start=s, end=e, kwh=r["kwh"],
+            printed_rate=r["rate"], printed_usd=r["kwh"] * r["rate"],
+            status="corroborated" if one_span else "uncorroborated",
+            reason=reason, differing_cell=cell in differing,
+            witness_tier=first.tier if one_span else "",
+            witness_rate=first.rate if one_span else None,
+            witness_usd=r["kwh"] * first.rate if one_span else None,
+            agrees=(first.rate == r["rate"]) if one_span else None))
+    corr = [x for x in rows if x["status"] == "corroborated"]
+    unc = [x for x in rows if x["status"] == "uncorroborated"]
+    return dict(
+        period=period, rows=rows,
+        corroborated_rows=len(corr),
+        agree_rows=sum(1 for x in corr if x["agrees"]),
+        disagree_rows=sum(1 for x in corr if not x["agrees"]),
+        uncorroborated_rows=len(unc), reasons=reasons,
+        direct_witness_rows=sum(1 for x in corr if x["witness_tier"] == "direct"),
+        printed_usd=sum(x["printed_usd"] for x in rows),
+        corroborated_printed_usd=sum(x["printed_usd"] for x in corr),
+        corroborated_witness_usd=sum(x["witness_usd"] for x in corr),
+        differing_cells=len(differing),
+        differing_corroborated_rows=sum(1 for x in corr if x["differing_cell"]),
+        differing_uncorroborated_rows=sum(1 for x in unc if x["differing_cell"]))
+
+
 def rebill_holdout(period):
     """Re-price one statement against a timeline built WITHOUT its own rate rows.
 
     The one per-statement check here that can move: the prices come from the
     other 25 statements, so a misread rate, column or segment on this statement
-    shows up as a residual instead of cancelling out. Rows the rest of the corpus
-    cannot date (an absent holdout span, or a span boundary falling inside the
-    printed segment — which is exactly what a mid-cycle change visible only on
-    this bill looks like) are not priced; they are counted, not guessed.
+    shows up as a residual instead of cancelling out. It prices exactly the lines
+    corroboration() calls corroborated, and counts — never guesses — the rest,
+    which are uncorroborated BY CONSTRUCTION (that function's docstring lists the
+    five shapes; a mid-cycle change printed only on this bill is one of them).
+    A PRINTED-LINE reconstruction: on a CCA statement the generation lines are
+    SDG&E's bundled-generation comparison table, not the CEA tariff charged.
 
     Returns {period, printed_priced, rebilled, residual, residual_pct|None,
-    priced_pct, unpriced_rows} where the residual is over the PRICED subset and
-    printed_priced is that subset's printed dollars.
+    priced_pct, uncorroborated_rows} where the residual is over the CORROBORATED
+    subset and printed_priced is that subset's printed dollars. priced_pct is
+    descriptive only: it is NOT a gate, because a corpus of stable repeated rates
+    would clear any threshold on it while an uncorroborated new vintage sat
+    entirely outside it (see corroboration()).
     """
-    eng = _engine()
-    hold = _holdout_engine(period)
-    rows = [r for r in eng.tou if r["period"] == period]
-    if not rows:
-        raise SystemExit(f"rebill_holdout: no billing period {period!r} in the corpus")
-    printed = sum(r["kwh"] * r["rate"] for r in rows if r["kwh"] > 0)
-    priced = rebilled = 0.0
-    unpriced = 0
-    for r in rows:
-        if r["kwh"] <= 0:
-            continue
-        cell = (r["section"], r["season"], r["tou_period"])
-        s, e = eng.segments[(period, r["section"], r["season"], r["segment"])]
-        first, last = hold.span_at(cell, s), hold.span_at(cell, e)
-        if first is not last or first.tier == "absent":
-            unpriced += 1
-            continue
-        priced += r["kwh"] * r["rate"]
-        rebilled += r["kwh"] * first.rate
+    c = corroboration(period)
+    priced, rebilled = c["corroborated_printed_usd"], c["corroborated_witness_usd"]
     residual = rebilled - priced
     return dict(period=period, printed_priced=priced, rebilled=rebilled,
                 residual=residual,
                 residual_pct=(100.0 * residual / priced) if priced else None,
-                priced_pct=(100.0 * priced / printed) if printed else 0.0,
-                unpriced_rows=unpriced)
+                priced_pct=(100.0 * priced / c["printed_usd"])
+                if c["printed_usd"] else 0.0,
+                uncorroborated_rows=c["uncorroborated_rows"])
 
 
 def cca_generation_gap(period):
     """Printed generation TOU dollars vs the CCA generation charge actually billed.
 
     Σ(printed generation kWh × printed rate) − bill_periods_electric.cca_generation
-    for a CCA statement. The two are not the same tariff, and this measures by how
-    much: it is the evidence that RateSet.cca_generation() must fail closed rather
-    than reuse the printed comparison table. Returns None for bundled statements,
+    for a CCA statement. The left side is a deliberate reconstruction of the PRINTED
+    lines — SDG&E's bundled-generation comparison table, the thing
+    RateSet.generation_comparison_table() hands out and RateSet.generation()
+    refuses to call a tariff. The two sides are not the same tariff, and this
+    measures by how much: it is the evidence that RateSet.generation() and
+    RateSet.cca_generation() must both fail closed rather than reuse the printed
+    comparison table. Returns None for bundled statements,
     where SDG&E's printed generation table IS what it billed and no CCA charge
     exists.
     """
@@ -849,7 +1080,8 @@ def _residual_rows():
                         rebill_statement(per, "vintage_collapse"),
                         rebill_statement(per, "netting_collapse"),
                         rebill_holdout(per),
-                        cca_generation_gap(per)))
+                        cca_generation_gap(per),
+                        corroboration(per)))
     # worst = largest |timeline_residual_pct|. That column is zero by identity
     # (module docstring), so in practice the tie breaks on the holdout residual —
     # the per-statement check that can actually move — and then on the statement
@@ -858,7 +1090,7 @@ def _residual_rows():
                                            -abs(t[3]["residual_pct"] or 0.0),
                                            t[0]["statement_date"]))[0][0]["period"]
     rows = []
-    for piece, vint, netc, hold, gap in results:
+    for piece, vint, netc, hold, gap, corr in results:
         rows.append([piece["statement_date"], piece["period"], piece["days"],
                      piece["provider"], piece["n_segments"],
                      f"{piece['printed']:.2f}",
@@ -868,7 +1100,12 @@ def _residual_rows():
                      f"{hold['printed_priced']:.2f}",
                      f"{hold['rebilled']:.2f}",
                      _fmt_money(hold["priced_pct"], 2),
-                     hold["unpriced_rows"],
+                     corr["corroborated_rows"], corr["agree_rows"],
+                     corr["disagree_rows"], corr["uncorroborated_rows"],
+                     ";".join(f"{k}:{v}" for k, v in sorted(corr["reasons"].items())),
+                     corr["differing_cells"],
+                     corr["differing_corroborated_rows"],
+                     corr["differing_uncorroborated_rows"],
                      _fmt_money(hold["residual"]),
                      "" if hold["residual_pct"] is None
                      else _fmt_money(hold["residual_pct"], 4),
@@ -900,14 +1137,23 @@ def _write_artifacts(dest_dir):
         # same kWh through the timeline built from those same rows, so
         # timeline_residual_* is a reconstruction identity, not a dollar
         # validation (module docstring). holdout_* withholds the statement's own
-        # rates and CAN move; cca_generation_gap_* is the one independent
-        # comparison the committed artifacts support.
+        # rates and CAN move; holdout_corroborated_*/holdout_uncorroborated_*
+        # say per statement which printed lines the rest of the corpus
+        # independently witnesses and, for the rest, why it cannot
+        # (corroboration()); split_differing_* isolates the mid-cycle change
+        # itself. cca_generation_gap_* is the one independent comparison the
+        # committed artifacts support.
         (dest_dir / "rate_rebilling_residuals.csv",
          ["statement_date", "period", "days", "provider", "n_segments",
           "printed_tou_energy_usd", "timeline_energy_usd",
           "timeline_residual_usd", "timeline_residual_pct",
           "holdout_printed_priced_usd", "holdout_energy_usd",
-          "holdout_priced_pct", "holdout_unpriced_rows",
+          "holdout_priced_pct",
+          "holdout_corroborated_rows", "holdout_corroborated_agree_rows",
+          "holdout_corroborated_disagree_rows", "holdout_uncorroborated_rows",
+          "holdout_uncorroborated_reasons", "split_differing_cells",
+          "split_differing_corroborated_rows",
+          "split_differing_uncorroborated_rows",
           "holdout_residual_usd", "holdout_residual_pct",
           "vintage_collapse_basis_usd", "vintage_collapse_energy_usd",
           "vintage_collapse_unpriced_rows", "vintage_collapse_residual_pct",
@@ -942,6 +1188,17 @@ def main():
           f"({(eng.end - eng.start).days + 1} days, {len(eng.periods)} periods)")
     print(f"cells: {len(eng.timelines)} × timeline "
           f"({directs} direct spans, {absents} flagged-absent spans)")
+    corr = [corroboration(p["period"]) for p in eng.periods]
+    reasons = {}
+    for c in corr:
+        for k, v in c["reasons"].items():
+            reasons[k] = reasons.get(k, 0) + v
+    print(f"holdout corroboration of the printed lines: "
+          f"{sum(c['corroborated_rows'] for c in corr)} corroborated "
+          f"({sum(c['disagree_rows'] for c in corr)} disagreeing), "
+          f"{sum(c['uncorroborated_rows'] for c in corr)} uncorroborated by "
+          f"construction — "
+          + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items())))
     for p in paths:
         print(f"wrote {p.relative_to(ROOT)}")
 
