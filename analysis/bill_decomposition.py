@@ -828,6 +828,35 @@ def billing_mode_scan():
     return rows
 
 
+def _both_compared_periods_accrue(scan):
+    """True only when the scan says BOTH compared statements accrue; else refuse.
+
+    The comparison prices each period from its own accrued energy, so if either
+    end were an annual settlement statement its figure would be a year's true-up
+    rather than that month's cost, and every downstream term would be measuring
+    something else. A settlement row still carries an establishing quote, so
+    nothing else in the scan would have objected.
+    """
+    by = {r["statement_date"]: r for r in scan}
+    for role, stmt in (("base", BASE["statement"]), ("current", CURRENT["statement"])):
+        row = by.get(stmt)
+        if row is None:
+            raise SystemExit(
+                f"the {role} statement {stmt} is not in the billing-mode scan, so its "
+                "billing mode was never established from its own text")
+        if row["billing_mode"] != "accrues to the annual true-up" or \
+                row["annual_settlement"] or row["payment_required_this_month"] != "No":
+            raise SystemExit(
+                f"the {role} statement {stmt} does not accrue to the annual true-up "
+                f"(billing_mode={row['billing_mode']!r}, "
+                f"annual_settlement={row['annual_settlement']}, "
+                f"payment_required_this_month={row['payment_required_this_month']!r}). "
+                "This comparison prices each period from its accrued energy, so a "
+                "settlement statement at either end would be a year's true-up rather "
+                "than that period's cost — choose comparable periods.")
+    return True
+
+
 def billing_mode_finding(scan):
     """Turn the scan into the answer, naming the statements that establish it.
 
@@ -865,28 +894,41 @@ def billing_mode_finding(scan):
         "question": ("does a 2024 statement bill the energy component monthly, or "
                      "accrue it to the annual NEM true-up?"),
         "answer": "accrues to the annual true-up",
-        "answer_holds_for_both_compared_periods": True,
+        # Derived, not asserted: if either compared statement were classified as an
+        # annual settlement, it would still carry an establishing quote and this
+        # would have gone on claiming both periods accrue. The whole decomposition
+        # rests on the accrual being the cost series for BOTH periods, so a
+        # settlement on either end is refused here rather than published as true.
+        "answer_holds_for_both_compared_periods": _both_compared_periods_accrue(scan),
         "established_by": [
             {"statement_date": BASE["statement"],
              "role": "the base period of this comparison",
              "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == BASE["statement"]),
-             "net_energy_metering_summary": "Payment Required This Month: No"},
+             "net_energy_metering_summary": "Payment Required This Month: "
+                 + next(r["payment_required_this_month"] for r in scan
+                         if r["statement_date"] == BASE["statement"])},
             {"statement_date": CURRENT["statement"],
              "role": "the current period of this comparison",
              "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == CURRENT["statement"]),
-             "net_energy_metering_summary": "Payment Required This Month: No"},
+             "net_energy_metering_summary": "Payment Required This Month: "
+                 + next(r["payment_required_this_month"] for r in scan
+                         if r["statement_date"] == CURRENT["statement"])},
             {"statement_date": last_ledger,
              "role": "last statement printing a separate Net Metering Account Summary",
              "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == last_ledger),
-             "net_energy_metering_summary": "Payment Required This Month: No"},
+             "net_energy_metering_summary": "Payment Required This Month: "
+                 + next(r["payment_required_this_month"] for r in scan
+                         if r["statement_date"] == last_ledger)},
             {"statement_date": first_without,
              "role": "first statement without it — the presentation change",
              "quote": next(r["establishing_quote"] for r in scan
                            if r["statement_date"] == first_without),
-             "net_energy_metering_summary": "Payment Required This Month: No"},
+             "net_energy_metering_summary": "Payment Required This Month: "
+                 + next(r["payment_required_this_month"] for r in scan
+                         if r["statement_date"] == first_without)},
         ],
         "annual_settlement_statements": [
             {"statement_date": r["statement_date"],
