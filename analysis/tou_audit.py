@@ -42,6 +42,13 @@ are re-derived by this script every run rather than trusted:
   reconcile measurably worse, by between 5.0 and 59.3 kWh against a 3.0 kWh
   rounding bound, so none of them rests on the tariff sheet alone.
 
+  Weekend-falling holidays additionally get an observed-day adjudication
+  (weekend_shift_evidence): the no-shift, observed-Friday and observed-Monday
+  variants are scored against the printed buckets with an explicit
+  identifiability bound, reporting indeterminate when the discriminating energy
+  sits inside statement rounding. A decisive contradiction of the documented
+  Sunday-to-Monday rule encoded in rates.holidays fails the verdict.
+
 Tolerance. Statements print whole kWh, so a bucket carries up to +/-0.5 kWh of
 rounding before any real disagreement exists. A bucket passes when the residual is
 within max(1.0 kWh, 0.5% of the billed magnitude); the floor keeps small buckets
@@ -160,11 +167,17 @@ DATA = ROOT / "data"
 
 
 def holidays(years):
-    """Tariff holidays assigned weekend TOU windows.
+    """Tariff holidays assigned weekend TOU windows -- ACTUAL dates only.
 
     Source: research/rates-reference.md -- "Holidays treated as weekends: New
     Year's, Presidents, Memorial, July 4, Labor, Veterans, Thanksgiving,
     Christmas".
+
+    Deliberately NOT rates.holidays(): that set also carries the documented
+    Sunday-to-Monday observed dates, which no bill has confirmed yet. as_billed
+    reproduces what the statements demonstrate, so its baseline is the actual-date
+    set, and weekend_shift_evidence() scores the observed-day variants against the
+    bills explicitly whenever a weekend holiday enters an audited period.
     """
     def nth_weekday(y, m, wd, n):
         c = dt.date(y, m, 1)
@@ -643,6 +656,86 @@ def holiday_evidence(intervals, billed, hol, audited):
     return out
 
 
+# The documented weekend-shift rule (sdge.ca/sdge-holiday-rates, read 2026-07-29,
+# encoded in rates.holidays): a Sunday holiday is also observed the following
+# Monday; a Saturday holiday does not shift. Keyed by weekday().
+DOCUMENTED_SHIFT = {5: "none", 6: "monday"}
+
+
+def weekend_shift_evidence(intervals, billed, hol, audited):
+    """Adjudicate the observed-day rule for every weekend-falling holiday.
+
+    For each weekend holiday, three candidate rules are scored against the printed
+    buckets of every audited period touching the holiday or its candidate observed
+    days: `none` (no shift -- the as_billed baseline), `friday` (the federal
+    convention) and `monday` (the rule SDG&E documents for Sundays). Each
+    candidate adds its observed day to the holiday set and the period is rebuilt;
+    the candidate whose rebuild reconciles best wins ONLY when it beats every
+    other candidate by more than the identifiability bound: 0.5 kWh of statement
+    rounding for each bucket the two candidates actually move energy between.
+    Anything inside that bound is reported `indeterminate` -- ranking residuals
+    that differ by less than print rounding is noise, not evidence (the July 2026
+    Saturday moves ~2 kWh under a Friday shift and ~0.7 kWh under a Monday shift,
+    so a wrong winner could otherwise be crowned by rounding alone).
+
+    Weekend holidays outside every audited period are reported `untested` rather
+    than dropped, so the check cannot be skipped silently. A determined winner is
+    compared against DOCUMENTED_SHIFT; a contradiction fails the run's verdict in
+    main() -- the canonical calendar in rates.py rides on the documented rule and
+    must be corrected if a bill decisively disagrees.
+    """
+    out = []
+    for d in sorted(hol):
+        if d.weekday() < 5:
+            continue
+        observed = {"none": None,
+                    "friday": d - dt.timedelta(days=d.weekday() - 4),
+                    "monday": d + dt.timedelta(days=7 - d.weekday())}
+        cand_days = {d} | {o for o in observed.values() if o}
+        periods = [p for p in audited
+                   if any(parse_period(p)[0] <= x <= parse_period(p)[1]
+                          for x in cand_days)]
+        entry = {"date": str(d), "weekday": d.strftime("%A"),
+                 "documented_rule": DOCUMENTED_SHIFT[d.weekday()]}
+        if not periods:
+            entry.update({"inside_an_audited_period": False, "outcome": "untested",
+                          "consistent_with_documented": None})
+            out.append(entry)
+            continue
+
+        resid, built = {}, {}
+        for name, obs in observed.items():
+            hset = hol | ({obs} if obs else set())
+            resid[name] = round(sum(_period_residual(intervals, billed, p, hset)
+                                    for p in periods), 2)
+            built[name] = {(p, k): v for p in periods
+                           for k, v in rebuild(intervals, *parse_period(p),
+                                               "as_billed", hset).items()}
+        winner = min(resid, key=resid.get)
+        margins, decisive = {}, True
+        for other in resid:
+            if other == winner:
+                continue
+            keys = set(built[winner]) | set(built[other])
+            moved = sum(1 for k in keys
+                        if abs(built[winner].get(k, 0.0)
+                               - built[other].get(k, 0.0)) > 1e-9)
+            bound = ROUNDING_PER_BUCKET * moved
+            margin = resid[other] - resid[winner]
+            margins[other] = {"margin_kwh": round(margin, 2),
+                              "identifiability_bound_kwh": round(bound, 2)}
+            if margin <= bound:
+                decisive = False
+        entry.update({
+            "inside_an_audited_period": True, "periods": periods,
+            "residual_kwh": resid, "margins": margins,
+            "outcome": f"determined:{winner}" if decisive else "indeterminate",
+            "consistent_with_documented": (
+                (winner == DOCUMENTED_SHIFT[d.weekday()]) if decisive else None)})
+        out.append(entry)
+    return out
+
+
 def main():
     usage = pathlib.Path("usage.csv")
     if not usage.exists():
@@ -677,6 +770,8 @@ def main():
                      for d in dst],
         "midday_sop_changeover": refit_changeover(intervals, billed, periods, hol),
         "holiday_evidence": holiday_evidence(intervals, billed, hol, audited),
+        "weekend_holiday_shift_evidence": weekend_shift_evidence(
+            intervals, billed, hol, audited),
         "period_totals": totals,
         "rules": {r: summarise(rows, totals, r) for r in ("as_billed", "canonical")},
     }
@@ -691,8 +786,16 @@ def main():
     out["days_declared_but_not_delivered"] = undelivered
     out["complete"] = not integrity and not undelivered
 
+    # A decisive weekend-shift determination that contradicts the documented rule
+    # invalidates the canonical calendar in rates.py, so it must fail the verdict
+    # even if the aggregate residuals happen to sit inside tolerance.
+    shift_conflicts = [e for e in out["weekend_holiday_shift_evidence"]
+                       if e["consistent_with_documented"] is False]
+    out["weekend_shift_conflicts"] = shift_conflicts
+
     v = out["rules"]["as_billed"]
-    reconciles = v["buckets_failing"] == 0 and v["period_totals_failing"] == 0
+    reconciles = (v["buckets_failing"] == 0 and v["period_totals_failing"] == 0
+                  and not shift_conflicts)
     if undelivered:
         out["verdict"] = (
             f"INCOMPLETE -- the export declares {declared[0]}..{declared[1]} but did "
@@ -703,6 +806,12 @@ def main():
             f"INCOMPLETE -- {len(integrity)} in-coverage period(s) excluded for "
             f"degraded interval data ({', '.join(s['period'] for s in integrity)}); "
             "no reconciliation claim is made over the corpus")
+    elif shift_conflicts:
+        out["verdict"] = (
+            f"{len(shift_conflicts)} weekend holiday(s) decisively contradict the "
+            "documented observed-day rule encoded in rates.holidays "
+            f"(e.g. {shift_conflicts[0]['date']}: {shift_conflicts[0]['outcome']}); "
+            "correct the canonical calendar to follow the bills")
     elif reconciles:
         out["verdict"] = "the utility's TOU accounting reproduces from raw interval data"
     else:
@@ -734,6 +843,9 @@ def main():
               f"max|residual| {s['max_abs_residual_kwh']:>7.2f} kWh  "
               f"worst period total {s['worst_period_total_pct']:.3f}%")
     print(f"  DST days: {[(d['date'], d['intervals']) for d in out['dst_days']]}")
+    shifts = out["weekend_holiday_shift_evidence"]
+    print("  weekend-holiday shift: " + (", ".join(
+        f"{e['date']} {e['outcome']}" for e in shifts) if shifts else "none in calendar"))
     if integrity:
         print(f"  !! {len(integrity)} in-coverage period(s) excluded for degraded data:")
         for s in integrity:

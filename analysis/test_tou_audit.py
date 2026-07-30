@@ -335,6 +335,111 @@ def case_holiday_evidence_is_leave_one_out():
     return "holiday evidence confirms by leave-one-out and reports untested dates as such"
 
 
+def _shift_fixture(period, window_imp=None):
+    """Period intervals: 1.0 kWh per slot, with 06:00-10:00 overridden per day.
+
+    The 06:00-10:00 window is the only place a summer weekday and weekend differ
+    under the current tariff, so the per-day override controls exactly how much
+    energy each shift candidate can move.
+    """
+    start, end = T.parse_period(period)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    rows = []
+    for d in days:
+        w = (window_imp or {}).get(d)
+        for h in T.expected_slots(d).elements():
+            rows.append((d, h, w if (w is not None and 6 <= h < 10) else 1.0, 0.0))
+    return rows
+
+
+def _billed_under(rows, period, hol):
+    start, end = T.parse_period(period)
+    return {(period, T.SEASON_NAME[s], T.TOU_NAME[t]): round(v)
+            for (s, t), v in T.rebuild(rows, start, end, "as_billed", hol).items()}
+
+
+def case_weekend_shift_scoring_detects_a_friday_shift():
+    """Bills carrying a Friday observed holiday must be identified as such --
+    and flagged as contradicting the documented Saturday-no-shift rule."""
+    period = "6/27/26 - 7/26/26"          # contains Sat July 4 2026
+    fri, mon = dt.date(2026, 7, 3), dt.date(2026, 7, 6)
+    rows = _shift_fixture(period, {fri: 2.0, mon: 0.5})
+    billed = _billed_under(rows, period, HOL | {fri})
+    ev = T.weekend_shift_evidence(rows, billed, HOL, [period])
+    e = [x for x in ev if x["date"] == "2026-07-04"][0]
+    assert e["inside_an_audited_period"], e
+    assert e["outcome"] == "determined:friday", e
+    assert e["documented_rule"] == "none", e
+    assert e["consistent_with_documented"] is False, e
+    assert e["residual_kwh"]["friday"] < e["residual_kwh"]["monday"], e
+    assert e["residual_kwh"]["friday"] < e["residual_kwh"]["none"], e
+    for m in e["margins"].values():
+        assert m["margin_kwh"] > m["identifiability_bound_kwh"], e
+    return "a decisive Friday shift is determined and flagged against the documented rule"
+
+
+def case_weekend_shift_scoring_confirms_no_shift():
+    period = "6/27/26 - 7/26/26"
+    fri, mon = dt.date(2026, 7, 3), dt.date(2026, 7, 6)
+    rows = _shift_fixture(period, {fri: 2.0, mon: 0.5})
+    billed = _billed_under(rows, period, HOL)          # bills follow no-shift
+    ev = T.weekend_shift_evidence(rows, billed, HOL, [period])
+    e = [x for x in ev if x["date"] == "2026-07-04"][0]
+    assert e["outcome"] == "determined:none", e
+    assert e["consistent_with_documented"] is True, e
+    return "decisive no-shift evidence confirms the documented Saturday rule"
+
+
+def case_weekend_shift_scoring_is_indeterminate_below_rounding():
+    """Sub-rounding energy in the discriminating window must never pick a winner.
+
+    The candidates differ only by the 06:00-10:00 kWh on the candidate days; when
+    that is smaller than the joint bucket-rounding bound, ranking residuals is
+    noise and the scorer must say so rather than crown the smallest number.
+    """
+    period = "6/27/26 - 7/26/26"
+    fri, mon = dt.date(2026, 7, 3), dt.date(2026, 7, 6)
+    rows = _shift_fixture(period, {fri: 0.02, mon: 0.01})
+    billed = _billed_under(rows, period, HOL | {fri})   # even when a shift IS present
+    ev = T.weekend_shift_evidence(rows, billed, HOL, [period])
+    e = [x for x in ev if x["date"] == "2026-07-04"][0]
+    assert e["outcome"] == "indeterminate", e
+    assert e["consistent_with_documented"] is None, e
+    return "a shift below the identifiability bound reports indeterminate, not a winner"
+
+
+def case_weekend_shift_scoring_determines_a_sunday_monday_shift():
+    """The first real Sunday case is July 4 2027; the scorer must handle it."""
+    hol27 = T.holidays([2027])
+    period = "6/27/27 - 7/26/27"          # contains Sun July 4 2027
+    fri, mon = dt.date(2027, 7, 2), dt.date(2027, 7, 5)
+    rows = _shift_fixture(period, {mon: 2.0, fri: 0.5})
+    billed = _billed_under(rows, period, hol27 | {mon})
+    ev = T.weekend_shift_evidence(rows, billed, hol27, [period])
+    e = [x for x in ev if x["date"] == "2027-07-04"][0]
+    assert e["outcome"] == "determined:monday", e
+    assert e["documented_rule"] == "monday", e
+    assert e["consistent_with_documented"] is True, e
+    return "a decisive Sunday-to-Monday shift is determined and matches the documented rule"
+
+
+def case_weekend_shift_scoring_reports_untested_dates():
+    """A weekend holiday outside every audited period must appear as untested,
+    so August intake cannot silently skip the check."""
+    period = "4/1/26 - 4/30/26"           # contains no weekend holiday
+    rows = _shift_fixture(period)
+    billed = _billed_under(rows, period, HOL)
+    ev = T.weekend_shift_evidence(rows, billed, HOL, [period])
+    dates = {e["date"] for e in ev}
+    assert "2026-07-04" in dates, dates
+    e = [x for x in ev if x["date"] == "2026-07-04"][0]
+    assert e["inside_an_audited_period"] is False, e
+    assert e["outcome"] == "untested" and e["consistent_with_documented"] is None, e
+    weekend_hols = {str(d) for d in HOL if d.weekday() >= 5}
+    assert dates == weekend_hols, (dates, weekend_hols)
+    return "weekend holidays outside audited periods are reported as untested, never dropped"
+
+
 def case_period_total_catches_accumulated_bias():
     """Every bucket inside the 1 kWh floor, yet the period total does not reconcile."""
     period = "5/20/26 - 6/20/26"
@@ -575,6 +680,11 @@ CASES = [
     case_partial_period_is_skipped_not_credited,
     case_interval_gap_inside_period_is_skipped,
     case_holiday_evidence_is_leave_one_out,
+    case_weekend_shift_scoring_detects_a_friday_shift,
+    case_weekend_shift_scoring_confirms_no_shift,
+    case_weekend_shift_scoring_is_indeterminate_below_rounding,
+    case_weekend_shift_scoring_determines_a_sunday_monday_shift,
+    case_weekend_shift_scoring_reports_untested_dates,
     case_period_total_catches_accumulated_bias,
     case_period_total_tolerates_pure_rounding,
 ]

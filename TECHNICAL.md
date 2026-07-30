@@ -202,8 +202,17 @@ For the 2-period plan TOU-DR2, `analyze*.py` use simply on = 16–21, off = othe
 Thanksgiving = 4th Thu Nov, Christmas), each confirmed individually against the bills by
 `analysis/tou_audit.py`. The rule lives in `rates.holidays()`/`rates.off_peak_day()` and every
 pipeline script gets it through `rates.period_at` — the historical per-script inconsistency
-(§6.5) is closed. Whether a weekend-falling holiday shifts to an observed Monday is not yet
-determinable from the corpus (first testable statement: August 2026; see rates.py).
+(§6.5) is closed. Weekend-falling holidays carry the documented observed-day rule (SDG&E
+holiday-TOU page, read 2026-07-29): a Sunday holiday is also observed the following Monday, a
+Saturday holiday does not shift. That rule is documentation-sourced, not yet bill-confirmed —
+no weekend holiday sits in the audited corpus, and its first effective date (2027-07-05) is
+outside every current analysis window, so it changes no committed artifact. Adjudication is
+executable: `tou_audit.weekend_shift_evidence()` scores the no-shift / observed-Friday /
+observed-Monday variants against each statement's printed buckets whenever a weekend holiday
+enters an audited period, with an identifiability bound of 0.5 kWh per moved bucket
+(sub-rounding separations report `indeterminate`, untested dates are listed, and a decisive
+contradiction of the documented rule fails the audit verdict). `tou_audit`'s own `as_billed`
+baseline keeps actual dates only, since it reproduces what the statements demonstrate.
 
 **Rate constants** (all $/kWh unless noted; sources and effective dates in
 `research/rates-reference.md`):

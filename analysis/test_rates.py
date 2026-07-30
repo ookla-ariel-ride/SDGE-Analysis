@@ -47,6 +47,29 @@ def case_eight_tariff_holidays():
     return "holidays() is the eight tariff holidays in research/rates-reference.md"
 
 
+def case_sunday_holidays_add_an_observed_monday():
+    """The documented shift rule: Sunday -> following Monday, Saturday -> no shift.
+
+    Source: SDG&E's holiday-TOU page (see the holidays() docstring). Not yet
+    bill-confirmed -- tou_audit's weekend_shift_evidence adjudicates it whenever a
+    weekend holiday enters the audited corpus -- but the canonical calendar and the
+    operational layers (PVOutput, observatory) must agree in the meantime.
+    """
+    got = R.holidays(range(2021, 2028))
+    assert dt.date(2027, 7, 5) in got, "July 4 2027 is a Sunday; Monday is observed"
+    assert dt.date(2027, 7, 4) in got, "the Sunday itself keeps weekend windows"
+    assert dt.date(2023, 1, 2) in got, "New Year's 2023 fell on a Sunday"
+    assert dt.date(2022, 12, 26) in got, "Christmas 2022 fell on a Sunday"
+    assert dt.date(2021, 7, 5) in got, "July 4 2021 fell on a Sunday"
+    # Saturday holidays do not shift, in either direction:
+    assert dt.date(2026, 7, 3) not in got and dt.date(2026, 7, 6) not in got
+    assert dt.date(2021, 12, 24) not in got, "Christmas 2021 (Sat) must not shift to Friday"
+    assert dt.date(2023, 11, 10) not in got, "Veterans 2023 (Sat) must not shift to Friday"
+    assert len(R.holidays([2027])) == 9, "2027 carries 8 holidays + 1 observed Monday"
+    assert R.off_peak_day(dt.date(2027, 7, 5)), "the observed Monday takes weekend windows"
+    return "Sunday holidays add an observed Monday; Saturday holidays never shift"
+
+
 def case_off_peak_day_covers_weekends_and_holidays():
     assert R.off_peak_day(dt.date(2026, 4, 11))          # Saturday
     assert R.off_peak_day(dt.date(2026, 4, 12))          # Sunday
@@ -160,6 +183,7 @@ def case_interval_coverage_accepts_dst_days_and_rejects_extras():
 
 CASES = [
     case_eight_tariff_holidays,
+    case_sunday_holidays_add_an_observed_monday,
     case_off_peak_day_covers_weekends_and_holidays,
     case_period_at_applies_the_holiday_rule,
     case_period_at_matches_period_when_told_the_truth,

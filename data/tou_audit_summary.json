@@ -250,6 +250,16 @@
       "confirmed": null
     }
   ],
+  "weekend_holiday_shift_evidence": [
+    {
+      "date": "2026-07-04",
+      "weekday": "Saturday",
+      "documented_rule": "none",
+      "inside_an_audited_period": false,
+      "outcome": "untested",
+      "consistent_with_documented": null
+    }
+  ],
   "period_totals": [
     {
       "period": "6/27/25 - 7/28/25",
@@ -686,5 +696,6 @@
   ],
   "days_declared_but_not_delivered": [],
   "complete": true,
+  "weekend_shift_conflicts": [],
   "verdict": "the utility's TOU accounting reproduces from raw interval data"
 }
