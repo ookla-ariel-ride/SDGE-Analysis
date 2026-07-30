@@ -1192,6 +1192,44 @@ def case_provider_break_is_where_the_bills_put_it():
     return "bundled through 2024-12-26, CCA from 2024-12-27, per the bill artifacts"
 
 
+def case_an_all_export_statement_serialises_instead_of_crashing():
+    """A statement with no positive TOU basis must not break the generator.
+
+    rebill_statement returns residual_pct=None when a mode can price nothing --
+    every bucket net-exported, so there is no positive basis to divide by. That
+    is a legitimate statement shape for a high-production month, and the artifact
+    the section-9 gate regenerates has to survive it: the percentage serialises
+    empty and the statement sorts as zero residual rather than raising TypeError
+    on abs(None).
+    """
+    # A mid-corpus summer statement: its cells are observed by other summer
+    # statements either side, so zeroing its lines leaves every cell evidenced
+    # and isolates the one thing under test — an unpriceable statement.
+    victim = "7/29/25 - 8/26/25"
+
+    def mutate(rows):
+        # A real all-export statement prints credit lines the way every other
+        # net-negative bucket in the corpus does: negative kWh at $0.00000. The
+        # loader enforces that pairing, so the fixture has to honour it.
+        for r in rows:
+            if r["period"] == victim and float(r["kwh"]) > 0:
+                r["kwh"], r["rate_per_kwh"] = f"-{r['kwh']}", "0.00000"
+
+    with _corrupted_corpus(mutate):
+        piece = H.rebill_statement(victim)
+        assert piece["printed_basis"] == 0.0, piece["printed_basis"]
+        assert piece["residual_pct"] is None, piece["residual_pct"]
+        with tempfile.TemporaryDirectory() as d:
+            paths = H._write_artifacts(pathlib.Path(d))
+            body = [r for r in csv.DictReader(open(paths[1], newline=""))
+                    if r["period"] == victim]
+        assert len(body) == 1, body
+        assert body[0]["timeline_residual_pct"] == "", body[0]
+        assert body[0]["worst_residual"] == "", (
+            "an unpriceable statement must not be crowned worst on a None residual")
+    return "a statement with no positive TOU basis serialises an empty percentage"
+
+
 def case_writer_is_deterministic_and_atomic():
     """AC: data/rate_vintages.csv (and the residual table) must regenerate
     byte-identically. Two independent writes must produce identical bytes, no
@@ -1316,6 +1354,7 @@ CASES = [
     case_a_mis_associated_segment_is_caught_or_pinned,
     case_cca_generation_gap_is_recorded_as_data,
     case_provider_break_is_where_the_bills_put_it,
+    case_an_all_export_statement_serialises_instead_of_crashing,
     case_writer_is_deterministic_and_atomic,
     case_worst_statement_is_named_in_the_committed_artifact,
     case_bill_nem_prices_bundled_dates_and_refuses_cca_ones,

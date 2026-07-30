@@ -1446,7 +1446,11 @@ def _residual_rows():
     # (module docstring), so in practice the tie breaks on the holdout residual —
     # the per-statement check that can actually move — and then on the statement
     # date, so the label stays stable as the corpus grows.
-    worst = sorted(results, key=lambda t: (-abs(t[0]["residual_pct"]),
+    # `or 0.0` on every percentage: a statement whose every bucket net-exported
+    # has no positive basis to divide by, so rebill_statement returns None rather
+    # than a ratio. Such a statement sorts as zero residual instead of crashing
+    # the generator the section-9 gate depends on.
+    worst = sorted(results, key=lambda t: (-abs(t[0]["residual_pct"] or 0.0),
                                            -abs(t[3]["residual_pct"] or 0.0),
                                            t[0]["statement_date"]))[0][0]["period"]
     rows = []
@@ -1456,7 +1460,8 @@ def _residual_rows():
                      f"{piece['printed']:.2f}",
                      f"{piece['rebilled']:.2f}",
                      _fmt_money(piece["residual"]),
-                     _fmt_money(piece["residual_pct"], 4),
+                     "" if piece["residual_pct"] is None
+                     else _fmt_money(piece["residual_pct"], 4),
                      f"{hold['printed_priced']:.2f}",
                      f"{hold['rebilled']:.2f}",
                      _fmt_money(hold["priced_pct"], 2),
@@ -1475,7 +1480,8 @@ def _residual_rows():
                      "" if vint["residual_pct"] is None
                      else _fmt_money(vint["residual_pct"], 4),
                      f"{netc['rebilled']:.2f}",
-                     _fmt_money(netc["residual_pct"], 4),
+                     "" if netc["residual_pct"] is None
+                     else _fmt_money(netc["residual_pct"], 4),
                      "" if gap is None else f"{gap['printed_generation']:.2f}",
                      "" if gap is None else f"{gap['cca_billed']:.2f}",
                      "" if gap is None else _fmt_money(gap["gap"], 2),
