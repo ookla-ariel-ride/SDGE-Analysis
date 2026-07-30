@@ -20,6 +20,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: parse_bills guard tests
         run: python analysis/test_parse_bills.py
+      - name: historical rate engine guard tests
+        run: python analysis/test_rates_history.py
 
   tou-audit:
     # The TOU audit reconciles billed kWh against the raw interval export, which is

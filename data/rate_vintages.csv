@@ -1,0 +1,144 @@
+section,season,tou_period,vintage_start,vintage_end,rate_per_kwh,evidence,note
+delivery,summer,off_peak,2024-05-25,2026-05-31,,absent,no positive-kWh line before 2026-06-01 (net-negative buckets print $0)
+delivery,summer,off_peak,2026-06-01,2026-06-26,0.30203,direct,billed on 5/29/26 - 6/26/26
+delivery,summer,on_peak,2024-05-25,2024-05-31,,absent,no positive-kWh line before 2024-06-01 (net-negative buckets print $0)
+delivery,summer,on_peak,2024-06-01,2024-09-30,0.26438,direct,billed on 5/25/24 - 6/25/24; 6/26/24 - 7/25/24; 7/26/24 - 8/26/24; 8/27/24 - 9/25/24; 9/26/24 - 10/25/24
+delivery,summer,on_peak,2024-10-01,2024-10-31,0.26687,direct,billed on 9/26/24 - 10/25/24; 10/26/24 - 11/25/24
+delivery,summer,on_peak,2024-11-01,2025-05-31,,absent,rate changed from 0.26687 to 0.29773 somewhere in this gap; no positive-kWh line dates the change
+delivery,summer,on_peak,2025-06-01,2025-09-30,0.29773,direct,billed on 5/29/25 - 6/26/25; 6/27/25 - 7/28/25; 7/29/25 - 8/26/25; 8/27/25 - 9/25/25; 9/26/25 - 9/30/25
+delivery,summer,on_peak,2025-10-01,2025-10-31,0.29426,direct,billed on 10/1/25 - 10/27/25; 10/28/25 - 11/25/25
+delivery,summer,on_peak,2025-11-01,2026-05-31,,absent,rate changed from 0.29426 to 0.30203 somewhere in this gap; no positive-kWh line dates the change
+delivery,summer,on_peak,2026-06-01,2026-06-26,0.30203,direct,billed on 5/29/26 - 6/26/26
+delivery,summer,super_off_peak,2024-05-25,2024-05-31,,absent,no positive-kWh line before 2024-06-01 (net-negative buckets print $0)
+delivery,summer,super_off_peak,2024-06-01,2024-10-31,0.04013,direct,billed on 5/25/24 - 6/25/24; 6/26/24 - 7/25/24; 7/26/24 - 8/26/24; 8/27/24 - 9/25/24; 9/26/24 - 10/25/24; 10/26/24 - 11/25/24
+delivery,summer,super_off_peak,2024-11-01,2025-05-31,,absent,rate changed from 0.04013 to 0.02255 somewhere in this gap; no positive-kWh line dates the change
+delivery,summer,super_off_peak,2025-06-01,2025-09-30,0.02255,direct,billed on 5/29/25 - 6/26/25; 6/27/25 - 7/28/25; 7/29/25 - 8/26/25; 8/27/25 - 9/25/25; 9/26/25 - 9/30/25
+delivery,summer,super_off_peak,2025-10-01,2025-10-31,0.02164,direct,billed on 10/1/25 - 10/27/25; 10/28/25 - 11/25/25
+delivery,summer,super_off_peak,2025-11-01,2026-05-31,,absent,rate changed from 0.02164 to 0.02606 somewhere in this gap; no positive-kWh line dates the change
+delivery,summer,super_off_peak,2026-06-01,2026-06-26,0.02606,direct,billed on 5/29/26 - 6/26/26
+delivery,winter,off_peak,2024-05-25,2024-12-26,,absent,no positive-kWh line before 2024-12-27 (net-negative buckets print $0)
+delivery,winter,off_peak,2024-12-27,2024-12-31,0.26687,direct,billed on 12/27/24 - 1/27/25
+delivery,winter,off_peak,2025-01-01,2025-03-27,,absent,rate changed from 0.26687 to 0.27787 somewhere in this gap; no positive-kWh line dates the change
+delivery,winter,off_peak,2025-03-28,2025-04-28,0.27787,direct,billed on 3/28/25 - 4/28/25
+delivery,winter,off_peak,2025-04-29,2025-05-28,0.27787,carried,net-negative gap; flanking observed rates equal at 0.27787
+delivery,winter,off_peak,2025-05-29,2025-05-31,0.27787,direct,billed on 5/29/25 - 6/26/25
+delivery,winter,off_peak,2025-06-01,2025-12-26,,absent,rate changed from 0.27787 to 0.29426 somewhere in this gap; no positive-kWh line dates the change
+delivery,winter,off_peak,2025-12-27,2025-12-31,0.29426,direct,billed on 12/27/25 - 1/27/26
+delivery,winter,off_peak,2026-01-01,2026-02-26,,absent,rate changed from 0.29426 to 0.30814 somewhere in this gap; no positive-kWh line dates the change
+delivery,winter,off_peak,2026-02-27,2026-03-27,0.30814,direct,billed on 2/27/26 - 3/27/26
+delivery,winter,off_peak,2026-03-28,2026-03-31,,absent,rate changed from 0.30814 to 0.31174 somewhere in this gap; no positive-kWh line dates the change
+delivery,winter,off_peak,2026-04-01,2026-05-28,0.31174,direct,billed on 3/28/26 - 4/28/26; 4/29/26 - 5/28/26
+delivery,winter,off_peak,2026-05-29,2026-06-26,,absent,no positive-kWh line after 2026-05-28
+delivery,winter,on_peak,2024-05-25,2024-10-31,,absent,no positive-kWh line before 2024-11-01 (net-negative buckets print $0)
+delivery,winter,on_peak,2024-11-01,2025-01-31,0.26687,direct,billed on 10/26/24 - 11/25/24; 11/26/24 - 12/26/24; 12/27/24 - 1/27/25; 1/28/25 - 2/26/25
+delivery,winter,on_peak,2025-02-01,2025-05-31,0.27787,direct,billed on 1/28/25 - 2/26/25; 2/27/25 - 3/27/25; 3/28/25 - 4/28/25; 4/29/25 - 5/28/25; 5/29/25 - 6/26/25
+delivery,winter,on_peak,2025-06-01,2025-10-31,,absent,rate changed from 0.27787 to 0.29426 somewhere in this gap; no positive-kWh line dates the change
+delivery,winter,on_peak,2025-11-01,2025-12-31,0.29426,direct,billed on 10/28/25 - 11/25/25; 11/26/25 - 12/26/25; 12/27/25 - 1/27/26
+delivery,winter,on_peak,2026-01-01,2026-03-31,0.30814,direct,billed on 12/27/25 - 1/27/26; 1/28/26 - 2/26/26; 2/27/26 - 3/27/26; 3/28/26 - 4/28/26
+delivery,winter,on_peak,2026-04-01,2026-05-31,0.31174,direct,billed on 3/28/26 - 4/28/26; 4/29/26 - 5/28/26; 5/29/26 - 6/26/26
+delivery,winter,on_peak,2026-06-01,2026-06-26,,absent,no positive-kWh line after 2026-05-31
+delivery,winter,super_off_peak,2024-05-25,2024-05-31,0.04013,direct,billed on 5/25/24 - 6/25/24
+delivery,winter,super_off_peak,2024-06-01,2024-10-31,0.04013,carried,net-negative gap; flanking observed rates equal at 0.04013
+delivery,winter,super_off_peak,2024-11-01,2025-01-31,0.04013,direct,billed on 10/26/24 - 11/25/24; 11/26/24 - 12/26/24; 12/27/24 - 1/27/25; 1/28/25 - 2/26/25
+delivery,winter,super_off_peak,2025-02-01,2025-05-31,0.02255,direct,billed on 1/28/25 - 2/26/25; 2/27/25 - 3/27/25; 3/28/25 - 4/28/25; 4/29/25 - 5/28/25; 5/29/25 - 6/26/25
+delivery,winter,super_off_peak,2025-06-01,2025-10-31,,absent,rate changed from 0.02255 to 0.02164 somewhere in this gap; no positive-kWh line dates the change
+delivery,winter,super_off_peak,2025-11-01,2025-12-31,0.02164,direct,billed on 10/28/25 - 11/25/25; 11/26/25 - 12/26/25; 12/27/25 - 1/27/26
+delivery,winter,super_off_peak,2026-01-01,2026-03-31,0.02168,direct,billed on 12/27/25 - 1/27/26; 1/28/26 - 2/26/26; 2/27/26 - 3/27/26; 3/28/26 - 4/28/26
+delivery,winter,super_off_peak,2026-04-01,2026-05-31,0.02606,direct,billed on 3/28/26 - 4/28/26; 4/29/26 - 5/28/26; 5/29/26 - 6/26/26
+delivery,winter,super_off_peak,2026-06-01,2026-06-26,,absent,no positive-kWh line after 2026-05-31
+generation,summer,off_peak,2024-05-25,2026-05-31,,absent,no positive-kWh line before 2026-06-01 (net-negative buckets print $0)
+generation,summer,off_peak,2026-06-01,2026-06-26,0.17311,direct,billed on 5/29/26 - 6/26/26
+generation,summer,on_peak,2024-05-25,2024-05-31,,absent,no positive-kWh line before 2024-06-01 (net-negative buckets print $0)
+generation,summer,on_peak,2024-06-01,2024-10-31,0.38826,direct,billed on 5/25/24 - 6/25/24; 6/26/24 - 7/25/24; 7/26/24 - 8/26/24; 8/27/24 - 9/25/24; 9/26/24 - 10/25/24; 10/26/24 - 11/25/24
+generation,summer,on_peak,2024-11-01,2025-05-31,,absent,rate changed from 0.38826 to 0.40592 somewhere in this gap; no positive-kWh line dates the change
+generation,summer,on_peak,2025-06-01,2025-10-31,0.40592,direct,billed on 5/29/25 - 6/26/25; 6/27/25 - 7/28/25; 7/29/25 - 8/26/25; 8/27/25 - 9/25/25; 9/26/25 - 9/30/25; 10/1/25 - 10/27/25; 10/28/25 - 11/25/25
+generation,summer,on_peak,2025-11-01,2026-05-31,,absent,rate changed from 0.40592 to 0.47019 somewhere in this gap; no positive-kWh line dates the change
+generation,summer,on_peak,2026-06-01,2026-06-26,0.47019,direct,billed on 5/29/26 - 6/26/26
+generation,summer,super_off_peak,2024-05-25,2024-05-31,,absent,no positive-kWh line before 2024-06-01 (net-negative buckets print $0)
+generation,summer,super_off_peak,2024-06-01,2024-10-31,0.06741,direct,billed on 5/25/24 - 6/25/24; 6/26/24 - 7/25/24; 7/26/24 - 8/26/24; 8/27/24 - 9/25/24; 9/26/24 - 10/25/24; 10/26/24 - 11/25/24
+generation,summer,super_off_peak,2024-11-01,2025-05-31,,absent,rate changed from 0.06741 to 0.07035 somewhere in this gap; no positive-kWh line dates the change
+generation,summer,super_off_peak,2025-06-01,2025-10-31,0.07035,direct,billed on 5/29/25 - 6/26/25; 6/27/25 - 7/28/25; 7/29/25 - 8/26/25; 8/27/25 - 9/25/25; 9/26/25 - 9/30/25; 10/1/25 - 10/27/25; 10/28/25 - 11/25/25
+generation,summer,super_off_peak,2025-11-01,2026-05-31,,absent,rate changed from 0.07035 to 0.08147 somewhere in this gap; no positive-kWh line dates the change
+generation,summer,super_off_peak,2026-06-01,2026-06-26,0.08147,direct,billed on 5/29/26 - 6/26/26
+generation,winter,off_peak,2024-05-25,2024-12-26,,absent,no positive-kWh line before 2024-12-27 (net-negative buckets print $0)
+generation,winter,off_peak,2024-12-27,2024-12-31,0.11850,direct,billed on 12/27/24 - 1/27/25
+generation,winter,off_peak,2025-01-01,2025-03-27,,absent,rate changed from 0.11850 to 0.12379 somewhere in this gap; no positive-kWh line dates the change
+generation,winter,off_peak,2025-03-28,2025-04-28,0.12379,direct,billed on 3/28/25 - 4/28/25
+generation,winter,off_peak,2025-04-29,2025-05-28,0.12379,carried,net-negative gap; flanking observed rates equal at 0.12379
+generation,winter,off_peak,2025-05-29,2025-05-31,0.12379,direct,billed on 5/29/25 - 6/26/25
+generation,winter,off_peak,2025-06-01,2025-12-26,0.12379,carried,net-negative gap; flanking observed rates equal at 0.12379
+generation,winter,off_peak,2025-12-27,2025-12-31,0.12379,direct,billed on 12/27/25 - 1/27/26
+generation,winter,off_peak,2026-01-01,2026-02-26,,absent,rate changed from 0.12379 to 0.14354 somewhere in this gap; no positive-kWh line dates the change
+generation,winter,off_peak,2026-02-27,2026-03-27,0.14354,direct,billed on 2/27/26 - 3/27/26
+generation,winter,off_peak,2026-03-28,2026-03-31,,absent,rate changed from 0.14354 to 0.14337 somewhere in this gap; no positive-kWh line dates the change
+generation,winter,off_peak,2026-04-01,2026-05-28,0.14337,direct,billed on 3/28/26 - 4/28/26; 4/29/26 - 5/28/26
+generation,winter,off_peak,2026-05-29,2026-06-26,,absent,no positive-kWh line after 2026-05-28
+generation,winter,on_peak,2024-05-25,2024-10-31,,absent,no positive-kWh line before 2024-11-01 (net-negative buckets print $0)
+generation,winter,on_peak,2024-11-01,2025-01-31,0.16516,direct,billed on 10/26/24 - 11/25/24; 11/26/24 - 12/26/24; 12/27/24 - 1/27/25; 1/28/25 - 2/26/25
+generation,winter,on_peak,2025-02-01,2025-05-31,0.17258,direct,billed on 1/28/25 - 2/26/25; 2/27/25 - 3/27/25; 3/28/25 - 4/28/25; 4/29/25 - 5/28/25; 5/29/25 - 6/26/25
+generation,winter,on_peak,2025-06-01,2025-10-31,0.17258,carried,net-negative gap; flanking observed rates equal at 0.17258
+generation,winter,on_peak,2025-11-01,2025-12-31,0.17258,direct,billed on 10/28/25 - 11/25/25; 11/26/25 - 12/26/25; 12/27/25 - 1/27/26
+generation,winter,on_peak,2026-01-01,2026-03-31,0.20013,direct,billed on 12/27/25 - 1/27/26; 1/28/26 - 2/26/26; 2/27/26 - 3/27/26; 3/28/26 - 4/28/26
+generation,winter,on_peak,2026-04-01,2026-05-31,0.19990,direct,billed on 3/28/26 - 4/28/26; 4/29/26 - 5/28/26; 5/29/26 - 6/26/26
+generation,winter,on_peak,2026-06-01,2026-06-26,,absent,no positive-kWh line after 2026-05-31
+generation,winter,super_off_peak,2024-05-25,2024-05-31,0.06133,direct,billed on 5/25/24 - 6/25/24
+generation,winter,super_off_peak,2024-06-01,2024-10-31,0.06133,carried,net-negative gap; flanking observed rates equal at 0.06133
+generation,winter,super_off_peak,2024-11-01,2025-01-31,0.06133,direct,billed on 10/26/24 - 11/25/24; 11/26/24 - 12/26/24; 12/27/24 - 1/27/25; 1/28/25 - 2/26/25
+generation,winter,super_off_peak,2025-02-01,2025-05-31,0.06399,direct,billed on 1/28/25 - 2/26/25; 2/27/25 - 3/27/25; 3/28/25 - 4/28/25; 4/29/25 - 5/28/25; 5/29/25 - 6/26/25
+generation,winter,super_off_peak,2025-06-01,2025-10-31,0.06399,carried,net-negative gap; flanking observed rates equal at 0.06399
+generation,winter,super_off_peak,2025-11-01,2025-12-31,0.06399,direct,billed on 10/28/25 - 11/25/25; 11/26/25 - 12/26/25; 12/27/25 - 1/27/26
+generation,winter,super_off_peak,2026-01-01,2026-03-31,0.07419,direct,billed on 12/27/25 - 1/27/26; 1/28/26 - 2/26/26; 2/27/26 - 3/27/26; 3/28/26 - 4/28/26
+generation,winter,super_off_peak,2026-04-01,2026-05-31,0.07410,direct,billed on 3/28/26 - 4/28/26; 4/29/26 - 5/28/26; 5/29/26 - 6/26/26
+generation,winter,super_off_peak,2026-06-01,2026-06-26,,absent,no positive-kWh line after 2026-05-31
+base_services_charge,,per_day,2024-05-25,2024-06-25,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-06-26,2024-07-25,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-07-26,2024-08-26,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-08-27,2024-09-25,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-09-26,2024-10-25,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-10-26,2024-11-25,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-11-26,2024-12-26,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2024-12-27,2025-01-27,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-01-28,2025-02-26,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-02-27,2025-03-27,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-03-28,2025-04-28,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-04-29,2025-05-28,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-05-29,2025-06-26,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-06-27,2025-07-28,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-07-29,2025-08-26,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-08-27,2025-09-25,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-09-26,2025-09-30,,absent,"no base_services_charge line parsed for this period — new charge, renamed line, or parser gap is an OPEN question"
+base_services_charge,,per_day,2025-10-01,2025-10-27,0.79333,derived,period total 21.42 / 27 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2025-10-28,2025-11-25,0.79345,derived,period total 23.01 / 29 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2025-11-26,2025-12-26,0.79355,derived,period total 24.60 / 31 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2025-12-27,2026-01-27,0.79344,derived,period total 25.39 / 32 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2026-01-28,2026-02-26,0.79333,derived,period total 23.80 / 30 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2026-02-27,2026-03-27,0.79345,derived,period total 23.01 / 29 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2026-03-28,2026-04-28,0.79344,derived,period total 25.39 / 32 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2026-04-29,2026-05-28,0.79333,derived,period total 23.80 / 30 days (the printed daily unit rate is not captured by the parser)
+base_services_charge,,per_day,2026-05-29,2026-06-26,0.79345,derived,period total 23.01 / 29 days (the printed daily unit rate is not captured by the parser)
+provider,,,2024-05-25,2024-06-25,,direct,bundled
+provider,,,2024-06-26,2024-07-25,,direct,bundled
+provider,,,2024-07-26,2024-08-26,,direct,bundled
+provider,,,2024-08-27,2024-09-25,,direct,bundled
+provider,,,2024-09-26,2024-10-25,,direct,bundled
+provider,,,2024-10-26,2024-11-25,,direct,bundled
+provider,,,2024-11-26,2024-12-26,,direct,bundled
+provider,,,2024-12-27,2025-01-27,,direct,CCA
+provider,,,2025-01-28,2025-02-26,,direct,CCA
+provider,,,2025-02-27,2025-03-27,,direct,CCA
+provider,,,2025-03-28,2025-04-28,,direct,CCA
+provider,,,2025-04-29,2025-05-28,,direct,CCA
+provider,,,2025-05-29,2025-06-26,,direct,CCA
+provider,,,2025-06-27,2025-07-28,,direct,CCA
+provider,,,2025-07-29,2025-08-26,,direct,CCA
+provider,,,2025-08-27,2025-09-25,,direct,CCA
+provider,,,2025-09-26,2025-09-30,,direct,CCA
+provider,,,2025-10-01,2025-10-27,,direct,CCA
+provider,,,2025-10-28,2025-11-25,,direct,CCA
+provider,,,2025-11-26,2025-12-26,,direct,CCA
+provider,,,2025-12-27,2026-01-27,,direct,CCA
+provider,,,2026-01-28,2026-02-26,,direct,CCA
+provider,,,2026-02-27,2026-03-27,,direct,CCA
+provider,,,2026-03-28,2026-04-28,,direct,CCA
+provider,,,2026-04-29,2026-05-28,,direct,CCA
+provider,,,2026-05-29,2026-06-26,,direct,CCA
