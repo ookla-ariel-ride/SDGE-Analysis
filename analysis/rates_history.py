@@ -161,14 +161,25 @@ THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
   it. An independent per-statement dollar tie-out is therefore NOT available
   from committed data. Two checks that CAN move are reported beside the
   identity:
-    * holdout_* — statement S's own kWh priced by a timeline rebuilt from the
-      OTHER 25 statements' rate rows. Independent of S's printed rates, so a
-      misread rate on S moves it. It can price only what the rest of the corpus
-      independently witnesses, and the artifact says per statement exactly which
-      printed lines those are (corroboration(), one row per positive-kWh
-      (cell, segment) printed line):
+    * holdout_* — statement S's own kWh priced by a timeline rebuilt from every
+      OTHER statement's rate rows. THE UNIT OF INDEPENDENCE IS THE STATEMENT (the
+      file), NOT the billing period. One statement can print more than one
+      billing period — the 2025-10-31 statement carries both 9/26/25-9/30/25 and
+      10/1/25-10/27/25 — and sibling periods' rows come from one parse of one PDF
+      down one extraction path, so they are not independent of each other. A
+      holdout that dropped only the period under test would leave its sibling in
+      the witness pool, and the sibling could mark the held-out lines
+      corroborated: a parser error shared across that statement would corroborate
+      itself while the artifact described the witness as another statement. So the
+      holdout withholds EVERY rate row whose statement_date matches the held-out
+      period's statement_date. Their segment DATES are still used (dates are
+      calendar facts, and the held-out reconstruction needs them). Independent of
+      S's printed rates, so a misread rate on S moves it. It can price only what
+      the rest of the corpus independently witnesses, and the artifact says per
+      statement exactly which printed lines those are (corroboration(), one row
+      per positive-kWh (cell, segment) printed line):
         holdout_corroborated_rows / _agree_rows / _disagree_rows
-              lines the other 25 statements DO witness across the whole printed
+              lines the other statements DO witness across the whole printed
               segment, and whether the witness rate equals the printed rate
               exactly. A disagreement is a finding: it means the corpus
               contradicts this statement's printed rate.
@@ -195,7 +206,10 @@ THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
       Note what the corroborating witness always IS here: a CARRIED span between
       two other statements that flank S's dates with the SAME printed rate. No
       other statement bills S's dates, so a direct witness is impossible by
-      construction, on every one of these rows.
+      construction, on every one of these rows. Which statements those are is
+      exposed per row (corroboration()'s witness_statements), so the provenance
+      can be checked rather than assumed — in particular that no witness is a
+      sibling period printed on the held-out statement.
     * cca_generation_gap_usd — Σ(printed generation kWh × printed rate) minus
       bill_periods_electric.cca_generation, for CCA statements. This is the
       measured evidence that the printed generation table is not the tariff
@@ -295,29 +309,43 @@ def _season_blocks(a, b):
 
 
 class _Span:
-    """One constant-rate stretch of a cell's timeline."""
-    __slots__ = ("start", "end", "rate", "tier", "note")
+    """One constant-rate stretch of a cell's timeline.
 
-    def __init__(self, start, end, rate, tier, note):
+    sources names the STATEMENTS (statement_date strings) whose printed lines
+    evidence the rate: the statements that printed it on a direct span, and the
+    two flanking statements that printed the same rate on a carried span. Empty on
+    an absent span. This is the witness provenance corroboration() reports, so a
+    caller can check WHICH statement corroborated a line instead of trusting the
+    holdout's bookkeeping."""
+    __slots__ = ("start", "end", "rate", "tier", "note", "sources")
+
+    def __init__(self, start, end, rate, tier, note, sources=()):
         self.start, self.end = start, end
         self.rate, self.tier, self.note = rate, tier, note
+        self.sources = tuple(sources)
 
 
 class _Engine:
-    def __init__(self, periods, tou, exclude_period=None):
+    def __init__(self, periods, tou, exclude_statement=None):
         self.periods = periods                      # chronological period dicts
         self.tou = tou                              # validated TOU detail rows
         self.start = periods[0]["start"]
         self.end = periods[-1]["end"]
-        # exclude_period builds the HOLDOUT timeline: segment dates still come
-        # from every statement (they are calendar facts), but the excluded
-        # statement's rate observations are withheld, so pricing it against this
-        # timeline is independent of its own printed rates.
-        self.exclude_period = exclude_period
+        # exclude_statement builds the HOLDOUT timeline. The unit is the STATEMENT
+        # (statement_date — the file), not the billing period: one statement can
+        # print two periods (the 2025-10-31 statement prints 9/26/25-9/30/25 and
+        # 10/1/25-10/27/25), and both of those periods' rows come from one parse of
+        # one PDF down one extraction path. Withholding only the period under test
+        # would leave its sibling as a "witness" that shares every failure mode
+        # with the line being tested, so a parser error on that statement could
+        # corroborate itself. Segment DATES still come from every statement (they
+        # are calendar facts, and the held-out statement's own reconstruction needs
+        # its dates); only the rate observations are withheld.
+        self.exclude_statement = exclude_statement
         self.segments = self._date_segments(periods, tou)
         self.timelines = self._timelines(
-            [r for r in tou if r["period"] != exclude_period]
-            if exclude_period is not None else tou)
+            [r for r in tou if r["statement_date"] != exclude_statement]
+            if exclude_statement is not None else tou)
 
     # -- construction ------------------------------------------------------
     @staticmethod
@@ -371,7 +399,8 @@ class _Engine:
                 raise SystemExit(f"unknown TOU cell in bill_tou_detail.csv: {cell}")
             span = self.segments[(r["period"], r["section"], r["season"], r["segment"])]
             if r["kwh"] > 0:
-                obs[cell].append((span[0], span[1], r["rate"], r["period"]))
+                obs[cell].append((span[0], span[1], r["rate"], r["period"],
+                                  r["statement_date"]))
             elif r["rate"] != 0.0:
                 raise SystemExit(
                     f"[{r['period']}] {'/'.join(cell)}: a net-negative bucket "
@@ -380,8 +409,8 @@ class _Engine:
         timelines = {}
         for cell, o in obs.items():
             o.sort()
-            merged = []                     # [[start, end, rate, [periods]], ...]
-            for s, e, rate, period in o:
+            merged = []          # [[start, end, rate, [periods], [statements]], ...]
+            for s, e, rate, period, stmt in o:
                 if merged and merged[-1][1] >= s:
                     raise SystemExit(f"{'/'.join(cell)}: overlapping rate segments "
                                      f"at {s} — the corpus is not clean")
@@ -389,20 +418,21 @@ class _Engine:
                         merged[-1][1] + dt.timedelta(days=1) == s:
                     merged[-1][1] = e
                     merged[-1][3].append(period)
+                    merged[-1][4].append(stmt)
                 else:
-                    merged.append([s, e, rate, [period]])
+                    merged.append([s, e, rate, [period], [stmt]])
             spans, prev = [], None
             name = "/".join(cell)
             # a gap means "no positive-kWh line here"; in a holdout timeline the
             # withheld statement is a second reason, and the note must say so
-            gap_why = ("net-negative gap" if self.exclude_period is None else
-                       f"gap with {self.exclude_period} held out")
+            gap_why = ("net-negative gap" if self.exclude_statement is None else
+                       f"gap with the {self.exclude_statement} statement held out")
             if not merged:
-                if self.exclude_period is not None:
+                if self.exclude_statement is not None:
                     timelines[cell] = [_Span(
                         self.start, self.end, None, "absent",
                         "no positive-kWh line outside the held-out statement "
-                        + self.exclude_period)]
+                        + self.exclude_statement)]
                     continue
                 raise SystemExit(f"{name}: no positive-kWh line anywhere in the corpus")
             if merged[0][0] > self.start:
@@ -410,15 +440,19 @@ class _Engine:
                                    None, "absent",
                                    "no positive-kWh line before "
                                    f"{merged[0][0]} (net-negative buckets print $0)"))
-            for s, e, rate, srcs in merged:
+            for s, e, rate, srcs, stmts in merged:
                 if prev is not None:
                     gap0 = prev.end + dt.timedelta(days=1)
                     if gap0 < s:
                         gap1 = s - dt.timedelta(days=1)
                         if prev.rate == rate:
-                            spans.append(_Span(gap0, gap1, rate, "carried",
-                                               f"{gap_why}; flanking observed "
-                                               f"rates equal at {rate:.5f}"))
+                            # the witnesses to a carried span are exactly the two
+                            # flanking statements that printed the same rate
+                            spans.append(_Span(
+                                gap0, gap1, rate, "carried",
+                                f"{gap_why}; flanking observed rates equal at "
+                                f"{rate:.5f}",
+                                dict.fromkeys(prev.sources + tuple(stmts))))
                         else:
                             spans.append(_Span(gap0, gap1, None, "absent",
                                                f"rate changed from {prev.rate:.5f} to "
@@ -431,7 +465,8 @@ class _Engine:
                 # SDG&E's bundled-generation comparison and nothing was billed
                 # at it (see the module docstring's trust boundary).
                 prev = _Span(s, e, rate, "direct",
-                             "printed on " + "; ".join(dict.fromkeys(srcs)))
+                             "printed on " + "; ".join(dict.fromkeys(srcs)),
+                             dict.fromkeys(stmts))
                 spans.append(prev)
             if merged[-1][1] < self.end:
                 spans.append(_Span(merged[-1][1] + dt.timedelta(days=1), self.end,
@@ -467,12 +502,17 @@ def _engine():
     return _ENGINE
 
 
-def _holdout_engine(period):
-    """The engine with `period`'s rate observations withheld (see _Engine)."""
+def _holdout_engine(statement_date):
+    """The engine with one STATEMENT's rate observations withheld (see _Engine).
+
+    Keyed by statement_date, not by billing period, so the two periods printed on
+    the 2025-10-31 statement share one holdout timeline and neither can witness the
+    other."""
     eng = _engine()
-    if period not in _HOLDOUT:
-        _HOLDOUT[period] = _Engine(eng.periods, eng.tou, exclude_period=period)
-    return _HOLDOUT[period]
+    if statement_date not in _HOLDOUT:
+        _HOLDOUT[statement_date] = _Engine(
+            eng.periods, eng.tou, exclude_statement=statement_date)
+    return _HOLDOUT[statement_date]
 
 
 def _load():
@@ -508,8 +548,24 @@ def _load():
                              f"{p2['period']} — the vintage timeline would have a hole")
     tou = []
     known = set()
+    stmt_of_period = {p["period"]: p["statement_date"] for p in periods}
     for row in csv.DictReader(open(tpath, newline="")):
         kwh, rate = float(row["kwh"]), float(row["rate_per_kwh"])
+        # the row's statement_date is the FILE it was parsed from, and the holdout's
+        # unit of independence (_Engine.exclude_statement). If the two artifacts
+        # disagree about which statement printed a period, that unit is ambiguous —
+        # a sibling period could be held out with the wrong statement or left in the
+        # witness pool — so refuse rather than pick one.
+        want = stmt_of_period.get(row["period"])
+        if want is None or row["statement_date"] != want:
+            raise SystemExit(
+                f"[{row['period']}] {row['section']}/{row['season']}/"
+                f"{row['tou_period']}: bill_tou_detail.csv says statement_date "
+                f"{row['statement_date']!r} but bill_periods_electric.csv says "
+                f"{want!r} for that period. statement_date is the unit of "
+                "independence for the holdout re-bill (one statement can print two "
+                "billing periods), so the two artifacts must agree on it. Refusing "
+                "the corpus — re-run parse_bills.py.")
         # A billed bucket's printed $/kWh is the module's only rate evidence, so
         # its shape is checked at the loader, before any timeline exists. Zero,
         # negative, NaN and infinite are parser regressions, not tariffs: a
@@ -527,7 +583,8 @@ def _load():
                 "and treating one as a rate observation would publish a "
                 "directly-evidenced free or negative tariff. Refusing the corpus "
                 "— re-run parse_bills.py and re-derive.")
-        tou.append(dict(period=row["period"], section=row["section"],
+        tou.append(dict(period=row["period"], statement_date=row["statement_date"],
+                        section=row["section"],
                         season=row["season"], segment=int(row["segment"]),
                         segment_days=int(row["segment_days"]),
                         tou_period=row["tou_period"], kwh=kwh, rate=rate))
@@ -1043,8 +1100,13 @@ def corroboration(period):
     corpus can and cannot independently say about the rates this statement printed.
 
     One row per positive-kWh TOU energy line (a (cell, segment) pair, priced over
-    that segment's dates). The timeline rebuilt WITHOUT this statement's rate rows
-    is asked for the same cell over the same dates:
+    that segment's dates). The timeline rebuilt WITHOUT the rate rows of the
+    STATEMENT that printed this period is asked for the same cell over the same
+    dates. The unit is the statement, not the period: one statement can print two
+    billing periods (the 2025-10-31 statement prints 9/26/25-9/30/25 and
+    10/1/25-10/27/25), and a sibling period parsed out of the same file shares every
+    failure mode with the line under test, so it is withheld too rather than allowed
+    to corroborate it (_Engine, and the module docstring's holdout section):
 
       status "corroborated"    the holdout timeline holds ONE rate across the whole
             printed segment — an independent witness exists. `agrees` is True only
@@ -1054,6 +1116,9 @@ def corroboration(period):
             these dates that printed the SAME rate; no other statement bills these
             dates, so a DIRECT witness is impossible by construction and `tier`
             records which it was rather than implying the stronger one.
+            `witness_statements` names those statements, so the provenance can be
+            checked — in particular that the held-out statement itself (which may
+            print a sibling period of the period under test) never appears there.
       status "uncorroborated"  no such witness exists, and `reason` (one of
             UNCORROBORATED_REASONS) says which shape of hole it is.
 
@@ -1064,7 +1129,11 @@ def corroboration(period):
     uncorroborated BY CONSTRUCTION. They are neither failures nor passes, and they
     are never folded into an aggregate that a stable repeated rate could carry.
 
-    Returns {period, rows, corroborated_rows, agree_rows, disagree_rows,
+    Each corroborated row also carries `witness_statements` (the statement_dates
+    whose printed lines evidence the witness rate) and `held_out_statement`.
+
+    Returns {period, held_out_statement, rows, corroborated_rows, agree_rows,
+    disagree_rows,
     uncorroborated_rows, reasons {reason: count}, printed_usd,
     corroborated_printed_usd, corroborated_witness_usd, direct_witness_rows,
     differing_cells, differing_corroborated_rows, differing_uncorroborated_rows},
@@ -1082,7 +1151,7 @@ def corroboration(period):
     p = next((x for x in eng.periods if x["period"] == period), None)
     if p is None:
         raise SystemExit(f"corroboration: no billing period {period!r} in the corpus")
-    hold = _holdout_engine(period)
+    hold = _holdout_engine(p["statement_date"])
     billed = [r for r in eng.tou if r["period"] == period and r["kwh"] > 0]
     # the mid-cycle change on a split statement: cells printing two rates
     printed_rates = {}
@@ -1116,13 +1185,15 @@ def corroboration(period):
             status="corroborated" if one_span else "uncorroborated",
             reason=reason, differing_cell=cell in differing,
             witness_tier=first.tier if one_span else "",
+            # which STATEMENTS evidence the witness — never the held-out one
+            witness_statements=first.sources if one_span else (),
             witness_rate=first.rate if one_span else None,
             witness_usd=r["kwh"] * first.rate if one_span else None,
             agrees=(first.rate == r["rate"]) if one_span else None))
     corr = [x for x in rows if x["status"] == "corroborated"]
     unc = [x for x in rows if x["status"] == "uncorroborated"]
     return dict(
-        period=period, rows=rows,
+        period=period, held_out_statement=p["statement_date"], rows=rows,
         corroborated_rows=len(corr),
         agree_rows=sum(1 for x in corr if x["agrees"]),
         disagree_rows=sum(1 for x in corr if not x["agrees"]),
@@ -1139,8 +1210,12 @@ def corroboration(period):
 def rebill_holdout(period):
     """Re-price one statement against a timeline built WITHOUT its own rate rows.
 
+    Every rate row of the statement that printed this period is withheld — the
+    unit is the statement (the file), not the billing period, so a sibling period
+    printed on the same statement cannot witness this one (see corroboration()).
+
     The one per-statement check here that can move: the prices come from the
-    other 25 statements, so a misread rate, column or segment on this statement
+    other statements, so a misread rate, column or segment on this statement
     shows up as a residual instead of cancelling out. It prices exactly the lines
     corroboration() calls corroborated, and counts — never guesses — the rest,
     which are uncorroborated BY CONSTRUCTION (that function's docstring lists the

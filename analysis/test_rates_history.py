@@ -36,7 +36,20 @@ been satisfied by a corpus of stable repeated rates while a corrupted new vintag
 sat entirely outside it, and would not have noticed a line dropping out of
 coverage; the pinned dict does.
 
-Four of the cases are NEGATIVE fixtures: they corrupt a synthetic copy of the two
+THE UNIT OF INDEPENDENCE IS THE STATEMENT, not the billing period, and two cases
+hold it there. One statement can print two billing periods (the 2025-10-31
+statement prints 9/26/25-9/30/25 and 10/1/25-10/27/25), and sibling periods come
+out of one parse of one PDF down one extraction path, so a sibling is not an
+independent witness. case_the_holdout_unit_is_the_statement_not_the_billing_period
+asserts the provenance directly — corroboration() names the statements behind each
+witness, and the held-out statement is never among them — and
+case_a_shared_statement_error_cannot_corroborate_its_sibling_period injects the
+parser error the two units disagree about: with 10/1/25-10/27/25's delivery on-peak
+rate misread as its sibling's, a period-level holdout calls the sibling's line
+corroborated AND agreeing, on the strength of its own statement. The statement-
+level holdout reports it uncorroborated.
+
+Five of the cases are NEGATIVE fixtures: they corrupt a synthetic copy of the two
 CSVs (in a temp directory, never the committed files) and assert what the
 reconciliation does and does not notice. That is the only way to know the gate is
 measuring something — the timeline-reconstruction residual is zero by algebraic
@@ -99,6 +112,14 @@ def _corrupted_corpus(mutate):
             H.DATA, H._ENGINE = saved, None
             H._HOLDOUT.clear()
 
+
+# One statement can print more than one billing period (CLAUDE.md §1: one PDF can
+# contain several billing cycles, so periods are parsed, not files). On this corpus
+# 26 periods come off 25 statements, and exactly one statement carries two of them.
+# Pinned so a new multi-period statement has to be noticed rather than absorbed.
+MULTI_PERIOD_STATEMENTS = {
+    "2025-10-31": ("9/26/25 - 9/30/25", "10/1/25 - 10/27/25"),
+}
 
 # Pinned per STATEMENT, not as an aggregate:
 # (corroborated, agreeing, disagreeing, uncorroborated, uncorroborated reasons).
@@ -626,6 +647,182 @@ def case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated
             f"their reason, and no witness is stronger than a carried span")
 
 
+def _period_level_holdout(period):
+    """The RETIRED period-level holdout, rebuilt here so the guards can MEASURE what
+    the statement-level one changes instead of asserting the code agrees with itself.
+
+    Identical to _Engine(exclude_statement=...) in every respect but the rows it
+    withholds: by PERIOD, which leaves a sibling period printed on the same
+    statement in the witness pool. Nothing in rates_history.py builds this."""
+    eng = H._engine()
+    old = H._Engine(eng.periods, eng.tou)     # segment DATES from every statement
+    old.exclude_statement = period           # affects gap NOTE wording only
+    old.timelines = old._timelines([r for r in eng.tou if r["period"] != period])
+    return old
+
+
+def _witness_under(engine, row):
+    """(corroborated?, witness statement_dates) for one corroboration row under any
+    holdout timeline — the same one-span test corroboration() itself applies."""
+    first = engine.span_at(row["cell"], row["start"])
+    last = engine.span_at(row["cell"], row["end"])
+    ok = first is last and first.tier != "absent"
+    return ok, (first.sources if ok else ()), (first.rate if ok else None)
+
+
+def case_the_holdout_unit_is_the_statement_not_the_billing_period():
+    """The holdout's unit of independence is the STATEMENT (the file), not the
+    billing period, and the witness provenance is asserted rather than assumed.
+
+    One statement can print two billing periods — the 2025-10-31 statement prints
+    9/26/25-9/30/25 and 10/1/25-10/27/25 — and those two periods' rate rows come
+    from one parse of one PDF down one extraction path. They share every failure
+    mode, so a sibling cannot be an independent second opinion about the other. If
+    the holdout withheld only the period under test, the sibling would stay in the
+    witness pool and could mark the held-out lines corroborated: a parser error
+    shared across that statement would corroborate itself, while the artifact
+    described the witness as another statement.
+
+    So corroboration() exposes which statements are behind each witness, and this
+    pins three things:
+      * the inventory: 26 periods, 25 statements, one of them carrying two periods;
+      * on EVERY statement, no corroborated line's witness includes the held-out
+        statement (the universal form, so a second multi-period statement is
+        covered the day it arrives);
+      * the difference is real: under the retired period-level unit, 4 lines on the
+        2025-10-31 statement listed 2025-10-31 itself among their witnesses. Their
+        verdict does not change here — the flanking statements print the same
+        generation rates either way, so the pinned counts stay 81/77 — but the
+        witness list does, and the fixture below shows a corpus where the verdict
+        changes too."""
+    eng = H._engine()
+    by_stmt = {}
+    for p in eng.periods:
+        by_stmt.setdefault(p["statement_date"], []).append(p["period"])
+    multi = {s: tuple(v) for s, v in by_stmt.items() if len(v) > 1}
+    assert len(eng.periods) == 26 and len(by_stmt) == 25, (len(eng.periods),
+                                                           len(by_stmt))
+    assert multi == MULTI_PERIOD_STATEMENTS, multi
+    # every TOU row's statement_date agrees with bill_periods_electric (the loader
+    # refuses otherwise — see below), so "the statement" is a well-defined unit
+    assert {r["statement_date"] for r in eng.tou} == set(by_stmt), "statement mismatch"
+
+    # (1) universal: nothing is ever its own witness, on any statement
+    self_witnessed = []
+    for p in eng.periods:
+        c = H.corroboration(p["period"])
+        assert c["held_out_statement"] == p["statement_date"], c["held_out_statement"]
+        for row in c["rows"]:
+            if row["status"] == "corroborated":
+                assert row["witness_statements"], (p["period"], row)
+                if c["held_out_statement"] in row["witness_statements"]:
+                    self_witnessed.append((p["period"], row["cell"]))
+            else:
+                assert row["witness_statements"] == (), (p["period"], row)
+    assert self_witnessed == [], self_witnessed
+
+    # (2) the sibling periods share ONE holdout timeline, and it withholds all 12 of
+    # that statement's rows, not just the 6 of the period under test
+    stmt, siblings = next(iter(MULTI_PERIOD_STATEMENTS.items()))
+    engines = {H._holdout_engine(
+        next(p["statement_date"] for p in eng.periods if p["period"] == per))
+        for per in siblings}
+    assert len(engines) == 1, "the sibling periods must share one holdout engine"
+    hold = engines.pop()
+    assert hold.exclude_statement == stmt, hold.exclude_statement
+    withheld = [r for r in eng.tou if r["statement_date"] == stmt]
+    assert len(withheld) == 12 and {r["period"] for r in withheld} == set(siblings), \
+        len(withheld)
+
+    # (3) the retired unit self-witnessed 4 lines on that statement; measure it
+    leaked = []
+    for p in eng.periods:
+        old = _period_level_holdout(p["period"])
+        for row in H.corroboration(p["period"])["rows"]:
+            ok, sources, _ = _witness_under(old, row)
+            if ok and p["statement_date"] in sources:
+                leaked.append((p["period"], "/".join(row["cell"])))
+                assert row["witness_statements"] and \
+                    p["statement_date"] not in row["witness_statements"], row
+    assert leaked == [
+        ("9/26/25 - 9/30/25", "generation/summer/on_peak"),
+        ("9/26/25 - 9/30/25", "generation/summer/super_off_peak"),
+        ("10/1/25 - 10/27/25", "generation/summer/on_peak"),
+        ("10/1/25 - 10/27/25", "generation/summer/super_off_peak"),
+    ], leaked
+
+    # (4) statement_date is the unit, so the two artifacts must agree on it
+    def break_statement_date(rows):
+        for r in rows:
+            if r["period"] == "10/1/25 - 10/27/25":
+                r["statement_date"] = "2025-11-30"
+    with _corrupted_corpus(break_statement_date):
+        _raises(H._engine, "10/1/25 - 10/27/25", "'2025-11-30'", "'2025-10-31'",
+                "unit of independence", "one statement can print two")
+    return (f"the holdout unit is the statement: {len(by_stmt)} statements over "
+            f"{len(eng.periods)} periods, one of them ({stmt}) printing two, whose "
+            f"12 rows are withheld together; no corroborated line anywhere is "
+            f"witnessed by its own statement, where the retired period-level unit "
+            f"self-witnessed {len(leaked)}")
+
+
+def case_a_shared_statement_error_cannot_corroborate_its_sibling_period():
+    """NEGATIVE fixture for the unit of independence: the parser error the two units
+    disagree about.
+
+    The delivery summer on-peak rate steps 0.29773 -> 0.29426 on 10/1/25, and BOTH
+    sides of that step are printed on the one 2025-10-31 statement. So the plausible
+    misread is the second period inheriting the first's rate — one file, two adjacent
+    blocks, one wrong number carried down. Inject exactly that (10/1/25-10/27/25
+    delivery on-peak at 0.29773) and the two holdout units disagree about the
+    9/26/25-9/30/25 line:
+      * period-level (retired): the gap 9/26..9/30 is now flanked by 0.29773 on both
+        sides — 8/27/25-9/25/25 on one side and the corrupted SIBLING on the other —
+        so the line comes back corroborated, agreeing exactly, with 2025-10-31 in its
+        own witness list. The corpus would have reported one more agreeing line than
+        it does clean: a false pass manufactured by the statement under test.
+      * statement-level (current): both sibling periods are withheld, the flanking
+        witnesses are 0.29773 and 0.29426, they disagree, and the line is reported
+        uncorroborated with the reason that names the undated change.
+    Nothing else moves: the corruption sits on lines that are uncorroborated either
+    way, so the pinned counts are unchanged — which is the point. The gate does not
+    reward the corruption, and it does not have to notice it to stay honest."""
+    period, sibling = "9/26/25 - 9/30/25", "10/1/25 - 10/27/25"
+    cell = ("delivery", "summer", "on_peak")
+    printed = [r for r in H._engine().tou
+               if r["period"] == period and (r["section"], r["season"],
+                                             r["tou_period"]) == cell][0]["rate"]
+    assert printed == 0.29773, printed
+
+    def carry_the_rate_down(rows):
+        hits = [r for r in rows if r["period"] == sibling
+                and (r["section"], r["season"], r["tou_period"]) == cell]
+        assert len(hits) == 1 and hits[0]["rate_per_kwh"] == "0.29426", hits
+        hits[0]["rate_per_kwh"] = f"{printed:.5f}"
+
+    with _corrupted_corpus(carry_the_rate_down):
+        row = [r for r in H.corroboration(period)["rows"] if r["cell"] == cell][0]
+        # the current unit: uncorroborated, and nothing claims a witness
+        assert row["status"] == "uncorroborated", row
+        assert row["reason"] == \
+            "flanking_witnesses_disagree_the_change_is_undated", row
+        assert (row["witness_rate"], row["witness_statements"]) == (None, ()), row
+        # the retired unit: corroborated, agreeing, on the strength of its own file
+        ok, sources, rate = _witness_under(_period_level_holdout(period), row)
+        assert ok and rate == printed, (ok, rate)
+        assert "2025-10-31" in sources, sources
+        # and the pinned counts are untouched by the corruption
+        got, exact = _corroboration_snapshot()
+        assert exact, "no corroborated line is touched by this corruption"
+        assert got == CORROBORATION, {k: v for k, v in got.items()
+                                      if CORROBORATION[k] != v}
+    assert _corroboration_snapshot() == (CORROBORATION, True)
+    return ("a rate misread across one statement's two periods would have been "
+            "corroborated — exactly, at 0.29773 — by that statement's own sibling "
+            "period under the retired period-level holdout; the statement-level "
+            "holdout reports the line uncorroborated instead")
+
+
 def case_split_statement_mid_cycle_changes_are_recorded_as_uncorroborated():
     """The five split statements are where the corpus is weakest, so the artifact has
     to say so line by line rather than let a statement look validated.
@@ -744,7 +941,7 @@ def case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout
     of the corpus fully corroborates:
       * the timeline residual stays exactly $0.000000 — the reconstruction check
         cannot see a misread rate, which is why it is labeled an identity;
-      * the holdout re-bill, priced from the other 25 statements, moves by exactly
+      * the holdout re-bill, priced from every other statement, moves by exactly
         the perturbation (371 kWh × $0.05 = $18.55);
       * the corroboration gate fails in both of its halves: that line is
         corroborated and now disagrees with its witness, AND the corrupted rate
@@ -1108,6 +1305,8 @@ CASES = [
     case_current_vintage_matches_rates_py_to_the_cent,
     case_rebilling_reproduces_all_26_statements_within_1pct,
     case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated,
+    case_the_holdout_unit_is_the_statement_not_the_billing_period,
+    case_a_shared_statement_error_cannot_corroborate_its_sibling_period,
     case_split_statement_mid_cycle_changes_are_recorded_as_uncorroborated,
     case_rate_only_vintage_collapse_worsens_the_split_statements,
     case_netting_collapse_is_a_separate_counterfactual,
