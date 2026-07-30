@@ -48,6 +48,7 @@ SANDBOX = ROOT / "private" / "verify"
 # provenance and must refuse to run.
 MANIFEST = {
     "rates.py": "library",
+    "rates_history.py": "generator",
     "household.py": "library",
     "publish.py": "library",
     "behavior_rebuild.py": "generator",
@@ -76,6 +77,8 @@ MANIFEST = {
 # Not listed: gitignored run products (stats.json, *_relief*) and parse_bills.py,
 # whose five artifacts have their own transactional gate and test suite.
 OWNS = {
+    "rates_history.py":             [("data", "rate_vintages.csv"),
+                                     ("data", "rate_rebilling_residuals.csv")],
     "behavior_rebuild.py":          [("cwd", "behavior_rebuild.json")],
     "battery_dispatch_policies.py": [("cwd", "battery_dispatch_policies.json")],
     "battery_plan_matrix.py":       [("data", "battery_plan_matrix.json")],
@@ -240,6 +243,8 @@ CI_RUNNABLE = {
     "behavior_rebuild.py", "battery_dispatch_policies.py", "package_results.py",
     "report_data.py", "analyze.py", "analyze_norelief.py",
     "carbon_fullyear.py", "tou_audit.py",
+    # reads only the two committed bill artifacts, so it runs anywhere
+    "rates_history.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
