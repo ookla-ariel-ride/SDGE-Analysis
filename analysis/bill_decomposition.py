@@ -385,12 +385,44 @@ def statement_text(stmt):
 
 
 def statement_dates():
-    """Every statement in the corpus, in date order."""
+    """Every statement in the corpus, in date order, checked against the artifacts.
+
+    The PDFs on disk cannot define their own expected set: a missing statement is
+    simply absent from the glob, and every loop over it then completes happily
+    while the artifact goes on claiming that all 25 statements were scanned and
+    reconciled. The expected universe therefore comes from a source that records
+    what SHOULD be there -- the committed bill_periods_electric.csv, which
+    parse_bills.py builds with its own continuity gate -- and the export is
+    checked against it too, so an incomplete private corpus fails closed here
+    rather than being published as a complete reconciliation.
+    """
     dates = sorted(m.group(1) for m in
                    (re.search(r"(\d{4}-\d{2}-\d{2})\.pdf$", str(p))
                     for p in ELEC_DIR.glob("sdge_electric_*.pdf")) if m)
     if not dates:
         raise SystemExit(f"no electric statements found in {ELEC_DIR}")
+    want = {s for (s, _) in periods()}
+    missing = sorted(want - set(dates))
+    extra = sorted(set(dates) - want)
+    if missing or extra:
+        raise SystemExit(
+            f"the statement PDFs in {ELEC_DIR} do not match the statements in "
+            f"data/bill_periods_electric.csv: {len(missing)} present in the "
+            f"artifact with no PDF ({missing[:4]}), {len(extra)} PDFs with no "
+            f"artifact row ({extra[:4]}). Every finding here is 'established by "
+            "statement text', so a partial corpus cannot be scanned and reported "
+            "as a complete one -- restore the statements or re-run parse_bills.py.")
+    if HISTORY_CSV.exists():
+        seen = {r["statement_date"] for r in _read_csv(HISTORY_CSV)
+                if r.get("statement_date")}
+        if seen:
+            gap = sorted(want - seen)
+            if gap:
+                raise SystemExit(
+                    f"{len(gap)} statement(s) in data/bill_periods_electric.csv have "
+                    f"no row in the billing-history export ({gap[:4]}); the export "
+                    "reconciliation would silently cover fewer statements than it "
+                    "claims. Re-pull the export or restrict the corpus deliberately.")
     return dates
 
 
@@ -820,9 +852,15 @@ def billing_mode_finding(scan):
                          "the mode-change date cannot be located")
     last_ledger = max(r["statement_date"] for r in ledger)
     first_without = min(r["statement_date"] for r in no_ledger)
-    if any(r["statement_date"] > last_ledger for r in ledger) or \
-            any(r["statement_date"] < first_without for r in no_ledger):
-        raise SystemExit("the NEM-ledger presentation is not a single contiguous run")
+    # Every ledger statement must precede every statement without one. Comparing
+    # each ledger date against the maximum OF THE LEDGER DATES can never fail --
+    # it is its own bound -- so the interleaved case (a ledger block reappearing
+    # after it stopped) would have been reported as a single permanent changeover.
+    if last_ledger > first_without:
+        raise SystemExit(
+            f"the NEM-ledger presentation is not a single contiguous run: a ledger "
+            f"statement ({last_ledger}) is dated after a statement printed without "
+            f"one ({first_without}), so there is no single changeover date to name")
     return {
         "question": ("does a 2024 statement bill the energy component monthly, or "
                      "accrue it to the annual NEM true-up?"),

@@ -352,6 +352,45 @@ def case_the_mode_change_is_presentation_not_billing():
             "a presentation change, not a billing-mode change")
 
 
+def case_an_interleaved_ledger_presentation_cannot_be_called_one_changeover():
+    """The contiguity guard used to compare each ledger date against the maximum OF
+    THE LEDGER DATES — its own bound, so it could never fire. A ledger block that
+    stopped and came back would have been published as a single permanent
+    changeover on a date that never existed."""
+    scan = copy.deepcopy(_artifact()["billing_mode"]["per_statement"])
+    by = {r["statement_date"]: r for r in scan}
+    # make the ledger reappear after it stopped: 2025-06-03 sits after the
+    # 2025-05-02 statement that first printed without it
+    assert by["2025-06-03"]["nem_ledger_block_printed"] is False
+    by["2025-06-03"]["nem_ledger_block_printed"] = True
+    msg = _raises(lambda: B.billing_mode_finding(scan),
+                  "not a single contiguous run", "2025-06-03", "2025-05-02")
+    assert "changeover" in msg, msg
+    return ("a ledger block reappearing after it stopped is refused instead of being "
+            "reported as one changeover date")
+
+
+def case_a_statement_missing_from_the_corpus_fails_closed():
+    """A missing PDF is simply absent from the glob, so every loop over the corpus
+    completes and the artifact still claims all 25 statements were scanned. The
+    expected set therefore comes from the committed periods artifact, not from the
+    files on disk."""
+    want = sorted({s for (s, _) in B.periods()})
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        for stmt in want[:-1]:                       # one statement withheld
+            (d / f"sdge_electric_{stmt}.pdf").touch()
+        saved = B.ELEC_DIR
+        B.ELEC_DIR = d
+        try:
+            msg = _raises(B.statement_dates, "do not match", want[-1])
+            assert "parse_bills" in msg, msg
+        finally:
+            B.ELEC_DIR = saved
+    B.statement_dates()          # the real corpus still passes the gate
+    return "a statement present in the artifact but missing from the PDFs fails closed"
+
+
 # ---------------------------------------------------------------------------
 # A settlement $0 is not a price — enforced by the representation
 # ---------------------------------------------------------------------------
@@ -1166,6 +1205,8 @@ CASES = [
     case_the_billing_mode_counts_come_from_the_validated_rows,
     case_the_export_is_reconciled_for_every_statement,
     case_the_mode_change_is_presentation_not_billing,
+    case_an_interleaved_ledger_presentation_cannot_be_called_one_changeover,
+    case_a_statement_missing_from_the_corpus_fails_closed,
     case_a_settlement_non_price_refuses_every_arithmetic_use,
     case_an_import_cell_priced_at_zero_is_refused_as_a_tariff,
     case_the_whole_change_reconciles_within_a_dollar,
