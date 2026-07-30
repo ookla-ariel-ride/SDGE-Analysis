@@ -376,6 +376,20 @@ def case_a_statement_missing_from_the_corpus_fails_closed():
     expected set therefore comes from the committed periods artifact, not from the
     files on disk."""
     want = sorted({s for (s, _) in B.periods()})
+    if not B.ELEC_DIR.exists():
+        # The synthetic half below still runs everywhere; only the closing check
+        # that the REAL corpus satisfies the gate needs the archive.
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            for stmt in want[:-1]:
+                (d / f"sdge_electric_{stmt}.pdf").touch()
+            saved, B.ELEC_DIR = B.ELEC_DIR, d
+            try:
+                _raises(B.statement_dates, "do not match", want[-1])
+            finally:
+                B.ELEC_DIR = saved
+        return ("SKIP the real-corpus half needs the private archive; the withheld-"
+                "statement refusal was still exercised synthetically")
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         for stmt in want[:-1]:                       # one statement withheld

@@ -1342,7 +1342,11 @@ def decompose(base, current):
                     "price_usd_high": _c(max(agg["price_l"], agg["price_p"])),
                     "quantity_usd_low": _c(min(agg["quantity_l"], agg["quantity_p"])),
                     "quantity_usd_high": _c(max(agg["quantity_l"], agg["quantity_p"])),
-                    "interval_width_usd": _c(agg["interaction"]),
+                    # width between bounds ordered low-to-high, so |interaction|:
+                    # the interaction is signed and keeps its sign in
+                    # interaction_usd, but a width that came out negative would
+                    # contradict the two fields printed either side of it.
+                    "interval_width_usd": _c(abs(agg["interaction"])),
                     "exact_pairings": [
                         {"price_basis": "laspeyres", "price_usd": _c(agg["price_l"]),
                          "quantity_basis": "paasche",
