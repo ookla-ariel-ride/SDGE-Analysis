@@ -38,6 +38,35 @@ WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
         rates appear only on the CCA pages, which parse_bills.py does not
         extract, so RateSet.cca_generation() fails closed too: on a CCA date
         this module has NO generation tariff to offer, by either name.
+
+        THE SAME BOUNDARY HOLDS AT EVERY OTHER EXIT, not just the single-cell
+        accessor. The aggregations that hand out many cells at once —
+        RateSet.cells(), current_vintage() and the data/rate_vintages.csv
+        writer — would otherwise leak exactly the number generation() refuses,
+        under a column called "rate", to a caller who never typed the word
+        "comparison". So each of them carries the AUTHORITY of every value it
+        returns:
+          - RateSet.cells() returns CellValue objects, not (rate, tier, note)
+            tuples. On a CCA date a generation CellValue has authority
+            "printed_comparison_only", .rate None, and the printed number in
+            .comparison_rate. CellValue is deliberately not iterable, so the
+            old tuple unpacking raises TypeError rather than binding a printed
+            comparison rate to a variable named `rate`.
+          - current_vintage() returns VintageEntry objects with the same two
+            value slots and the same authority field. On this corpus, which ends
+            inside the CCA era, EVERY generation entry is comparison-only:
+            from bill evidence alone there is no current charged generation
+            tariff, and the function says so instead of returning the last
+            printed comparison number as one.
+          - data/rate_vintages.csv splits every generation span at the provider
+            break and publishes the CCA side under a different section name
+            (generation_printed_comparison), with rate_per_kwh EMPTY and the
+            printed value in its own comparison_rate_per_kwh column. A consumer
+            reading rate_per_kwh cannot receive a comparison number.
+        DELIVERY is unaffected at every exit: the UDC is the charged tariff in
+        both provider eras (in bundled periods sdge_delivery additionally
+        includes generation, which is a line-item fact about the bill, not a
+        different delivery tariff).
   * provider in force ("bundled" / "CCA")
         bill_periods_electric.generation_provider for the covering period.
         Bundled through 12/26/24; CCA from 12/27/24. In bundled periods
@@ -174,9 +203,17 @@ THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
       $56.82 CCA charge).
 
 Generator outputs (deterministic writers, atomic replace; run twice → identical):
-    data/rate_vintages.csv              every cell's spans with evidence tier
-                                        (direct / carried / absent) + BSC and
-                                        provider timelines
+    data/rate_vintages.csv              every cell's spans with the provider in
+                                        force, the AUTHORITY of the value
+                                        (charged_tariff / printed_comparison_only
+                                        / not_a_rate) and the evidence tier
+                                        (direct / carried / absent), plus the BSC
+                                        and provider timelines. Charged tariffs
+                                        are in rate_per_kwh; printed
+                                        CCA-generation comparisons are in
+                                        comparison_rate_per_kwh under section
+                                        generation_printed_comparison, and the
+                                        two columns are never both populated.
     data/rate_rebilling_residuals.csv   per-statement printed TOU energy, the
                                         timeline reconstruction of it, the
                                         holdout re-bill with its per-line
@@ -387,8 +424,14 @@ class _Engine:
                                                f"rate changed from {prev.rate:.5f} to "
                                                f"{rate:.5f} somewhere in this gap; no "
                                                "positive-kWh line dates the change"))
+                # "printed on", not "billed on": the note records which
+                # statements PRINTED this rate on a positive-kWh line, which is
+                # the same thing as charged only where the authority column says
+                # charged_tariff. On CCA generation lines the printed table is
+                # SDG&E's bundled-generation comparison and nothing was billed
+                # at it (see the module docstring's trust boundary).
                 prev = _Span(s, e, rate, "direct",
-                             "billed on " + "; ".join(dict.fromkeys(srcs)))
+                             "printed on " + "; ".join(dict.fromkeys(srcs)))
                 spans.append(prev)
             if merged[-1][1] < self.end:
                 spans.append(_Span(merged[-1][1] + dt.timedelta(days=1), self.end,
@@ -496,6 +539,143 @@ def _load():
 
 
 # ---------------------------------------------------------------------------
+# The authority of a value: was it CHARGED, or only PRINTED for comparison?
+# ---------------------------------------------------------------------------
+# Delivery (UDC) is the charged tariff in both provider eras. Generation printed
+# on a bundled statement is also what SDG&E charged. Generation printed on a CCA
+# statement is SDG&E's bundled-generation (EECC) comparison table beside a bill
+# the CCA charged at rates no committed artifact carries — a number, but not a
+# tariff. Every aggregation in this module labels which of the two it is holding,
+# so no caller can read the second as the first.
+CHARGED_TARIFF = "charged_tariff"
+COMPARISON_ONLY = "printed_comparison_only"
+NOT_A_RATE = "not_a_rate"                 # provider-timeline rows: no $/kWh at all
+AUTHORITIES = (CHARGED_TARIFF, COMPARISON_ONLY, NOT_A_RATE)
+
+# The serialized section name for the CCA side of a generation span. Deliberately
+# NOT "generation": a consumer filtering section == "generation" out of
+# data/rate_vintages.csv gets charged tariffs only.
+COMPARISON_SECTION = "generation_printed_comparison"
+
+_COMPARISON_NOTE = (
+    "SDG&E's bundled-generation (EECC) COMPARISON printed beside a statement whose "
+    "generation the CCA charged — NOT a tariff and NOT what was billed; the CCA's "
+    "own per-TOU rates are in no committed artifact (RateSet.generation and "
+    "RateSet.cca_generation both refuse here, and cca_generation_gap measures how "
+    "far this printed table is from the charge actually billed)")
+
+
+def _authority_on(section, provider):
+    """The authority of one (section, provider) pair — the whole rule, in one place."""
+    if section == "generation" and provider == "CCA":
+        return COMPARISON_ONLY
+    return CHARGED_TARIFF
+
+
+class _Valued:
+    """Shared behaviour of CellValue and VintageEntry.
+
+    Deliberately NOT iterable, indexable or unpackable: the previous shapes were
+    plain tuples, and `rate, tier, note = cells[cell]` would silently bind a
+    printed CCA-generation comparison number to a variable called `rate`. Any
+    such caller now gets a TypeError and has to look at .authority.
+
+      rate             the CHARGED tariff $/kWh, or None. None whenever the
+                       authority is not charged_tariff, and None on an absent
+                       span. NEVER a comparison number.
+      comparison_rate  the PRINTED comparison $/kWh, populated only when the
+                       authority is printed_comparison_only. NEVER a tariff.
+      authority        one of AUTHORITIES.
+      provider         the generation provider in force ("bundled" / "CCA").
+      tier             evidence tier of the underlying printed observation:
+                       "direct" (a positive-kWh line printed it), "carried"
+                       (identical flanking observations across a gap) or
+                       "absent" (no bill-sourced value; both value slots None).
+    """
+    __slots__ = ()
+
+    @property
+    def is_charged_tariff(self):
+        """True only for a value the utility or CCA actually charged."""
+        return self.authority == CHARGED_TARIFF and self.rate is not None
+
+    @property
+    def classification(self):
+        """The four-way label: direct | carried | absent | comparison.
+
+        "comparison" swallows the tier on purpose — a directly-observed printed
+        comparison rate is still not a tariff, so it must not be counted beside
+        the directly-observed tariffs."""
+        if self.tier == "absent":
+            return "absent"
+        return "comparison" if self.authority == COMPARISON_ONLY else self.tier
+
+    def _value_repr(self):
+        if self.rate is not None:
+            return f"rate={self.rate:.5f}"
+        if self.comparison_rate is not None:
+            return f"comparison_rate={self.comparison_rate:.5f} (NOT a tariff)"
+        return "no bill-sourced value"
+
+
+class CellValue(_Valued):
+    """One rate cell on one DATE, with the authority of its value (see _Valued)."""
+    __slots__ = ("section", "season", "tou_period", "date", "provider",
+                 "authority", "rate", "comparison_rate", "tier", "note")
+
+    def __init__(self, section, season, tou_period, date, provider, authority,
+                 rate, comparison_rate, tier, note):
+        self.section, self.season, self.tou_period = section, season, tou_period
+        self.date, self.provider, self.authority = date, provider, authority
+        self.rate, self.comparison_rate = rate, comparison_rate
+        self.tier, self.note = tier, note
+
+    def __repr__(self):
+        return (f"<CellValue {self.section}/{self.season}/{self.tou_period} "
+                f"{self.date} provider={self.provider} {self.authority} "
+                f"tier={self.tier} {self._value_repr()}>")
+
+
+class VintageEntry(_Valued):
+    """One cell's last directly observed value and the DATES it was printed over,
+    with the authority of that value (see _Valued)."""
+    __slots__ = ("section", "season", "tou_period", "start", "end", "provider",
+                 "authority", "rate", "comparison_rate", "tier", "note")
+
+    def __init__(self, section, season, tou_period, start, end, provider,
+                 authority, rate, comparison_rate, tier, note):
+        self.section, self.season, self.tou_period = section, season, tou_period
+        self.start, self.end, self.provider = start, end, provider
+        self.authority = authority
+        self.rate, self.comparison_rate = rate, comparison_rate
+        self.tier, self.note = tier, note
+
+    def __repr__(self):
+        return (f"<VintageEntry {self.section}/{self.season}/{self.tou_period} "
+                f"{self.start}..{self.end} provider={self.provider} "
+                f"{self.authority} tier={self.tier} {self._value_repr()}>")
+
+
+def _provider_runs(eng):
+    """[(provider, start, end)] — maximal constant-provider runs over the corpus,
+    merged from bill_periods_electric.generation_provider. The authority of a
+    generation value changes exactly at these boundaries, so anything that
+    reports a DATE RANGE has to respect them."""
+    runs = []
+    for p in eng.periods:
+        if runs and runs[-1][0] == p["provider"]:
+            runs[-1][2] = p["end"]
+        else:
+            runs.append([p["provider"], p["start"], p["end"]])
+    return [tuple(r) for r in runs]
+
+
+def _providers_over(eng, a, b):
+    """The distinct providers in force across [a, b], chronologically."""
+    return tuple(prov for prov, s, e in _provider_runs(eng) if s <= b and e >= a)
+
+
+# ---------------------------------------------------------------------------
 # Public lookups
 # ---------------------------------------------------------------------------
 class RateSet:
@@ -600,13 +780,39 @@ class RateSet:
         return total / self._period["days"]
 
     def cells(self):
-        """{(section, season, tou_period): (rate|None, tier, note)} — for reporting."""
+        """{(section, season, tou_period): CellValue} — all 12 cells, for reporting.
+
+        The aggregation of _cell()/generation(), and it carries the SAME trust
+        boundary rather than reading values straight off the timeline. On a CCA
+        date the three generation cells come back with authority
+        "printed_comparison_only", .rate None and SDG&E's printed
+        bundled-generation comparison in .comparison_rate — so a report that
+        loops over cells() and prints .rate cannot publish a comparison number as
+        a charged generation tariff, which is the number RateSet.generation()
+        refuses to hand out one cell at a time.
+
+        Delivery cells are charged tariffs on every corpus date, CCA included.
+
+        CellValue is not a tuple and not iterable: the old
+        `rate, tier, note = cells[cell]` raises TypeError instead of quietly
+        binding a comparison rate to `rate`. Use .rate for charged tariffs,
+        .comparison_rate for the printed comparison, .authority to tell them
+        apart and .classification for the four-way direct/carried/absent/
+        comparison label."""
         out = {}
         for sec in SECTIONS:
             for season in SEASONS:
                 for tp in TOU_PERIODS:
                     span = self._eng.span_at((sec, season, tp), self.date)
-                    out[(sec, season, tp)] = (span.rate, span.tier, span.note)
+                    auth = _authority_on(sec, self.provider)
+                    absent = span.tier == "absent"
+                    charged = auth == CHARGED_TARIFF
+                    out[(sec, season, tp)] = CellValue(
+                        sec, season, tp, self.date, self.provider, auth,
+                        None if absent or not charged else span.rate,
+                        None if absent or charged else span.rate,
+                        span.tier,
+                        span.note if charged else span.note + "; " + _COMPARISON_NOTE)
         return out
 
 
@@ -628,15 +834,45 @@ def coverage():
 
 
 def current_vintage():
-    """{(section, season, tou_period): (rate, start, end)} — each cell's LAST
-    directly observed rate and the dates the bills show it billed on. This is
-    what 'the current vintage' means from bill evidence alone; compare delivery
-    against rates.py's UDC (test_rates_history.py does, to the cent)."""
+    """{(section, season, tou_period): VintageEntry} — each cell's LAST directly
+    observed value, the dates the statements printed it over, and its AUTHORITY.
+
+    What 'the current vintage' means from bill evidence alone — but only for the
+    components the bills actually charged at the printed rate. Delivery entries
+    are charged tariffs in both provider eras and carry .rate; compare them
+    against rates.py's UDC (test_rates_history.py does, and they match exactly).
+
+    A GENERATION entry whose printed window touches a CCA period is not a tariff:
+    SDG&E printed it as the bundled-generation (EECC) comparison beside a bill the
+    CCA charged. Those entries come back with authority
+    "printed_comparison_only", .rate None and the printed number in
+    .comparison_rate — the same refusal RateSet.generation() makes per cell,
+    applied here rather than returning the last direct observation for every cell
+    regardless of who charged it. A window that straddles the provider break is
+    classified comparison-only in full: a single 'current vintage' entry cannot be
+    half charged, and failing closed is the honest half.
+
+    On this corpus, which ends inside the CCA era, that is all six generation
+    cells: from bill evidence alone there is NO current charged generation tariff.
+
+    VintageEntry is not a tuple and not iterable (see CellValue) — the old
+    `rate, start, end = cv[cell]` unpacking raises TypeError."""
     eng = _engine()
     out = {}
     for cell, spans in eng.timelines.items():
         last = [s for s in spans if s.tier == "direct"][-1]
-        out[cell] = (last.rate, last.start, last.end)
+        section = cell[0]
+        providers = _providers_over(eng, last.start, last.end)
+        auth = (CHARGED_TARIFF
+                if all(_authority_on(section, prov) == CHARGED_TARIFF
+                       for prov in providers)
+                else COMPARISON_ONLY)
+        charged = auth == CHARGED_TARIFF
+        out[cell] = VintageEntry(
+            section, cell[1], cell[2], last.start, last.end, "+".join(providers),
+            auth, last.rate if charged else None,
+            None if charged else last.rate, last.tier,
+            last.note if charged else last.note + "; " + _COMPARISON_NOTE)
     return out
 
 
@@ -835,9 +1071,16 @@ def corroboration(period):
     where differing_* covers the cells whose printed rate is NOT the same in both
     segments of a split statement — the mid-cycle change itself, which is exactly
     the thing a holdout of that statement cannot see.
+
+    Every row is a PRINTED line, and printed_rate / witness_rate are printed
+    numbers by definition — on a CCA statement's generation rows they are SDG&E's
+    bundled-generation comparison, not the tariff charged. Each row carries
+    `authority` (CHARGED_TARIFF / COMPARISON_ONLY) so that is visible per row and
+    not only in this docstring.
     """
     eng = _engine()
-    if not any(p["period"] == period for p in eng.periods):
+    p = next((x for x in eng.periods if x["period"] == period), None)
+    if p is None:
         raise SystemExit(f"corroboration: no billing period {period!r} in the corpus")
     hold = _holdout_engine(period)
     billed = [r for r in eng.tou if r["period"] == period and r["kwh"] > 0]
@@ -868,6 +1111,7 @@ def corroboration(period):
             reasons[reason] = reasons.get(reason, 0) + 1
         rows.append(dict(
             cell=cell, segment=r["segment"], start=s, end=e, kwh=r["kwh"],
+            authority=_authority_on(r["section"], p["provider"]),
             printed_rate=r["rate"], printed_usd=r["kwh"] * r["rate"],
             status="corroborated" if one_span else "uncorroborated",
             reason=reason, differing_cell=cell in differing,
@@ -1047,27 +1291,68 @@ def _fmt_money(v, places=6):
 
 
 def _vintage_rows():
+    """Rows of data/rate_vintages.csv — charged tariffs and printed comparisons in
+    separate sections and separate value columns.
+
+    A generation span is SPLIT at every provider boundary, because the authority of
+    the printed number changes there while the number itself does not (the winter
+    on-peak 0.16516 span 2024-11-01..2025-01-31 is a charged SDG&E tariff through
+    12/26/24 and a printed comparison from 12/27/24). The CCA side is serialized
+    under section=generation_printed_comparison with rate_per_kwh EMPTY and the
+    printed value in comparison_rate_per_kwh, so a consumer reading rate_per_kwh —
+    or filtering section == "generation" — receives charged tariffs only. Delivery
+    spans are not split: the UDC is the charged tariff in both eras, so their
+    provider column reads "bundled+CCA" where the span straddles the break.
+
+    Note wording follows the same rule: a direct span's note says which statements
+    PRINTED the rate, and the authority column says whether printing it and
+    charging it were the same thing. Nothing claims a CCA-era generation rate was
+    "billed on" anything."""
     eng = _engine()
+    runs = _provider_runs(eng)
     rows = []
     for cell in sorted(eng.timelines):
+        section = cell[0]
         for span in eng.timelines[cell]:
-            rows.append([cell[0], cell[1], cell[2], str(span.start), str(span.end),
-                         "" if span.rate is None else f"{span.rate:.5f}",
-                         span.tier, span.note])
+            # generation: one row per provider run the span overlaps; delivery:
+            # one row, with every provider it spans named
+            pieces = ([(prov, max(s, span.start), min(e, span.end))
+                       for prov, s, e in runs
+                       if s <= span.end and e >= span.start]
+                      if section == "generation"
+                      else [("+".join(_providers_over(eng, span.start, span.end)),
+                             span.start, span.end)])
+            for provider, start, end in pieces:
+                auth = _authority_on(section, provider)
+                charged = auth == CHARGED_TARIFF
+                value = "" if span.rate is None else f"{span.rate:.5f}"
+                note = span.note
+                if (start, end) != (span.start, span.end):
+                    # the note's statement list belongs to the whole observed
+                    # span, so say which slice of it this row is
+                    note += (f"; this row is the {provider} portion of the observed "
+                             f"span {span.start}..{span.end}")
+                rows.append([
+                    section if charged else COMPARISON_SECTION,
+                    cell[1], cell[2], str(start), str(end), provider, auth,
+                    value if charged else "",
+                    "" if charged else value,
+                    span.tier,
+                    note if charged else note + "; " + _COMPARISON_NOTE])
     for p in eng.periods:                # BSC: per period, absence made explicit
         rows.append(["base_services_charge", "", "per_day",
-                     str(p["start"]), str(p["end"]),
+                     str(p["start"]), str(p["end"]), p["provider"], CHARGED_TARIFF,
                      "" if p["bsc_total"] is None
-                     else f"{p['bsc_total'] / p['days']:.5f}",
+                     else f"{p['bsc_total'] / p['days']:.5f}", "",
                      "absent" if p["bsc_total"] is None else "derived",
                      "no base_services_charge line parsed for this period — new "
                      "charge, renamed line, or parser gap is an OPEN question"
                      if p["bsc_total"] is None else
                      f"period total {p['bsc_total']:.2f} / {p['days']} days "
                      f"(the printed daily unit rate is not captured by the parser)"])
-    for p in eng.periods:                # provider timeline
+    for p in eng.periods:                # provider timeline: a label, not a rate
         rows.append(["provider", "", "", str(p["start"]), str(p["end"]),
-                     "", "direct", p["provider"]])
+                     p["provider"], NOT_A_RATE, "", "", "direct", p["provider"]])
     return rows
 
 
@@ -1129,9 +1414,15 @@ def _write_artifacts(dest_dir):
     same filesystem). Returns the two paths."""
     dest_dir = pathlib.Path(dest_dir)
     targets = [
+        # rate_per_kwh holds CHARGED tariffs only. A printed CCA-generation
+        # comparison rate — a number SDG&E printed for reference beside a bill the
+        # CCA charged — is published under section generation_printed_comparison in
+        # comparison_rate_per_kwh, with authority=printed_comparison_only, and the
+        # two value columns are never both populated (_vintage_rows).
         (dest_dir / "rate_vintages.csv",
          ["section", "season", "tou_period", "vintage_start", "vintage_end",
-          "rate_per_kwh", "evidence", "note"], _vintage_rows()),
+          "provider", "authority", "rate_per_kwh", "comparison_rate_per_kwh",
+          "evidence", "note"], _vintage_rows()),
         # Column names say what the reference is. printed_tou_energy_usd is the
         # statement's OWN printed TOU energy lines; timeline_* re-prices those
         # same kWh through the timeline built from those same rows, so
@@ -1188,6 +1479,12 @@ def main():
           f"({(eng.end - eng.start).days + 1} days, {len(eng.periods)} periods)")
     print(f"cells: {len(eng.timelines)} × timeline "
           f"({directs} direct spans, {absents} flagged-absent spans)")
+    vint = _vintage_rows()
+    print("rate_vintages rows by authority: "
+          + ", ".join(f"{a} {sum(1 for r in vint if r[6] == a)}"
+                      for a in AUTHORITIES)
+          + f" — of which {sum(1 for r in vint if r[6] == COMPARISON_ONLY)} are "
+            "printed CCA-generation comparisons carrying no charged rate")
     corr = [corroboration(p["period"]) for p in eng.periods]
     reasons = {}
     for c in corr:

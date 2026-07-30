@@ -12,6 +12,17 @@ malformed printed rates (messages naming the date/period and the cell), the
 refusal to hand out a CCA-period generation tariff, the provider break, and a
 byte-deterministic writer.
 
+THE CCA AUTHORITY BOUNDARY IS PINNED AT EVERY EXIT, not just at
+RateSet.generation(). Three cases cover it together: the per-cell refusal
+(case_generation_refuses_on_cca_dates_...), the aggregations that hand out many
+cells at once (case_the_aggregations_never_hand_out_a_cca_generation_tariff — for
+cells() and current_vintage(), including that the retired (rate, tier, note)
+unpacking now raises TypeError), and the committed artifact
+(case_the_vintage_artifact_separates_charged_tariffs_from_comparisons — section
+name, value column, authority column, and the corrected note wording). Delivery
+is asserted charged in BOTH provider eras, because the UDC is what was charged
+either way.
+
 THE HOLDOUT GATE, and why it is not a coverage percentage. Each statement's
 printed rate lines are classified by rates_history.corroboration(): a line is
 corroborated when the rest of the corpus independently witnesses that cell across
@@ -185,16 +196,23 @@ def case_out_of_coverage_dates_raise_and_name_themselves():
 
 def case_every_corpus_day_yields_a_fully_classified_rate_set():
     """AC: a complete rate set for every day 5/25/24-6/26/26, sourced only from
-    the artifacts. 'Complete' means every component is either a bill-sourced
-    value or an explicitly flagged absence — never a silent hole, never an
-    invented number. For the cells that bill the day (its own season), the
-    absences are pinned exactly: they are the buckets whose printed rate is
-    $0.00000 because they netted negative on every statement of their era
-    (off-peak, on this solar household) plus the first seven corpus days,
-    whose statement printed no positive on-peak line."""
+    the artifacts. 'Complete' means all 12 cells come back with an explicit
+    classification — a bill-sourced CHARGED tariff (direct or carried), a printed
+    CCA-generation COMPARISON labelled as not-a-tariff, or a flagged absence —
+    never a silent hole, never an invented number, and never a comparison number
+    in the .rate slot. The four-way counts over 763 days × 12 cells are pinned
+    here, so a cell that changes authority or falls out of coverage fails.
+
+    For the cells that bill the day (its own season) the absences are pinned
+    exactly: the buckets whose printed rate is $0.00000 because they netted
+    negative on every statement of their era (off-peak, on this solar household)
+    plus the first seven corpus days, whose statement printed no positive on-peak
+    line. Those counts are unchanged by the authority split — an absence is an
+    absence in either provider era."""
     start, end = H.coverage()
     days = 0
     absent = {}
+    classes = {}
     day = start
     while day <= end:
         rs = H.rates_on(day)                       # never raises in-window
@@ -202,21 +220,49 @@ def case_every_corpus_day_yields_a_fully_classified_rate_set():
         cells = rs.cells()
         assert len(cells) == 12, day               # 2 sections × 2 seasons × 3 TOU
         season = "summer" if day.month in R.SUMMER_MONTHS else "winter"
-        for (sec, sea, tp), (rate, tier, note) in cells.items():
-            assert tier in ("direct", "carried", "absent"), (day, sec, sea, tp)
-            assert (rate is None) == (tier == "absent"), (day, sec, sea, tp)
-            if sea == season and tier == "absent":
+        for (sec, sea, tp), cv in cells.items():
+            where = (day, sec, sea, tp)
+            assert (cv.section, cv.season, cv.tou_period) == (sec, sea, tp), where
+            assert cv.date == day and cv.provider == rs.provider, where
+            assert cv.tier in ("direct", "carried", "absent"), where
+            assert cv.authority in (H.CHARGED_TARIFF, H.COMPARISON_ONLY), where
+            # delivery is the charged tariff in BOTH provider eras; generation is
+            # charged only while SDG&E was bundled
+            assert cv.authority == (
+                H.COMPARISON_ONLY if sec == "generation" and rs.provider == "CCA"
+                else H.CHARGED_TARIFF), where
+            # exactly one value slot may be populated, and which one is decided by
+            # the authority — a comparison number can never land in .rate
+            if cv.tier == "absent":
+                assert (cv.rate, cv.comparison_rate) == (None, None), where
+                assert cv.classification == "absent", where
+            elif cv.authority == H.CHARGED_TARIFF:
+                assert cv.rate is not None and cv.comparison_rate is None, where
+                assert cv.is_charged_tariff and cv.classification == cv.tier, where
+            else:
+                assert cv.rate is None and cv.comparison_rate is not None, where
+                assert not cv.is_charged_tariff, where
+                assert cv.classification == "comparison", where
+            classes[cv.classification] = classes.get(cv.classification, 0) + 1
+            if sea == season and cv.tier == "absent":
                 absent[(sec, tp)] = absent.get((sec, tp), 0) + 1
         days += 1
         day += dt.timedelta(days=1)
     assert days == 763, days
+    assert classes == {"direct": 2102, "carried": 336, "absent": 4921,
+                       "comparison": 1797}, classes
+    assert sum(classes.values()) == 12 * days, classes
     want = {("delivery", "off_peak"): 306 + 269,
             ("generation", "off_peak"): 306 + 213,
             ("delivery", "on_peak"): 7, ("generation", "on_peak"): 7}
     assert absent == want, absent                  # sop: sourced on all 763 days
     frac = 1 - sum(absent.values()) / (6 * days)
-    return (f"all {days} days return 12 classified cells; the day's own season is "
-            f"{frac:.0%} sourced, every absence a pinned net-negative bucket")
+    return (f"all {days} days return 12 classified cells "
+            f"({classes['direct']} direct, {classes['carried']} carried, "
+            f"{classes['comparison']} printed-comparison-only, "
+            f"{classes['absent']} flagged absent); the day's own season is "
+            f"{frac:.0%} classified from the bills, every absence a pinned "
+            f"net-negative bucket")
 
 
 def case_missing_rate_cells_raise_naming_date_and_cell():
@@ -290,16 +336,197 @@ def case_generation_refuses_on_cca_dates_and_only_the_diagnostic_answers():
             "printed comparison value, and bundled dates are unchanged")
 
 
+def case_the_aggregations_never_hand_out_a_cca_generation_tariff():
+    """The same trust boundary at the AGGREGATE exits, not just at generation().
+
+    RateSet.generation() refuses one cell at a time, but cells() and
+    current_vintage() hand out every cell at once, and a caller of those never
+    types the word "comparison". So they carry the authority with each value:
+    on a CCA date the generation cells come back authority
+    printed_comparison_only, .rate None, and SDG&E's printed bundled-generation
+    number in .comparison_rate. Pinned here against the SAME literals the
+    diagnostic accessor returns, so the boundary is about labelling and not about
+    losing the number.
+
+    Also pinned: the old tuple shapes are gone. `rate, tier, note = cells[cell]`
+    and `rate, start, end = current_vintage()[cell]` raise TypeError instead of
+    binding a printed comparison rate to a variable called `rate`."""
+    cca = H.rates_on(dt.date(2026, 2, 1))                # 1/28/26 - 2/26/26, CCA
+    assert cca.provider == "CCA"
+    cells = cca.cells()
+    gen = cells[("generation", "winter", "on_peak")]
+    assert gen.authority == H.COMPARISON_ONLY, gen
+    assert gen.rate is None and gen.is_charged_tariff is False, gen
+    assert gen.comparison_rate == 0.20013, gen           # the printed number, named
+    assert gen.comparison_rate == cca.generation_comparison_table(
+        "winter", "on_peak"), gen
+    assert gen.provider == "CCA" and gen.classification == "comparison", gen
+    assert "COMPARISON" in gen.note and "NOT a tariff" in gen.note, gen.note
+    # delivery on the very same date is a charged tariff, and it is the UDC
+    udc = cells[("delivery", "winter", "on_peak")]
+    assert udc.authority == H.CHARGED_TARIFF and udc.is_charged_tariff, udc
+    assert udc.rate == cca.delivery("winter", "on_peak"), udc
+    assert udc.comparison_rate is None, udc
+    # a bundled date is untouched: generation there IS the charged tariff
+    bundled = H.rates_on(dt.date(2024, 8, 1)).cells()[
+        ("generation", "summer", "on_peak")]
+    assert bundled.provider == "bundled", bundled
+    assert bundled.authority == H.CHARGED_TARIFF and bundled.rate == 0.38826, bundled
+    assert bundled.comparison_rate is None, bundled
+    # current_vintage(): the corpus ends inside the CCA era, so NO generation cell
+    # has a current charged tariff, and all six say so with the printed number
+    # parked in comparison_rate
+    cv = H.current_vintage()
+    assert len(cv) == 12, len(cv)
+    comparisons = {}
+    for cell, entry in cv.items():
+        if cell[0] == "generation":
+            assert entry.authority == H.COMPARISON_ONLY, entry
+            assert entry.rate is None and not entry.is_charged_tariff, entry
+            assert entry.comparison_rate is not None, entry
+            assert entry.provider == "CCA", entry
+            comparisons[cell[1:]] = entry.comparison_rate
+        else:
+            assert entry.authority == H.CHARGED_TARIFF, entry
+            assert entry.rate is not None and entry.comparison_rate is None, entry
+    assert comparisons == {
+        ("summer", "on_peak"): 0.47019, ("summer", "off_peak"): 0.17311,
+        ("summer", "super_off_peak"): 0.08147, ("winter", "on_peak"): 0.19990,
+        ("winter", "off_peak"): 0.14337, ("winter", "super_off_peak"): 0.07410,
+    }, comparisons
+    # no charged generation rate is reachable from either aggregation, on any date
+    leaked, cca_days = [], 0
+    day, end = H.coverage()
+    while day <= end:
+        rs = H.rates_on(day)
+        if rs.provider == "CCA":
+            cca_days += 1
+            for cell, cv_ in rs.cells().items():
+                if cell[0] == "generation" and cv_.rate is not None:
+                    leaked.append((day, cell, cv_.rate))
+        day += dt.timedelta(days=1)
+    assert not leaked, leaked[:5]
+    assert cca_days == 547, cca_days               # 2024-12-27..2026-06-26
+    # the retired tuple shapes must not silently unpack
+    for fn in (lambda: [x for x in gen],
+               lambda: gen[0],
+               lambda: [x for x in cv[("generation", "winter", "on_peak")]]):
+        try:
+            fn()
+        except TypeError:
+            continue
+        raise AssertionError("a CellValue/VintageEntry still unpacks like a tuple")
+    return ("cells() and current_vintage() label every value: on CCA dates all "
+            "generation cells are printed_comparison_only with .rate None and the "
+            f"printed number in .comparison_rate (0 charged generation rates "
+            f"reachable on any of the {cca_days} CCA days), delivery stays charged "
+            "in both eras, and the old tuple unpacking raises TypeError")
+
+
+def case_the_vintage_artifact_separates_charged_tariffs_from_comparisons():
+    """data/rate_vintages.csv must not present a printed CCA-generation comparison
+    in the schema a consumer reads as a historical tariff vintage.
+
+    Three separations, all pinned: the section name
+    (generation_printed_comparison, so filtering section == "generation" yields
+    charged tariffs only), the value column (rate_per_kwh holds charged tariffs,
+    comparison_rate_per_kwh holds printed comparisons, never both on one row), and
+    an explicit authority column on every row with the provider beside it. The
+    "billed on" note wording is gone everywhere: a direct span's note says which
+    statements PRINTED the rate, and the authority column says whether printing it
+    and charging it were the same act.
+
+    Generation spans are split at the provider break so no row mixes the two
+    authorities — the winter on-peak 0.16516 observation is a charged SDG&E tariff
+    through 12/26/24 and a printed comparison from 12/27/24, and the artifact
+    carries it as two rows saying exactly that."""
+    rows = list(csv.DictReader(open(H.DATA / "rate_vintages.csv", newline="")))
+    header = (H.DATA / "rate_vintages.csv").read_text().splitlines()[0].split(",")
+    assert header == ["section", "season", "tou_period", "vintage_start",
+                      "vintage_end", "provider", "authority", "rate_per_kwh",
+                      "comparison_rate_per_kwh", "evidence", "note"], header
+    cca_start = dt.date(2024, 12, 27)
+    counts = {}
+    for row in rows:
+        a, b = dt.date.fromisoformat(row["vintage_start"]), \
+            dt.date.fromisoformat(row["vintage_end"])
+        assert a <= b, row
+        assert row["authority"] in H.AUTHORITIES, row
+        assert row["provider"] in ("bundled", "CCA", "bundled+CCA"), row
+        assert "billed on" not in row["note"], row       # the corrected wording
+        # never both value columns, and never a comparison number under a name a
+        # consumer reads as a tariff
+        assert not (row["rate_per_kwh"] and row["comparison_rate_per_kwh"]), row
+        if row["authority"] == H.COMPARISON_ONLY:
+            assert row["section"] == "generation_printed_comparison", row
+            assert row["rate_per_kwh"] == "", row
+            assert row["provider"] == "CCA" and a >= cca_start, row
+            assert (row["comparison_rate_per_kwh"] == "") == \
+                (row["evidence"] == "absent"), row
+            assert "NOT a tariff" in row["note"], row
+        else:
+            assert row["comparison_rate_per_kwh"] == "", row
+            if row["section"] == "generation":
+                # a charged generation row may not touch a CCA date at all
+                assert b < cca_start, row
+                assert row["provider"] == "bundled", row
+            if row["section"] == "provider":
+                assert row["authority"] == H.NOT_A_RATE, row
+                assert not row["rate_per_kwh"], row
+        counts[(row["section"], row["authority"])] = \
+            counts.get((row["section"], row["authority"]), 0) + 1
+    assert counts == {
+        ("delivery", H.CHARGED_TARIFF): 47,
+        ("generation", H.CHARGED_TARIFF): 13,
+        ("generation_printed_comparison", H.COMPARISON_ONLY): 36,
+        ("base_services_charge", H.CHARGED_TARIFF): 26,
+        ("provider", H.NOT_A_RATE): 26,
+    }, counts
+    # the split at the provider break, both halves, same printed number
+    def find(section, season, tp, start):
+        hits = [r for r in rows if (r["section"], r["season"], r["tou_period"],
+                                    r["vintage_start"]) == (section, season, tp,
+                                                            start)]
+        assert len(hits) == 1, (section, season, tp, start, hits)
+        return hits[0]
+
+    charged = find("generation", "winter", "on_peak", "2024-11-01")
+    printed = find("generation_printed_comparison", "winter", "on_peak",
+                   "2024-12-27")
+    assert (charged["vintage_end"], charged["rate_per_kwh"],
+            charged["comparison_rate_per_kwh"]) == ("2024-12-26", "0.16516", ""), charged
+    assert (printed["vintage_end"], printed["rate_per_kwh"],
+            printed["comparison_rate_per_kwh"]) == ("2025-01-31", "", "0.16516"), printed
+    assert "portion of the observed span" in printed["note"], printed
+    # the two headline CCA comparison numbers appear ONLY as comparisons
+    for value in ("0.20013", "0.40592"):
+        where = {r["section"] for r in rows if value in (
+            r["rate_per_kwh"], r["comparison_rate_per_kwh"])}
+        assert where == {"generation_printed_comparison"}, (value, where)
+        assert not any(r["rate_per_kwh"] == value for r in rows), value
+    return (f"{len(rows)} vintage rows: {counts[('generation', H.CHARGED_TARIFF)]} "
+            f"charged generation spans (all ending before 2024-12-27) carry "
+            f"rate_per_kwh, the "
+            f"{counts[('generation_printed_comparison', H.COMPARISON_ONLY)]} CCA-era "
+            f"spans sit under generation_printed_comparison with an empty "
+            f"rate_per_kwh, and no note says 'billed on'")
+
+
 def case_current_vintage_matches_rates_py_to_the_cent():
     """AC: the engine's final delivery vintage equals rates.py's UDC on all six
-    season×TOU cells. (rates.py's CEA table comes from the CCA's own schedule,
-    which the bill artifacts do not carry — see the module docstring.)"""
+    season×TOU cells. Delivery is the charged tariff in both provider eras, so all
+    six entries are authority=charged_tariff and their .rate is the number to
+    compare. (rates.py's CEA table comes from the CCA's own schedule, which the
+    bill artifacts do not carry — see the module docstring.)"""
     cv = H.current_vintage()
     for seas, season in (("S", "summer"), ("W", "winter")):
         for short, long_tp in zip(tuple(R.UDC["S"]),
                                   ("on_peak", "off_peak", "super_off_peak")):
             want = R.UDC[seas][short]
-            got, s, e = cv[("delivery", season, long_tp)]
+            entry = cv[("delivery", season, long_tp)]
+            assert entry.authority == H.CHARGED_TARIFF, entry
+            assert entry.is_charged_tariff and entry.comparison_rate is None, entry
+            got = entry.rate
             assert abs(got - want) < 0.005, (seas, short, got, want)
             assert got == want, (seas, short, got, want)   # in fact exact
     return "all six UDC season×TOU cells match rates.py exactly, not just to the cent"
@@ -362,9 +589,17 @@ def case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated
     assert got == CORROBORATION, {k: (CORROBORATION[k], v)
                                   for k, v in got.items() if CORROBORATION[k] != v}
     corr = unc = direct = 0
+    providers = {p["period"]: p["provider"] for p in H._engine().periods}
     for period in CORROBORATION:
         c = H.corroboration(period)
         h = H.rebill_holdout(period)
+        # every row here is a PRINTED line, and each one says whether printing it
+        # was the same act as charging it — on a CCA statement the generation rows
+        # are SDG&E's comparison table, and printed_rate/witness_rate are that
+        for row in c["rows"]:
+            assert row["authority"] == (
+                H.COMPARISON_ONLY if row["cell"][0] == "generation"
+                and providers[period] == "CCA" else H.CHARGED_TARIFF), (period, row)
         assert c["disagree_rows"] == 0, (period, c["disagree_rows"])
         # the corroborated dollars are the holdout residual's whole basis
         assert abs(h["residual"]) < 0.005, (period, h)
@@ -868,6 +1103,8 @@ CASES = [
     case_missing_rate_cells_raise_naming_date_and_cell,
     case_unsourceable_components_fail_closed,
     case_generation_refuses_on_cca_dates_and_only_the_diagnostic_answers,
+    case_the_aggregations_never_hand_out_a_cca_generation_tariff,
+    case_the_vintage_artifact_separates_charged_tariffs_from_comparisons,
     case_current_vintage_matches_rates_py_to_the_cent,
     case_rebilling_reproduces_all_26_statements_within_1pct,
     case_every_corroborable_line_agrees_and_the_rest_is_pinned_as_uncorroborated,
