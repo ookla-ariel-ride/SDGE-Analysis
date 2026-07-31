@@ -156,6 +156,36 @@ def case_inference_counts_rate_changes_not_reprints():
 
 
 @case
+def case_a_never_repaying_battery_publishes_null_not_a_crash():
+    """A strongly narrowing spread can leave the battery unrecovered inside the
+    horizon. _payback then returns payback_yr None, and the comparison against
+    the uniform ladder must survive that rather than raising."""
+    never = ts._payback(2238, -0.60)
+    assert never["payback_yr"] is None, (
+        f"precondition: a -60%/yr spread should never repay, got {never}")
+    assert ts._payback_delta(never["payback_yr"], 6.2) is None
+    assert ts._payback_delta(5.3, None) is None
+    assert ts._payback_delta(5.3, 6.2) == -0.9
+    return "a never-repaying run yields a null delta instead of a TypeError"
+
+
+@case
+def case_corpus_coverage_is_derived_not_hardcoded():
+    """Adding a statement must move the coverage evidence with the corpus. A
+    frozen count keeps reading as current long after it stops being true."""
+    first, last = ts._corpus_bounds()
+    days = (last - first).days + 1
+    reason = json.loads((ROOT / "data" / "tou_spread.json").read_text())[
+        "not_determined"]["generation_escalation"]["reason"]
+    assert f"of {days} corpus days" in reason, (
+        f"published coverage does not match the parsed corpus ({days} d): {reason}")
+    assert first.isoformat() in reason and last.isoformat() in reason, reason
+    # inclusive counting, the convention the rest of the repo uses
+    assert days == 763, f"corpus span changed: {first}..{last} = {days} d"
+    return f"coverage derived from the parsed corpus: {first}..{last}, {days} d"
+
+
+@case
 def case_break_detector_ignores_repeated_levels():
     """Consecutive identical prints are one level, not many observations of a
     move. A detector that differenced raw rows would find a 'largest step' of

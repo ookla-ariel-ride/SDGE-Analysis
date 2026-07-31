@@ -472,7 +472,7 @@
    ]
   },
   "generation_escalation": {
-   "reason": "On a CCA date this corpus carries no charged generation tariff. The printed generation table is SDG&E's bundled comparison, off the actual CEA charge by -6.8% to +104.3% (issue #3). The provider broke on 2024-12-27, leaving 546 of 763 corpus days with no charged generation price.",
+   "reason": "On a CCA date this corpus carries no charged generation tariff. The printed generation table is SDG&E's bundled comparison, off the actual CEA charge by -6.8% to +104.3% (issue #3). The provider broke on 2024-12-27, leaving 547 of 763 corpus days (2024-05-25..2026-06-26) with no charged generation price.",
    "verdict": "not determined",
    "would_settle_it": [
     "The CCA's own per-TOU rates, which appear only on the CCA pages of the statements; parse_bills.py does not extract those pages.",

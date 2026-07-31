@@ -25,7 +25,7 @@ confident wrong number:
    enforces at the type level, that on a CCA date there is no charged generation
    tariff in this corpus at all -- the printed generation table is SDG&E's
    bundled comparison, off the actual CEA charge by -6.8% to +104.3%. The
-   provider broke on 2024-12-27, so 546 of the corpus's 763 days (72%) have no
+   provider broke on 2024-12-27, so 547 of the corpus's 763 days (72%) have no
    charged generation price. Delivery is the charged tariff in BOTH eras, so
    delivery escalation is measurable and generation escalation is not. Splicing
    a charged tariff to a comparison figure and fitting the join would be a
@@ -197,6 +197,20 @@ def _parse_period(text):
         return dt.datetime.strptime(a, fmt).date(), dt.datetime.strptime(b, fmt).date()
     except Exception as exc:
         raise SystemExit(f"tou_spread.py: unparseable period {text!r}: {exc}")
+
+
+def _corpus_bounds():
+    """First and last day the bill corpus covers, from every period in the file.
+
+    Read from ALL rows, not just priced ones: a period whose cells are all
+    settlement zeros still covers those days, and excluding it would understate
+    coverage in exactly the direction CLAUDE.md 1 warns about.
+    """
+    rows = list(csv.DictReader(DETAIL.open()))
+    if not rows:
+        raise SystemExit(f"tou_spread.py: {DETAIL} is empty")
+    bounds = [_parse_period(r["period"]) for r in rows]
+    return min(b[0] for b in bounds), max(b[1] for b in bounds)
 
 
 def _priced_rows():
@@ -441,6 +455,19 @@ def _fit_spread(series, origin):
     }
 
 
+def _payback_delta(mine, theirs):
+    """Difference in payback years, or None when either side never pays back.
+
+    A narrowing spread can leave the battery unrecovered inside HORIZON_YR, and
+    _payback then reports payback_yr None. That is a real result -- arguably the
+    most decision-relevant one -- so it must publish as a null delta rather than
+    crash the generator on the verdict it most needs to be able to state.
+    """
+    if mine is None or theirs is None:
+        return None
+    return round(mine - theirs, 1)
+
+
 def _payback(save1, esc, cost=BATT_COST, fade=BATT_FADE, disc=BATT_DISC):
     """Payback year and 10-year NPV at a constant escalation -- the same
     arithmetic as battery_dispatch_policies.escalation(), reproduced so the
@@ -638,10 +665,15 @@ def build():
             f"post-break window {post['first']}..{post['last']}, "
             f"{post['n']} observations, {post['distinct_levels']} distinct levels")
         run["full_window_escalation_pct_yr_NOT_USED"] = fit["escalation_pct_yr"]
+        # A narrowing spread can leave the battery unpaid inside HORIZON_YR, in
+        # which case _payback returns payback_yr None. That is a real result, not
+        # an error, so the delta is published as null rather than crashing the
+        # generator on the one verdict it most needs to be able to report.
         run["vs_uniform"] = {
             f"{int(e*100)}%": {
-                "payback_delta_yr": round(
-                    run["payback_yr"] - battery["uniform_ladder"][f"{int(e*100)}%"]["payback_yr"], 1),
+                "payback_delta_yr": _payback_delta(
+                    run["payback_yr"],
+                    battery["uniform_ladder"][f"{int(e*100)}%"]["payback_yr"]),
                 "npv10_delta_usd": run["npv10"] - battery["uniform_ladder"][f"{int(e*100)}%"]["npv10"],
             } for e in UNIFORM_LADDER}
         run["applied_to"] = (
@@ -668,7 +700,16 @@ def build():
         battery["per_period"][season] = run
 
     # ---- what is not determined, and what would settle it ----------------
-    cca_days = (dt.date(2026, 6, 26) - CCA_START).days
+    # Derived from the parsed periods, never hard-coded: adding a statement must
+    # move this evidence with the corpus rather than leave a frozen count that
+    # reads as current (CLAUDE.md 1 -- coverage is counted in DAYS).
+    corpus_first, corpus_last = _corpus_bounds()
+    # INCLUSIVE of both endpoints, which is the convention the rest of this repo
+    # counts coverage in (issue #2's engine covers 2024-05-25..2026-06-26 = 763
+    # days). Mixing the two conventions is how the docstring and the artifact
+    # came to disagree by one day about the same corpus.
+    corpus_days = (corpus_last - corpus_first).days + 1
+    cca_days = max(0, (corpus_last - max(CCA_START, corpus_first)).days + 1)
     not_determined = {
         "generation_escalation": {
             "verdict": "not determined",
@@ -677,7 +718,9 @@ def build():
                 "The printed generation table is SDG&E's bundled comparison, off "
                 "the actual CEA charge by -6.8% to +104.3% (issue #3). The "
                 f"provider broke on {CCA_START.isoformat()}, leaving {cca_days} "
-                "of 763 corpus days with no charged generation price."),
+                f"of {corpus_days} corpus days "
+                f"({corpus_first.isoformat()}..{corpus_last.isoformat()}) "
+                "with no charged generation price."),
             "would_settle_it": [
                 "The CCA's own per-TOU rates, which appear only on the CCA pages "
                 "of the statements; parse_bills.py does not extract those pages.",
