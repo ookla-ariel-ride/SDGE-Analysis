@@ -759,7 +759,17 @@ def build():
         "adequacy_test": {
             "min_distinct_vintages": MIN_VINTAGES,
             "min_span_days": MIN_SPAN_DAYS,
-            "spread_rule": "both cells adequate AND slope 95% CI excludes zero",
+            "spread_rule": (
+                "both cells adequate AND the full-window 95% CI excludes zero "
+                "AND the post-break refit agrees in sign and is itself adequate "
+                "AND the post-break CI still excludes zero after being widened "
+                "for having chosen the breakpoint from the data"),
+            "inference_unit": (
+                "distinct rate CHANGES, not statement prints: a tariff reprinted "
+                "unchanged is not a second observation of the price"),
+            "fitted_scale": (
+                "ln(spread), so the rate that _payback compounds is the rate "
+                "that was estimated"),
             "stated_before_fitting": True,
         },
         "delivery_cell_escalation": cells,
