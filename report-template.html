@@ -48,7 +48,7 @@
     s10 Actual bills, gas & electrification
     s11 Lifetime value / payback
     s12 Panel cleaning & soiling   [COLLAPSIBLE — <details id="sec12">]
-    s13 Carbon, NEM value, escalation, price map  [COLLAPSIBLE — <details id="sec13">, chart #carbon lazy-inits on open]
+    s13 Carbon, NEM value, escalation, price map  [COLLAPSIBLE — <details id="sec13">; its canvases (#carbon, #spread) lazy-init on reveal via the lazyChart registry]
     s14 Methodology, sources & caveats (+ provenance line)
   ============================================================================
 -->
@@ -569,6 +569,27 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </tbody>
 </table>
 <p class="small"><!-- TODO: base-case assumptions and the downside bracket (conservative dispatch, Monte Carlo median). --></p>
+<h3 id="spread">Level escalation vs spread escalation <span class="pill g">measured · {{SPREAD_OBSERVATION_COUNT}}</span></h3>
+<p><!-- TODO: why the ladder above is an assumption — it escalates every price by one rate,
+     which holds the on-peak-to-super-off-peak GAP constant. A battery sells that gap, not
+     the price level, so the two are separate measurements. State the corpus behind the gap
+     (priced cells, billing periods, statements, date range) from data/tou_spread.json. --></p>
+<div class="chartbox"><canvas id="spread" height="110"></canvas></div>
+<p class="small"><!-- TODO: caption — one point per rate segment, dated at the segment midpoint;
+     what the dashed spans mean (pre-structural-break, excluded from the reported fit). --></p>
+<p><!-- TODO: per season, EITHER the surviving trend (slope, 95% CI, r², span in days, distinct
+     rate levels, %/yr) OR "not determined" with the reason. A season whose full-window slope is
+     carried by one tariff step must be reported as not determined, however good the fit looks:
+     tou_spread.py refits after the largest single step and publishes only if both windows agree.
+     Name that rule as pre-stated — it can only suppress a claim, never create one. --></p>
+<p><!-- TODO: battery re-run on the MEASURED spread vs the uniform ladder above — payback years
+     and 10-yr NPV, and the delta against each rung, so the reader can see which rungs mis-state
+     the battery. Tag the re-run figures modeled. --></p>
+<p class="small"><!-- TODO: scope caveat. If the corpus cannot price one component of the rate
+     (e.g. generation on community-choice dates, where statements print the utility's bundled
+     comparison rather than the charged rate), say which component the spread covers, that the
+     all-in spread is therefore not determined, and exactly what data would settle it. Cite
+     analysis/tou_spread.py -> data/tou_spread.json and the settlement-zero exclusion rule. --></p>
 <h3>Phantom baseload — decomposed <span class="pill g">measured</span></h3>
 <p><!-- TODO: EV-free-night floor statistics (median/p10/p90 kW, implied kWh/yr and $/yr), cycling and seasonality structure, and the practical recoverable read. --></p>
 <h3>The marginal price map — what one kWh costs or earns, right now <span class="pill g">measured · bill rates</span></h3>
@@ -632,7 +653,18 @@ const D = {
  bat_pw3_S:[/* 24 hourly values — with one battery */],
  bat_pw3x_S:[/* 24 hourly values — with expanded battery */],
  // Grid CO2 intensity in kg/MWh by hour of day, from grid-operator data (24 values).
- carb:[/* 24 hourly values */]
+ carb:[/* 24 hourly values */],
+ // On-peak minus super-off-peak DELIVERY spread, $/kWh, from analysis/tou_spread.py ->
+ // data/tou_spread.json (delivery_spread.<season>.series). One point per RATE SEGMENT,
+ // dated at the segment's midpoint — a billing period splits when a tariff changes
+ // mid-cycle, so segments outnumber statements. spLabels is the union of both seasons'
+ // dates; each season's array carries null on the other season's dates.
+ spLabels:[/* "YY-MM-DD" segment-midpoint labels, both seasons merged and sorted */],
+ spSummer:[/* summer spread $/kWh, null where the label belongs to winter */],
+ spWinter:[/* winter spread $/kWh, null where the label belongs to summer */],
+ // Index into spLabels of each season's largest single step (post_break.break_date).
+ // Everything up to and including it is drawn dashed and excluded from the reported fit.
+ spBreak:{summer:/* index */0,winter:/* index */0}
 };
 // Palette read from the CSS tokens so charts follow the light/dark theme.
 const V=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -675,21 +707,43 @@ new Chart(document.getElementById('periods'),{type:'bar',data:{
   {label:'Annual import cost $',data:[/* 3 values: gross import $ by TOU period */],backgroundColor:A(PAL.on,.75)}]},
  // e.g. "X% of the energy causes ~Y% of gross import cost — the on-peak problem in one picture".
  options:{indexAxis:'y',plugins:{title:{display:true,text:'{{CHART_TITLE_PERIODS}}',color:PAL.ink}}}});
-// #carbon lives inside the §13 <details>, itself inside the closed-by-default #advanced tier:
-// lazy-init it once BOTH are open so it sizes correctly (flag guards double init).
-let carbonChart=null;
-function initCarbon(){
- if(carbonChart)return;
- carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
-  {label:'Grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
-  // e.g. "Grid carbon by hour (real grid-operator data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest".
-  options:{plugins:{title:{display:true,text:'{{CHART_TITLE_CARBON}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
-}
-const sec13=document.getElementById('sec13');
-const maybeCarbon=()=>{if(adv.open&&sec13.open)initCarbon();};
-sec13.addEventListener('toggle',maybeCarbon);
-adv.addEventListener('toggle',maybeCarbon);
-maybeCarbon();
+// LAZY CHART REGISTRY — keep this generic; do not special-case a single canvas.
+// A Chart.js canvas built while any ancestor <details> is closed measures 0x0 and never
+// recovers, so every canvas inside a collapsible section (the advanced tier, or any
+// <details class="sec"> within it) must be built on first reveal instead of on load.
+// The four basic-tier charts above sit outside any <details> and init on load.
+//
+// TO ADD A CHART TO A COLLAPSED SECTION: call lazyChart('yourCanvasId', el => new Chart(el, {...})).
+// Nothing else needs wiring — the registry walks that canvas's own <details> ancestors,
+// and it is re-run on every details toggle, on deep-link opens, and before printing.
+const lazyCharts=[];
+const lazyChart=(id,build)=>lazyCharts.push({id,build,built:false});
+const revealed=el=>{
+ for(let d=el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))
+  if(!d.open)return false;
+ return true;
+};
+const runLazyCharts=()=>{for(const c of lazyCharts){
+ if(c.built)continue;
+ const el=document.getElementById(c.id);
+ if(el&&revealed(el)){c.build(el);c.built=true;}
+}};
+lazyChart('carbon',el=>new Chart(el,{type:'line',data:{labels:hrs,datasets:[
+ {label:'Grid CO₂ intensity (annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3}]},
+ // e.g. "Grid carbon by hour (real grid-operator data) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest".
+ options:{plugins:{title:{display:true,text:'{{CHART_TITLE_CARBON}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]}));
+// onpeakBand is deliberately NOT applied below: this chart's x-axis is calendar dates, not
+// hours of the day, so a 4-9pm band would shade arbitrary dates. The shading rule in
+// CLAUDE.md §10 applies to the hour-axis charts.
+lazyChart('spread',el=>new Chart(el,{type:'line',data:{labels:D.spLabels,datasets:[
+ {label:'Summer on-peak − super-off-peak ($/kWh)',data:D.spSummer,borderColor:PAL.on,spanGaps:true,tension:0,pointRadius:2,
+  segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.summer?[5,3]:undefined}},
+ {label:'Winter on-peak − super-off-peak ($/kWh)',data:D.spWinter,borderColor:PAL.sub,spanGaps:true,tension:0,pointRadius:2,
+  segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.winter?[5,3]:undefined}}]},
+ // e.g. "Delivery spread by rate segment — dashed spans precede each structural break".
+ options:{plugins:{title:{display:true,text:'{{CHART_TITLE_SPREAD}}',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
+document.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',runLazyCharts));
+runLazyCharts();
 
 // --- Navigation enhancements (progressive: page works fully without this script) ---
 // Anchor offset: measure the sticky nav's real height and feed it to h2{scroll-margin-top}.
@@ -721,7 +775,7 @@ function openHashTarget(){
  if(adv.contains(el)&&!adv.open){adv.open=true;opened=true;}
  const det=el.closest('details');
  if(det&&det!==adv&&!det.open){det.open=true;opened=true;}
- if(opened){maybeCarbon();el.scrollIntoView();}
+ if(opened){runLazyCharts();el.scrollIntoView();}
 }
 addEventListener('hashchange',openHashTarget);
 addEventListener('load',openHashTarget);
@@ -761,7 +815,7 @@ adv.addEventListener('toggle',()=>{syncTier();if(adv.open)markScrollables();});
 syncTier();
 // Printing must emit the full report: force-open the tier and every inner details
 // (CSS alone cannot open a <details>); matchMedia('print') is the beforeprint fallback.
-const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);maybeCarbon()};
+const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);runLazyCharts()};
 addEventListener('beforeprint',openForPrint);
 matchMedia('print').addEventListener('change',e=>{if(e.matches)openForPrint()});
 // Collapse/expand the audit <details> sections from the nav.
