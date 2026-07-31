@@ -37,8 +37,8 @@ Walk me through **DATA-SOURCES-CHEATSHEET.md section by section (A–H)**: house
 interval data, rate PDFs, detailed bills, solar production + install invoice + cleaning
 history, gas, weather/grid data, battery research. **Drive the interview from the
 cheatsheet's per-field yaml blocks** — ask each field's `question` by its `id`, honoring
-`required_if` (set has_solar / has_ev / has_gas / has_battery_interest first, from section
-A) and `privacy`. For each section confirm: what I already
+`required_if` (set has_solar / has_ev / has_gas / has_battery_interest /
+has_new_load_interest first, from section A) and `privacy`. For each section confirm: what I already
 have, what you will pull from my logged-in portals (I'll have Chrome open and logged in —
 you drive via the browser extension, but **NEVER type my password**; single clicks only, and
 confirm which window holds the session), and what to skip (no solar → E; no gas → F).

@@ -246,6 +246,7 @@ schema and pipeline in depth.
 | `data/bill_decomposition.json` | Why the bill changed between two matched periods: billing-mode evidence, per season × TOU cell price/quantity bounds, the settlement component, and the provider-vs-vintage split |
 | `data/tou_audit.csv`, `data/tou_audit_summary.json` | The utility's billed TOU buckets reconciled against the raw 15-minute export, per statement and in summary |
 | `data/lifetime_payback.json` | Cumulative value of metered production against the install invoice, with the crossover dates and the blended rates it was derived from |
+| `data/service_headroom.json` | Electrical service headroom under NEC 220.87: the measured demand basis, the calculated existing load it implies, what is left against the main breaker and the busbar, and the 120%-rule check on the existing PV backfeed |
 
 </details>
 
@@ -275,12 +276,13 @@ schema and pipeline in depth.
 | `analysis/battery_plan_matrix.py` | Battery × plan matrix (§4): the price-aware PW3 dispatch billed under each top-3 plan's rate-table values → `data/battery_plan_matrix.json` |
 | `analysis/package_results.py` | Composes `data/package_results.json` from the behavior + dispatch artifacts (no new computation) |
 | `analysis/lifetime_payback.py` | Lifetime solar payback: cumulative production value vs install invoice, with crossover dates |
+| `analysis/service_headroom.py` | Electrical service headroom from measured demand: takes the peak interval demand out of the Green Button export, applies the NEC 220.87 existing-dwelling method (measured maximum demand × 125%), and checks the result and the existing PV backfeed against the panel facts in `private/household.yaml` → `data/service_headroom.json` |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/extended-research-notes.md` | AB 205 / DSGS-VPP / outage-exposure / fuel-constant research (sources + captured figures) backing the extended findings |
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |
 | `analysis/parse_bills.py` | Parses the detailed bill PDFs into the per-period and TOU artifacts, and regenerates the two legacy bill summaries as its own reproduction gate. Reads `household.has_gas` — the flag, not the presence of a directory, decides whether gas is expected |
-| `analysis/test_*.py` | **Ten test suites**, run by CI on every push. They are mostly *negative* tests: each one injects the defect it claims to catch and proves the code refuses. `test_scripts_runnable.py` additionally executes every generator and byte-diffs each committed artifact against a fresh run — the §9 gate, folded into the suite |
+| `analysis/test_*.py` | **Twelve test suites**, run by CI on every push. They are mostly *negative* tests: each one injects the defect it claims to catch and proves the code refuses. `test_scripts_runnable.py` additionally executes every generator and byte-diffs each committed artifact against a fresh run — the §9 gate, folded into the suite |
 | `analysis/check_coverage.sh` | Local coverage gate (≥90% statement coverage across the analysis package); needs the private archive, so it does not run in CI |
 | `analysis/household.py` | Loader for `private/household.yaml` — analysis scripts read per-house facts (invoice, dates, charger kW, vehicle specs…) through it and **fail closed** with a run-the-intake-interview message if the file or a required key is missing |
 
@@ -340,7 +342,7 @@ where the `private/verify` flow expects them.
    single source of truth all current models import. If the household changed (vehicle,
    charger, cleaning event, appliance), update `private/household.yaml` too.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
-   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. Run the ten
+   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. Run the twelve
    test suites as well — `test_scripts_runnable.py` performs the byte-diff across every owned
    artifact in one pass. For the strictest check, clone fresh, stage the private inputs with
    `stage-private-data.sh`, and run the same gates there: the pipeline reproduces

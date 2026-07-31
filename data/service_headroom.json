@@ -1,0 +1,1075 @@
+{
+ "added_load_code_values": {
+  "battery_charging_a": 59.9,
+  "battery_charging_basis": "11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A.",
+  "battery_charging_not_determined": "NOT DETERMINED -- the selected unit's AC CHARGE INPUT. No figure for it exists anywhere in this project and none is invented here. The maximum continuous AC input on the selected unit's own nameplate or datasheet would settle it, and could only lower the demand-side figure used above.",
+  "heat_pump_a": null,
+  "heat_pump_basis": "NOT DETERMINED -- no unit has been selected anywhere in this project, and a nameplate cannot be invented. The heat-pump term is solved for instead: each case reports the largest minimum circuit ampacity that fits, MCA being the figure marked on the equipment (NEC 440.4(B)) and the one its conductors are sized to (NEC 440.35).",
+  "heat_pump_what_would_settle_it": "The selected unit's own nameplate: its marked minimum circuit ampacity (NEC 440.4(B)), which is directly comparable with the solved-for figure each case publishes. Until a unit is chosen there is nothing to read, and the largest MCA that fits is the answer this data can give.",
+  "second_evse_a": 60.0,
+  "second_evse_basis": "NEC 625.42 continuous load: 48 A output x 1.25 on a 60 A 2-pole circuit"
+ },
+ "battery_inverter": {
+  "alternatives_not_evaluated_here": [
+   "supply-side (line-side) tap ahead of the main disconnect, NEC 705.11",
+   "the NEC 705.12(B)(3)(3) sum-of-breakers rule, if the branch total can be brought under the busbar rating",
+   "a listed power control system limiting combined source output, NEC 705.13",
+   "a main-breaker downgrade, which trades backfeed allowance against the demand headroom computed above"
+  ],
+  "alternatives_note": "Routes a licensed electrician would price and evaluate. None of them is computed here, and listing one is not a recommendation for or against it.",
+  "ampacity_leg": "fail",
+  "ampacity_leg_basis": "Three-valued, and which of the three turns on what the intake actually says about the existing backfeed. A rating read off the breaker, and an explicit null meaning the panel was surveyed and nothing backfeeds it, are both ANSWERS: the remaining allowance is complete and the leg resolves to pass or fail on it. With panel.pv_backfeed_a absent from the intake the existing backfeed is instead set to 0 A as though nothing backfed the panel, which makes the allowance the LARGEST it could be -- a shortfall against the largest possible allowance is a real shortfall, so `fail` still survives, but a fit does not and reads `not_determined` until the question is answered.",
+  "ampacity_leg_what_would_settle_it": null,
+  "backfeed_breaker_a": 60.0,
+  "busbar_120_percent": {
+   "busbar_rating_a": 200.0,
+   "busbar_x_120pct_a": 240.0,
+   "existing_pv_backfeed_a": 50.0,
+   "existing_pv_backfeed_basis": "read_off_the_breaker",
+   "existing_pv_backfeed_note": "read off the existing backfeed breaker",
+   "formula": "remaining = busbar * 1.20 - main_ocpd - existing_backfeed",
+   "main_ocpd_a": 175.0,
+   "position_condition": {
+    "main_supply_position": null,
+    "reading": "No readable end is recorded for the proposed battery backfeed breaker. NEC 705.12(B)(3)(2) binds every source connected to the busbar, and has to be satisfied by the installation rather than by this calculation.",
+    "requirement": "NEC 705.12(B)(3)(2) has a second, conjunctive condition: the backfeed breaker must be located at the opposite end of the busbar from the main supply. The 120% arithmetic is only the first half of the rule, and a positive remaining allowance is not by itself a compliant interconnection.",
+    "source": "proposed battery backfeed breaker",
+    "source_breaker_position": null,
+    "verdict": "not_determined",
+    "what_would_settle_it": "A SURVEYED position for the new breaker: which end of the busbar the main lands on, and whether two adjacent full-size spaces exist at the opposite end for a 2-pole source breaker to occupy. The existing PV breaker's end is a fact about the device already installed and says nothing about where a new one could physically go, so it is not carried over."
+   },
+   "remaining_backfeed_a": 15.0,
+   "remaining_backfeed_is_the_ampacity_leg_only": "A positive remainder satisfies the arithmetic half of the rule. The position condition below is the other half and both must hold.",
+   "remaining_backfeed_kva": 3.6,
+   "rule": "NEC 705.12(B)(3)(2) -- Where the sources are at the opposite end of the busbar from the primary supply, 'the sum of 125 percent of the power-source(s) output circuit current and the rating of the overcurrent device protecting the busbar shall not exceed 120 percent of the ampacity of the busbar'. The opposite-end position is part of the rule, not a commentary on it",
+   "rule_reading": "The 120% arithmetic and the breaker-position condition are one conjunctive rule, and both are evaluated below.",
+   "source_current_basis": {
+    "every_rating_is_at_or_above_the_code_figure": true,
+    "reading": "Every source's breaker rating is at or above the code's 125%-of-output figure, so counting ratings spends MORE of the 120% allowance than the rule requires and no verdict here rests on the substitution.",
+    "rule_as_written": "Where the sources are at the opposite end of the busbar from the primary supply, 'the sum of 125 percent of the power-source(s) output circuit current and the rating of the overcurrent device protecting the busbar shall not exceed 120 percent of the ampacity of the busbar'. The opposite-end position is part of the rule, not a commentary on it",
+    "sources": [
+     {
+      "code_figure_125pct_of_output_a": 49.2188,
+      "ocpd_rating_a": 50.0,
+      "output_basis": "solar.kw_ac, the array's inverter AC nameplate: 9.45 kW at 240 V",
+      "output_circuit_current_a": 39.375,
+      "rating_is_at_or_above_the_code_figure": true,
+      "rating_minus_code_figure_a": 0.7812,
+      "source": "existing PV backfeed breaker"
+     },
+     {
+      "code_figure_125pct_of_output_a": 59.8958,
+      "ocpd_rating_a": 60.0,
+      "output_basis": "the unit's continuous power rating, 11.5 kW at 240 V",
+      "output_circuit_current_a": 47.9167,
+      "rating_is_at_or_above_the_code_figure": true,
+      "rating_minus_code_figure_a": 0.1042,
+      "source": "proposed battery backfeed breaker"
+     }
+    ],
+    "the_rule_counts": "125 percent of the power-source(s) output circuit current",
+    "this_calculation_counts": "the rating of each source's overcurrent device"
+   },
+   "total_backfeed_allowed_a": 65.0
+  },
+  "continuous_output_a": 47.92,
+  "inverter_kw": 11.5,
+  "note": "The busbar rule fails on its own arithmetic, independently of the NEC 220.87 demand result, so it is what decides the battery here.",
+  "position_leg": "not_determined",
+  "position_leg_is_about": "the PROPOSED battery backfeed breaker's own position (panel.battery_breaker_position), not the existing PV breaker's. No position has been surveyed for a new breaker here, so this leg is not_determined on that ground alone -- see position_condition.what_would_settle_it.",
+  "position_leg_what_would_settle_it": "A SURVEYED position for the new breaker: which end of the busbar the main lands on, and whether two adjacent full-size spaces exist at the opposite end for a 2-pole source breaker to occupy. The existing PV breaker's end is a fact about the device already installed and says nothing about where a new one could physically go, so it is not carried over.",
+  "shortfall_a": 45.0,
+  "sum_rule": {
+   "branch_ocpd_sum_a": 460.0,
+   "busbar_rating_a": 200.0,
+   "counted_sum_a": 520.0,
+   "proposed_battery_breaker_a": 60.0,
+   "rule": "NEC 705.12(B)(3)(3) -- The sum of the ampere ratings of all overcurrent devices on the panelboard, excluding the device protecting the busbar, shall not exceed the ampacity of the busbar",
+   "verdict": "fail",
+   "verdict_basis": "The proposed battery breaker is counted: this rule is only being asked as a way to add it. The recorded schedule can only understate the true sum, so a sum already over the busbar rating fails outright, while a sum under it depends on the schedule having missed no device and is not asserted as a pass.",
+   "what_would_settle_it": null
+  },
+  "unit": "Tesla Powerwall 3",
+  "verdict": "FAILS as the panel stands",
+  "verdict_basis": "NEC 705.12(B)(3)(2) is conjunctive: the 120% arithmetic AND the opposite-end breaker position. A failure on either leg fails the panel, and the arithmetic alone is never a compliant verdict."
+ },
+ "cases": [
+  {
+   "ampacity_verdict": "pass",
+   "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+   "case": "heat_pump_only",
+   "fixed_added_load_a": 0.0,
+   "note": "No heat pump has been selected, so the term is solved for rather than assumed: this is the largest minimum circuit ampacity that fits. MCA is the figure marked on the equipment nameplate (NEC 440.4(B)) and the one its conductors are sized to (NEC 440.35); it already embeds the 125% on the largest motor. Conservative -- it adds the heat pump on top of a measured maximum that already contains the existing A/C.",
+   "remaining_headroom_a": {
+    "conservative_basis": {
+     "binding": 37.0313,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 37.0313,
+     "vs_service_rating": 42.0313
+    },
+    "conservative_basis_is": "the top of the gross-load envelope: the largest upper bound over every 15-minute interval in the window, each interval capped at what the inverters can physically deliver in fifteen minutes. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+    "measured_basis": {
+     "binding": 76.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 76.4583,
+     "vs_service_rating": 81.4583
+    },
+    "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
+   },
+   "remaining_is": "the largest heat-pump MCA that fits",
+   "spaces": {
+    "adjacent_free_pairs": null,
+    "full_size_spaces_required": 2,
+    "new_2pole_breakers_required": 1,
+    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
+   },
+   "what_would_settle_it": null
+  },
+  {
+   "ampacity_verdict": "not_determined",
+   "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+   "case": "second_evse_only",
+   "fixed_added_load_a": 60.0,
+   "note": "A second Tesla Wall Connector at 48 A continuous on its own 60 A 2-pole circuit. NEC 625.42 makes EVSE a continuous load, so the code value is 48 x 1.25 = 60 A. What remains is spare headroom, not a heat pump.",
+   "remaining_headroom_a": {
+    "conservative_basis": {
+     "binding": -22.9687,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": -22.9687,
+     "vs_service_rating": -17.9687
+    },
+    "conservative_basis_is": "the top of the gross-load envelope: the largest upper bound over every 15-minute interval in the window, each interval capped at what the inverters can physically deliver in fifteen minutes. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+    "measured_basis": {
+     "binding": 16.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 16.4583,
+     "vs_service_rating": 21.4583
+    },
+    "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
+   },
+   "remaining_is": "spare headroom on the measured basis; on the conservative basis the figure is a shortfall",
+   "spaces": {
+    "adjacent_free_pairs": null,
+    "full_size_spaces_required": 2,
+    "new_2pole_breakers_required": 1,
+    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
+   },
+   "what_would_settle_it": "An Enphase consumption-CT export pulled through the end of the meter window. The interval that sets the conservative basis (2026-07-25 01:15) sits in an hour the current export does not cover -- it stops at 2026-07-24 07:00, 64.75 h short of the meter's last interval -- so there is no production measurement of that hour AT ANY RESOLUTION, and 15-minute production data would not settle this case: the hour itself is missing. Covering the tail would put an hourly reading behind that interval and narrow the bound to it. Beyond that, the quarter-hours inside producing hours stay bounds until 15-minute production is metered, which it never was here."
+  },
+  {
+   "ampacity_verdict": "not_determined",
+   "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+   "case": "heat_pump_and_second_evse",
+   "fixed_added_load_a": 60.0,
+   "note": "The second EVSE at its code value, with the heat pump solved for against what is left.",
+   "remaining_headroom_a": {
+    "conservative_basis": {
+     "binding": -22.9687,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": -22.9687,
+     "vs_service_rating": -17.9687
+    },
+    "conservative_basis_is": "the top of the gross-load envelope: the largest upper bound over every 15-minute interval in the window, each interval capped at what the inverters can physically deliver in fifteen minutes. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+    "measured_basis": {
+     "binding": 16.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 16.4583,
+     "vs_service_rating": 21.4583
+    },
+    "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
+   },
+   "remaining_is": "the largest heat-pump MCA that fits ON THE MEASURED BASIS; on the conservative basis the case is already over and the figure there is a shortfall",
+   "spaces": {
+    "adjacent_free_pairs": null,
+    "full_size_spaces_required": 4,
+    "new_2pole_breakers_required": 2,
+    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
+   },
+   "what_would_settle_it": "An Enphase consumption-CT export pulled through the end of the meter window. The interval that sets the conservative basis (2026-07-25 01:15) sits in an hour the current export does not cover -- it stops at 2026-07-24 07:00, 64.75 h short of the meter's last interval -- so there is no production measurement of that hour AT ANY RESOLUTION, and 15-minute production data would not settle this case: the hour itself is missing. Covering the tail would put an hourly reading behind that interval and narrow the bound to it. Beyond that, the quarter-hours inside producing hours stay bounds until 15-minute production is metered, which it never was here."
+  },
+  {
+   "ampacity_verdict": "fail",
+   "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+   "case": "heat_pump_second_evse_and_battery",
+   "fixed_added_load_a": 119.8958,
+   "note": "The battery is counted on the DEMAND side at 59.90 A. 11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A. The 120% busbar rule fails independently of this arithmetic, so ampacity is not what decides the battery here.",
+   "remaining_headroom_a": {
+    "conservative_basis": {
+     "binding": -82.8645,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": -82.8645,
+     "vs_service_rating": -77.8645
+    },
+    "conservative_basis_is": "the top of the gross-load envelope: the largest upper bound over every 15-minute interval in the window, each interval capped at what the inverters can physically deliver in fifteen minutes. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+    "measured_basis": {
+     "binding": -43.4375,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": -43.4375,
+     "vs_service_rating": -38.4375
+    },
+    "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
+   },
+   "remaining_is": "a SHORTFALL, not headroom: the loads already specified in this case exceed the calculated headroom by this much, so no heat pump fits on either basis",
+   "spaces": {
+    "adjacent_free_pairs": null,
+    "full_size_spaces_required": 6,
+    "new_2pole_breakers_required": 3,
+    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
+   },
+   "what_would_settle_it": null
+  }
+ ],
+ "caveat": "Scoping estimate only. The permit calculation belongs to a licensed electrician. NEC 220.87 permits an existing dwelling's calculated load to be taken from measured maximum demand where its three conditions are met; whether the data satisfies the authority having jurisdiction is the AHJ's call, since Approved means acceptable to the AHJ (NEC 100), and the AHJ may instead require a full NEC 220.82/NEC 220.83 nameplate calculation. Condition (3) -- feeder overcurrent protection to NEC 240.4 and service overload protection to NEC 230.90 -- is not verified here. Conductor sizes, the actual nameplate ratings of the existing equipment, and the panel's listing restrictions were not verified either, and no equipment should be ordered against these figures.",
+ "gross_reconstruction": {
+  "bounded_intervals": 20756,
+  "conservation": {
+   "against": {
+    "enphase_meter": {
+     "correlation": 0.99996,
+     "mae_kwh_per_day": 0.1596,
+     "ratio_derived_over_reference": 1.00323,
+     "reference_total_kwh": 16406.3,
+     "residual_pct": 0.323
+    },
+    "pvoutput": {
+     "correlation": 0.99986,
+     "mae_kwh_per_day": 0.7891,
+     "ratio_derived_over_reference": 0.9831,
+     "reference_total_kwh": 16742.1,
+     "residual_pct": -1.69
+    }
+   },
+   "claims_tested": {
+    "claims_are": "tested statements that shape the sentence below. They do not halt the run: a derived total just outside a tight reference spread, with every residual gate holding, calls for a different sentence rather than a refusal to publish.",
+    "derived_total_sits_inside_the_reference_spread": true,
+    "each_reference_is_closer_to_the_reconstruction_than_to_the_other": true,
+    "reference_spread_kwh": [
+     16406.3,
+     16742.1
+    ]
+   },
+   "days_compared": 363,
+   "derived_total_kwh": 16459.2,
+   "dst_days_excluded": [
+    "2025-11-02",
+    "2026-03-08"
+   ],
+   "first_day": "2025-07-24",
+   "gates": [
+    {
+     "catches": "a reference export that only partly overlaps the meter window -- a truncated pull or the wrong year -- which shrinks the comparison to a handful of days while every ratio still looks respectable",
+     "comparison": ">=",
+     "gate": "minimum_overlapping_days",
+     "observed": 363,
+     "passed": true,
+     "requirement": "the derived series and each reference must share at least 90 days",
+     "threshold": 90
+    },
+    {
+     "catches": "a rescaled series -- DC read for AC, a unit error, a different system -- and a reference from the wrong year",
+     "comparison": "<=",
+     "gate": "abs_residual_pct_vs_pvoutput",
+     "observed": 1.69,
+     "passed": true,
+     "requirement": "the derived total must be within 5.0% of pvoutput",
+     "threshold": 5.0
+    },
+    {
+     "catches": "a time-shifted series, which leaves the annual total and the ratio almost unchanged while the day-by-day error jumps",
+     "comparison": "<=",
+     "gate": "mae_kwh_per_day_vs_pvoutput",
+     "observed": 0.7891,
+     "passed": true,
+     "requirement": "the mean absolute daily error against pvoutput must not exceed 5.0 kWh/day",
+     "threshold": 5.0
+    },
+    {
+     "catches": "a stale or misaligned series, which loses the weather-driven day shape long before it loses its total",
+     "comparison": ">=",
+     "gate": "correlation_vs_pvoutput",
+     "observed": 0.99986,
+     "passed": true,
+     "requirement": "daily production must track pvoutput at r >= 0.95",
+     "threshold": 0.95
+    },
+    {
+     "catches": "a rescaled series -- DC read for AC, a unit error, a different system -- and a reference from the wrong year",
+     "comparison": "<=",
+     "gate": "abs_residual_pct_vs_enphase_meter",
+     "observed": 0.323,
+     "passed": true,
+     "requirement": "the derived total must be within 5.0% of enphase_meter",
+     "threshold": 5.0
+    },
+    {
+     "catches": "a time-shifted series, which leaves the annual total and the ratio almost unchanged while the day-by-day error jumps",
+     "comparison": "<=",
+     "gate": "mae_kwh_per_day_vs_enphase_meter",
+     "observed": 0.1596,
+     "passed": true,
+     "requirement": "the mean absolute daily error against enphase_meter must not exceed 5.0 kWh/day",
+     "threshold": 5.0
+    },
+    {
+     "catches": "a stale or misaligned series, which loses the weather-driven day shape long before it loses its total",
+     "comparison": ">=",
+     "gate": "correlation_vs_enphase_meter",
+     "observed": 0.99996,
+     "passed": true,
+     "requirement": "daily production must track enphase_meter at r >= 0.95",
+     "threshold": 0.95
+    }
+   ],
+   "gates_are": "halting checks. A breach raises SystemExit and the artifact is written atomically, so a failed conservation check publishes nothing.",
+   "gates_passed": 7,
+   "gates_total": 7,
+   "last_day": "2026-07-23",
+   "reading": "All 7 conservation gates passed on 363 overlapping days (2025-07-24 to 2026-07-23). The derived series differs from enphase_meter by 0.323% and from pvoutput by 1.69%, against a 5.0% threshold, and tracks both at r >= 0.99986. The derived total sits inside the spread between the two reference instruments, which disagree with each other by 2.05%, more than either disagrees with the reconstruction. On this window the reconstruction is not the weakest link in the chain.",
+   "references_disagree_pct": 2.05
+  },
+  "honesty": "Gross load is EXACT only where the containing hour produced no PV and the interval exported none. Everywhere else it is a bound, and the upper end is loose for one of two reasons: inside a producing hour it credits that whole hour's measured production to a single quarter-hour, capped at what the inverters can physically deliver in fifteen minutes; and on an hour the Enphase file does not cover it carries that physical cap with nothing to narrow it. The second is the looser of the two -- see pv_ceiling_basis_split for how many such intervals there are, how far the production record stops short of the meter window, and why no empirical figure is allowed to narrow them. Which of the two sets the published maximum is not assumed: it is read off the binding interval and reported in max_upper_bound_binding_interval. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+  "identity": "gross = import - export + pv",
+  "intervals": 37920,
+  "intervals_whose_upper_bound_exceeds_the_peak": 368,
+  "intervals_whose_upper_bound_exceeds_the_peak_pct": 0.97,
+  "max_lower_bound_kw": 17.96,
+  "max_upper_bound_binding_interval": {
+   "hour_has_a_production_measurement": false,
+   "pv_ceiling_basis": "nameplate",
+   "reading": "The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+   "timestamp_local": "2026-07-25 01:15",
+   "upper_bound_kw": 25.53,
+   "why_the_hour_is_uncovered": "after_the_last_hour_the_enphase_files_measured"
+  },
+  "max_upper_bound_is_set_by_an_hour_with_no_production_measurement": true,
+  "max_upper_bound_kw": 25.53,
+  "of_those_with_nonzero_export": 8,
+  "point_determined_fraction_pct": 45.264,
+  "point_determined_intervals": 17164,
+  "pv_ac_ceiling": {
+   "basis": "inverter AC nameplate from intake (solar.kw_ac): 30 x Enphase IQ7X (IQ7X-96-2-US), 9.45 kW AC. The array cannot deliver more than its inverters are rated for, so one quarter-hour carries at most 2.3625 kWh of production. This is a physical bound, not an observation.",
+   "ceiling_kw": 9.45,
+   "corroboration": [
+    {
+     "below_nameplate_by_kw": 0.572,
+     "exceeds_nameplate": false,
+     "instrument": "derived hourly PV",
+     "measures": "largest hourly production implied by the meter and the consumption CT, as a mean over the hour",
+     "observed_kw": 8.878
+    },
+    {
+     "below_nameplate_by_kw": 1.15,
+     "exceeds_nameplate": false,
+     "instrument": "15-minute meter export",
+     "measures": "largest export the revenue meter recorded in one quarter-hour, a lower bound on production in that interval",
+     "observed_kw": 8.3
+    },
+    {
+     "below_nameplate_by_kw": 1.518,
+     "exceeds_nameplate": false,
+     "instrument": "5-minute inverter output (pvoutput_5min_sample.csv)",
+     "measures": "largest 5-minute AC output the monitoring feed recorded",
+     "observed_kw": 7.932
+    }
+   ],
+   "corroboration_reading": "Every independent maximum sits below the nameplate, so nothing in the record contradicts it. These are corroboration, not the basis of the ceiling; any one of them exceeding the nameplate stops the run.",
+   "per_interval_ceiling_kwh": 2.3625,
+   "why_not_the_observed_maximum": "The largest DERIVED hourly production is not a per-interval ceiling: a quarter-hour can legitimately carry more than a quarter of the best full hour, through intra-hour ramps and cloud-edge lensing. Capping on it would produce an 'upper bound' able to sit below true gross demand, which is the direction a capacity answer must never fail in. The nameplate is looser and is the safe direction."
+  },
+  "pv_ceiling_basis_split": {
+   "enphase_coverage_first_hour": "2025-01-01 00:00",
+   "enphase_coverage_lag": {
+    "enphase_coverage_last_hour": "2026-07-24 07:00",
+    "gate": {
+     "catches": "a STALE Enphase export left in place beside a fresh meter export, which hands a growing tail of the window to the bare nameplate PV cap -- the loosest bound this analysis draws, and the one the conservative verdicts are computed on",
+     "comparison": "<=",
+     "gate": "enphase_coverage_lag_hours",
+     "observed": 64.75,
+     "passed": true,
+     "requirement": "the meter window may run at most 168 h past the last hour the Enphase consumption-CT export measured",
+     "threshold": 168.0
+    },
+    "lag_hours": 64.75,
+    "lag_intervals": 256,
+    "meter_window_last_interval": "2026-07-26 23:45",
+    "what_the_lag_costs": "256 interval(s) with no production measurement behind them. Each is bounded by the inverters' AC nameplate alone, which is the loosest bound in the envelope.",
+    "what_would_close_it": "An Enphase consumption-CT export pulled through the end of the meter window, so the tail has hourly production behind it like the rest of the record."
+   },
+   "enphase_coverage_last_hour": "2026-07-24 07:00",
+   "measured_hour_basis": "the containing hour HAS an Enphase reading, so the derived production for that hour is a measurement of it. The upper bound credits the whole hour to this one quarter-hour and is narrowed to the nameplate interval cap where the hour's own output could not physically land inside fifteen minutes -- narrowing by a measurement OF THAT HOUR, never by an observation of some other day.",
+   "measured_hour_intervals": 37472,
+   "measured_hour_pct": 98.819,
+   "nameplate_basis": "the containing hour has NO Enphase reading, so the only ceiling that holds is the inverters' AC nameplate. No empirical figure narrows it. The bound is loose on these intervals -- a 01:15 in the uncovered tail is credited with a full quarter-hour of nameplate production, which certainly did not happen -- and loose in the direction an upper bound is allowed to be wrong in.",
+   "nameplate_intervals": 448,
+   "nameplate_intervals_by_reason": {
+    "after_the_last_hour_the_enphase_files_measured": 256,
+    "excluded_dst_day": 192
+   },
+   "nameplate_pct": 1.181,
+   "why_not_the_empirical_hour_of_day_maximum": "For an hour with no reading, the largest production previously OBSERVED at that hour of day is not a ceiling on it: an uncovered hour can legitimately produce more than any hour yet seen at that clock position, through a clearer sky, a cooler cell temperature or a season the window sampled thinly. Taking the smaller of that figure and the nameplate cap selects the empirical one whenever it is lower, and the result is not an upper bound. It errs optimistically, which is the one direction a capacity verdict must never fail in, so the nameplate cap is used alone."
+  },
+  "zero_export_fraction_pct": 67.318,
+  "zero_export_intervals": 25527
+ },
+ "maximum_demand": {
+  "basis": "15-minute gross load, lower bound, which is exact at the maximum: the peak interval exported nothing and its hour produced nothing",
+  "by_month": [
+   {
+    "month": "2025-06",
+    "peak_a": 64.3333,
+    "peak_kw": 15.44,
+    "point_determined": true,
+    "timestamp_local": "2025-06-29 01:30",
+    "upper_bound_kw": 15.44
+   },
+   {
+    "month": "2025-07",
+    "peak_a": 67.8333,
+    "peak_kw": 16.28,
+    "point_determined": false,
+    "timestamp_local": "2025-07-10 06:00",
+    "upper_bound_kw": 16.616
+   },
+   {
+    "month": "2025-08",
+    "peak_a": 74.8333,
+    "peak_kw": 17.96,
+    "point_determined": true,
+    "timestamp_local": "2025-08-22 05:45",
+    "upper_bound_kw": 17.96
+   },
+   {
+    "month": "2025-09",
+    "peak_a": 71.25,
+    "peak_kw": 17.1,
+    "point_determined": true,
+    "timestamp_local": "2025-09-04 19:00",
+    "upper_bound_kw": 17.1
+   },
+   {
+    "month": "2025-10",
+    "peak_a": 70.0,
+    "peak_kw": 16.8,
+    "point_determined": true,
+    "timestamp_local": "2025-10-08 06:45",
+    "upper_bound_kw": 16.8
+   },
+   {
+    "month": "2025-11",
+    "peak_a": 64.25,
+    "peak_kw": 15.42,
+    "point_determined": true,
+    "timestamp_local": "2025-11-12 19:00",
+    "upper_bound_kw": 15.42
+   },
+   {
+    "month": "2025-12",
+    "peak_a": 59.0833,
+    "peak_kw": 14.18,
+    "point_determined": true,
+    "timestamp_local": "2025-12-05 05:30",
+    "upper_bound_kw": 14.18
+   },
+   {
+    "month": "2026-01",
+    "peak_a": 63.9167,
+    "peak_kw": 15.34,
+    "point_determined": true,
+    "timestamp_local": "2026-01-25 17:15",
+    "upper_bound_kw": 15.34
+   },
+   {
+    "month": "2026-02",
+    "peak_a": 63.0,
+    "peak_kw": 15.12,
+    "point_determined": false,
+    "timestamp_local": "2026-02-16 13:15",
+    "upper_bound_kw": 17.26
+   },
+   {
+    "month": "2026-03",
+    "peak_a": 70.4167,
+    "peak_kw": 16.9,
+    "point_determined": true,
+    "timestamp_local": "2026-03-17 06:45",
+    "upper_bound_kw": 16.9
+   },
+   {
+    "month": "2026-04",
+    "peak_a": 73.75,
+    "peak_kw": 17.7,
+    "point_determined": false,
+    "timestamp_local": "2026-04-05 18:00",
+    "upper_bound_kw": 18.808
+   },
+   {
+    "month": "2026-05",
+    "peak_a": 68.3333,
+    "peak_kw": 16.4,
+    "point_determined": true,
+    "timestamp_local": "2026-05-11 20:00",
+    "upper_bound_kw": 16.4
+   },
+   {
+    "month": "2026-06",
+    "peak_a": 69.4167,
+    "peak_kw": 16.66,
+    "point_determined": true,
+    "timestamp_local": "2026-06-03 06:45",
+    "upper_bound_kw": 16.66
+   },
+   {
+    "month": "2026-07",
+    "peak_a": 70.8333,
+    "peak_kw": 17.0,
+    "point_determined": false,
+    "timestamp_local": "2026-07-08 19:00",
+    "upper_bound_kw": 17.204
+   }
+  ],
+  "dst_guard": {
+   "corrected_max_at": "2025-09-02 19:00",
+   "corrected_max_kw": 16.81,
+   "irregular_hours": [
+    {
+     "corrected_kw": 10.687,
+     "elapsed_hours": 2.0,
+     "hour": "2025-11-02 01:00",
+     "intervals": 8,
+     "naive_kw": 21.375
+    }
+   ],
+   "naive_max_at": "2025-11-02 01:00",
+   "naive_max_is_a_dst_artifact": true,
+   "naive_max_kw": 21.375,
+   "rule": "hourly mean kW = kWh / (intervals * 0.25 h); the interval count is never assumed to be four",
+   "series": "metered import (net), hourly mean"
+  },
+  "independent_corroboration": {
+   "at": "2025-07-03 16:00",
+   "checks": [
+    {
+     "catches": "a shifted, rescaled or wrong-year consumption-CT export -- this one is physics, not a convention",
+     "comparison": "<=",
+     "gate": "enphase_hourly_max_within_the_envelope",
+     "observed": 17.819,
+     "passed": true,
+     "requirement": "the hourly gross maximum cannot exceed the top of the 15-minute gross-load envelope",
+     "threshold": 25.53
+    },
+    {
+     "catches": "a headline maximum demand contradicted from above by an independent instrument, which would make every headroom figure and every case verdict optimistic",
+     "comparison": "<=",
+     "gate": "enphase_hourly_max_within_the_headline_peak",
+     "observed": 17.819,
+     "passed": true,
+     "requirement": "the hourly gross maximum must not exceed the point-determined 15-minute maximum this artifact publishes as maximum demand",
+     "threshold": 17.96
+    }
+   ],
+   "instrument": "Enphase consumption CT, hourly whole-home gross",
+   "margin_below_the_envelope_top_kw": 7.711,
+   "margin_below_the_headline_peak_kw": 0.141,
+   "max_hourly_mean_kw": 17.819,
+   "reading": "An hourly mean can only understate a 15-minute peak. This one sits 0.141 kW below the point-determined 15-minute maximum and 7.711 kW below the top of the envelope, which is the direction consistency requires. Both comparisons are enforced: a consumption CT reading above either one stops the run rather than being published beside a sentence saying the instruments agree."
+  },
+  "peak_a": 74.8333,
+  "peak_coincident": {
+   "derived_pv_that_hour_kwh": 0.0,
+   "export_kwh": 0.0,
+   "hour_of_day": 5,
+   "month": "2025-08",
+   "point_determined": true,
+   "tariff_season": "summer",
+   "tou_period": "sop",
+   "upper_bound_kw": 17.96,
+   "weekday": "Friday"
+  },
+  "peak_kw": 17.96,
+  "peak_timestamp_local": "2025-08-22 05:45",
+  "what_was_running": {
+   "reading": "Which loads were running at the annual maximum cannot be determined from this data. The revenue meter and the consumption CT both read the WHOLE HOUSE; neither separates one circuit from another, and no quantity in this artifact identifies an appliance. Nothing here names one.",
+   "verdict": "not_determined",
+   "what_the_series_does_show": {
+    "existing_evse_rated_kw": 11.5,
+    "intervals_around_the_peak": [
+     {
+      "gross_kw_lower_bound": 2.06,
+      "point_determined": true,
+      "timestamp_local": "2025-08-22 05:15"
+     },
+     {
+      "gross_kw_lower_bound": 7.1,
+      "point_determined": true,
+      "timestamp_local": "2025-08-22 05:30"
+     },
+     {
+      "gross_kw_lower_bound": 17.96,
+      "point_determined": true,
+      "timestamp_local": "2025-08-22 05:45"
+     },
+     {
+      "gross_kw_lower_bound": 6.7,
+      "point_determined": false,
+      "timestamp_local": "2025-08-22 06:00"
+     },
+     {
+      "gross_kw_lower_bound": 5.84,
+      "point_determined": false,
+      "timestamp_local": "2025-08-22 06:15"
+     }
+    ],
+    "largest_neighbouring_interval_kw": 7.1,
+    "peak_kw": 17.96,
+    "peak_minus_existing_evse_rated_kw": 6.46,
+    "peak_minus_largest_neighbour_kw": 10.86,
+    "reading": "The maximum is a single-interval spike: the quarter-hours around it run 2.06 -> 7.1 -> 17.96 -> 6.7 -> 5.84 kW, so the peak stands 10.86 kW above its largest neighbour. It also stands 6.46 kW above the 11.5 kW rating of the home EV charger (charger.kw), so the charger drawing its full rated power does not account for the interval on its own -- something else was drawing at the same time. WHAT else is not determined."
+   },
+   "what_would_settle_it": "Circuit-level submetering on the panel's branch circuits, or a whole-house feed sampled fast enough to disaggregate loads by their switching signatures. Either one attributes the peak; 15-minute whole-house energy cannot."
+  }
+ },
+ "mitigations": [
+  {
+   "added_load_with_a": 0.0,
+   "added_load_without_a": 60.0,
+   "basis": "NEC 625.42 permits an EVSE load-management system to be sized to the SYSTEM'S MAXIMUM OUTPUT rather than the sum of the connectors it serves. A second connector brought into a sharing group with the existing one therefore adds no code load: the group's maximum output is what it was. This is a code citation, and it is the whole of what this mitigation claims.",
+   "both_figures_are": "the headroom left once the sharing group adds no code load: the second connector's demand term is 0 A, so what remains is the whole of the calculated headroom on each basis. The measured figure is what to plan against; the conservative one is what the verdict is taken from.",
+   "case_both_heat_pump_mca_a": {
+    "ampacity_verdict": "pass",
+    "conservative_basis": {
+     "binding": 37.0313,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 37.0313,
+     "vs_service_rating": 42.0313
+    },
+    "measured_basis": {
+     "binding": 76.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 76.4583,
+     "vs_service_rating": 81.4583
+    },
+    "what_would_settle_it": null
+   },
+   "case_second_evse_only_headroom_a": {
+    "ampacity_verdict": "pass",
+    "conservative_basis": {
+     "binding": 37.0313,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 37.0313,
+     "vs_service_rating": 42.0313
+    },
+    "measured_basis": {
+     "binding": 76.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 76.4583,
+     "vs_service_rating": 81.4583
+    },
+    "what_would_settle_it": null
+   },
+   "mitigation": "EVSE load sharing",
+   "physical_fit_if_it_needs_its_own_circuit": "A 2-pole branch circuit takes two ADJACENT full-size spaces. The panel has 1 free, short of two on the count alone, so it does not fit whatever their arrangement -- it would take consolidating existing circuits onto twin-density devices or adding a subpanel.",
+   "physical_fit_if_it_shares_the_existing_circuit": "No new breaker and no new space: the second connector joins the circuit already there, and the panel's 1 free full-size space(s) are not called on at all.",
+   "reduction_a": 60.0,
+   "shares_the_existing_branch_circuit": null,
+   "shares_the_existing_branch_circuit_not_determined": "NOT DETERMINED -- whether a second connector in a power-sharing group may land on the EXISTING branch circuit and its breaker, or whether each connector still requires its own branch circuit. That is a manufacturer installation fact; this project holds no source for it and none is invented here, so nothing is asserted either way. The manufacturer's installation instructions for power sharing, together with the AHJ's acceptance of the wiring method, would settle it. The amps above do not depend on the answer; the panel-space consequence does, and is given for both answers.",
+   "what_is_determined_here": "The amps. The added demand goes from 60.0 A to 0 A on NEC 625.42, and that figure does not depend on how the connectors are wired. Whether a new breaker is needed is a separate, unsettled question and is not folded into the saving."
+  },
+  {
+   "basis": "The connector's output is settable; the code value follows it directly at 125% (NEC 625.42), and the minimum circuit is the smallest standard OCPD (NEC 240.6(A)) carrying that output at 80%.",
+   "mitigation": "Charge-rate limit on the second EVSE",
+   "reading": "4 of 7 selectable settings fit on the conservative basis as well as the measured one -- up to 24 A. A row's headroom on the measured basis is not by itself a verdict: the settings above that band fit on the measured maximum and not on the conservative one, which is the same not_determined the second_evse_only case reports.",
+   "reduction_a_at_lowest_setting": 45.0,
+   "settings_that_pass_on_both_bases_a": [
+    12.0,
+    16.0,
+    20.0,
+    24.0
+   ],
+   "table": [
+    {
+     "ampacity_verdict": "pass",
+     "code_load_a": 15.0,
+     "evse_output_a": 12.0,
+     "headroom_left_conservative_basis": {
+      "binding": 22.0313,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 22.0313,
+      "vs_service_rating": 27.0313
+     },
+     "headroom_left_measured_basis": {
+      "binding": 61.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 61.4583,
+      "vs_service_rating": 66.4583
+     },
+     "headroom_left_vs_meter_socket_a": 61.4583,
+     "headroom_left_vs_service_a": 66.4583,
+     "min_circuit_a": 15.0,
+     "what_would_settle_it": null
+    },
+    {
+     "ampacity_verdict": "pass",
+     "code_load_a": 20.0,
+     "evse_output_a": 16.0,
+     "headroom_left_conservative_basis": {
+      "binding": 17.0313,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 17.0313,
+      "vs_service_rating": 22.0313
+     },
+     "headroom_left_measured_basis": {
+      "binding": 56.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 56.4583,
+      "vs_service_rating": 61.4583
+     },
+     "headroom_left_vs_meter_socket_a": 56.4583,
+     "headroom_left_vs_service_a": 61.4583,
+     "min_circuit_a": 20.0,
+     "what_would_settle_it": null
+    },
+    {
+     "ampacity_verdict": "pass",
+     "code_load_a": 25.0,
+     "evse_output_a": 20.0,
+     "headroom_left_conservative_basis": {
+      "binding": 12.0313,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 12.0313,
+      "vs_service_rating": 17.0313
+     },
+     "headroom_left_measured_basis": {
+      "binding": 51.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 51.4583,
+      "vs_service_rating": 56.4583
+     },
+     "headroom_left_vs_meter_socket_a": 51.4583,
+     "headroom_left_vs_service_a": 56.4583,
+     "min_circuit_a": 25.0,
+     "what_would_settle_it": null
+    },
+    {
+     "ampacity_verdict": "pass",
+     "code_load_a": 30.0,
+     "evse_output_a": 24.0,
+     "headroom_left_conservative_basis": {
+      "binding": 7.0313,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 7.0313,
+      "vs_service_rating": 12.0313
+     },
+     "headroom_left_measured_basis": {
+      "binding": 46.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 46.4583,
+      "vs_service_rating": 51.4583
+     },
+     "headroom_left_vs_meter_socket_a": 46.4583,
+     "headroom_left_vs_service_a": 51.4583,
+     "min_circuit_a": 30.0,
+     "what_would_settle_it": null
+    },
+    {
+     "ampacity_verdict": "not_determined",
+     "code_load_a": 40.0,
+     "evse_output_a": 32.0,
+     "headroom_left_conservative_basis": {
+      "binding": -2.9687,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": -2.9687,
+      "vs_service_rating": 2.0313
+     },
+     "headroom_left_measured_basis": {
+      "binding": 36.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 36.4583,
+      "vs_service_rating": 41.4583
+     },
+     "headroom_left_vs_meter_socket_a": 36.4583,
+     "headroom_left_vs_service_a": 41.4583,
+     "min_circuit_a": 40.0,
+     "what_would_settle_it": "An Enphase consumption-CT export pulled through the end of the meter window. The interval that sets the conservative basis (2026-07-25 01:15) sits in an hour the current export does not cover -- it stops at 2026-07-24 07:00, 64.75 h short of the meter's last interval -- so there is no production measurement of that hour AT ANY RESOLUTION, and 15-minute production data would not settle this case: the hour itself is missing. Covering the tail would put an hourly reading behind that interval and narrow the bound to it. Beyond that, the quarter-hours inside producing hours stay bounds until 15-minute production is metered, which it never was here."
+    },
+    {
+     "ampacity_verdict": "not_determined",
+     "code_load_a": 50.0,
+     "evse_output_a": 40.0,
+     "headroom_left_conservative_basis": {
+      "binding": -12.9687,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": -12.9687,
+      "vs_service_rating": -7.9687
+     },
+     "headroom_left_measured_basis": {
+      "binding": 26.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 26.4583,
+      "vs_service_rating": 31.4583
+     },
+     "headroom_left_vs_meter_socket_a": 26.4583,
+     "headroom_left_vs_service_a": 31.4583,
+     "min_circuit_a": 50.0,
+     "what_would_settle_it": "An Enphase consumption-CT export pulled through the end of the meter window. The interval that sets the conservative basis (2026-07-25 01:15) sits in an hour the current export does not cover -- it stops at 2026-07-24 07:00, 64.75 h short of the meter's last interval -- so there is no production measurement of that hour AT ANY RESOLUTION, and 15-minute production data would not settle this case: the hour itself is missing. Covering the tail would put an hourly reading behind that interval and narrow the bound to it. Beyond that, the quarter-hours inside producing hours stay bounds until 15-minute production is metered, which it never was here."
+    },
+    {
+     "ampacity_verdict": "not_determined",
+     "code_load_a": 60.0,
+     "evse_output_a": 48.0,
+     "headroom_left_conservative_basis": {
+      "binding": -22.9687,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": -22.9687,
+      "vs_service_rating": -17.9687
+     },
+     "headroom_left_measured_basis": {
+      "binding": 16.4583,
+      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+      "vs_meter_socket": 16.4583,
+      "vs_service_rating": 21.4583
+     },
+     "headroom_left_vs_meter_socket_a": 16.4583,
+     "headroom_left_vs_service_a": 21.4583,
+     "min_circuit_a": 60.0,
+     "what_would_settle_it": "An Enphase consumption-CT export pulled through the end of the meter window. The interval that sets the conservative basis (2026-07-25 01:15) sits in an hour the current export does not cover -- it stops at 2026-07-24 07:00, 64.75 h short of the meter's last interval -- so there is no production measurement of that hour AT ANY RESOLUTION, and 15-minute production data would not settle this case: the hour itself is missing. Covering the tail would put an hourly reading behind that interval and narrow the bound to it. Beyond that, the quarter-hours inside producing hours stay bounds until 15-minute production is metered, which it never was here."
+    }
+   ],
+   "table_verdict_vocabulary": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it."
+  },
+  {
+   "basis": "A listed PCS limits the combined output of the PV and the battery, so the interconnection is evaluated against the PCS setting instead of the sum of the source breakers.",
+   "counted_backfeed_with_a": 65.0,
+   "counted_backfeed_without_a": 110.0,
+   "largest_combined_output_within_the_120pct_allowance_kva": 15.6,
+   "mitigation": "Power control system on the sources (NEC 705.13)",
+   "reduction_a": 45.0,
+   "that_figure_is_not_a_compliant_design": "It is what the 120% arithmetic leaves, nothing more. The breaker-position condition, the panel's listing, and whether a PCS is listed for this equipment are separate questions, none of them settled here."
+  }
+ ],
+ "nec_220_87": {
+  "calculated_load_a": 93.5417,
+  "condition_1_days_required": 365,
+  "conditions": {
+   "condition_1": {
+    "days_available": 395,
+    "days_required": 365,
+    "margin_x": 1.08,
+    "reading": "395 days of continuous 15-minute revenue-meter data covers the 1-year period condition (1) requires, with 1.08x the required span.",
+    "rule": "NEC 220.87(1) -- The maximum demand data is available for a 1-year period",
+    "verdict": "pass"
+   },
+   "condition_1_exception_30_day_recording": {
+    "available_to_this_service": false,
+    "rule": "NEC 220.87(1) Exception -- Where 1-year maximum demand data is not available, the calculated load may instead rest on maximum demand continuously recorded over a minimum 30-day period with a recording ammeter or power meter, taken while the building is occupied and including the larger of the heating or cooling load. The exception closes: 'This exception shall not apply if the feeder or service has a renewable energy system (i.e., solar photovoltaic or wind electric) or employs any form of peak load shaving'",
+    "why": "This service has a renewable energy system on it -- 9.45 kW AC of solar photovoltaic, read from intake (solar.kw_ac) -- and the Exception says in terms that it does not apply to a feeder or service that has one. The 30-day recording route was therefore never open to this household, whatever the window length, so no margin against 30 days means anything here.",
+    "why_it_strengthens_rather_than_weakens": "The route that is closed is the WEAKER one. The household qualifies under condition (1) itself, on a full year of revenue-meter data, which is the evidence the Exception exists to substitute for."
+   },
+   "condition_2": {
+    "rule": "NEC 220.87(2) -- The maximum demand at 125 percent plus the new load does not exceed the ampacity of the feeder or rating of the service",
+    "where_it_is_evaluated": "This is what the steps below and every case verdict compute: the measured maximum demand at 125% plus the new load, against the service rating and the meter socket's continuous rating. It is a per-case question, so it is answered per case rather than once."
+   },
+   "condition_3": {
+    "reading": "Neither the feeder's overcurrent protection nor the service's overload protection was inspected. Nothing in this project records them, and neither is inferable from interval data or from a panel schedule, so this condition is UNVERIFIED here rather than met. The artifact computes condition (2) and reads condition (1) off the window; condition (3) is the one it cannot answer.",
+    "rule": "NEC 220.87(3) -- The feeder has overcurrent protection in accordance with 240.4, and the service has overload protection in accordance with 230.90",
+    "verdict": "not_determined",
+    "what_would_settle_it": "An on-site check by a licensed electrician: that the feeder is protected in accordance with NEC 240.4 and the service has overload protection in accordance with NEC 230.90. Both are readings off the installed equipment, not calculations."
+   },
+   "edition": "2020",
+   "rule": "NEC 220.87 -- Determining existing loads. The calculated load for an existing service or feeder is permitted to be taken from measured maximum demand where conditions (1), (2) and (3) are all met"
+  },
+  "headroom_a": {
+   "binding": 76.4583,
+   "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+   "vs_meter_socket": 76.4583,
+   "vs_service_rating": 81.4583
+  },
+  "measurement_days": 395,
+  "rule": "NEC 220.87 -- Determining existing loads. The calculated load for an existing service or feeder is permitted to be taken from measured maximum demand where conditions (1), (2) and (3) are all met",
+  "sensitivity_on_the_upper_bound": {
+   "binding": 37.0313,
+   "binding_interval": {
+    "hour_has_a_production_measurement": false,
+    "pv_ceiling_basis": "nameplate",
+    "reading": "The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+    "timestamp_local": "2026-07-25 01:15",
+    "upper_bound_kw": 25.53,
+    "why_the_hour_is_uncovered": "after_the_last_hour_the_enphase_files_measured"
+   },
+   "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+   "calculated_load_a": 132.9687,
+   "headroom_vs_meter_socket_a": 37.0313,
+   "headroom_vs_service_a": 42.0313,
+   "max_upper_bound_is_set_by_an_hour_with_no_production_measurement": true,
+   "max_upper_bound_kw": 25.53,
+   "what_would_settle_it": "An Enphase consumption-CT export pulled through the end of the meter window. The interval that sets the conservative basis (2026-07-25 01:15) sits in an hour the current export does not cover -- it stops at 2026-07-24 07:00, 64.75 h short of the meter's last interval -- so there is no production measurement of that hour AT ANY RESOLUTION, and 15-minute production data would not settle this case: the hour itself is missing. Covering the tail would put an hourly reading behind that interval and narrow the bound to it. Beyond that, the quarter-hours inside producing hours stay bounds until 15-minute production is metered, which it never was here.",
+   "why": "If the true 15-minute maximum sat at the top of the gross-load envelope rather than at the exact peak, the answer would move by this much. It is a bound, not an estimate: every interval's PV credit is capped at the inverters' AC nameplate, so no quarter-hour is credited with more production than the array can physically deliver. The headline maximum stays the measured one, but no case verdict is asserted from it alone -- this is the conservative basis every verdict is also computed on. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight."
+  },
+  "steps": [
+   {
+    "formula": "A = kW * 1000 / V",
+    "inputs": {
+     "V": 240.0,
+     "kW": 17.96
+    },
+    "label": "measured maximum demand converted to service amps",
+    "result_a": 74.8333,
+    "step": 1
+   },
+   {
+    "formula": "A_calc = A_measured * 1.25",
+    "inputs": {
+     "A_measured": 74.8333,
+     "condition_1_days_required": 365,
+     "factor": 1.25,
+     "measurement_days": 395
+    },
+    "label": "NEC 220.87(2) calculated load: maximum demand x 125%",
+    "result_a": 93.5417,
+    "step": 2
+   },
+   {
+    "formula": "headroom = service_rating - A_calc",
+    "inputs": {
+     "A_calc": 93.5417,
+     "service_rating_a": 175.0
+    },
+    "label": "headroom against the main breaker rating",
+    "result_a": 81.4583,
+    "step": 3
+   },
+   {
+    "formula": "headroom = meter_socket_continuous - A_calc",
+    "inputs": {
+     "A_calc": 93.5417,
+     "meter_socket_continuous_a": 170.0
+    },
+    "label": "headroom against the meter socket's continuous rating, the tighter of the two constraints",
+    "result_a": 76.4583,
+    "step": 4
+   }
+  ],
+  "window_note": "395 days of continuous 15-minute data, 1.08x the 1-year period condition (1) requires. The 30-day recording route is the Exception to (1), not the condition, and it is closed to a service with a photovoltaic system -- so a year is the only span that qualifies this household, and it has one. See conditions."
+ },
+ "noncoincident_loads": {
+  "credit_bounds_a": {
+   "high": 50.0,
+   "low": 0.0
+  },
+  "evidence_on_where_the_credit_sits": {
+   "annual_peak_falls_in_the_cooling_hours": false,
+   "annual_peak_hour": 5,
+   "annual_peak_month": "2025-08",
+   "cooling_hours": "11:00-20:59",
+   "max_summer_month_peak_kw": 17.96,
+   "max_winter_month_peak_kw": 17.7,
+   "reading": "The annual maximum falls at 05:00 in 2025-08, outside the 11:00-20:59 hours a condenser works hardest, and the largest non-cooling-season month peaks 0.26 kW below the largest cooling-season month. Neither fact points at cooling setting the measured maximum, so the A/C credit at the peak reads as near the low end of the bounds above and the conservative figure is the one to use.",
+   "summer_minus_winter_peak_kw": 0.26
+  },
+  "existing_ac_ocpd_a": 40.0,
+  "existing_ac_ocpd_basis": "read_off_the_schedule",
+  "existing_ac_ocpd_reading": "One schedule entry matches an air-conditioning token, and its branch overcurrent device is rated 40 A. The rating is the only thing taken from that row; the device marking and the door-legend label are private-tier intake and stay there.",
+  "existing_ac_ocpd_what_would_settle_it": null,
+  "not_determined": "The A/C's actual draw at the moment of the annual peak cannot be separated from whole-house data. Sub-metering the condenser, or its nameplate RLA/MCA, would settle it.",
+  "rule": "NEC 220.60 -- Noncoincident loads. Where it is unlikely that two or more noncoincident loads will be in use simultaneously, it is permissible to use only the largest load(s) that will be used at one time in calculating the total load of a feeder or service. If a motor or air-conditioning load is part of the noncoincident load and is not the largest of the noncoincident loads, 125 percent of either the motor load or the air-conditioning load, whichever is larger, shall be used in the calculation",
+  "schedule_entries_matching_an_air_conditioning_token": 1,
+  "the_second_sentence_matters_here": "NEC 220.60 does not stop at 'count only the largest'. Where a motor or air-conditioning load is one of the noncoincident loads and is NOT the largest of them, the calculation still carries 125% of the larger of the motor or air-conditioning load. A heat pump swapped in for this A/C is exactly that pairing, so the second sentence is part of the rule that applies and is stated with the first.",
+  "why_it_matters": "A heat pump that REPLACES the existing A/C does not add its whole MCA: whatever the A/C was drawing is already inside the measured maximum. The conservative cases above ignore that credit. The replacement configuration itself is not modelled here -- no case in this artifact removes a load."
+ },
+ "panel": {
+  "battery_breaker_position": null,
+  "battery_breaker_position_note": "the PROPOSED battery/source breaker's end of the busbar, a separate intake field from the existing PV breaker's. Null means no position has been surveyed for a new breaker, which is what makes the battery's position leg not_determined; the existing PV breaker's end is never substituted for it",
+  "busbar_rating_a": 200.0,
+  "existing_evse_kw": 11.5,
+  "existing_evse_kw_basis": "charger.kw, the home EVSE's rated power from the intake",
+  "existing_pv_backfeed_a": 50.0,
+  "existing_pv_backfeed_basis": "read_off_the_breaker",
+  "existing_pv_backfeed_note": "read off the existing backfeed breaker",
+  "existing_pv_position_condition": {
+   "main_supply_position": null,
+   "reading": "The existing PV backfeed breaker's end is recorded but the main supply's end is not, so 'opposite end' cannot be evaluated. Reading which end of the stack the main lands on would settle it.",
+   "requirement": "NEC 705.12(B)(3)(2) has a second, conjunctive condition: the backfeed breaker must be located at the opposite end of the busbar from the main supply. The 120% arithmetic is only the first half of the rule, and a positive remaining allowance is not by itself a compliant interconnection.",
+   "source": "existing PV backfeed breaker",
+   "source_breaker_position": "bottom",
+   "verdict": "not_determined",
+   "what_would_settle_it": "Reading off the panel whichever of the two ends is not already recorded: which end of the breaker stack the main supply lands on, and which end the existing PV breaker lands on."
+  },
+  "existing_pv_position_condition_note": "NEC 705.12(B)(3)(2) applied to the breaker ALREADY on the bus. It is a fact about the existing interconnection and is not the battery's position leg, which is evaluated on the proposed breaker's own position under battery_inverter",
+  "main_breaker_position": null,
+  "meter_socket_basis": "read_off_the_socket",
+  "meter_socket_constraint": "applies -- headroom is reported against it alongside the service rating",
+  "meter_socket_continuous_a": 170.0,
+  "meter_socket_what_would_settle_it": null,
+  "occupancy": {
+   "branch_ocpd_sum_a": 460.0,
+   "devices": 12,
+   "largest_branch_ocpd_a": 60.0,
+   "note": "A 240 V circuit needs two adjacent full-size spaces; a tandem cannot host one. With 1 space(s) free, there is nowhere to put one whatever the ampacity math says: it takes consolidating existing circuits onto twin-density devices or adding a subpanel.",
+   "pole_positions_free": 12,
+   "pole_positions_total": 40,
+   "pole_positions_used": 28,
+   "spaces_free": 1,
+   "spaces_total": 20,
+   "spaces_used": 19,
+   "twin_density_devices": 7
+  },
+  "pv_breaker_position": "bottom",
+  "service_rating_a": 175.0
+ },
+ "provenance": {
+  "dst_days": [
+   "2025-11-02",
+   "2026-03-08"
+  ],
+  "enphase_consumption_ct": [
+   {
+    "file": "enphase_sam8760_2025.csv",
+    "last_measured_hour": "2025-12-31 23:00:00",
+    "rows": 8760,
+    "rows_used": 8760,
+    "year": 2025,
+    "zero_padded_rows": 0
+   },
+   {
+    "file": "enphase_sam8760_2026.csv",
+    "last_measured_hour": "2026-07-24 07:00:00",
+    "rows": 8760,
+    "rows_used": 4904,
+    "year": 2026,
+    "zero_padded_rows": 3856
+   }
+  ],
+  "interval_minutes": 15,
+  "interval_rows": 37920,
+  "intervals_per_day": {
+   "100": 1,
+   "92": 1,
+   "96": 393
+  },
+  "inverter_power_reference": "pvoutput_5min_sample.csv",
+  "meter_export": "Electric_15_Minute_6-27-2025_7-26-2026_20260727.csv",
+  "production_reference": "threeway_production_validation.csv",
+  "service_voltage_v": 240.0,
+  "timezone_handling": "local wall clock as exported; no timezone conversion applied",
+  "voltage_basis": "120/240 V single-phase 3-wire residential service; service amps taken across the 240 V legs",
+  "window_days": 395,
+  "window_end": "2026-07-26",
+  "window_start": "2025-06-27"
+ },
+ "scenarios_not_applicable": []
+}
