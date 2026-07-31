@@ -119,7 +119,8 @@ What is computed
      would violate the evidence rule;
   5. the NEC 705.12(B)(3) busbar checks, which are what actually decide the
      battery case, and the panel's remaining physical spaces, which can veto a
-     result that passes every ampacity test;
+     result that passes every ampacity test but can never confirm one, because
+     adjacency is not in the schedule;
   6. load-management mitigations with their demand reduction computed.
 
 705.12(B)(3)(2) is TWO conjunctive conditions, not one. The 120% arithmetic is
@@ -159,6 +160,47 @@ and each has a defined meaning when absent:
 position condition `not_determined`.
 
 `solar.kw_ac` is REQUIRED and has no default, for the reason given above.
+
+Every intake value that survives to the arithmetic is then checked against its
+physical domain (validate_panel, panel_occupancy). Being present is not the same
+as being possible, and the busbar formula turns an impossible value into a
+plausible answer rather than an obviously wrong one: a NEGATIVE
+`panel.pv_backfeed_a` enlarges the remaining allowance and can turn a failing
+panel into a passing one. A main larger than the busbar it feeds, a non-positive
+rating or space count, fewer pole positions than spaces, or a schedule that
+fills more of the enclosure than the enclosure has -- each stops the run naming
+the field and the value.
+
+Nothing here publishes a verdict the data does not settle
+-------------------------------------------------------
+The same defect kept reappearing at different exits: a pass/fail asserted from
+one basis, from an assumed zero, or from a count that cannot see what the rule
+asks about. Every judgement in this artifact is therefore either three-valued
+with an explicit `not_determined` and what would settle it, or a direct
+restatement of something measured. The three-valued ones:
+
+  * `cases[].ampacity_verdict` -- computed on the measured AND the conservative
+    basis, `not_determined` where the answer sits inside the reconstruction's
+    disclosed width;
+  * `cases[].spaces.physical_fit` -- a 240 V circuit needs two ADJACENT
+    full-size spaces, and the schedule records devices, not slot positions. Too
+    few free spaces is a fail on the count alone; enough free spaces is
+    `not_determined`, never a fit;
+  * the battery's `ampacity_leg` -- the 120% allowance is computed with the
+    existing backfeed at 0 A wherever none was declared, which is the largest it
+    could be, so a shortfall is real and a fit is `not_determined`;
+  * the battery's `position_leg` -- fails closed on an unsurveyed breaker end;
+  * the battery's `sum_rule` -- the recorded schedule can only understate the
+    true sum of overcurrent devices, so a sum already over the busbar rating
+    fails and a sum under it is `not_determined`.
+
+The battery's demand-side figure is the one assumption left standing, and it is
+labelled rather than hidden: research/battery-research-notes.md records a single
+11.5 kW continuous power rating for the Powerwall 3 with no split between charge
+and discharge, so applying it to grid charging is a conservative stand-in for a
+charge-input specification this project does not have. A unit whose AC charge
+input is below its discharge output would draw less. What would settle it is the
+selected unit's own nameplate; no figure is invented here in either direction.
 
 Run from anywhere in the checkout:  ./.venv/bin/python analysis/service_headroom.py
 Writes data/service_headroom.json atomically.
@@ -210,7 +252,20 @@ EXISTING_EVSE_OUTPUT_A = 48.0
 # The repo's canonical battery is the Tesla Powerwall 3 at 11.5 kW -- the same
 # unit battery_dispatch_policies.py and battery_plan_matrix.py model. Kept here
 # as one number so the hardware cannot fork between scripts.
+#
+# research/battery-research-notes.md is the only place in this project that
+# records a power rating for the unit, and it records ONE: 11.5 kW of
+# "continuous power", with no split between what the unit can deliver and what
+# it draws while charging. Everything below that uses 11.5 kW as a CHARGING draw
+# is therefore applying that single figure to the demand side as an assumption,
+# and says so where it is published. See BATTERY_CHARGING_BASIS.
 BATTERY_INVERTER_KW = 11.5
+
+# The hours a residential condenser works hardest, used only to READ the annual
+# maximum -- whether it looks cooling-shaped or not. Nothing computed anywhere
+# depends on the boundary, and the window is published beside the reading so a
+# reader can disagree with it instead of guessing what was assumed.
+COOLING_HOURS = range(11, 21)
 
 # Standard branch-circuit ampere ratings (NEC 240.6(A)) used to size a circuit
 # from a continuous output; picked as the smallest standard rating that carries
@@ -413,6 +468,82 @@ def _optional_number(key):
     return None if v is None else float(v)
 
 
+PANEL_DOMAIN_NOTE = (
+    "The panel intake feeds safety arithmetic, and a value outside its physical "
+    "domain does not produce an obviously wrong answer -- it produces a "
+    "plausible one. NEC 705.12(B)(3)(2) computes the remaining backfeed "
+    "allowance as busbar * 1.20 - main - existing_backfeed, so a NEGATIVE "
+    "existing backfeed ENLARGES the allowance and can turn a failing panel into "
+    "a passing one. Each field is checked before anything is computed on it.")
+
+
+def _panel_domain_error(field, value, why):
+    """Stop the run naming the field, the value read, and why it is impossible."""
+    raise SystemExit(f"service_headroom.py: panel.{field} is {value!r}, which "
+                     f"{why}. {PANEL_DOMAIN_NOTE}")
+
+
+def validate_panel(p):
+    """Domain checks on the panel intake, fail-closed and field-specific.
+
+    Only what can flip a verdict or make the arithmetic meaningless is checked
+    here; this is a guard on safety arithmetic, not a schema validator:
+
+      * the two ampere ratings every figure divides the panel by must be
+        positive;
+      * a meter-socket rating, where one is recorded at all, must be positive --
+        `null` is how the intake says the constraint does not apply, and a zero
+        would be published as a binding constraint instead;
+      * an existing backfeed must not be negative, which is the one that can
+        turn a failing panel into a passing one;
+      * the two position counts must be positive, and a panel cannot offer
+        fewer pole positions than it has full-size spaces;
+      * a main larger than the busbar it feeds is not a panel this method can
+        score -- every 120% figure computed from that pair is meaningless.
+
+    The schedule's own geometry is checked where it is counted, in
+    panel_occupancy(): a schedule that fills more spaces or pole positions than
+    the enclosure has stops the run there.
+    """
+    for f in ("service_rating_a", "busbar_rating_a"):
+        if not p[f] > 0.0:
+            _panel_domain_error(
+                f, p[f], "is not a positive ampere rating -- a panel with no "
+                "main or no busbar rating is not one this method can score")
+    socket = p["meter_socket_continuous_a"]
+    if socket is not None and not socket > 0.0:
+        _panel_domain_error(
+            "meter_socket_continuous_a", socket,
+            "is recorded but is not a positive ampere rating; null is how the "
+            "intake says the socket carries no printed continuous rating, and "
+            "a zero or negative one would be published as the binding "
+            "ampacity constraint")
+    backfeed = p["pv_backfeed_a"]
+    if backfeed is not None and backfeed < 0.0:
+        _panel_domain_error(
+            "pv_backfeed_a", backfeed,
+            "is negative; an existing source cannot spend a negative share of "
+            "the 120% allowance, and a negative one increases the remaining "
+            "allowance rather than reducing it")
+    for f in ("spaces", "max_circuits"):
+        if not p[f] > 0:
+            _panel_domain_error(
+                f, p[f], "is not a positive count of physical positions")
+    if p["max_circuits"] < p["spaces"]:
+        _panel_domain_error(
+            "max_circuits", p["max_circuits"],
+            f"is fewer than panel.spaces ({p['spaces']}); max_circuits counts "
+            f"pole positions including twin-density devices, so it can equal "
+            f"the full-size space count but never fall below it")
+    if p["service_rating_a"] > p["busbar_rating_a"]:
+        _panel_domain_error(
+            "service_rating_a", p["service_rating_a"],
+            f"exceeds panel.busbar_rating_a ({p['busbar_rating_a']}); a main "
+            f"larger than the busbar it feeds is not a panel this method can "
+            f"score")
+    return p
+
+
 def load_panel():
     """The private-tier panel intake, through the fail-closed accessor.
 
@@ -431,8 +562,13 @@ def load_panel():
     `battery_breaker_position` is the PROPOSED source breaker's end of the bus,
     a separate question from where the existing PV breaker sits. It is read
     separately and never filled in from `pv_breaker_position`.
+
+    Everything numeric then goes through validate_panel(), which rejects values
+    outside their physical domain. A missing field already stops the run; an
+    impossible one has to as well, because the busbar arithmetic turns it into a
+    plausible answer rather than an obviously wrong one.
     """
-    return {
+    return validate_panel({
         "service_rating_a": float(HH.get("panel.service_rating_a")),
         "busbar_rating_a": float(HH.get("panel.busbar_rating_a")),
         "pv_backfeed_a": _optional_number("panel.pv_backfeed_a"),
@@ -447,7 +583,7 @@ def load_panel():
         "max_circuits": int(HH.get("panel.max_circuits")),
         "schedule": HH.get("panel.schedule"),
         "charger_kw": float(HH.get("charger.kw")),
-    }
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +630,11 @@ def panel_occupancy(schedule, spaces, max_circuits):
 
     A panel can pass every ampacity test and still have nowhere to land a
     breaker, so this is reported alongside the amps and never folded into them.
+
+    The schedule is checked against the enclosure it claims to describe: a
+    schedule filling more full-size spaces, or more pole positions, than the
+    intake says the panel has is a disagreement between two intake answers, and
+    every free-space figure below it would be negative or invented.
     """
     used_spaces = used_poles = 0
     ocpd = []
@@ -505,12 +646,25 @@ def panel_occupancy(schedule, spaces, max_circuits):
         ocpd += a
         if isinstance(e["amps"], list):
             twin += 1
+    if used_spaces > spaces:
+        raise SystemExit(
+            f"service_headroom.py: the panel schedule occupies {used_spaces} "
+            f"full-size spaces but panel.spaces records {spaces}. The schedule "
+            f"and the enclosure disagree, so neither the free-space count nor "
+            f"anything computed from it is a fact about this panel.")
+    if used_poles > max_circuits:
+        raise SystemExit(
+            f"service_headroom.py: the panel schedule occupies {used_poles} "
+            f"pole positions but panel.max_circuits records {max_circuits}. The "
+            f"schedule and the enclosure disagree, so neither the free-pole "
+            f"count nor anything computed from it is a fact about this panel.")
+    free = spaces - used_spaces
     return {
         "devices": len(schedule),
         "twin_density_devices": twin,
         "spaces_total": spaces,
         "spaces_used": used_spaces,
-        "spaces_free": spaces - used_spaces,
+        "spaces_free": free,
         "pole_positions_total": max_circuits,
         "pole_positions_used": used_poles,
         "pole_positions_free": max_circuits - used_poles,
@@ -518,10 +672,13 @@ def panel_occupancy(schedule, spaces, max_circuits):
         "largest_branch_ocpd_a": _r(max(ocpd), 1),
         "note": (
             "A 240 V circuit needs two adjacent full-size spaces; a tandem "
-            "cannot host one. With "
-            f"{spaces - used_spaces} space(s) free, adding a 2-pole breaker "
-            "requires consolidating existing circuits onto twin-density "
-            "devices or adding a subpanel, whatever the ampacity math says."),
+            f"cannot host one. With {free} space(s) free, "
+            + ("there is nowhere to put one whatever the ampacity math says: "
+               "it takes consolidating existing circuits onto twin-density "
+               "devices or adding a subpanel." if free < 2 else
+               "the count allows one, but the schedule records devices rather "
+               "than slot positions, so whether two of the free spaces are "
+               "ADJACENT is not established -- see each case's physical_fit.")),
     }
 
 
@@ -755,6 +912,29 @@ def fmt_ts(d, hf):
 def amps(kw):
     """kW to amps at the service voltage."""
     return kw * 1000.0 / SERVICE_VOLTAGE_V
+
+
+# The demand-side figure for a battery is what it DRAWS while charging from the
+# grid, and this project records one power rating for the unit rather than two.
+# Applying it to charging is an assumption; it is stated as one, and it is the
+# conservative direction for a capacity answer.
+BATTERY_CHARGING_BASIS = (
+    f"{BATTERY_INVERTER_KW} kW is this project's canonical continuous power "
+    f"rating for the unit -- research/battery-research-notes.md records it as "
+    f"the Powerwall 3's continuous power and does not separate charging from "
+    f"discharging. Applying it to GRID CHARGING is an assumption, not a reading "
+    f"off a charging specification. It is the conservative direction: a unit "
+    f"whose AC charge input is lower than its discharge output would draw less "
+    f"than this, so the demand-side load counted here is if anything "
+    f"overstated. On that basis the code value is "
+    f"{amps(BATTERY_INVERTER_KW):.2f} A x 1.25 continuous = "
+    f"{amps(BATTERY_INVERTER_KW) * NEC_625_42_FACTOR:.2f} A.")
+
+BATTERY_CHARGING_NOT_DETERMINED = (
+    "NOT DETERMINED -- the selected unit's AC CHARGE INPUT. No figure for it "
+    "exists anywhere in this project and none is invented here. The maximum "
+    "continuous AC input on the selected unit's own nameplate or datasheet "
+    "would settle it, and could only lower the demand-side figure used above.")
 
 
 def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days):
@@ -994,17 +1174,23 @@ WHAT_WOULD_SETTLE_IT = (
 def battery_verdict(ampacity_leg, position_leg):
     """The interconnection verdict from BOTH legs of NEC 705.12(B)(3)(2).
 
-    Conjunctive: either leg failing fails the panel, and a passing arithmetic
-    leg with no position evidence is `not determined`, never "fits". The rule
-    the artifact publishes and the rule the code applies have to be the same
-    rule.
+    Conjunctive: either leg failing fails the panel, and either leg lacking its
+    evidence makes the whole thing `not determined`, never "fits". Both legs are
+    three-valued, so the verdict names which one is undecided rather than
+    implying the other carried it.
     """
     if ampacity_leg == "fail" or position_leg == "fail":
         return "FAILS as the panel stands"
+    undecided = []
+    if ampacity_leg == "not_determined":
+        undecided.append("the 120% allowance was computed as though nothing "
+                         "already backfeeds the busbar")
     if position_leg == "not_determined":
-        return ("NOT DETERMINED -- the 120% allowance is sufficient, but the "
-                "breaker-position condition of NEC 705.12(B)(3)(2) has no "
-                "evidence behind it")
+        undecided.append("the breaker-position condition has no evidence "
+                         "behind it")
+    if undecided:
+        return ("NOT DETERMINED -- NEC 705.12(B)(3)(2) is conjunctive and "
+                + "; and ".join(undecided))
     return "fits within the 120% allowance"
 
 
@@ -1021,6 +1207,113 @@ def ampacity_verdict(measured_binding, conservative_binding):
     if measured_binding <= 0:
         return "fail"
     return "not_determined"
+
+
+PHYSICAL_FIT_BASIS = (
+    "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit "
+    "needs two ADJACENT full-size spaces, and the panel schedule records "
+    "devices and their pole counts, not the slot positions those devices "
+    "occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer "
+    "free spaces than the case needs is a fail whatever their arrangement -- "
+    "but it can never establish a fit, because adjacency is not in the data. "
+    "`pass` is reserved for a panel whose recorded slot positions show the "
+    "adjacent pair.")
+
+PHYSICAL_FIT_SETTLE = (
+    "Slot positions in the panel schedule: which stab positions each device "
+    "occupies, read off the panel and recorded per device, so the free spaces "
+    "can be tested for adjacency instead of counted. No schedule in this intake "
+    "carries them -- this household's is annotated 'position map partial' -- "
+    "and no field for them is invented here.")
+
+
+def physical_fit(new_2pole_breakers, spaces_free, adjacent_free_pairs):
+    """fail / not_determined / pass on the breaker spaces one case needs.
+
+    `adjacent_free_pairs` is the number of adjacent free full-size PAIRS
+    established from the panel's recorded slot positions, or None where the
+    schedule does not record positions -- which is every schedule this intake
+    carries today. It is passed in rather than defaulted, so a panel that gains
+    positions is one explicit change away from a determinable answer and nothing
+    silently starts asserting one before then.
+
+    Too few free spaces is a fail on the count alone: adjacency cannot rescue a
+    shortage. Enough free spaces is NOT a pass, because two free spaces at
+    opposite ends of the stack do not accept a 2-pole breaker.
+    """
+    if 2 * new_2pole_breakers > spaces_free:
+        return "fail"
+    if adjacent_free_pairs is None:
+        return "not_determined"
+    return "pass" if new_2pole_breakers <= adjacent_free_pairs else "fail"
+
+
+AMPACITY_LEG_BASIS = (
+    "Three-valued. The remaining allowance is computed with the existing "
+    "backfeed set to 0 A wherever the intake declared no source, which makes it "
+    "the LARGEST the allowance could be. A shortfall against the largest "
+    "possible allowance is a real shortfall, so `fail` survives that "
+    "assumption; a fit does not, and reads `not_determined` until an "
+    "existing-backfeed answer is recorded.")
+
+AMPACITY_LEG_SETTLE = (
+    "The existing backfeed on this busbar: panel.pv_backfeed_a, read off the "
+    "breaker(s) already backfeeding the panel. The allowance above was computed "
+    "as though nothing did, which is the most generous reading available.")
+
+
+def busbar_ampacity_leg(breaker_a, remaining_a, backfeed_declared):
+    """The arithmetic leg of NEC 705.12(B)(3)(2), three-valued.
+
+    See AMPACITY_LEG_BASIS: the asymmetry is the point. The undeclared-backfeed
+    case only ever makes the allowance look bigger, so a failure on it is sound
+    and a pass on it is an assumption wearing a verdict's clothes.
+    """
+    if breaker_a > remaining_a:
+        return "fail"
+    return "pass" if backfeed_declared else "not_determined"
+
+
+SUM_RULE_SETTLE = (
+    "A complete device-by-device panel schedule, verified against the panel "
+    "itself: the sum below counts the overcurrent devices the intake recorded, "
+    "and a schedule cannot establish about itself that it missed nothing.")
+
+
+def sum_of_breakers_rule(branch_ocpd_sum_a, busbar_a, proposed_breaker_a):
+    """NEC 705.12(B)(3)(1) -- the sum-of-breakers alternative, three-valued.
+
+    The sum counts every overcurrent device on the busbar other than the main,
+    which for THIS question includes the proposed battery breaker: the rule is
+    being asked as a compliance path for adding it, so leaving it out would
+    score a panel that does not exist.
+
+    A sum taken over the recorded schedule is a LOWER bound on the true sum -- a
+    device the schedule missed adds to it and never subtracts -- so a sum
+    already over the busbar rating is a real failure. A sum under it rests on
+    the schedule being a complete enumeration, which the schedule cannot
+    establish about itself, so it reads `not_determined`.
+    """
+    total = branch_ocpd_sum_a + proposed_breaker_a
+    verdict = "fail" if total > busbar_a else "not_determined"
+    return {
+        "rule": ("NEC 705.12(B)(3)(1) -- the sum of the overcurrent devices on "
+                 "the busbar other than the main must not exceed the busbar "
+                 "rating"),
+        "branch_ocpd_sum_a": branch_ocpd_sum_a,
+        "proposed_battery_breaker_a": _r(proposed_breaker_a, 1),
+        "counted_sum_a": _r(total, 1),
+        "busbar_rating_a": busbar_a,
+        "verdict": verdict,
+        "verdict_basis": (
+            "The proposed battery breaker is counted: this rule is only being "
+            "asked as a way to add it. The recorded schedule can only "
+            "understate the true sum, so a sum already over the busbar rating "
+            "fails outright, while a sum under it depends on the schedule "
+            "having missed no device and is not asserted as a pass."),
+        "what_would_settle_it": (SUM_RULE_SETTLE
+                                 if verdict == "not_determined" else None),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1392,6 +1685,13 @@ def build():
 
     occ = panel_occupancy(panel["schedule"], panel["spaces"], panel["max_circuits"])
 
+    # No schedule this intake carries records slot positions, so the number of
+    # ADJACENT free full-size pairs is not established for this panel. Passed
+    # explicitly to physical_fit() rather than defaulted there: recording
+    # positions later is one change at one named place, and nothing starts
+    # asserting a fit before then.
+    adjacent_free_pairs = None
+
     def case(name, fixed_a, new_2pole_breakers, solves_for_heat_pump, note):
         """One scenario. `fixed_a` is the sum of the code values of the loads
         that ARE specified; what is left is either spare headroom or, where a
@@ -1405,6 +1705,29 @@ def build():
         conservative = remaining_headroom(avail_upper, fixed_a)
         verdict = ampacity_verdict(measured["binding"], conservative["binding"])
         spaces_needed = 2 * new_2pole_breakers
+        fit = physical_fit(new_2pole_breakers, occ["spaces_free"],
+                           adjacent_free_pairs)
+        # What the remaining figure IS depends on its sign: a negative number is
+        # not "the largest MCA that fits", it is the amount by which the case
+        # has already overrun the calculated headroom.
+        if measured["binding"] <= 0:
+            remaining_is = (
+                "a SHORTFALL, not headroom: the loads already specified in this "
+                "case exceed the calculated headroom by this much, so no heat "
+                "pump fits on either basis" if solves_for_heat_pump else
+                "a SHORTFALL, not headroom: this case exceeds the calculated "
+                "headroom by this much")
+        elif conservative["binding"] <= 0:
+            remaining_is = (
+                "the largest heat-pump MCA that fits ON THE MEASURED BASIS; on "
+                "the conservative basis the case is already over and the figure "
+                "there is a shortfall" if solves_for_heat_pump else
+                "spare headroom on the measured basis; on the conservative "
+                "basis the figure is a shortfall")
+        else:
+            remaining_is = ("the largest heat-pump MCA that fits"
+                            if solves_for_heat_pump else
+                            "spare headroom above the calculated load")
         return {
             "case": name,
             "fixed_added_load_a": _r(fixed_a),
@@ -1421,9 +1744,7 @@ def build():
                     "which is a physical ceiling on what the array can put on "
                     "the service in fifteen minutes"),
             },
-            "remaining_is": ("the largest heat-pump MCA that fits"
-                             if solves_for_heat_pump else
-                             "spare headroom above the calculated load"),
+            "remaining_is": remaining_is,
             "ampacity_verdict": verdict,
             "ampacity_verdict_basis": VERDICT_BASIS,
             "what_would_settle_it": (WHAT_WOULD_SETTLE_IT
@@ -1432,12 +1753,25 @@ def build():
                 "new_2pole_breakers_required": new_2pole_breakers,
                 "full_size_spaces_required": spaces_needed,
                 "spaces_free": occ["spaces_free"],
-                "fits_without_panel_work": spaces_needed <= occ["spaces_free"],
+                "adjacent_free_pairs": adjacent_free_pairs,
+                "physical_fit": fit,
+                "physical_fit_basis": PHYSICAL_FIT_BASIS,
+                "what_would_settle_it": (PHYSICAL_FIT_SETTLE
+                                         if fit == "not_determined" else None),
                 "note": ("A heat pump also needs a 2-pole breaker, so every "
                          "case here needs at least two adjacent free spaces."),
             },
             "note": note,
         }
+
+    # Both legs of 705.12(B)(3)(2), computed before the cases because the
+    # battery case's own note reports which constraint decided it and must not
+    # assert that from a fixed string.
+    amp_leg = busbar_ampacity_leg(batt_breaker_a,
+                                  busbar["remaining_backfeed_a"],
+                                  backfeed_declared)
+    pos_leg = busbar["position_condition"]["verdict"]
+    batt_verdict = battery_verdict(amp_leg, pos_leg)
 
     cases = [
         case("heat_pump_only", 0.0, 1, True,
@@ -1457,11 +1791,14 @@ def build():
              "The second EVSE at its code value, with the heat pump solved for "
              "against what is left."),
         case("heat_pump_second_evse_and_battery", evse2_a + batt_a, 3, True,
-             f"The battery is counted on the DEMAND side at its grid-charging "
-             f"draw: {BATTERY_INVERTER_KW} kW = "
-             f"{amps(BATTERY_INVERTER_KW):.2f} A, x1.25 continuous = "
-             f"{batt_a:.2f} A. Ampacity is not the binding constraint here -- "
-             f"the 120% busbar rule is, and it fails first."),
+             f"The battery is counted on the DEMAND side at {batt_a:.2f} A. "
+             f"{BATTERY_CHARGING_BASIS} "
+             + ("The 120% busbar rule fails independently of this arithmetic, "
+                "so ampacity is not what decides the battery here."
+                if amp_leg == "fail" else
+                "The 120% busbar rule is evaluated separately under "
+                "battery_inverter; neither constraint is assumed to decide the "
+                "other.")),
     ]
 
     # Noncoincident-load refinement, bounded rather than asserted.
@@ -1473,6 +1810,11 @@ def build():
                     if int(ym[5:]) in R.SUMMER_MONTHS}
     winter_peaks = {ym: e[2] for ym, e in monthly.items()
                     if int(ym[5:]) not in R.SUMMER_MONTHS}
+    season_gap = _r(max(summer_peaks.values()) - max(winter_peaks.values()), 2)
+    # Whether the annual maximum is cooling-shaped is a reading, not an input to
+    # any figure, and the window it is read against is published beside it so a
+    # reader can disagree with the boundary rather than guess at it.
+    cooling_shaped = int(peak[1]) in COOLING_HOURS
     noncoincident = {
         "rule": ("NEC 220.60 -- space heating and air conditioning are "
                  "noncoincident loads, so only the larger is counted."),
@@ -1483,19 +1825,30 @@ def build():
         "existing_ac_ocpd_a": ac_ocpd,
         "credit_bounds_a": {"low": 0.0,
                             "high": _r(ac_ocpd * NEC_220_87_FACTOR) if ac_ocpd else None},
-        "evidence_the_credit_is_small": {
+        "evidence_on_where_the_credit_sits": {
             "annual_peak_month": f"{peak[0].year:04d}-{peak[0].month:02d}",
             "annual_peak_hour": int(peak[1]),
+            "cooling_hours": f"{COOLING_HOURS[0]:02d}:00-{COOLING_HOURS[-1]:02d}:59",
+            "annual_peak_falls_in_the_cooling_hours": cooling_shaped,
             "max_summer_month_peak_kw": _r(max(summer_peaks.values())),
             "max_winter_month_peak_kw": _r(max(winter_peaks.values())),
+            "summer_minus_winter_peak_kw": season_gap,
             "reading": (
-                "The largest non-cooling-season month peaks within "
-                f"{_r(max(summer_peaks.values()) - max(winter_peaks.values()), 2)} "
-                "kW of the largest cooling-season month, and the annual maximum "
-                "falls in an early-morning hour rather than an afternoon "
-                "cooling hour. The measured maximum is not cooling-driven, so "
-                "the A/C credit at the peak is near the low end of its bounds "
-                "and the conservative figure is the one to use."),
+                f"The annual maximum falls at {int(peak[1]):02d}:00 in "
+                f"{peak[0].year:04d}-{peak[0].month:02d}, "
+                + ("inside" if cooling_shaped else "outside")
+                + f" the {COOLING_HOURS[0]:02d}:00-{COOLING_HOURS[-1]:02d}:59 "
+                f"hours a condenser works hardest, and the largest "
+                f"non-cooling-season month peaks {abs(season_gap)} kW "
+                + ("below" if season_gap > 0 else "above")
+                + " the largest cooling-season month. "
+                + ("Cooling may therefore be part of the measured maximum, and "
+                   "where the credit sits inside the bounds above is not "
+                   "determined from whole-house data." if cooling_shaped else
+                   "Neither fact points at cooling setting the measured "
+                   "maximum, so the A/C credit at the peak reads as near the "
+                   "low end of the bounds above and the conservative figure is "
+                   "the one to use.")),
         },
         "not_determined": (
             "The A/C's actual draw at the moment of the annual peak cannot be "
@@ -1529,8 +1882,14 @@ def build():
          "reduction_a": _r(share_reduction),
          "case_second_evse_only_headroom_a": avail_binding,
          "case_both_heat_pump_mca_a": avail_binding,
-         "also": ("It needs no new breaker, which matters more than the amps: "
-                  "the panel does not have two adjacent free spaces for one.")},
+         "also": ("It needs no new breaker, which matters more than the amps "
+                  "here: "
+                  + (f"the panel has {occ['spaces_free']} free full-size "
+                     f"space(s), fewer than the two a 2-pole circuit takes."
+                     if occ["spaces_free"] < 2 else
+                     f"the panel has {occ['spaces_free']} free full-size "
+                     f"space(s), but whether two of them are adjacent is not "
+                     f"recorded."))},
         {"mitigation": "Charge-rate limit on the second EVSE",
          "basis": ("The connector's output is settable; the code value follows "
                    "it directly at 125% (NEC 625.42), and the minimum circuit "
@@ -1545,17 +1904,14 @@ def build():
          "counted_backfeed_without_a": _r(existing_backfeed_a + batt_breaker_a, 1),
          "counted_backfeed_with_a": busbar["total_backfeed_allowed_a"],
          "reduction_a": _r(pcs_reduction, 1),
-         "largest_compliant_combined_output_kva": _r(
-             busbar["total_backfeed_allowed_a"] * SERVICE_VOLTAGE_V / 1000.0, 2)},
+         "largest_combined_output_within_the_120pct_allowance_kva": _r(
+             busbar["total_backfeed_allowed_a"] * SERVICE_VOLTAGE_V / 1000.0, 2),
+         "that_figure_is_not_a_compliant_design": (
+             "It is what the 120% arithmetic leaves, nothing more. The "
+             "breaker-position condition, the panel's listing, and whether a "
+             "PCS is listed for this equipment are separate questions, none of "
+             "them settled here.")},
     ]
-
-    # Both legs of 705.12(B)(3)(2). The ampacity leg is the one this panel
-    # fails; the position leg cannot make a failing panel pass, and cannot be
-    # skipped when the arithmetic does pass.
-    amp_leg = ("fail" if batt_breaker_a > busbar["remaining_backfeed_a"]
-               else "pass")
-    pos_leg = busbar["position_condition"]["verdict"]
-    batt_verdict = battery_verdict(amp_leg, pos_leg)
 
     battery = {
         "unit": "Tesla Powerwall 3",
@@ -1564,7 +1920,15 @@ def build():
         "backfeed_breaker_a": _r(batt_breaker_a, 1),
         "busbar_120_percent": busbar,
         "ampacity_leg": amp_leg,
+        "ampacity_leg_basis": AMPACITY_LEG_BASIS,
+        "ampacity_leg_what_would_settle_it": (
+            AMPACITY_LEG_SETTLE if amp_leg == "not_determined" else None),
         "position_leg": pos_leg,
+        # Mirrored beside the leg, not left to be found inside
+        # busbar_120_percent: a reader quoting the leg should not have to go
+        # looking for what would settle it.
+        "position_leg_what_would_settle_it":
+            busbar["position_condition"]["what_would_settle_it"],
         "position_leg_is_about": (
             "the PROPOSED battery backfeed breaker's own position "
             "(panel.battery_breaker_position), not the existing PV breaker's. "
@@ -1577,13 +1941,10 @@ def build():
             "opposite-end breaker position. A failure on either leg fails the "
             "panel, and the arithmetic alone is never a compliant verdict."),
         "shortfall_a": _r(batt_breaker_a - busbar["remaining_backfeed_a"], 1),
-        "sum_rule": {
-            "rule": ("NEC 705.12(B)(3)(1) -- sum of all breakers other than the "
-                     "main must not exceed the busbar rating"),
-            "branch_ocpd_sum_a": None,   # filled below from panel_occupancy
-            "busbar_rating_a": panel["busbar_rating_a"],
-        },
-        "alternatives_not_recommended": [
+        "sum_rule": sum_of_breakers_rule(occ["branch_ocpd_sum_a"],
+                                         panel["busbar_rating_a"],
+                                         batt_breaker_a),
+        "alternatives_not_evaluated_here": [
             "supply-side (line-side) tap ahead of the main disconnect, NEC 705.11",
             "the 705.12(B)(3)(1) sum-of-breakers rule, if the branch total can "
             "be brought under the busbar rating",
@@ -1592,13 +1953,17 @@ def build():
             "a main-breaker downgrade, which trades backfeed allowance against "
             "the demand headroom computed above",
         ],
-        "note": ("The binding constraint on the battery is the busbar rule, not "
-                 "demand headroom. It fails independently of the 220.87 result."),
+        "alternatives_note": (
+            "Routes a licensed electrician would price and evaluate. None of "
+            "them is computed here, and listing one is not a recommendation "
+            "for or against it."),
+        "note": (
+            "The busbar rule fails on its own arithmetic, independently of the "
+            "220.87 demand result, so it is what decides the battery here."
+            if amp_leg == "fail" else
+            "The busbar rule and the 220.87 demand headroom are reported "
+            "separately; neither is assumed to decide the other."),
     }
-
-    battery["sum_rule"]["branch_ocpd_sum_a"] = occ["branch_ocpd_sum_a"]
-    battery["sum_rule"]["passes"] = (occ["branch_ocpd_sum_a"]
-                                     <= panel["busbar_rating_a"])
 
     return {
         "caveat": CAVEAT,
@@ -1683,9 +2048,17 @@ def build():
             "conservation": conservation_check(pv, dst),
         },
         "maximum_demand": {
-            "basis": ("15-minute gross load, lower bound, which is exact at the "
-                      "maximum: the peak interval exported nothing and its hour "
-                      "produced nothing"),
+            # Whether the peak is a point or a bound is a fact about the peak
+            # interval, not a property of the method: it is read off that
+            # interval rather than asserted, because a window whose maximum fell
+            # in daylight would make the same sentence false.
+            "basis": ("15-minute gross load, lower bound" + (
+                ", which is exact at the maximum: the peak interval exported "
+                "nothing and its hour produced nothing" if peak[5] else
+                ", and at the maximum it is a BOUND rather than a point -- the "
+                "peak interval sits in a producing hour, so the true gross load "
+                "there is at least this and at most the upper bound reported "
+                "beside it")),
             "peak_kw": _r(peak_kw),
             "peak_a": _r(amps(peak_kw)),
             "peak_timestamp_local": fmt_ts(peak[0], peak[1]),
@@ -1754,9 +2127,8 @@ def build():
                 f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
                 f"circuit"),
             "battery_charging_a": _r(batt_a, 2),
-            "battery_charging_basis": (
-                f"{BATTERY_INVERTER_KW} kW grid charging = "
-                f"{amps(BATTERY_INVERTER_KW):.2f} A x 1.25 continuous"),
+            "battery_charging_basis": BATTERY_CHARGING_BASIS,
+            "battery_charging_not_determined": BATTERY_CHARGING_NOT_DETERMINED,
             "heat_pump_a": None,
             "heat_pump_basis": (
                 "NOT DETERMINED -- no unit has been selected anywhere in this "
@@ -1804,8 +2176,8 @@ def main():
         print(f"  {c['case']}: {rem['measured_basis']['binding']} A measured / "
               f"{rem['conservative_basis']['binding']} A conservative -- "
               f"{c['remaining_is']}  ({c['ampacity_verdict']} on ampacity, "
-              f"{'fits' if c['spaces']['fits_without_panel_work'] else 'NO ROOM'}"
-              f" in {c['spaces']['full_size_spaces_required']} spaces)")
+              f"{c['spaces']['physical_fit']} on "
+              f"{c['spaces']['full_size_spaces_required']} spaces)")
     b = result["battery_inverter"]
     print(f"  battery: {b['verdict']} -- "
           f"{b['busbar_120_percent']['remaining_backfeed_a']} A of backfeed "

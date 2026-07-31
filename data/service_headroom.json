@@ -1,20 +1,24 @@
 {
  "added_load_code_values": {
   "battery_charging_a": 59.9,
-  "battery_charging_basis": "11.5 kW grid charging = 47.92 A x 1.25 continuous",
+  "battery_charging_basis": "11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A.",
+  "battery_charging_not_determined": "NOT DETERMINED -- the selected unit's AC CHARGE INPUT. No figure for it exists anywhere in this project and none is invented here. The maximum continuous AC input on the selected unit's own nameplate or datasheet would settle it, and could only lower the demand-side figure used above.",
   "heat_pump_a": null,
   "heat_pump_basis": "NOT DETERMINED -- no unit has been selected anywhere in this project, and a nameplate cannot be invented. The heat-pump term is solved for instead: each case reports the largest NEC 440.6 MCA that fits.",
   "second_evse_a": 60.0,
   "second_evse_basis": "NEC 625.42 continuous load: 48 A output x 1.25 on a 60 A 2-pole circuit"
  },
  "battery_inverter": {
-  "alternatives_not_recommended": [
+  "alternatives_not_evaluated_here": [
    "supply-side (line-side) tap ahead of the main disconnect, NEC 705.11",
    "the 705.12(B)(3)(1) sum-of-breakers rule, if the branch total can be brought under the busbar rating",
    "a listed power control system limiting combined source output, NEC 705.13",
    "a main-breaker downgrade, which trades backfeed allowance against the demand headroom computed above"
   ],
+  "alternatives_note": "Routes a licensed electrician would price and evaluate. None of them is computed here, and listing one is not a recommendation for or against it.",
   "ampacity_leg": "fail",
+  "ampacity_leg_basis": "Three-valued. The remaining allowance is computed with the existing backfeed set to 0 A wherever the intake declared no source, which makes it the LARGEST the allowance could be. A shortfall against the largest possible allowance is a real shortfall, so `fail` survives that assumption; a fit does not, and reads `not_determined` until an existing-backfeed answer is recorded.",
+  "ampacity_leg_what_would_settle_it": null,
   "backfeed_breaker_a": 60.0,
   "busbar_120_percent": {
    "busbar_rating_a": 200.0,
@@ -41,15 +45,20 @@
   },
   "continuous_output_a": 47.92,
   "inverter_kw": 11.5,
-  "note": "The binding constraint on the battery is the busbar rule, not demand headroom. It fails independently of the 220.87 result.",
+  "note": "The busbar rule fails on its own arithmetic, independently of the 220.87 demand result, so it is what decides the battery here.",
   "position_leg": "not_determined",
   "position_leg_is_about": "the PROPOSED battery backfeed breaker's own position (panel.battery_breaker_position), not the existing PV breaker's. No position has been surveyed for a new breaker here, so this leg is not_determined on that ground alone -- see position_condition.what_would_settle_it.",
+  "position_leg_what_would_settle_it": "A SURVEYED position for the new breaker: which end of the busbar the main lands on, and whether two adjacent full-size spaces exist at the opposite end for a 2-pole source breaker to occupy. The existing PV breaker's end is a fact about the device already installed and says nothing about where a new one could physically go, so it is not carried over.",
   "shortfall_a": 45.0,
   "sum_rule": {
    "branch_ocpd_sum_a": 460.0,
    "busbar_rating_a": 200.0,
-   "passes": false,
-   "rule": "NEC 705.12(B)(3)(1) -- sum of all breakers other than the main must not exceed the busbar rating"
+   "counted_sum_a": 520.0,
+   "proposed_battery_breaker_a": 60.0,
+   "rule": "NEC 705.12(B)(3)(1) -- the sum of the overcurrent devices on the busbar other than the main must not exceed the busbar rating",
+   "verdict": "fail",
+   "verdict_basis": "The proposed battery breaker is counted: this rule is only being asked as a way to add it. The recorded schedule can only understate the true sum, so a sum already over the busbar rating fails outright, while a sum under it depends on the schedule having missed no device and is not asserted as a pass.",
+   "what_would_settle_it": null
   },
   "unit": "Tesla Powerwall 3",
   "verdict": "FAILS as the panel stands",
@@ -78,11 +87,14 @@
    },
    "remaining_is": "the largest heat-pump MCA that fits",
    "spaces": {
-    "fits_without_panel_work": false,
+    "adjacent_free_pairs": null,
     "full_size_spaces_required": 2,
     "new_2pole_breakers_required": 1,
     "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
-    "spaces_free": 1
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
    },
    "what_would_settle_it": null
   },
@@ -106,13 +118,16 @@
     },
     "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
    },
-   "remaining_is": "spare headroom above the calculated load",
+   "remaining_is": "spare headroom on the measured basis; on the conservative basis the figure is a shortfall",
    "spaces": {
-    "fits_without_panel_work": false,
+    "adjacent_free_pairs": null,
     "full_size_spaces_required": 2,
     "new_2pole_breakers_required": 1,
     "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
-    "spaces_free": 1
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
    },
    "what_would_settle_it": "15-minute PV production, which was never metered here. The consumption CT reads hourly, so each daylight quarter-hour is reported as a bound whose upper end credits a whole hour's production to one interval. A 15-minute production series would collapse the bound to a point and decide this case either way."
   },
@@ -136,13 +151,16 @@
     },
     "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
    },
-   "remaining_is": "the largest heat-pump MCA that fits",
+   "remaining_is": "the largest heat-pump MCA that fits ON THE MEASURED BASIS; on the conservative basis the case is already over and the figure there is a shortfall",
    "spaces": {
-    "fits_without_panel_work": false,
+    "adjacent_free_pairs": null,
     "full_size_spaces_required": 4,
     "new_2pole_breakers_required": 2,
     "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
-    "spaces_free": 1
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
    },
    "what_would_settle_it": "15-minute PV production, which was never metered here. The consumption CT reads hourly, so each daylight quarter-hour is reported as a bound whose upper end credits a whole hour's production to one interval. A 15-minute production series would collapse the bound to a point and decide this case either way."
   },
@@ -151,7 +169,7 @@
    "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a bound in daylight, not a point. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it.",
    "case": "heat_pump_second_evse_and_battery",
    "fixed_added_load_a": 119.8958,
-   "note": "The battery is counted on the DEMAND side at its grid-charging draw: 11.5 kW = 47.92 A, x1.25 continuous = 59.90 A. Ampacity is not the binding constraint here -- the 120% busbar rule is, and it fails first.",
+   "note": "The battery is counted on the DEMAND side at 59.90 A. 11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A. The 120% busbar rule fails independently of this arithmetic, so ampacity is not what decides the battery here.",
    "remaining_headroom_a": {
     "conservative_basis": {
      "binding": -78.9062,
@@ -166,13 +184,16 @@
     },
     "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
    },
-   "remaining_is": "the largest heat-pump MCA that fits",
+   "remaining_is": "a SHORTFALL, not headroom: the loads already specified in this case exceed the calculated headroom by this much, so no heat pump fits on either basis",
    "spaces": {
-    "fits_without_panel_work": false,
+    "adjacent_free_pairs": null,
     "full_size_spaces_required": 6,
     "new_2pole_breakers_required": 3,
     "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
-    "spaces_free": 1
+    "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
    },
    "what_would_settle_it": null
   }
@@ -511,7 +532,7 @@
   {
    "added_load_with_a": 0.0,
    "added_load_without_a": 60.0,
-   "also": "It needs no new breaker, which matters more than the amps: the panel does not have two adjacent free spaces for one.",
+   "also": "It needs no new breaker, which matters more than the amps here: the panel has 1 free full-size space(s), fewer than the two a 2-pole circuit takes.",
    "basis": "Tesla Wall Connectors share power across one circuit, and NEC 625.42 permits an EVSE load-management system to be sized to the system's maximum output rather than the sum of the connectors.",
    "case_both_heat_pump_mca_a": 76.4583,
    "case_second_evse_only_headroom_a": 76.4583,
@@ -578,9 +599,10 @@
    "basis": "A listed PCS limits the combined output of the PV and the battery, so the interconnection is evaluated against the PCS setting instead of the sum of the source breakers.",
    "counted_backfeed_with_a": 65.0,
    "counted_backfeed_without_a": 110.0,
-   "largest_compliant_combined_output_kva": 15.6,
+   "largest_combined_output_within_the_120pct_allowance_kva": 15.6,
    "mitigation": "Power control system on the sources (NEC 705.13)",
-   "reduction_a": 45.0
+   "reduction_a": 45.0,
+   "that_figure_is_not_a_compliant_design": "It is what the 120% arithmetic leaves, nothing more. The breaker-position condition, the panel's listing, and whether a PCS is listed for this equipment are separate questions, none of them settled here."
   }
  ],
  "nec_220_87": {
@@ -652,12 +674,15 @@
    "high": 50.0,
    "low": 0.0
   },
-  "evidence_the_credit_is_small": {
+  "evidence_on_where_the_credit_sits": {
+   "annual_peak_falls_in_the_cooling_hours": false,
    "annual_peak_hour": 5,
    "annual_peak_month": "2025-08",
+   "cooling_hours": "11:00-20:59",
    "max_summer_month_peak_kw": 17.96,
    "max_winter_month_peak_kw": 17.7,
-   "reading": "The largest non-cooling-season month peaks within 0.26 kW of the largest cooling-season month, and the annual maximum falls in an early-morning hour rather than an afternoon cooling hour. The measured maximum is not cooling-driven, so the A/C credit at the peak is near the low end of its bounds and the conservative figure is the one to use."
+   "reading": "The annual maximum falls at 05:00 in 2025-08, outside the 11:00-20:59 hours a condenser works hardest, and the largest non-cooling-season month peaks 0.26 kW below the largest cooling-season month. Neither fact points at cooling setting the measured maximum, so the A/C credit at the peak reads as near the low end of the bounds above and the conservative figure is the one to use.",
+   "summer_minus_winter_peak_kw": 0.26
   },
   "existing_ac_ocpd_a": 40.0,
   "not_determined": "The A/C's actual draw at the moment of the annual peak cannot be separated from whole-house data. Sub-metering the condenser, or its nameplate RLA/MCA, would settle it.",
@@ -689,7 +714,7 @@
    "branch_ocpd_sum_a": 460.0,
    "devices": 12,
    "largest_branch_ocpd_a": 60.0,
-   "note": "A 240 V circuit needs two adjacent full-size spaces; a tandem cannot host one. With 1 space(s) free, adding a 2-pole breaker requires consolidating existing circuits onto twin-density devices or adding a subpanel, whatever the ampacity math says.",
+   "note": "A 240 V circuit needs two adjacent full-size spaces; a tandem cannot host one. With 1 space(s) free, there is nowhere to put one whatever the ampacity math says: it takes consolidating existing circuits onto twin-density devices or adding a subpanel.",
    "pole_positions_free": 12,
    "pole_positions_total": 40,
    "pole_positions_used": 28,

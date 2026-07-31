@@ -244,6 +244,42 @@ def case_busbar_carries_both_legs_of_the_rule():
     return "busbar_120_percent reports the position condition beside the arithmetic"
 
 
+def case_the_busbar_ampacity_leg_is_three_valued():
+    """The 120% allowance is computed with the existing backfeed at 0 A wherever
+    the intake declared none, which makes it the LARGEST it could be. A
+    shortfall against the largest possible allowance is real; a fit against it
+    is an assumption, and must not read as a pass."""
+    # declared backfeed: the arithmetic decides it either way
+    assert S.busbar_ampacity_leg(60.0, 15.0, True) == "fail"
+    assert S.busbar_ampacity_leg(60.0, 90.0, True) == "pass"
+    # undeclared: a shortfall survives the assumption, a fit does not
+    assert S.busbar_ampacity_leg(60.0, 15.0, False) == "fail"
+    assert S.busbar_ampacity_leg(60.0, 90.0, False) == "not_determined"
+    # exactly at the allowance is not a shortfall
+    assert S.busbar_ampacity_leg(60.0, 60.0, True) == "pass"
+    assert "0 A" in S.AMPACITY_LEG_BASIS and "not_determined" in S.AMPACITY_LEG_BASIS
+    assert "pv_backfeed_a" in S.AMPACITY_LEG_SETTLE
+    return "the busbar ampacity leg is three-valued when no backfeed was declared"
+
+
+def case_the_sum_of_breakers_rule_is_three_valued():
+    """705.12(B)(3)(1) is asked as a way to ADD the battery, so the proposed
+    breaker is counted. The recorded schedule can only understate the true sum,
+    so a sum over the busbar rating fails and a sum under it is not settled."""
+    over = S.sum_of_breakers_rule(460.0, 200.0, 60.0)
+    assert _close(over["counted_sum_a"], 520.0), over
+    assert over["verdict"] == "fail", over
+    assert over["what_would_settle_it"] is None, over
+    under = S.sum_of_breakers_rule(100.0, 200.0, 60.0)
+    assert _close(under["counted_sum_a"], 160.0), under
+    assert under["verdict"] == "not_determined", under
+    assert "complete device-by-device" in under["what_would_settle_it"], under
+    # the proposed breaker is what turns a passing sum into a failing one
+    assert S.sum_of_breakers_rule(160.0, 200.0, 60.0)["verdict"] == "fail"
+    assert S.sum_of_breakers_rule(160.0, 200.0, 0.0)["verdict"] == "not_determined"
+    return "the sum-of-breakers rule counts the proposed breaker and is three-valued"
+
+
 def case_the_battery_verdict_needs_both_legs():
     """The arithmetic alone never reads as compliant. A panel with room on the
     120% allowance but no recorded breaker positions is not determined, and
@@ -254,6 +290,13 @@ def case_the_battery_verdict_needs_both_legs():
     assert S.battery_verdict("pass", "fail") == "FAILS as the panel stands"
     assert S.battery_verdict("fail", "pass") == "FAILS as the panel stands"
     assert S.battery_verdict("fail", "not_determined") == "FAILS as the panel stands"
+    # the ampacity leg is three-valued too, and its undecided case says so
+    # instead of borrowing the position leg's reason
+    und = S.battery_verdict("not_determined", "pass")
+    assert und.startswith("NOT DETERMINED") and "backfeeds the busbar" in und, und
+    both = S.battery_verdict("not_determined", "not_determined")
+    assert "backfeeds the busbar" in both and "breaker-position" in both, both
+    assert S.battery_verdict("not_determined", "fail") == "FAILS as the panel stands"
     return "the battery verdict is conjunctive over the ampacity and position legs"
 
 
@@ -471,6 +514,102 @@ def case_a_null_pv_backfeed_runs_end_to_end():
     assert _close(b["remaining_backfeed_a"], 65.0), b
     assert b["position_condition"]["verdict"] == "not_determined", b
     return "a null pv_backfeed_a spends 0 A and is reported as undeclared"
+
+
+def case_impossible_panel_values_fail_closed_by_field():
+    """Present is not the same as possible. Each value that can flip a verdict
+    or make the busbar arithmetic meaningless is checked, and the message names
+    the field and the value rather than dying somewhere downstream."""
+    for edit, replacement, needle in (
+            ("service_rating_a: 175", "service_rating_a: 0", "service_rating_a"),
+            ("busbar_rating_a: 200", "busbar_rating_a: -5", "busbar_rating_a"),
+            ("meter_socket_continuous_a: 170", "meter_socket_continuous_a: 0",
+             "meter_socket_continuous_a"),
+            ("pv_backfeed_a: 50", "pv_backfeed_a: -50", "pv_backfeed_a"),
+            ("spaces: 20", "spaces: 0", "spaces"),
+            ("max_circuits: 40", "max_circuits: 10", "max_circuits"),
+            ("service_rating_a: 175", "service_rating_a: 250",
+             "service_rating_a")):
+        with _with_household(PANEL_YAML.replace(edit, replacement)):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted {replacement!r}")
+            except SystemExit as e:
+                assert f"panel.{needle} is" in str(e), (replacement, str(e))
+                assert replacement.split(": ")[1] in str(e), (replacement, str(e))
+    # the one that matters most: a negative existing backfeed does not produce a
+    # wrong-looking number, it produces a bigger allowance. 200x1.2-175 = 65 A
+    # of total backfeed; a -50 A "existing" source turns 15 A remaining into
+    # 115 A, which accepts the 60 A battery breaker the real panel refuses.
+    honest = S.busbar_120_percent(200.0, 175.0, 50.0)
+    flipped = S.busbar_120_percent(200.0, 175.0, -50.0)
+    assert _close(honest["remaining_backfeed_a"], 15.0), honest
+    assert _close(flipped["remaining_backfeed_a"], 115.0), flipped
+    assert S.busbar_ampacity_leg(60.0, honest["remaining_backfeed_a"], True) == "fail"
+    assert S.busbar_ampacity_leg(60.0, flipped["remaining_backfeed_a"], True) == "pass"
+    return "impossible panel values stop the run naming the field and the value"
+
+
+def case_panel_domain_checks_accept_the_edges_that_are_real():
+    """The guard is on safety arithmetic, not a schema validator: values that
+    are unusual but physically possible must still run."""
+    ok = (PANEL_YAML
+          .replace("pv_backfeed_a: 50", "pv_backfeed_a: 0")
+          .replace("service_rating_a: 175", "service_rating_a: 200")
+          .replace("max_circuits: 40", "max_circuits: 20"))
+    with _with_household(ok):
+        p = S.load_panel()
+    # a zero existing backfeed is a real reading; a main equal to the busbar and
+    # a panel with no twin-density capacity are real panels
+    assert _close(p["pv_backfeed_a"], 0.0) and p["max_circuits"] == 20, p
+    assert _close(p["service_rating_a"], p["busbar_rating_a"]), p
+    with _with_household(PANEL_YAML_NO_SOCKET):
+        assert S.load_panel()["meter_socket_continuous_a"] is None
+    with _with_household(PANEL_YAML_NO_BACKFEED):
+        assert S.load_panel()["pv_backfeed_a"] is None
+    return "a zero backfeed, a main equal to the busbar and null optionals still run"
+
+
+def case_a_schedule_larger_than_its_enclosure_fails_closed():
+    """Two intake answers about one panel can disagree. If they do, every
+    free-space figure below is negative or invented, so the run stops."""
+    sched = [{"poles": 2, "amps": 60, "label": "a"},        # 2 spaces, 2 poles
+             {"poles": 2, "amps": [20, 20], "label": "b"},  # 1 space,  2 poles
+             {"poles": 4, "amps": [15, 20, 20, 15], "label": "c"}]  # 2 sp, 4 p
+    assert S.panel_occupancy(sched, 5, 8)["spaces_free"] == 0
+    try:
+        S.panel_occupancy(sched, 4, 40)
+        raise AssertionError("a schedule overfilling the enclosure was accepted")
+    except SystemExit as e:
+        assert "occupies 5 full-size spaces" in str(e), e
+        assert "panel.spaces records 4" in str(e), e
+    try:
+        S.panel_occupancy(sched, 20, 6)
+        raise AssertionError("a schedule overfilling the pole positions was accepted")
+    except SystemExit as e:
+        assert "occupies 8 pole positions" in str(e), e
+        assert "panel.max_circuits records 6" in str(e), e
+    return "a schedule that overfills its own enclosure stops the run"
+
+
+def case_physical_fit_is_three_valued():
+    """A 240 V circuit needs two ADJACENT full-size spaces and the schedule
+    records devices, not slot positions. A shortage is determinable from the
+    count; a fit is not, and used to be published as a boolean true."""
+    # one free space, one 2-pole breaker wanted: short on the count alone
+    assert S.physical_fit(1, 1, None) == "fail"
+    assert S.physical_fit(2, 3, None) == "fail"
+    # enough free spaces, no positions recorded: not a fit, not a failure
+    assert S.physical_fit(1, 2, None) == "not_determined"
+    assert S.physical_fit(3, 6, None) == "not_determined"
+    # only recorded positions can produce a pass, and they can still fail
+    assert S.physical_fit(1, 2, 1) == "pass"
+    assert S.physical_fit(2, 6, 2) == "pass"
+    assert S.physical_fit(2, 6, 1) == "fail"
+    assert S.physical_fit(1, 4, 0) == "fail"
+    assert "adjacency is not in the data" in S.PHYSICAL_FIT_BASIS
+    assert "Slot positions" in S.PHYSICAL_FIT_SETTLE
+    return "physical fit is three-valued: a count can fail a case but never pass one"
 
 
 def case_breaker_positions_are_read_from_the_intake():
@@ -965,7 +1104,12 @@ def case_artifact_states_both_legs_of_the_busbar_rule():
     d = json.loads(S.OUT.read_text())
     b = d["battery_inverter"]
     pos = b["busbar_120_percent"]["position_condition"]
-    assert b["ampacity_leg"] in ("pass", "fail"), b
+    assert b["ampacity_leg"] in ("pass", "fail", "not_determined"), b
+    assert b["ampacity_leg"] == S.busbar_ampacity_leg(
+        b["backfeed_breaker_a"], b["busbar_120_percent"]["remaining_backfeed_a"],
+        b["busbar_120_percent"]["existing_pv_backfeed_declared"]), b
+    assert (b["ampacity_leg_what_would_settle_it"] is not None) == \
+        (b["ampacity_leg"] == "not_determined"), b
     assert b["position_leg"] == pos["verdict"], b
     assert pos["verdict"] in ("pass", "fail", "not_determined"), pos
     assert "opposite end" in pos["requirement"], pos
@@ -1086,6 +1230,167 @@ def case_artifact_labels_the_nullable_panel_fields():
     return "the artifact says which nullable panel fields were declared"
 
 
+JUDGEMENT_WORDS = ("fits", "passes", "compliant", "verified", "sufficient",
+                   "supported", "ok", "valid", "allowed", "safe")
+
+# Every boolean the artifact publishes, and why a bare true/false is honest
+# there. Each one is a DIRECT, COMPLETE restatement of something measured or of
+# a comparison whose two sides are printed beside it -- never a judgement whose
+# evidence is somewhere else or absent. A new boolean fails this test until it
+# is either justified here or made three-valued.
+ALLOWED_BOOLEANS = {
+    "existing_pv_backfeed_declared":
+        "restates whether panel.pv_backfeed_a carried an answer at all",
+    "passed":
+        "restates a gate's own comparison, whose observed value, comparison and "
+        "threshold are printed in the same object -- and a false one halts the "
+        "run, so it can never be published",
+    "exceeds_nameplate":
+        "restates observed_kw > ceiling_kw, both printed beside it; a true one "
+        "halts the run",
+    "point_determined":
+        "restates that an interval's upper and lower bounds coincide, which is "
+        "a fact about that interval",
+    "naive_max_is_a_dst_artifact":
+        "restates that the naive maximum's own date is one of the DST days "
+        "listed in the same artifact",
+    "derived_total_sits_inside_the_reference_spread":
+        "restates a comparison of three totals printed beside it",
+    "each_reference_is_closer_to_the_reconstruction_than_to_the_other":
+        "restates a comparison of residuals printed beside it",
+    "annual_peak_falls_in_the_cooling_hours":
+        "restates that the published peak hour lies in the published window",
+}
+
+
+def case_artifact_publishes_no_bare_boolean_judgement():
+    """The class, not the instance. Four review rounds found the same defect at
+    four exits -- a boolean or a two-valued verdict published where the data
+    settles only one direction. This walks every leaf in the artifact: booleans
+    must be on the justified allowlist above, and anything named like a
+    judgement must be three-valued."""
+    d = json.loads(S.OUT.read_text())
+    bools, verdicts = {}, {}
+
+    def walk(o, path):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, path + [k])
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, path + [f"[{i}]"])
+        elif isinstance(o, bool):
+            bools.setdefault(path[-1], []).append(".".join(path))
+        elif isinstance(o, str) and (
+                path[-1].endswith("verdict") or path[-1].endswith("_leg")
+                or path[-1] == "physical_fit"):
+            verdicts.setdefault(".".join(path), o)
+
+    walk(d, [])
+    unjustified = sorted(set(bools) - set(ALLOWED_BOOLEANS))
+    assert not unjustified, (
+        f"boolean judgement(s) with no justification: {unjustified}. Either "
+        f"make them three-valued with a what_would_settle_it, or add them to "
+        f"ALLOWED_BOOLEANS with the reason the data settles them completely")
+    # no boolean may be NAMED like a conclusion a reader would quote
+    for leaf in bools:
+        low = leaf.lower()
+        assert not any(w in low.split("_") for w in JUDGEMENT_WORDS), \
+            f"{leaf} is a boolean named like a verdict"
+    # the three-valued vocabulary is one vocabulary
+    assert verdicts, "no verdict fields found -- the walk is not finding them"
+    for path, v in verdicts.items():
+        assert v in ("pass", "fail", "not_determined") or v.isupper() or \
+            v.startswith(("fits", "FAILS", "NOT DETERMINED")), (path, v)
+    # and every field that reports a not_determined names what would settle it
+    for path, v in verdicts.items():
+        if v != "not_determined":
+            continue
+        owner = d
+        for key in path.split(".")[:-1]:
+            owner = owner[int(key.strip("[]"))] if key.startswith("[") else owner[key]
+        settle = [val for k, val in owner.items()
+                  if "what_would_settle_it" in k and val]
+        assert settle, f"{path} is not_determined and names nothing that would settle it"
+    return "no bare boolean or two-valued judgement survives in the artifact"
+
+
+def case_artifact_reports_physical_fit_not_a_boolean():
+    """Finding C's exit: `fits_without_panel_work` claimed adjacency the panel
+    schedule cannot establish. This household is short on the COUNT, which is
+    determinable, so the answer is a fail either way -- but it has to be a fail
+    for the reason the data supports."""
+    txt = S.OUT.read_text()
+    assert "fits_without_panel_work" not in txt, \
+        "the adjacency boolean is still in the artifact"
+    d = json.loads(txt)
+    occ = d["panel"]["occupancy"]
+    for c in d["cases"]:
+        sp = c["spaces"]
+        assert sp["physical_fit"] in ("pass", "fail", "not_determined"), c
+        assert sp["adjacent_free_pairs"] is None, sp
+        assert sp["physical_fit"] == S.physical_fit(
+            sp["new_2pole_breakers_required"], sp["spaces_free"],
+            sp["adjacent_free_pairs"]), c
+        assert sp["spaces_free"] == occ["spaces_free"], c
+        # this household: 1 free space, every case wants at least two
+        assert sp["full_size_spaces_required"] > sp["spaces_free"], c
+        assert sp["physical_fit"] == "fail", c
+        assert sp["what_would_settle_it"] is None, sp
+        assert "adjacency is not in the data" in sp["physical_fit_basis"], sp
+    return "physical fit is three-valued in the artifact and fails on the count here"
+
+
+def case_artifact_states_the_battery_charging_assumption():
+    """Finding A. 11.5 kW is the only power rating this project records for the
+    unit, and research/battery-research-notes.md does not split charge from
+    discharge. The figure stays; asserting it as a charging specification does
+    not."""
+    d = json.loads(S.OUT.read_text())
+    v = d["added_load_code_values"]
+    basis = v["battery_charging_basis"]
+    assert "assumption" in basis, basis
+    assert "battery-research-notes" in basis, basis
+    assert "conservative" in basis, basis
+    assert "would draw less" in basis, basis
+    # the old sentence asserted it as fact; that phrasing must not come back
+    assert "kW grid charging =" not in basis, basis
+    nd = v["battery_charging_not_determined"]
+    assert nd.startswith("NOT DETERMINED"), nd
+    assert "AC CHARGE INPUT" in nd, nd
+    assert "nameplate or datasheet" in nd, nd
+    # the number itself is unchanged and still reproduces from the constant
+    assert _close(v["battery_charging_a"],
+                  S.amps(S.BATTERY_INVERTER_KW) * S.NEC_625_42_FACTOR, 1e-2), v
+    assert _close(S.BATTERY_INVERTER_KW, 11.5)
+    # and the case that carries it says the same thing rather than its own
+    batt_case = [c for c in d["cases"] if "battery" in c["case"]][0]
+    assert "assumption" in batt_case["note"], batt_case["note"]
+    # the busbar leg is what fails, and it still does
+    assert d["battery_inverter"]["verdict"] == "FAILS as the panel stands"
+    assert d["battery_inverter"]["ampacity_leg"] == "fail"
+    return "the battery charging basis is published as an assumption, not a fact"
+
+
+def case_artifact_sum_rule_counts_the_proposed_breaker():
+    d = json.loads(S.OUT.read_text())
+    sr = d["battery_inverter"]["sum_rule"]
+    occ = d["panel"]["occupancy"]
+    assert "passes" not in sr, "the sum rule still publishes a bare boolean"
+    assert sr["verdict"] in ("fail", "not_determined"), sr
+    assert _close(sr["branch_ocpd_sum_a"], occ["branch_ocpd_sum_a"]), sr
+    assert _close(sr["proposed_battery_breaker_a"],
+                  d["battery_inverter"]["backfeed_breaker_a"]), sr
+    assert _close(sr["counted_sum_a"],
+                  sr["branch_ocpd_sum_a"] + sr["proposed_battery_breaker_a"]), sr
+    assert sr["verdict"] == ("fail" if sr["counted_sum_a"] > sr["busbar_rating_a"]
+                             else "not_determined"), sr
+    # this panel: 460 A of branch devices plus a 60 A source breaker on a 200 A
+    # bus, so the sum rule is not an escape route from the 120% failure
+    assert sr["verdict"] == "fail", sr
+    return "the sum-of-breakers rule counts the proposed breaker and is not a boolean"
+
+
 def case_artifact_carries_the_scoping_caveat():
     d = json.loads(S.OUT.read_text())
     low = d["caveat"].lower()
@@ -1126,8 +1431,11 @@ CASES = [
     case_busbar_120_percent_rule_passes_a_smaller_main,
     case_the_busbar_position_condition_is_evaluated_not_ignored,
     case_busbar_carries_both_legs_of_the_rule,
+    case_the_busbar_ampacity_leg_is_three_valued,
+    case_the_sum_of_breakers_rule_is_three_valued,
     case_the_battery_verdict_needs_both_legs,
     case_an_undeclared_backfeed_source_spends_no_allowance,
+    case_physical_fit_is_three_valued,
     case_fall_back_day_produces_no_phantom_peak,
     case_spring_forward_day_is_short_and_still_clean,
     case_day_lengths_match_the_tariff_clock,
@@ -1140,6 +1448,9 @@ CASES = [
     case_every_required_panel_field_still_fails_closed,
     case_a_null_meter_socket_rating_runs_end_to_end,
     case_a_null_pv_backfeed_runs_end_to_end,
+    case_impossible_panel_values_fail_closed_by_field,
+    case_panel_domain_checks_accept_the_edges_that_are_real,
+    case_a_schedule_larger_than_its_enclosure_fails_closed,
     case_breaker_positions_are_read_from_the_intake,
     case_pole_counting_handles_int_and_list_amps,
     case_malformed_schedule_entries_fail_closed,
@@ -1166,6 +1477,10 @@ CASES = [
     case_artifact_gates_the_conservation_check,
     case_artifact_battery_position_is_not_the_pv_breakers,
     case_artifact_labels_the_nullable_panel_fields,
+    case_artifact_publishes_no_bare_boolean_judgement,
+    case_artifact_reports_physical_fit_not_a_boolean,
+    case_artifact_states_the_battery_charging_assumption,
+    case_artifact_sum_rule_counts_the_proposed_breaker,
     case_artifact_carries_the_scoping_caveat,
     case_artifact_carries_no_identifiers,
 ]
