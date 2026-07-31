@@ -1,22 +1,40 @@
 #!/usr/bin/env python3
 """Unit guards for service_headroom.py.
 
-The full run needs the private Green Button export and the private Enphase
-consumption-CT files, which exist on one machine. Everything that could be wrong
-in a way that matters -- the NEC arithmetic, the DST day-length handling, the
-zero-padding truncation, the fail-closed intake read, the panel-schedule
-geometry -- is arithmetic or parsing, and all of it is exercised here against
-synthetic fixtures. No private data; runs in CI.
+What runs where, stated exactly, because the previous version of this paragraph
+claimed more than it delivered. It said "everything that could be wrong in a way
+that matters runs in CI"; a reviewer injected a 10% error into build() and CI
+still reported 78 of 81 passed, because the only cases that ran the generator
+skipped without the private archive and the round-trip case re-serializes the
+committed bytes rather than regenerating them.
 
-The two cases worth naming: a naive hourly aggregation of this dataset reports a
-21.4 kW peak that never happened, because the fall-back Sunday's repeated hour
-carries eight 15-minute intervals covering two real hours; and the current-year
-Enphase export is zero-padded into the future, so its tail is not measurement.
-Both are tested directly rather than trusted.
+  * WITHOUT the private archive (CI): every unit case -- the NEC arithmetic and
+    its citations, the DST day-length handling, the zero-padding truncation, the
+    coverage-lag gate, the fail-closed intake reads, the panel-schedule
+    geometry, the three-valued verdicts -- plus
+    case_build_runs_end_to_end_on_a_synthetic_house, which writes a complete
+    synthetic year to a temporary directory and runs the whole of build()
+    against it. That case is what closes the gap above: an arithmetic error in
+    the assembly moves a figure the fixture determines by hand, and it fails.
+    The artifact-reading cases also run, against the COMMITTED artifact, which
+    checks its internal consistency but cannot check that it regenerates.
+  * ONLY with the private archive: the two cases that run build() on the real
+    inputs (the no-EV variant, and the byte-identical reproduction with the EV
+    flag deleted) and the private-only leak scan. They raise SkipCase, so a case
+    that cannot run says so instead of reading as green. Regeneration itself is
+    a repository gate (CLAUDE.md section 9), not something this file can assert
+    in CI.
+
+The two failure modes worth naming: a naive hourly aggregation of this dataset
+reports a 21.4 kW peak that never happened, because the fall-back Sunday's
+repeated hour carries eight 15-minute intervals covering two real hours; and the
+current-year Enphase export is zero-padded into the future, so its tail is not
+measurement. Both are tested directly rather than trusted.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_service_headroom.py
 """
 import ast
+import collections
 import datetime as dt
 import json
 import pathlib
@@ -32,8 +50,26 @@ import service_headroom as S
 EPS = 1e-9
 
 
+class SkipCase(Exception):
+    """A case that cannot run here, raised rather than returned.
+
+    The runner used to sniff a returned string for a "SKIP" prefix, so a case
+    that happened to open its sentence that way would have been counted as
+    skipped, and a case that meant to skip and worded it differently would have
+    been counted as passed. test_parse_bills.py already carries the typed
+    version; this is the same exception, for the same reason.
+    """
+
+
 def _close(a, b, eps=EPS):
     return abs(float(a) - float(b)) <= eps
+
+
+def _rq(x, n):
+    """The artifact's own rounding at a stated number of places, so a published
+    figure is compared exactly instead of through a loose epsilon that would
+    hide real drift."""
+    return round(float(x), n)
 
 
 def _with_household(text):
@@ -109,7 +145,13 @@ def case_220_87_chain_on_hand_computed_inputs():
     for s in steps:
         assert s["formula"] and s["inputs"] and "label" in s, s
     assert steps[1]["inputs"]["factor"] == S.NEC_220_87_FACTOR
-    assert steps[1]["inputs"]["code_minimum_days"] == 30
+    # condition (1) is a 1-YEAR period. The 30-day figure that used to sit here
+    # is the Exception's, and the Exception is closed to a PV service.
+    assert steps[1]["inputs"]["condition_1_days_required"] == 365
+    assert steps[1]["inputs"]["condition_1_days_required"] == \
+        S.NEC_220_87_CONDITION_1_DAYS
+    assert not hasattr(S, "NEC_220_87_MIN_DAYS"), \
+        "the 30-day 'code minimum' constant is back"
     return "the 220.87 chain reproduces a hand calculation at every step"
 
 
@@ -169,10 +211,24 @@ def case_220_87_socket_step_follows_the_three_socket_states():
 
 
 def case_three_valued_verdict_needs_both_bases():
-    # The household's own figures: 76.4583 A of binding headroom on the
-    # measured basis, 43.9688 A on the conservative upper-bound basis.
-    measured = {"service": 81.4583, "meter_socket": 76.4583}
-    conservative = {"service": 48.9688, "meter_socket": 43.9688}
+    """The flip, on the household's own headroom figures.
+
+    The figures are READ from the committed artifact rather than typed here:
+    typed copies went stale twice while still passing, and a case labelled
+    "the household's own" has to be the household's own. The shape the case
+    depends on is asserted first, so an artifact that stops exhibiting the flip
+    fails this case instead of quietly testing something else.
+    """
+    d = json.loads(S.OUT.read_text())
+    nec, sens = d["nec_220_87"], d["nec_220_87"]["sensitivity_on_the_upper_bound"]
+    measured = {"service": nec["headroom_a"]["vs_service_rating"],
+                "meter_socket": nec["headroom_a"]["vs_meter_socket"]}
+    conservative = {"service": sens["headroom_vs_service_a"],
+                    "meter_socket": sens["headroom_vs_meter_socket_a"]}
+    # the case below is built on a second 48 A EVSE (60 A code load) fitting on
+    # one basis and not the other; if that stops being true, say so
+    assert measured["meter_socket"] > 60.0 > conservative["meter_socket"], \
+        (measured, conservative)
 
     def verdict(fixed_a):
         m = S.remaining_headroom(measured, fixed_a, S.SOCKET_READ)
@@ -188,7 +244,7 @@ def case_three_valued_verdict_needs_both_bases():
     assert v == "not_determined", (v, m, c)
     assert m["binding"] > 0 > c["binding"], (m, c)
     # the battery case does not fit even on the measured maximum
-    v, m, c = verdict(119.8958)
+    v, m, c = verdict(measured["meter_socket"] + 1.0)
     assert v == "fail", (v, m, c)
     assert m["binding"] < 0, m
     # exactly zero headroom is not a pass
@@ -895,6 +951,12 @@ def case_physical_fit_is_three_valued():
     assert S.physical_fit(2, 6, 2) == "pass"
     assert S.physical_fit(2, 6, 1) == "fail"
     assert S.physical_fit(1, 4, 0) == "fail"
+    # a case adding NO breaker needs no adjacent pair, whatever the schedule
+    # records: the short-circuit on adjacent_free_pairs used to report a
+    # not_determined for a configuration with nothing to fit
+    assert S.physical_fit(0, 1, None) == "pass"
+    assert S.physical_fit(0, 0, None) == "pass"
+    assert S.physical_fit(0, 4, 0) == "pass"
     assert "adjacency is not in the data" in S.PHYSICAL_FIT_BASIS
     assert "Slot positions" in S.PHYSICAL_FIT_SETTLE
     return "physical fit is three-valued: a count can fail a case but never pass one"
@@ -935,10 +997,14 @@ def case_malformed_schedule_entries_fail_closed():
             ({"poles": 4, "amps": [20, 30, 20, 30], "label": "x"}, "common-trip"),
             ({"poles": 6, "amps": [15] * 6, "label": "x"}, "twin-density")):
         try:
-            S.breaker_geometry(entry)
+            S.breaker_geometry(entry, "schedule entry 3 of 9")
             raise AssertionError(f"accepted a malformed entry: {entry}")
         except SystemExit as e:
             assert needle in str(e), (needle, str(e))
+            # the message locates the row positionally; the door-legend label
+            # is private-tier intake and has no business on stderr
+            assert "schedule entry 3 of 9" in str(e), str(e)
+            assert entry["label"] not in str(e), str(e)
     return "malformed tandem/quad entries stop the run rather than miscounting"
 
 
@@ -1265,7 +1331,9 @@ def case_conservation_residual_is_computed_and_bounded():
     a = out["against"]["refA"]
     assert _close(a["ratio_derived_over_reference"], 1.01, 1e-4), a
     assert _close(a["residual_pct"], 1.0, 1e-3), a
-    assert _close(a["correlation"], 1.0, 1e-4), a
+    # a series exactly 1.01x another correlates at 1.0 to floating point, not
+    # to four decimal places
+    assert _close(a["correlation"], 1.0, 1e-12), a
     assert a["mae_kwh_per_day"] > 0.0, a
     assert _close(out["references_disagree_pct"], 2.0, 1e-2), out
     # the 9999 kWh day would be the largest single term in the sum if included
@@ -1362,14 +1430,23 @@ def case_the_enphase_peak_invariant_fails_closed():
     enforced, and the second one -- against the headline maximum every headroom
     figure rests on -- fails in the direction that would make the answer
     optimistic."""
-    ok = S.enphase_peak_invariant(17.819, "2025-07-03 16:00", 17.96, 24.77)
+    # the household's own figures, read from the artifact so they cannot go
+    # stale: the consumption CT's hourly maximum, the headline 15-minute
+    # maximum, and the top of the envelope
+    d = json.loads(S.OUT.read_text())
+    corr = d["maximum_demand"]["independent_corroboration"]
+    sam_max = corr["max_hourly_mean_kw"]
+    peak = d["maximum_demand"]["peak_kw"]
+    top = d["gross_reconstruction"]["max_upper_bound_kw"]
+    assert sam_max < peak < top, (sam_max, peak, top)
+    ok = S.enphase_peak_invariant(sam_max, corr["at"], peak, top)
     assert [c["passed"] for c in ok["checks"]] == [True, True], ok
-    assert _close(ok["margin_below_the_headline_peak_kw"], 0.141, 1e-6), ok
-    assert _close(ok["margin_below_the_envelope_top_kw"], 6.951, 1e-6), ok
+    assert _close(ok["margin_below_the_headline_peak_kw"], peak - sam_max, 1e-9), ok
+    assert _close(ok["margin_below_the_envelope_top_kw"], top - sam_max, 1e-9), ok
     # above the headline peak but inside the envelope: the physics holds and
     # the publication precondition does not
     try:
-        S.enphase_peak_invariant(20.0, "2025-07-03 16:00", 17.96, 24.77)
+        S.enphase_peak_invariant(peak + 2.0, corr["at"], peak, top)
         raise AssertionError("an hourly mean above the headline peak was published")
     except SystemExit as e:
         assert "enphase_hourly_max_within_the_headline_peak" in str(e), e
@@ -1377,7 +1454,7 @@ def case_the_enphase_peak_invariant_fails_closed():
         assert "optimistic" in str(e), e
     # above the envelope too: the instruments are not describing the same house
     try:
-        S.enphase_peak_invariant(30.0, "2025-07-03 16:00", 17.96, 24.77)
+        S.enphase_peak_invariant(top + 5.0, corr["at"], peak, top)
         raise AssertionError("an impossible hourly mean was published")
     except SystemExit as e:
         assert "enphase_hourly_max_within_the_envelope" in str(e), e
@@ -1436,7 +1513,7 @@ def case_artifact_is_internally_consistent():
                   pan["service_rating_a"] - nec["calculated_load_a"], 1e-3), nec
     assert _close(nec["headroom_a"]["vs_meter_socket"],
                   pan["meter_socket_continuous_a"] - nec["calculated_load_a"], 1e-3)
-    assert nec["measurement_days"] >= S.NEC_220_87_MIN_DAYS, nec
+    assert nec["measurement_days"] >= S.NEC_220_87_CONDITION_1_DAYS, nec
     assert [c["case"] for c in d["cases"]] == [
         "heat_pump_only", "second_evse_only", "heat_pump_and_second_evse",
         "heat_pump_second_evse_and_battery"], d["cases"]
@@ -1475,9 +1552,23 @@ def case_artifact_publishes_no_verdict_the_data_does_not_support():
         assert cons <= m, ("the conservative basis is not the tighter one", c)
         assert v == S.ampacity_verdict(m, cons), c
         if v == "not_determined":
-            assert c["what_would_settle_it"], c
-            assert "15-minute" in c["what_would_settle_it"], c
-            assert "never metered" in c["what_would_settle_it"], c
+            # the settler is DERIVED from the basis the binding interval took:
+            # where that hour was never covered, 15-minute production data
+            # settles nothing, and pointing a reader at it is pointing them at
+            # the wrong instrument
+            settle = c["what_would_settle_it"]
+            assert settle, c
+            binding = d["gross_reconstruction"]["max_upper_bound_binding_interval"]
+            assert settle == S.what_would_settle_it(
+                binding,
+                d["gross_reconstruction"]["pv_ceiling_basis_split"][
+                    "enphase_coverage_lag"]), settle
+            assert binding["timestamp_local"] in settle, settle
+            if binding["hour_has_a_production_measurement"]:
+                assert "never metered here" in settle, settle
+            else:
+                assert "AT ANY RESOLUTION" in settle, settle
+                assert "would not settle this case" in settle, settle
         else:
             assert c["what_would_settle_it"] is None, c
     # this household: a second 48 A EVSE is exactly the case that flips
@@ -1695,6 +1786,26 @@ ALLOWED_BOOLEANS = {
         "restates a comparison of residuals printed beside it",
     "annual_peak_falls_in_the_cooling_hours":
         "restates that the published peak hour lies in the published window",
+    "hour_has_a_production_measurement":
+        "restates which PV ceiling the binding interval took, a fact about "
+        "that interval, with the basis token and the uncovered reason printed "
+        "in the same object",
+    "max_upper_bound_is_set_by_an_hour_with_no_production_measurement":
+        "the same restatement, mirrored where a reader meets the conservative "
+        "basis: it is the negation of the binding interval's own "
+        "hour_has_a_production_measurement, published beside it",
+    "available_to_this_service":
+        "restates that this service has a renewable energy system -- the "
+        "photovoltaic nameplate is quoted in the sentence beside it -- against "
+        "the Exception's own text, which is printed in the same object. Both "
+        "sides of the comparison are on the page",
+    "rating_is_at_or_above_the_code_figure":
+        "restates ocpd_rating_a >= code_figure_125pct_of_output_a, both "
+        "printed beside it along with their difference",
+    "every_rating_is_at_or_above_the_code_figure":
+        "restates the conjunction of the per-source booleans above, each "
+        "printed with its two sides; it is null, not true, where there is no "
+        "source to compare",
 }
 
 
@@ -1945,7 +2056,7 @@ def case_artifact_states_the_battery_charging_assumption():
     assert "nameplate or datasheet" in nd, nd
     # the number itself is unchanged and still reproduces from the constant
     assert _close(v["battery_charging_a"],
-                  S.amps(S.BATTERY_INVERTER_KW) * S.NEC_625_42_FACTOR, 1e-2), v
+                  _rq(S.amps(S.BATTERY_INVERTER_KW) * S.NEC_625_42_FACTOR, 2)), v
     assert _close(S.BATTERY_INVERTER_KW, 11.5)
     # and the case that carries it says the same thing rather than its own
     batt_case = [c for c in d["cases"] if "battery" in c["case"]][0]
@@ -1979,7 +2090,7 @@ def case_the_load_sharing_mitigation_separates_the_amps_from_the_breaker():
     assert "MAXIMUM OUTPUT" in m["basis"], m
     assert _close(m["added_load_with_a"], 0.0), m
     assert _close(m["added_load_without_a"],
-                  S.evse_code_load_a(S.EXISTING_EVSE_OUTPUT_A), 1e-2), m
+                  _rq(S.evse_code_load_a(S.EXISTING_EVSE_OUTPUT_A), 4)), m
     assert _close(m["reduction_a"], m["added_load_without_a"]), m
     assert "625.42" in m["what_is_determined_here"], m
     assert "does not depend on how the connectors are wired" in \
@@ -2311,8 +2422,9 @@ def case_no_private_only_intake_value_reaches_the_artifact():
     """
     import yaml
     if not REAL_HOUSEHOLD.is_file():
-        return ("SKIP the private-only leak scan needs private/household.yaml "
-                "(gitignored) -- it has no values to look for without it")
+        raise SkipCase("the private-only leak scan needs "
+                       "private/household.yaml (gitignored) -- it has no "
+                       "values to look for without it")
     household = yaml.safe_load(REAL_HOUSEHOLD.read_text()) or {}
     fields = _cheatsheet_fields()
     needles = _needles(household, fields)
@@ -2395,6 +2507,31 @@ def case_the_private_leak_scan_catches_a_planted_value():
             "stays quiet on a clean artifact")
 
 
+# Figures DERIVED from the panel schedule that the artifact publishes outside
+# panel.occupancy, each with the reason it is publishable. The cheatsheet's
+# panel_schedule privacy_note is a closed allow-list of aggregates, and a
+# derived figure that is not on it is a disagreement between the artifact and
+# the stated rule -- which is how existing_ac_ocpd_a came to be published
+# without anyone deciding it could be. Both guards miss it structurally: the
+# leak scan skips whole integers below 1000 (a bare ampere rating is not
+# identifying), and the row-shape scan only rejects device/poles/label keys.
+# So it is declared here, and the artifact is checked to publish nothing else.
+SCHEDULE_DERIVED_FIGURES = {
+    "noncoincident_loads.existing_ac_ocpd_a": (
+        "one bare ampere rating, the same class of value the cheatsheet already "
+        "tiers public-ok for the service, busbar and backfeed ratings: a "
+        "standard NEC 240.6(A) size that millions of dwellings share. It is "
+        "load-bearing -- the 220.60 credit bound is 125% of it -- and it is "
+        "published without the device marking or the door-legend label that "
+        "selected it. The cheatsheet's panel_schedule privacy_note has to name "
+        "it as an admitted aggregate; until it does, this artifact and that "
+        "note disagree"),
+    "noncoincident_loads.schedule_entries_matching_an_air_conditioning_token": (
+        "a count over the schedule, the same shape as devices and "
+        "twin_density_devices, and the thing that makes the three-valued "
+        "existing_ac_ocpd_a readable"),
+}
+
 # What the artifact is allowed to say about the panel schedule: counts and sums
 # over it, never a row of it. panel_schedule stays private-only because its
 # `device` markings and door-legend `label`s describe one particular house.
@@ -2444,6 +2581,27 @@ def case_the_artifact_aggregates_the_panel_schedule_away():
         f"panel-schedule row key(s) in the artifact: {found} -- devices and "
         f"door-legend labels are private-only and only aggregates over them "
         f"may be published")
+
+    # Figures derived from the schedule outside panel.occupancy are declared,
+    # with the reason each may be published. An undeclared one is the defect
+    # this catches: neither the leak scan nor the row-shape walk above can see
+    # a bare ampere rating lifted out of one row.
+    nc = d["noncoincident_loads"]
+    derived = {f"noncoincident_loads.{k}" for k in nc
+               if k.startswith(("existing_ac_ocpd_a",
+                                "schedule_entries_matching"))}
+    undeclared = sorted(derived - set(SCHEDULE_DERIVED_FIGURES))
+    assert not undeclared, (
+        f"schedule-derived figure(s) published without a declared reason: "
+        f"{undeclared}. Declare them in SCHEDULE_DERIVED_FIGURES and have the "
+        f"cheatsheet's panel_schedule privacy_note admit them, or stop "
+        f"publishing them")
+    for key, why in SCHEDULE_DERIVED_FIGURES.items():
+        assert len(why) > 60, key
+        leaf = key.split(".")[-1]
+        assert leaf in nc, f"{key} is declared but no longer published"
+        assert nc[leaf] is None or isinstance(nc[leaf], (int, float)), \
+            f"{key} is not a bare number: {nc[leaf]!r}"
     return "the artifact publishes aggregates of the panel schedule, never a row of it"
 
 
@@ -2532,8 +2690,9 @@ def case_a_household_with_no_ev_still_gets_its_panel_answer():
     themselves not applicable with the flag that did it, and charger.kw is
     never touched."""
     if not _private_run_ready():
-        return ("SKIP the end-to-end no-EV run needs the private archive (the "
-                "Green Button export and the Enphase consumption-CT files)")
+        raise SkipCase("the end-to-end no-EV run needs the private archive "
+                       "(the Green Button export and the Enphase "
+                       "consumption-CT files)")
 
     def no_ev(h):
         h["household"]["has_ev"] = False
@@ -2595,8 +2754,9 @@ def case_an_absent_ev_flag_reproduces_the_committed_artifact():
     """Absence is not false, proved at the only scale that settles it: with the
     flag deleted the run has to produce the committed artifact byte for byte."""
     if not _private_run_ready():
-        return ("SKIP the absent-flag reproduction needs the private archive "
-                "(the Green Button export and the Enphase consumption-CT files)")
+        raise SkipCase("the absent-flag reproduction needs the private archive "
+                       "(the Green Button export and the Enphase "
+                       "consumption-CT files)")
     d = _build_with(lambda h: h["household"].pop("has_ev", None))
     got = (json.dumps(d, indent=1, sort_keys=True) + "\n").encode()
     assert got == S.OUT.read_bytes(), (
@@ -2604,6 +2764,748 @@ def case_an_absent_ev_flag_reproduces_the_committed_artifact():
         "being read as false somewhere")
     return "an absent household.has_ev reproduces the committed artifact byte for byte"
 
+
+# ---------------------------------------------------------------------------
+# NEC citations
+# ---------------------------------------------------------------------------
+
+# A section number, as this module publishes them: 705.12(B)(3)(3), 220.87(1),
+# 440.4(B). Bare three-digit-dot-number and any parenthesised subdivisions.
+NEC_SECTION_RE = r"\d{3}\.\d+(?:\([A-Za-z0-9]+\))*"
+
+
+def _nec_sections(text):
+    import re
+    return set(re.findall(r"\b" + NEC_SECTION_RE, text))
+
+
+def case_every_nec_citation_comes_from_one_declared_table():
+    """Three citations were wrong at once, each at more than one site: the
+    sum-of-all-OCPDs rule cited as 705.12(B)(3)(1), the MCA marking cited as
+    440.6, and the 30-day recording route cited as the body of 220.87 rather
+    than as the Exception this service may not use.
+
+    The fix is structural rather than three edits. Every section number lives in
+    NEC_RULES with the rule it stands for, and every published citation is built
+    by nec()/nec_rule() from that table -- so a number typed into prose is a
+    test failure here, and a misnumbering is a one-line fix in one place.
+    """
+    import re
+    src = pathlib.Path(S.__file__).read_text()
+    tree = ast.parse(src)
+
+    table = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and \
+                any(getattr(t, "id", "") == "NEC_RULES" for t in node.targets):
+            table.update(id(n) for n in ast.walk(node))
+    assert table, "NEC_RULES is not a module-level table any more"
+
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and \
+                    isinstance(body[0].value, ast.Constant) and \
+                    isinstance(body[0].value.value, str):
+                docstrings.add(id(body[0].value))
+
+    inline, in_docs = [], set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if id(node) in table:
+            continue
+        found = _nec_sections(node.value)
+        if not found:
+            continue
+        if id(node) in docstrings:
+            in_docs |= found
+        elif not (node.value.strip() in S.NEC_RULES):
+            # a literal that IS a table key is a citation argument to
+            # nec()/nec_rule(), which validates it at run time
+            inline.append((node.lineno, sorted(found), node.value[:60]))
+    assert not inline, (
+        f"NEC section number(s) typed into prose rather than cited through "
+        f"nec()/nec_rule(): {inline}. Add the section to NEC_RULES and build "
+        f"the string from it, so the number and the rule it stands for cannot "
+        f"drift apart")
+    undeclared = sorted(in_docs - set(S.NEC_RULES))
+    assert not undeclared, (
+        f"docstring(s) cite section(s) the table does not declare: "
+        f"{undeclared}")
+
+    # the artifact's own citations resolve to the table too
+    text = S.OUT.read_text()
+    cited = set()
+    for hit in re.findall(r"NEC (" + NEC_SECTION_RE + ")", text):
+        cited.add(hit)
+    assert cited, "the artifact cites no NEC section -- the scan is stale"
+    unknown = sorted(cited - set(S.NEC_RULES))
+    assert not unknown, f"artifact cites undeclared section(s): {unknown}"
+
+    # and the three that were wrong are right, at every site
+    d = json.loads(text)
+    assert "440.6" not in text, "the retired 440.6 MCA citation is back"
+    # the module may say why 440.6 was wrong; it may not cite it
+    assert "NEC 440.6" not in src and "440.6 MCA" not in src, \
+        "service_headroom.py still cites 440.6 for MCA"
+    assert "440.4(B)" in S.NEC_RULES and "440.35" in S.NEC_RULES
+    sr = d["battery_inverter"]["sum_rule"]["rule"]
+    assert "705.12(B)(3)(3)" in sr, sr
+    assert "705.12(B)(3)(1)" not in text, \
+        "the sum-of-breakers rule is still cited as (B)(3)(1) somewhere"
+    assert "705.12(B)(3)(1)" not in src, sr
+    hp = d["added_load_code_values"]["heat_pump_basis"]
+    assert "440.4(B)" in hp and "440.35" in hp, hp
+    # the AHJ sentence is Article 100's, not a quotation from 220.87
+    cav = d["caveat"]
+    assert "authority having jurisdiction" in cav, cav
+    assert "NEC 100" in cav, cav
+    assert "220.87 requires that the maximum-demand data be acceptable" \
+        not in src, "the AHJ sentence is still attributed to 220.87"
+    return (f"all {len(cited)} NEC citations in the artifact resolve to the "
+            f"one declared table, and none is typed inline")
+
+
+def case_the_220_87_conditions_are_published_with_the_right_minimum():
+    """220.87(1) is a 1-YEAR period. The 30-day recording is the EXCEPTION to
+    it, and the Exception is closed to a service with a photovoltaic system --
+    so "13x the code minimum of 30" was wrong twice: wrong minimum, and a route
+    this service could never take."""
+    d = json.loads(S.OUT.read_text())
+    nec = d["nec_220_87"]
+    con = nec["conditions"]
+    assert nec["condition_1_days_required"] == 365, nec
+    assert "code_minimum_days" not in nec, nec
+    assert "code minimum" not in json.dumps(nec), nec["window_note"]
+
+    c1 = con["condition_1"]
+    assert c1["days_required"] == 365, c1
+    assert c1["days_available"] == nec["measurement_days"], c1
+    assert _close(c1["margin_x"], _rq(c1["days_available"] / 365.0, 2)), c1
+    assert c1["margin_x"] < 2.0, ("395 days is not 13x anything", c1)
+    assert c1["verdict"] == "pass", c1
+
+    exc = con["condition_1_exception_30_day_recording"]
+    assert exc["available_to_this_service"] is False, exc
+    assert "renewable energy system" in exc["rule"], exc
+    assert "photovoltaic" in exc["why"], exc
+    # the PV that closes the Exception is the intake's own figure
+    kw = d["gross_reconstruction"]["pv_ac_ceiling"]["ceiling_kw"]
+    assert f"{kw:.2f} kW" in exc["why"], (kw, exc["why"])
+    assert "WEAKER" in exc["why_it_strengthens_rather_than_weakens"], exc
+    assert "condition (1)" in exc["why_it_strengthens_rather_than_weakens"], exc
+
+    # condition (2) is what the artifact computes; (3) is what it cannot
+    assert "compute" in con["condition_2"]["where_it_is_evaluated"], con
+    c3 = con["condition_3"]
+    assert c3["verdict"] == "not_determined", c3
+    assert c3["what_would_settle_it"], c3
+    assert "240.4" in c3["rule"] and "230.90" in c3["rule"], c3
+    # and the window note states the true margin
+    note = nec["window_note"]
+    assert "1-year period" in note, note
+    assert f"{_rq(c1['days_available'] / 365.0, 2)}x" in note, note
+    assert "Exception" in note and "closed" in note, note
+    return "the 220.87 conditions are published, with a 1-year minimum and the Exception ruled out"
+
+
+def case_the_busbar_rule_shows_both_source_figures():
+    """705.12(B)(3)(2) counts 125% of each source's OUTPUT CIRCUIT CURRENT; this
+    analysis counts breaker ratings. The ratings are the larger figures here, so
+    the substitution is conservative -- which is worth showing rather than
+    leaving to chance."""
+    d = json.loads(S.OUT.read_text())
+    b = d["battery_inverter"]["busbar_120_percent"]
+    sc = b["source_current_basis"]
+    assert "125 percent of the power-source(s) output circuit current" in \
+        sc["rule_as_written"], sc
+    assert "120 percent of the ampacity of the busbar" in sc["rule_as_written"]
+    rows = sc["sources"]
+    assert len(rows) == 2, rows
+    for r in rows:
+        # both figures are published rounded, so they agree to the last
+        # published place rather than to the bit
+        assert _close(r["code_figure_125pct_of_output_a"],
+                      r["output_circuit_current_a"] * 1.25, 1e-3), r
+        assert _close(r["rating_minus_code_figure_a"],
+                      _rq(r["ocpd_rating_a"] - r["code_figure_125pct_of_output_a"],
+                          4), 1e-4), r
+        assert r["rating_is_at_or_above_the_code_figure"] is (
+            r["ocpd_rating_a"] >= r["code_figure_125pct_of_output_a"]), r
+        assert r["output_basis"], r
+    assert sc["every_rating_is_at_or_above_the_code_figure"] is True, sc
+    # the figures the review checked by hand: a 50 A PV breaker against
+    # 1.25 x 39.375 A, and a 60 A battery breaker against 1.25 x 47.9167 A
+    by = {r["source"]: r for r in rows}
+    pv = by[S.SOURCE_EXISTING_PV]
+    assert _close(pv["ocpd_rating_a"], b["existing_pv_backfeed_a"]), pv
+    assert _close(pv["code_figure_125pct_of_output_a"], 49.2188, 1e-4), pv
+    bat = by[S.SOURCE_PROPOSED_BATTERY]
+    assert _close(bat["ocpd_rating_a"],
+                  d["battery_inverter"]["backfeed_breaker_a"]), bat
+    assert _close(bat["code_figure_125pct_of_output_a"], 59.8958, 1e-4), bat
+    # nothing published moves: the arithmetic still runs on the ratings
+    assert _close(b["remaining_backfeed_a"],
+                  _rq(b["busbar_x_120pct_a"] - b["main_ocpd_a"]
+                      - b["existing_pv_backfeed_a"], 1)), b
+    # an empty source list claims nothing rather than claiming everything
+    empty = S.source_current_basis(())
+    assert empty["every_rating_is_at_or_above_the_code_figure"] is None, empty
+    assert "cannot be compared" in empty["reading"], empty
+    # and a source whose breaker is SMALLER than its code figure is caught
+    low = S.source_current_basis([("x", 40.0, 39.375, "test")])
+    assert low["every_rating_is_at_or_above_the_code_figure"] is False, low
+    assert "BELOW" in low["reading"], low
+    return "the 120% rule publishes both the breaker ratings and the code's 125%-of-output figures"
+
+
+# ---------------------------------------------------------------------------
+# The conservative basis, and the coverage gap that sets it
+# ---------------------------------------------------------------------------
+
+def _covered_env(basis):
+    """A one-interval envelope on the given PV ceiling basis, plus a `sam` that
+    makes the interval covered or not."""
+    d = dt.date(2026, 6, 15)
+    env = [(d, 1.25, 4.0, 25.0, 0.0, False, basis)]
+    sam = {(d, 1): 1.0} if basis == S.PV_BASIS_MEASURED else {(d, 0): 1.0}
+    return d, env, sam
+
+
+def case_the_conservative_basis_names_the_interval_that_sets_it():
+    """The published description of the conservative basis used to be a fixed
+    sentence about daylight while the interval that actually set it was a 01:15
+    in the uncovered tail. It is derived from that interval now, and so is what
+    would settle a case computed against it -- because where the hour was never
+    covered, 15-minute production data settles nothing."""
+    # uncovered: the bound is the bare nameplate cap, and the remedy is a
+    # consumption-CT export that reaches the end of the meter window
+    d, env, sam = _covered_env(S.PV_BASIS_NAMEPLATE)
+    lag = {"enphase_coverage_last_hour": "2026-06-14 07:00",
+           "meter_window_last_interval": "2026-06-15 23:45", "lag_hours": 40.75}
+    b = S.binding_upper_interval(env, set(), sam, 9.45, lag)
+    assert b["timestamp_local"] == "2026-06-15 01:15", b
+    assert b["pv_ceiling_basis"] == S.PV_BASIS_NAMEPLATE, b
+    assert b["hour_has_a_production_measurement"] is False, b
+    assert b["why_the_hour_is_uncovered"] == S.UNCOVERED_AFTER, b
+    assert "COVERAGE GAP, not daylight" in b["reading"], b
+    assert "2.3625 kWh" in b["reading"], b
+    assert lag["enphase_coverage_last_hour"] in b["reading"], b
+    settle = S.what_would_settle_it(b, lag)
+    assert "AT ANY RESOLUTION" in settle, settle
+    assert "would not settle this case" in settle, settle
+    assert b["timestamp_local"] in settle, settle
+    assert S.conservative_basis_is(b).endswith(b["reading"]), S.conservative_basis_is(b)
+    assert b["reading"] in S.verdict_basis(b), S.verdict_basis(b)
+
+    # covered: the bound is hourly resolution, and 15-minute production IS the
+    # instrument that would collapse it
+    d2, env2, sam2 = _covered_env(S.PV_BASIS_MEASURED)
+    b2 = S.binding_upper_interval(env2, set(), sam2, 9.45, lag)
+    assert b2["hour_has_a_production_measurement"] is True, b2
+    assert b2["why_the_hour_is_uncovered"] is None, b2
+    assert "HAS an Enphase reading" in b2["reading"], b2
+    assert "COVERAGE GAP" not in b2["reading"], b2
+    settle2 = S.what_would_settle_it(b2, lag)
+    assert settle2.startswith("15-minute PV production"), settle2
+    assert "never metered here" in settle2, settle2
+    assert settle2 != settle, "both bases name the same remedy"
+
+    # the four uncovered reasons are exhaustive and each has its own sentence
+    assert set(S.UNCOVERED_WHY) == {S.UNCOVERED_DST, S.UNCOVERED_AFTER,
+                                    S.UNCOVERED_BEFORE, S.UNCOVERED_GAP}
+    assert len(set(S.UNCOVERED_WHY.values())) == 4, S.UNCOVERED_WHY
+    return "the conservative basis and its settler are derived from the interval that binds"
+
+
+def case_the_coverage_lag_is_published_and_gated():
+    """The lag between the end of the production record and the end of the
+    meter window was computed and never acted on. Every interval inside it
+    carries the bare nameplate cap, and on this household one of them sets the
+    conservative basis -- so it is published in hours and intervals, and a lag
+    past the declared threshold stops the run."""
+    day = dt.date(2026, 6, 15)
+    sam = {(day, h): 1.0 for h in range(8)}
+
+    def env_to(hours):
+        return [(day, h + f, 1.0, 2.0, 0.0, False, S.PV_BASIS_NAMEPLATE)
+                for h in range(hours) for f in (0.0, .25, .5, .75)]
+
+    ok = S.coverage_lag(env_to(9), sam, 4)
+    assert ok["enphase_coverage_last_hour"] == "2026-06-15 07:00", ok
+    assert ok["meter_window_last_interval"] == "2026-06-15 08:45", ok
+    assert _close(ok["lag_hours"], 1.75), ok
+    assert ok["lag_intervals"] == 4, ok
+    assert ok["gate"]["passed"] is True, ok
+    assert ok["gate"]["threshold"] == S.ENPHASE_COVERAGE_MAX_LAG_HOURS, ok
+    assert "STALE" in ok["gate"]["catches"], ok
+    assert "4 interval(s)" in ok["what_the_lag_costs"], ok
+
+    # past the threshold the run stops rather than publishing a conservative
+    # basis set by a lengthening stretch of unmeasured hours
+    long_env = [(day + dt.timedelta(days=30), 12.0, 1.0, 2.0, 0.0, False,
+                 S.PV_BASIS_NAMEPLATE)] + env_to(8)
+    try:
+        S.coverage_lag(long_env, sam, 3000)
+        raise AssertionError("a stale Enphase export was accepted")
+    except SystemExit as e:
+        assert "stops" in str(e) and "before the end of the meter window" in str(e), e
+        assert "Re-pull the Enphase export" in str(e), e
+        assert "nothing was written" in str(e), e
+        # and it says what NOT to do about it
+        assert "Shortening the meter window instead is not the fix" in str(e), e
+    assert S.ENPHASE_COVERAGE_MAX_LAG_HOURS == 168.0, \
+        "the lag threshold moved -- the comment justifying it has to move too"
+    return "the Enphase coverage lag is published in hours and intervals, and gated"
+
+
+def case_the_artifact_flags_an_unmeasured_binding_hour():
+    """A reader meeting max_upper_bound_kw must be able to see, without going
+    looking, whether the interval that produced it had any production
+    measurement behind it."""
+    d = json.loads(S.OUT.read_text())
+    g = d["gross_reconstruction"]
+    b = g["max_upper_bound_binding_interval"]
+    sens = d["nec_220_87"]["sensitivity_on_the_upper_bound"]
+    flag = "max_upper_bound_is_set_by_an_hour_with_no_production_measurement"
+    assert _close(b["upper_bound_kw"], g["max_upper_bound_kw"]), (b, g)
+    assert _close(sens["max_upper_bound_kw"], g["max_upper_bound_kw"]), sens
+    assert sens["binding_interval"] == b, sens
+    assert g[flag] is not b["hour_has_a_production_measurement"], g[flag]
+    assert sens[flag] == g[flag], (sens[flag], g[flag])
+    assert b["pv_ceiling_basis"] in (S.PV_BASIS_MEASURED, S.PV_BASIS_NAMEPLATE)
+    assert (b["pv_ceiling_basis"] == S.PV_BASIS_MEASURED) == \
+        b["hour_has_a_production_measurement"], b
+    assert b["reading"] in g["honesty"], g["honesty"]
+    assert b["reading"] in sens["why"], sens["why"]
+    # the lag that produced it, published beside the split
+    lag = g["pv_ceiling_basis_split"]["enphase_coverage_lag"]
+    assert lag["gate"]["passed"] is True, lag
+    assert lag["lag_intervals"] == g["pv_ceiling_basis_split"][
+        "nameplate_intervals_by_reason"].get(S.UNCOVERED_AFTER, 0), lag
+    if not b["hour_has_a_production_measurement"]:
+        # this household: the binding interval is in the uncovered tail, and
+        # every not_determined case names the export re-pull, not a 15-minute
+        # production series
+        assert b["why_the_hour_is_uncovered"] == S.UNCOVERED_AFTER, b
+        assert lag["lag_hours"] > 0, lag
+        for c in d["cases"]:
+            if c["ampacity_verdict"] == "not_determined":
+                assert "Enphase consumption-CT export pulled through" in \
+                    c["what_would_settle_it"], c
+    return "the artifact says in one field whether an unmeasured hour sets the conservative basis"
+
+
+# ---------------------------------------------------------------------------
+# Mitigations, the A/C credit and the peak
+# ---------------------------------------------------------------------------
+
+def case_mitigations_carry_both_bases_and_a_verdict():
+    """A mitigation figure published on the measured basis alone reads as
+    available at settings the conservative basis does not fit -- including the
+    48 A setting the second_evse_only case itself calls not_determined."""
+    d = json.loads(S.OUT.read_text())
+    by = {m["mitigation"]: m for m in d["mitigations"]}
+    share = by["EVSE load sharing"]
+    for key in ("case_second_evse_only_headroom_a", "case_both_heat_pump_mca_a"):
+        fig = share[key]
+        assert set(fig) >= {"measured_basis", "conservative_basis",
+                            "ampacity_verdict"}, fig
+        for basis in ("measured_basis", "conservative_basis"):
+            assert "binding" in fig[basis] and fig[basis]["binding_is"], fig
+        assert fig["conservative_basis"]["binding"] <= \
+            fig["measured_basis"]["binding"], fig
+        assert fig["ampacity_verdict"] == S.ampacity_verdict(
+            fig["measured_basis"]["binding"],
+            fig["conservative_basis"]["binding"]), fig
+    # they are the whole calculated headroom: a sharing group adds no code load
+    nec = d["nec_220_87"]
+    assert _close(share["case_second_evse_only_headroom_a"]["measured_basis"][
+        "binding"], nec["headroom_a"]["binding"]), share
+    assert _close(share["case_second_evse_only_headroom_a"][
+        "conservative_basis"]["binding"],
+        nec["sensitivity_on_the_upper_bound"]["binding"]), share
+
+    rate = by["Charge-rate limit on the second EVSE"]
+    table = rate["table"]
+    assert len(table) == len(S.WALL_CONNECTOR_OUTPUTS_A), table
+    for row in table:
+        assert row["ampacity_verdict"] in ("pass", "fail", "not_determined"), row
+        assert row["ampacity_verdict"] == S.ampacity_verdict(
+            row["headroom_left_measured_basis"]["binding"],
+            row["headroom_left_conservative_basis"]["binding"]), row
+        assert (row["what_would_settle_it"] is not None) == \
+            (row["ampacity_verdict"] == "not_determined"), row
+        assert _close(row["headroom_left_measured_basis"]["binding"],
+                      _rq(nec["headroom_a"]["binding"] - row["code_load_a"], 4)), row
+    # the verdicts are monotone in the setting, and this household's own answer
+    verdicts = [r["ampacity_verdict"] for r in table]
+    assert verdicts.index("not_determined") > 0, verdicts
+    assert all(v == "pass" for v in verdicts[:verdicts.index("not_determined")])
+    passing = rate["settings_that_pass_on_both_bases_a"]
+    assert passing == [r["evse_output_a"] for r in table
+                       if r["ampacity_verdict"] == "pass"], passing
+    # the 48 A row is the one the case calls not_determined, and it says so
+    by_out = {r["evse_output_a"]: r for r in table}
+    top = by_out[S.EXISTING_EVSE_OUTPUT_A]
+    case = [c for c in d["cases"] if c["case"] == "second_evse_only"][0]
+    assert top["ampacity_verdict"] == case["ampacity_verdict"], (top, case)
+    assert top["headroom_left_vs_service_a"] > 0 > \
+        top["headroom_left_conservative_basis"]["vs_service_rating"], top
+    assert f"{len(passing)} of {len(table)}" in rate["reading"], rate["reading"]
+    return "every mitigation figure carries both bases and a three-valued verdict"
+
+
+def case_the_existing_ac_ocpd_is_three_valued():
+    """The A/C rating was taken from the first label that matched, and a miss
+    was indistinguishable from a panel with no A/C circuit. Both are answers the
+    schedule cannot give, so both report not_determined."""
+    read = S.existing_ac_ocpd([{"poles": 2, "amps": 40, "label": "A/C unit"},
+                               {"poles": 1, "amps": 20, "label": "Kitchen"}])
+    assert _close(read["ocpd_a"], 40.0), read
+    assert read["basis"] == S.AC_READ, read
+    assert read["matches"] == 1, read
+    assert read["what_would_settle_it"] is None, read
+    assert "A/C unit" not in read["reading"], "the door legend leaked"
+
+    none = S.existing_ac_ocpd([{"poles": 1, "amps": 20, "label": "Kitchen"}])
+    assert none["ocpd_a"] is None and none["basis"] == S.AC_NO_MATCH, none
+    assert none["reading"].startswith("NOT DETERMINED"), none
+    assert "not the same as a panel with no air-conditioning circuit" in \
+        none["reading"], none
+    assert none["what_would_settle_it"], none
+
+    two = S.existing_ac_ocpd([{"poles": 2, "amps": 40, "label": "A/C"},
+                              {"poles": 2, "amps": 30, "label": "Condenser 2"}])
+    assert two["ocpd_a"] is None and two["basis"] == S.AC_AMBIGUOUS, two
+    assert two["matches"] == 2, two
+    assert "choosing silently" in two["reading"], two
+
+    twin = S.existing_ac_ocpd([{"poles": 2, "amps": [20, 20], "label": "a/c"}])
+    assert twin["ocpd_a"] is None and twin["basis"] == S.AC_NOT_ONE_DEVICE, twin
+
+    # in the artifact: the figure travels with its basis, and the credit bound
+    # is computed from it or withheld with it
+    d = json.loads(S.OUT.read_text())
+    nc = d["noncoincident_loads"]
+    assert nc["existing_ac_ocpd_basis"] in (
+        S.AC_READ, S.AC_NO_MATCH, S.AC_AMBIGUOUS, S.AC_NOT_ONE_DEVICE), nc
+    high = nc["credit_bounds_a"]["high"]
+    if nc["existing_ac_ocpd_basis"] == S.AC_READ:
+        assert _close(high, _rq(nc["existing_ac_ocpd_a"] * 1.25, 4)), nc
+        assert nc["existing_ac_ocpd_what_would_settle_it"] is None, nc
+    else:
+        assert nc["existing_ac_ocpd_a"] is None and high is None, nc
+        assert nc["existing_ac_ocpd_what_would_settle_it"], nc
+    # only the bare rating is published, never a word of the schedule row
+    assert isinstance(nc["schedule_entries_matching_an_air_conditioning_token"],
+                      int), nc
+    # the token list itself stays out: a token short enough to be useful is
+    # exactly what a door legend says, and publishing the list republishes one
+    # household's label verbatim -- the private-only leak scan caught it
+    assert "air_conditioning_tokens_searched" not in nc, nc
+    values = {v.lower() for v in _artifact_strings(nc) if isinstance(v, str)}
+    for tok in S.AC_LABEL_TOKENS:
+        assert tok not in values, \
+            f"{tok!r} is published as a value, and that is what a door legend says"
+    return "the existing A/C rating is three-valued and publishes no schedule row"
+
+
+def case_the_noncoincident_rule_is_stated_whole():
+    """220.60's second sentence is the one that bears on this case -- a motor or
+    A/C load that is NOT the largest noncoincident load still carries 125%. The
+    artifact stated the first sentence only."""
+    d = json.loads(S.OUT.read_text())
+    nc = d["noncoincident_loads"]
+    rule = nc["rule"]
+    assert "largest load(s) that will be used at one time" in rule, rule
+    assert "125 percent of either the motor load or the air-conditioning load" \
+        in rule, rule
+    assert "whichever is larger" in rule, rule
+    assert rule == S.nec_rule("220.60"), rule
+    assert "second sentence" in nc["the_second_sentence_matters_here"], nc
+    # and the space note no longer asserts a universal the artifact contradicts
+    for c in d["cases"]:
+        note = c["spaces"]["note"]
+        assert "every case here needs at least two adjacent free spaces" \
+            not in note, note
+        assert "ADDS equipment" in note, note
+        assert "REPLACES the existing A/C" in note and "not modelled" in note, note
+    assert "not modelled here" in nc["why_it_matters"], nc
+    return "220.60 is stated whole, and the space note is scoped to the add cases"
+
+
+def case_the_artifact_says_what_it_cannot_say_about_the_peak():
+    """The peak's timestamp and conditions were published and what was running
+    was not -- which reads as though nobody asked. Whole-house 15-minute data
+    cannot attribute a peak to a load; that is an answer, and it is published
+    with what would settle it and with what the series does show."""
+    d = json.loads(S.OUT.read_text())
+    md = d["maximum_demand"]
+    w = md["what_was_running"]
+    assert w["verdict"] == "not_determined", w
+    assert "WHOLE HOUSE" in w["reading"], w
+    assert "submetering" in w["what_would_settle_it"], w
+    assert "disaggregate" in w["what_would_settle_it"], w
+    shows = w["what_the_series_does_show"]
+    rows = shows["intervals_around_the_peak"]
+    assert 3 <= len(rows) <= 5, rows
+    ts = [r["timestamp_local"] for r in rows]
+    assert md["peak_timestamp_local"] in ts, (ts, md["peak_timestamp_local"])
+    assert ts == sorted(ts), ts
+    peak_row = [r for r in rows
+                if r["timestamp_local"] == md["peak_timestamp_local"]][0]
+    assert _close(peak_row["gross_kw_lower_bound"], md["peak_kw"]), peak_row
+    others = [r["gross_kw_lower_bound"] for r in rows if r is not peak_row]
+    assert _close(shows["largest_neighbouring_interval_kw"], max(others)), shows
+    assert _close(shows["peak_minus_largest_neighbour_kw"],
+                  _rq(md["peak_kw"] - max(others), 4)), shows
+    assert shows["peak_minus_largest_neighbour_kw"] > 0, shows
+    evse = shows["existing_evse_rated_kw"]
+    if evse is None:
+        assert shows["peak_minus_existing_evse_rated_kw"] is None, shows
+    else:
+        assert _close(evse, d["panel"]["existing_evse_kw"]), shows
+        assert _close(shows["peak_minus_existing_evse_rated_kw"],
+                      _rq(md["peak_kw"] - evse, 4)), shows
+        assert "does not account for the interval on its own" in \
+            shows["reading"], shows
+    # no appliance is named anywhere in the answer: that is the attribution the
+    # data cannot make, and naming one is the failure this case guards
+    text = json.dumps(w).lower()
+    for word in ("oven", "dryer", "air conditioner", "a/c", "pool", "pump",
+                 "heater", "range"):
+        assert word not in text, f"the peak answer names {word!r}"
+    return "the peak's load attribution is published as not determined, with what the series shows"
+
+# ---------------------------------------------------------------------------
+# build(), end to end, on a synthetic house
+#
+# The two cases that run the real build() need the private archive and SKIP in
+# CI, which left the whole body of build() -- the assembly, the wiring of every
+# figure into the artifact -- unexercised there. This fixture builds a complete
+# synthetic year on disk and runs build() against it, so an error injected into
+# the assembly fails in CI rather than only on the one machine that holds the
+# private data.
+#
+# It is a synthetic HOUSE, not a synthetic version of this household: the loads
+# are flat, the production is a rectangle, and every figure asserted below is
+# hand-computable from the two spikes the fixture plants. Nothing here is
+# evidence about the real dataset, and nothing about the real dataset is
+# reproduced from it.
+# ---------------------------------------------------------------------------
+
+SYNTH_START = dt.date(2025, 6, 1)
+SYNTH_END = dt.date(2026, 6, 30)          # 395 days, DST both ways inside
+SYNTH_BASE_KWH = 0.25                     # 1 kW of house load, every interval
+SYNTH_PV_HOURS = range(9, 16)             # 7 producing hours a day
+SYNTH_PV_KWH = 2.0                        # per producing hour, before weather
+SYNTH_KW_AC = 9.45                        # matches PANEL_YAML's solar.kw_ac
+
+# The night spike sets the measured maximum: 4.0 kWh in a quarter-hour is 16 kW,
+# in an hour with no production, so the bound collapses and the peak is a point.
+SYNTH_PEAK_DAY = dt.date(2025, 9, 10)
+SYNTH_PEAK_HF = 5.75
+SYNTH_PEAK_KWH = 4.0
+# The daylight spike sets the conservative basis: 4.0 kWh of load against
+# 0.5 kWh of PV in that interval is 3.5 kWh imported, and the upper bound adds
+# the containing hour's whole 2.0 kWh of production -> (3.5 + 2.0) * 4 = 22 kW.
+SYNTH_UPPER_DAY = dt.date(2025, 10, 15)
+SYNTH_UPPER_HF = 12.25
+
+
+def _synth_weather(day):
+    """A deterministic, non-monotonic daily scale on production.
+
+    Flat production would leave the daily series with no variance and the
+    conservation correlation undefined; a ramp would correlate at 1.0 with its
+    own shift. The spike day is pinned at 1.0 so the upper bound below is exact.
+    """
+    if day == SYNTH_UPPER_DAY:
+        return 1.0
+    rnd = random.Random((day - SYNTH_START).days * 7919)
+    return 0.6 + 0.4 * rnd.random()
+
+
+def _synth_series():
+    """(meter rows, hourly gross by (date, hour), daily derived PV).
+
+    Per interval the meter sees load - pv, split into import and export, so the
+    identity the module inverts -- pv = sam - import + export -- holds exactly
+    on every hour and the derived series is the fixture's own PV by
+    construction.
+    """
+    rows, sam, daily_pv = [], {}, {}
+    day = SYNTH_START
+    while day <= SYNTH_END:
+        slots = R.expected_day_hours(day)
+        per_hour = collections.Counter(int(h) for h in slots)
+        pv_day = 0.0
+        for hf in slots:
+            h = int(hf)
+            pv_hour = (SYNTH_PV_KWH * _synth_weather(day)
+                       if h in SYNTH_PV_HOURS else 0.0)
+            pv_i = pv_hour / per_hour[h]
+            load_i = SYNTH_BASE_KWH
+            if (day, hf) == (SYNTH_PEAK_DAY, SYNTH_PEAK_HF) or \
+                    (day, hf) == (SYNTH_UPPER_DAY, SYNTH_UPPER_HF):
+                load_i = SYNTH_PEAK_KWH
+            net = load_i - pv_i
+            rows.append((day, hf, max(net, 0.0), max(-net, 0.0)))
+            sam[(day, h)] = sam.get((day, h), 0.0) + load_i
+            pv_day += pv_i
+        daily_pv[day] = pv_day
+        day += dt.timedelta(days=1)
+    return rows, sam, daily_pv
+
+
+def _write_synth_meter(path, rows):
+    """A Green Button 15-minute export in the shape load_intervals() parses."""
+    out = ["Name,SYNTHETIC FIXTURE", "",
+           "Meter Number,Date,Start Time,End Time,Consumption,Generation,Units"]
+    for day, hf, imp, exp in rows:
+        t = dt.datetime.combine(day, dt.time()) + dt.timedelta(hours=hf)
+        end = t + dt.timedelta(minutes=15)
+        out.append(f"SYNTH,{day:%m/%d/%Y},{t:%I:%M %p},{end:%I:%M %p},"
+                   f"{imp:.6f},{exp:.6f},kWh")
+    path.write_text("\n".join(out) + "\n")
+
+
+def _write_synth_sam(path, year, sam):
+    """One flat 8760-row Enphase export, zero-padded past the last hour."""
+    n = 8784 if (year % 4 == 0 and (year % 100 or year % 400 == 0)) else 8760
+    base = dt.datetime(year, 1, 1)
+    vals = []
+    for i in range(n):
+        ts = base + dt.timedelta(hours=i)
+        # inside the window: the hour's real gross load. Before it: the same
+        # flat base, which is measurement of a house nobody is asking about.
+        # After it: zero, the padding the loader truncates.
+        if (ts.date(), ts.hour) in sam:
+            vals.append(sam[(ts.date(), ts.hour)])
+        elif ts.date() < SYNTH_START:
+            vals.append(4 * SYNTH_BASE_KWH)
+        else:
+            vals.append(0.0)
+    path.write_text("kWh\n" + "".join(f"{v:.6f}\n" for v in vals))
+
+
+def _write_synth_threeway(path, daily_pv, dst_days):
+    """Two reference production series over the fixture's own derived PV."""
+    lines = [",synthetic_ct,synthetic_feed"]
+    for day in sorted(daily_pv):
+        if day in dst_days:
+            continue
+        lines.append(f"{day},{daily_pv[day]:.6f},{daily_pv[day] * 1.02:.6f}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def case_build_runs_end_to_end_on_a_synthetic_house():
+    """The whole of build(), in CI, against inputs whose answers are known.
+
+    Every figure asserted here follows from the fixture by hand: a 16 kW night
+    spike in a non-producing hour is the measured maximum and is
+    point-determined; a 14 kW daylight spike whose hour made 2.0 kWh is the
+    conservative maximum at 22 kW; 395 days satisfies 220.87(1); the two DST
+    Sundays are the only uncovered hours. An arithmetic error anywhere in the
+    assembly moves one of them.
+    """
+    rows, sam, daily_pv = _synth_series()
+    dst = {d for y in (2025, 2026) for d in R.dst_transition_sundays(y)
+           if SYNTH_START <= d <= SYNTH_END}
+    assert len(dst) == 2, dst
+    real = (S.RAW_DIR, S.THREEWAY)
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    for year in (2025, 2026):
+        _write_synth_sam(raw / f"enphase_sam8760_{year}.csv", year, sam)
+    _write_synth_threeway(raw / "threeway.csv", daily_pv, dst)
+    hh = _with_household("household:\n  has_new_load_interest: true\n"
+                         + PANEL_YAML)
+    try:
+        S.RAW_DIR, S.THREEWAY = raw, raw / "threeway.csv"
+        d = S.build()
+    finally:
+        S.RAW_DIR, S.THREEWAY = real
+        del hh
+        td.cleanup()
+
+    # the window and the measured maximum
+    prov = d["provenance"]
+    assert prov["window_days"] == 395, prov
+    assert prov["interval_rows"] == len(rows), prov
+    md = d["maximum_demand"]
+    assert _close(md["peak_kw"], 16.0), md
+    assert md["peak_timestamp_local"] == "2025-09-10 05:45", md
+    assert md["peak_coincident"]["point_determined"] is True, md
+    assert _close(md["peak_a"], 16.0 * 1000 / 240.0, 1e-4), md
+
+    # 220.87 on that maximum, and its conditions
+    nec = d["nec_220_87"]
+    assert _close(nec["calculated_load_a"], _rq(16.0 * 1000 / 240.0 * 1.25, 4)), nec
+    assert _close(nec["headroom_a"]["vs_service_rating"],
+                  _rq(175.0 - nec["calculated_load_a"], 4)), nec
+    assert _close(nec["headroom_a"]["binding"],
+                  _rq(170.0 - nec["calculated_load_a"], 4)), nec
+    assert nec["conditions"]["condition_1"]["verdict"] == "pass", nec
+    assert nec["conditions"]["condition_1"]["days_available"] == 395, nec
+    assert nec["conditions"]["condition_1_exception_30_day_recording"][
+        "available_to_this_service"] is False, nec
+
+    # the conservative basis, and the OTHER branch of the binding-interval
+    # description: this fixture's binding interval sits in a COVERED hour, so
+    # 15-minute production is the instrument that would settle it
+    g = d["gross_reconstruction"]
+    assert _close(g["max_upper_bound_kw"], 22.0), g
+    b = g["max_upper_bound_binding_interval"]
+    assert b["timestamp_local"] == "2025-10-15 12:15", b
+    assert b["hour_has_a_production_measurement"] is True, b
+    assert g["max_upper_bound_is_set_by_an_hour_with_no_production_measurement"] \
+        is False, g
+    assert g["intervals_whose_upper_bound_exceeds_the_peak"] == 1, g
+    for c in d["cases"]:
+        if c["ampacity_verdict"] == "not_determined":
+            assert c["what_would_settle_it"].startswith("15-minute PV production")
+
+    # the PV ceiling split: the two DST Sundays are the only uncovered hours,
+    # and the export reaches the end of the meter window bar the last hour
+    sp = g["pv_ceiling_basis_split"]
+    assert sp["nameplate_intervals_by_reason"] == {
+        "excluded_dst_day": sum(len(R.expected_day_hours(x)) for x in dst)}, sp
+    lag = sp["enphase_coverage_lag"]
+    assert lag["enphase_coverage_last_hour"] == "2026-06-30 23:00", lag
+    assert lag["meter_window_last_interval"] == "2026-06-30 23:45", lag
+    assert _close(lag["lag_hours"], 0.75), lag
+    assert lag["lag_intervals"] == 0, lag
+    assert lag["gate"]["passed"] is True, lag
+
+    # the conservation check ran on the fixture's own references and passed
+    con = g["conservation"]
+    assert con["gates_passed"] == con["gates_total"] >= 7, con
+    assert con["days_compared"] == 395 - len(dst), con
+    assert _close(con["against"]["synthetic_ct"]["residual_pct"], 0.0, 1e-3), con
+
+    # the cases, the busbar and the mitigations all assembled
+    assert [c["case"] for c in d["cases"]] == [
+        "heat_pump_only", "second_evse_only", "heat_pump_and_second_evse",
+        "heat_pump_second_evse_and_battery"], d["cases"]
+    hp = d["cases"][0]
+    assert _close(hp["remaining_headroom_a"]["measured_basis"]["binding"],
+                  nec["headroom_a"]["binding"]), hp
+    assert hp["spaces"]["physical_fit"] == "not_determined", hp
+    assert d["battery_inverter"]["ampacity_leg"] == "fail", d["battery_inverter"]
+    assert len(d["mitigations"]) == 3, d["mitigations"]
+    # no A/C label in this fixture's schedule: a miss is not a panel without one
+    nc = d["noncoincident_loads"]
+    assert nc["existing_ac_ocpd_basis"] == S.AC_NO_MATCH, nc
+    assert nc["credit_bounds_a"]["high"] is None, nc
+    # and the artifact serializes, which is what main() would write
+    assert json.dumps(d, indent=1, sort_keys=True), "the result is not JSON"
+    return ("build() runs end to end on a synthetic year and reproduces every "
+            "figure the fixture determines")
 
 CASES = [
     case_220_87_chain_on_hand_computed_inputs,
@@ -2684,28 +3586,63 @@ CASES = [
     case_no_private_only_intake_value_reaches_the_artifact,
     case_the_private_leak_scan_catches_a_planted_value,
     case_the_artifact_aggregates_the_panel_schedule_away,
+    case_every_nec_citation_comes_from_one_declared_table,
+    case_the_220_87_conditions_are_published_with_the_right_minimum,
+    case_the_busbar_rule_shows_both_source_figures,
+    case_the_conservative_basis_names_the_interval_that_sets_it,
+    case_the_coverage_lag_is_published_and_gated,
+    case_the_artifact_flags_an_unmeasured_binding_hour,
+    case_mitigations_carry_both_bases_and_a_verdict,
+    case_the_existing_ac_ocpd_is_three_valued,
+    case_the_noncoincident_rule_is_stated_whole,
+    case_the_artifact_says_what_it_cannot_say_about_the_peak,
+    case_build_runs_end_to_end_on_a_synthetic_house,
     case_charger_kw_is_read_only_where_there_is_an_ev,
     case_a_household_with_no_ev_still_gets_its_panel_answer,
     case_an_absent_ev_flag_reproduces_the_committed_artifact,
 ]
 
 
+def _cases_defined_here():
+    """Every case_* function this module defines, by name."""
+    return {name for name, obj in globals().items()
+            if name.startswith("case_") and callable(obj)}
+
+
 def main():
+    # The list is hand-maintained, so a case added and not listed would sit in
+    # the file looking like coverage and never run. Checked both ways.
+    listed = [c.__name__ for c in CASES]
+    assert len(listed) == len(set(listed)), \
+        f"CASES lists a case twice: {sorted(n for n in listed if listed.count(n) > 1)}"
+    unlisted = sorted(_cases_defined_here() - set(listed))
+    assert not unlisted, (
+        f"case function(s) defined but not in CASES, so they never run: "
+        f"{unlisted}")
+
     real_path, real_cache = HH.PATH, HH._cache
     ran = skipped = failures = 0
     for case in CASES:
         try:
             msg = case()
-            # The private-data cases report SKIP rather than passing quietly:
-            # a case that cannot run in CI must say so, not read as green.
-            if msg.startswith("SKIP"):
-                print(f"SKIP  {case.__name__} ({msg[5:]})")
-                skipped += 1
-            else:
-                print(f"PASS  {msg}")
-                ran += 1
+            print(f"PASS  {case.__name__}: {msg}")
+            ran += 1
+        except SkipCase as e:
+            # A case that cannot run here says so; it never reads as green.
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
+            failures += 1
+        except SystemExit as e:
+            # A fail-closed raise the case did not expect. It is a failure of
+            # that case, not a reason to abandon the ones after it -- an
+            # uncaught SystemExit used to abort the run with every remaining
+            # case unreported and the exit status of a clean pass.
+            print(f"FAIL  {case.__name__}: unexpected SystemExit: {e}")
+            failures += 1
+        except Exception as e:                     # noqa: BLE001 -- see above
+            print(f"FAIL  {case.__name__}: {type(e).__name__}: {e}")
             failures += 1
         finally:
             HH.PATH, HH._cache = real_path, real_cache

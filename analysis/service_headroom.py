@@ -5,18 +5,33 @@ The question this answers: with a 175 A service already carrying a house, an EV
 charger and a 10 kW PV array, is there room for a heat pump, a second EV charger,
 or both -- and what happens if a battery inverter is added on top.
 
-NEC 220.87 (existing dwelling unit) lets the calculated load be taken as the
-ACTUAL maximum demand over at least 30 days times 125%, in place of a nameplate
-220.82/220.83 calculation. A year of 15-minute revenue-meter data is exactly the
-input that method wants, and this window is 395 days.
+NEC 220.87 (2020) lets an existing dwelling's calculated load be taken as the
+ACTUAL maximum demand times 125%, in place of a nameplate 220.82/220.83
+calculation, where its three conditions hold. Condition (1) is that the maximum
+demand data is available for a 1-YEAR period; this window is 395 days, so the
+household qualifies under (1) itself. The 30-day continuously-recorded route
+often quoted as "the code minimum" is not condition (1) -- it is the EXCEPTION
+to it, the fallback where a year is not available, and it closes with "This
+exception shall not apply if the feeder or service has a renewable energy
+system (i.e., solar photovoltaic or wind electric) or employs any form of peak
+load shaving." This service has ~9.45 kW of PV on it, so that route was never
+open to it. Qualifying under (1) rather than under an Exception the service
+cannot use is a strengthening of the evidence, and the artifact says so.
+Condition (2) is the arithmetic this module computes; condition (3) -- feeder
+overcurrent protection and service overload protection -- is NOT verified here
+and is published as not determined.
+
+Every NEC section number this module publishes is declared once in NEC_RULES
+with the rule it stands for, and every citation is built from that table.
 
 SCOPING ESTIMATE ONLY -- THE PERMIT CALCULATION BELONGS TO A LICENSED
-ELECTRICIAN. NEC 220.87 requires that the maximum-demand data be acceptable to
-the authority having jurisdiction; the AHJ may instead require a full 220.82 or
-220.83 nameplate calculation, and only a licensed electrician working from the
-actual equipment nameplates, conductor sizes and the panel's own labelling can
-produce a number that will be permitted. Nothing here is a design, and no
-equipment should be ordered against it.
+ELECTRICIAN. Approved means acceptable to the authority having jurisdiction
+(Article 100), so whether measured-demand data is accepted at all is the AHJ's
+call; the AHJ may instead require a full 220.82 or 220.83 nameplate
+calculation, and only a licensed electrician working from the actual equipment
+nameplates, conductor sizes and the panel's own labelling can produce a number
+that will be permitted. Nothing here is a design, and no equipment should be
+ordered against it.
 
 The measurement problem, and how it is handled
 ----------------------------------------------
@@ -69,23 +84,44 @@ ceiling and the run stops: an envelope built on the empirical maximum is not a
 bound, and every ampacity verdict here rests on it being one.
 
 The bound collapses to a point -- gross is EXACTLY the metered import -- wherever
-the containing hour produced no PV and the interval exported nothing. That is
-where the annual maximum lives: every one of the 200 largest import intervals in
-the window carries zero export and sits in an hour with zero derived production,
-in hours 00-08 and 17-23. The peak is therefore an exact observation, not a
-PV-masked one. In daylight the reconstruction is genuinely a bound and is
-reported as one; the width is stated rather than papered over.
+the containing hour produced no PV and the interval exported nothing. Whether
+the annual maximum is one of those is a fact about the peak interval, so it is
+read off that interval and published (`maximum_demand.basis`,
+`peak_coincident.point_determined`) rather than asserted about the method or
+about a top-N of the distribution. On this window it is: the peak interval
+exported nothing and its hour produced nothing. Elsewhere the reconstruction is
+genuinely a bound and is reported as one; the width is stated rather than
+papered over.
 
-The headline maximum demand is the measured one and stays that way -- the upper
-bound is loose by construction, because it credits a whole hour's production to
-a single quarter-hour. But a PASS/FAIL verdict taken off the measured basis
-alone would be asserting more than the data supports wherever the answer flips
-inside the disclosed width. Every case verdict is therefore THREE-VALUED,
-computed on both bases: `pass` where the case fits even on the conservative
-upper-bound reconstruction, `fail` where it does not fit even on the
-point-determined measured maximum, and `not_determined` where it fits on one and
-not the other. What would settle a `not_determined` case is 15-minute production
-data, which was never metered here.
+The headline maximum demand is the measured one and stays that way. The upper
+bound is loose by construction, for either of two reasons: inside a producing
+hour it credits that whole hour's measured production to one quarter-hour, and
+on an hour the Enphase file does not cover it carries the bare nameplate cap.
+A PASS/FAIL verdict taken off the measured basis alone would assert more than
+the data supports wherever the answer flips inside the disclosed width. Every
+case verdict is therefore THREE-VALUED, computed on both bases: `pass` where the
+case fits even on the conservative upper-bound reconstruction, `fail` where it
+does not fit even on the point-determined measured maximum, and `not_determined`
+where it fits on one and not the other.
+
+WHICH of the two loosenesses sets the conservative basis is computed, not
+assumed -- `binding_upper_interval()` reports the interval that produces
+max_upper_bound_kw and the ceiling it took -- because what would settle a
+`not_determined` case depends on it. Where the binding interval sits inside a
+covered hour, 15-minute production data (never metered here) would settle it.
+Where it sits in an hour the production export does not cover, 15-minute data
+would settle nothing: there is no measurement of that hour at any resolution,
+and what is needed is a consumption-CT export pulled through the end of the
+meter window. The artifact names the right remedy rather than the usual one,
+and it names the binding interval beside it.
+
+The gap between the end of the production record and the end of the meter
+window is therefore a gated quantity, not a footnote: `coverage_lag()` publishes
+it in hours and intervals and stops the run past
+ENPHASE_COVERAGE_MAX_LAG_HOURS, because past that the conservative basis every
+verdict rests on is being set by a lengthening stretch of unmeasured hours. The
+window is never shortened to make the gate pass -- that would delete real
+metered demand from a maximum-demand study.
 
 Two joint-computation hazards are handled explicitly.
 
@@ -289,6 +325,130 @@ import household as HH
 import rates as R
 
 # ---------------------------------------------------------------------------
+# NEC citations, declared once.
+#
+# Every section number this module publishes is a key here, with the rule it
+# stands for, and every published citation is BUILT from this table by nec() or
+# nec_rule(). Nothing is typed inline. A review found three misnumbered
+# citations scattered across prose -- the sum-of-all-OCPDs rule cited as
+# (B)(3)(1), the MCA marking cited as 440.6, and the 30-day recording route
+# cited as the body of 220.87 rather than as the Exception this service may not
+# use -- and each had to be hunted for at several sites. With one table a
+# misnumbering is a one-line fix and a test failure.
+#
+# The EDITION is named because the numbering and the wording both moved: in the
+# 2020 edition the sum-of-all-overcurrent-devices rule is 705.12(B)(3)(3), and
+# the 120% rule's own text now reads on 125 percent of source output current
+# rather than on the source breaker's rating.
+# ---------------------------------------------------------------------------
+NEC_EDITION = "2020"
+
+NEC_RULES = {
+    "100": (
+        "Article 100, definition of Approved: acceptable to the authority "
+        "having jurisdiction. It is a general principle of the Code, not a "
+        "sentence of any one article"),
+    "220.60": (
+        "Noncoincident loads. Where it is unlikely that two or more "
+        "noncoincident loads will be in use simultaneously, it is permissible "
+        "to use only the largest load(s) that will be used at one time in "
+        "calculating the total load of a feeder or service. If a motor or "
+        "air-conditioning load is part of the noncoincident load and is not "
+        "the largest of the noncoincident loads, 125 percent of either the "
+        "motor load or the air-conditioning load, whichever is larger, shall "
+        "be used in the calculation"),
+    "220.82": "Optional calculation for a dwelling unit",
+    "220.83": (
+        "Optional calculation for an existing dwelling unit adding loads"),
+    "220.87": (
+        "Determining existing loads. The calculated load for an existing "
+        "service or feeder is permitted to be taken from measured maximum "
+        "demand where conditions (1), (2) and (3) are all met"),
+    "220.87(1)": "The maximum demand data is available for a 1-year period",
+    "220.87(1) Exception": (
+        "Where 1-year maximum demand data is not available, the calculated "
+        "load may instead rest on maximum demand continuously recorded over a "
+        "minimum 30-day period with a recording ammeter or power meter, taken "
+        "while the building is occupied and including the larger of the "
+        "heating or cooling load. The exception closes: 'This exception shall "
+        "not apply if the feeder or service has a renewable energy system "
+        "(i.e., solar photovoltaic or wind electric) or employs any form of "
+        "peak load shaving'"),
+    "220.87(2)": (
+        "The maximum demand at 125 percent plus the new load does not exceed "
+        "the ampacity of the feeder or rating of the service"),
+    "220.87(3)": (
+        "The feeder has overcurrent protection in accordance with 240.4, and "
+        "the service has overload protection in accordance with 230.90"),
+    "230.90": "Overload protection for service conductors",
+    "240.4": "Protection of conductors",
+    "240.6(A)": (
+        "Standard ampere ratings for fuses and inverse time circuit breakers"),
+    "440.4(B)": (
+        "Nameplate marking for air-conditioning and refrigerating equipment: "
+        "the equipment is marked with its minimum circuit ampacity (MCA), "
+        "which already embeds the 125 percent on the largest motor"),
+    "440.35": (
+        "Conductors for room air conditioners are sized to the marked minimum "
+        "circuit ampacity"),
+    "625.42": (
+        "Electric vehicle supply equipment rating. EV charging loads are "
+        "continuous loads, so the code value is 125 percent of rated output; "
+        "where an EVSE load management system is used, the load on the service "
+        "or feeder is the maximum the system permits rather than the sum of "
+        "the connectors"),
+    "705.11": (
+        "Supply-side (line-side) source connection ahead of the service "
+        "disconnecting means"),
+    "705.12(B)(3)": (
+        "Busbars. The numbered items under it are alternative compliance paths "
+        "for connecting a power source to a panelboard busbar; each is a "
+        "different test, and citing one for another's arithmetic names the "
+        "wrong rule"),
+    "705.12(B)(3)(2)": (
+        "Where the sources are at the opposite end of the busbar from the "
+        "primary supply, 'the sum of 125 percent of the power-source(s) output "
+        "circuit current and the rating of the overcurrent device protecting "
+        "the busbar shall not exceed 120 percent of the ampacity of the "
+        "busbar'. The opposite-end position is part of the rule, not a "
+        "commentary on it"),
+    "705.12(B)(3)(3)": (
+        "The sum of the ampere ratings of all overcurrent devices on the "
+        "panelboard, excluding the device protecting the busbar, shall not "
+        "exceed the ampacity of the busbar"),
+    "705.13": (
+        "Power control systems: a listed PCS limits the current on the "
+        "conductors and busbars it controls, and the interconnection is "
+        "evaluated against the PCS setting"),
+}
+
+
+def nec(section):
+    """'NEC 705.12(B)(3)(3)' -- a citation, from the table.
+
+    A section this module has not declared cannot be published: the whole point
+    of the table is that the number and the rule it stands for travel together
+    and are written down once.
+    """
+    if section not in NEC_RULES:
+        raise SystemExit(f"service_headroom.py: {section!r} is not a declared "
+                         f"NEC citation; add it to NEC_RULES with the rule it "
+                         f"stands for. Declared: {sorted(NEC_RULES)}")
+    return f"NEC {section}"
+
+
+def nec_rule(section):
+    """'NEC 220.87(1) -- <the rule it stands for>', built from the table."""
+    return f"{nec(section)} -- {NEC_RULES[section]}"
+
+
+# main()'s summary line names the method, and its local `nec` is the artifact's
+# own section rather than this module's citation helper -- so the citation is
+# taken once, here.
+NEC_220_87_LABEL = nec("220.87")
+
+
+# ---------------------------------------------------------------------------
 # Code and equipment constants. Each carries its source; none is a guess.
 # ---------------------------------------------------------------------------
 
@@ -304,9 +464,22 @@ import rates as R
 # and the socket rating this analysis binds on is panel.meter_socket_continuous_a.
 SERVICE_VOLTAGE_V = 240.0
 
-# NEC 220.87: calculated load = maximum demand over >= 30 days x 125%.
+# NEC 220.87(2): the calculated load is the measured maximum demand x 125%.
 NEC_220_87_FACTOR = 1.25
-NEC_220_87_MIN_DAYS = 30
+
+# NEC 220.87(1): the maximum demand data must be available for a 1-YEAR period.
+# That is the condition this household qualifies under, and 365 days is the
+# figure every margin below is measured against.
+#
+# The 30-day continuously-recorded route is NOT this condition. It is the
+# Exception to (1) -- the fallback where a year is not available -- and it ends
+# "This exception shall not apply if the feeder or service has a renewable
+# energy system (i.e., solar photovoltaic or wind electric) or employs any form
+# of peak load shaving." This service has PV on it, so the Exception is
+# unavailable to it whatever the window length. Quoting 30 days as "the code
+# minimum" here was wrong twice over: the applicable minimum is a year, and the
+# 30-day route was never open to this service in the first place.
+NEC_220_87_CONDITION_1_DAYS = 365
 
 # NEC 625.42: EV supply equipment is a CONTINUOUS load, so its code-required
 # value is 125% of its rated output.
@@ -315,6 +488,12 @@ NEC_625_42_FACTOR = 1.25
 # NEC 705.12(B)(3)(2): busbar rating x 120% minus the main OCPD rating bounds
 # the backfeed a panel may accept.
 NEC_705_12_BUSBAR_FACTOR = 1.20
+
+# The rule's own multiplier on a source's OUTPUT CIRCUIT CURRENT. The 2020 text
+# counts 125% of source output current where this analysis counts the source
+# breaker's rating; both figures are published side by side so the direction of
+# the difference is visible rather than accidental. See source_current_basis().
+NEC_705_12_SOURCE_FACTOR = 1.25
 
 # Continuous-load derating: a breaker may carry 80% of its rating continuously,
 # which is why a 60 A circuit hosts a 48 A continuous EVSE output.
@@ -343,7 +522,7 @@ BATTERY_INVERTER_KW = 11.5
 # reader can disagree with it instead of guessing what was assumed.
 COOLING_HOURS = range(11, 21)
 
-# Standard branch-circuit ampere ratings (NEC 240.6(A)) used to size a circuit
+# Standard branch-circuit ampere ratings, NEC 240.6(A), used to size a circuit
 # from a continuous output; picked as the smallest standard rating that carries
 # the output at 80%.
 STANDARD_OCPD_A = (15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 60.0,
@@ -358,10 +537,9 @@ STANDARD_OCPD_A = (15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 60.0,
 # written atomically, so a failed run publishes nothing.
 # ---------------------------------------------------------------------------
 
-# At least 90 overlapping days. NEC 220.87 will not accept fewer than 30 days of
-# demand data at all, and a conservation check resting on fewer days than the
-# code's own measurement minimum is not evidence about the year; 90 days is a
-# full season. Observed: 363. Catches a reference export that only partly
+# At least 90 overlapping days. A conservation check resting on a handful of
+# days is not evidence about the year the demand figure is taken from; 90 days
+# is a full season. Observed: 363. Catches a reference export that only partly
 # overlaps the meter window -- a truncated pull, or the wrong year -- which
 # shrinks the comparison to a handful of days while every ratio still looks
 # respectable.
@@ -388,15 +566,40 @@ CONSERVATION_MAX_MAE_KWH_PER_DAY = 5.0
 # total, so correlation catches what the ratio cannot.
 CONSERVATION_MIN_CORRELATION = 0.95
 
+# How far the meter window may run past the last hour the Enphase consumption-CT
+# export covers. Every interval in that lag has NO production measurement behind
+# it and takes the bare nameplate PV cap, and on this window one of them is what
+# sets the conservative basis -- so the lag is not a detail, it is the thing the
+# conservative verdicts are computed on.
+#
+# Seven days, and the reason is the pull, not the physics: the two exports are
+# meant to come out of one data-gathering session, and the Enphase file
+# ordinarily stops a few hours to a couple of days short of the meter's last
+# interval because the two systems publish on different lags. Observed here:
+# 64.75 h (2.7 days, 256 intervals, 0.67% of the window). A week is 2.6x that
+# and still under 2% of a year-long window. Past it, the Enphase export is a
+# STALE pull left in place beside a fresh meter export -- the failure this gate
+# exists to catch -- and a growing tail of the record is bounded by the
+# nameplate alone. The run then stops rather than publishing a conservative
+# basis set by a lengthening stretch of unmeasured hours. Nothing is truncated
+# to make the gate pass: shortening the window to hide the gap would delete real
+# metered demand from a maximum-demand study.
+ENPHASE_COVERAGE_MAX_LAG_HOURS = 168.0
+
 CAVEAT = (
     "Scoping estimate only. The permit calculation belongs to a licensed "
-    "electrician. NEC 220.87 permits an existing dwelling's calculated load to "
-    "be taken from measured maximum demand only where that data is acceptable "
-    "to the authority having jurisdiction; the AHJ may instead require a full "
-    "NEC 220.82/220.83 nameplate calculation. Conductor sizes, the actual "
-    "nameplate ratings of the existing equipment, and the panel's listing "
-    "restrictions were not verified here, and no equipment should be ordered "
-    "against these figures.")
+    f"electrician. {nec('220.87')} permits an existing dwelling's calculated "
+    "load to be taken from measured maximum demand where its three conditions "
+    "are met; whether the data satisfies the authority having jurisdiction is "
+    "the AHJ's call, since Approved means acceptable to the AHJ "
+    f"({nec('100')}), and the AHJ may instead require a full "
+    f"{nec('220.82')}/{nec('220.83')} nameplate calculation. Condition (3) -- "
+    f"feeder overcurrent protection to {nec('240.4')} and service overload "
+    f"protection to {nec('230.90')} -- is not verified here. Conductor sizes, "
+    "the actual nameplate "
+    "ratings of the existing equipment, and the panel's listing restrictions "
+    "were not verified either, and no equipment should be ordered against "
+    "these figures.")
 
 
 def _repo_root():
@@ -771,7 +974,7 @@ def existing_backfeed(panel):
 PANEL_DOMAIN_NOTE = (
     "The panel intake feeds safety arithmetic, and a value outside its physical "
     "domain does not produce an obviously wrong answer -- it produces a "
-    "plausible one. NEC 705.12(B)(3)(2) computes the remaining backfeed "
+    f"plausible one. {nec('705.12(B)(3)(2)')} computes the remaining backfeed "
     "allowance as busbar * 1.20 - main - existing_backfeed, so a NEGATIVE "
     "existing backfeed ENLARGES the allowance and can turn a failing panel into "
     "a passing one. Each field is checked before anything is computed on it.")
@@ -908,8 +1111,13 @@ def load_panel():
 # Panel schedule geometry
 # ---------------------------------------------------------------------------
 
-def breaker_geometry(entry):
+def breaker_geometry(entry, where="a schedule entry"):
     """(spaces, poles, [ocpd_a, ...]) for one device in the panel schedule.
+
+    `where` names the entry POSITIONALLY in any failure message. The entry's
+    own `label` is a transcribed door legend -- private-tier intake -- and a
+    stop message on stderr is a place it does not need to be. The position is
+    enough to find the row.
 
     `amps` is an int for a full-size breaker -- one overcurrent device spanning
     `poles` stab positions, so a 2-pole 60 A breaker is a single 60 A OCPD
@@ -928,19 +1136,19 @@ def breaker_geometry(entry):
     if not isinstance(amps, list):
         return poles, poles, [float(amps)]
     if len(amps) != poles:
-        raise SystemExit(f"service_headroom.py: schedule entry {entry.get('label')!r} "
-                         f"lists {len(amps)} amp values for {poles} poles")
+        raise SystemExit(f"service_headroom.py: {where} lists {len(amps)} amp "
+                         f"values for {poles} poles")
     if poles == 2:
         return 1, 2, [float(a) for a in amps]
     if poles == 4:
         if amps[0] != amps[3] or amps[1] != amps[2]:
             raise SystemExit(
-                f"service_headroom.py: quad {entry.get('label')!r} has amps "
-                f"{amps}, which is not an outer/inner common-trip pair")
+                f"service_headroom.py: the quad at {where} has amps {amps}, "
+                f"which is not an outer/inner common-trip pair")
         return 2, 4, [float(amps[0]), float(amps[1])]
-    raise SystemExit(f"service_headroom.py: schedule entry {entry.get('label')!r} "
-                     f"has {poles} poles with a list of amps -- only tandems (2) "
-                     f"and quads (4) are twin-density devices")
+    raise SystemExit(f"service_headroom.py: {where} has {poles} poles with a "
+                     f"list of amps -- only tandems (2) and quads (4) are "
+                     f"twin-density devices")
 
 
 def panel_occupancy(schedule, spaces, max_circuits):
@@ -957,8 +1165,8 @@ def panel_occupancy(schedule, spaces, max_circuits):
     used_spaces = used_poles = 0
     ocpd = []
     twin = 0
-    for e in schedule:
-        s, p, a = breaker_geometry(e)
+    for i, e in enumerate(schedule, start=1):
+        s, p, a = breaker_geometry(e, f"schedule entry {i} of {len(schedule)}")
         used_spaces += s
         used_poles += p
         ocpd += a
@@ -1262,14 +1470,119 @@ def gross_envelope(intervals, pv, ac_ceiling_kw):
     return out
 
 
+UNCOVERED_DST = "excluded_dst_day"
+UNCOVERED_AFTER = "after_the_last_hour_the_enphase_files_measured"
+UNCOVERED_BEFORE = "before_the_first_hour_the_enphase_files_cover"
+UNCOVERED_GAP = "missing_hour_inside_the_enphase_coverage"
+
+UNCOVERED_WHY = {
+    UNCOVERED_DST: (
+        "its date is a DST transition Sunday, which is excluded from every "
+        "meter x Enphase computation because the flat 8760-row Enphase grid "
+        "cannot be aligned to a 23- or 25-hour day"),
+    UNCOVERED_AFTER: (
+        "it falls after the last hour the Enphase consumption-CT export "
+        "measured: the meter window runs on past the end of the production "
+        "record"),
+    UNCOVERED_BEFORE: (
+        "it falls before the first hour the Enphase consumption-CT export "
+        "covers"),
+    UNCOVERED_GAP: (
+        "its hour is missing from the middle of the Enphase coverage -- the "
+        "export skips it"),
+}
+
+
+def uncovered_reason(d, hf, excluded_days, first, last):
+    """Why one interval's hour has no Enphase reading behind it.
+
+    `first`/`last` are the (date, hour) ends of the Enphase coverage. The four
+    reasons are exhaustive by construction: an hour is either excluded, past
+    the end, before the start, or missing from the middle.
+    """
+    if d in excluded_days:
+        return UNCOVERED_DST
+    if (d, int(hf)) > last:
+        return UNCOVERED_AFTER
+    if (d, int(hf)) < first:
+        return UNCOVERED_BEFORE
+    return UNCOVERED_GAP
+
+
+def _hour_dt(key):
+    """(date, hour) as a datetime, for arithmetic on the coverage lag."""
+    return dt.datetime.combine(key[0], dt.time(int(key[1])))
+
+
+def _interval_dt(d, hf):
+    return dt.datetime.combine(d, dt.time(0)) + dt.timedelta(hours=float(hf))
+
+
+def coverage_lag(env, sam, lag_intervals):
+    """How far the meter window runs past the Enphase record, GATED.
+
+    The lag was computed and not acted on: `ceiling_basis_split` counted the
+    intervals it produces and asserted only that they add up. Every one of them
+    is bounded by the bare nameplate cap, and on this window one of them is
+    what sets the conservative basis every `not_determined` verdict rests on --
+    so the lag is published as a figure and judged against a declared threshold
+    like every other gate here. A breach stops the run; see
+    ENPHASE_COVERAGE_MAX_LAG_HOURS for the threshold and why it is that.
+    """
+    last = max(sam)
+    meter_end = max(_interval_dt(d, hf) for d, hf, *_rest in env)
+    hours = (meter_end - _hour_dt(last)).total_seconds() / 3600.0
+    gate = _gate(
+        "enphase_coverage_lag_hours", _r(hours, 2), "<=",
+        ENPHASE_COVERAGE_MAX_LAG_HOURS, hours <= ENPHASE_COVERAGE_MAX_LAG_HOURS,
+        f"the meter window may run at most "
+        f"{ENPHASE_COVERAGE_MAX_LAG_HOURS:.0f} h past the last hour the "
+        f"Enphase consumption-CT export measured",
+        "a STALE Enphase export left in place beside a fresh meter export, "
+        "which hands a growing tail of the window to the bare nameplate PV cap "
+        "-- the loosest bound this analysis draws, and the one the "
+        "conservative verdicts are computed on")
+    if not gate["passed"]:
+        raise SystemExit(
+            "service_headroom.py: the Enphase consumption-CT export stops "
+            f"{_r(hours, 2)} h before the end of the meter window, past the "
+            f"{ENPHASE_COVERAGE_MAX_LAG_HOURS:.0f} h limit. Those "
+            f"{lag_intervals} intervals carry the bare nameplate PV cap with "
+            "no measurement to narrow them, and the conservative basis every "
+            "verdict rests on would be set by unmeasured hours. Re-pull the "
+            "Enphase export through the end of the meter window; nothing was "
+            "written. Shortening the meter window instead is not the fix -- it "
+            "would delete real metered demand from a maximum-demand study.")
+    return {
+        "enphase_coverage_last_hour": f"{last[0]} {last[1]:02d}:00",
+        "meter_window_last_interval": fmt_ts(meter_end.date(),
+                                             meter_end.hour + meter_end.minute / 60.0),
+        "lag_hours": _r(hours, 2),
+        "lag_intervals": lag_intervals,
+        "gate": gate,
+        "what_the_lag_costs": (
+            f"{lag_intervals} interval(s) with no production measurement "
+            f"behind them. Each is bounded by the inverters' AC nameplate "
+            f"alone, which is the loosest bound in the envelope."),
+        "what_would_close_it": (
+            "An Enphase consumption-CT export pulled through the end of the "
+            "meter window, so the tail has hourly production behind it like "
+            "the rest of the record."),
+    }
+
+
 def ceiling_basis_split(env, excluded_days, sam):
-    """How many intervals took each PV ceiling, and why the nameplate ones did.
+    """How many intervals took each PV ceiling, why the nameplate ones did, and
+    how far behind the meter window the production record stops.
 
     The nameplate intervals are the loose end of the envelope, so the artifact
     states their count and their CAUSE rather than leaving a reader to work out
     that some of the window has no production measurement behind it. Every
     nameplate interval is attributed to one of the four reasons an hour can be
     uncovered, and the attribution is checked to account for all of them.
+
+    The coverage lag is then GATED rather than merely counted -- see
+    coverage_lag().
     """
     first, last = min(sam), max(sam)
     reasons = collections.Counter()
@@ -1279,14 +1592,7 @@ def ceiling_basis_split(env, excluded_days, sam):
             measured += 1
             continue
         nameplate += 1
-        if d in excluded_days:
-            reasons["excluded_dst_day"] += 1
-        elif (d, int(hf)) > last:
-            reasons["after_the_last_hour_the_enphase_files_measured"] += 1
-        elif (d, int(hf)) < first:
-            reasons["before_the_first_hour_the_enphase_files_cover"] += 1
-        else:
-            reasons["missing_hour_inside_the_enphase_coverage"] += 1
+        reasons[uncovered_reason(d, hf, excluded_days, first, last)] += 1
     if sum(reasons.values()) != nameplate:
         raise SystemExit(
             "service_headroom.py: the nameplate-ceiling intervals do not add up "
@@ -1303,8 +1609,99 @@ def ceiling_basis_split(env, excluded_days, sam):
         "nameplate_intervals_by_reason": dict(sorted(reasons.items())),
         "enphase_coverage_first_hour": f"{first[0]} {first[1]:02d}:00",
         "enphase_coverage_last_hour": f"{last[0]} {last[1]:02d}:00",
+        "enphase_coverage_lag": coverage_lag(env, sam,
+                                             reasons[UNCOVERED_AFTER]),
         "why_not_the_empirical_hour_of_day_maximum": PV_BASIS_WHY_NOT_EMPIRICAL,
     }
+
+
+def binding_upper_interval(env, excluded_days, sam, ceiling_kw, lag):
+    """The interval that SETS the conservative basis, and what bounded it.
+
+    Every `not_determined` verdict in this artifact turns on one number -- the
+    top of the gross-load envelope -- and that number comes from one interval.
+    Which interval, and on which PV ceiling, decides what the conservative
+    basis actually means and what would settle a case computed against it. A
+    fixed sentence about daylight was published here while the binding interval
+    was a 01:15 in the uncovered tail, so the description is derived from the
+    interval instead of asserted about the method.
+    """
+    d, hf, _lo, up, _exp, _exact, basis = max(env, key=lambda e: e[3])
+    first, last = min(sam), max(sam)
+    covered = basis == PV_BASIS_MEASURED
+    reason = None if covered else uncovered_reason(d, hf, excluded_days,
+                                                   first, last)
+    ts = fmt_ts(d, hf)
+    if covered:
+        reading = (
+            f"The conservative basis is set by the interval at {ts}. Its "
+            f"containing hour HAS an Enphase reading, so the upper bound there "
+            f"credits that hour's whole measured production to this one "
+            f"quarter-hour, capped at {_r(ceiling_kw * 0.25, 5)} kWh -- a "
+            f"quarter-hour at the {ceiling_kw:.2f} kW inverter AC nameplate. "
+            f"The looseness is the hourly resolution of the production "
+            f"measurement.")
+    else:
+        reading = (
+            f"The conservative basis is set by the interval at {ts}, and its "
+            f"containing hour has NO production measurement behind it: "
+            f"{UNCOVERED_WHY[reason]}. The Enphase export stops at "
+            f"{lag['enphase_coverage_last_hour']} while the meter window runs "
+            f"to {lag['meter_window_last_interval']}, {lag['lag_hours']} h "
+            f"later. An uncovered hour is bounded by the inverters' AC "
+            f"nameplate alone, so this quarter-hour is credited with "
+            f"{_r(ceiling_kw * 0.25, 5)} kWh of production -- a full "
+            f"quarter-hour at {ceiling_kw:.2f} kW, at {ts[-5:]}. Nothing "
+            f"measured that hour, so nothing narrows the cap. What makes the "
+            f"bound loose here is a COVERAGE GAP, not daylight.")
+    return {
+        "timestamp_local": ts,
+        "upper_bound_kw": _r(up),
+        "pv_ceiling_basis": basis,
+        "hour_has_a_production_measurement": covered,
+        "why_the_hour_is_uncovered": reason,
+        "reading": reading,
+    }
+
+
+def conservative_basis_is(binding):
+    """What the conservative basis IS, built from the interval that sets it."""
+    return ("the top of the gross-load envelope: the largest upper bound over "
+            "every 15-minute interval in the window, each interval capped at "
+            "what the inverters can physically deliver in fifteen minutes. "
+            + binding["reading"])
+
+
+def what_would_settle_it(binding, lag):
+    """What would settle a case the two bases disagree about.
+
+    Derived from the basis the BINDING interval took. Where the binding
+    interval sits in an hour the production export never covered, 15-minute
+    production data settles nothing -- there is no measurement of that hour at
+    any resolution -- and saying otherwise sends a reader after the wrong
+    instrument.
+    """
+    if binding["hour_has_a_production_measurement"]:
+        return (
+            "15-minute PV production, which was never metered here. The "
+            "consumption CT reads hourly, so each quarter-hour inside a "
+            "producing hour is reported as a bound whose upper end credits a "
+            "whole hour's production to one interval. A 15-minute production "
+            "series would collapse the bound to a point and decide this case "
+            f"either way. The interval that sets the conservative basis "
+            f"({binding['timestamp_local']}) is one of those.")
+    return (
+        f"An Enphase consumption-CT export pulled through the end of the meter "
+        f"window. The interval that sets the conservative basis "
+        f"({binding['timestamp_local']}) sits in an hour the current export "
+        f"does not cover -- it stops at {lag['enphase_coverage_last_hour']}, "
+        f"{lag['lag_hours']} h short of the meter's last interval -- so there "
+        f"is no production measurement of that hour AT ANY RESOLUTION, and "
+        f"15-minute production data would not settle this case: the hour "
+        f"itself is missing. Covering the tail would put an hourly reading "
+        f"behind that interval and narrow the bound to it. Beyond that, the "
+        f"quarter-hours inside producing hours stay bounds until 15-minute "
+        f"production is metered, which it never was here.")
 
 
 def fmt_ts(d, hf):
@@ -1354,7 +1751,7 @@ BATTERY_CHARGING_BASIS = (
 # given BOTH ways instead, so the reader can act on whichever the
 # manufacturer's instructions turn out to say.
 EVSE_SHARING_AMPS_BASIS = (
-    "NEC 625.42 permits an EVSE load-management system to be sized to the "
+    f"{nec('625.42')} permits an EVSE load-management system to be sized to the "
     "SYSTEM'S MAXIMUM OUTPUT rather than the sum of the connectors it serves. "
     "A second connector brought into a sharing group with the existing one "
     "therefore adds no code load: the group's maximum output is what it was. "
@@ -1405,12 +1802,12 @@ def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days,
          "inputs": {"kW": _r(max_demand_kw), "V": SERVICE_VOLTAGE_V},
          "result_a": _r(a_measured)},
         {"step": 2,
-         "label": "NEC 220.87 calculated load: maximum demand x 125%",
+         "label": f"{nec('220.87(2)')} calculated load: maximum demand x 125%",
          "formula": "A_calc = A_measured * 1.25",
          "inputs": {"A_measured": _r(a_measured),
                     "factor": NEC_220_87_FACTOR,
                     "measurement_days": days,
-                    "code_minimum_days": NEC_220_87_MIN_DAYS},
+                    "condition_1_days_required": NEC_220_87_CONDITION_1_DAYS},
          "result_a": _r(a_calc)},
         {"step": 3,
          "label": "headroom against the main breaker rating",
@@ -1446,13 +1843,99 @@ def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days,
     return steps
 
 
+def nec_220_87_conditions(days, pv_kw_ac):
+    """The three conditions 220.87 actually sets, and where each one stands.
+
+    The method has conditions, and only one of them is arithmetic. Publishing
+    the arithmetic without them let the artifact quote "the code minimum of 30
+    days" -- which is not condition (1) at all. Condition (1) is a 1-YEAR
+    period; the 30-day continuously-recorded route is the Exception to it, and
+    the Exception is expressly closed to a service with a renewable energy
+    system. That the household qualifies under (1) rather than under an
+    Exception it could not use is a STRENGTHENING of the evidence, and it is
+    reported that way.
+
+    `pv_kw_ac` is what makes the Exception unavailable, so the finding is
+    derived from the intake rather than asserted: solar.kw_ac is required and
+    positive, which is the renewable energy system the Exception names.
+    """
+    margin = days / float(NEC_220_87_CONDITION_1_DAYS)
+    # Read, not assumed: solar.kw_ac is a required positive intake field (the
+    # run stops without it), and a positive AC nameplate IS the renewable
+    # energy system the Exception names.
+    has_renewable = pv_kw_ac > 0.0
+    return {
+        "rule": nec_rule("220.87"),
+        "edition": NEC_EDITION,
+        "condition_1": {
+            "rule": nec_rule("220.87(1)"),
+            "days_required": NEC_220_87_CONDITION_1_DAYS,
+            "days_available": days,
+            "margin_x": _r(margin, 2),
+            "verdict": "pass" if days >= NEC_220_87_CONDITION_1_DAYS else "fail",
+            "reading": (
+                f"{days} days of continuous 15-minute revenue-meter data "
+                f"covers the 1-year period condition (1) requires, with "
+                f"{_r(margin, 2)}x the required span."
+                if days >= NEC_220_87_CONDITION_1_DAYS else
+                f"{days} days is short of the 1-year period condition (1) "
+                f"requires, and the Exception that would otherwise permit a "
+                f"30-day recording is closed to this service."),
+        },
+        "condition_1_exception_30_day_recording": {
+            "rule": nec_rule("220.87(1) Exception"),
+            "available_to_this_service": not has_renewable,
+            "why": (
+                f"This service has a renewable energy system on it -- "
+                f"{pv_kw_ac:.2f} kW AC of solar photovoltaic, read from intake "
+                f"(solar.kw_ac) -- and the Exception says in terms that it "
+                f"does not apply to a feeder or service that has one. The "
+                f"30-day recording route was therefore never open to this "
+                f"household, whatever the window length, so no margin against "
+                f"30 days means anything here."),
+            "why_it_strengthens_rather_than_weakens": (
+                "The route that is closed is the WEAKER one. The household "
+                "qualifies under condition (1) itself, on a full year of "
+                "revenue-meter data, which is the evidence the Exception "
+                "exists to substitute for."),
+        },
+        "condition_2": {
+            "rule": nec_rule("220.87(2)"),
+            "where_it_is_evaluated": (
+                "This is what the steps below and every case verdict compute: "
+                "the measured maximum demand at 125% plus the new load, "
+                "against the service rating and the meter socket's continuous "
+                "rating. It is a per-case question, so it is answered per case "
+                "rather than once."),
+        },
+        "condition_3": {
+            "rule": nec_rule("220.87(3)"),
+            "verdict": "not_determined",
+            "reading": (
+                "Neither the feeder's overcurrent protection nor the service's "
+                "overload protection was inspected. Nothing in this project "
+                "records them, and neither is inferable from interval data or "
+                "from a panel schedule, so this condition is UNVERIFIED here "
+                "rather than met. The artifact computes condition (2) and "
+                "reads condition (1) off the window; condition (3) is the one "
+                "it cannot answer."),
+            "what_would_settle_it": (
+                f"An on-site check by a licensed electrician: that the feeder "
+                f"is protected in accordance with {nec('240.4')} and the "
+                f"service has overload protection in accordance with "
+                f"{nec('230.90')}. Both are readings off the installed "
+                f"equipment, not calculations."),
+        },
+    }
+
+
 # The two ends of a busbar. NEC 705.12(B)(3)(2) is a statement about which of
 # them each supply lands on, so a position that reads as neither is not
 # evidence about the condition.
 BUSBAR_ENDS = ("top", "bottom")
 
 POSITION_REQUIREMENT = (
-    "NEC 705.12(B)(3)(2) has a second, conjunctive condition: the backfeed "
+    f"{nec('705.12(B)(3)(2)')} has a second, conjunctive condition: the backfeed "
     "breaker must be located at the opposite end of the busbar from the main "
     "supply. The 120% arithmetic is only the first half of the rule, and a "
     "positive remaining allowance is not by itself a compliant interconnection.")
@@ -1506,8 +1989,8 @@ def position_condition(source_position, main_position,
     settle = WHAT_WOULD_SETTLE_THE_POSITION[source]
     if src is None:
         verdict = "not_determined"
-        why = (f"No readable end is recorded for the {source}. NEC "
-               f"705.12(B)(3)(2) binds every source connected to the busbar, "
+        why = (f"No readable end is recorded for the {source}. "
+               f"{nec('705.12(B)(3)(2)')} binds every source connected to the busbar, "
                f"and has to be satisfied by the installation rather than by "
                f"this calculation.")
     elif main is None:
@@ -1534,9 +2017,66 @@ def position_condition(source_position, main_position,
     }
 
 
+def source_current_basis(sources):
+    """The rule's own 125%-of-output figures, beside the ratings used here.
+
+    705.12(B)(3)(2) counts "125 percent of the power-source(s) output circuit
+    current"; the arithmetic in this module counts each source's OVERCURRENT
+    DEVICE RATING instead. On this equipment the ratings are the larger figures
+    -- a 50 A breaker on an array whose 125%-of-output is 49.22 A, a 60 A
+    breaker on a battery whose 125%-of-output is 59.90 A -- so using them is
+    conservative and no published figure moves. That is worth showing rather
+    than leaving to chance: a reader can see the direction of the difference,
+    and a future source whose breaker is SMALLER than its code figure would
+    show up here instead of quietly making the answer optimistic.
+
+    `sources` is [(name, ocpd_rating_a, output_circuit_current_a, basis)].
+    """
+    rows = []
+    for name, rating_a, output_a, output_basis in sources:
+        code_a = output_a * NEC_705_12_SOURCE_FACTOR
+        rows.append({
+            "source": name,
+            "ocpd_rating_a": _r(rating_a, 2),
+            "output_circuit_current_a": _r(output_a, 4),
+            "code_figure_125pct_of_output_a": _r(code_a, 4),
+            "output_basis": output_basis,
+            "rating_is_at_or_above_the_code_figure": bool(
+                rating_a >= code_a - 1e-9),
+            "rating_minus_code_figure_a": _r(rating_a - code_a, 4),
+        })
+    # None, not True, on an empty list: "every source is conservative" said of
+    # no sources is a claim with nothing behind it, and vacuous truth is exactly
+    # the shape of assertion this artifact refuses everywhere else.
+    all_conservative = (all(r["rating_is_at_or_above_the_code_figure"]
+                            for r in rows) if rows else None)
+    return {
+        "rule_as_written": NEC_RULES["705.12(B)(3)(2)"],
+        "the_rule_counts": ("125 percent of the power-source(s) output circuit "
+                            "current"),
+        "this_calculation_counts": ("the rating of each source's overcurrent "
+                                    "device"),
+        "sources": rows,
+        "every_rating_is_at_or_above_the_code_figure": all_conservative,
+        "reading": (
+            "No source's output circuit current is recorded here, so the two "
+            "figures cannot be compared and nothing is claimed about the "
+            "direction of the substitution." if all_conservative is None else
+            "Every source's breaker rating is at or above the code's "
+            "125%-of-output figure, so counting ratings spends MORE of the "
+            "120% allowance than the rule requires and no verdict here rests "
+            "on the substitution."
+            if all_conservative else
+            "At least one source's breaker rating is BELOW the code's "
+            "125%-of-output figure, so counting ratings understates what the "
+            "rule counts. The figures above are the ones to work from."),
+    }
+
+
 def busbar_120_percent(busbar_a, main_a, existing_backfeed_a,
                        basis=BACKFEED_READ, source_position=None,
-                       main_position=None, source=SOURCE_EXISTING_PV):
+                       main_position=None, source=SOURCE_EXISTING_PV,
+                       sources=()):
     """NEC 705.12(B)(3)(2): the 120% arithmetic AND the position condition.
 
     busbar x 120% - main OCPD bounds the total backfeed a panel may accept; the
@@ -1559,8 +2099,10 @@ def busbar_120_percent(busbar_a, main_a, existing_backfeed_a,
     total_backfeed = allowed - main_a
     remaining = total_backfeed - existing_backfeed_a
     return {
-        "rule": ("NEC 705.12(B)(3)(2) -- 120% busbar allowance, plus the "
-                 "breaker-position condition that goes with it"),
+        "rule": (f"{nec_rule('705.12(B)(3)(2)')}"),
+        "rule_reading": (
+            "The 120% arithmetic and the breaker-position condition are one "
+            "conjunctive rule, and both are evaluated below."),
         "formula": ("remaining = busbar * 1.20 - main_ocpd - existing_backfeed"),
         "busbar_rating_a": busbar_a,
         "busbar_x_120pct_a": _r(allowed, 1),
@@ -1575,6 +2117,7 @@ def busbar_120_percent(busbar_a, main_a, existing_backfeed_a,
             "A positive remainder satisfies the arithmetic half of the rule. "
             "The position condition below is the other half and both must "
             "hold."),
+        "source_current_basis": source_current_basis(sources),
         "position_condition": position_condition(source_position,
                                                  main_position, source),
     }
@@ -1635,19 +2178,20 @@ def remaining_headroom(avail, fixed_a, socket_basis):
 
 
 VERDICT_BASIS = (
-    "Three-valued because the gross-load reconstruction is a bound in daylight, "
-    "not a point. pass = the case fits even on the conservative upper-bound "
-    "basis; fail = it does not fit even on the measured, point-determined "
-    "maximum; not_determined = it fits on one basis and not the other, so the "
-    "answer lies inside the width of the reconstruction and the data does not "
-    "decide it.")
+    "Three-valued because the gross-load reconstruction is a BOUND wherever an "
+    "interval's own hour is not point-determined -- inside a producing hour, "
+    "where hourly production is credited to one quarter-hour, and on every "
+    "hour the production export does not cover, where only the inverters' AC "
+    "nameplate bounds it. pass = the case fits even on the conservative "
+    "upper-bound basis; fail = it does not fit even on the measured, "
+    "point-determined maximum; not_determined = it fits on one basis and not "
+    "the other, so the answer lies inside the width of the reconstruction and "
+    "the data does not decide it.")
 
-WHAT_WOULD_SETTLE_IT = (
-    "15-minute PV production, which was never metered here. The consumption CT "
-    "reads hourly, so each daylight quarter-hour is reported as a bound whose "
-    "upper end credits a whole hour's production to one interval. A 15-minute "
-    "production series would collapse the bound to a point and decide this "
-    "case either way.")
+
+def verdict_basis(binding):
+    """VERDICT_BASIS plus which of the two the binding interval actually is."""
+    return f"{VERDICT_BASIS} {binding['reading']}"
 
 
 def battery_verdict(ampacity_leg, position_leg):
@@ -1668,8 +2212,8 @@ def battery_verdict(ampacity_leg, position_leg):
         undecided.append("the breaker-position condition has no evidence "
                          "behind it")
     if undecided:
-        return ("NOT DETERMINED -- NEC 705.12(B)(3)(2) is conjunctive and "
-                + "; and ".join(undecided))
+        return (f"NOT DETERMINED -- {nec('705.12(B)(3)(2)')} is conjunctive "
+                f"and " + "; and ".join(undecided))
     return "fits within the 120% allowance"
 
 
@@ -1719,9 +2263,17 @@ def physical_fit(new_2pole_breakers, spaces_free, adjacent_free_pairs):
     Too few free spaces is a fail on the count alone: adjacency cannot rescue a
     shortage. Enough free spaces is NOT a pass, because two free spaces at
     opposite ends of the stack do not accept a 2-pole breaker.
+
+    A case needing NO new breaker is decided before adjacency is consulted: a
+    configuration that lands no device in the panel needs no adjacent pair, so
+    an unrecorded slot map cannot leave it undetermined. The order used to be
+    the other way round and returned `not_determined` for a case with nothing
+    to fit.
     """
     if 2 * new_2pole_breakers > spaces_free:
         return "fail"
+    if new_2pole_breakers == 0:
+        return "pass"
     if adjacent_free_pairs is None:
         return "not_determined"
     return "pass" if new_2pole_breakers <= adjacent_free_pairs else "fail"
@@ -1761,6 +2313,102 @@ def busbar_ampacity_leg(breaker_a, remaining_a, basis):
     return "pass" if backfeed_known(basis) else "not_determined"
 
 
+# Finding the existing A/C circuit in the panel schedule.
+#
+# The schedule's `label` is a transcribed door legend and is private-only
+# intake, so it is searched with a DECLARED token list and only the resulting
+# bare ampere rating is published. No label, no device marking and no
+# per-device row leaves this function.
+#
+# The token list itself is NOT published either, and that is not fastidiousness:
+# the private-only leak scan caught it. A token short enough to be useful ("a/c")
+# is exactly what a door legend says, so publishing the list republishes one
+# household's label verbatim. The count of matching entries is an aggregate and
+# is published; the words are not.
+# Deliberately short: a token has to be specific enough that an unrelated
+# legend cannot contain it by accident ("a-c" sits inside "Sauna-Cabin"), and
+# every match is counted rather than the first one taken, so a token that is too
+# loose shows up as an ambiguity rather than as a wrong number.
+AC_LABEL_TOKENS = ("a/c", "air cond", "air-cond", "condenser")
+
+AC_READ = "read_off_the_schedule"
+AC_NO_MATCH = "no_schedule_label_matched"
+AC_AMBIGUOUS = "more_than_one_schedule_label_matched"
+AC_NOT_ONE_DEVICE = "the_matched_entry_is_a_twin_density_device"
+
+AC_SETTLE = (
+    "The condenser's own nameplate -- its rated-load amps and minimum circuit "
+    "ampacity -- or an intake answer naming the A/C circuit's overcurrent "
+    "device directly. Reading it out of the door legend is a match on words, "
+    "and words are what this cannot resolve.")
+
+
+def existing_ac_ocpd(schedule):
+    """The existing A/C branch device's ampere rating, three-valued.
+
+    Four outcomes, and only one of them is a number:
+
+      * exactly one full-size entry whose label matches an air-conditioning
+        token -- its rating, read;
+      * NO entry matched. That is NOT "this panel has no A/C": a legend that
+        says CONDENSER, HP or nothing at all reads the same way from here, and
+        the two mean opposite things for the credit below. It reports
+        not_determined rather than a zero credit;
+      * MORE than one matched. Taking the first was silently choosing which
+        device the answer describes -- with two matching entries, which one the
+        measured maximum contains is not established;
+      * the matched entry is twin-density, so it carries a list of ratings
+        rather than one device's rating.
+
+    The count of matches is published; nothing else about the rows is.
+    """
+    matches = [e for e in schedule
+               if any(t in str(e.get("label", "")).lower()
+                      for t in AC_LABEL_TOKENS)]
+    if not matches:
+        return {
+            "ocpd_a": None, "basis": AC_NO_MATCH, "matches": 0,
+            "reading": (
+                "NOT DETERMINED -- no entry in the panel schedule carries a "
+                "label matching any air-conditioning token. That is not the "
+                "same as a panel with no air-conditioning circuit: a legend "
+                "wording it differently reads identically from here, and the "
+                "two mean opposite things for the credit below. No credit "
+                "bound is published on either reading."),
+            "what_would_settle_it": AC_SETTLE,
+        }
+    if len(matches) > 1:
+        return {
+            "ocpd_a": None, "basis": AC_AMBIGUOUS, "matches": len(matches),
+            "reading": (
+                f"NOT DETERMINED -- {len(matches)} schedule entries carry a "
+                f"label matching an air-conditioning token. Which of them is "
+                f"the air-conditioning load already inside the measured "
+                f"maximum is not established, and taking the first would be "
+                f"choosing silently."),
+            "what_would_settle_it": AC_SETTLE,
+        }
+    if isinstance(matches[0]["amps"], list):
+        return {
+            "ocpd_a": None, "basis": AC_NOT_ONE_DEVICE, "matches": 1,
+            "reading": (
+                "NOT DETERMINED -- the matched entry is a twin-density device "
+                "carrying more than one overcurrent device, so it has no "
+                "single ampere rating to credit."),
+            "what_would_settle_it": AC_SETTLE,
+        }
+    amps_a = float(matches[0]["amps"])
+    return {
+        "ocpd_a": amps_a, "basis": AC_READ, "matches": 1,
+        "reading": (
+            f"One schedule entry matches an air-conditioning token, and its "
+            f"branch overcurrent device is rated {amps_a:.0f} A. The rating is "
+            f"the only thing taken from that row; the device marking and the "
+            f"door-legend label are private-tier intake and stay there."),
+        "what_would_settle_it": None,
+    }
+
+
 SUM_RULE_SETTLE = (
     "A complete device-by-device panel schedule, verified against the panel "
     "itself: the sum below counts the overcurrent devices the intake recorded, "
@@ -1768,7 +2416,12 @@ SUM_RULE_SETTLE = (
 
 
 def sum_of_breakers_rule(branch_ocpd_sum_a, busbar_a, proposed_breaker_a):
-    """NEC 705.12(B)(3)(1) -- the sum-of-breakers alternative, three-valued.
+    """NEC 705.12(B)(3)(3) -- the sum-of-breakers alternative, three-valued.
+
+    (B)(3)(3) is the rule that sums the overcurrent devices on the busbar.
+    (B)(3)(1) is a different test entirely -- 125% of source output plus the
+    busbar's own overcurrent device against the busbar ampacity -- and citing
+    it here named the wrong rule for the arithmetic below.
 
     The sum counts every overcurrent device on the busbar other than the main,
     which for THIS question includes the proposed battery breaker: the rule is
@@ -1784,9 +2437,7 @@ def sum_of_breakers_rule(branch_ocpd_sum_a, busbar_a, proposed_breaker_a):
     total = branch_ocpd_sum_a + proposed_breaker_a
     verdict = "fail" if total > busbar_a else "not_determined"
     return {
-        "rule": ("NEC 705.12(B)(3)(1) -- the sum of the overcurrent devices on "
-                 "the busbar other than the main must not exceed the busbar "
-                 "rating"),
+        "rule": nec_rule("705.12(B)(3)(3)"),
         "branch_ocpd_sum_a": branch_ocpd_sum_a,
         "proposed_battery_breaker_a": _r(proposed_breaker_a, 1),
         "counted_sum_a": _r(total, 1),
@@ -2132,14 +2783,76 @@ def build():
     over = [e for e in env if e[3] > peak_kw + 1e-9]
     env_max = max(e[3] for e in env)
 
+    # WHICH interval sets the conservative basis, and on which PV ceiling. Every
+    # not_determined verdict below is computed against env_max, so what bounded
+    # that one interval decides what the conservative basis means and what would
+    # settle a case that turns on it -- see binding_upper_interval().
+    binding = binding_upper_interval(env, dst, sam, kw_ac,
+                                     ceiling_split["enphase_coverage_lag"])
+    case_settle = what_would_settle_it(
+        binding, ceiling_split["enphase_coverage_lag"])
+
     # Independent corroboration: the Enphase consumption CT is a direct gross
     # reading. Both comparisons are enforced, not asserted -- see
     # enphase_peak_invariant().
-    sam_max_key = max((k for k in sam if k[0] not in dst and k[0] in set(days)),
+    day_set = set(days)
+    sam_max_key = max((k for k in sam if k[0] not in dst and k[0] in day_set),
                       key=lambda k: sam[k])
     corroboration = enphase_peak_invariant(
         sam[sam_max_key], f"{sam_max_key[0]} {sam_max_key[1]:02d}:00",
         peak_kw, env_max)
+
+    # What was running at the annual peak. Whole-house 15-minute data cannot
+    # answer it, and the question was previously left unanswered rather than
+    # answered "not determined" -- which reads as though nobody asked. The
+    # shape of the peak IS in the series, so what the data does show is
+    # computed and published beside the not_determined; no appliance is named,
+    # because naming one would be exactly the attribution the data cannot make.
+    peak_ix = max(range(len(env)), key=lambda i: env[i][2])
+    around = [{"timestamp_local": fmt_ts(env[j][0], env[j][1]),
+               "gross_kw_lower_bound": _r(env[j][2]),
+               "point_determined": bool(env[j][5])}
+              for j in range(max(0, peak_ix - 2),
+                             min(len(env), peak_ix + 3))]
+    neighbour_max = max(r["gross_kw_lower_bound"] for r in around
+                        if r["timestamp_local"] != fmt_ts(peak[0], peak[1]))
+    evse_kw = panel["charger_kw"]
+    peak_attribution = {
+        "verdict": "not_determined",
+        "reading": (
+            "Which loads were running at the annual maximum cannot be "
+            "determined from this data. The revenue meter and the consumption "
+            "CT both read the WHOLE HOUSE; neither separates one circuit from "
+            "another, and no quantity in this artifact identifies an "
+            "appliance. Nothing here names one."),
+        "what_would_settle_it": (
+            "Circuit-level submetering on the panel's branch circuits, or a "
+            "whole-house feed sampled fast enough to disaggregate loads by "
+            "their switching signatures. Either one attributes the peak; "
+            "15-minute whole-house energy cannot."),
+        "what_the_series_does_show": {
+            "intervals_around_the_peak": around,
+            "peak_kw": _r(peak_kw),
+            "largest_neighbouring_interval_kw": neighbour_max,
+            "peak_minus_largest_neighbour_kw": _r(peak_kw - neighbour_max),
+            "existing_evse_rated_kw": evse_kw,
+            "peak_minus_existing_evse_rated_kw": (
+                None if evse_kw is None else _r(peak_kw - float(evse_kw))),
+            "reading": (
+                f"The maximum is a single-interval spike: the quarter-hours "
+                f"around it run "
+                + " -> ".join(f"{r['gross_kw_lower_bound']}" for r in around)
+                + f" kW, so the peak stands {_r(peak_kw - neighbour_max)} kW "
+                f"above its largest neighbour."
+                + ("" if evse_kw is None else
+                   f" It also stands {_r(peak_kw - float(evse_kw))} kW above "
+                   f"the {evse_kw} kW rating of the home EV charger "
+                   f"(charger.kw), so the charger drawing its full rated power "
+                   f"does not account for the interval on its own -- something "
+                   f"else was drawing at the same time. WHAT else is not "
+                   f"determined.")),
+        },
+    }
 
     # Maximum demand: full window and per calendar month.
     monthly = {}
@@ -2155,15 +2868,15 @@ def build():
     socket_basis = socket_basis_of(panel)
     steps = nec_220_87_steps(peak_kw, panel["service_rating_a"],
                              socket_a, len(days), socket_basis)
+    conditions = nec_220_87_conditions(len(days), kw_ac)
     a_calc = steps[1]["result_a"]
 
     # The measured basis is the headline. The conservative basis is the same
-    # arithmetic on the top of the daylight envelope, and every case verdict is
-    # computed on both -- see ampacity_verdict().
+    # arithmetic on the top of the gross-load envelope, and every case verdict
+    # is computed on both -- see ampacity_verdict().
     a_calc_upper = _r(amps(env_max) * NEC_220_87_FACTOR)
     avail = availability(panel["service_rating_a"], socket_a, a_calc)
     avail_upper = availability(panel["service_rating_a"], socket_a, a_calc_upper)
-    avail_binding = _r(min(avail.values()))
 
     # An explicit null pv_backfeed_a means the panel was surveyed and nothing
     # backfeeds it: 0 A of spent allowance, known. An ABSENT key is the same 0 A
@@ -2180,17 +2893,33 @@ def build():
     # device already on the bus and is reported separately -- inheriting it
     # would let the battery read as compliant because someone else's breaker
     # happens to sit opposite the main.
+    batt_breaker_a = standard_circuit_for(amps(BATTERY_INVERTER_KW))
+    # The rule counts 125% of each source's OUTPUT CIRCUIT CURRENT; this
+    # arithmetic counts breaker ratings. Both figures go into the artifact so
+    # the direction of the difference is visible -- see source_current_basis().
+    # The existing source appears only where its backfeed rating was actually
+    # read: with nothing recorded there is no source to compare.
+    busbar_sources = []
+    if backfeed_basis == BACKFEED_READ:
+        busbar_sources.append((
+            SOURCE_EXISTING_PV, existing_backfeed_a, amps(kw_ac),
+            f"solar.kw_ac, the array's inverter AC nameplate: {kw_ac:.2f} kW "
+            f"at {SERVICE_VOLTAGE_V:.0f} V"))
+    busbar_sources.append((
+        SOURCE_PROPOSED_BATTERY, batt_breaker_a, amps(BATTERY_INVERTER_KW),
+        f"the unit's continuous power rating, {BATTERY_INVERTER_KW} kW at "
+        f"{SERVICE_VOLTAGE_V:.0f} V"))
     busbar = busbar_120_percent(panel["busbar_rating_a"],
                                 panel["service_rating_a"],
                                 existing_backfeed_a,
                                 backfeed_basis,
                                 panel["battery_breaker_position"],
                                 panel["main_breaker_position"],
-                                SOURCE_PROPOSED_BATTERY)
+                                SOURCE_PROPOSED_BATTERY,
+                                busbar_sources)
     existing_pv_position = position_condition(panel["pv_breaker_position"],
                                               panel["main_breaker_position"],
                                               SOURCE_EXISTING_PV)
-    batt_breaker_a = standard_circuit_for(amps(BATTERY_INVERTER_KW))
 
     occ = panel_occupancy(panel["schedule"], panel["spaces"], panel["max_circuits"])
 
@@ -2246,17 +2975,12 @@ def build():
                 "measured_basis_is": (
                     "the point-determined 15-minute maximum, the headline "
                     "figure"),
-                "conservative_basis_is": (
-                    "the top of the daylight gross-load envelope: an upper "
-                    "bound that credits a whole hour's production to one "
-                    "quarter-hour, capped at the inverters' AC nameplate, "
-                    "which is a physical ceiling on what the array can put on "
-                    "the service in fifteen minutes"),
+                "conservative_basis_is": conservative_basis_is(binding),
             },
             "remaining_is": remaining_is,
             "ampacity_verdict": verdict,
-            "ampacity_verdict_basis": VERDICT_BASIS,
-            "what_would_settle_it": (WHAT_WOULD_SETTLE_IT
+            "ampacity_verdict_basis": verdict_basis(binding),
+            "what_would_settle_it": (case_settle
                                      if verdict == "not_determined" else None),
             "spaces": {
                 "new_2pole_breakers_required": new_2pole_breakers,
@@ -2267,8 +2991,15 @@ def build():
                 "physical_fit_basis": PHYSICAL_FIT_BASIS,
                 "what_would_settle_it": (PHYSICAL_FIT_SETTLE
                                          if fit == "not_determined" else None),
-                "note": ("A heat pump also needs a 2-pole breaker, so every "
-                         "case here needs at least two adjacent free spaces."),
+                "note": (
+                    "Every case published here ADDS equipment, and each added "
+                    "240 V load -- a heat pump, a second EVSE, a battery -- "
+                    "needs its own 2-pole breaker and therefore two adjacent "
+                    "free spaces. A heat pump that REPLACES the existing A/C "
+                    "on that circuit is a different configuration and is not "
+                    "modelled here, so nothing in this artifact says what it "
+                    "would need; see noncoincident_loads for the demand-side "
+                    "half of that scenario."),
             },
             "note": note,
         }
@@ -2294,11 +3025,13 @@ def build():
 
     heat_pump_case = case(
         "heat_pump_only", 0.0, 1, True,
-        "No heat pump has been selected, so the term is solved for rather "
-        "than assumed: this is the largest minimum circuit ampacity (NEC "
-        "440.6 MCA, which already embeds the 125% on the largest motor) "
-        "that fits. Conservative -- it adds the heat pump on top of a "
-        "measured maximum that already contains the existing A/C.")
+        f"No heat pump has been selected, so the term is solved for rather "
+        f"than assumed: this is the largest minimum circuit ampacity that "
+        f"fits. MCA is the figure marked on the equipment nameplate "
+        f"({nec('440.4(B)')}) and the one its conductors are sized to "
+        f"({nec('440.35')}); it already embeds the 125% on the largest motor. "
+        f"Conservative -- it adds the heat pump on top of a measured maximum "
+        f"that already contains the existing A/C.")
 
     # With no EV the second-charger term is not zero, it is ABSENT: the three
     # cases carrying it are reported not applicable rather than priced, and the
@@ -2319,7 +3052,7 @@ def build():
                  f"A second Tesla Wall Connector at "
                  f"{EXISTING_EVSE_OUTPUT_A:.0f} A continuous on its own "
                  f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
-                 f"circuit. NEC 625.42 makes EVSE a continuous load, so the "
+                 f"circuit. {nec('625.42')} makes EVSE a continuous load, so the "
                  f"code value is {EXISTING_EVSE_OUTPUT_A:.0f} x 1.25 = "
                  f"{evse2_a:.0f} A. What remains is spare headroom, not a heat "
                  f"pump."),
@@ -2331,10 +3064,8 @@ def build():
         ]
 
     # Noncoincident-load refinement, bounded rather than asserted.
-    ac_entry = next((e for e in panel["schedule"]
-                     if "a/c" in str(e.get("label", "")).lower()), None)
-    ac_ocpd = float(ac_entry["amps"]) if ac_entry and not isinstance(
-        ac_entry["amps"], list) else None
+    ac = existing_ac_ocpd(panel["schedule"])
+    ac_ocpd = ac["ocpd_a"]
     summer_peaks = {ym: e[2] for ym, e in monthly.items()
                     if int(ym[5:]) in R.SUMMER_MONTHS}
     winter_peaks = {ym: e[2] for ym, e in monthly.items()
@@ -2345,15 +3076,30 @@ def build():
     # reader can disagree with the boundary rather than guess at it.
     cooling_shaped = int(peak[1]) in COOLING_HOURS
     noncoincident = {
-        "rule": ("NEC 220.60 -- space heating and air conditioning are "
-                 "noncoincident loads, so only the larger is counted."),
+        "rule": nec_rule("220.60"),
+        "the_second_sentence_matters_here": (
+            f"{nec('220.60')} does not stop at 'count only the largest'. Where "
+            "a motor or "
+            "air-conditioning load is one of the noncoincident loads and is NOT "
+            "the largest of them, the calculation still carries 125% of the "
+            "larger of the motor or air-conditioning load. A heat pump swapped "
+            "in for this A/C is exactly that pairing, so the second sentence is "
+            "part of the rule that applies and is stated with the first."),
         "why_it_matters": (
             "A heat pump that REPLACES the existing A/C does not add its whole "
             "MCA: whatever the A/C was drawing is already inside the measured "
-            "maximum. The conservative cases above ignore that credit."),
+            "maximum. The conservative cases above ignore that credit. The "
+            "replacement configuration itself is not modelled here -- no case "
+            "in this artifact removes a load."),
         "existing_ac_ocpd_a": ac_ocpd,
-        "credit_bounds_a": {"low": 0.0,
-                            "high": _r(ac_ocpd * NEC_220_87_FACTOR) if ac_ocpd else None},
+        "existing_ac_ocpd_basis": ac["basis"],
+        "existing_ac_ocpd_reading": ac["reading"],
+        "existing_ac_ocpd_what_would_settle_it": ac["what_would_settle_it"],
+        "schedule_entries_matching_an_air_conditioning_token": ac["matches"],
+        "credit_bounds_a": {
+            "low": 0.0,
+            "high": (_r(ac_ocpd * NEC_220_87_FACTOR)
+                     if ac_ocpd is not None else None)},
         "evidence_on_where_the_credit_sits": {
             "annual_peak_month": f"{peak[0].year:04d}-{peak[0].month:02d}",
             "annual_peak_hour": int(peak[1]),
@@ -2395,6 +3141,9 @@ def build():
         rate_table = []
         for out_a in WALL_CONNECTOR_OUTPUTS_A:
             code_a = evse_code_load_a(out_a)
+            m_row = remaining_headroom(avail, code_a, socket_basis)
+            c_row = remaining_headroom(avail_upper, code_a, socket_basis)
+            row_verdict = ampacity_verdict(m_row["binding"], c_row["binding"])
             rate_table.append({
                 "evse_output_a": _r(out_a, 1),
                 "min_circuit_a": _r(standard_circuit_for(out_a), 1),
@@ -2403,15 +3152,51 @@ def build():
                 "headroom_left_vs_meter_socket_a": (
                     None if socket_a is None
                     else _r(avail["meter_socket"] - code_a)),
+                # The same two bases every case carries. A row published on the
+                # measured basis alone read as available at settings the
+                # conservative basis does not fit, including the 48 A setting
+                # the second_evse_only case itself calls not_determined.
+                "headroom_left_measured_basis": m_row,
+                "headroom_left_conservative_basis": c_row,
+                "ampacity_verdict": row_verdict,
+                "what_would_settle_it": (case_settle
+                                         if row_verdict == "not_determined"
+                                         else None),
             })
+        settings_that_pass = [r["evse_output_a"] for r in rate_table
+                              if r["ampacity_verdict"] == "pass"]
+        # A shared second connector adds no code load, so the headroom it leaves
+        # is the whole of the calculated headroom -- on BOTH bases, with the
+        # same binding_is label and the same three-valued verdict every case
+        # carries. Published as one figure used twice, because it is one figure.
+        shared_verdict = ampacity_verdict(_r(min(avail.values())),
+                                          _r(min(avail_upper.values())))
+        shared_headroom = {
+            "measured_basis": remaining_headroom(avail, 0.0, socket_basis),
+            "conservative_basis": remaining_headroom(avail_upper, 0.0,
+                                                     socket_basis),
+            "ampacity_verdict": shared_verdict,
+            "what_would_settle_it": (case_settle
+                                     if shared_verdict == "not_determined"
+                                     else None),
+        }
         evse_mitigations = [
             {"mitigation": "EVSE load sharing",
              "basis": EVSE_SHARING_AMPS_BASIS,
              "added_load_without_a": _r(evse2_a),
              "added_load_with_a": 0.0,
              "reduction_a": _r(share_reduction),
-             "case_second_evse_only_headroom_a": avail_binding,
-             "case_both_heat_pump_mca_a": avail_binding,
+             # Both bases, and the same binding_is label the cases carry. These
+             # are the headroom a shared second connector leaves -- the sharing
+             # group adds no code load, so what is left is what was there.
+             "case_second_evse_only_headroom_a": shared_headroom,
+             "case_both_heat_pump_mca_a": shared_headroom,
+             "both_figures_are": (
+                 "the headroom left once the sharing group adds no code load: "
+                 "the second connector's demand term is 0 A, so what remains is "
+                 "the whole of the calculated headroom on each basis. The "
+                 "measured figure is what to plan against; the conservative one "
+                 "is what the verdict is taken from."),
              "shares_the_existing_branch_circuit": None,
              "shares_the_existing_branch_circuit_not_determined":
                  EVSE_SHARING_CIRCUIT_NOT_DETERMINED,
@@ -2434,23 +3219,37 @@ def build():
                     "case's physical_fit.")),
              "what_is_determined_here": (
                  "The amps. The added demand goes from "
-                 f"{_r(evse2_a)} A to 0 A on NEC 625.42, and that figure does "
+                 f"{_r(evse2_a)} A to 0 A on {nec('625.42')}, and that figure does "
                  "not depend on how the connectors are wired. Whether a new "
                  "breaker is needed is a separate, unsettled question and is "
                  "not folded into the saving.")},
             {"mitigation": "Charge-rate limit on the second EVSE",
-             "basis": ("The connector's output is settable; the code value "
-                       "follows it directly at 125% (NEC 625.42), and the "
-                       "minimum circuit is the smallest standard OCPD carrying "
-                       "that output at 80%."),
+             "basis": (f"The connector's output is settable; the code value "
+                       f"follows it directly at 125% ({nec('625.42')}), and "
+                       f"the minimum circuit is the smallest standard OCPD "
+                       f"({nec('240.6(A)')}) carrying that output at 80%."),
              "table": rate_table,
+             "table_verdict_vocabulary": VERDICT_BASIS,
+             "settings_that_pass_on_both_bases_a": settings_that_pass,
+             "reading": (
+                 f"{len(settings_that_pass)} of "
+                 f"{len(WALL_CONNECTOR_OUTPUTS_A)} selectable settings fit on "
+                 f"the conservative basis as well as the measured one"
+                 + (f" -- up to {max(settings_that_pass):.0f} A."
+                    if settings_that_pass else
+                    ": none of them, so a second connector is not settled at "
+                    "any setting.")
+                 + " A row's headroom on the measured basis is not by itself a "
+                   "verdict: the settings above that band fit on the measured "
+                   "maximum and not on the conservative one, which is the same "
+                   "not_determined the second_evse_only case reports."),
              "reduction_a_at_lowest_setting": _r(evse2_a - evse_code_load_a(
                  WALL_CONNECTOR_OUTPUTS_A[0]))},
         ]
     pcs_reduction = (existing_backfeed_a + batt_breaker_a
                      - busbar["total_backfeed_allowed_a"])
     mitigations = evse_mitigations + [
-        {"mitigation": "Power control system on the sources (NEC 705.13)",
+        {"mitigation": f"Power control system on the sources ({nec('705.13')})",
          "basis": ("A listed PCS limits the combined output of the PV and the "
                    "battery, so the interconnection is evaluated against the "
                    "PCS setting instead of the sum of the source breakers."),
@@ -2490,7 +3289,7 @@ def build():
             "position_condition.what_would_settle_it."),
         "verdict": batt_verdict,
         "verdict_basis": (
-            "NEC 705.12(B)(3)(2) is conjunctive: the 120% arithmetic AND the "
+            f"{nec('705.12(B)(3)(2)')} is conjunctive: the 120% arithmetic AND the "
             "opposite-end breaker position. A failure on either leg fails the "
             "panel, and the arithmetic alone is never a compliant verdict."),
         "shortfall_a": _r(batt_breaker_a - busbar["remaining_backfeed_a"], 1),
@@ -2498,11 +3297,12 @@ def build():
                                          panel["busbar_rating_a"],
                                          batt_breaker_a),
         "alternatives_not_evaluated_here": [
-            "supply-side (line-side) tap ahead of the main disconnect, NEC 705.11",
-            "the 705.12(B)(3)(1) sum-of-breakers rule, if the branch total can "
-            "be brought under the busbar rating",
-            "a listed power control system limiting combined source output, "
-            "NEC 705.13",
+            f"supply-side (line-side) tap ahead of the main disconnect, "
+            f"{nec('705.11')}",
+            f"the {nec('705.12(B)(3)(3)')} sum-of-breakers rule, if the branch "
+            f"total can be brought under the busbar rating",
+            f"a listed power control system limiting combined source output, "
+            f"{nec('705.13')}",
             "a main-breaker downgrade, which trades backfeed allowance against "
             "the demand headroom computed above",
         ],
@@ -2511,11 +3311,12 @@ def build():
             "them is computed here, and listing one is not a recommendation "
             "for or against it."),
         "note": (
-            "The busbar rule fails on its own arithmetic, independently of the "
-            "220.87 demand result, so it is what decides the battery here."
+            f"The busbar rule fails on its own arithmetic, independently of "
+            f"the {nec('220.87')} demand result, so it is what decides the "
+            f"battery here."
             if amp_leg == "fail" else
-            "The busbar rule and the 220.87 demand headroom are reported "
-            "separately; neither is assumed to decide the other."),
+            f"The busbar rule and the {nec('220.87')} demand headroom are "
+            f"reported separately; neither is assumed to decide the other."),
     }
 
     # What this run did NOT answer, and on whose say-so. An intake flag that
@@ -2588,7 +3389,7 @@ def build():
             "main_breaker_position": panel["main_breaker_position"],
             "existing_pv_position_condition": existing_pv_position,
             "existing_pv_position_condition_note": (
-                "NEC 705.12(B)(3)(2) applied to the breaker ALREADY on the "
+                f"{nec('705.12(B)(3)(2)')} applied to the breaker ALREADY on the "
                 "bus. It is a fact about the existing interconnection and is "
                 "not the battery's position leg, which is evaluated on the "
                 "proposed breaker's own position under battery_inverter"),
@@ -2614,22 +3415,31 @@ def build():
             "pv_ac_ceiling": ac_ceiling,
             "max_lower_bound_kw": _r(peak_kw),
             "max_upper_bound_kw": _r(env_max),
+            # The loud field. max_upper_bound_kw is the conservative basis, and
+            # a reader is entitled to know at a glance whether the interval
+            # setting it had a production measurement behind it at all.
+            "max_upper_bound_is_set_by_an_hour_with_no_production_measurement":
+                not binding["hour_has_a_production_measurement"],
+            "max_upper_bound_binding_interval": binding,
             "intervals_whose_upper_bound_exceeds_the_peak": len(over),
             "intervals_whose_upper_bound_exceeds_the_peak_pct": _r(
                 100.0 * len(over) / n, 3),
             "of_those_with_nonzero_export": sum(1 for e in over if e[4] > 0.0),
             "honesty": (
                 "Gross load is EXACT only where the containing hour produced no "
-                "PV and the interval exported none; in daylight it is a bound, "
-                "and the upper bound is loose because it credits a whole hour's "
+                "PV and the interval exported none. Everywhere else it is a "
+                "bound, and the upper end is loose for one of two reasons: "
+                "inside a producing hour it credits that whole hour's measured "
                 "production to a single quarter-hour, capped at what the "
-                "inverters can physically deliver in fifteen minutes. It is "
-                "looser still on the intervals whose hour the Enphase file does "
-                "not cover, which carry that physical cap with nothing to "
-                "narrow it -- see pv_ceiling_basis_split for how many, and why "
-                "no empirical figure is allowed to narrow them. The bound is "
-                "reported, not resolved -- 15-minute production was never "
-                "metered here."),
+                "inverters can physically deliver in fifteen minutes; and on an "
+                "hour the Enphase file does not cover it carries that physical "
+                "cap with nothing to narrow it. The second is the looser of the "
+                "two -- see pv_ceiling_basis_split for how many such intervals "
+                "there are, how far the production record stops short of the "
+                "meter window, and why no empirical figure is allowed to narrow "
+                "them. Which of the two sets the published maximum is not "
+                "assumed: it is read off the binding interval and reported in "
+                "max_upper_bound_binding_interval. " + binding["reading"]),
             "conservation": conservation_check(pv, dst),
         },
         "maximum_demand": {
@@ -2659,6 +3469,7 @@ def build():
                 "tou_period": R.period(peak[1], R.off_peak_day(peak[0])),
                 "derived_pv_that_hour_kwh": _r(pv.get((peak[0], int(peak[1])), 0.0), 3),
             },
+            "what_was_running": peak_attribution,
             "independent_corroboration": corroboration,
             "dst_guard": dst_guard(hsums, dst),
             "by_month": [
@@ -2671,34 +3482,40 @@ def build():
                 for ym, e in sorted(monthly.items())],
         },
         "nec_220_87": {
-            "rule": ("NEC 220.87 -- for an existing dwelling unit the calculated "
-                     "load may be taken as the maximum demand measured over at "
-                     "least 30 days, times 125%, in place of a nameplate "
-                     "calculation, where the data is acceptable to the AHJ."),
+            "rule": nec_rule("220.87"),
+            "conditions": conditions,
             "measurement_days": len(days),
-            "code_minimum_days": NEC_220_87_MIN_DAYS,
-            "window_note": (f"{len(days)} days of continuous 15-minute data, "
-                            f"{len(days) // NEC_220_87_MIN_DAYS}x the code "
-                            f"minimum of {NEC_220_87_MIN_DAYS}"),
+            "condition_1_days_required": NEC_220_87_CONDITION_1_DAYS,
+            "window_note": (
+                f"{len(days)} days of continuous 15-minute data, "
+                f"{_r(len(days) / float(NEC_220_87_CONDITION_1_DAYS), 2)}x the "
+                f"1-year period condition (1) requires. The 30-day recording "
+                f"route is the Exception to (1), not the condition, and it is "
+                f"closed to a service with a photovoltaic system -- so a year "
+                f"is the only span that qualifies this household, and it has "
+                f"one. See conditions."),
             "steps": steps,
             "calculated_load_a": a_calc,
             "headroom_a": {"vs_service_rating": avail["service"],
                            "vs_meter_socket": avail.get("meter_socket"),
-                           "binding": avail_binding,
+                           "binding": _r(min(avail.values())),
                            "binding_is": BINDING_IS[socket_basis]},
             "sensitivity_on_the_upper_bound": {
                 "why": ("If the true 15-minute maximum sat at the top of the "
-                        "daylight envelope rather than at the exact peak, the "
+                        "gross-load envelope rather than at the exact peak, the "
                         "answer would move by this much. It is a bound, not an "
-                        "estimate: the daylight cap is the inverters' AC "
-                        "nameplate, so no quarter-hour is credited with more "
-                        "production than the array can physically deliver, and "
-                        "nothing in the record suggests a whole hour's output "
-                        "ever landed in one quarter-hour. "
-                        "The headline maximum stays the measured one, but no "
-                        "case verdict is asserted from it alone -- this is the "
-                        "conservative basis every verdict is also computed on."),
+                        "estimate: every interval's PV credit is capped at the "
+                        "inverters' AC nameplate, so no quarter-hour is "
+                        "credited with more production than the array can "
+                        "physically deliver. The headline maximum stays the "
+                        "measured one, but no case verdict is asserted from it "
+                        "alone -- this is the conservative basis every verdict "
+                        "is also computed on. " + binding["reading"]),
                 "max_upper_bound_kw": _r(env_max),
+                "binding_interval": binding,
+                "max_upper_bound_is_set_by_an_hour_with_no_production_measurement":
+                    not binding["hour_has_a_production_measurement"],
+                "what_would_settle_it": case_settle,
                 "calculated_load_a": a_calc_upper,
                 "headroom_vs_service_a": avail_upper["service"],
                 "headroom_vs_meter_socket_a": avail_upper.get("meter_socket"),
@@ -2709,7 +3526,7 @@ def build():
         "added_load_code_values": {
             "second_evse_a": _r(evse2_a, 2) if has_ev else None,
             "second_evse_basis": (
-                f"NEC 625.42 continuous load: {EXISTING_EVSE_OUTPUT_A:.0f} A "
+                f"{nec('625.42')} continuous load: {EXISTING_EVSE_OUTPUT_A:.0f} A "
                 f"output x 1.25 on a "
                 f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
                 f"circuit" if has_ev else
@@ -2719,10 +3536,18 @@ def build():
             "battery_charging_not_determined": BATTERY_CHARGING_NOT_DETERMINED,
             "heat_pump_a": None,
             "heat_pump_basis": (
-                "NOT DETERMINED -- no unit has been selected anywhere in this "
-                "project, and a nameplate cannot be invented. The heat-pump "
-                "term is solved for instead: each case reports the largest NEC "
-                "440.6 MCA that fits."),
+                f"NOT DETERMINED -- no unit has been selected anywhere in this "
+                f"project, and a nameplate cannot be invented. The heat-pump "
+                f"term is solved for instead: each case reports the largest "
+                f"minimum circuit ampacity that fits, MCA being the figure "
+                f"marked on the equipment ({nec('440.4(B)')}) and the one its "
+                f"conductors are sized to ({nec('440.35')})."),
+            "heat_pump_what_would_settle_it": (
+                "The selected unit's own nameplate: its marked minimum circuit "
+                f"ampacity ({nec('440.4(B)')}), which is directly comparable "
+                f"with the solved-for figure each case publishes. Until a unit "
+                f"is chosen there is nothing to read, and the largest MCA that "
+                f"fits is the answer this data can give."),
         },
         "cases": cases,
         "noncoincident_loads": noncoincident,
@@ -2770,7 +3595,8 @@ def main():
         SOCKET_NOT_RECORDED: ("the meter socket was never read, so this is an "
                               "UPPER LIMIT: a socket rating would tighten it"),
     }[pan["meter_socket_basis"]]
-    print(f"  220.87 calculated load {nec['calculated_load_a']} A -> headroom "
+    print(f"  {NEC_220_87_LABEL} calculated load {nec['calculated_load_a']} A "
+          f"-> headroom "
           f"{nec['headroom_a']['vs_service_rating']} A vs the "
           f"{pan['service_rating_a']:.0f} A main, {socket}")
     for c in result["cases"]:
