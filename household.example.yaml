@@ -98,6 +98,10 @@ panel:                               # omit only if you don't want a service-hea
                                      # breaker; null if nothing backfeeds the panel
   breaker_family: "EX / EXC (CTL classified)"
                                      # what a new branch breaker has to be compatible with
+  main_breaker_position: "top"       # "top" or "bottom" — which end of the bus the
+                                     # main lands on. Needed with the field below:
+                                     # without both ends the 120% rule's position
+                                     # condition reports "not determined".
   pv_breaker_position: "bottom"      # "top" or "bottom" — which end of the bus the
                                      # backfeed breaker lands on. NEC 705.12(B)(3)(2)
                                      # wants the opposite end from the main.

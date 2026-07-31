@@ -23,7 +23,7 @@ rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
 
 # 1) the test suites, in-process
 for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
-         test_carbon_fullyear test_household test_publish; do
+         test_carbon_fullyear test_household test_publish test_service_headroom; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null
   echo "suite  $t"
 done
@@ -36,7 +36,7 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
          package_results extended_findings report_data deep_analyses \
          battery_backup_sims analyze analyze_norelief carbon_fullyear \
          tou_audit lifetime_payback soiling_analysis parse_bills \
-         billing_model_nem; do
+         billing_model_nem service_headroom; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "$g.py" >/dev/null 2>&1 \
     && echo "gen    $g" || { echo "gen    $g FAILED"; exit 1; }
 done

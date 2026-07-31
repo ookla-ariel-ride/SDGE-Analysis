@@ -597,10 +597,10 @@ privacy: private-only
 
 ```yaml
 id: panel_pv_breaker_position
-question: "Is the solar backfeed breaker at the top or the bottom of the breaker stack?"
+question: "Which end of the breaker stack is the solar backfeed breaker at, top or bottom — and which end is the main at?"
 type: string
 required_if: has_new_load_interest
-where: "Look at which end of the busbar it sits on relative to the main. NEC 705.12(B)(3)(2) wants the backfeed at the opposite end from the main, so 'top' or 'bottom' is an input to the busbar check. Null if nothing backfeeds the panel."
+where: "NEC 705.12(B)(3)(2) is two conditions, not one: the 120% arithmetic, and the backfeed breaker sitting at the opposite end of the busbar from the main. The check compares the two ends, so record both — the backfeed breaker's as panel.pv_breaker_position and the main's as panel.main_breaker_position, each 'top' or 'bottom'. With either one missing the position condition is reported as not determined rather than assumed, and the arithmetic alone is never read as a compliant verdict. Null if nothing backfeeds the panel."
 privacy: private-only
 ```
 
