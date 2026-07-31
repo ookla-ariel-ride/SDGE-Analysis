@@ -39,7 +39,9 @@ THE ADEQUACY TEST, STATED BEFORE THE RESULT (issue #4 AC-3)
     distinct non-zero rates spanning >= MIN_SPAN_DAYS.
     A season's spread trend is reportable only if BOTH its cells qualify AND the
     fitted slope's 95% interval excludes zero AND the trend survives the
-    structural-break check below.
+    structural-break check below AND the post-break slope still excludes zero
+    once its interval is widened for the fact that the breakpoint was CHOSEN
+    from the data (see _selection_adjusted_ci).
     Anything failing any bar is published as "not determined" together with
     the data that would settle it. "Not determined" is an acceptable outcome
     (CLAUDE.md 0) and is not a failure of the analysis.
@@ -59,6 +61,16 @@ WHY A STRUCTURAL-BREAK CHECK EXISTS AT ALL
     fit is itself adequate. This bar can only ever suppress a claim, never create
     one, which is why adding it after seeing the full-window result is not tuning
     the test toward a preferred answer.
+
+    THE BREAK CHECK HAS ITS OWN COST, AND IT IS PAID HERE
+    Refitting after a break CHOSEN by looking at the data is a selection
+    procedure, so the textbook interval on the tail no longer has 95% coverage.
+    On this corpus that is not a rounding detail: winter's post-break slope is
+    +10.95%/yr with an unadjusted interval of [1.89, 20.81]%, and [-6.90, 32.22]%
+    once the choice among 4 candidate steps is paid for. The adjusted interval
+    includes zero, so winter is published as NOT DETERMINED rather than as a
+    measured widening. Four independent rate changes are simply not enough to
+    locate a break and estimate a slope from the same data.
 
 Writes data/tou_spread.json atomically: a partial or failed run changes nothing.
 """
@@ -101,6 +113,59 @@ def _t_crit(df):
     if df <= 0:
         return None
     return _T95.get(df, 1.960)
+
+
+def _t_pdf(t, df):
+    return (math.exp(math.lgamma((df + 1) / 2) - math.lgamma(df / 2))
+            / math.sqrt(df * math.pi) * (1 + t * t / df) ** (-(df + 1) / 2))
+
+
+def _t_quantile(p, df, _n=2048):
+    """Two-sided-usable Student-t quantile for p > 0.5, by Simpson quadrature of
+    the pdf plus bisection.
+
+    scipy is not a dependency of this repo, and _T95 only covers the 95% column.
+    A selection adjustment needs arbitrary levels (alpha/K), so the quantile is
+    computed rather than looked up. Pure arithmetic with a fixed node count, so
+    it is deterministic and the artifact stays byte-identical across runs.
+    """
+    def cdf(t):
+        if t <= 0:
+            return 0.5
+        h = t / _n
+        s = _t_pdf(0, df) + _t_pdf(t, df)
+        for i in range(1, _n):
+            s += _t_pdf(i * h, df) * (4 if i % 2 else 2)
+        return 0.5 + s * h / 3
+
+    lo, hi = 0.0, 1.0
+    while cdf(hi) < p and hi < 1e6:
+        hi *= 2
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if cdf(mid) < p:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def _selection_adjusted_ci(slope, se, df, k_candidates):
+    """Bonferroni-widened interval for a slope fitted on a DATA-SELECTED window.
+
+    _dominant_break picks the largest observed step and the trend is then refit
+    on the tail after it. Applying a textbook OLS interval to that tail ignores
+    that the split point was chosen by looking at the same data, so the stated
+    95% coverage is not the real coverage. Correcting over the k steps that
+    could have been chosen is the conservative end of the valid range; a
+    sup-Wald critical value would be tighter. Conservative is the right
+    direction here for the same reason the break check itself is: it can only
+    ever suppress a claim, never manufacture one.
+    """
+    if se is None or df <= 0 or k_candidates < 1:
+        return None
+    t = _t_quantile(1 - (1 - CONFIDENCE) / k_candidates / 2, df)
+    return [slope - t * se, slope + t * se]
 
 
 def _repo_root():
@@ -342,11 +407,19 @@ def _fit_spread(series, origin):
     units = _independent_units(series)
     udates = [d for d, _ in units]
     uvals = [v for _, v in units]
-    fit = _ols(_years_from(udates, origin), uvals)
-    if fit is None:
+    xs = _years_from(udates, origin)
+    fit = _ols(xs, uvals)
+    # Escalation is fitted on ln(spread), like _cell_escalation, because
+    # _payback COMPOUNDS the rate it is given. A slope in $/kWh/yr divided by
+    # the mean is an additive growth rate; compounding it geometrically projects
+    # a curve that was never fitted (worth ~$2.1k of 10-yr NPV on this corpus).
+    # The dollar slope is kept as a descriptive figure only.
+    gfit = _ols(xs, [math.log(v) for v in uvals])
+    if fit is None or gfit is None:
         return {"n": len(series), "n_independent": len(units),
                 "verdict": "not determined -- fit undefined on "
                            f"{len(units)} independent level(s)"}
+    pct = lambda g: round(100 * (math.exp(g) - 1), 2)
     return {
         "n": len(series),
         "n_independent": fit["n"],
@@ -358,11 +431,13 @@ def _fit_spread(series, origin):
         "spread_last_usd_kwh": round(vals[-1], 5),
         "slope_usd_kwh_per_yr": round(fit["slope"], 5),
         "slope_ci95": [round(fit["ci95"][0], 5), round(fit["ci95"][1], 5)],
-        "excludes_zero": fit["excludes_zero"],
-        "r2": round(fit["r2"], 3) if fit["r2"] is not None else None,
+        "excludes_zero": gfit["excludes_zero"],
+        "r2": round(gfit["r2"], 3) if gfit["r2"] is not None else None,
         "mean_spread_usd_kwh": round(statistics.fmean(vals), 5),
         "mean_fitted_usd_kwh": round(statistics.fmean(uvals), 5),
-        "escalation_pct_yr": round(100 * fit["slope"] / statistics.fmean(uvals), 2),
+        "escalation_pct_yr": pct(gfit["slope"]),
+        "escalation_ci95_pct_yr": [pct(gfit["ci95"][0]), pct(gfit["ci95"][1])],
+        "_g_slope": gfit["slope"], "_g_se": gfit["se"], "_g_df": gfit["df"],
     }
 
 
@@ -452,11 +527,28 @@ def build():
             post["break_jump_usd_kwh"] = round(jump, 5)
             post["break_jump_pct_of_prior_level"] = round(100 * rel, 1)
             post["distinct_levels"] = len({v for _, v in tail})
+            # The break was CHOSEN by looking at the data, so the tail's own
+            # interval overstates its coverage. Re-test against an interval
+            # widened over every step that could have been chosen instead.
+            k = max(1, len(_independent_units(series)) - 1)
+            adj = _selection_adjusted_ci(
+                post.get("_g_slope"), post.get("_g_se"), post.get("_g_df", 0), k)
+            post["candidate_breakpoints"] = k
+            post["selection_adjusted"] = adj is not None
+            if adj is not None:
+                pct = lambda g: round(100 * (math.exp(g) - 1), 2)
+                post["escalation_ci95_pct_yr_selection_adjusted"] = [pct(adj[0]), pct(adj[1])]
+                post["excludes_zero_selection_adjusted"] = bool(adj[0] > 0 or adj[1] < 0)
             post["adequate"] = bool(
                 post.get("n", 0) >= MIN_VINTAGES
                 and post.get("span_days", 0) >= MIN_SPAN_DAYS
                 and post.get("excludes_zero", False)
+                and post.get("excludes_zero_selection_adjusted", False)
                 and post["distinct_levels"] >= MIN_VINTAGES)
+        for scratch in (fit, post):
+            if isinstance(scratch, dict):
+                for k_ in ("_g_slope", "_g_se", "_g_df"):
+                    scratch.pop(k_, None)
         fit["post_break"] = post
 
         agree = bool(
@@ -480,7 +572,19 @@ def build():
                 why.append("super-off-peak cell below the vintage/span bar")
             if not fit.get("excludes_zero", False):
                 why.append("full-window slope 95% interval includes zero")
-            if not agree:
+            if (post and post.get("selection_adjusted")
+                    and post.get("excludes_zero", False)
+                    and not post.get("excludes_zero_selection_adjusted", False)):
+                why.append(
+                    "the post-break slope is significant on its own interval "
+                    f"({post['escalation_ci95_pct_yr']}%/yr) but not once that "
+                    "interval is widened for having CHOSEN the breakpoint from "
+                    f"the data ({post['escalation_ci95_pct_yr_selection_adjusted']}"
+                    f"%/yr over {post['candidate_breakpoints']} candidate steps). "
+                    f"{post['distinct_levels']} independent rate changes cannot "
+                    "support a trend claim once breakpoint selection is paid for")
+            if not agree and not (post and post.get("selection_adjusted")
+                                  and post.get("excludes_zero", False)):
                 why.append(
                     "the full-window slope does not survive the structural-break "
                     "check: it is carried by a single step"
@@ -489,6 +593,20 @@ def build():
                        "of the prior level)" if post and "break_date" in post else "")
                     + ", not by an ongoing trend")
             fit["not_determined_because"] = why
+            fit["would_settle_it"] = [
+                "More rate CHANGES, not more statements: the interval is set by "
+                f"the {(post or {}).get('distinct_levels', 'few')} distinct "
+                "spreads in the window, and reprinting the same tariff adds "
+                "none. At roughly two delivery redesigns a year, a corpus "
+                "reaching into 2028 would roughly double the independent units.",
+                "A breakpoint fixed in advance from published tariff effective "
+                "dates rather than chosen as the largest observed step. That "
+                "removes the selection penalty entirely and the unadjusted "
+                "interval becomes legitimate.",
+                "Statements from before 2024-05-25, which would extend the "
+                "pre-break window and let the two segments be compared as a "
+                "formal change-point model rather than a refit.",
+            ]
         fit["series"] = [[d.isoformat(), round(v, 5)] for d, v in series]
         spreads[season] = fit
 

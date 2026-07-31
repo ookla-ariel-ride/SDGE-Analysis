@@ -237,8 +237,57 @@ def case_battery_uses_the_post_break_escalation():
             run["spread_escalation_pct_yr"], (
             f"{season}: the two figures coincide, so this test proves nothing "
             "-- check the corpus still contains a structural break")
-    assert any_reported, "no season reported; this case needs one to be meaningful"
+    if not any_reported:
+        # No season clears the bars on this corpus. The contract still binds:
+        # every season must then be blocked with a stated reason, and no
+        # battery figure may be published from an unreported trend.
+        for season, run in result["battery"]["per_period"].items():
+            assert run["verdict"] == "not determined", season
+            assert run.get("because"), f"{season} blocked without a reason"
+            for leaked in ("payback_yr", "npv10", "spread_escalation_pct_yr"):
+                assert leaked not in run, (
+                    f"{season} publishes {leaked} from a trend that is not reported")
+        return ("no season is reportable, and every battery run is blocked with "
+                "a reason and publishes no figure")
     return "the payback escalates on the post-break slope, not the inflated one"
+
+
+@case
+def case_a_chosen_breakpoint_pays_for_the_choosing():
+    """Refitting after a break FOUND in the data is a selection procedure, so the
+    tail's textbook interval overstates its coverage. The adjusted interval must
+    be strictly wider, and the published verdict must respect it."""
+    # widening must be monotone in the number of candidate steps considered
+    base = ts._selection_adjusted_ci(0.10, 0.02, 2, 1)
+    more = ts._selection_adjusted_ci(0.10, 0.02, 2, 6)
+    assert base and more
+    assert (more[1] - more[0]) > (base[1] - base[0]), (
+        f"more candidates must widen the interval: {base} vs {more}")
+    # K=1 reproduces the ordinary 95% interval (nothing was selected)
+    plain = 0.10 - ts._t_crit(2) * 0.02, 0.10 + ts._t_crit(2) * 0.02
+    assert abs(base[0] - plain[0]) < 1e-3 and abs(base[1] - plain[1]) < 1e-3, (
+        f"K=1 must be the unadjusted interval, got {base} vs {plain}")
+
+    result = json.loads((ROOT / "data" / "tou_spread.json").read_text())
+    checked = 0
+    for season, fit in result["delivery_spread"].items():
+        post = fit.get("post_break") or {}
+        if not post.get("selection_adjusted"):
+            continue
+        checked += 1
+        raw = post["escalation_ci95_pct_yr"]
+        adj = post["escalation_ci95_pct_yr_selection_adjusted"]
+        assert adj[0] <= raw[0] and adj[1] >= raw[1], (
+            f"{season}: adjusted interval is not wider ({adj} vs {raw})")
+        if post.get("adequate"):
+            assert post["excludes_zero_selection_adjusted"], (
+                f"{season} is adequate but fails its own adjusted interval")
+        if fit["verdict"] != "not determined":
+            assert post["excludes_zero_selection_adjusted"], (
+                f"{season} is published as a trend on an interval that includes zero")
+    assert checked, "no season carried a selection-adjusted interval"
+    return (f"{checked} season(s): the adjusted interval is wider and gates the "
+            "verdict; K=1 reduces to the ordinary interval")
 
 
 @case
