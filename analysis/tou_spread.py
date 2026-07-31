@@ -730,14 +730,16 @@ def build():
                 "The CCA's own per-TOU rates, which appear only on the CCA pages "
                 "of the statements; parse_bills.py does not extract those pages.",
                 "A second bundled-era stretch long enough to fit generation "
-                "separately -- the corpus has only 216 bundled days.",
+                f"separately -- the corpus has only {corpus_days - cca_days} "
+                "bundled days.",
             ]},
         "all_in_spread": {
             "verdict": "not determined",
             "reason": ("The all-in on-peak price is delivery plus generation. "
                        "With generation undetermined past the provider break, an "
                        "all-in spread trend would splice a charged tariff to a "
-                       "comparison figure across 72% of the corpus."),
+                       f"comparison figure across {round(100 * cca_days / corpus_days)}% "
+                       "of the corpus."),
             "would_settle_it": ["Same as generation_escalation above."]},
     }
 
