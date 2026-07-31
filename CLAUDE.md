@@ -168,10 +168,46 @@ This project pulled Enphase Enlighten data, but the method is monitoring-agnosti
 Tesla, SMA, Fronius, PVOutput, etc. all expose production feeds. Describe the DATA needed
 (gross hourly/daily production, system size, metering config), not one vendor's menu.
 
-## 8. Scope discipline.
-Ask clarifying questions before large work. Keep a task list. Use subagents for independent
-sub-analyses and for an adversarial verification pass over the math before presenting. Verify
-programmatically. Do not expand scope silently.
+## 8. Scope discipline, and use subagents wherever possible.
+Ask clarifying questions before large work. Keep a task list. Verify programmatically. Do not
+expand scope silently.
+
+**Default to delegating.** Any unit of work that can be stated as a self-contained brief —
+an analysis, a script, a fix, an audit, a doc pass — should go to a subagent rather than be
+done inline. Reserve inline work for deciding *what* to delegate, verifying what comes back,
+and talking to the user. This is not about speed: a subagent that reads the files itself and
+reports a conclusion keeps the main thread's attention on judgment, which is where the
+mistakes in this project have actually happened.
+
+Rules that make delegation work here, each learned by it failing:
+
+- **Disjoint file ownership.** Parallel agents must own non-overlapping files, named
+  explicitly in the brief ("you own EXACTLY these two files"). Two agents editing one file
+  produce a mid-edit tree where a third agent's test run fails for reasons unrelated to its
+  own work.
+- **Give every agent a scope box** — the exact files and acceptance criteria in bounds — and
+  tell it to stop and report rather than touch anything outside it. Agents are otherwise
+  helpful in exactly the way that causes drift.
+- **Never let a subagent commit.** They leave changes in the working tree; the parent reads
+  the diff, verifies, and commits. A commit is a claim about verified state, and the agent
+  cannot verify its own claim.
+- **Verify independently, do not accept the report.** Re-run the assertions yourself with
+  your own commands. Subagent reports here have been accurate about what was done and
+  occasionally wrong about what it means — a summary saying "26/26 pass, artifact
+  byte-identical" is a starting point for checking, not a substitute.
+- **Make byte-identity a stated constraint.** Any agent touching a generator gets: "the
+  committed artifact must regenerate byte-identically; prove it with cmp." That single line
+  catches most accidental behavior changes.
+- **Have agents sweep, not patch.** When a defect is found at one site, instruct the agent to
+  find every other instance of the same shape rather than fixing the named one. Three review
+  rounds were spent on the same defect appearing at three different exits.
+- **Adversarial passes stay adversarial.** Use subagents for an independent verification pass
+  over the math before presenting, and for the review loops. The parent classifies each
+  finding as in or out of scope and reports that classification to the user *before* any fix
+  is applied — never fix silently.
+- **Isolate issue work in a git worktree** (never `worktrees/` inside the repo), with its own
+  venv and private data staged per the clean-room procedure, so a branch cannot disturb the
+  main checkout.
 
 ## 9. Pre-publication gates — run ALL of these before any report ships.
 Round-three review found every one of these violated. Check them mechanically, not by memory:
