@@ -168,6 +168,7 @@
     "on_peak": true,
     "super_off_peak": true
    },
+   "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
    "escalation_ci95_pct_yr": [
     0.79,
     26.25
@@ -190,6 +191,7 @@
     "break_jump_pct_of_prior_level": 21.4,
     "break_jump_usd_kwh": 0.04844,
     "candidate_breakpoints": 4,
+    "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
     "distinct_levels": 3,
     "escalation_ci95_pct_yr": [
      -13.22,
@@ -293,6 +295,7 @@
    "spread_first_usd_kwh": 0.22425,
    "spread_last_usd_kwh": 0.27597,
    "survives_structural_break": false,
+   "unpaired_observations_dropped": 0,
    "verdict": "not determined",
    "would_settle_it": [
     "More rate CHANGES, not more statements: the interval is set by the 3 distinct spreads in the window, and reprinting the same tariff adds none. At roughly two delivery redesigns a year, a corpus reaching into 2028 would roughly double the independent units.",
@@ -305,6 +308,7 @@
     "on_peak": true,
     "super_off_peak": true
    },
+   "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
    "escalation_ci95_pct_yr": [
     5.94,
     27.59
@@ -327,6 +331,7 @@
     "break_jump_pct_of_prior_level": 12.6,
     "break_jump_usd_kwh": 0.02858,
     "candidate_breakpoints": 4,
+    "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
     "distinct_levels": 4,
     "escalation_ci95_pct_yr": [
      1.89,
@@ -450,6 +455,7 @@
    "spread_first_usd_kwh": 0.22674,
    "spread_last_usd_kwh": 0.28568,
    "survives_structural_break": false,
+   "unpaired_observations_dropped": 1,
    "verdict": "not determined",
    "would_settle_it": [
     "More rate CHANGES, not more statements: the interval is set by the 4 distinct spreads in the window, and reprinting the same tariff adds none. At roughly two delivery redesigns a year, a corpus reaching into 2028 would roughly double the independent units.",

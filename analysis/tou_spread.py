@@ -388,7 +388,12 @@ def _spread_series(priced, season, origin):
 
     on, sop = by_date("on_peak"), by_date("super_off_peak")
     dates = sorted(set(on) & set(sop))
-    return [(d, on[d] - sop[d]) for d in dates]
+    # An unmatched observation is dropped by this join. That is correct -- a
+    # spread needs both halves priced on the same date -- but it is a silent
+    # narrowing of the evidence base, so the count is returned for the artifact
+    # rather than left for a reader to infer from a row count.
+    dropped = len(set(on) ^ set(sop))
+    return [(d, on[d] - sop[d]) for d in dates], dropped
 
 
 def _dominant_break(series):
@@ -428,6 +433,13 @@ def _fit_spread(series, origin):
     # the mean is an additive growth rate; compounding it geometrically projects
     # a curve that was never fitted (worth ~$2.1k of 10-yr NPV on this corpus).
     # The dollar slope is kept as a descriptive figure only.
+    nonpos = [(d.isoformat(), v) for d, v in units if v <= 0]
+    if nonpos:
+        raise SystemExit(
+            "tou_spread.py: non-positive spread, which ln() cannot take and which "
+            "means on-peak is priced at or below super-off-peak: "
+            f"{nonpos[:3]}. That is a real tariff inversion, not noise -- decide "
+            "how to report it rather than letting the fit crash or be dropped.")
     gfit = _ols(xs, [math.log(v) for v in uvals])
     if fit is None or gfit is None:
         return {"n": len(series), "n_independent": len(units),
@@ -451,6 +463,12 @@ def _fit_spread(series, origin):
         "mean_fitted_usd_kwh": round(statistics.fmean(uvals), 5),
         "escalation_pct_yr": pct(gfit["slope"]),
         "escalation_ci95_pct_yr": [pct(gfit["ci95"][0]), pct(gfit["ci95"][1])],
+        "ci_basis": (
+            "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come "
+            "from the ln(spread) fit, which is what gates the verdict and what "
+            "_payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the "
+            "descriptive linear fit; on a non-monotonic history the two scales "
+            "can disagree, so do not read excludes_zero against slope_ci95."),
         "_g_slope": gfit["slope"], "_g_se": gfit["se"], "_g_df": gfit["df"],
     }
 
@@ -536,7 +554,7 @@ def build():
     # ---- spread series ---------------------------------------------------
     spreads = {}
     for season in ("summer", "winter"):
-        series = _spread_series(priced, season, origin)
+        series, unpaired = _spread_series(priced, season, origin)
         fit = _fit_spread(series, origin)
         on_ok = cells[f"{season}_on_peak"]["adequate"]
         sop_ok = cells[f"{season}_super_off_peak"]["adequate"]
@@ -589,6 +607,7 @@ def build():
             post and post.get("adequate") and (post_dir > 0) == (full_dir > 0))
         reportable = bool(on_ok and sop_ok and fit.get("excludes_zero") and agree)
 
+        fit["unpaired_observations_dropped"] = unpaired
         fit["cells_adequate"] = {"on_peak": on_ok, "super_off_peak": sop_ok}
         fit["survives_structural_break"] = agree
         fit["reportable"] = reportable
