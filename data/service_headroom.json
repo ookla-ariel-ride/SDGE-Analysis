@@ -1,0 +1,539 @@
+{
+ "added_load_code_values": {
+  "battery_charging_a": 59.9,
+  "battery_charging_basis": "11.5 kW grid charging = 47.92 A x 1.25 continuous",
+  "heat_pump_a": null,
+  "heat_pump_basis": "NOT DETERMINED -- no unit has been selected anywhere in this project, and a nameplate cannot be invented. The heat-pump term is solved for instead: each case reports the largest NEC 440.6 MCA that fits.",
+  "second_evse_a": 60.0,
+  "second_evse_basis": "NEC 625.42 continuous load: 48 A output x 1.25 on a 60 A 2-pole circuit"
+ },
+ "battery_inverter": {
+  "alternatives_not_recommended": [
+   "supply-side (line-side) tap ahead of the main disconnect, NEC 705.11",
+   "the 705.12(B)(3)(1) sum-of-breakers rule, if the branch total can be brought under the busbar rating",
+   "a listed power control system limiting combined source output, NEC 705.13",
+   "a main-breaker downgrade, which trades backfeed allowance against the demand headroom computed above"
+  ],
+  "backfeed_breaker_a": 60.0,
+  "busbar_120_percent": {
+   "busbar_rating_a": 200.0,
+   "busbar_x_120pct_a": 240.0,
+   "existing_pv_backfeed_a": 50.0,
+   "formula": "remaining = busbar * 1.20 - main_ocpd - existing_backfeed",
+   "main_ocpd_a": 175.0,
+   "remaining_backfeed_a": 15.0,
+   "remaining_backfeed_kva": 3.6,
+   "rule": "NEC 705.12(B)(3)(2) -- 120% busbar allowance",
+   "total_backfeed_allowed_a": 65.0
+  },
+  "continuous_output_a": 47.92,
+  "inverter_kw": 11.5,
+  "note": "The binding constraint on the battery is the busbar rule, not demand headroom. It fails independently of the 220.87 result.",
+  "shortfall_a": 45.0,
+  "sum_rule": {
+   "branch_ocpd_sum_a": 460.0,
+   "busbar_rating_a": 200.0,
+   "passes": false,
+   "rule": "NEC 705.12(B)(3)(1) -- sum of all breakers other than the main must not exceed the busbar rating"
+  },
+  "unit": "Tesla Powerwall 3",
+  "verdict": "FAILS as the panel stands"
+ },
+ "cases": [
+  {
+   "case": "heat_pump_only",
+   "fixed_added_load_a": 0.0,
+   "note": "No heat pump has been selected, so the term is solved for rather than assumed: this is the largest minimum circuit ampacity (NEC 440.6 MCA, which already embeds the 125% on the largest motor) that fits. Conservative -- it adds the heat pump on top of a measured maximum that already contains the existing A/C.",
+   "passes_on_ampacity": true,
+   "remaining_headroom_a": {
+    "binding": 76.4583,
+    "vs_meter_socket": 76.4583,
+    "vs_service_rating": 81.4583
+   },
+   "remaining_is": "the largest heat-pump MCA that fits",
+   "spaces": {
+    "fits_without_panel_work": false,
+    "full_size_spaces_required": 2,
+    "new_2pole_breakers_required": 1,
+    "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
+    "spaces_free": 1
+   }
+  },
+  {
+   "case": "second_evse_only",
+   "fixed_added_load_a": 60.0,
+   "note": "A second Tesla Wall Connector at 48 A continuous on its own 60 A 2-pole circuit. NEC 625.42 makes EVSE a continuous load, so the code value is 48 x 1.25 = 60 A. What remains is spare headroom, not a heat pump.",
+   "passes_on_ampacity": true,
+   "remaining_headroom_a": {
+    "binding": 16.4583,
+    "vs_meter_socket": 16.4583,
+    "vs_service_rating": 21.4583
+   },
+   "remaining_is": "spare headroom above the calculated load",
+   "spaces": {
+    "fits_without_panel_work": false,
+    "full_size_spaces_required": 2,
+    "new_2pole_breakers_required": 1,
+    "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
+    "spaces_free": 1
+   }
+  },
+  {
+   "case": "heat_pump_and_second_evse",
+   "fixed_added_load_a": 60.0,
+   "note": "The second EVSE at its code value, with the heat pump solved for against what is left.",
+   "passes_on_ampacity": true,
+   "remaining_headroom_a": {
+    "binding": 16.4583,
+    "vs_meter_socket": 16.4583,
+    "vs_service_rating": 21.4583
+   },
+   "remaining_is": "the largest heat-pump MCA that fits",
+   "spaces": {
+    "fits_without_panel_work": false,
+    "full_size_spaces_required": 4,
+    "new_2pole_breakers_required": 2,
+    "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
+    "spaces_free": 1
+   }
+  },
+  {
+   "case": "heat_pump_second_evse_and_battery",
+   "fixed_added_load_a": 119.8958,
+   "note": "The battery is counted on the DEMAND side at its grid-charging draw: 11.5 kW = 47.92 A, x1.25 continuous = 59.90 A. Ampacity is not the binding constraint here -- the 120% busbar rule is, and it fails first.",
+   "passes_on_ampacity": false,
+   "remaining_headroom_a": {
+    "binding": -43.4375,
+    "vs_meter_socket": -43.4375,
+    "vs_service_rating": -38.4375
+   },
+   "remaining_is": "the largest heat-pump MCA that fits",
+   "spaces": {
+    "fits_without_panel_work": false,
+    "full_size_spaces_required": 6,
+    "new_2pole_breakers_required": 3,
+    "note": "A heat pump also needs a 2-pole breaker, so every case here needs at least two adjacent free spaces.",
+    "spaces_free": 1
+   }
+  }
+ ],
+ "caveat": "Scoping estimate only. The permit calculation belongs to a licensed electrician. NEC 220.87 permits an existing dwelling's calculated load to be taken from measured maximum demand only where that data is acceptable to the authority having jurisdiction; the AHJ may instead require a full NEC 220.82/220.83 nameplate calculation. Conductor sizes, the actual nameplate ratings of the existing equipment, and the panel's listing restrictions were not verified here, and no equipment should be ordered against these figures.",
+ "gross_reconstruction": {
+  "bounded_intervals": 20756,
+  "conservation": {
+   "against": {
+    "enphase_meter": {
+     "correlation": 0.99996,
+     "mae_kwh_per_day": 0.1596,
+     "ratio_derived_over_reference": 1.00323,
+     "reference_total_kwh": 16406.3,
+     "residual_pct": 0.323
+    },
+    "pvoutput": {
+     "correlation": 0.99986,
+     "mae_kwh_per_day": 0.7891,
+     "ratio_derived_over_reference": 0.9831,
+     "reference_total_kwh": 16742.1,
+     "residual_pct": -1.69
+    }
+   },
+   "days_compared": 363,
+   "derived_total_kwh": 16459.2,
+   "dst_days_excluded": [
+    "2025-11-02",
+    "2026-03-08"
+   ],
+   "first_day": "2025-07-24",
+   "last_day": "2026-07-23",
+   "reading": "The derived series sits inside the spread between the two reference instruments, which disagree with each other by more than either disagrees with the reconstruction. The reconstruction is therefore not the weakest link in the chain.",
+   "references_disagree_pct": 2.05
+  },
+  "honesty": "Gross load is EXACT only where the containing hour produced no PV and the interval exported none; in daylight it is a bound, and the upper bound is loose because it credits a whole hour's production to a single quarter-hour. The bound is reported, not resolved -- 15-minute production was never metered here.",
+  "hours_with_enphase_reading": 37472,
+  "identity": "gross = import - export + pv",
+  "intervals": 37920,
+  "intervals_on_the_empirical_hour_ceiling": 448,
+  "intervals_whose_upper_bound_exceeds_the_peak": 274,
+  "intervals_whose_upper_bound_exceeds_the_peak_pct": 0.723,
+  "max_lower_bound_kw": 17.96,
+  "max_upper_bound_kw": 24.198,
+  "of_those_with_nonzero_export": 4,
+  "point_determined_fraction_pct": 45.264,
+  "point_determined_intervals": 17164,
+  "pv_ac_ceiling_basis": "largest derived hourly production in the window, excluding the DST days; corroborated by the largest 15-minute meter export (8.3 kW) and the largest 5-minute inverter output in pvoutput_5min_sample.csv (7.932 kW)",
+  "pv_ac_ceiling_kwh_per_hour": 8.878,
+  "zero_export_fraction_pct": 67.318,
+  "zero_export_intervals": 25527
+ },
+ "maximum_demand": {
+  "basis": "15-minute gross load, lower bound, which is exact at the maximum: the peak interval exported nothing and its hour produced nothing",
+  "by_month": [
+   {
+    "month": "2025-06",
+    "peak_a": 64.3333,
+    "peak_kw": 15.44,
+    "point_determined": true,
+    "timestamp_local": "2025-06-29 01:30",
+    "upper_bound_kw": 15.44
+   },
+   {
+    "month": "2025-07",
+    "peak_a": 67.8333,
+    "peak_kw": 16.28,
+    "point_determined": false,
+    "timestamp_local": "2025-07-10 06:00",
+    "upper_bound_kw": 16.616
+   },
+   {
+    "month": "2025-08",
+    "peak_a": 74.8333,
+    "peak_kw": 17.96,
+    "point_determined": true,
+    "timestamp_local": "2025-08-22 05:45",
+    "upper_bound_kw": 17.96
+   },
+   {
+    "month": "2025-09",
+    "peak_a": 71.25,
+    "peak_kw": 17.1,
+    "point_determined": true,
+    "timestamp_local": "2025-09-04 19:00",
+    "upper_bound_kw": 17.1
+   },
+   {
+    "month": "2025-10",
+    "peak_a": 70.0,
+    "peak_kw": 16.8,
+    "point_determined": true,
+    "timestamp_local": "2025-10-08 06:45",
+    "upper_bound_kw": 16.8
+   },
+   {
+    "month": "2025-11",
+    "peak_a": 64.25,
+    "peak_kw": 15.42,
+    "point_determined": true,
+    "timestamp_local": "2025-11-12 19:00",
+    "upper_bound_kw": 15.42
+   },
+   {
+    "month": "2025-12",
+    "peak_a": 59.0833,
+    "peak_kw": 14.18,
+    "point_determined": true,
+    "timestamp_local": "2025-12-05 05:30",
+    "upper_bound_kw": 14.18
+   },
+   {
+    "month": "2026-01",
+    "peak_a": 63.9167,
+    "peak_kw": 15.34,
+    "point_determined": true,
+    "timestamp_local": "2026-01-25 17:15",
+    "upper_bound_kw": 15.34
+   },
+   {
+    "month": "2026-02",
+    "peak_a": 63.0,
+    "peak_kw": 15.12,
+    "point_determined": false,
+    "timestamp_local": "2026-02-16 13:15",
+    "upper_bound_kw": 17.26
+   },
+   {
+    "month": "2026-03",
+    "peak_a": 70.4167,
+    "peak_kw": 16.9,
+    "point_determined": true,
+    "timestamp_local": "2026-03-17 06:45",
+    "upper_bound_kw": 16.9
+   },
+   {
+    "month": "2026-04",
+    "peak_a": 73.75,
+    "peak_kw": 17.7,
+    "point_determined": false,
+    "timestamp_local": "2026-04-05 18:00",
+    "upper_bound_kw": 18.808
+   },
+   {
+    "month": "2026-05",
+    "peak_a": 68.3333,
+    "peak_kw": 16.4,
+    "point_determined": true,
+    "timestamp_local": "2026-05-11 20:00",
+    "upper_bound_kw": 16.4
+   },
+   {
+    "month": "2026-06",
+    "peak_a": 69.4167,
+    "peak_kw": 16.66,
+    "point_determined": true,
+    "timestamp_local": "2026-06-03 06:45",
+    "upper_bound_kw": 16.66
+   },
+   {
+    "month": "2026-07",
+    "peak_a": 70.8333,
+    "peak_kw": 17.0,
+    "point_determined": false,
+    "timestamp_local": "2026-07-08 19:00",
+    "upper_bound_kw": 17.204
+   }
+  ],
+  "dst_guard": {
+   "corrected_max_at": "2025-09-02 19:00",
+   "corrected_max_kw": 16.81,
+   "irregular_hours": [
+    {
+     "corrected_kw": 10.687,
+     "elapsed_hours": 2.0,
+     "hour": "2025-11-02 01:00",
+     "intervals": 8,
+     "naive_kw": 21.375
+    }
+   ],
+   "naive_max_at": "2025-11-02 01:00",
+   "naive_max_is_a_dst_artifact": true,
+   "naive_max_kw": 21.375,
+   "rule": "hourly mean kW = kWh / (intervals * 0.25 h); the interval count is never assumed to be four",
+   "series": "metered import (net), hourly mean"
+  },
+  "independent_corroboration": {
+   "at": "2025-07-03 16:00",
+   "instrument": "Enphase consumption CT, hourly whole-home gross",
+   "max_hourly_mean_kw": 17.819,
+   "reading": "An hourly mean can only understate a 15-minute peak, and this one sits below the reconstructed maximum, which is the direction consistency requires."
+  },
+  "peak_a": 74.8333,
+  "peak_coincident": {
+   "derived_pv_that_hour_kwh": 0.0,
+   "export_kwh": 0.0,
+   "hour_of_day": 5,
+   "month": "2025-08",
+   "point_determined": true,
+   "tariff_season": "summer",
+   "tou_period": "sop",
+   "upper_bound_kw": 17.96,
+   "weekday": "Friday"
+  },
+  "peak_kw": 17.96,
+  "peak_timestamp_local": "2025-08-22 05:45"
+ },
+ "mitigations": [
+  {
+   "added_load_with_a": 0.0,
+   "added_load_without_a": 60.0,
+   "also": "It needs no new breaker, which matters more than the amps: the panel does not have two adjacent free spaces for one.",
+   "basis": "Tesla Wall Connectors share power across one circuit, and NEC 625.42 permits an EVSE load-management system to be sized to the system's maximum output rather than the sum of the connectors.",
+   "case_both_heat_pump_mca_a": 76.4583,
+   "case_second_evse_only_headroom_a": 76.4583,
+   "mitigation": "EVSE load sharing on the existing circuit",
+   "reduction_a": 60.0
+  },
+  {
+   "basis": "The connector's output is settable; the code value follows it directly at 125% (NEC 625.42), and the minimum circuit is the smallest standard OCPD carrying that output at 80%.",
+   "mitigation": "Charge-rate limit on the second EVSE",
+   "reduction_a_at_lowest_setting": 45.0,
+   "table": [
+    {
+     "code_load_a": 15.0,
+     "evse_output_a": 12.0,
+     "headroom_left_vs_meter_socket_a": 61.4583,
+     "headroom_left_vs_service_a": 66.4583,
+     "min_circuit_a": 15.0
+    },
+    {
+     "code_load_a": 20.0,
+     "evse_output_a": 16.0,
+     "headroom_left_vs_meter_socket_a": 56.4583,
+     "headroom_left_vs_service_a": 61.4583,
+     "min_circuit_a": 20.0
+    },
+    {
+     "code_load_a": 25.0,
+     "evse_output_a": 20.0,
+     "headroom_left_vs_meter_socket_a": 51.4583,
+     "headroom_left_vs_service_a": 56.4583,
+     "min_circuit_a": 25.0
+    },
+    {
+     "code_load_a": 30.0,
+     "evse_output_a": 24.0,
+     "headroom_left_vs_meter_socket_a": 46.4583,
+     "headroom_left_vs_service_a": 51.4583,
+     "min_circuit_a": 30.0
+    },
+    {
+     "code_load_a": 40.0,
+     "evse_output_a": 32.0,
+     "headroom_left_vs_meter_socket_a": 36.4583,
+     "headroom_left_vs_service_a": 41.4583,
+     "min_circuit_a": 40.0
+    },
+    {
+     "code_load_a": 50.0,
+     "evse_output_a": 40.0,
+     "headroom_left_vs_meter_socket_a": 26.4583,
+     "headroom_left_vs_service_a": 31.4583,
+     "min_circuit_a": 50.0
+    },
+    {
+     "code_load_a": 60.0,
+     "evse_output_a": 48.0,
+     "headroom_left_vs_meter_socket_a": 16.4583,
+     "headroom_left_vs_service_a": 21.4583,
+     "min_circuit_a": 60.0
+    }
+   ]
+  },
+  {
+   "basis": "A listed PCS limits the combined output of the PV and the battery, so the interconnection is evaluated against the PCS setting instead of the sum of the source breakers.",
+   "counted_backfeed_with_a": 65.0,
+   "counted_backfeed_without_a": 110.0,
+   "largest_compliant_combined_output_kva": 15.6,
+   "mitigation": "Power control system on the sources (NEC 705.13)",
+   "reduction_a": 45.0
+  }
+ ],
+ "nec_220_87": {
+  "calculated_load_a": 93.5417,
+  "code_minimum_days": 30,
+  "headroom_a": {
+   "binding": 76.4583,
+   "vs_meter_socket": 76.4583,
+   "vs_service_rating": 81.4583
+  },
+  "measurement_days": 395,
+  "rule": "NEC 220.87 -- for an existing dwelling unit the calculated load may be taken as the maximum demand measured over at least 30 days, times 125%, in place of a nameplate calculation, where the data is acceptable to the AHJ.",
+  "sensitivity_on_the_upper_bound": {
+   "calculated_load_a": 126.0312,
+   "headroom_vs_meter_socket_a": 43.9688,
+   "headroom_vs_service_a": 48.9688,
+   "max_upper_bound_kw": 24.198,
+   "why": "If the true 15-minute maximum sat at the top of the daylight envelope rather than at the exact peak, the answer would move by this much. It is a bound, not an estimate: nothing in the record suggests a whole hour's production ever landed in one quarter-hour."
+  },
+  "steps": [
+   {
+    "formula": "A = kW * 1000 / V",
+    "inputs": {
+     "V": 240.0,
+     "kW": 17.96
+    },
+    "label": "measured maximum demand converted to service amps",
+    "result_a": 74.8333,
+    "step": 1
+   },
+   {
+    "formula": "A_calc = A_measured * 1.25",
+    "inputs": {
+     "A_measured": 74.8333,
+     "code_minimum_days": 30,
+     "factor": 1.25,
+     "measurement_days": 395
+    },
+    "label": "NEC 220.87 calculated load: maximum demand x 125%",
+    "result_a": 93.5417,
+    "step": 2
+   },
+   {
+    "formula": "headroom = service_rating - A_calc",
+    "inputs": {
+     "A_calc": 93.5417,
+     "service_rating_a": 175.0
+    },
+    "label": "headroom against the main breaker rating",
+    "result_a": 81.4583,
+    "step": 3
+   },
+   {
+    "formula": "headroom = meter_socket_continuous - A_calc",
+    "inputs": {
+     "A_calc": 93.5417,
+     "meter_socket_continuous_a": 170.0
+    },
+    "label": "headroom against the meter socket's continuous rating, the tighter of the two constraints",
+    "result_a": 76.4583,
+    "step": 4
+   }
+  ],
+  "window_note": "395 days of continuous 15-minute data, 13x the code minimum of 30"
+ },
+ "noncoincident_loads": {
+  "credit_bounds_a": {
+   "high": 50.0,
+   "low": 0.0
+  },
+  "evidence_the_credit_is_small": {
+   "annual_peak_hour": 5,
+   "annual_peak_month": "2025-08",
+   "max_summer_month_peak_kw": 17.96,
+   "max_winter_month_peak_kw": 17.7,
+   "reading": "The largest non-cooling-season month peaks within 0.26 kW of the largest cooling-season month, and the annual maximum falls in an early-morning hour rather than an afternoon cooling hour. The measured maximum is not cooling-driven, so the A/C credit at the peak is near the low end of its bounds and the conservative figure is the one to use."
+  },
+  "existing_ac_ocpd_a": 40.0,
+  "not_determined": "The A/C's actual draw at the moment of the annual peak cannot be separated from whole-house data. Sub-metering the condenser, or its nameplate RLA/MCA, would settle it.",
+  "rule": "NEC 220.60 -- space heating and air conditioning are noncoincident loads, so only the larger is counted.",
+  "why_it_matters": "A heat pump that REPLACES the existing A/C does not add its whole MCA: whatever the A/C was drawing is already inside the measured maximum. The conservative cases above ignore that credit."
+ },
+ "panel": {
+  "busbar_rating_a": 200.0,
+  "existing_evse_kw": 11.5,
+  "existing_pv_backfeed_a": 50.0,
+  "meter_socket_continuous_a": 170.0,
+  "occupancy": {
+   "branch_ocpd_sum_a": 460.0,
+   "devices": 12,
+   "largest_branch_ocpd_a": 60.0,
+   "note": "A 240 V circuit needs two adjacent full-size spaces; a tandem cannot host one. With 1 space(s) free, adding a 2-pole breaker requires consolidating existing circuits onto twin-density devices or adding a subpanel, whatever the ampacity math says.",
+   "pole_positions_free": 12,
+   "pole_positions_total": 40,
+   "pole_positions_used": 28,
+   "spaces_free": 1,
+   "spaces_total": 20,
+   "spaces_used": 19,
+   "twin_density_devices": 7
+  },
+  "service_rating_a": 175.0
+ },
+ "provenance": {
+  "dst_days": [
+   "2025-11-02",
+   "2026-03-08"
+  ],
+  "enphase_consumption_ct": [
+   {
+    "file": "enphase_sam8760_2025.csv",
+    "last_measured_hour": "2025-12-31 23:00:00",
+    "rows": 8760,
+    "rows_used": 8760,
+    "year": 2025,
+    "zero_padded_rows": 0
+   },
+   {
+    "file": "enphase_sam8760_2026.csv",
+    "last_measured_hour": "2026-07-24 07:00:00",
+    "rows": 8760,
+    "rows_used": 4904,
+    "year": 2026,
+    "zero_padded_rows": 3856
+   }
+  ],
+  "interval_minutes": 15,
+  "interval_rows": 37920,
+  "intervals_per_day": {
+   "100": 1,
+   "92": 1,
+   "96": 393
+  },
+  "inverter_power_reference": "pvoutput_5min_sample.csv",
+  "meter_export": "Electric_15_Minute_6-27-2025_7-26-2026_20260727.csv",
+  "production_reference": "threeway_production_validation.csv",
+  "service_voltage_v": 240.0,
+  "timezone_handling": "local wall clock as exported; no timezone conversion applied",
+  "voltage_basis": "120/240 V single-phase 3-wire residential service, meter class CL200; service amps taken across the 240 V legs",
+  "window_days": 395,
+  "window_end": "2026-07-26",
+  "window_start": "2025-06-27"
+ }
+}

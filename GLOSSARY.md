@@ -142,6 +142,24 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 ---
 
+## Electrical service & panel
+
+**AHJ (authority having jurisdiction)** — Whoever actually enforces the electrical code where you live: usually the city or county building department and its inspector. Code sections that say a method is allowed "where acceptable to the authority having jurisdiction" mean the inspector can decline your evidence, so a calculation done at home is a scoping exercise until they sign it.
+
+**Backfeed breaker** — A breaker that carries power *into* the panel instead of out to a load — the one a solar inverter or a battery connects through. Both its rating and its position on the busbar matter, because the bar has to carry the utility's supply and the backfed supply at the same time. Its rating enters the 120% busbar rule, and changing it is the kind of change Rule 21 interconnection paperwork covers.
+
+**Existing-dwelling load calculation** — Sizing a service from what a house has actually drawn rather than from what its equipment could theoretically draw. The standard method (NEC 220.82) adds up nameplate ratings and applies fixed demand factors — assumed diversity, since not everything runs at once. The existing-dwelling method (NEC 220.87) replaces that assumption with measurement: real recorded demand from the meter. For a house with a year of interval data the measured route is both easier and tighter, because the assumed factors are deliberately conservative.
+
+**MCA (minimum circuit ampacity)** — The current a piece of equipment's branch circuit must be able to carry, printed on the appliance's nameplate (heat pump, heat-pump water heater, EV charger). It already includes the code's continuous-load margin, so it runs above the appliance's actual running current. It is the figure you add to an existing load when checking whether a new appliance fits the service.
+
+**NEC 220.87 ("Determining Existing Loads")** — The code section that lets an existing dwelling's calculated load be taken from metered history instead of a nameplate tally: the maximum demand recorded over at least 30 days, at 15-minute intervals or finer, multiplied by 125%. The recording has to be acceptable to the AHJ. Utility interval data is exactly the right shape for this, and a full year of it clears the 30-day minimum many times over. [NFPA 70 (National Electrical Code)](https://www.nfpa.org/codes-and-standards/nfpa-70-standard-development/70)
+
+**NEC 705.12(B)(3)(2) (the "120% busbar rule")** — The limit on how much backfed solar or battery current a panel can accept: the rating of the main overcurrent device plus the rating of the backfeed breaker may not exceed 120% of the busbar's rating, and the backfeed breaker must sit at the opposite end of the bus from the main. The 20% allowance exists because supply from both ends never fully stacks on any one span of bar. [NFPA 70 (National Electrical Code)](https://www.nfpa.org/codes-and-standards/nfpa-70-standard-development/70)
+
+**Noncoincident loads (NEC 220.60)** — Loads that cannot run at the same time — an A/C compressor and an electric furnace, say — of which only the largest is counted in a load calculation. Measured demand data settles which loads actually coincide instead of leaving it to assumption.
+
+---
+
 ## Money & incentives
 
 **ITC (Investment Tax Credit)** — The federal tax credit (30% for this system's 2019 vintage) for solar and battery purchases; it expired for residential systems at the end of 2025, so this report's battery math assumes no ITC. [IRS: Residential Clean Energy Credit](https://www.irs.gov/credits-deductions/residential-clean-energy-credit)

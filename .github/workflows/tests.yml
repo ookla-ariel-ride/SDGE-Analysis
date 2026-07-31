@@ -65,3 +65,5 @@ jobs:
         run: python analysis/test_household.py
       - name: transactional set publication
         run: python analysis/test_publish.py
+      - name: service headroom NEC arithmetic and DST guards
+        run: python analysis/test_service_headroom.py

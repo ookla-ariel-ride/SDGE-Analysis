@@ -29,6 +29,11 @@ household:
                                      # true requires gas.* and the gas bill corpus; false
                                      # marks gas analyses not-applicable and retires the
                                      # gas artifacts explicitly.
+  has_new_load_interest: true        # cheatsheet has_new_load_interest — same contract for
+                                     # the service-headroom question (heat pump, second EV
+                                     # charger, battery): true requires the panel block
+                                     # below; false marks the headroom analysis
+                                     # not-applicable. A bill-only analysis sets it false.
 
 location:
   lat: 33.00                         # site latitude, decimal degrees — 2 decimals (~1 km)
@@ -59,6 +64,54 @@ vehicles:                            # one entry per EV; [] if none (has_ev: fal
 charger:
   kw: 11.5                           # home EV charger max power — the behavior model's
                                      # destination cap when it re-places shifted charging
+
+panel:                               # omit only if you don't want a service-headroom
+                                     # answer (has_new_load_interest: false). Every value
+                                     # here is READ OFF THE EQUIPMENT, never inferred from
+                                     # the house's age or the meter: the main breaker's
+                                     # handle stamp and catalog number, the rating label
+                                     # inside the door, the meter face, and the schedule
+                                     # card on the inside of the door. Photograph the
+                                     # labels; nothing here needs the dead front off, and
+                                     # opening the panel is an electrician's job.
+  service_rating_a: 100              # main breaker rating — the number stamped on the
+                                     # main's handle. NOT the bus rating below, and not
+                                     # the meter class; a derated main is common.
+  main_breaker_catalog: "EX-M2100"   # catalog/style number printed on the main breaker
+  busbar_rating_a: 125               # bus rating off the panel's own rating label
+                                     # ("___ AMPS MAX"); often higher than the main
+  enclosure_catalog: "EX-LC1224"     # load-center catalog number on the rating label
+  spaces: 12                         # physical breaker spaces (count them)
+  max_circuits: 24                   # ceiling with CTL tandems — also on the label
+  enclosure_type: "NEMA 1 indoor, main-breaker load center"
+                                     # NEMA type + indoor/outdoor; say so if it is a
+                                     # meter-main combination
+  meter_socket_continuous_a: null    # continuous rating printed on a meter-main
+                                     # combination; null when the meter socket is a
+                                     # separate enclosure with no rating printed
+  assembly_sccr_ka: 10               # short-circuit current rating of the ASSEMBLY, off
+                                     # the rating label — it can differ from the rating
+                                     # marked on the main breaker alone
+  meter_class: "CL100"               # socket class off the meter face — a socket rating,
+                                     # NOT the service rating
+  pv_backfeed_a: 30                  # rating of the existing PV (or battery) backfeed
+                                     # breaker; null if nothing backfeeds the panel
+  breaker_family: "EX / EXC (CTL classified)"
+                                     # what a new branch breaker has to be compatible with
+  pv_breaker_position: "bottom"      # "top" or "bottom" — which end of the bus the
+                                     # backfeed breaker lands on. NEC 705.12(B)(3)(2)
+                                     # wants the opposite end from the main.
+  schedule:                          # one entry per PHYSICAL device, top to bottom.
+                                     # `amps` is a single int, or a list for a tandem or
+                                     # quad device (one value per pole group). `label`
+                                     # comes from the door legend and is the weaker half
+                                     # of each row: the device markings are read directly,
+                                     # the legend-to-device mapping is inferred from
+                                     # position.
+    - {device: "EX-2P60",  poles: 2, amps: 60, label: "EV charger"}
+    - {device: "EX-2P40",  poles: 2, amps: 40, label: "Range"}
+    - {device: "EX-T2020 tandem", poles: 2, amps: [20, 20], label: "Kitchen"}
+    - {device: "EX-2P30",  poles: 2, amps: 30, label: "Solar PV (backfed)"}
 
 cleaning_history:                    # PAST panel cleanings only (CLAUDE.md §0: events are
                                      # recorded AFTER they happen — never list a scheduled
