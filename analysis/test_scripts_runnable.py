@@ -61,6 +61,7 @@ MANIFEST = {
     "battery_backup_sims.py": "generator",
     "billing_model_nem.py": "library",
     "lifetime_payback.py": "generator",
+    "tou_spread.py": "generator",
     "analyze.py": "generator",
     "analyze_norelief.py": "generator",
     "carbon_fullyear.py": "generator",
@@ -98,6 +99,7 @@ OWNS = {
                                      ("data", "tou_audit_summary.json")],
     "lifetime_payback.py":          [("data", "lifetime_payback.json")],
     "bill_decomposition.py":        [("data", "bill_decomposition.json")],
+    "tou_spread.py":                [("data", "tou_spread.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -248,6 +250,9 @@ CI_RUNNABLE = {
     "carbon_fullyear.py", "tou_audit.py",
     # reads only the two committed bill artifacts, so it runs anywhere
     "rates_history.py",
+    # reads only data/bill_tou_detail.csv and data/battery_dispatch_policies.json,
+    # both committed, so it runs anywhere too
+    "tou_spread.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
