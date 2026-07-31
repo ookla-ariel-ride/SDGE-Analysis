@@ -25,7 +25,7 @@ confident wrong number:
    enforces at the type level, that on a CCA date there is no charged generation
    tariff in this corpus at all -- the printed generation table is SDG&E's
    bundled comparison, off the actual CEA charge by -6.8% to +104.3%. The
-   provider broke on 2024-12-27, so 547 of the corpus's 763 days (72%) have no
+   provider broke on 2024-12-27, so 546 of the corpus's 763 days (72%) have no
    charged generation price. Delivery is the charged tariff in BOTH eras, so
    delivery escalation is measurable and generation escalation is not. Splicing
    a charged tariff to a comparison figure and fitting the join would be a
@@ -50,7 +50,7 @@ WHY A STRUCTURAL-BREAK CHECK EXISTS AT ALL
     does not decay, it steps once. It held 0.04013 through late 2024, dropped to
     0.02255 in a single tariff redesign in early 2025, and has been flat-to-
     rising since (0.02164 -> 0.02606). Fitted as an exponential across the whole
-    window that one step reads as -34.5%/yr, clears every density bar, and --
+    window that one step reads as -21.4%/yr, clears every density bar, and --
     propagated fifteen years into a battery payback -- turns a single historical
     redesign into a permanent forecast of collapsing off-peak prices.
 
@@ -231,6 +231,26 @@ def _years_from(dates, origin):
     return [(d - origin).days / 365.25 for d in dates]
 
 
+def _independent_units(pairs):
+    """One (date, value) per distinct consecutive level, dated at its first print.
+
+    A tariff reprinted unchanged on next month's statement is not a second
+    observation of the price. Fitting every print treats one rate change as
+    several independent draws, which shrinks the standard error without adding
+    any evidence, and the shrinkage is large here: winter's post-break window
+    prints 15 statement segments carrying only 4 distinct spreads.
+
+    The adequacy gate already counts DISTINCT VINTAGES as the unit of evidence.
+    Inference is fitted on the same unit, so the two cannot disagree about what
+    counts as an observation. `pairs` must be in date order.
+    """
+    out = []
+    for d, v in pairs:
+        if not out or v != out[-1][1]:
+            out.append((d, v))
+    return out
+
+
 def _cell_escalation(obs, origin):
     """Annualised escalation of one season x TOU cell, with its own adequacy verdict.
 
@@ -242,9 +262,12 @@ def _cell_escalation(obs, origin):
     span = (max(dates) - min(dates)).days if dates else 0
     adequate = len(vintages) >= MIN_VINTAGES and span >= MIN_SPAN_DAYS
 
-    fit = _ols(_years_from(dates, origin), [math.log(o["rate"]) for o in obs])
+    units = _independent_units([(o["date"], o["rate"]) for o in obs])
+    fit = _ols(_years_from([d for d, _ in units], origin),
+               [math.log(v) for _, v in units])
     out = {
         "observations": len(obs),
+        "independent_units": len(units),
         "distinct_vintages": len(vintages),
         "span_days": span,
         "first": min(dates).isoformat() if dates else None,
@@ -263,6 +286,7 @@ def _cell_escalation(obs, origin):
         round(100 * (math.exp(fit["ci95"][0]) - 1), 2),
         round(100 * (math.exp(fit["ci95"][1]) - 1), 2)]
     out["r2"] = round(fit["r2"], 3) if fit["r2"] is not None else None
+    out["fit_df"] = fit["df"]
     out["verdict"] = ("measured" if adequate else
                       f"estimated -- {len(vintages)} vintage(s) over {span} d, "
                       f"below the {MIN_VINTAGES}/{MIN_SPAN_DAYS}d bar")
@@ -315,11 +339,18 @@ def _fit_spread(series, origin):
                 "verdict": "not determined -- fewer than 3 paired observations"}
     dates = [d for d, _ in series]
     vals = [v for _, v in series]
-    fit = _ols(_years_from(dates, origin), vals)
+    units = _independent_units(series)
+    udates = [d for d, _ in units]
+    uvals = [v for _, v in units]
+    fit = _ols(_years_from(udates, origin), uvals)
     if fit is None:
-        return {"n": len(series), "verdict": "not determined -- fit undefined"}
+        return {"n": len(series), "n_independent": len(units),
+                "verdict": "not determined -- fit undefined on "
+                           f"{len(units)} independent level(s)"}
     return {
-        "n": fit["n"],
+        "n": len(series),
+        "n_independent": fit["n"],
+        "fit_df": fit["df"],
         "first": dates[0].isoformat(),
         "last": dates[-1].isoformat(),
         "span_days": (dates[-1] - dates[0]).days,
@@ -330,7 +361,8 @@ def _fit_spread(series, origin):
         "excludes_zero": fit["excludes_zero"],
         "r2": round(fit["r2"], 3) if fit["r2"] is not None else None,
         "mean_spread_usd_kwh": round(statistics.fmean(vals), 5),
-        "escalation_pct_yr": round(100 * fit["slope"] / statistics.fmean(vals), 2),
+        "mean_fitted_usd_kwh": round(statistics.fmean(uvals), 5),
+        "escalation_pct_yr": round(100 * fit["slope"] / statistics.fmean(uvals), 2),
     }
 
 
@@ -494,10 +526,23 @@ def build():
                     run["payback_yr"] - battery["uniform_ladder"][f"{int(e*100)}%"]["payback_yr"], 1),
                 "npv10_delta_usd": run["npv10"] - battery["uniform_ladder"][f"{int(e*100)}%"]["npv10"],
             } for e in UNIFORM_LADDER}
+        run["applied_to"] = (
+            f"the ENTIRE ${seed}/yr battery marginal, uniformly -- exactly as "
+            "the 3/5/8/12% rungs apply their rate. That seed spans both seasons "
+            "and includes generation, while the measured rate is WINTER DELIVERY "
+            "spread only. Summer and generation are not determined, so this run "
+            "escalates components this corpus cannot measure. It is a ladder rung "
+            "whose RATE is measured, not a decomposed all-in forecast.")
+        run["floor_zero_escalation"] = _payback(seed, 0.0)
         run["basis"] = (
             "DELIVERY spread only. The generation half of the on-peak price "
             "cannot be escalated from this corpus, so this figure is what the "
-            "delivery component alone implies -- not an all-in forecast.")
+            "delivery component alone implies -- not an all-in forecast. The "
+            "honest bracket on the battery is floor_zero_escalation (nothing "
+            "escalates) to this run (everything escalates at the measured winter "
+            "delivery rate); decomposing the seed by season and component would "
+            "need a dispatch re-run that reports savings per season x component, "
+            "which battery_dispatch_policies.json does not currently expose.")
         battery["per_period"][season] = run
 
     # ---- what is not determined, and what would settle it ----------------

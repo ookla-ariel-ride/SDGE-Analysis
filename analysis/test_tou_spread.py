@@ -98,18 +98,61 @@ def case_a_pure_step_is_not_a_trend():
     o = dt.date(2024, 1, 1)
     flat_then_step = ([(o + dt.timedelta(days=30 * i), 0.040) for i in range(6)]
                       + [(o + dt.timedelta(days=30 * i), 0.022) for i in range(6, 14)])
-    full = ts._fit_spread(flat_then_step, o)
-    assert full["excludes_zero"], (
-        "precondition: the naive full-window fit should look significant, "
+    # Fitted the naive way, one print per statement, the step looks like a
+    # strongly significant decay. This is the illusion the unit rule removes.
+    naive = ts._ols(ts._years_from([d for d, _ in flat_then_step], o),
+                    [v for _, v in flat_then_step])
+    assert naive["excludes_zero"], (
+        "precondition: the print-level fit should look significant, "
         "otherwise this case proves nothing")
+    # Fitted on independent levels there are only two observations, so no trend
+    # is defined at all -- a step cannot be a trend before the break check even
+    # runs.
+    full = ts._fit_spread(flat_then_step, o)
+    assert "slope_usd_kwh_per_yr" not in full, (
+        f"a two-level step must not yield a slope, got {full}")
+    assert full["n_independent"] == 2, full
+    assert "not determined" in full["verdict"], full
     brk = ts._dominant_break(flat_then_step)
     assert brk is not None, "the step was not detected"
     tail = [(d, v) for d, v in flat_then_step if d >= brk[0]]
     post = ts._fit_spread(tail, o)
-    assert post["slope_usd_kwh_per_yr"] == 0.0, (
-        f"post-break slope should be flat, got {post['slope_usd_kwh_per_yr']}")
-    return ("a step passes the naive fit (CI excludes zero) and is flat after "
-            "the break -- which is why the break check gates the verdict")
+    assert "slope_usd_kwh_per_yr" not in post, (
+        f"a single flat level after the break has no slope either, got {post}")
+    return ("a step is significant at print level and undefined at level level "
+            "-- pseudoreplication was the whole of that apparent trend")
+
+
+@case
+def case_inference_counts_rate_changes_not_reprints():
+    """A tariff reprinted unchanged is not a new observation of the price.
+
+    The adequacy gate counts distinct vintages; the interval must be built on
+    the same unit or the two disagree about what evidence is. Reprinting the
+    same series more densely must not narrow the interval.
+    """
+    o = dt.date(2024, 1, 1)
+    levels = [0.20, 0.23, 0.25, 0.28]
+    sparse = [(o + dt.timedelta(days=120 * i), v) for i, v in enumerate(levels)]
+    # the same four rate changes, each reprinted on three monthly statements
+    dense = []
+    for i, v in enumerate(levels):
+        for k in range(3):
+            dense.append((o + dt.timedelta(days=120 * i + 30 * k), v))
+
+    fs, fd = ts._fit_spread(sparse, o), ts._fit_spread(dense, o)
+    assert fd["n"] == 12 and fd["n_independent"] == 4, fd
+    assert fd["fit_df"] == 2, f"df must come from the 4 levels, got {fd['fit_df']}"
+    width = lambda f: f["slope_ci95"][1] - f["slope_ci95"][0]
+    assert width(fd) >= width(fs) * 0.99, (
+        f"reprinting narrowed the interval: {width(fd)} vs {width(fs)}")
+    # and the published winter figure is built on levels, not prints
+    result = json.loads((ROOT / "data" / "tou_spread.json").read_text())
+    post = result["delivery_spread"]["winter"]["post_break"]
+    assert post["n"] == 15 and post["n_independent"] == 4, post
+    assert post["fit_df"] == 2, post
+    return ("reprints do not narrow the interval; winter's published CI is "
+            "built on 4 rate changes, not 15 statement prints")
 
 
 @case

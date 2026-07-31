@@ -148,6 +148,27 @@ def case_spread_chart_series_match_their_artifact():
     return "the §13 spread series and break indices match tou_spread.json"
 
 
+def case_every_lazy_chart_id_resolves_to_a_unique_canvas():
+    """getElementById returns the FIRST match, so a canvas sharing its id with a
+    heading hands Chart.js an <h3> and the chart silently never renders -- while
+    the registry still marks it built. Guards both halves: ids are unique, and
+    every lazyChart target is a canvas.
+    """
+    for name in ("index.html", "report-template.html"):
+        html = (ROOT / name).read_text()
+        body = re.sub(r"<!--.*?-->", "", html, flags=re.S)   # section-map comments
+        # ...and JS line comments, so the template's "how to add a chart"
+        # instruction is not read as a real registration. `(?<!:)` keeps URLs.
+        body = re.sub(r"(?<!:)//[^\n]*", "", body)
+        ids = re.findall(r'\bid="([^"]+)"', body)
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        assert not dupes, f"{name}: duplicate element ids {dupes}"
+        for cid in re.findall(r"lazyChart\('([^']+)'", body):
+            assert re.search(r'<canvas id="' + re.escape(cid) + r'"', body), (
+                f"{name}: lazyChart('{cid}') has no matching <canvas id=\"{cid}\">")
+    return "every lazyChart id is unique and resolves to a canvas in both files"
+
+
 def case_headline_figures_present_and_stale_ones_absent():
     """One pinned figure per artifact class, plus absence of the retired value:
     presence-anywhere alone cannot catch a partial re-base (the §3 failure), but
@@ -209,6 +230,7 @@ CASES = [
     case_hourly_profiles_match_their_artifact,
     case_battery_chart_series_match_their_artifacts,
     case_spread_chart_series_match_their_artifact,
+    case_every_lazy_chart_id_resolves_to_a_unique_canvas,
     case_headline_figures_present_and_stale_ones_absent,
     case_chart_and_dispatch_agree_on_non_super_off_peak,
     case_no_retired_holiday_discrepancy_note,
