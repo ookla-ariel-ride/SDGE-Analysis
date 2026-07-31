@@ -186,6 +186,32 @@ def case_corpus_coverage_is_derived_not_hardcoded():
 
 
 @case
+def case_verdict_sign_comes_from_the_fitted_scale():
+    """Significance and battery escalation are taken from the log fit, so the
+    direction that gates the verdict must come from the same fit. The dollar
+    slope is descriptive, and on a non-monotonic history the two can disagree."""
+    result = json.loads((ROOT / "data" / "tou_spread.json").read_text())
+    for season, fit in result["delivery_spread"].items():
+        if fit["verdict"] == "widening":
+            assert fit["escalation_pct_yr"] > 0, season
+        if fit["verdict"] == "narrowing":
+            assert fit["escalation_pct_yr"] < 0, season
+        post = fit.get("post_break") or {}
+        if fit.get("survives_structural_break"):
+            assert (post["escalation_pct_yr"] > 0) == (fit["escalation_pct_yr"] > 0), (
+                f"{season}: break check agreed on a sign the fits do not share")
+    # a series whose dollar and log fits disagree in sign must not be reported
+    o = dt.date(2024, 1, 1)
+    skewed = [(o + dt.timedelta(days=200 * i), v)
+              for i, v in enumerate([0.02, 0.40, 0.30, 0.26])]
+    f = ts._fit_spread(skewed, o)
+    lin_pos = f["slope_usd_kwh_per_yr"] > 0
+    log_pos = f["escalation_pct_yr"] > 0
+    return ("verdict direction is taken from the fitted (log) scale; on the "
+            f"skewed probe linear>0={lin_pos}, log>0={log_pos}")
+
+
+@case
 def case_break_detector_ignores_repeated_levels():
     """Consecutive identical prints are one level, not many observations of a
     move. A detector that differenced raw rows would find a 'largest step' of

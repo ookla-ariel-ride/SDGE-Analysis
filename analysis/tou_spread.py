@@ -578,18 +578,23 @@ def build():
                     scratch.pop(k_, None)
         fit["post_break"] = post
 
+        # Sign is compared on escalation_pct_yr, i.e. on the LOG fit, because that
+        # is the scale significance and the battery escalation are taken from.
+        # The raw-dollar slope is descriptive only, and for a non-monotonic rate
+        # history the two scales can disagree in sign -- which would let the gate
+        # pass a trend whose published escalation reverses after the break.
+        full_dir = fit.get("escalation_pct_yr", 0)
+        post_dir = (post or {}).get("escalation_pct_yr", 0)
         agree = bool(
-            post and post.get("adequate")
-            and (post.get("slope_usd_kwh_per_yr", 0) > 0)
-            == (fit.get("slope_usd_kwh_per_yr", 0) > 0))
+            post and post.get("adequate") and (post_dir > 0) == (full_dir > 0))
         reportable = bool(on_ok and sop_ok and fit.get("excludes_zero") and agree)
 
         fit["cells_adequate"] = {"on_peak": on_ok, "super_off_peak": sop_ok}
         fit["survives_structural_break"] = agree
         fit["reportable"] = reportable
         fit["verdict"] = (
-            "widening" if reportable and fit.get("slope_usd_kwh_per_yr", 0) > 0 else
-            "narrowing" if reportable and fit.get("slope_usd_kwh_per_yr", 0) < 0 else
+            "widening" if reportable and full_dir > 0 else
+            "narrowing" if reportable and full_dir < 0 else
             "not determined")
         if not reportable:
             why = []
