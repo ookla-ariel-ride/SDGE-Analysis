@@ -577,11 +577,21 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div class="chartbox"><canvas id="spread" height="110"></canvas></div>
 <p class="small"><!-- TODO: caption — one point per rate segment, dated at the segment midpoint;
      what the dashed spans mean (pre-structural-break, excluded from the reported fit). --></p>
-<p><!-- TODO: per season, EITHER the surviving trend (slope, 95% CI, r², span in days, distinct
-     rate levels, %/yr) OR "not determined" with the reason. A season whose full-window slope is
-     carried by one tariff step must be reported as not determined, however good the fit looks:
-     tou_spread.py refits after the largest single step and publishes only if both windows agree.
-     Name that rule as pre-stated — it can only suppress a claim, never create one. --></p>
+<p><!-- TODO: per season, EITHER the surviving trend (escalation %/yr, 95% CI, r², span in days,
+     distinct rate LEVELS, %/yr) OR "not determined" with the reason. Three rules decide it, all of
+     which can only suppress a claim and never create one, so applying them after seeing a result is
+     not tuning the test:
+       1. A season whose full-window slope is carried by one tariff step is not determined, however
+          good the fit looks. tou_spread.py refits after the largest step and publishes only if both
+          windows agree.
+       2. Count rate CHANGES, not statements. A tariff reprinted unchanged is not a new observation,
+          and fitting every print shrinks the interval without adding evidence.
+       3. If the breakpoint was chosen by looking at the data, widen the interval for that choice
+          before testing it. On this household's corpus that one correction is what turns an
+          apparently solid winter trend into "not determined".
+     Expect "not determined" to be the honest answer on a two-year corpus, and say what would
+     settle it: more rate changes, a breakpoint fixed in advance from published tariff dates, or a
+     longer pre-break window. --></p>
 <p><!-- TODO: battery re-run on the MEASURED spread vs the uniform ladder above — payback years
      and 10-yr NPV, and the delta against each rung, so the reader can see which rungs mis-state
      the battery. Tag the re-run figures modeled. --></p>
