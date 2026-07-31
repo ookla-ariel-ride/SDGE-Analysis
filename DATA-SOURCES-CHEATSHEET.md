@@ -555,7 +555,7 @@ id: panel_meter_socket_continuous_a
 question: "If the meter shares the panel enclosure, what continuous amp rating is printed for the meter socket?"
 type: number
 required_if: has_new_load_interest
-where: "On the rating label of a meter-main combination, worded like 'METER SOCKET RATED ___ AMPS CONTINUOUS'. It is a third limit, separate from the bus and from the main. Leave it null when the meter sits in its own enclosure or no such rating is printed."
+where: "On the rating label of a meter-main combination, worded like 'METER SOCKET RATED ___ AMPS CONTINUOUS'. It is a third limit, separate from the bus and from the main, and usually the tightest one. Set it to null if you looked and the meter sits in its own enclosure or no such rating is printed — that is an answer, and the headroom is then reported against the main alone. Leave the key out entirely if you have not looked; the headroom is then published as an upper limit that a socket rating could tighten, rather than as though the constraint did not exist."
 privacy: private-only
 ```
 
@@ -582,7 +582,7 @@ id: panel_pv_backfeed_a
 question: "If solar or a battery is connected to the panel, what is its backfeed breaker rated at?"
 type: number
 required_if: has_new_load_interest
-where: "The breaker the solar feeds through, usually at the far end of the stack from the main and often under a red PV or DO-NOT-RELOCATE sticker. Read the handle stamp, then cross-check it against the 'Max System AC Current' figure on the interconnection placard beside the panel. Null if nothing backfeeds the panel."
+where: "The breaker the solar feeds through, usually at the far end of the stack from the main and often under a red PV or DO-NOT-RELOCATE sticker. Read the handle stamp, then cross-check it against the 'Max System AC Current' figure on the interconnection placard beside the panel. Set it to null if you looked at the panel and nothing backfeeds it — that is an answer, and it lets the 120% busbar check resolve. Leave the key out entirely if you have not looked; the check then reports not_determined instead of crediting a zero nobody verified."
 privacy: private-only
 ```
 

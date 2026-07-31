@@ -17,14 +17,14 @@
   ],
   "alternatives_note": "Routes a licensed electrician would price and evaluate. None of them is computed here, and listing one is not a recommendation for or against it.",
   "ampacity_leg": "fail",
-  "ampacity_leg_basis": "Three-valued. The remaining allowance is computed with the existing backfeed set to 0 A wherever the intake declared no source, which makes it the LARGEST the allowance could be. A shortfall against the largest possible allowance is a real shortfall, so `fail` survives that assumption; a fit does not, and reads `not_determined` until an existing-backfeed answer is recorded.",
+  "ampacity_leg_basis": "Three-valued, and which of the three turns on what the intake actually says about the existing backfeed. A rating read off the breaker, and an explicit null meaning the panel was surveyed and nothing backfeeds it, are both ANSWERS: the remaining allowance is complete and the leg resolves to pass or fail on it. With panel.pv_backfeed_a absent from the intake the existing backfeed is instead set to 0 A as though nothing backfed the panel, which makes the allowance the LARGEST it could be -- a shortfall against the largest possible allowance is a real shortfall, so `fail` still survives, but a fit does not and reads `not_determined` until the question is answered.",
   "ampacity_leg_what_would_settle_it": null,
   "backfeed_breaker_a": 60.0,
   "busbar_120_percent": {
    "busbar_rating_a": 200.0,
    "busbar_x_120pct_a": 240.0,
    "existing_pv_backfeed_a": 50.0,
-   "existing_pv_backfeed_declared": true,
+   "existing_pv_backfeed_basis": "read_off_the_breaker",
    "existing_pv_backfeed_note": "read off the existing backfeed breaker",
    "formula": "remaining = busbar * 1.20 - main_ocpd - existing_backfeed",
    "main_ocpd_a": 175.0,
@@ -74,12 +74,14 @@
    "remaining_headroom_a": {
     "conservative_basis": {
      "binding": 40.9896,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": 40.9896,
      "vs_service_rating": 45.9896
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
      "binding": 76.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": 76.4583,
      "vs_service_rating": 81.4583
     },
@@ -107,12 +109,14 @@
    "remaining_headroom_a": {
     "conservative_basis": {
      "binding": -19.0104,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": -19.0104,
      "vs_service_rating": -14.0104
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
      "binding": 16.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": 16.4583,
      "vs_service_rating": 21.4583
     },
@@ -140,12 +144,14 @@
    "remaining_headroom_a": {
     "conservative_basis": {
      "binding": -19.0104,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": -19.0104,
      "vs_service_rating": -14.0104
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
      "binding": 16.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": 16.4583,
      "vs_service_rating": 21.4583
     },
@@ -173,12 +179,14 @@
    "remaining_headroom_a": {
     "conservative_basis": {
      "binding": -78.9062,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": -78.9062,
      "vs_service_rating": -73.9062
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
      "binding": -43.4375,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
      "vs_meter_socket": -43.4375,
      "vs_service_rating": -38.4375
     },
@@ -610,6 +618,7 @@
   "code_minimum_days": 30,
   "headroom_a": {
    "binding": 76.4583,
+   "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
    "vs_meter_socket": 76.4583,
    "vs_service_rating": 81.4583
   },
@@ -617,6 +626,7 @@
   "rule": "NEC 220.87 -- for an existing dwelling unit the calculated load may be taken as the maximum demand measured over at least 30 days, times 125%, in place of a nameplate calculation, where the data is acceptable to the AHJ.",
   "sensitivity_on_the_upper_bound": {
    "binding": 40.9896,
+   "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
    "calculated_load_a": 129.0104,
    "headroom_vs_meter_socket_a": 40.9896,
    "headroom_vs_service_a": 45.9896,
@@ -695,7 +705,7 @@
   "busbar_rating_a": 200.0,
   "existing_evse_kw": 11.5,
   "existing_pv_backfeed_a": 50.0,
-  "existing_pv_backfeed_declared": true,
+  "existing_pv_backfeed_basis": "read_off_the_breaker",
   "existing_pv_backfeed_note": "read off the existing backfeed breaker",
   "existing_pv_position_condition": {
    "main_supply_position": null,
@@ -708,8 +718,10 @@
   },
   "existing_pv_position_condition_note": "NEC 705.12(B)(3)(2) applied to the breaker ALREADY on the bus. It is a fact about the existing interconnection and is not the battery's position leg, which is evaluated on the proposed breaker's own position under battery_inverter",
   "main_breaker_position": null,
+  "meter_socket_basis": "read_off_the_socket",
   "meter_socket_constraint": "applies -- headroom is reported against it alongside the service rating",
   "meter_socket_continuous_a": 170.0,
+  "meter_socket_what_would_settle_it": null,
   "occupancy": {
    "branch_ocpd_sum_a": 460.0,
    "devices": 12,

@@ -140,6 +140,30 @@ battery's position leg is `not_determined` on that ground alone. The existing
 PV breaker's own condition is still reported, labelled as being about the
 installed source.
 
+Whether the question is asked at all
+------------------------------------
+`household.has_new_load_interest` is the intake APPLICABILITY flag for this
+analysis, and the whole `panel:` block is tagged `required_if:
+has_new_load_interest`. It is read FIRST, before any input is opened, and it
+follows the same contract `household.has_ev` and `household.has_gas` carry:
+
+  * explicitly false -- the household is not asking whether its service has
+    room for a new load. The artifact is a not_applicable stub naming the flag
+    and what to set to enable the analysis; no panel field, no interval export
+    and no Enphase file is read;
+  * true or ABSENT -- the analysis runs exactly as it always has, including the
+    fail-closed stop on a missing `panel.service_rating_a`. Absence is not read
+    as false: the flag postdates some intake files, and a household that asks
+    for this answer without supplying the panel must stop rather than be
+    quietly excused.
+
+A `panel:` block present under a false flag is NOT treated as a contradiction,
+which is where this differs from behavior_rebuild.py's charger.kw check. A
+charger is an EV; a panel survey is a description of the house that anyone may
+have on file, and wanting no new-load answer is compatible with having one.
+Checking for it would also mean reading the panel intake the false flag says
+not to read.
+
 Panel facts (service rating, busbar rating, spaces, max circuits, the device
 schedule) are private-tier intake fields read through household.get(), which
 fails closed. There are no defaults: a missing service rating stops the run
@@ -147,13 +171,26 @@ rather than producing a plausible-looking answer about a panel nobody measured.
 Two fields are OPTIONAL because the intake contract documents them as nullable,
 and each has a defined meaning when absent:
 
-  * `panel.pv_backfeed_a` -- null means nothing backfeeds the panel, so the
-    existing backfeed is 0 A. The artifact records that no source was declared
-    rather than printing a bare zero;
-  * `panel.meter_socket_continuous_a` -- null means the constraint does not
-    apply (a separate meter enclosure with no rating printed), so the service
-    rating is the only ampacity constraint. The socket is then omitted from the
-    220.87 steps and from every headroom, never carried as a null in arithmetic.
+  * `panel.pv_backfeed_a` -- an explicit null means the panel was surveyed and
+    nothing backfeeds it, so the existing backfeed is a KNOWN 0 A. That is an
+    answer, and it is kept distinct from the key being ABSENT, which is the
+    question never having been asked. Both put 0 A into the arithmetic; only
+    the absent one leaves the allowance an upper bound and the ampacity leg
+    undecided. The artifact names which of the three it is;
+  * `panel.meter_socket_continuous_a` -- an explicit null means the socket was
+    read and carries no printed continuous rating (a separate meter enclosure),
+    so the constraint does not apply and the service rating is the only ampacity
+    constraint. The socket is then omitted from the 220.87 steps and from every
+    headroom, never carried as a null in arithmetic. An ABSENT key is not that:
+    nobody looked, and since the socket is the TIGHTER of the two constraints
+    wherever it exists, dropping it would delete the binding constraint and
+    inflate every headroom. Step 4 is then emitted as `not_determined` and every
+    binding figure is labelled an upper limit.
+
+Both nullable panel fields therefore have three states, not two, and the
+artifact names which one each is in. The rule is one rule: an unanswered
+question never gets to look like an answer, and it especially never gets to
+look like the answer that makes the result more permissive.
 
 `panel.pv_breaker_position`, `panel.battery_breaker_position` and
 `panel.main_breaker_position` are optional too; their absence is what makes the
@@ -186,9 +223,11 @@ restatement of something measured. The three-valued ones:
     full-size spaces, and the schedule records devices, not slot positions. Too
     few free spaces is a fail on the count alone; enough free spaces is
     `not_determined`, never a fit;
-  * the battery's `ampacity_leg` -- the 120% allowance is computed with the
-    existing backfeed at 0 A wherever none was declared, which is the largest it
-    could be, so a shortfall is real and a fit is `not_determined`;
+  * the battery's `ampacity_leg` -- where the existing backfeed was never
+    recorded the 120% allowance is computed at 0 A, which is the largest it
+    could be, so a shortfall is real and a fit is `not_determined`. A recorded
+    rating, or an explicit null meaning the panel was surveyed and nothing
+    backfeeds it, both make the allowance complete and the leg decidable;
   * the battery's `position_leg` -- fails closed on an unsurveyed breaker end;
   * the battery's `sum_rule` -- the recorded schedule can only understate the
     true sum of overcurrent devices, so a sum already over the busbar rating
@@ -455,6 +494,79 @@ def load_sam(paths):
     return out, prov
 
 
+def _flag(path):
+    """Read an intake applicability flag. Present -> it must be a real YAML
+    boolean; absent -> None, and the caller decides.
+
+    The same helper behavior_rebuild.py uses on household.has_ev. A string
+    "false", a 0 or a stray comment fragment is not a boolean and is not
+    guessed at: the flag decides whether an entire analysis is published, so a
+    value nobody can read is an intake defect, not a default.
+    """
+    v = HH.get(path, required=False)
+    if v is not None and v is not True and v is not False:
+        raise SystemExit(
+            "service_headroom.py: %s in private/household.yaml must be a YAML "
+            "boolean (true/false), got %r -- fix the intake before running"
+            % (path, v))
+    return v
+
+
+NEW_LOAD_FLAG = "household.has_new_load_interest"
+
+NEW_LOAD_FLAG_CONTRACT = (
+    "household.has_new_load_interest is the intake APPLICABILITY flag for this "
+    "analysis (DATA-SOURCES-CHEATSHEET.md, required_if: always), and the whole "
+    "panel: block is tagged required_if: has_new_load_interest. The flag is the "
+    "authority on whether the question is being asked; the presence or absence "
+    "of panel data is never read as an answer to it. Explicit false is the only "
+    "value that switches the analysis off. An ABSENT flag is NOT read as false "
+    "-- the flag postdates some intake files, so its absence leaves the "
+    "original hard requirement on panel.service_rating_a in place, and a "
+    "household that asks for this answer without supplying the panel stops "
+    "rather than being quietly excused.")
+
+
+def not_applicable():
+    """The artifact for a household whose intake says this question does not apply.
+
+    not_applicable, NOT not_determined: the intake DID determine the answer --
+    the analysis does not apply to this household. Same contract and vocabulary
+    as behavior_rebuild.py's and extended_findings.py's stubs, which govern the
+    sibling flags.
+
+    Nothing is computed and nothing is read to build it. That is the point of
+    checking the flag first: a bill-only household has no panel survey, no
+    Enphase export and possibly no interval file, and the documented promise
+    for a false flag is "not applicable", not a stack of fail-closed stops.
+
+    No CAVEAT either. The scoping caveat exists to bound an estimate, and this
+    artifact does not carry one.
+    """
+    return {
+        "not_applicable": True,
+        "flag": NEW_LOAD_FLAG,
+        "reason": (
+            f"{NEW_LOAD_FLAG} is false (intake applicability flag, "
+            f"DATA-SOURCES-CHEATSHEET.md) -- this household is not asking "
+            f"whether its electrical service has room for a new load, so no "
+            f"service-headroom analysis was run and none is published."),
+        "to_enable_it": (
+            f"Set {NEW_LOAD_FLAG}: true in private/household.yaml and answer "
+            f"the panel questions the cheatsheet tags required_if: "
+            f"has_new_load_interest -- panel.service_rating_a, "
+            f"panel.busbar_rating_a, panel.spaces, panel.max_circuits and "
+            f"panel.schedule are the ones with no default -- then rerun "
+            f"analysis/service_headroom.py."),
+        "inputs_read": (
+            "None beyond the flag itself. It is checked before the panel "
+            "intake, the Green Button 15-minute export and the Enphase "
+            "consumption-CT files are touched, so a household with none of "
+            "them on hand still gets this artifact instead of an error."),
+        "flag_contract": NEW_LOAD_FLAG_CONTRACT,
+    }
+
+
 def _optional_number(key):
     """A nullable intake field as a float, or None.
 
@@ -466,6 +578,136 @@ def _optional_number(key):
     """
     v = HH.get(key, required=False)
     return None if v is None else float(v)
+
+
+def _key_present(dotted):
+    """Whether the intake RECORDS this key at all, whatever value it holds.
+
+    household.get() cannot tell the two apart on its own: with required=False a
+    key present with an explicit null and a key that is not there both return
+    None. The difference is a fact about the intake rather than about the
+    value, and here it carries meaning -- `panel.pv_backfeed_a: null` is a
+    surveyor's answer ("I looked; nothing backfeeds this panel"), while an
+    absent key is the question never having been asked. So the parent mapping is
+    fetched and the leaf looked up in it, leaving household.get()'s contract
+    alone.
+    """
+    parent, _dot, leaf = dotted.rpartition(".")
+    if not parent:
+        raise SystemExit(f"service_headroom.py: _key_present needs a dotted "
+                         f"path with a parent, got {dotted!r}")
+    node = HH.get(parent, required=False)
+    return isinstance(node, dict) and leaf in node
+
+
+# What the intake says about the source(s) already backfeeding the busbar. Three
+# states, because the intake has three, and collapsing the middle one onto the
+# last withholds a determination the data supports.
+BACKFEED_READ = "read_off_the_breaker"
+BACKFEED_SURVEYED_NONE = "surveyed_none"
+BACKFEED_NOT_RECORDED = "not_recorded"
+
+BACKFEED_NOTE = {
+    BACKFEED_READ: "read off the existing backfeed breaker",
+    BACKFEED_SURVEYED_NONE: (
+        "panel.pv_backfeed_a is recorded as an explicit null: the panel was "
+        "surveyed and NOTHING backfeeds it. The 0 A above is a known, complete "
+        "answer -- not an unanswered question -- so the remaining allowance is "
+        "the real one and the ampacity leg is decided on it"),
+    BACKFEED_NOT_RECORDED: (
+        "panel.pv_backfeed_a is ABSENT from the intake: nobody has answered "
+        "whether anything backfeeds this panel. The 0 A above is the most "
+        "generous reading available rather than a measurement, so the "
+        "remaining allowance is an upper bound and a fit within it is not "
+        "determined"),
+}
+
+
+def backfeed_known(basis):
+    """Whether the existing backfeed is an answer rather than an assumption.
+
+    Validates the token as well: a stale True/False passed where a basis is
+    expected would read as truthy and silently promote an unanswered question
+    to a known zero, which is the exact defect the three states exist to
+    prevent.
+    """
+    if basis not in BACKFEED_NOTE:
+        raise SystemExit(f"service_headroom.py: {basis!r} is not an "
+                         f"existing-backfeed basis; expected one of "
+                         f"{sorted(BACKFEED_NOTE)}")
+    return basis != BACKFEED_NOT_RECORDED
+
+
+# What the intake says about the meter socket's continuous rating. Same three
+# states, same reason -- and here the collapsed middle case failed in the
+# OPTIMISTIC direction: the socket is the tighter of the two ampacity
+# constraints wherever it exists, so an unasked question that read as "does not
+# apply" deleted the binding constraint and inflated every headroom below it.
+SOCKET_READ = "read_off_the_socket"
+SOCKET_SURVEYED_NONE = "surveyed_no_rating_printed"
+SOCKET_NOT_RECORDED = "not_recorded"
+
+SOCKET_CONSTRAINT = {
+    SOCKET_READ: ("applies -- headroom is reported against it alongside the "
+                  "service rating"),
+    SOCKET_SURVEYED_NONE: (
+        "does not apply -- no continuous rating is recorded for the meter "
+        "socket, so the service rating is the only ampacity constraint and the "
+        "socket is omitted from every headroom rather than carried as a null"),
+    SOCKET_NOT_RECORDED: (
+        "NOT DETERMINED -- panel.meter_socket_continuous_a is ABSENT from the "
+        "intake, so whether this service has a printed continuous rating at the "
+        "socket has never been looked at. That is not the same as a socket with "
+        "no rating printed, which the intake records as an explicit null. The "
+        "socket is the TIGHTER of the two ampacity constraints wherever it "
+        "exists, so every headroom in this artifact is an upper limit that a "
+        "socket rating could tighten, not a binding figure"),
+}
+
+SOCKET_SETTLE = (
+    "Reading the meter socket, and recording either answer: the continuous "
+    "ampere rating printed on a meter-main combination goes in "
+    "panel.meter_socket_continuous_a, and an explicit null goes there if the "
+    "meter is a separate enclosure with no rating printed. Either one decides "
+    "the constraint; leaving the key out leaves it open, and the headrooms "
+    "published here stand as upper limits until it is closed.")
+
+BINDING_IS = {
+    SOCKET_READ: (
+        "the tightest of the ampacity constraints that apply -- the service "
+        "rating and the meter socket's continuous rating, both evaluated"),
+    SOCKET_SURVEYED_NONE: (
+        "the headroom against the service rating, which is the only ampacity "
+        "constraint on this service: the meter socket was read and carries no "
+        "printed continuous rating"),
+    SOCKET_NOT_RECORDED: (
+        "an UPPER LIMIT, not the binding figure. It is the headroom against the "
+        "service rating alone, because panel.meter_socket_continuous_a is "
+        "absent from the intake -- nobody has looked at whether the socket "
+        "carries a continuous rating, and one would be the tighter constraint"),
+}
+
+
+def socket_basis_of(panel):
+    """Which of the three states the meter-socket rating is in."""
+    if panel["meter_socket_continuous_a"] is not None:
+        return SOCKET_READ
+    return (SOCKET_SURVEYED_NONE if panel["meter_socket_recorded"]
+            else SOCKET_NOT_RECORDED)
+
+
+def existing_backfeed(panel):
+    """(amps already spending the 120% allowance, on what basis).
+
+    The arithmetic is the same 0 A in two of the three cases; what differs is
+    whether that zero is a finding or a placeholder, and every verdict that
+    rests on the allowance needs to know which.
+    """
+    if panel["pv_backfeed_a"] is not None:
+        return float(panel["pv_backfeed_a"]), BACKFEED_READ
+    if panel["pv_backfeed_recorded"]:
+        return 0.0, BACKFEED_SURVEYED_NONE
+    return 0.0, BACKFEED_NOT_RECORDED
 
 
 PANEL_DOMAIN_NOTE = (
@@ -514,10 +756,10 @@ def validate_panel(p):
     if socket is not None and not socket > 0.0:
         _panel_domain_error(
             "meter_socket_continuous_a", socket,
-            "is recorded but is not a positive ampere rating; null is how the "
-            "intake says the socket carries no printed continuous rating, and "
-            "a zero or negative one would be published as the binding "
-            "ampacity constraint")
+            "is recorded but is not a positive ampere rating; an explicit null "
+            "is how the intake says the socket was read and carries no printed "
+            "continuous rating, and a zero or negative one would be published "
+            "as the binding ampacity constraint")
     backfeed = p["pv_backfeed_a"]
     if backfeed is not None and backfeed < 0.0:
         _panel_domain_error(
@@ -553,11 +795,16 @@ def load_panel():
     device schedule are all REQUIRED.
 
     The nullable fields are the exceptions the intake contract itself names --
-    `pv_backfeed_a` (null when nothing backfeeds the panel),
-    `meter_socket_continuous_a` (null when the socket carries no printed
-    continuous rating) and the three breaker positions. Each is carried as None
-    and handled explicitly downstream; none is coerced to a number that would
-    read as a measurement.
+    `pv_backfeed_a` (null when the panel was surveyed and nothing backfeeds it),
+    `meter_socket_continuous_a` (null when the socket was read and carries no
+    printed continuous rating) and the three breaker positions. Each is carried
+    as None and handled explicitly downstream; none is coerced to a number that
+    would read as a measurement.
+
+    `pv_backfeed_recorded` and `meter_socket_recorded` carry whether each key
+    was there at all, which the value alone cannot say. A surveyed null and an
+    unanswered question look identical through household.get() and mean
+    opposite things -- see existing_backfeed() and socket_basis_of().
 
     `battery_breaker_position` is the PROPOSED source breaker's end of the bus,
     a separate question from where the existing PV breaker sits. It is read
@@ -572,8 +819,10 @@ def load_panel():
         "service_rating_a": float(HH.get("panel.service_rating_a")),
         "busbar_rating_a": float(HH.get("panel.busbar_rating_a")),
         "pv_backfeed_a": _optional_number("panel.pv_backfeed_a"),
+        "pv_backfeed_recorded": _key_present("panel.pv_backfeed_a"),
         "meter_socket_continuous_a": _optional_number(
             "panel.meter_socket_continuous_a"),
+        "meter_socket_recorded": _key_present("panel.meter_socket_continuous_a"),
         "pv_breaker_position": HH.get("panel.pv_breaker_position", required=False),
         "battery_breaker_position": HH.get("panel.battery_breaker_position",
                                            required=False),
@@ -937,13 +1186,22 @@ BATTERY_CHARGING_NOT_DETERMINED = (
     "would settle it, and could only lower the demand-side figure used above.")
 
 
-def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days):
+def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days,
+                     socket_basis):
     """The 220.87 chain, written out so the artifact shows the arithmetic.
 
-    `socket_rating_a` is None where the meter socket carries no printed
-    continuous rating. Step 4 is then OMITTED rather than emitted with a null
-    on both sides of a subtraction: a constraint that does not apply produces
-    no row, and the service rating stands alone.
+    Step 4 follows the socket's THREE states, not the one bit of information a
+    null `socket_rating_a` carries:
+
+      * a rating was read -- the step is computed, as it always has been;
+      * the socket was read and carries no printed continuous rating -- the step
+        is OMITTED rather than emitted with a null on both sides of a
+        subtraction. A constraint that genuinely does not apply produces no row;
+      * nobody looked -- the step is emitted as `not_determined`, with what
+        would settle it. Dropping it here is what made the omission invisible:
+        the chain would end at step 3 and read exactly like a service whose
+        socket had been checked, while the tighter of the two constraints had
+        silently left the calculation.
     """
     a_measured = amps(max_demand_kw)
     a_calc = a_measured * NEC_220_87_FACTOR
@@ -967,7 +1225,7 @@ def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days):
          "inputs": {"service_rating_a": service_rating_a, "A_calc": _r(a_calc)},
          "result_a": _r(service_rating_a - a_calc)},
     ]
-    if socket_rating_a is not None:
+    if socket_basis == SOCKET_READ:
         steps.append(
             {"step": 4,
              "label": ("headroom against the meter socket's continuous rating, "
@@ -976,6 +1234,22 @@ def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days):
              "inputs": {"meter_socket_continuous_a": socket_rating_a,
                         "A_calc": _r(a_calc)},
              "result_a": _r(socket_rating_a - a_calc)})
+    elif socket_basis == SOCKET_NOT_RECORDED:
+        steps.append(
+            {"step": 4,
+             "label": ("headroom against the meter socket's continuous rating, "
+                       "the tighter of the two constraints where one exists"),
+             "formula": "headroom = meter_socket_continuous - A_calc",
+             "inputs": {"meter_socket_continuous_a": None,
+                        "A_calc": _r(a_calc)},
+             "result_a": None,
+             "verdict": "not_determined",
+             "reading": SOCKET_CONSTRAINT[SOCKET_NOT_RECORDED],
+             "what_would_settle_it": SOCKET_SETTLE})
+    elif socket_basis != SOCKET_SURVEYED_NONE:
+        raise SystemExit(f"service_headroom.py: {socket_basis!r} is not a "
+                         f"meter-socket basis; expected one of "
+                         f"{sorted(SOCKET_CONSTRAINT)}")
     return steps
 
 
@@ -1068,7 +1342,7 @@ def position_condition(source_position, main_position,
 
 
 def busbar_120_percent(busbar_a, main_a, existing_backfeed_a,
-                       backfeed_declared=True, source_position=None,
+                       basis=BACKFEED_READ, source_position=None,
                        main_position=None, source=SOURCE_EXISTING_PV):
     """NEC 705.12(B)(3)(2): the 120% arithmetic AND the position condition.
 
@@ -1083,9 +1357,11 @@ def busbar_120_percent(busbar_a, main_a, existing_backfeed_a,
     is being evaluated, which for a proposed battery is the PROPOSED breaker,
     not the one already on the bus.
 
-    `existing_backfeed_a` is 0.0 where nothing backfeeds the panel;
-    `backfeed_declared` says which of the two a zero means.
+    `existing_backfeed_a` is 0.0 both where the panel was surveyed and nothing
+    backfeeds it and where nobody was asked; `basis` says which, and it is the
+    difference between a complete allowance and an upper bound on one.
     """
+    backfeed_known(basis)     # rejects a token this function cannot describe
     allowed = busbar_a * NEC_705_12_BUSBAR_FACTOR
     total_backfeed = allowed - main_a
     remaining = total_backfeed - existing_backfeed_a
@@ -1098,11 +1374,8 @@ def busbar_120_percent(busbar_a, main_a, existing_backfeed_a,
         "main_ocpd_a": main_a,
         "total_backfeed_allowed_a": _r(total_backfeed, 1),
         "existing_pv_backfeed_a": existing_backfeed_a,
-        "existing_pv_backfeed_declared": bool(backfeed_declared),
-        "existing_pv_backfeed_note": (
-            "read off the existing backfeed breaker" if backfeed_declared else
-            "no existing backfeed source was declared in the intake, so the "
-            "spent allowance is 0 A -- not a measured zero"),
+        "existing_pv_backfeed_basis": basis,
+        "existing_pv_backfeed_note": BACKFEED_NOTE[basis],
         "remaining_backfeed_a": _r(remaining, 1),
         "remaining_backfeed_kva": _r(remaining * SERVICE_VOLTAGE_V / 1000.0, 2),
         "remaining_backfeed_is_the_ampacity_leg_only": (
@@ -1131,9 +1404,11 @@ def evse_code_load_a(output_a):
 def availability(service_rating_a, socket_rating_a, calc_a):
     """Headroom per ampacity constraint that APPLIES, at one calculated load.
 
-    The meter socket appears only where a continuous rating was recorded. A
-    socket that does not apply is absent from the map rather than present as a
-    None, so nothing downstream can take a minimum over it.
+    The meter socket appears only where a continuous rating was RECORDED, so
+    nothing downstream can take a minimum over a placeholder. Its absence from
+    the map is therefore ambiguous on its own -- a socket with no printed rating
+    and a socket nobody read produce the same map -- and every consumer of this
+    map is handed `socket_basis` alongside it to say which. See BINDING_IS.
     """
     out = {"service": _r(service_rating_a - calc_a)}
     if socket_rating_a is not None:
@@ -1141,18 +1416,29 @@ def availability(service_rating_a, socket_rating_a, calc_a):
     return out
 
 
-def remaining_headroom(avail, fixed_a):
+def remaining_headroom(avail, fixed_a, socket_basis):
     """What one case's fixed loads leave of an availability map.
 
-    `avail` carries one entry per ampacity constraint that APPLIES -- the
-    service rating always, the meter socket only where a continuous rating was
-    recorded. The binding figure is the minimum over the constraints that
-    exist, never over a placeholder for one that does not.
+    `avail` carries one entry per ampacity constraint with a NUMBER behind it --
+    the service rating always, the meter socket only where a continuous rating
+    was recorded. The binding figure is the minimum over those, never over a
+    placeholder.
+
+    `binding_is` travels with the number because the minimum alone cannot say
+    whether it is the binding constraint or merely the tightest one anybody
+    asked about. Where the socket was never read, the figure is an upper limit
+    and says so at every exit rather than at one summary the reader may not
+    reach.
     """
+    if socket_basis not in BINDING_IS:
+        raise SystemExit(f"service_headroom.py: {socket_basis!r} is not a "
+                         f"meter-socket basis; expected one of "
+                         f"{sorted(BINDING_IS)}")
     rem = {k: _r(v - fixed_a) for k, v in avail.items()}
     return {"vs_service_rating": rem["service"],
             "vs_meter_socket": rem.get("meter_socket"),
-            "binding": _r(min(rem.values()))}
+            "binding": _r(min(rem.values())),
+            "binding_is": BINDING_IS[socket_basis]}
 
 
 VERDICT_BASIS = (
@@ -1249,29 +1535,37 @@ def physical_fit(new_2pole_breakers, spaces_free, adjacent_free_pairs):
 
 
 AMPACITY_LEG_BASIS = (
-    "Three-valued. The remaining allowance is computed with the existing "
-    "backfeed set to 0 A wherever the intake declared no source, which makes it "
-    "the LARGEST the allowance could be. A shortfall against the largest "
-    "possible allowance is a real shortfall, so `fail` survives that "
-    "assumption; a fit does not, and reads `not_determined` until an "
-    "existing-backfeed answer is recorded.")
+    "Three-valued, and which of the three turns on what the intake actually "
+    "says about the existing backfeed. A rating read off the breaker, and an "
+    "explicit null meaning the panel was surveyed and nothing backfeeds it, are "
+    "both ANSWERS: the remaining allowance is complete and the leg resolves to "
+    "pass or fail on it. With panel.pv_backfeed_a absent from the intake the "
+    "existing backfeed is instead set to 0 A as though nothing backfed the "
+    "panel, which makes the allowance the LARGEST it could be -- a shortfall "
+    "against the largest "
+    "possible allowance is a real shortfall, so `fail` still survives, but a "
+    "fit does not and reads `not_determined` until the question is answered.")
 
 AMPACITY_LEG_SETTLE = (
-    "The existing backfeed on this busbar: panel.pv_backfeed_a, read off the "
-    "breaker(s) already backfeeding the panel. The allowance above was computed "
-    "as though nothing did, which is the most generous reading available.")
+    "An answer to panel.pv_backfeed_a, which the intake does not carry at all: "
+    "the ampere rating of the breaker(s) already backfeeding this busbar, or an "
+    "explicit null if the panel was surveyed and nothing does. The allowance "
+    "above was computed as though nothing did, which is the most generous "
+    "reading available; a recorded null would confirm that reading and decide "
+    "this leg, and a recorded rating would shrink the allowance.")
 
 
-def busbar_ampacity_leg(breaker_a, remaining_a, backfeed_declared):
+def busbar_ampacity_leg(breaker_a, remaining_a, basis):
     """The arithmetic leg of NEC 705.12(B)(3)(2), three-valued.
 
-    See AMPACITY_LEG_BASIS: the asymmetry is the point. The undeclared-backfeed
-    case only ever makes the allowance look bigger, so a failure on it is sound
-    and a pass on it is an assumption wearing a verdict's clothes.
+    See AMPACITY_LEG_BASIS: the asymmetry is the point. An unrecorded backfeed
+    only ever makes the allowance look bigger, so a failure on it is sound and a
+    fit on it is an assumption wearing a verdict's clothes. A surveyed null is
+    not that case -- it is a measurement of zero, and a fit on it is a fit.
     """
     if breaker_a > remaining_a:
         return "fail"
-    return "pass" if backfeed_declared else "not_determined"
+    return "pass" if backfeed_known(basis) else "not_determined"
 
 
 SUM_RULE_SETTLE = (
@@ -1581,6 +1875,13 @@ def enphase_peak_invariant(sam_max_kw, sam_max_at, peak_kw, envelope_max_kw):
 
 
 def build():
+    # The applicability flag comes FIRST, before any input is opened. A
+    # household that told the intake it is not adding new load has no panel
+    # survey to read and should not be stopped by the absence of one -- see
+    # NEW_LOAD_FLAG_CONTRACT. Absent is not false.
+    if _flag(NEW_LOAD_FLAG) is False:
+        return not_applicable()
+
     panel = load_panel()
     raw = only_match("Electric_15_Minute_*.csv", "Green Button 15-minute export")
     sam_paths = sorted(RAW_DIR.glob("enphase_sam8760_*.csv"))
@@ -1645,9 +1946,14 @@ def build():
         ym = f"{e[0].year:04d}-{e[0].month:02d}"
         if ym not in monthly or e[2] > monthly[ym][2]:
             monthly[ym] = e
-    socket_a = panel["meter_socket_continuous_a"]      # None => does not apply
+    # None means EITHER "read, no rating printed" OR "never read". The basis
+    # says which, and it travels with every headroom computed below: the socket
+    # is the tighter constraint wherever it exists, so an unasked question must
+    # not read as one that does not apply.
+    socket_a = panel["meter_socket_continuous_a"]
+    socket_basis = socket_basis_of(panel)
     steps = nec_220_87_steps(peak_kw, panel["service_rating_a"],
-                             socket_a, len(days))
+                             socket_a, len(days), socket_basis)
     a_calc = steps[1]["result_a"]
 
     # The measured basis is the headline. The conservative basis is the same
@@ -1658,11 +1964,10 @@ def build():
     avail_upper = availability(panel["service_rating_a"], socket_a, a_calc_upper)
     avail_binding = _r(min(avail.values()))
 
-    # A null pv_backfeed_a means nothing backfeeds the panel, which spends 0 A
-    # of the allowance. The zero is stated as "nothing declared", not printed
-    # as though a breaker had been read.
-    backfeed_declared = panel["pv_backfeed_a"] is not None
-    existing_backfeed_a = panel["pv_backfeed_a"] if backfeed_declared else 0.0
+    # An explicit null pv_backfeed_a means the panel was surveyed and nothing
+    # backfeeds it: 0 A of spent allowance, known. An ABSENT key is the same 0 A
+    # and not known. The artifact says which, and the ampacity leg reads it.
+    existing_backfeed_a, backfeed_basis = existing_backfeed(panel)
 
     evse2_a = evse_code_load_a(EXISTING_EVSE_OUTPUT_A)
     batt_a = amps(BATTERY_INVERTER_KW) * NEC_625_42_FACTOR
@@ -1674,7 +1979,7 @@ def build():
     busbar = busbar_120_percent(panel["busbar_rating_a"],
                                 panel["service_rating_a"],
                                 existing_backfeed_a,
-                                backfeed_declared,
+                                backfeed_basis,
                                 panel["battery_breaker_position"],
                                 panel["main_breaker_position"],
                                 SOURCE_PROPOSED_BATTERY)
@@ -1701,8 +2006,8 @@ def build():
         measured basis is what a reader should plan against; the conservative
         one is what decides whether the plan survives the reconstruction's own
         disclosed width."""
-        measured = remaining_headroom(avail, fixed_a)
-        conservative = remaining_headroom(avail_upper, fixed_a)
+        measured = remaining_headroom(avail, fixed_a, socket_basis)
+        conservative = remaining_headroom(avail_upper, fixed_a, socket_basis)
         verdict = ampacity_verdict(measured["binding"], conservative["binding"])
         spaces_needed = 2 * new_2pole_breakers
         fit = physical_fit(new_2pole_breakers, occ["spaces_free"],
@@ -1769,7 +2074,7 @@ def build():
     # assert that from a fixed string.
     amp_leg = busbar_ampacity_leg(batt_breaker_a,
                                   busbar["remaining_backfeed_a"],
-                                  backfeed_declared)
+                                  backfeed_basis)
     pos_leg = busbar["position_condition"]["verdict"]
     batt_verdict = battery_verdict(amp_leg, pos_leg)
 
@@ -1992,15 +2297,12 @@ def build():
             "service_rating_a": panel["service_rating_a"],
             "busbar_rating_a": panel["busbar_rating_a"],
             "meter_socket_continuous_a": socket_a,
-            "meter_socket_constraint": (
-                "applies -- headroom is reported against it alongside the "
-                "service rating" if socket_a is not None else
-                "does not apply -- no continuous rating is recorded for the "
-                "meter socket, so the service rating is the only ampacity "
-                "constraint and the socket is omitted from every headroom "
-                "rather than carried as a null"),
+            "meter_socket_basis": socket_basis,
+            "meter_socket_constraint": SOCKET_CONSTRAINT[socket_basis],
+            "meter_socket_what_would_settle_it": (
+                SOCKET_SETTLE if socket_basis == SOCKET_NOT_RECORDED else None),
             "existing_pv_backfeed_a": existing_backfeed_a,
-            "existing_pv_backfeed_declared": backfeed_declared,
+            "existing_pv_backfeed_basis": backfeed_basis,
             "existing_pv_backfeed_note": busbar["existing_pv_backfeed_note"],
             "pv_breaker_position": panel["pv_breaker_position"],
             "battery_breaker_position": panel["battery_breaker_position"],
@@ -2099,7 +2401,8 @@ def build():
             "calculated_load_a": a_calc,
             "headroom_a": {"vs_service_rating": avail["service"],
                            "vs_meter_socket": avail.get("meter_socket"),
-                           "binding": avail_binding},
+                           "binding": avail_binding,
+                           "binding_is": BINDING_IS[socket_basis]},
             "sensitivity_on_the_upper_bound": {
                 "why": ("If the true 15-minute maximum sat at the top of the "
                         "daylight envelope rather than at the exact peak, the "
@@ -2117,6 +2420,7 @@ def build():
                 "headroom_vs_service_a": avail_upper["service"],
                 "headroom_vs_meter_socket_a": avail_upper.get("meter_socket"),
                 "binding": _r(min(avail_upper.values())),
+                "binding_is": BINDING_IS[socket_basis],
             },
         },
         "added_load_code_values": {
@@ -2156,6 +2460,11 @@ def main():
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+    if result.get("not_applicable"):
+        print(f"wrote {OUT.relative_to(ROOT)}")
+        print(f"  {result['reason']}")
+        print(f"  {result['to_enable_it']}")
+        return 0
     md = result["maximum_demand"]
     nec = result["nec_220_87"]
     print(f"wrote {OUT.relative_to(ROOT)}")
@@ -2163,11 +2472,15 @@ def main():
           f"{md['peak_timestamp_local']}, point-determined="
           f"{md['peak_coincident']['point_determined']}")
     pan = result["panel"]
-    socket = (f"{nec['headroom_a']['vs_meter_socket']} A vs the "
-              f"{pan['meter_socket_continuous_a']:.0f} A meter socket"
-              if pan["meter_socket_continuous_a"] is not None else
-              "no meter-socket rating recorded, so the main is the only "
-              "constraint")
+    socket = {
+        SOCKET_READ: (f"{nec['headroom_a']['vs_meter_socket']} A vs the "
+                      f"{pan['meter_socket_continuous_a']:.0f} A meter socket"
+                      if pan["meter_socket_continuous_a"] is not None else ""),
+        SOCKET_SURVEYED_NONE: ("the socket carries no printed continuous "
+                               "rating, so the main is the only constraint"),
+        SOCKET_NOT_RECORDED: ("the meter socket was never read, so this is an "
+                              "UPPER LIMIT: a socket rating would tighten it"),
+    }[pan["meter_socket_basis"]]
     print(f"  220.87 calculated load {nec['calculated_load_a']} A -> headroom "
           f"{nec['headroom_a']['vs_service_rating']} A vs the "
           f"{pan['service_rating_a']:.0f} A main, {socket}")

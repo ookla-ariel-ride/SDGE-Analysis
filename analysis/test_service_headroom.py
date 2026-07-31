@@ -16,6 +16,7 @@ Both are tested directly rather than trusted.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_service_headroom.py
 """
+import ast
 import datetime as dt
 import json
 import pathlib
@@ -89,12 +90,16 @@ PANEL_YAML_NO_SOCKET = PANEL_YAML.replace(
     "meter_socket_continuous_a: 170", "meter_socket_continuous_a: null")
 PANEL_YAML_NO_BACKFEED = PANEL_YAML.replace(
     "pv_backfeed_a: 50", "pv_backfeed_a: null")
+# The keys gone entirely -- an unanswered question, not a surveyed absence.
+PANEL_YAML_BACKFEED_UNASKED = PANEL_YAML.replace("  pv_backfeed_a: 50\n", "")
+PANEL_YAML_SOCKET_UNASKED = PANEL_YAML.replace(
+    "  meter_socket_continuous_a: 170\n", "")
 
 
 def case_220_87_chain_on_hand_computed_inputs():
     # 12.000 kW at 240 V is 50.000 A; x1.25 is 62.500 A; against a 200 A
     # service that leaves 137.500 A, and against a 150 A socket 87.500 A.
-    steps = S.nec_220_87_steps(12.0, 200.0, 150.0, 400)
+    steps = S.nec_220_87_steps(12.0, 200.0, 150.0, 400, S.SOCKET_READ)
     assert [s["step"] for s in steps] == [1, 2, 3, 4], steps
     assert _close(steps[0]["result_a"], 50.0), steps[0]
     assert _close(steps[1]["result_a"], 62.5), steps[1]
@@ -130,16 +135,37 @@ def case_evse_is_a_continuous_load():
     return "EVSE code load is 125% of output and sizes to a standard circuit"
 
 
-def case_220_87_omits_the_socket_step_when_none_is_recorded():
-    """A null meter-socket rating means the constraint does not apply. The row
-    is omitted, not emitted with a null on both sides of a subtraction."""
-    steps = S.nec_220_87_steps(12.0, 200.0, None, 400)
-    assert [s["step"] for s in steps] == [1, 2, 3], steps
-    for s in steps:
+def case_220_87_socket_step_follows_the_three_socket_states():
+    """A surveyed socket with no printed rating drops step 4: the constraint
+    genuinely does not apply. A socket nobody read must NOT drop it -- the
+    chain would then end at step 3 and read exactly like the surveyed case,
+    with the tighter of the two constraints silently gone."""
+    none_printed = S.nec_220_87_steps(12.0, 200.0, None, 400,
+                                      S.SOCKET_SURVEYED_NONE)
+    assert [s["step"] for s in none_printed] == [1, 2, 3], none_printed
+    for s in none_printed:
         assert s["result_a"] is not None, s
         assert all(v is not None for v in s["inputs"].values()), s
-    assert _close(steps[2]["result_a"], 137.5), steps[2]
-    return "a null meter-socket rating drops step 4 instead of computing on None"
+    assert _close(none_printed[2]["result_a"], 137.5), none_printed[2]
+
+    unasked = S.nec_220_87_steps(12.0, 200.0, None, 400, S.SOCKET_NOT_RECORDED)
+    assert [s["step"] for s in unasked] == [1, 2, 3, 4], unasked
+    four = unasked[3]
+    assert four["result_a"] is None, four
+    assert four["verdict"] == "not_determined", four
+    assert "ABSENT" in four["reading"], four
+    assert "TIGHTER" in four["reading"], four
+    assert "meter_socket_continuous_a" in four["what_would_settle_it"], four
+    # the first three steps are identical either way: only step 4 differs
+    assert unasked[:3] == none_printed[:3], (unasked, none_printed)
+    # and a token this function cannot describe stops the run
+    for stale in (True, None, "maybe"):
+        try:
+            S.nec_220_87_steps(12.0, 200.0, None, 400, stale)
+            raise AssertionError(f"accepted {stale!r} as a socket basis")
+        except SystemExit as e:
+            assert "meter-socket basis" in str(e), e
+    return "step 4 is dropped only for a surveyed socket, never for an unasked one"
 
 
 def case_three_valued_verdict_needs_both_bases():
@@ -149,8 +175,8 @@ def case_three_valued_verdict_needs_both_bases():
     conservative = {"service": 48.9688, "meter_socket": 43.9688}
 
     def verdict(fixed_a):
-        m = S.remaining_headroom(measured, fixed_a)
-        c = S.remaining_headroom(conservative, fixed_a)
+        m = S.remaining_headroom(measured, fixed_a, S.SOCKET_READ)
+        c = S.remaining_headroom(conservative, fixed_a, S.SOCKET_READ)
         return S.ampacity_verdict(m["binding"], c["binding"]), m, c
 
     # nothing added: fits on both bases
@@ -173,13 +199,30 @@ def case_three_valued_verdict_needs_both_bases():
 
 def case_remaining_headroom_omits_an_absent_socket():
     """With no socket rating the binding constraint is the service rating
-    alone -- never a None dragged into min()."""
-    r = S.remaining_headroom({"service": 100.0}, 60.0)
+    alone -- never a None dragged into min(). But the number alone cannot say
+    whether it IS the binding constraint or just the tightest one anybody asked
+    about, so `binding_is` travels with it at every exit."""
+    r = S.remaining_headroom({"service": 100.0}, 60.0, S.SOCKET_SURVEYED_NONE)
     assert r["vs_meter_socket"] is None, r
     assert _close(r["vs_service_rating"], 40.0) and _close(r["binding"], 40.0), r
-    r2 = S.remaining_headroom({"service": 100.0, "meter_socket": 95.0}, 60.0)
+    assert "only ampacity constraint" in r["binding_is"], r
+    r2 = S.remaining_headroom({"service": 100.0, "meter_socket": 95.0}, 60.0,
+                              S.SOCKET_READ)
     assert _close(r2["vs_meter_socket"], 35.0) and _close(r2["binding"], 35.0), r2
-    return "an absent meter socket drops out of the binding headroom entirely"
+    assert "both evaluated" in r2["binding_is"], r2
+    # the case that used to be indistinguishable: same map, same number, and a
+    # label that refuses to call it binding
+    r3 = S.remaining_headroom({"service": 100.0}, 60.0, S.SOCKET_NOT_RECORDED)
+    assert _close(r3["binding"], r["binding"]), (r3, r)
+    assert "UPPER LIMIT" in r3["binding_is"], r3
+    assert r3["binding_is"] != r["binding_is"], r3
+    for stale in (True, None, "socket"):
+        try:
+            S.remaining_headroom({"service": 100.0}, 60.0, stale)
+            raise AssertionError(f"accepted {stale!r} as a socket basis")
+        except SystemExit as e:
+            assert "meter-socket basis" in str(e), e
+    return "an absent meter socket drops out of the arithmetic but never silently"
 
 
 def case_busbar_120_percent_rule_fails_the_battery():
@@ -233,11 +276,13 @@ def case_the_busbar_position_condition_is_evaluated_not_ignored():
 
 
 def case_busbar_carries_both_legs_of_the_rule():
-    ok = S.busbar_120_percent(200.0, 100.0, 50.0, True, "bottom", "top")
+    ok = S.busbar_120_percent(200.0, 100.0, 50.0, S.BACKFEED_READ,
+                              "bottom", "top")
     assert ok["position_condition"]["verdict"] == "pass", ok
     assert "conjunctive" in ok["position_condition"]["requirement"], ok
     assert "both must hold" in ok["remaining_backfeed_is_the_ampacity_leg_only"]
-    bad = S.busbar_120_percent(200.0, 100.0, 50.0, True, "top", "top")
+    bad = S.busbar_120_percent(200.0, 100.0, 50.0, S.BACKFEED_READ,
+                               "top", "top")
     assert bad["position_condition"]["verdict"] == "fail", bad
     # the arithmetic is identical in both: the position leg is what differs
     assert _close(ok["remaining_backfeed_a"], bad["remaining_backfeed_a"]), (ok, bad)
@@ -245,21 +290,34 @@ def case_busbar_carries_both_legs_of_the_rule():
 
 
 def case_the_busbar_ampacity_leg_is_three_valued():
-    """The 120% allowance is computed with the existing backfeed at 0 A wherever
-    the intake declared none, which makes it the LARGEST it could be. A
+    """Where the intake never answered, the allowance is computed with the
+    existing backfeed at 0 A, which makes it the LARGEST it could be. A
     shortfall against the largest possible allowance is real; a fit against it
-    is an assumption, and must not read as a pass."""
-    # declared backfeed: the arithmetic decides it either way
-    assert S.busbar_ampacity_leg(60.0, 15.0, True) == "fail"
-    assert S.busbar_ampacity_leg(60.0, 90.0, True) == "pass"
-    # undeclared: a shortfall survives the assumption, a fit does not
-    assert S.busbar_ampacity_leg(60.0, 15.0, False) == "fail"
-    assert S.busbar_ampacity_leg(60.0, 90.0, False) == "not_determined"
+    is an assumption, and must not read as a pass. A surveyed zero is not that
+    case -- it is an answer, and it decides the leg."""
+    # a rating read off the breaker: the arithmetic decides it either way
+    assert S.busbar_ampacity_leg(60.0, 15.0, S.BACKFEED_READ) == "fail"
+    assert S.busbar_ampacity_leg(60.0, 90.0, S.BACKFEED_READ) == "pass"
+    # surveyed and nothing backfeeds it: also an answer, also decisive
+    assert S.busbar_ampacity_leg(60.0, 15.0, S.BACKFEED_SURVEYED_NONE) == "fail"
+    assert S.busbar_ampacity_leg(60.0, 90.0, S.BACKFEED_SURVEYED_NONE) == "pass"
+    # never asked: a shortfall survives the assumption, a fit does not
+    assert S.busbar_ampacity_leg(60.0, 15.0, S.BACKFEED_NOT_RECORDED) == "fail"
+    assert S.busbar_ampacity_leg(60.0, 90.0, S.BACKFEED_NOT_RECORDED) == \
+        "not_determined"
     # exactly at the allowance is not a shortfall
-    assert S.busbar_ampacity_leg(60.0, 60.0, True) == "pass"
+    assert S.busbar_ampacity_leg(60.0, 60.0, S.BACKFEED_READ) == "pass"
     assert "0 A" in S.AMPACITY_LEG_BASIS and "not_determined" in S.AMPACITY_LEG_BASIS
+    assert "surveyed" in S.AMPACITY_LEG_BASIS, S.AMPACITY_LEG_BASIS
     assert "pv_backfeed_a" in S.AMPACITY_LEG_SETTLE
-    return "the busbar ampacity leg is three-valued when no backfeed was declared"
+    # a stale boolean where a basis token belongs must not read as truthy
+    for stale in (True, False, None, "yes"):
+        try:
+            S.busbar_ampacity_leg(60.0, 90.0, stale)
+            raise AssertionError(f"accepted {stale!r} as a backfeed basis")
+        except SystemExit as e:
+            assert "existing-backfeed basis" in str(e), e
+    return "the busbar ampacity leg is three-valued only when nobody was asked"
 
 
 def case_the_sum_of_breakers_rule_is_three_valued():
@@ -300,17 +358,33 @@ def case_the_battery_verdict_needs_both_legs():
     return "the battery verdict is conjunctive over the ampacity and position legs"
 
 
-def case_an_undeclared_backfeed_source_spends_no_allowance():
-    """pv_backfeed_a: null means nothing backfeeds the panel -- 0 A spent, and
-    the artifact says so rather than printing a bare measured-looking zero."""
-    b = S.busbar_120_percent(200.0, 175.0, 0.0, False)
-    assert _close(b["remaining_backfeed_a"], 65.0), b
-    assert b["existing_pv_backfeed_declared"] is False, b
-    assert "no existing backfeed source was declared" in b["existing_pv_backfeed_note"]
-    declared = S.busbar_120_percent(200.0, 175.0, 0.0, True)
-    assert declared["existing_pv_backfeed_declared"] is True, declared
+def case_the_two_zero_backfeeds_are_told_apart():
+    """Both zeros spend 0 A of the allowance; only one of them is a finding.
+    The note has to tell a reader which, in words that cannot be confused."""
+    unasked = S.busbar_120_percent(200.0, 175.0, 0.0, S.BACKFEED_NOT_RECORDED)
+    assert _close(unasked["remaining_backfeed_a"], 65.0), unasked
+    assert unasked["existing_pv_backfeed_basis"] == S.BACKFEED_NOT_RECORDED
+    note = unasked["existing_pv_backfeed_note"]
+    assert "ABSENT" in note and "nobody has answered" in note, note
+    assert "rather than a measurement" in note, note
+
+    surveyed = S.busbar_120_percent(200.0, 175.0, 0.0, S.BACKFEED_SURVEYED_NONE)
+    # identical arithmetic, opposite evidential standing
+    assert _close(surveyed["remaining_backfeed_a"],
+                  unasked["remaining_backfeed_a"]), (surveyed, unasked)
+    assert surveyed["existing_pv_backfeed_basis"] == S.BACKFEED_SURVEYED_NONE
+    snote = surveyed["existing_pv_backfeed_note"]
+    assert "explicit null" in snote and "NOTHING backfeeds it" in snote, snote
+    assert "known, complete answer" in snote, snote
+    assert snote != note, "the two zeros publish the same sentence"
+
+    declared = S.busbar_120_percent(200.0, 175.0, 0.0, S.BACKFEED_READ)
+    assert declared["existing_pv_backfeed_basis"] == S.BACKFEED_READ
     assert "read off" in declared["existing_pv_backfeed_note"], declared
-    return "an undeclared backfeed source spends 0 A and is labelled as undeclared"
+    # and no bare boolean is left standing in place of the three states
+    for b in (unasked, surveyed, declared):
+        assert "existing_pv_backfeed_declared" not in b, b
+    return "a surveyed zero and an unanswered one spend 0 A and are told apart"
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +503,135 @@ def case_enphase_loader_checks_shape_and_reads_the_trailing_year():
 # Intake
 # ---------------------------------------------------------------------------
 
+FLAG_FALSE = "household:\n  has_new_load_interest: false\n"
+FLAG_TRUE = "household:\n  has_new_load_interest: true\n"
+
+
+class _Reached(Exception):
+    """Raised by a tripwire standing in for a real input read."""
+
+
+def case_only_an_explicit_false_new_load_flag_disables_the_analysis():
+    """The has_ev contract, applied to this flag. The flag is the authority on
+    whether the question is being asked, and its ABSENCE is not an answer --
+    the flag postdates some intake files, so a household without it must still
+    get the analysis (and still stop on a missing panel)."""
+    real = S.load_panel
+
+    def tripwire():
+        raise _Reached()
+
+    try:
+        S.load_panel = tripwire
+        with _with_household(FLAG_FALSE):
+            out = S.build()
+            assert out["not_applicable"] is True, out
+        for text, why in ((FLAG_TRUE, "an explicit true"),
+                          (PANEL_YAML, "an absent flag"),
+                          ("household:\n  plan: EV-TOU-5\n", "an absent flag")):
+            with _with_household(text):
+                try:
+                    S.build()
+                    raise AssertionError(f"{why} did not reach the panel intake")
+                except _Reached:
+                    pass
+    finally:
+        S.load_panel = real
+    # a flag nobody can read is an intake defect, not a default
+    for bad in ("household:\n  has_new_load_interest: 'false'\n",
+                "household:\n  has_new_load_interest: 0\n"):
+        with _with_household(bad):
+            try:
+                S.build()
+                raise AssertionError(f"accepted {bad!r} as a flag")
+            except SystemExit as e:
+                assert "must be a YAML boolean" in str(e), e
+                assert "has_new_load_interest" in str(e), e
+    return "only an explicit false disables the analysis; absence never does"
+
+
+def case_a_false_new_load_flag_reads_no_input_at_all():
+    """The documented promise for a false flag is 'not applicable', and a
+    bill-only household has no panel survey, no meter export and no Enphase
+    file to fail closed on. Every reader is a tripwire here, and the intake
+    accessor records every path asked for."""
+    readers = ("load_panel", "only_match", "load_intervals", "load_sam",
+               "load_pv_ac_nameplate")
+    real = {name: getattr(S, name) for name in readers}
+    real_get = HH.get
+    reads = []
+
+    def _tripwire(name):
+        def boom(*a, **kw):
+            raise AssertionError(f"{name}() was called under a false flag")
+        return boom
+
+    def recording_get(path, required=True):
+        reads.append(path)
+        return real_get(path, required=required)
+
+    try:
+        for name in readers:
+            setattr(S, name, _tripwire(name))
+        HH.get = recording_get
+        with _with_household(FLAG_FALSE):
+            out = S.build()
+    finally:
+        for name, fn in real.items():
+            setattr(S, name, fn)
+        HH.get = real_get
+
+    assert reads == [S.NEW_LOAD_FLAG], reads
+    assert not [p for p in reads if p.startswith(("panel.", "solar.", "charger."))]
+    # the stub names the flag, and what to set to get an answer
+    assert out["flag"] == S.NEW_LOAD_FLAG, out
+    assert S.NEW_LOAD_FLAG in out["reason"] and "is false" in out["reason"], out
+    assert "true" in out["to_enable_it"], out
+    assert "panel.service_rating_a" in out["to_enable_it"], out
+    assert "not_applicable" in out and "not_determined" not in json.dumps(out), out
+    # nothing was computed, so nothing that reads as a computed answer is there
+    for key in ("caveat", "maximum_demand", "nec_220_87", "cases",
+                "battery_inverter", "panel"):
+        assert key not in out, (key, sorted(out))
+    return "a false flag reads only the flag and publishes a not_applicable stub"
+
+
+def case_a_false_new_load_flag_writes_the_stub_artifact():
+    """The stub is an artifact, not a print statement: main() writes it through
+    the same atomic path the real result takes, and exits 0."""
+    real_out, real_root = S.OUT, S.ROOT
+    td = tempfile.TemporaryDirectory()
+    try:
+        S.ROOT = pathlib.Path(td.name)
+        S.OUT = S.ROOT / "data" / "service_headroom.json"
+        with _with_household(FLAG_FALSE):
+            assert S.main() == 0
+        d = json.loads(S.OUT.read_text())
+    finally:
+        S.OUT, S.ROOT = real_out, real_root
+        td.cleanup()
+    assert d["not_applicable"] is True, d
+    assert d["flag"] == S.NEW_LOAD_FLAG, d
+    assert "postdates" in d["flag_contract"], d
+    assert "None beyond the flag itself" in d["inputs_read"], d
+    return "a false flag writes a not_applicable artifact and exits 0"
+
+
+def case_a_true_new_load_flag_still_fails_closed_on_the_panel():
+    """The flag switches the analysis off; it never softens it. A household
+    that asks for the answer and has not supplied the service rating still
+    stops, which is the whole point of the panel fields having no defaults."""
+    for text in (FLAG_TRUE + PANEL_YAML.replace("  service_rating_a: 175\n", ""),
+                 PANEL_YAML.replace("  service_rating_a: 175\n", "")):
+        with _with_household(text):
+            try:
+                S.build()
+                raise AssertionError("a missing service rating was accepted")
+            except SystemExit as e:
+                assert "panel.service_rating_a" in str(e), e
+    return "a true or absent flag keeps the fail-closed stop on the service rating"
+
+
 def case_absent_service_rating_fails_closed():
     with _with_household("charger:\n  kw: 11.5\n"):
         try:
@@ -484,36 +687,119 @@ def case_a_null_meter_socket_rating_runs_end_to_end():
     with _with_household(PANEL_YAML_NO_SOCKET):
         p = S.load_panel()
     assert p["meter_socket_continuous_a"] is None, p
+    assert p["meter_socket_recorded"] is True, p
+    basis = S.socket_basis_of(p)
+    assert basis == S.SOCKET_SURVEYED_NONE, basis
     # the whole chain build() runs on that field, in order
     steps = S.nec_220_87_steps(12.0, p["service_rating_a"],
-                               p["meter_socket_continuous_a"], 400)
+                               p["meter_socket_continuous_a"], 400, basis)
     assert [s["step"] for s in steps] == [1, 2, 3], steps
     avail = S.availability(p["service_rating_a"],
                            p["meter_socket_continuous_a"], steps[1]["result_a"])
     assert set(avail) == {"service"}, avail
-    rem = S.remaining_headroom(avail, 60.0)
+    rem = S.remaining_headroom(avail, 60.0, basis)
     assert rem["vs_meter_socket"] is None, rem
     assert _close(rem["binding"], 175.0 - 62.5 - 60.0), rem
     assert S.ampacity_verdict(rem["binding"], rem["binding"]) == "pass"
-    return "a null meter-socket rating runs through the whole chain, socket omitted"
+    # the sentence the artifact publishes here is TRUE and stands
+    assert "does not apply" in S.SOCKET_CONSTRAINT[basis], basis
+    return "a surveyed socket with no printed rating drops out, and says why"
+
+
+def case_an_absent_meter_socket_key_is_not_a_socket_without_a_rating():
+    """The optimistic half of this defect class. The meter socket is the
+    TIGHTER of the two ampacity constraints wherever it exists, so an unasked
+    question that reads as 'does not apply' deletes the binding constraint and
+    inflates every headroom in the artifact."""
+    with _with_household(PANEL_YAML_SOCKET_UNASKED):
+        p = S.load_panel()
+        assert S._key_present("panel.meter_socket_continuous_a") is False
+    assert p["meter_socket_continuous_a"] is None, p
+    assert p["meter_socket_recorded"] is False, p
+    basis = S.socket_basis_of(p)
+    assert basis == S.SOCKET_NOT_RECORDED, basis
+    # step 4 survives, as an undetermined row naming what would settle it
+    steps = S.nec_220_87_steps(12.0, p["service_rating_a"],
+                               p["meter_socket_continuous_a"], 400, basis)
+    assert [s["step"] for s in steps] == [1, 2, 3, 4], steps
+    assert steps[3]["verdict"] == "not_determined", steps[3]
+    # the arithmetic is identical to the surveyed case; the labels are not
+    with _with_household(PANEL_YAML_NO_SOCKET):
+        surveyed = S.socket_basis_of(S.load_panel())
+    avail = S.availability(p["service_rating_a"], None, steps[1]["result_a"])
+    unasked_rem = S.remaining_headroom(avail, 60.0, basis)
+    surveyed_rem = S.remaining_headroom(avail, 60.0, surveyed)
+    assert _close(unasked_rem["binding"], surveyed_rem["binding"]), unasked_rem
+    assert unasked_rem["binding_is"] != surveyed_rem["binding_is"]
+    assert "UPPER LIMIT" in unasked_rem["binding_is"], unasked_rem
+    assert "does not apply" not in S.SOCKET_CONSTRAINT[basis], basis
+    assert "NOT DETERMINED" in S.SOCKET_CONSTRAINT[basis], basis
+    assert "meter_socket_continuous_a" in S.SOCKET_SETTLE
+    # and a recorded rating is a third thing again
+    with _with_household(PANEL_YAML):
+        assert S.socket_basis_of(S.load_panel()) == S.SOCKET_READ
+    return "an absent meter-socket key is not_determined, never 'does not apply'"
 
 
 def case_a_null_pv_backfeed_runs_end_to_end():
-    """pv_backfeed_a: null is documented as 'nothing backfeeds the panel'. It
-    means 0 A of spent allowance, stated as undeclared rather than measured."""
+    """pv_backfeed_a: null is documented as 'the panel was surveyed and nothing
+    backfeeds it'. That is an ANSWER: 0 A of spent allowance, known, and the
+    ampacity leg resolves on it instead of being withheld."""
     with _with_household(PANEL_YAML_NO_BACKFEED):
         p = S.load_panel()
     assert p["pv_backfeed_a"] is None, p
-    declared = p["pv_backfeed_a"] is not None
-    existing = p["pv_backfeed_a"] if declared else 0.0
+    assert p["pv_backfeed_recorded"] is True, p
+    existing, basis = S.existing_backfeed(p)
+    assert _close(existing, 0.0) and basis == S.BACKFEED_SURVEYED_NONE, basis
     b = S.busbar_120_percent(p["busbar_rating_a"], p["service_rating_a"],
-                             existing, declared, p["pv_breaker_position"],
+                             existing, basis, p["pv_breaker_position"],
                              p["main_breaker_position"])
     assert _close(b["existing_pv_backfeed_a"], 0.0), b
-    assert b["existing_pv_backfeed_declared"] is False, b
+    assert b["existing_pv_backfeed_basis"] == S.BACKFEED_SURVEYED_NONE, b
     assert _close(b["remaining_backfeed_a"], 65.0), b
     assert b["position_condition"]["verdict"] == "not_determined", b
-    return "a null pv_backfeed_a spends 0 A and is reported as undeclared"
+    # 65 A of allowance takes the 60 A source breaker, and with the existing
+    # backfeed KNOWN that is a pass rather than a withheld verdict
+    assert S.busbar_ampacity_leg(60.0, b["remaining_backfeed_a"], basis) == "pass"
+    # and the same panel with a 70 A breaker still fails on the arithmetic
+    assert S.busbar_ampacity_leg(70.0, b["remaining_backfeed_a"], basis) == "fail"
+    return "a surveyed null pv_backfeed_a is a known 0 A and decides the leg"
+
+
+def case_an_absent_pv_backfeed_key_is_not_a_surveyed_zero():
+    """The distinction household.get() cannot make on its own. A key that is
+    not there is an unanswered question, and it must not inherit the standing
+    of an explicit null."""
+    with _with_household(PANEL_YAML_BACKFEED_UNASKED):
+        p = S.load_panel()
+        assert S._key_present("panel.pv_backfeed_a") is False
+    assert p["pv_backfeed_a"] is None, p
+    assert p["pv_backfeed_recorded"] is False, p
+    existing, basis = S.existing_backfeed(p)
+    assert _close(existing, 0.0) and basis == S.BACKFEED_NOT_RECORDED, basis
+    # same amps, same allowance, different standing
+    with _with_household(PANEL_YAML_NO_BACKFEED):
+        surveyed = S.existing_backfeed(S.load_panel())
+    assert _close(surveyed[0], existing), (surveyed, existing)
+    assert surveyed[1] != basis, (surveyed, basis)
+    b = S.busbar_120_percent(p["busbar_rating_a"], p["service_rating_a"],
+                             existing, basis)
+    assert _close(b["remaining_backfeed_a"], 65.0), b
+    assert S.busbar_ampacity_leg(60.0, b["remaining_backfeed_a"], basis) == \
+        "not_determined"
+    assert "not recorded" in S.AMPACITY_LEG_SETTLE or \
+        "does not carry" in S.AMPACITY_LEG_SETTLE, S.AMPACITY_LEG_SETTLE
+    # a recorded 50 A is a third thing again
+    with _with_household(PANEL_YAML):
+        assert S.existing_backfeed(S.load_panel()) == (50.0, S.BACKFEED_READ)
+    # the presence test needs a parent mapping to look the leaf up in, and says
+    # so rather than silently reporting "absent" for a top-level key
+    try:
+        S._key_present("pv_backfeed_a")
+        raise AssertionError("accepted a path with no parent")
+    except SystemExit as e:
+        assert "dotted path" in str(e), e
+    return "an absent pv_backfeed_a key is not_determined, not a surveyed zero"
 
 
 def case_impossible_panel_values_fail_closed_by_field():
@@ -545,8 +831,10 @@ def case_impossible_panel_values_fail_closed_by_field():
     flipped = S.busbar_120_percent(200.0, 175.0, -50.0)
     assert _close(honest["remaining_backfeed_a"], 15.0), honest
     assert _close(flipped["remaining_backfeed_a"], 115.0), flipped
-    assert S.busbar_ampacity_leg(60.0, honest["remaining_backfeed_a"], True) == "fail"
-    assert S.busbar_ampacity_leg(60.0, flipped["remaining_backfeed_a"], True) == "pass"
+    assert S.busbar_ampacity_leg(
+        60.0, honest["remaining_backfeed_a"], S.BACKFEED_READ) == "fail"
+    assert S.busbar_ampacity_leg(
+        60.0, flipped["remaining_backfeed_a"], S.BACKFEED_READ) == "pass"
     return "impossible panel values stop the run naming the field and the value"
 
 
@@ -770,7 +1058,7 @@ def case_the_battery_position_leg_is_its_own_input():
     assert S.position_condition("bottom", "top",
                                 S.SOURCE_EXISTING_PV)["verdict"] == "pass"
     # ... and the battery, on the same panel, is not determined
-    b = S.busbar_120_percent(200.0, 100.0, 50.0, True,
+    b = S.busbar_120_percent(200.0, 100.0, 50.0, S.BACKFEED_READ,
                              p["battery_breaker_position"], "top",
                              S.SOURCE_PROPOSED_BATTERY)
     pos = b["position_condition"]
@@ -1107,7 +1395,7 @@ def case_artifact_states_both_legs_of_the_busbar_rule():
     assert b["ampacity_leg"] in ("pass", "fail", "not_determined"), b
     assert b["ampacity_leg"] == S.busbar_ampacity_leg(
         b["backfeed_breaker_a"], b["busbar_120_percent"]["remaining_backfeed_a"],
-        b["busbar_120_percent"]["existing_pv_backfeed_declared"]), b
+        b["busbar_120_percent"]["existing_pv_backfeed_basis"]), b
     assert (b["ampacity_leg_what_would_settle_it"] is not None) == \
         (b["ampacity_leg"] == "not_determined"), b
     assert b["position_leg"] == pos["verdict"], b
@@ -1213,25 +1501,74 @@ def case_artifact_battery_position_is_not_the_pv_breakers():
 def case_artifact_labels_the_nullable_panel_fields():
     d = json.loads(S.OUT.read_text())
     pan = d["panel"]
-    assert "existing_pv_backfeed_declared" in pan, pan
-    assert isinstance(pan["existing_pv_backfeed_declared"], bool), pan
-    if not pan["existing_pv_backfeed_declared"]:
-        assert _close(pan["existing_pv_backfeed_a"], 0.0), pan
-        assert "no existing backfeed source" in pan["existing_pv_backfeed_note"], pan
-    socket = pan["meter_socket_continuous_a"]
+    basis = pan["existing_pv_backfeed_basis"]
+    assert basis in S.BACKFEED_NOTE, pan
+    assert pan["existing_pv_backfeed_note"] == S.BACKFEED_NOTE[basis], pan
+    assert basis == S.BACKFEED_READ or _close(pan["existing_pv_backfeed_a"], 0.0), pan
+    # the two zeros are told apart in the artifact's own words, not inferred
+    if basis == S.BACKFEED_SURVEYED_NONE:
+        assert "surveyed" in pan["existing_pv_backfeed_note"], pan
+        assert d["battery_inverter"]["ampacity_leg"] != "not_determined", d
+    if basis == S.BACKFEED_NOT_RECORDED:
+        assert "ABSENT" in pan["existing_pv_backfeed_note"], pan
+    socket = pan["meter_socket_basis"]
     nec = d["nec_220_87"]
-    if socket is None:
+    assert socket in S.SOCKET_CONSTRAINT, pan
+    assert pan["meter_socket_constraint"] == S.SOCKET_CONSTRAINT[socket], pan
+    assert nec["headroom_a"]["binding_is"] == S.BINDING_IS[socket], nec
+    assert (pan["meter_socket_what_would_settle_it"] is not None) == \
+        (socket == S.SOCKET_NOT_RECORDED), pan
+    if socket == S.SOCKET_READ:
+        assert pan["meter_socket_continuous_a"] is not None, pan
+        assert [s["step"] for s in nec["steps"]] == [1, 2, 3, 4], nec["steps"]
+        assert nec["steps"][3]["result_a"] is not None, nec["steps"]
+        assert nec["headroom_a"]["vs_meter_socket"] is not None, nec
+    else:
+        assert pan["meter_socket_continuous_a"] is None, pan
+        assert nec["headroom_a"]["vs_meter_socket"] is None, nec
+    if socket == S.SOCKET_SURVEYED_NONE:
+        # the only state in which the constraint may be dropped outright
         assert "does not apply" in pan["meter_socket_constraint"], pan
         assert [s["step"] for s in nec["steps"]] == [1, 2, 3], nec["steps"]
-        assert nec["headroom_a"]["vs_meter_socket"] is None, nec
-    else:
+    if socket == S.SOCKET_NOT_RECORDED:
+        # dropped step 4 is what made the omission invisible; it stays, as a
+        # not_determined row, and every binding figure is an upper limit
         assert [s["step"] for s in nec["steps"]] == [1, 2, 3, 4], nec["steps"]
-        assert nec["headroom_a"]["vs_meter_socket"] is not None, nec
-    return "the artifact says which nullable panel fields were declared"
+        assert nec["steps"][3]["verdict"] == "not_determined", nec["steps"]
+        assert "UPPER LIMIT" in nec["headroom_a"]["binding_is"], nec
+        for c in d["cases"]:
+            for b in ("measured_basis", "conservative_basis"):
+                assert "UPPER LIMIT" in \
+                    c["remaining_headroom_a"][b]["binding_is"], c
+    return "the artifact says what each nullable panel field actually records"
 
 
 JUDGEMENT_WORDS = ("fits", "passes", "compliant", "verified", "sufficient",
                    "supported", "ok", "valid", "allowed", "safe")
+
+# Sentences that assert a constraint does not apply, a source is absent, or a
+# figure is zero because the answer was "none". Each is a positive claim about
+# the world and may only be published on the strength of an answer somebody
+# actually gave.
+NON_APPLICABILITY_PHRASES = ("does not apply", "no continuous rating is recorded",
+                             "nothing backfeeds it", "is a known, complete answer")
+
+# The intake fields with THREE states, and the (claim field, basis field,
+# vocabulary) each publishes. Two review passes found the same defect at two of
+# these; the rule is stated once here so a third cannot be introduced quietly:
+#
+#   * exactly three states, with distinct sentences;
+#   * the SURVEYED-absence state is the only one entitled to say the thing is
+#     absent or does not apply;
+#   * the NOT-RECORDED state may say none of that, and must say it is open;
+#   * wherever the claim appears in the artifact, its basis appears beside it
+#     and the sentence is the vocabulary's, not a paraphrase that could drift.
+THREE_STATE_FIELDS = [
+    ("existing_pv_backfeed_note", "existing_pv_backfeed_basis", S.BACKFEED_NOTE,
+     S.BACKFEED_READ, S.BACKFEED_SURVEYED_NONE, S.BACKFEED_NOT_RECORDED),
+    ("meter_socket_constraint", "meter_socket_basis", S.SOCKET_CONSTRAINT,
+     S.SOCKET_READ, S.SOCKET_SURVEYED_NONE, S.SOCKET_NOT_RECORDED),
+]
 
 # Every boolean the artifact publishes, and why a bare true/false is honest
 # there. Each one is a DIRECT, COMPLETE restatement of something measured or of
@@ -1239,8 +1576,6 @@ JUDGEMENT_WORDS = ("fits", "passes", "compliant", "verified", "sufficient",
 # evidence is somewhere else or absent. A new boolean fails this test until it
 # is either justified here or made three-valued.
 ALLOWED_BOOLEANS = {
-    "existing_pv_backfeed_declared":
-        "restates whether panel.pv_backfeed_a carried an answer at all",
     "passed":
         "restates a gate's own comparison, whose observed value, comparison and "
         "threshold are printed in the same object -- and a false one halts the "
@@ -1270,10 +1605,11 @@ def case_artifact_publishes_no_bare_boolean_judgement():
     must be on the justified allowlist above, and anything named like a
     judgement must be three-valued."""
     d = json.loads(S.OUT.read_text())
-    bools, verdicts = {}, {}
+    bools, verdicts, dicts = {}, {}, []
 
     def walk(o, path):
         if isinstance(o, dict):
+            dicts.append(o)
             for k, v in o.items():
                 walk(v, path + [k])
         elif isinstance(o, list):
@@ -1312,7 +1648,149 @@ def case_artifact_publishes_no_bare_boolean_judgement():
         settle = [val for k, val in owner.items()
                   if "what_would_settle_it" in k and val]
         assert settle, f"{path} is not_determined and names nothing that would settle it"
+
+    # The companion rule. A claim that something is absent, zero or
+    # inapplicable must trace to an answer that was GIVEN, never to a key
+    # nobody filled in -- the defect that published a battery leg as
+    # undecidable on a fully surveyed panel, and deleted the tighter of two
+    # ampacity constraints on a panel nobody had looked at.
+    for claim, basis_key, vocab, read, none, unasked in THREE_STATE_FIELDS:
+        assert len(vocab) == 3, (claim, vocab)
+        assert len({vocab[read], vocab[none], vocab[unasked]}) == 3, \
+            f"{claim}: two of the three states publish the same sentence"
+        assert any(ph in vocab[none].lower() for ph in NON_APPLICABILITY_PHRASES), \
+            (f"{claim}: the surveyed-absence state is the one entitled to say "
+             f"the thing is absent, and it does not say it")
+        for state in (read, unasked):
+            said = [ph for ph in NON_APPLICABILITY_PHRASES
+                    if ph in vocab[state].lower()]
+            assert not said, (
+                f"{claim}[{state}] claims {said} -- only the surveyed-absence "
+                f"state may, and {unasked!r} means nobody looked")
+        low = vocab[unasked].lower()
+        assert ("not determined" in low or "never been looked at" in low
+                or "nobody has answered" in low), (
+            f"{claim}[{unasked}] does not say the question is still open")
+        # and wherever it is published, the basis is published beside it
+        found = 0
+        for owner in dicts:
+            if claim not in owner:
+                continue
+            found += 1
+            assert basis_key in owner, \
+                f"{claim} published with no {basis_key} beside it"
+            assert owner[basis_key] in vocab, (claim, owner[basis_key])
+            assert owner[claim] == vocab[owner[basis_key]], (
+                f"{claim} has drifted from the sentence its basis declares")
+        assert found, f"{claim} is not in the artifact -- the walk is stale"
     return "no bare boolean or two-valued judgement survives in the artifact"
+
+
+# Every optional intake read in service_headroom.py that does NOT ask whether
+# its key was recorded, and what makes an absent key and an explicit null the
+# same answer there. Anything not on this list must pair its read with
+# _key_present(), because household.get() returns None for both and the two
+# mean opposite things. A new optional field fails the case below until its
+# author has either distinguished them or written down why they cannot differ.
+OPTIONAL_READS_WITHOUT_A_PRESENCE_TEST = {
+    "household.has_new_load_interest": (
+        "the flag's contract is that only an explicit false disables the "
+        "analysis; absent and null are both 'not answered' and both leave the "
+        "analysis running with its fail-closed panel requirements intact, "
+        "which is the conservative direction"),
+    "solar.kw_ac": (
+        "absent and null both stop the run with PV_CEILING_MISSING -- there is "
+        "no path on which either becomes a published figure"),
+    "solar.inverter_model": (
+        "prose only: it names the hardware inside pv_ac_ceiling's basis "
+        "sentence and no verdict, bound or arithmetic reads it"),
+    "solar.inverter_count": (
+        "prose only, as above -- it appears beside the model in the same "
+        "sentence and nothing is computed from it"),
+    "panel.pv_breaker_position": (
+        "position_condition() maps absent and unreadable alike to "
+        "not_determined with what would settle it; there is no state in which "
+        "a missing answer becomes a pass, so the two collapse safely"),
+    "panel.battery_breaker_position": (
+        "same as pv_breaker_position, and this one has no surveyed value at "
+        "all in any intake yet: absent is the only state it has"),
+    "panel.main_breaker_position": (
+        "same as pv_breaker_position -- with no main end recorded the "
+        "'opposite end' test cannot be evaluated and reports not_determined"),
+}
+
+
+def _module_string_constants(tree):
+    """Module-level NAME = "literal" bindings, so a read passed a constant is
+    still seen as the path it resolves to."""
+    out = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                and isinstance(node.value.value, str):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    out[t.id] = node.value.value
+    return out
+
+
+def case_every_optional_intake_read_distinguishes_absent_from_null():
+    """The class, at the source rather than in one artifact. This household
+    records both nullable panel fields, so no artifact of its own could catch a
+    third field conflating an unanswered question with an answer of 'none'.
+    The reads themselves are audited instead: every optional read either asks
+    _key_present() or is declared above with the reason the two cannot differ."""
+    src = pathlib.Path(S.__file__).with_suffix(".py").read_text()
+    tree = ast.parse(src)
+    consts = _module_string_constants(tree)
+
+    def paths(call):
+        out = []
+        for a in call.args:
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                out.append(a.value)
+            elif isinstance(a, ast.Name) and a.id in consts:
+                out.append(consts[a.id])
+        return out
+
+    optional, presence = {}, set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+        if name == "get" and isinstance(f, ast.Attribute) and \
+                getattr(f.value, "id", "") == "HH":
+            req = [k for k in n.keywords if k.arg == "required"]
+            if req and isinstance(req[0].value, ast.Constant) and \
+                    req[0].value.value is False:
+                for p in paths(n):
+                    optional[p] = "HH.get(required=False)"
+        elif name in ("_optional_number", "_flag"):
+            for p in paths(n):
+                optional[p] = name
+        elif name == "_key_present":
+            presence.update(paths(n))
+
+    assert optional, "the read audit found nothing -- it has gone stale"
+    unhandled = sorted(p for p in optional
+                       if p not in presence
+                       and p not in OPTIONAL_READS_WITHOUT_A_PRESENCE_TEST)
+    assert not unhandled, (
+        f"optional intake read(s) that cannot tell an absent key from an "
+        f"explicit null: {unhandled}. household.get() returns None for both. "
+        f"Either pair the read with _key_present() and publish which state it "
+        f"is in, or declare it in OPTIONAL_READS_WITHOUT_A_PRESENCE_TEST with "
+        f"the reason the two cannot mean different things there")
+    # the declared exemptions stay honest: still read, still not distinguished
+    for p, reason in OPTIONAL_READS_WITHOUT_A_PRESENCE_TEST.items():
+        assert p in optional, f"{p} is declared exempt but is no longer read"
+        assert p not in presence, \
+            f"{p} now has a presence test -- drop its exemption"
+        assert len(reason) > 40, f"{p}'s exemption has no real reason behind it"
+    # the two that DO distinguish are the two with three published states
+    assert presence == {"panel.pv_backfeed_a", "panel.meter_socket_continuous_a"}, \
+        presence
+    return f"all {len(optional)} optional intake reads handle absent vs null explicitly"
 
 
 def case_artifact_reports_physical_fit_not_a_boolean():
@@ -1422,7 +1900,7 @@ def case_artifact_carries_no_identifiers():
 
 CASES = [
     case_220_87_chain_on_hand_computed_inputs,
-    case_220_87_omits_the_socket_step_when_none_is_recorded,
+    case_220_87_socket_step_follows_the_three_socket_states,
     case_three_valued_verdict_needs_both_bases,
     case_remaining_headroom_omits_an_absent_socket,
     case_amps_uses_the_240_v_service_basis,
@@ -1434,7 +1912,7 @@ CASES = [
     case_the_busbar_ampacity_leg_is_three_valued,
     case_the_sum_of_breakers_rule_is_three_valued,
     case_the_battery_verdict_needs_both_legs,
-    case_an_undeclared_backfeed_source_spends_no_allowance,
+    case_the_two_zero_backfeeds_are_told_apart,
     case_physical_fit_is_three_valued,
     case_fall_back_day_produces_no_phantom_peak,
     case_spring_forward_day_is_short_and_still_clean,
@@ -1443,11 +1921,17 @@ CASES = [
     case_zero_padding_is_truncated_not_treated_as_data,
     case_an_all_zero_enphase_export_fails_closed,
     case_enphase_loader_checks_shape_and_reads_the_trailing_year,
+    case_only_an_explicit_false_new_load_flag_disables_the_analysis,
+    case_a_false_new_load_flag_reads_no_input_at_all,
+    case_a_false_new_load_flag_writes_the_stub_artifact,
+    case_a_true_new_load_flag_still_fails_closed_on_the_panel,
     case_absent_service_rating_fails_closed,
     case_panel_intake_reads_every_required_field,
     case_every_required_panel_field_still_fails_closed,
     case_a_null_meter_socket_rating_runs_end_to_end,
+    case_an_absent_meter_socket_key_is_not_a_socket_without_a_rating,
     case_a_null_pv_backfeed_runs_end_to_end,
+    case_an_absent_pv_backfeed_key_is_not_a_surveyed_zero,
     case_impossible_panel_values_fail_closed_by_field,
     case_panel_domain_checks_accept_the_edges_that_are_real,
     case_a_schedule_larger_than_its_enclosure_fails_closed,
@@ -1478,6 +1962,7 @@ CASES = [
     case_artifact_battery_position_is_not_the_pv_breakers,
     case_artifact_labels_the_nullable_panel_fields,
     case_artifact_publishes_no_bare_boolean_judgement,
+    case_every_optional_intake_read_distinguishes_absent_from_null,
     case_artifact_reports_physical_fit_not_a_boolean,
     case_artifact_states_the_battery_charging_assumption,
     case_artifact_sum_rule_counts_the_proposed_breaker,

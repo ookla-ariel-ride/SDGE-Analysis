@@ -87,15 +87,25 @@ panel:                               # omit only if you don't want a service-hea
                                      # NEMA type + indoor/outdoor; say so if it is a
                                      # meter-main combination
   meter_socket_continuous_a: null    # continuous rating printed on a meter-main
-                                     # combination; null when the meter socket is a
-                                     # separate enclosure with no rating printed
+                                     # combination — usually the TIGHTEST ampacity
+                                     # limit. Set it to null if you looked and the
+                                     # meter socket is a separate enclosure with no
+                                     # rating printed. Leave the key out if you have
+                                     # not looked; the headroom is then published as
+                                     # an upper limit rather than as though the
+                                     # constraint did not exist.
   assembly_sccr_ka: 10               # short-circuit current rating of the ASSEMBLY, off
                                      # the rating label — it can differ from the rating
                                      # marked on the main breaker alone
   meter_class: "CL100"               # socket class off the meter face — a socket rating,
                                      # NOT the service rating
   pv_backfeed_a: 30                  # rating of the existing PV (or battery) backfeed
-                                     # breaker; null if nothing backfeeds the panel
+                                     # breaker. Set it to null if you LOOKED and nothing
+                                     # backfeeds the panel — that is an answer, and the
+                                     # 120% busbar check resolves on it. Leave the key out
+                                     # if you have not looked; the check then reports
+                                     # not_determined rather than crediting an unverified
+                                     # zero.
   breaker_family: "EX / EXC (CTL classified)"
                                      # what a new branch breaker has to be compatible with
   main_breaker_position: "top"       # "top" or "bottom" — which end of the bus the
