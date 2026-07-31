@@ -18,15 +18,15 @@
    },
    "winter": {
     "applied_to": "the ENTIRE $2238/yr battery marginal, uniformly -- exactly as the 3/5/8/12% rungs apply their rate. That seed spans both seasons and includes generation, while the measured rate is WINTER DELIVERY spread only. Summer and generation are not determined, so this run escalates components this corpus cannot measure. It is a ladder rung whose RATE is measured, not a decomposed all-in forecast.",
-    "basis": "DELIVERY spread only. The generation half of the on-peak price cannot be escalated from this corpus, so this figure is what the delivery component alone implies -- not an all-in forecast. The honest bracket on the battery is floor_zero_escalation (nothing escalates) to this run (everything escalates at the measured winter delivery rate); decomposing the seed by season and component would need a dispatch re-run that reports savings per season x component, which battery_dispatch_policies.json does not currently expose.",
+    "basis": "DELIVERY spread only. The generation half of the on-peak price cannot be escalated from this corpus, so this figure is what the delivery component alone implies -- not an all-in forecast. scenario_zero_escalation (nothing escalates) and this run (everything escalates at the measured winter delivery rate) are SENSITIVITY SCENARIOS, not bounds: the undetermined components can move either way, and faster than winter delivery in either direction, so neither endpoint constrains the true value. What is measured is that one component of the gap grew at this rate over the post-break window. Bounding the battery would need a dispatch re-run reporting savings per season x component, which battery_dispatch_policies.json does not currently expose.",
     "escalation_basis": "post-break window 2025-02-14..2026-05-30, 15 observations, 4 distinct levels",
-    "floor_zero_escalation": {
-     "npv10": 2091,
-     "payback_yr": 6.7
-    },
     "full_window_escalation_pct_yr_NOT_USED": 14.65,
     "npv10": 10975,
     "payback_yr": 5.3,
+    "scenario_zero_escalation": {
+     "npv10": 2091,
+     "payback_yr": 6.7
+    },
     "spread_escalation_pct_yr": 10.2,
     "vs_uniform": {
      "12%": {

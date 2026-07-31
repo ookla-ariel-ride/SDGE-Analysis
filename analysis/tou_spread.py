@@ -533,16 +533,20 @@ def build():
             "spread only. Summer and generation are not determined, so this run "
             "escalates components this corpus cannot measure. It is a ladder rung "
             "whose RATE is measured, not a decomposed all-in forecast.")
-        run["floor_zero_escalation"] = _payback(seed, 0.0)
+        run["scenario_zero_escalation"] = _payback(seed, 0.0)
         run["basis"] = (
             "DELIVERY spread only. The generation half of the on-peak price "
             "cannot be escalated from this corpus, so this figure is what the "
-            "delivery component alone implies -- not an all-in forecast. The "
-            "honest bracket on the battery is floor_zero_escalation (nothing "
-            "escalates) to this run (everything escalates at the measured winter "
-            "delivery rate); decomposing the seed by season and component would "
-            "need a dispatch re-run that reports savings per season x component, "
-            "which battery_dispatch_policies.json does not currently expose.")
+            "delivery component alone implies -- not an all-in forecast. "
+            "scenario_zero_escalation (nothing escalates) and this run "
+            "(everything escalates at the measured winter delivery rate) are "
+            "SENSITIVITY SCENARIOS, not bounds: the undetermined components can "
+            "move either way, and faster than winter delivery in either "
+            "direction, so neither endpoint constrains the true value. What is "
+            "measured is that one component of the gap grew at this rate over "
+            "the post-break window. Bounding the battery would need a dispatch "
+            "re-run reporting savings per season x component, which "
+            "battery_dispatch_policies.json does not currently expose.")
         battery["per_period"][season] = run
 
     # ---- what is not determined, and what would settle it ----------------
