@@ -965,9 +965,7 @@ def case_gross_is_exact_only_where_nothing_was_produced():
             (d, 12.0, 0.5, 0.4),    # daylight, exporting
             (d, 13.0, 0.5, 0.0)]    # daylight, importing under PV
     pv = {(d, 0): 0.0, (d, 12): 2.0, (d, 13): 2.0}
-    ceiling = {h: 0.0 for h in range(24)}
-    ceiling.update({12: 2.0, 13: 2.0})
-    env = S.gross_envelope(rows, pv, ceiling, 8.0)
+    env = S.gross_envelope(rows, pv, 8.0)
     # dark hour: bound collapses, gross is the metered import
     assert env[0][5] is True and _close(env[0][2], 4.0) and _close(env[0][3], 4.0)
     # exporting daylight interval: lower is the import, upper adds the capped PV
@@ -1004,9 +1002,9 @@ def case_the_pv_ceiling_is_the_inverter_nameplate():
         assert row["below_nameplate_by_kw"] > 0.0, row
     # and the envelope uses it: the cap is nameplate x 0.25, not observed x 0.25
     d = dt.date(2026, 1, 15)
-    env = S.gross_envelope([(d, 12.0, 0.0, 0.0)], {(d, 12): 99.0},
-                           {h: 99.0 for h in range(24)}, 9.45)
+    env = S.gross_envelope([(d, 12.0, 0.0, 0.0)], {(d, 12): 99.0}, 9.45)
     assert _close(env[0][3], 9.45 * 0.25 * 4.0), env
+    assert env[0][6] == S.PV_BASIS_MEASURED, env
     return "the per-interval PV ceiling is the inverter AC nameplate, not an observation"
 
 
@@ -1080,17 +1078,119 @@ def case_the_battery_position_leg_is_its_own_input():
     return "the battery's position leg reads its own intake field, never the PV breaker's"
 
 
-def case_missing_enphase_hours_fall_back_to_the_empirical_ceiling():
+def case_uncovered_hours_take_the_nameplate_ceiling_not_an_empirical_one():
+    """An hour the Enphase file does not cover has no measurement of itself, so
+    the only ceiling that holds on it is the inverters' AC nameplate.
+
+    The largest production previously OBSERVED at the same hour of day is not a
+    bound on it: an uncovered hour can legitimately beat every hour yet seen at
+    that clock position. Narrowing to the smaller of the two would pick the
+    empirical figure whenever it was lower -- which, on this array, is the case
+    at fourteen of the twenty-four hours of day -- and the result would sit
+    BELOW true gross demand, the one direction a capacity verdict may not err
+    in. The fixture is built so the two answers differ and only one is a bound.
+    """
     d = dt.date(2026, 1, 15)
-    rows = [(d, 1.0, 1.0, 0.0), (d, 12.0, 1.0, 0.0)]
-    ceiling = {h: 0.0 for h in range(24)}
-    ceiling[12] = 6.0
-    env = S.gross_envelope(rows, {}, ceiling, 8.0)
-    # 01:00 has never produced, so the bound still collapses there ...
-    assert env[0][5] is True, env[0]
-    # ... and midday falls back to the largest production ever seen in that hour
-    assert _close(env[1][3], (1.0 + min(6.0, 2.0)) * 4.0), env[1]
-    return "hours the Enphase file does not cover fall back to the per-hour ceiling"
+    kw_ac, cap = 8.0, 8.0 * 0.25          # 2.0 kWh in a quarter-hour
+    rows = [(d, 1.0, 1.0, 0.0),           # dark hour, uncovered
+            (d, 12.0, 1.0, 0.0),          # midday, uncovered
+            (d, 13.0, 1.0, 0.0)]          # midday, covered by a small reading
+    # A covered hour with a SMALL reading, and an empirical hour-of-day maximum
+    # that is smaller than the nameplate cap at both uncovered hours. Under the
+    # retired min(empirical, nameplate) rule 01:00 would have been capped at
+    # 0.05 kWh and 12:00 at 1.5 kWh -- both below the cap, both not bounds.
+    pv = {(d, 13): 0.5}
+    env = S.gross_envelope(rows, pv, kw_ac)
+    # the uncovered dark hour: the full nameplate cap, NOT the 0.05 kWh that is
+    # all this array has ever made at 01:00. The bound is loose and honest.
+    assert env[0][6] == S.PV_BASIS_NAMEPLATE, env[0]
+    assert _close(env[0][3], (1.0 + cap) * 4.0), env[0]
+    assert env[0][5] is False, env[0]     # never point-determined when uncovered
+    # the uncovered midday hour: the same cap, above the 1.5 kWh empirical figure
+    assert env[1][6] == S.PV_BASIS_NAMEPLATE, env[1]
+    assert _close(env[1][3], (1.0 + cap) * 4.0), env[1]
+    # the covered hour keeps its own measurement, which is narrower than the cap
+    assert env[2][6] == S.PV_BASIS_MEASURED, env[2]
+    assert _close(env[2][3], (1.0 + 0.5) * 4.0), env[2]
+    assert env[2][3] < env[1][3], (env[1], env[2])
+    # and the whole point: the nameplate answer is the LARGER one everywhere the
+    # two differ, so the envelope stays an upper bound
+    for e in (env[0], env[1]):
+        assert e[3] >= env[2][3], e
+    return "an uncovered hour takes the nameplate ceiling, never an empirical one"
+
+
+def _sam_csv(path, year, hours, tail_zeros):
+    """An 8760-row Enphase export with a zero-filled future tail."""
+    n = 8784 if (year % 4 == 0 and (year % 100 or year % 400 == 0)) else 8760
+    vals = [hours(i) for i in range(n - tail_zeros)] + [0.0] * tail_zeros
+    path.write_text("kWh\n" + "".join(f"{v}\n" for v in vals))
+
+
+def case_the_zero_padded_tail_and_the_dst_days_take_the_nameplate_path():
+    """The two named sources of uncovered hours, checked end to end.
+
+    Both were previously bounded by the per-hour-of-day empirical maximum, and
+    both are the loosest part of the record -- the tail because the file simply
+    stops, the DST days because the flat 8760 grid cannot be aligned to a day
+    that is 23 or 25 hours long. Neither may borrow another day's production as
+    a ceiling.
+    """
+    year = 2026
+    spring, _fall = R.dst_transition_sundays(year)
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / f"enphase_sam8760_{year}.csv"
+        # 48 zero rows at the end = the last two days of the year uncovered
+        _sam_csv(p, year, lambda i: 1.0 + (i % 24) * 0.01, 48)
+        sam, prov = S.load_sam([p])
+    assert prov[0]["zero_padded_rows"] == 48, prov
+    last_covered = max(sam)
+    tail_day = dt.date(year, 12, 31)
+    assert (tail_day, 12) not in sam, "the zero tail must not read as measurement"
+
+    dst = {spring}
+    days = [spring, tail_day, dt.date(year, 6, 15)]
+    hsums = {(d, h): (1.0, 0.0, 4) for d in days for h in range(24)}
+    pv = S.derive_pv(hsums, sam, dst)
+    # the DST day is covered by the file but excluded from the join ...
+    assert (spring, 12) in sam and (spring, 12) not in pv, spring
+    # ... and the tail is not in the file at all
+    assert (tail_day, 12) not in pv, tail_day
+    # a normal day inside coverage is derived as usual
+    assert (dt.date(year, 6, 15), 12) in pv
+
+    rows = [(d, 12.0, 1.0, 0.0) for d in days]
+    env = S.gross_envelope(rows, pv, 8.0)
+    assert env[0][6] == S.PV_BASIS_NAMEPLATE, ("dst day", env[0])
+    assert env[1][6] == S.PV_BASIS_NAMEPLATE, ("zero tail", env[1])
+    assert env[2][6] == S.PV_BASIS_MEASURED, ("covered day", env[2])
+    for e in (env[0], env[1]):
+        assert _close(e[3], (1.0 + 8.0 * 0.25) * 4.0), e
+
+    split = S.ceiling_basis_split(env, dst, sam)
+    assert split["nameplate_intervals"] == 2, split
+    assert split["measured_hour_intervals"] == 1, split
+    by = split["nameplate_intervals_by_reason"]
+    assert by["excluded_dst_day"] == 1, by
+    assert by["after_the_last_hour_the_enphase_files_measured"] == 1, by
+    assert sum(by.values()) == split["nameplate_intervals"], split
+    assert split["enphase_coverage_last_hour"].startswith(str(last_covered[0]))
+    assert "not a ceiling on it" in split["why_not_the_empirical_hour_of_day_maximum"]
+    return "the zero-padded tail and the DST days are bounded by the nameplate alone"
+
+
+def case_the_ceiling_split_must_account_for_every_nameplate_interval():
+    """The split is published beside the envelope, so an interval it cannot
+    explain is a defect in the published figure, not a rounding detail."""
+    d = dt.date(2026, 6, 15)
+    env = [(d, 12.0, 4.0, 6.0, 0.0, False, S.PV_BASIS_NAMEPLATE)]
+    # the interval sits INSIDE coverage and is not a DST day, so it lands in the
+    # gap bucket rather than being silently dropped
+    sam = {(d, 11): 1.0, (d, 13): 1.0}
+    split = S.ceiling_basis_split(env, set(), sam)
+    assert split["nameplate_intervals_by_reason"] == {
+        "missing_hour_inside_the_enphase_coverage": 1}, split
+    return "every nameplate-ceiling interval is attributed to a stated reason"
 
 
 def _reference_days(n=120, seed=7):
@@ -1856,6 +1956,116 @@ def case_artifact_states_the_battery_charging_assumption():
     return "the battery charging basis is published as an assumption, not a fact"
 
 
+def case_the_load_sharing_mitigation_separates_the_amps_from_the_breaker():
+    """The mitigation makes two claims and only one of them is citable.
+
+    The AMPS are code: NEC 625.42 sizes a load-management system on the
+    system's maximum output, so the added demand is 0 A rather than 60 A. That
+    stands on a citation and stays.
+
+    The BREAKER is hardware: whether two connectors in a power-sharing group may
+    share ONE branch circuit, or whether each still needs its own, is a
+    manufacturer installation fact. Nothing in research/, TECHNICAL.md or the
+    intake records it, so it is published as not determined, with what would
+    settle it and the physical-fit consequence stated BOTH ways -- the same
+    treatment battery_charging_not_determined gets.
+    """
+    d = json.loads(S.OUT.read_text())
+    m = [x for x in d["mitigations"] if x["mitigation"] == "EVSE load sharing"]
+    assert len(m) == 1, [x["mitigation"] for x in d["mitigations"]]
+    m = m[0]
+    # the amps claim: determined, cited, and still the mitigation's content
+    assert "625.42" in m["basis"], m
+    assert "MAXIMUM OUTPUT" in m["basis"], m
+    assert _close(m["added_load_with_a"], 0.0), m
+    assert _close(m["added_load_without_a"],
+                  S.evse_code_load_a(S.EXISTING_EVSE_OUTPUT_A), 1e-2), m
+    assert _close(m["reduction_a"], m["added_load_without_a"]), m
+    assert "625.42" in m["what_is_determined_here"], m
+    assert "does not depend on how the connectors are wired" in \
+        m["what_is_determined_here"], m
+    # the breaker claim: not determined, in the shape the battery basis uses
+    assert m["shares_the_existing_branch_circuit"] is None, m
+    nd = m["shares_the_existing_branch_circuit_not_determined"]
+    assert nd.startswith("NOT DETERMINED"), nd
+    assert "manufacturer installation fact" in nd, nd
+    assert "installation instructions" in nd and "AHJ" in nd, nd
+    assert "either way" in nd, nd
+    # ... and the consequence is given for BOTH answers, not just the convenient one
+    shares = m["physical_fit_if_it_shares_the_existing_circuit"]
+    own = m["physical_fit_if_it_needs_its_own_circuit"]
+    assert "No new breaker and no new space" in shares, shares
+    assert "two ADJACENT full-size spaces" in own, own
+    free = d["panel"]["occupancy"]["spaces_free"]
+    assert str(free) in shares and str(free) in own, (free, shares, own)
+    assert ("short of two" in own) is (free < 2), (free, own)
+    return "the load-sharing mitigation determines the amps and not the breaker"
+
+
+# The retired assertion, in every phrasing it was published in. It claimed a
+# manufacturer installation fact this project cannot cite, and it appeared at
+# more than one site before it was removed -- so the scan is over the WHOLE
+# artifact and the whole module, not over the one field it was found in.
+UNCITABLE_SHARING_PHRASES = (
+    "needs no new breaker",
+    "It needs no new breaker",
+    "no new breaker, which matters more than the amps",
+    "share power across one circuit",
+    "on the existing circuit",
+)
+
+
+def case_no_uncitable_breaker_claim_survives_anywhere():
+    d = S.OUT.read_text()
+    src = (pathlib.Path(S.__file__)).read_text()
+    for phrase in UNCITABLE_SHARING_PHRASES:
+        assert phrase not in d, f"artifact still asserts: {phrase!r}"
+        assert phrase not in src, f"service_headroom.py still asserts: {phrase!r}"
+    # and the mitigation's name no longer smuggles the claim in either
+    for x in json.loads(d)["mitigations"]:
+        assert "existing circuit" not in x["mitigation"], x["mitigation"]
+    # the ONE place the phrase may appear is inside an explicit both-ways
+    # consequence, which is conditional by construction
+    obj = json.loads(d)
+    shares = [x for x in obj["mitigations"]
+              if x["mitigation"] == "EVSE load sharing"][0][
+                  "physical_fit_if_it_shares_the_existing_circuit"]
+    assert "No new breaker" in shares, shares
+    return "the uncitable 'no new breaker' claim appears nowhere in artifact or module"
+
+
+def case_artifact_publishes_the_pv_ceiling_basis_split():
+    """How much of the envelope is measurement-narrowed and how much is the bare
+    physical cap, stated rather than implied -- the uncovered intervals are the
+    loosest part of the record and a reader is entitled to know how many."""
+    d = json.loads(S.OUT.read_text())
+    g = d["gross_reconstruction"]
+    sp = g["pv_ceiling_basis_split"]
+    assert sp["measured_hour_intervals"] + sp["nameplate_intervals"] == \
+        g["intervals"], sp
+    assert sum(sp["nameplate_intervals_by_reason"].values()) == \
+        sp["nameplate_intervals"], sp
+    assert _close(sp["measured_hour_pct"],
+                  100.0 * sp["measured_hour_intervals"] / g["intervals"], 1e-3)
+    assert _close(sp["nameplate_pct"],
+                  100.0 * sp["nameplate_intervals"] / g["intervals"], 1e-3)
+    # this window: both named sources of uncovered hours are present
+    by = sp["nameplate_intervals_by_reason"]
+    assert by["excluded_dst_day"] > 0, by
+    assert by["after_the_last_hour_the_enphase_files_measured"] > 0, by
+    # the DST days carry every interval of both transition Sundays
+    assert by["excluded_dst_day"] == sum(
+        len(R.expected_day_hours(dt.date.fromisoformat(s)))
+        for s in d["provenance"]["dst_days"]), by
+    # nothing empirical narrows them, and the artifact says why
+    why = sp["why_not_the_empirical_hour_of_day_maximum"]
+    assert "not a ceiling on it" in why, why
+    assert "not an upper bound" in why, why
+    assert "optimistically" in why, why
+    assert "pv_ceiling_basis_split" in g["honesty"], g["honesty"]
+    return "the artifact counts each PV ceiling basis and names why the loose one is loose"
+
+
 def case_artifact_sum_rule_counts_the_proposed_breaker():
     d = json.loads(S.OUT.read_text())
     sr = d["battery_inverter"]["sum_rule"]
@@ -2441,7 +2651,9 @@ CASES = [
     case_an_observed_pv_maximum_above_the_nameplate_fails_closed,
     case_an_absent_pv_nameplate_stops_the_run,
     case_the_battery_position_leg_is_its_own_input,
-    case_missing_enphase_hours_fall_back_to_the_empirical_ceiling,
+    case_uncovered_hours_take_the_nameplate_ceiling_not_an_empirical_one,
+    case_the_zero_padded_tail_and_the_dst_days_take_the_nameplate_path,
+    case_the_ceiling_split_must_account_for_every_nameplate_interval,
     case_conservation_residual_is_computed_and_bounded,
     case_conservation_gates_are_declared_with_thresholds,
     case_a_rescaled_series_fails_the_residual_gate,
@@ -2462,6 +2674,9 @@ CASES = [
     case_every_optional_intake_read_distinguishes_absent_from_null,
     case_artifact_reports_physical_fit_not_a_boolean,
     case_artifact_states_the_battery_charging_assumption,
+    case_the_load_sharing_mitigation_separates_the_amps_from_the_breaker,
+    case_no_uncitable_breaker_claim_survives_anywhere,
+    case_artifact_publishes_the_pv_ceiling_basis_split,
     case_artifact_sum_rule_counts_the_proposed_breaker,
     case_artifact_carries_the_scoping_caveat,
     case_artifact_carries_no_identifiers,

@@ -73,10 +73,10 @@
    "note": "No heat pump has been selected, so the term is solved for rather than assumed: this is the largest minimum circuit ampacity (NEC 440.6 MCA, which already embeds the 125% on the largest motor) that fits. Conservative -- it adds the heat pump on top of a measured maximum that already contains the existing A/C.",
    "remaining_headroom_a": {
     "conservative_basis": {
-     "binding": 40.9896,
+     "binding": 37.0313,
      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-     "vs_meter_socket": 40.9896,
-     "vs_service_rating": 45.9896
+     "vs_meter_socket": 37.0313,
+     "vs_service_rating": 42.0313
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
@@ -108,10 +108,10 @@
    "note": "A second Tesla Wall Connector at 48 A continuous on its own 60 A 2-pole circuit. NEC 625.42 makes EVSE a continuous load, so the code value is 48 x 1.25 = 60 A. What remains is spare headroom, not a heat pump.",
    "remaining_headroom_a": {
     "conservative_basis": {
-     "binding": -19.0104,
+     "binding": -22.9687,
      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-     "vs_meter_socket": -19.0104,
-     "vs_service_rating": -14.0104
+     "vs_meter_socket": -22.9687,
+     "vs_service_rating": -17.9687
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
@@ -143,10 +143,10 @@
    "note": "The second EVSE at its code value, with the heat pump solved for against what is left.",
    "remaining_headroom_a": {
     "conservative_basis": {
-     "binding": -19.0104,
+     "binding": -22.9687,
      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-     "vs_meter_socket": -19.0104,
-     "vs_service_rating": -14.0104
+     "vs_meter_socket": -22.9687,
+     "vs_service_rating": -17.9687
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
@@ -178,10 +178,10 @@
    "note": "The battery is counted on the DEMAND side at 59.90 A. 11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A. The 120% busbar rule fails independently of this arithmetic, so ampacity is not what decides the battery here.",
    "remaining_headroom_a": {
     "conservative_basis": {
-     "binding": -78.9062,
+     "binding": -82.8645,
      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-     "vs_meter_socket": -78.9062,
-     "vs_service_rating": -73.9062
+     "vs_meter_socket": -82.8645,
+     "vs_service_rating": -77.8645
     },
     "conservative_basis_is": "the top of the daylight gross-load envelope: an upper bound that credits a whole hour's production to one quarter-hour, capped at the inverters' AC nameplate, which is a physical ceiling on what the array can put on the service in fifteen minutes",
     "measured_basis": {
@@ -314,15 +314,13 @@
    "reading": "All 7 conservation gates passed on 363 overlapping days (2025-07-24 to 2026-07-23). The derived series differs from enphase_meter by 0.323% and from pvoutput by 1.69%, against a 5.0% threshold, and tracks both at r >= 0.99986. The derived total sits inside the spread between the two reference instruments, which disagree with each other by 2.05%, more than either disagrees with the reconstruction. On this window the reconstruction is not the weakest link in the chain.",
    "references_disagree_pct": 2.05
   },
-  "honesty": "Gross load is EXACT only where the containing hour produced no PV and the interval exported none; in daylight it is a bound, and the upper bound is loose because it credits a whole hour's production to a single quarter-hour, capped at what the inverters can physically deliver in fifteen minutes. The bound is reported, not resolved -- 15-minute production was never metered here.",
-  "hours_with_enphase_reading": 37472,
+  "honesty": "Gross load is EXACT only where the containing hour produced no PV and the interval exported none; in daylight it is a bound, and the upper bound is loose because it credits a whole hour's production to a single quarter-hour, capped at what the inverters can physically deliver in fifteen minutes. It is looser still on the intervals whose hour the Enphase file does not cover, which carry that physical cap with nothing to narrow it -- see pv_ceiling_basis_split for how many, and why no empirical figure is allowed to narrow them. The bound is reported, not resolved -- 15-minute production was never metered here.",
   "identity": "gross = import - export + pv",
   "intervals": 37920,
-  "intervals_on_the_empirical_hour_ceiling": 448,
-  "intervals_whose_upper_bound_exceeds_the_peak": 317,
-  "intervals_whose_upper_bound_exceeds_the_peak_pct": 0.836,
+  "intervals_whose_upper_bound_exceeds_the_peak": 368,
+  "intervals_whose_upper_bound_exceeds_the_peak_pct": 0.97,
   "max_lower_bound_kw": 17.96,
-  "max_upper_bound_kw": 24.77,
+  "max_upper_bound_kw": 25.53,
   "of_those_with_nonzero_export": 8,
   "point_determined_fraction_pct": 45.264,
   "point_determined_intervals": 17164,
@@ -355,6 +353,21 @@
    "corroboration_reading": "Every independent maximum sits below the nameplate, so nothing in the record contradicts it. These are corroboration, not the basis of the ceiling; any one of them exceeding the nameplate stops the run.",
    "per_interval_ceiling_kwh": 2.3625,
    "why_not_the_observed_maximum": "The largest DERIVED hourly production is not a per-interval ceiling: a quarter-hour can legitimately carry more than a quarter of the best full hour, through intra-hour ramps and cloud-edge lensing. Capping on it would produce an 'upper bound' able to sit below true gross demand, which is the direction a capacity answer must never fail in. The nameplate is looser and is the safe direction."
+  },
+  "pv_ceiling_basis_split": {
+   "enphase_coverage_first_hour": "2025-01-01 00:00",
+   "enphase_coverage_last_hour": "2026-07-24 07:00",
+   "measured_hour_basis": "the containing hour HAS an Enphase reading, so the derived production for that hour is a measurement of it. The upper bound credits the whole hour to this one quarter-hour and is narrowed to the nameplate interval cap where the hour's own output could not physically land inside fifteen minutes -- narrowing by a measurement OF THAT HOUR, never by an observation of some other day.",
+   "measured_hour_intervals": 37472,
+   "measured_hour_pct": 98.819,
+   "nameplate_basis": "the containing hour has NO Enphase reading, so the only ceiling that holds is the inverters' AC nameplate. No empirical figure narrows it. The bound is loose on these intervals -- a 01:15 in the uncovered tail is credited with a full quarter-hour of nameplate production, which certainly did not happen -- and loose in the direction an upper bound is allowed to be wrong in.",
+   "nameplate_intervals": 448,
+   "nameplate_intervals_by_reason": {
+    "after_the_last_hour_the_enphase_files_measured": 256,
+    "excluded_dst_day": 192
+   },
+   "nameplate_pct": 1.181,
+   "why_not_the_empirical_hour_of_day_maximum": "For an hour with no reading, the largest production previously OBSERVED at that hour of day is not a ceiling on it: an uncovered hour can legitimately produce more than any hour yet seen at that clock position, through a clearer sky, a cooler cell temperature or a season the window sampled thinly. Taking the smaller of that figure and the nameplate cap selects the empirical one whenever it is lower, and the result is not an upper bound. It errs optimistically, which is the one direction a capacity verdict must never fail in, so the nameplate cap is used alone."
   },
   "zero_export_fraction_pct": 67.318,
   "zero_export_intervals": 25527
@@ -503,7 +516,7 @@
      "observed": 17.819,
      "passed": true,
      "requirement": "the hourly gross maximum cannot exceed the top of the 15-minute gross-load envelope",
-     "threshold": 24.77
+     "threshold": 25.53
     },
     {
      "catches": "a headline maximum demand contradicted from above by an independent instrument, which would make every headroom figure and every case verdict optimistic",
@@ -516,10 +529,10 @@
     }
    ],
    "instrument": "Enphase consumption CT, hourly whole-home gross",
-   "margin_below_the_envelope_top_kw": 6.951,
+   "margin_below_the_envelope_top_kw": 7.711,
    "margin_below_the_headline_peak_kw": 0.141,
    "max_hourly_mean_kw": 17.819,
-   "reading": "An hourly mean can only understate a 15-minute peak. This one sits 0.141 kW below the point-determined 15-minute maximum and 6.951 kW below the top of the envelope, which is the direction consistency requires. Both comparisons are enforced: a consumption CT reading above either one stops the run rather than being published beside a sentence saying the instruments agree."
+   "reading": "An hourly mean can only understate a 15-minute peak. This one sits 0.141 kW below the point-determined 15-minute maximum and 7.711 kW below the top of the envelope, which is the direction consistency requires. Both comparisons are enforced: a consumption CT reading above either one stops the run rather than being published beside a sentence saying the instruments agree."
   },
   "peak_a": 74.8333,
   "peak_coincident": {
@@ -540,12 +553,16 @@
   {
    "added_load_with_a": 0.0,
    "added_load_without_a": 60.0,
-   "also": "It needs no new breaker, which matters more than the amps here: the panel has 1 free full-size space(s), fewer than the two a 2-pole circuit takes.",
-   "basis": "Tesla Wall Connectors share power across one circuit, and NEC 625.42 permits an EVSE load-management system to be sized to the system's maximum output rather than the sum of the connectors.",
+   "basis": "NEC 625.42 permits an EVSE load-management system to be sized to the SYSTEM'S MAXIMUM OUTPUT rather than the sum of the connectors it serves. A second connector brought into a sharing group with the existing one therefore adds no code load: the group's maximum output is what it was. This is a code citation, and it is the whole of what this mitigation claims.",
    "case_both_heat_pump_mca_a": 76.4583,
    "case_second_evse_only_headroom_a": 76.4583,
-   "mitigation": "EVSE load sharing on the existing circuit",
-   "reduction_a": 60.0
+   "mitigation": "EVSE load sharing",
+   "physical_fit_if_it_needs_its_own_circuit": "A 2-pole branch circuit takes two ADJACENT full-size spaces. The panel has 1 free, short of two on the count alone, so it does not fit whatever their arrangement -- it would take consolidating existing circuits onto twin-density devices or adding a subpanel.",
+   "physical_fit_if_it_shares_the_existing_circuit": "No new breaker and no new space: the second connector joins the circuit already there, and the panel's 1 free full-size space(s) are not called on at all.",
+   "reduction_a": 60.0,
+   "shares_the_existing_branch_circuit": null,
+   "shares_the_existing_branch_circuit_not_determined": "NOT DETERMINED -- whether a second connector in a power-sharing group may land on the EXISTING branch circuit and its breaker, or whether each connector still requires its own branch circuit. That is a manufacturer installation fact; this project holds no source for it and none is invented here, so nothing is asserted either way. The manufacturer's installation instructions for power sharing, together with the AHJ's acceptance of the wiring method, would settle it. The amps above do not depend on the answer; the panel-space consequence does, and is given for both answers.",
+   "what_is_determined_here": "The amps. The added demand goes from 60.0 A to 0 A on NEC 625.42, and that figure does not depend on how the connectors are wired. Whether a new breaker is needed is a separate, unsettled question and is not folded into the saving."
   },
   {
    "basis": "The connector's output is settable; the code value follows it directly at 125% (NEC 625.42), and the minimum circuit is the smallest standard OCPD carrying that output at 80%.",
@@ -625,12 +642,12 @@
   "measurement_days": 395,
   "rule": "NEC 220.87 -- for an existing dwelling unit the calculated load may be taken as the maximum demand measured over at least 30 days, times 125%, in place of a nameplate calculation, where the data is acceptable to the AHJ.",
   "sensitivity_on_the_upper_bound": {
-   "binding": 40.9896,
+   "binding": 37.0313,
    "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-   "calculated_load_a": 129.0104,
-   "headroom_vs_meter_socket_a": 40.9896,
-   "headroom_vs_service_a": 45.9896,
-   "max_upper_bound_kw": 24.77,
+   "calculated_load_a": 132.9687,
+   "headroom_vs_meter_socket_a": 37.0313,
+   "headroom_vs_service_a": 42.0313,
+   "max_upper_bound_kw": 25.53,
    "why": "If the true 15-minute maximum sat at the top of the daylight envelope rather than at the exact peak, the answer would move by this much. It is a bound, not an estimate: the daylight cap is the inverters' AC nameplate, so no quarter-hour is credited with more production than the array can physically deliver, and nothing in the record suggests a whole hour's output ever landed in one quarter-hour. The headline maximum stays the measured one, but no case verdict is asserted from it alone -- this is the conservative basis every verdict is also computed on."
   },
   "steps": [

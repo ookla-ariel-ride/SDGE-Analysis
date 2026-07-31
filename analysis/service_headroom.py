@@ -43,7 +43,16 @@ Hourly PV is then derived, `pv_hour = max(sam_hour - import_hour + export_hour, 
 and each 15-minute interval is reported as a BOUND rather than a point:
 
     lower = import                      (all PV exported, none self-consumed)
-    upper = import - export + min(pv_hour_bound, kw_ac * 0.25)
+    upper = import - export + pv_up
+
+`pv_up` is `min(pv_hour, kw_ac * 0.25)` on the hours the Enphase file covers
+and `kw_ac * 0.25` on the hours it does not. The asymmetry is deliberate: a
+covered hour has a MEASUREMENT of itself and may be narrowed by it, while an
+uncovered hour has only the physical cap. The largest production previously
+observed at the same hour of day is not a ceiling on an uncovered hour -- that
+hour can legitimately beat every one seen before it -- so it narrows nothing,
+and the uncovered intervals carry the full nameplate cap. Which basis each
+interval took is counted in the artifact rather than implied.
 
 `kw_ac` is the array's INVERTER AC NAMEPLATE, read from intake
 (`solar.kw_ac`). It is a physical ceiling: the array cannot put more onto the
@@ -85,13 +94,13 @@ Two joint-computation hazards are handled explicitly.
   rates.expected_day_hours). The two disagree only on those two days -- the
   Enphase file literally repeats one value at 01:00 and 02:00 of the fall-back
   day -- so those dates are excluded from every meter x Enphase computation and
-  fall back to the empirical per-hour PV ceiling. They are NOT excluded from the
+  their intervals take the nameplate PV cap. They are NOT excluded from the
   maximum-demand search, which uses the meter alone.
 
   Zero padding. The current-year Enphase export is a full 8760 rows with the
   future zero-filled. The zero tail is truncated at the last nonzero row and
   never treated as measurement; treating it as data would invent hours of zero
-  household load.
+  household load. Those intervals take the nameplate PV cap too.
 
 Hourly aggregation divides by the interval count actually present, never by a
 hard-coded four. A naive `groupby(date, hour).sum()` reports a phantom 21.4 kW
@@ -1073,26 +1082,25 @@ def dst_dates_in(dates):
 
 
 def derive_pv(hsums, sam, excluded_days):
-    """({(date, hour): pv_kwh}, per-hour-of-day empirical ceiling).
+    """{(date, hour): pv_kwh} for the hours the Enphase file actually covers.
 
     pv_hour = max(sam_hour - import_hour + export_hour, 0), which is the whole
     identity gross = import - export + pv rearranged. The clip at zero absorbs
     the instrument disagreement in dark hours, where the true value is zero and
     the residual can land either side of it.
 
-    The per-hour-of-day ceiling is the largest production this array has ever
-    delivered in that hour across the window. It is the fallback bound for the
-    handful of hours the Enphase file does not cover, and it is what keeps a
-    01:15 AM interval from being credited with a full quarter-hour of sunshine.
+    Hours outside this mapping have no production measurement at all, and no
+    empirical stand-in may be manufactured for them. In particular a
+    per-hour-of-day maximum -- the largest production seen at that clock
+    position on OTHER days -- is not a ceiling on an hour nobody measured, so
+    nothing of the kind is returned here. See gross_envelope().
     """
-    pv, ceiling = {}, {h: 0.0 for h in range(24)}
+    pv = {}
     for (d, h), (imp, exp, _n) in hsums.items():
         if d in excluded_days or (d, h) not in sam:
             continue
-        v = max(sam[(d, h)] - imp + exp, 0.0)
-        pv[(d, h)] = v
-        ceiling[h] = max(ceiling[h], v)
-    return pv, ceiling
+        pv[(d, h)] = max(sam[(d, h)] - imp + exp, 0.0)
+    return pv
 
 
 PV_CEILING_MISSING = (
@@ -1184,29 +1192,119 @@ def pv_ac_ceiling(kw_ac, inverter_model, inverter_count, corroboration):
     }
 
 
-def gross_envelope(intervals, pv, ceiling, ac_ceiling_kw):
-    """[(date, hour_frac, lower_kw, upper_kw, export_kwh, exact)] per interval.
+PV_BASIS_MEASURED = "measured_hour"
+PV_BASIS_NAMEPLATE = "nameplate"
+
+PV_BASIS_MEANING = {
+    PV_BASIS_MEASURED: (
+        "the containing hour HAS an Enphase reading, so the derived production "
+        "for that hour is a measurement of it. The upper bound credits the "
+        "whole hour to this one quarter-hour and is narrowed to the nameplate "
+        "interval cap where the hour's own output could not physically land "
+        "inside fifteen minutes -- narrowing by a measurement OF THAT HOUR, "
+        "never by an observation of some other day."),
+    PV_BASIS_NAMEPLATE: (
+        "the containing hour has NO Enphase reading, so the only ceiling that "
+        "holds is the inverters' AC nameplate. No empirical figure narrows it. "
+        "The bound is loose on these intervals -- a 01:15 in the uncovered "
+        "tail is credited with a full quarter-hour of nameplate production, "
+        "which certainly did not happen -- and loose in the direction an "
+        "upper bound is allowed to be wrong in."),
+}
+
+PV_BASIS_WHY_NOT_EMPIRICAL = (
+    "For an hour with no reading, the largest production previously OBSERVED "
+    "at that hour of day is not a ceiling on it: an uncovered hour can "
+    "legitimately produce more than any hour yet seen at that clock position, "
+    "through a clearer sky, a cooler cell temperature or a season the window "
+    "sampled thinly. Taking the smaller of that figure and the nameplate cap "
+    "selects the empirical one whenever it is lower, and the result is not an "
+    "upper bound. It errs optimistically, which is the one direction a "
+    "capacity verdict must never fail in, so the nameplate cap is used alone.")
+
+
+def gross_envelope(intervals, pv, ac_ceiling_kw):
+    """[(date, hour_frac, lower_kw, upper_kw, export_kwh, exact, pv_basis)].
 
     lower = import: every kWh the PV made was exported, none self-consumed.
-    upper = import - export + min(pv_hour_bound, ac_ceiling * 0.25): the whole
-            hour's production landed inside this one quarter-hour, capped by
-            the inverters' AC nameplate, which is what they can physically
-            deliver in fifteen minutes.
+    upper = import - export + pv_up, where pv_up is the most production that
+            could have landed inside this one quarter-hour.
 
-    The two coincide -- gross is the metered import, exactly -- wherever the
-    hour made no PV and the interval exported none. `exact` marks those.
+    `pv_up` has exactly two bases, and which one applies is recorded per
+    interval rather than left to be inferred:
+
+      * PV_BASIS_MEASURED -- the containing hour is covered by the Enphase
+        file. `min(pv_hour, ac_ceiling * 0.25)`: the hour's whole measured
+        output, narrowed by the physical fact that fifteen minutes cannot
+        carry more than a quarter of the inverters' AC nameplate.
+      * PV_BASIS_NAMEPLATE -- the hour is not covered (the zero-padded tail of
+        the current-year export, and the two excluded DST days). `ac_ceiling *
+        0.25` alone. Nothing empirical may narrow it -- see
+        PV_BASIS_WHY_NOT_EMPIRICAL, which is the standing reason a
+        per-hour-of-day maximum must not be reintroduced here.
+
+    The bound collapses -- gross is the metered import, exactly -- wherever the
+    hour made no PV and the interval exported none. `exact` marks those, and it
+    can only happen on the measured basis: an uncovered hour always carries the
+    full nameplate cap, so it is never point-determined.
     """
+    cap = ac_ceiling_kw * 0.25
     out = []
     for d, hf, imp, exp in intervals:
-        h = int(hf)
-        bound = pv.get((d, h))
-        if bound is None:
-            bound = ceiling[h]
-        pv_up = min(bound, ac_ceiling_kw * 0.25)
+        hour_pv = pv.get((d, int(hf)))
+        if hour_pv is None:
+            pv_up, basis = cap, PV_BASIS_NAMEPLATE
+        else:
+            pv_up, basis = min(hour_pv, cap), PV_BASIS_MEASURED
         lo = imp * 4.0
         up = max((imp - exp + pv_up) * 4.0, lo)
-        out.append((d, hf, lo, up, exp, up - lo < 1e-9))
+        out.append((d, hf, lo, up, exp, up - lo < 1e-9, basis))
     return out
+
+
+def ceiling_basis_split(env, excluded_days, sam):
+    """How many intervals took each PV ceiling, and why the nameplate ones did.
+
+    The nameplate intervals are the loose end of the envelope, so the artifact
+    states their count and their CAUSE rather than leaving a reader to work out
+    that some of the window has no production measurement behind it. Every
+    nameplate interval is attributed to one of the four reasons an hour can be
+    uncovered, and the attribution is checked to account for all of them.
+    """
+    first, last = min(sam), max(sam)
+    reasons = collections.Counter()
+    measured = nameplate = 0
+    for d, hf, _lo, _up, _exp, _exact, basis in env:
+        if basis == PV_BASIS_MEASURED:
+            measured += 1
+            continue
+        nameplate += 1
+        if d in excluded_days:
+            reasons["excluded_dst_day"] += 1
+        elif (d, int(hf)) > last:
+            reasons["after_the_last_hour_the_enphase_files_measured"] += 1
+        elif (d, int(hf)) < first:
+            reasons["before_the_first_hour_the_enphase_files_cover"] += 1
+        else:
+            reasons["missing_hour_inside_the_enphase_coverage"] += 1
+    if sum(reasons.values()) != nameplate:
+        raise SystemExit(
+            "service_headroom.py: the nameplate-ceiling intervals do not add up "
+            f"({sum(reasons.values())} attributed, {nameplate} counted) -- the "
+            "split published beside the envelope would be wrong")
+    n = len(env)
+    return {
+        "measured_hour_intervals": measured,
+        "measured_hour_pct": _r(100.0 * measured / n, 3),
+        "measured_hour_basis": PV_BASIS_MEANING[PV_BASIS_MEASURED],
+        "nameplate_intervals": nameplate,
+        "nameplate_pct": _r(100.0 * nameplate / n, 3),
+        "nameplate_basis": PV_BASIS_MEANING[PV_BASIS_NAMEPLATE],
+        "nameplate_intervals_by_reason": dict(sorted(reasons.items())),
+        "enphase_coverage_first_hour": f"{first[0]} {first[1]:02d}:00",
+        "enphase_coverage_last_hour": f"{last[0]} {last[1]:02d}:00",
+        "why_not_the_empirical_hour_of_day_maximum": PV_BASIS_WHY_NOT_EMPIRICAL,
+    }
 
 
 def fmt_ts(d, hf):
@@ -1238,6 +1336,41 @@ BATTERY_CHARGING_BASIS = (
     f"overstated. On that basis the code value is "
     f"{amps(BATTERY_INVERTER_KW):.2f} A x 1.25 continuous = "
     f"{amps(BATTERY_INVERTER_KW) * NEC_625_42_FACTOR:.2f} A.")
+
+# The EVSE load-sharing mitigation splits into a code claim and a hardware
+# claim, and only one of them is this project's to make.
+#
+# The AMPS are code: NEC 625.42 sizes an EVSE load-management system on the
+# system's maximum output rather than the sum of its connectors, so a second
+# connector joined to the existing one adds no code load. That is the
+# mitigation's actual content and it is cited.
+#
+# The BREAKER is hardware: whether two connectors in a power-sharing group may
+# occupy ONE branch circuit, or whether each still needs its own circuit and
+# breaker, is a manufacturer installation fact. Nothing in this repo records
+# it -- not research/, not TECHNICAL.md, not the intake -- so it is not
+# asserted in either direction, the same treatment the battery's charge input
+# gets in BATTERY_CHARGING_NOT_DETERMINED. The physical-fit consequence is
+# given BOTH ways instead, so the reader can act on whichever the
+# manufacturer's instructions turn out to say.
+EVSE_SHARING_AMPS_BASIS = (
+    "NEC 625.42 permits an EVSE load-management system to be sized to the "
+    "SYSTEM'S MAXIMUM OUTPUT rather than the sum of the connectors it serves. "
+    "A second connector brought into a sharing group with the existing one "
+    "therefore adds no code load: the group's maximum output is what it was. "
+    "This is a code citation, and it is the whole of what this mitigation "
+    "claims.")
+
+EVSE_SHARING_CIRCUIT_NOT_DETERMINED = (
+    "NOT DETERMINED -- whether a second connector in a power-sharing group may "
+    "land on the EXISTING branch circuit and its breaker, or whether each "
+    "connector still requires its own branch circuit. That is a manufacturer "
+    "installation fact; this project holds no source for it and none is "
+    "invented here, so nothing is asserted either way. The manufacturer's "
+    "installation instructions for power sharing, together with the AHJ's "
+    "acceptance of the wiring method, would settle it. The amps above do not "
+    "depend on the answer; the panel-space consequence does, and is given for "
+    "both answers.")
 
 BATTERY_CHARGING_NOT_DETERMINED = (
     "NOT DETERMINED -- the selected unit's AC CHARGE INPUT. No figure for it "
@@ -1961,7 +2094,7 @@ def build():
     sam, sam_prov = load_sam(sam_paths)
     hsums = hourly_sums(intervals)
     dst = dst_dates_in(set(days))
-    pv, ceiling = derive_pv(hsums, sam, dst)
+    pv = derive_pv(hsums, sam, dst)
 
     # The per-interval PV ceiling is the inverters' AC nameplate, a physical
     # bound -- not the largest observed hourly production, which is not one.
@@ -1983,12 +2116,16 @@ def build():
           "lower bound on production in that interval"),
          (f"5-minute inverter output ({PVOUTPUT_5MIN.name})", pvo_max_w / 1000.0,
           "largest 5-minute AC output the monitoring feed recorded")])
-    env = gross_envelope(intervals, pv, ceiling, kw_ac)
+    env = gross_envelope(intervals, pv, kw_ac)
 
     n = len(env)
-    zero_export = sum(1 for _d, _h, _lo, _up, exp, _e in env if exp == 0.0)
+    zero_export = sum(1 for e in env if e[4] == 0.0)
     exact = sum(1 for e in env if e[5])
-    sam_hours = sum(1 for d, hf, *_ in env if (d, int(hf)) in pv)
+    # The two ceiling bases, counted -- and for the nameplate ones, WHY the hour
+    # is uncovered. An uncovered interval is bounded by the nameplate alone, so
+    # the split is the reader's handle on how much of the envelope's width is
+    # measurement-narrowed and how much is the bare physical cap.
+    ceiling_split = ceiling_basis_split(env, dst, sam)
 
     peak = max(env, key=lambda e: e[2])
     peak_kw = peak[2]
@@ -2268,24 +2405,39 @@ def build():
                     else _r(avail["meter_socket"] - code_a)),
             })
         evse_mitigations = [
-            {"mitigation": "EVSE load sharing on the existing circuit",
-             "basis": ("Tesla Wall Connectors share power across one circuit, "
-                       "and NEC 625.42 permits an EVSE load-management system "
-                       "to be sized to the system's maximum output rather than "
-                       "the sum of the connectors."),
+            {"mitigation": "EVSE load sharing",
+             "basis": EVSE_SHARING_AMPS_BASIS,
              "added_load_without_a": _r(evse2_a),
              "added_load_with_a": 0.0,
              "reduction_a": _r(share_reduction),
              "case_second_evse_only_headroom_a": avail_binding,
              "case_both_heat_pump_mca_a": avail_binding,
-             "also": ("It needs no new breaker, which matters more than the "
-                      "amps here: "
-                      + (f"the panel has {occ['spaces_free']} free full-size "
-                         f"space(s), fewer than the two a 2-pole circuit takes."
-                         if occ["spaces_free"] < 2 else
-                         f"the panel has {occ['spaces_free']} free full-size "
-                         f"space(s), but whether two of them are adjacent is "
-                         f"not recorded."))},
+             "shares_the_existing_branch_circuit": None,
+             "shares_the_existing_branch_circuit_not_determined":
+                 EVSE_SHARING_CIRCUIT_NOT_DETERMINED,
+             "physical_fit_if_it_shares_the_existing_circuit": (
+                 "No new breaker and no new space: the second connector joins "
+                 "the circuit already there, and the panel's "
+                 f"{occ['spaces_free']} free full-size space(s) are not called "
+                 "on at all."),
+             "physical_fit_if_it_needs_its_own_circuit": (
+                 f"A 2-pole branch circuit takes two ADJACENT full-size "
+                 f"spaces. The panel has {occ['spaces_free']} free"
+                 + (", short of two on the count alone, so it does not fit "
+                    "whatever their arrangement -- it would take consolidating "
+                    "existing circuits onto twin-density devices or adding a "
+                    "subpanel."
+                    if occ["spaces_free"] < 2 else
+                    ", enough on the count, but the schedule records devices "
+                    "rather than slot positions, so whether two of them are "
+                    "adjacent is not established -- see the second_evse_only "
+                    "case's physical_fit.")),
+             "what_is_determined_here": (
+                 "The amps. The added demand goes from "
+                 f"{_r(evse2_a)} A to 0 A on NEC 625.42, and that figure does "
+                 "not depend on how the connectors are wired. Whether a new "
+                 "breaker is needed is a separate, unsettled question and is "
+                 "not folded into the saving.")},
             {"mitigation": "Charge-rate limit on the second EVSE",
              "basis": ("The connector's output is settable; the code value "
                        "follows it directly at 125% (NEC 625.42), and the "
@@ -2384,7 +2536,7 @@ def build():
                 ("second_evse_only", "case"),
                 ("heat_pump_and_second_evse", "case"),
                 ("heat_pump_second_evse_and_battery", "case"),
-                ("EVSE load sharing on the existing circuit", "mitigation"),
+                ("EVSE load sharing", "mitigation"),
                 ("Charge-rate limit on the second EVSE", "mitigation"),
                 ("panel.existing_evse_kw", "intake fact"),
                 ("added_load_code_values.second_evse_a", "code value"),
@@ -2458,8 +2610,7 @@ def build():
             "point_determined_intervals": exact,
             "point_determined_fraction_pct": _r(100.0 * exact / n, 3),
             "bounded_intervals": n - exact,
-            "hours_with_enphase_reading": sam_hours,
-            "intervals_on_the_empirical_hour_ceiling": n - sam_hours,
+            "pv_ceiling_basis_split": ceiling_split,
             "pv_ac_ceiling": ac_ceiling,
             "max_lower_bound_kw": _r(peak_kw),
             "max_upper_bound_kw": _r(env_max),
@@ -2472,8 +2623,12 @@ def build():
                 "PV and the interval exported none; in daylight it is a bound, "
                 "and the upper bound is loose because it credits a whole hour's "
                 "production to a single quarter-hour, capped at what the "
-                "inverters can physically deliver in fifteen minutes. The bound "
-                "is reported, not resolved -- 15-minute production was never "
+                "inverters can physically deliver in fifteen minutes. It is "
+                "looser still on the intervals whose hour the Enphase file does "
+                "not cover, which carry that physical cap with nothing to "
+                "narrow it -- see pv_ceiling_basis_split for how many, and why "
+                "no empirical figure is allowed to narrow them. The bound is "
+                "reported, not resolved -- 15-minute production was never "
                 "metered here."),
             "conservation": conservation_check(pv, dst),
         },
