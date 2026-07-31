@@ -103,8 +103,17 @@ panel:                               # omit only if you don't want a service-hea
                                      # without both ends the 120% rule's position
                                      # condition reports "not determined".
   pv_breaker_position: "bottom"      # "top" or "bottom" — which end of the bus the
-                                     # backfeed breaker lands on. NEC 705.12(B)(3)(2)
-                                     # wants the opposite end from the main.
+                                     # EXISTING backfeed breaker lands on. NEC
+                                     # 705.12(B)(3)(2) wants the opposite end from
+                                     # the main.
+  battery_breaker_position: null     # "top" or "bottom" — where a NEW battery/source
+                                     # breaker would land, if a position has been
+                                     # surveyed for one. null until it has. This is a
+                                     # separate answer from pv_breaker_position: where
+                                     # the existing PV breaker sits says nothing about
+                                     # where another 2-pole breaker could go, so it is
+                                     # never carried over, and null keeps the battery's
+                                     # position condition at "not determined".
   schedule:                          # one entry per PHYSICAL device, top to bottom.
                                      # `amps` is a single int, or a list for a tandem or
                                      # quad device (one value per pole group). `label`
