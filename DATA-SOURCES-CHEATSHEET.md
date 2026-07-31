@@ -487,13 +487,23 @@ to scope whether a new circuit fits. This section gathers the panel side of that
 > look. A licensed electrician's load calculation and your building department's sign-off
 > are what actually authorize a circuit.
 
+This section is tiered field by field, not as a block. The bare equipment **ratings** —
+amps, kA, slot counts, and which end of the bus a breaker sits on — are `public-ok`: they
+come from a short list of standard values that millions of dwellings share, and the
+published headroom and 705.12(B)(3)(2) verdicts cannot be audited without them. The
+**identifying detail** is `private-only`: catalog numbers, the enclosure description, the
+meter class, the breaker family, and the whole circuit schedule, whose `device` markings
+and door-legend `label`s describe the inside of one particular house. Each field says which
+it is and why in its own `privacy_note`.
+
 ```yaml
 id: panel_service_rating_a
 question: "What is your main breaker rated at, in amps?"
 type: number
 required_if: has_new_load_interest
 where: "Stamped on the main breaker's own handle — the large one at the top or bottom of the stack, often placarded SERVICE DISCONNECT. Read the handle, not the meter and not the panel's rating label: a panel can be fitted with a main smaller than its bus, sometimes with a placard saying not to enlarge it."
-privacy: private-only
+privacy: public-ok
+privacy_note: "A bare service size — 100, 125, 150, 175, 200 A — shared by millions of dwellings and narrowing nobody down; the catalog number of the breaker carrying it is equipment-specific and stays private-only."
 ```
 
 ```yaml
@@ -503,6 +513,7 @@ type: string
 required_if: has_new_load_interest
 where: "On the face of the main breaker, beside the amp stamp. It identifies the breaker type, which the panel's rating label refers back to when it states a short-circuit rating per main type."
 privacy: private-only
+privacy_note: "A catalog number names one specific device in one specific panel, which is what the bare rating does not — it stays out of every committed artifact."
 ```
 
 ```yaml
@@ -511,7 +522,8 @@ question: "What is the panel's busbar rated at, in amps?"
 type: number
 required_if: has_new_load_interest
 where: "On the rating label inside the door, usually as '___ AMPS MAX', often repeated on the wiring diagram printed beside it. The busbar is the bar the breakers clip onto, and it is what the 120% solar-backfeed rule is measured against. If the label covers a family of catalog numbers with different bus ratings and none is marked, record what the label actually says instead of picking one."
-privacy: private-only
+privacy: public-ok
+privacy_note: "A bus is rated at one of a few standard values (100/125/150/200/225 A); publishing which one says nothing about whose panel it is, and the 120% arithmetic cannot be shown without it."
 ```
 
 ```yaml
@@ -521,6 +533,7 @@ type: string
 required_if: has_new_load_interest
 where: "On the same rating label inside the door, and often on a sticker on the outside of the can. It is what a supply house needs to sell you a matching breaker or cover."
 privacy: private-only
+privacy_note: "Same reason as the main breaker's catalog number: it names one enclosure model rather than a rating, so it stays out of committed artifacts."
 ```
 
 ```yaml
@@ -529,7 +542,8 @@ question: "How many physical breaker spaces does the panel have?"
 type: number
 required_if: has_new_load_interest
 where: "Count the slots with the door open — occupied, blanked off, and empty alike. Space runs out before ampacity does in plenty of houses, so this is a separate question from the load calculation."
-privacy: private-only
+privacy: public-ok
+privacy_note: "A count of slots in a stock load centre; the free-space verdict cannot be published without it, and what those slots FEED is the private part."
 ```
 
 ```yaml
@@ -538,7 +552,8 @@ question: "What is the panel's maximum circuit count with tandem breakers?"
 type: number
 required_if: has_new_load_interest
 where: "On the rating label, written like '12 SPACES / 24 CIRCUITS'. Tandems only fit where the panel is listed to accept them, so take the label's ceiling rather than doubling the space count."
-privacy: private-only
+privacy: public-ok
+privacy_note: "The other half of the same stock-enclosure geometry as panel_spaces, and identifying in the same degree: not at all."
 ```
 
 ```yaml
@@ -548,6 +563,7 @@ type: string
 required_if: has_new_load_interest
 where: "The rating label gives the NEMA type (NEMA 1 indoor, NEMA 3R rainproof, and so on). Note whether it is a meter-main combination, with meter and main breaker in one outdoor enclosure, because that adds the socket rating below."
 privacy: private-only
+privacy_note: "Free text describing where on the building the gear sits and how it is arranged — a physical description of one house, not a rating, so it stays private-only. The socket rating it implies is published on its own."
 ```
 
 ```yaml
@@ -556,7 +572,8 @@ question: "If the meter shares the panel enclosure, what continuous amp rating i
 type: number
 required_if: has_new_load_interest
 where: "On the rating label of a meter-main combination, worded like 'METER SOCKET RATED ___ AMPS CONTINUOUS'. It is a third limit, separate from the bus and from the main, and usually the tightest one. Set it to null if you looked and the meter sits in its own enclosure or no such rating is printed — that is an answer, and the headroom is then reported against the main alone. Leave the key out entirely if you have not looked; the headroom is then published as an upper limit that a socket rating could tighten, rather than as though the constraint did not exist."
-privacy: private-only
+privacy: public-ok
+privacy_note: "A printed continuous rating, same class of fact as the main and the bus; it is the binding constraint in the published headroom, which cannot be shown without it."
 ```
 
 ```yaml
@@ -565,7 +582,8 @@ question: "What short-circuit current rating (SCCR, in kA) does the rating label
 type: number
 required_if: has_new_load_interest
 where: "On the rating label, often conditioned on which main is installed ('___ AMPS WITH TYPE __ MAIN'). Take the assembly figure matching your installed main; it can be lower than the rating marked on the breaker by itself."
-privacy: private-only
+privacy: public-ok
+privacy_note: "A kA rating off a label, drawn from the same short standard list (10/22/25 kA) as every other panel of its type."
 ```
 
 ```yaml
@@ -575,6 +593,7 @@ type: string
 required_if: has_new_load_interest
 where: "On the meter face or its nameplate, alongside the form and voltage. A meter class is a socket rating, not a service rating — record it, and don't let it stand in for the main breaker."
 privacy: private-only
+privacy_note: "Read off the utility's own metering equipment and recorded alongside the meter's form, model and AMI type, which together describe one installed meter — it stays private-only, and no committed artifact may quote it."
 ```
 
 ```yaml
@@ -583,7 +602,8 @@ question: "If solar or a battery is connected to the panel, what is its backfeed
 type: number
 required_if: has_new_load_interest
 where: "The breaker the solar feeds through, usually at the far end of the stack from the main and often under a red PV or DO-NOT-RELOCATE sticker. Read the handle stamp, then cross-check it against the 'Max System AC Current' figure on the interconnection placard beside the panel. Set it to null if you looked at the panel and nothing backfeeds it — that is an answer, and it lets the 120% busbar check resolve. Leave the key out entirely if you have not looked; the check then reports not_determined instead of crediting a zero nobody verified."
-privacy: private-only
+privacy: public-ok
+privacy_note: "A breaker rating, no more identifying than the main's; the repo already publishes this array's kW DC, module count and PTO date, all of which say far more about the house."
 ```
 
 ```yaml
@@ -593,6 +613,7 @@ type: string
 required_if: has_new_load_interest
 where: "Read the type letters off any existing branch breaker (BR, QO, HOM, THQL…) and check the rating label, which lists the classified types the panel accepts. Any new circuit has to use a compatible breaker."
 privacy: private-only
+privacy_note: "A manufacturer and product line rather than a rating; it belongs with the catalog numbers it is read off, and stays private-only for the same reason."
 ```
 
 ```yaml
@@ -600,8 +621,19 @@ id: panel_pv_breaker_position
 question: "Which end of the breaker stack is the solar backfeed breaker at, top or bottom — and which end is the main at?"
 type: string
 required_if: has_new_load_interest
-where: "NEC 705.12(B)(3)(2) is two conditions, not one: the 120% arithmetic, and the backfeed breaker sitting at the opposite end of the busbar from the main. The check compares the two ends, so record both — the backfeed breaker's as panel.pv_breaker_position and the main's as panel.main_breaker_position, each 'top' or 'bottom'. With either one missing the position condition is reported as not determined rather than assumed, and the arithmetic alone is never read as a compliant verdict. Null if nothing backfeeds the panel. This field describes the breaker ALREADY on the bus; a proposed battery breaker gets its own answer, panel.battery_breaker_position, below."
-privacy: private-only
+where: "NEC 705.12(B)(3)(2) is two conditions, not one: the 120% arithmetic, and the backfeed breaker sitting at the opposite end of the busbar from the main. The check compares the two ends, so record both — the backfeed breaker's as panel.pv_breaker_position and the main's as panel.main_breaker_position, each 'top' or 'bottom'. With either one missing the position condition is reported as not determined rather than assumed, and the arithmetic alone is never read as a compliant verdict. Null if nothing backfeeds the panel. This field describes the breaker ALREADY on the bus; a proposed battery breaker gets its own answer, panel.battery_breaker_position, below. The main's end is a separate answer with its own block, panel_main_breaker_position, immediately below."
+privacy: public-ok
+privacy_note: "Which end of a busbar a breaker sits on is one bit — top or bottom — and it is what makes the published 705.12(B)(3)(2) verdict checkable."
+```
+
+```yaml
+id: panel_main_breaker_position
+question: "Which end of the breaker stack does the main supply land on, top or bottom?"
+type: string
+required_if: has_new_load_interest
+where: "The main is the large breaker at one end of the stack, usually placarded SERVICE DISCONNECT. Record which end as panel.main_breaker_position, 'top' or 'bottom'. It is the second half of NEC 705.12(B)(3)(2)'s position condition — every backfeed breaker's end is judged against it — so with this missing the condition reports not determined for every source, however the 120% arithmetic came out. Leave the key out until someone has looked; nothing is inferred from where the PV breaker sits."
+privacy: public-ok
+privacy_note: "One bit, top or bottom, on a stock enclosure; without it no position verdict in the artifact can be audited."
 ```
 
 ```yaml
@@ -610,7 +642,8 @@ question: "If you are considering a battery, has a position been surveyed for it
 type: string
 required_if: has_new_load_interest
 where: "This is a SEPARATE answer from panel.pv_breaker_position, and the existing PV breaker's end is never reused for it: a panel can satisfy NEC 705.12(B)(3)(2) for the breaker already installed and have nowhere at that end to land another. Answer only from a survey of the panel — two adjacent full-size spaces at the end of the bus opposite the main, and which end that is. Null until someone has looked, which keeps the battery's position condition at 'not determined' instead of borrowing a compliant-looking answer from a different breaker."
-privacy: private-only
+privacy: public-ok
+privacy_note: "Same one bit as the other two positions, about a breaker that does not exist yet."
 ```
 
 ```yaml
@@ -620,6 +653,7 @@ type: list
 required_if: has_new_load_interest
 where: "Two sources of different quality. Device markings are read straight off each breaker (catalog number and amp stamp) and are firm. Circuit descriptions come from the hand-lettered legend on the door and get matched to devices by position, which is weaker — record that mapping as provisional and note any legend entry you can't pair with a device. Photograph the stack top to bottom in overlapping frames so no position falls between shots. A tandem or quad device carries one amp value per pole group."
 privacy: private-only
+privacy_note: "The strongest private-only field in this section: `device` gives catalog numbers, and `label` and any note transcribe a door legend describing what the inside of one particular house runs. No committed artifact may carry a device string, a label string or per-device detail — only aggregates over the schedule (device count, spaces and pole positions used and free, twin-density count, the branch-OCPD sum and the largest branch OCPD)."
 ```
 
 ## F. Gas usage 📥🔒 (if you have gas)

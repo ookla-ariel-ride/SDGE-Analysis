@@ -61,9 +61,14 @@ vehicles:                            # one entry per EV; [] if none (has_ev: fal
     in_service_date: 2022-01-01
     odometer: 88888
 
-charger:
+charger:                             # omit the whole block if you have no EV
+                                     # (has_ev: false) — nothing reads it then
   kw: 11.5                           # home EV charger max power — the behavior model's
-                                     # destination cap when it re-places shifted charging
+                                     # destination cap when it re-places shifted charging,
+                                     # and the existing-EVSE fact service_headroom.py
+                                     # publishes. Required only where has_ev is not
+                                     # false: with no EV the second-charger scenarios are
+                                     # reported not applicable and this key is not read.
 
 panel:                               # omit only if you don't want a service-headroom
                                      # answer (has_new_load_interest: false). Every value
@@ -74,63 +79,91 @@ panel:                               # omit only if you don't want a service-hea
                                      # card on the inside of the door. Photograph the
                                      # labels; nothing here needs the dead front off, and
                                      # opening the panel is an electrician's job.
-  service_rating_a: 100              # main breaker rating — the number stamped on the
-                                     # main's handle. NOT the bus rating below, and not
-                                     # the meter class; a derated main is common.
-  main_breaker_catalog: "EX-M2100"   # catalog/style number printed on the main breaker
-  busbar_rating_a: 125               # bus rating off the panel's own rating label
-                                     # ("___ AMPS MAX"); often higher than the main
-  enclosure_catalog: "EX-LC1224"     # load-center catalog number on the rating label
-  spaces: 12                         # physical breaker spaces (count them)
-  max_circuits: 24                   # ceiling with CTL tandems — also on the label
+                                     #
+                                     # TIERS ARE PER FIELD HERE, not per block. Each line
+                                     # is tagged [public-ok] or [private-only] to match
+                                     # its cheatsheet privacy tier. The bare RATINGS are
+                                     # public-ok — an ampere, kA or slot count comes from
+                                     # a short list of standard values millions of
+                                     # dwellings share, and the published headroom and
+                                     # NEC 705.12(B)(3)(2) verdicts cannot be audited
+                                     # without them. The IDENTIFYING detail is
+                                     # private-only — catalog numbers, the enclosure
+                                     # description, the meter class, the breaker family
+                                     # and the whole schedule, which names what the
+                                     # inside of one particular house runs. A
+                                     # [private-only] value must never reach a committed
+                                     # artifact; data/service_headroom.json publishes
+                                     # only aggregates over the schedule, and
+                                     # analysis/test_service_headroom.py fails if any
+                                     # private-only value turns up in it.
+  service_rating_a: 100              # [public-ok] main breaker rating — the number
+                                     # stamped on the main's handle. NOT the bus rating
+                                     # below, and not the meter class; a derated main is
+                                     # common.
+  main_breaker_catalog: "EX-M2100"   # [private-only] catalog/style number printed on the
+                                     # main breaker — it names one device, not a rating
+  busbar_rating_a: 125               # [public-ok] bus rating off the panel's own rating
+                                     # label ("___ AMPS MAX"); often higher than the main
+  enclosure_catalog: "EX-LC1224"     # [private-only] load-center catalog number on the
+                                     # rating label
+  spaces: 12                         # [public-ok] physical breaker spaces (count them)
+  max_circuits: 24                   # [public-ok] ceiling with CTL tandems — on the label
   enclosure_type: "NEMA 1 indoor, main-breaker load center"
-                                     # NEMA type + indoor/outdoor; say so if it is a
-                                     # meter-main combination
-  meter_socket_continuous_a: null    # continuous rating printed on a meter-main
-                                     # combination — usually the TIGHTEST ampacity
-                                     # limit. Set it to null if you looked and the
-                                     # meter socket is a separate enclosure with no
+                                     # [private-only] NEMA type + indoor/outdoor; say so
+                                     # if it is a meter-main combination. Free text about
+                                     # where on the building the gear sits.
+  meter_socket_continuous_a: null    # [public-ok] continuous rating printed on a
+                                     # meter-main combination — usually the TIGHTEST
+                                     # ampacity limit. Set it to null if you looked and
+                                     # the meter socket is a separate enclosure with no
                                      # rating printed. Leave the key out if you have
                                      # not looked; the headroom is then published as
                                      # an upper limit rather than as though the
                                      # constraint did not exist.
-  assembly_sccr_ka: 10               # short-circuit current rating of the ASSEMBLY, off
-                                     # the rating label — it can differ from the rating
-                                     # marked on the main breaker alone
-  meter_class: "CL100"               # socket class off the meter face — a socket rating,
-                                     # NOT the service rating
-  pv_backfeed_a: 30                  # rating of the existing PV (or battery) backfeed
-                                     # breaker. Set it to null if you LOOKED and nothing
-                                     # backfeeds the panel — that is an answer, and the
-                                     # 120% busbar check resolves on it. Leave the key out
-                                     # if you have not looked; the check then reports
-                                     # not_determined rather than crediting an unverified
-                                     # zero.
+  assembly_sccr_ka: 10               # [public-ok] short-circuit current rating of the
+                                     # ASSEMBLY, off the rating label — it can differ
+                                     # from the rating marked on the main breaker alone
+  meter_class: "CL100"               # [private-only] socket class off the meter face —
+                                     # a socket rating, NOT the service rating. Read off
+                                     # the utility's installed meter, so it stays in
+                                     # private/ with the rest of the meter's markings.
+  pv_backfeed_a: 30                  # [public-ok] rating of the existing PV (or battery)
+                                     # backfeed breaker. Set it to null if you LOOKED and
+                                     # nothing backfeeds the panel — that is an answer,
+                                     # and the 120% busbar check resolves on it. Leave
+                                     # the key out if you have not looked; the check then
+                                     # reports not_determined rather than crediting an
+                                     # unverified zero.
   breaker_family: "EX / EXC (CTL classified)"
-                                     # what a new branch breaker has to be compatible with
-  main_breaker_position: "top"       # "top" or "bottom" — which end of the bus the
-                                     # main lands on. Needed with the field below:
-                                     # without both ends the 120% rule's position
+                                     # [private-only] what a new branch breaker has to be
+                                     # compatible with — a manufacturer and product line
+  main_breaker_position: "top"       # [public-ok] "top" or "bottom" — which end of the
+                                     # bus the main lands on. Needed with the field
+                                     # below: without both ends the 120% rule's position
                                      # condition reports "not determined".
-  pv_breaker_position: "bottom"      # "top" or "bottom" — which end of the bus the
-                                     # EXISTING backfeed breaker lands on. NEC
+  pv_breaker_position: "bottom"      # [public-ok] "top" or "bottom" — which end of the
+                                     # bus the EXISTING backfeed breaker lands on. NEC
                                      # 705.12(B)(3)(2) wants the opposite end from
                                      # the main.
-  battery_breaker_position: null     # "top" or "bottom" — where a NEW battery/source
-                                     # breaker would land, if a position has been
-                                     # surveyed for one. null until it has. This is a
-                                     # separate answer from pv_breaker_position: where
-                                     # the existing PV breaker sits says nothing about
-                                     # where another 2-pole breaker could go, so it is
-                                     # never carried over, and null keeps the battery's
-                                     # position condition at "not determined".
-  schedule:                          # one entry per PHYSICAL device, top to bottom.
-                                     # `amps` is a single int, or a list for a tandem or
-                                     # quad device (one value per pole group). `label`
-                                     # comes from the door legend and is the weaker half
-                                     # of each row: the device markings are read directly,
-                                     # the legend-to-device mapping is inferred from
-                                     # position.
+  battery_breaker_position: null     # [public-ok] "top" or "bottom" — where a NEW
+                                     # battery/source breaker would land, if a position
+                                     # has been surveyed for one. null until it has. This
+                                     # is a separate answer from pv_breaker_position:
+                                     # where the existing PV breaker sits says nothing
+                                     # about where another 2-pole breaker could go, so it
+                                     # is never carried over, and null keeps the
+                                     # battery's position condition at "not determined".
+  schedule:                          # [private-only] one entry per PHYSICAL device, top
+                                     # to bottom. `amps` is a single int, or a list for a
+                                     # tandem or quad device (one value per pole group).
+                                     # `label` comes from the door legend and is the
+                                     # weaker half of each row: the device markings are
+                                     # read directly, the legend-to-device mapping is
+                                     # inferred from position. The whole list is
+                                     # private-only — `device`, `label` and any note name
+                                     # the equipment and the circuits of one house — and
+                                     # only aggregates over it are ever published.
     - {device: "EX-2P60",  poles: 2, amps: 60, label: "EV charger"}
     - {device: "EX-2P40",  poles: 2, amps: 40, label: "Range"}
     - {device: "EX-T2020 tandem", poles: 2, amps: [20, 20], label: "Kitchen"}

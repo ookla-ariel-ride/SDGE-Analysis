@@ -164,6 +164,27 @@ have on file, and wanting no new-load answer is compatible with having one.
 Checking for it would also mean reading the panel intake the false flag says
 not to read.
 
+`household.has_ev` is a SECOND applicability flag, and it gates a subset of this
+analysis rather than the whole of it. Wanting a new-load answer and having no EV
+is an ordinary combination -- somebody scoping a heat pump -- so the two flags
+are independent, and `has_ev: false` with `has_new_load_interest: true` runs.
+It carries the same contract as the flag above: only an explicit false disables,
+absence is not false. With an explicit false:
+
+  * `charger.kw` is NOT read. There is no home charger to record, and the
+    intake contract lets a household with no EV omit the `charger:` block
+    entirely, so reading it would fail closed on a key the contract says may be
+    missing;
+  * every scenario and mitigation about a SECOND charger is reported not
+    applicable, naming the flag, instead of being computed from a figure the
+    intake does not carry or from a default nobody supplied;
+  * the heat-pump and battery scenarios still run. They do not depend on the
+    EVSE term, and the 120% busbar analysis never did.
+
+What is skipped, and why, is published in the artifact's
+`scenarios_not_applicable` list rather than left to be inferred from a missing
+key. The list is present either way and is empty where nothing was skipped.
+
 Panel facts (service rating, busbar rating, spaces, max circuits, the device
 schedule) are private-tier intake fields read through household.get(), which
 fails closed. There are no defaults: a missing service rating stops the run
@@ -262,9 +283,16 @@ import rates as R
 # Code and equipment constants. Each carries its source; none is a guess.
 # ---------------------------------------------------------------------------
 
-# 120/240 V single-phase 3-wire residential service (the panel is a 120/240 V
-# meter-main combination, meter class CL200). Amps at the service disconnect are
-# taken across the 240 V legs: A = kW * 1000 / 240.
+# 120/240 V single-phase 3-wire residential service, the standard US residential
+# configuration. Amps at the service disconnect are taken across the 240 V legs:
+# A = kW * 1000 / 240.
+#
+# The meter's own class is NOT quoted here or in the artifact. It is a
+# private-only intake field (DATA-SOURCES-CHEATSHEET.md, panel_meter_class):
+# read off one installed meter alongside its form, model and AMI type, and
+# CLAUDE.md §4 keeps a private-only answer out of every committed artifact and
+# script. It settles nothing here either -- a meter class is a socket rating,
+# and the socket rating this analysis binds on is panel.meter_socket_continuous_a.
 SERVICE_VOLTAGE_V = 240.0
 
 # NEC 220.87: calculated load = maximum demand over >= 30 days x 125%.
@@ -513,6 +541,27 @@ def _flag(path):
 
 
 NEW_LOAD_FLAG = "household.has_new_load_interest"
+
+# The second applicability flag. It gates the EVSE half of the analysis, not the
+# whole of it: a household scoping a heat pump has every reason to ask this
+# question and no EV. Same contract as the flag above -- only an explicit false
+# disables, absence is not false.
+EV_FLAG = "household.has_ev"
+
+NO_EV_REASON = (
+    f"{EV_FLAG} is false (intake applicability flag, "
+    f"DATA-SOURCES-CHEATSHEET.md) -- this household has no EV, so there is no "
+    f"existing EV supply equipment to report and no second charger to add. "
+    f"charger.kw is not read: the intake contract lets a household with no EV "
+    f"omit the charger block, and a scenario priced from a default nobody "
+    f"supplied would be an invented figure, not a conservative one.")
+
+NO_EV_CONTRACT = (
+    f"{EV_FLAG} is read the same way {NEW_LOAD_FLAG} is: only an explicit "
+    f"false disables anything, and an ABSENT flag is not read as false. The "
+    f"two flags are independent -- has_ev: false with "
+    f"has_new_load_interest: true is an ordinary combination, and the "
+    f"heat-pump and battery scenarios run on it unchanged.")
 
 NEW_LOAD_FLAG_CONTRACT = (
     "household.has_new_load_interest is the intake APPLICABILITY flag for this "
@@ -810,12 +859,23 @@ def load_panel():
     a separate question from where the existing PV breaker sits. It is read
     separately and never filled in from `pv_breaker_position`.
 
+    `charger.kw` is the one field here that is NOT part of the panel survey, and
+    it is conditional on `household.has_ev`. With that flag explicitly false the
+    key is not read at all -- the intake contract lets a household with no EV
+    omit the `charger:` block, so a required read would fail closed on a key the
+    contract permits to be missing. `has_ev` travels with the panel dict so the
+    scenarios that price a SECOND charger can report themselves not applicable
+    rather than compute from a None. Absence is not false: only an explicit
+    false disables, which is the same contract the new-load flag carries.
+
     Everything numeric then goes through validate_panel(), which rejects values
     outside their physical domain. A missing field already stops the run; an
     impossible one has to as well, because the busbar arithmetic turns it into a
     plausible answer rather than an obviously wrong one.
     """
+    has_ev = _flag(EV_FLAG) is not False
     return validate_panel({
+        "has_ev": has_ev,
         "service_rating_a": float(HH.get("panel.service_rating_a")),
         "busbar_rating_a": float(HH.get("panel.busbar_rating_a")),
         "pv_backfeed_a": _optional_number("panel.pv_backfeed_a"),
@@ -831,7 +891,7 @@ def load_panel():
         "spaces": int(HH.get("panel.spaces")),
         "max_circuits": int(HH.get("panel.max_circuits")),
         "schedule": HH.get("panel.schedule"),
-        "charger_kw": float(HH.get("charger.kw")),
+        "charger_kw": float(HH.get("charger.kw")) if has_ev else None,
     })
 
 
@@ -1883,6 +1943,10 @@ def build():
         return not_applicable()
 
     panel = load_panel()
+    # The second applicability flag, read inside load_panel() because it decides
+    # whether charger.kw is read at all. Only an explicit false disables the
+    # EVSE half of the analysis; everything else here runs either way.
+    has_ev = panel["has_ev"]
     raw = only_match("Electric_15_Minute_*.csv", "Green Button 15-minute export")
     sam_paths = sorted(RAW_DIR.glob("enphase_sam8760_*.csv"))
     if not sam_paths:
@@ -1969,7 +2033,10 @@ def build():
     # and not known. The artifact says which, and the ampacity leg reads it.
     existing_backfeed_a, backfeed_basis = existing_backfeed(panel)
 
-    evse2_a = evse_code_load_a(EXISTING_EVSE_OUTPUT_A)
+    # None, not zero, where there is no EV: a second charger is not a load of
+    # 0 A, it is a scenario that does not apply. Nothing downstream may quietly
+    # add it to a case.
+    evse2_a = evse_code_load_a(EXISTING_EVSE_OUTPUT_A) if has_ev else None
     batt_a = amps(BATTERY_INVERTER_KW) * NEC_625_42_FACTOR
     # The position leg here is about the PROPOSED battery breaker, which has no
     # surveyed position. The existing PV breaker's end is a fact about the
@@ -2078,33 +2145,53 @@ def build():
     pos_leg = busbar["position_condition"]["verdict"]
     batt_verdict = battery_verdict(amp_leg, pos_leg)
 
-    cases = [
-        case("heat_pump_only", 0.0, 1, True,
-             "No heat pump has been selected, so the term is solved for rather "
-             "than assumed: this is the largest minimum circuit ampacity (NEC "
-             "440.6 MCA, which already embeds the 125% on the largest motor) "
-             "that fits. Conservative -- it adds the heat pump on top of a "
-             "measured maximum that already contains the existing A/C."),
-        case("second_evse_only", evse2_a, 1, False,
-             f"A second Tesla Wall Connector at {EXISTING_EVSE_OUTPUT_A:.0f} A "
-             f"continuous on its own "
-             f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
-             f"circuit. NEC 625.42 makes EVSE a continuous load, so the code "
-             f"value is {EXISTING_EVSE_OUTPUT_A:.0f} x 1.25 = {evse2_a:.0f} A. "
-             f"What remains is spare headroom, not a heat pump."),
-        case("heat_pump_and_second_evse", evse2_a, 2, True,
-             "The second EVSE at its code value, with the heat pump solved for "
-             "against what is left."),
-        case("heat_pump_second_evse_and_battery", evse2_a + batt_a, 3, True,
-             f"The battery is counted on the DEMAND side at {batt_a:.2f} A. "
-             f"{BATTERY_CHARGING_BASIS} "
-             + ("The 120% busbar rule fails independently of this arithmetic, "
-                "so ampacity is not what decides the battery here."
-                if amp_leg == "fail" else
-                "The 120% busbar rule is evaluated separately under "
-                "battery_inverter; neither constraint is assumed to decide the "
-                "other.")),
-    ]
+    battery_case_note = (
+        f"The battery is counted on the DEMAND side at {batt_a:.2f} A. "
+        f"{BATTERY_CHARGING_BASIS} "
+        + ("The 120% busbar rule fails independently of this arithmetic, "
+           "so ampacity is not what decides the battery here."
+           if amp_leg == "fail" else
+           "The 120% busbar rule is evaluated separately under "
+           "battery_inverter; neither constraint is assumed to decide the "
+           "other."))
+
+    heat_pump_case = case(
+        "heat_pump_only", 0.0, 1, True,
+        "No heat pump has been selected, so the term is solved for rather "
+        "than assumed: this is the largest minimum circuit ampacity (NEC "
+        "440.6 MCA, which already embeds the 125% on the largest motor) "
+        "that fits. Conservative -- it adds the heat pump on top of a "
+        "measured maximum that already contains the existing A/C.")
+
+    # With no EV the second-charger term is not zero, it is ABSENT: the three
+    # cases carrying it are reported not applicable rather than priced, and the
+    # two that would otherwise duplicate heat_pump_only once that term is gone
+    # are not published twice. What is left is the same arithmetic with one
+    # fewer load in it -- the heat pump, and the heat pump beside the battery.
+    if not has_ev:
+        cases = [
+            heat_pump_case,
+            case("heat_pump_and_battery", batt_a, 2, True,
+                 battery_case_note + " There is no second EVSE in this case: "
+                 + NO_EV_REASON),
+        ]
+    else:
+        cases = [
+            heat_pump_case,
+            case("second_evse_only", evse2_a, 1, False,
+                 f"A second Tesla Wall Connector at "
+                 f"{EXISTING_EVSE_OUTPUT_A:.0f} A continuous on its own "
+                 f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
+                 f"circuit. NEC 625.42 makes EVSE a continuous load, so the "
+                 f"code value is {EXISTING_EVSE_OUTPUT_A:.0f} x 1.25 = "
+                 f"{evse2_a:.0f} A. What remains is spare headroom, not a heat "
+                 f"pump."),
+            case("heat_pump_and_second_evse", evse2_a, 2, True,
+                 "The second EVSE at its code value, with the heat pump solved "
+                 "for against what is left."),
+            case("heat_pump_second_evse_and_battery", evse2_a + batt_a, 3, True,
+                 battery_case_note),
+        ]
 
     # Noncoincident-load refinement, bounded rather than asserted.
     ac_entry = next((e for e in panel["schedule"]
@@ -2161,47 +2248,56 @@ def build():
             "its nameplate RLA/MCA, would settle it."),
     }
 
-    # Mitigations, computed.
-    share_reduction = evse2_a
-    rate_table = []
-    for out_a in WALL_CONNECTOR_OUTPUTS_A:
-        code_a = evse_code_load_a(out_a)
-        rate_table.append({
-            "evse_output_a": _r(out_a, 1),
-            "min_circuit_a": _r(standard_circuit_for(out_a), 1),
-            "code_load_a": _r(code_a, 2),
-            "headroom_left_vs_service_a": _r(avail["service"] - code_a),
-            "headroom_left_vs_meter_socket_a": (
-                None if socket_a is None else _r(avail["meter_socket"] - code_a)),
-        })
+    # Mitigations, computed. The first two are ways of adding a SECOND charger
+    # more cheaply, so they exist only where there is a first one -- with
+    # has_ev false they are named in scenarios_not_applicable instead of being
+    # published as advice about equipment this household does not have.
+    evse_mitigations = []
+    if has_ev:
+        share_reduction = evse2_a
+        rate_table = []
+        for out_a in WALL_CONNECTOR_OUTPUTS_A:
+            code_a = evse_code_load_a(out_a)
+            rate_table.append({
+                "evse_output_a": _r(out_a, 1),
+                "min_circuit_a": _r(standard_circuit_for(out_a), 1),
+                "code_load_a": _r(code_a, 2),
+                "headroom_left_vs_service_a": _r(avail["service"] - code_a),
+                "headroom_left_vs_meter_socket_a": (
+                    None if socket_a is None
+                    else _r(avail["meter_socket"] - code_a)),
+            })
+        evse_mitigations = [
+            {"mitigation": "EVSE load sharing on the existing circuit",
+             "basis": ("Tesla Wall Connectors share power across one circuit, "
+                       "and NEC 625.42 permits an EVSE load-management system "
+                       "to be sized to the system's maximum output rather than "
+                       "the sum of the connectors."),
+             "added_load_without_a": _r(evse2_a),
+             "added_load_with_a": 0.0,
+             "reduction_a": _r(share_reduction),
+             "case_second_evse_only_headroom_a": avail_binding,
+             "case_both_heat_pump_mca_a": avail_binding,
+             "also": ("It needs no new breaker, which matters more than the "
+                      "amps here: "
+                      + (f"the panel has {occ['spaces_free']} free full-size "
+                         f"space(s), fewer than the two a 2-pole circuit takes."
+                         if occ["spaces_free"] < 2 else
+                         f"the panel has {occ['spaces_free']} free full-size "
+                         f"space(s), but whether two of them are adjacent is "
+                         f"not recorded."))},
+            {"mitigation": "Charge-rate limit on the second EVSE",
+             "basis": ("The connector's output is settable; the code value "
+                       "follows it directly at 125% (NEC 625.42), and the "
+                       "minimum circuit is the smallest standard OCPD carrying "
+                       "that output at 80%."),
+             "table": rate_table,
+             "reduction_a_at_lowest_setting": _r(evse2_a - evse_code_load_a(
+                 WALL_CONNECTOR_OUTPUTS_A[0]))},
+        ]
     pcs_reduction = (existing_backfeed_a + batt_breaker_a
                      - busbar["total_backfeed_allowed_a"])
-    mitigations = [
-        {"mitigation": "EVSE load sharing on the existing circuit",
-         "basis": ("Tesla Wall Connectors share power across one circuit, and "
-                   "NEC 625.42 permits an EVSE load-management system to be "
-                   "sized to the system's maximum output rather than the sum "
-                   "of the connectors."),
-         "added_load_without_a": _r(evse2_a),
-         "added_load_with_a": 0.0,
-         "reduction_a": _r(share_reduction),
-         "case_second_evse_only_headroom_a": avail_binding,
-         "case_both_heat_pump_mca_a": avail_binding,
-         "also": ("It needs no new breaker, which matters more than the amps "
-                  "here: "
-                  + (f"the panel has {occ['spaces_free']} free full-size "
-                     f"space(s), fewer than the two a 2-pole circuit takes."
-                     if occ["spaces_free"] < 2 else
-                     f"the panel has {occ['spaces_free']} free full-size "
-                     f"space(s), but whether two of them are adjacent is not "
-                     f"recorded."))},
-        {"mitigation": "Charge-rate limit on the second EVSE",
-         "basis": ("The connector's output is settable; the code value follows "
-                   "it directly at 125% (NEC 625.42), and the minimum circuit "
-                   "is the smallest standard OCPD carrying that output at 80%."),
-         "table": rate_table,
-         "reduction_a_at_lowest_setting": _r(evse2_a - evse_code_load_a(
-             WALL_CONNECTOR_OUTPUTS_A[0]))},
+    mitigations = evse_mitigations + [
         {"mitigation": "Power control system on the sources (NEC 705.13)",
          "basis": ("A listed PCS limits the combined output of the PV and the "
                    "battery, so the interconnection is evaluated against the "
@@ -2270,8 +2366,33 @@ def build():
             "separately; neither is assumed to decide the other."),
     }
 
+    # What this run did NOT answer, and on whose say-so. An intake flag that
+    # switches a scenario off leaves a hole in the artifact; naming the hole is
+    # the difference between "not applicable" and "quietly missing". Empty
+    # where nothing was skipped -- the key is always present, so a reader never
+    # has to infer from an absent key that everything ran.
+    scenarios_not_applicable = []
+    if not has_ev:
+        scenarios_not_applicable = [
+            {"item": item, "kind": kind, "reason": NO_EV_REASON,
+             "flag": EV_FLAG, "flag_contract": NO_EV_CONTRACT,
+             "to_enable_it": (
+                 f"Set {EV_FLAG}: true in private/household.yaml and answer "
+                 f"charger.kw (DATA-SOURCES-CHEATSHEET.md, charger_kw), then "
+                 f"rerun analysis/service_headroom.py.")}
+            for item, kind in (
+                ("second_evse_only", "case"),
+                ("heat_pump_and_second_evse", "case"),
+                ("heat_pump_second_evse_and_battery", "case"),
+                ("EVSE load sharing on the existing circuit", "mitigation"),
+                ("Charge-rate limit on the second EVSE", "mitigation"),
+                ("panel.existing_evse_kw", "intake fact"),
+                ("added_load_code_values.second_evse_a", "code value"),
+            )]
+
     return {
         "caveat": CAVEAT,
+        "scenarios_not_applicable": scenarios_not_applicable,
         "provenance": {
             "meter_export": raw.name,
             "enphase_consumption_ct": sam_prov,
@@ -2288,8 +2409,8 @@ def build():
             "dst_days": sorted(str(d) for d in dst),
             "service_voltage_v": SERVICE_VOLTAGE_V,
             "voltage_basis": ("120/240 V single-phase 3-wire residential "
-                              "service, meter class CL200; service amps taken "
-                              "across the 240 V legs"),
+                              "service; service amps taken across the 240 V "
+                              "legs"),
             "timezone_handling": ("local wall clock as exported; no timezone "
                                   "conversion applied"),
         },
@@ -2319,7 +2440,14 @@ def build():
                 "bus. It is a fact about the existing interconnection and is "
                 "not the battery's position leg, which is evaluated on the "
                 "proposed breaker's own position under battery_inverter"),
+            # None here is "this household has no EV", never "the charger's
+            # power was not recorded": the flag that produced it, and every
+            # scenario it switched off, are listed in
+            # scenarios_not_applicable at the top of the artifact.
             "existing_evse_kw": panel["charger_kw"],
+            "existing_evse_kw_basis": (
+                "charger.kw, the home EVSE's rated power from the intake"
+                if has_ev else f"NOT APPLICABLE -- {NO_EV_REASON}"),
             "occupancy": occ,
         },
         "gross_reconstruction": {
@@ -2424,12 +2552,13 @@ def build():
             },
         },
         "added_load_code_values": {
-            "second_evse_a": _r(evse2_a, 2),
+            "second_evse_a": _r(evse2_a, 2) if has_ev else None,
             "second_evse_basis": (
                 f"NEC 625.42 continuous load: {EXISTING_EVSE_OUTPUT_A:.0f} A "
                 f"output x 1.25 on a "
                 f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
-                f"circuit"),
+                f"circuit" if has_ev else
+                f"NOT APPLICABLE -- {NO_EV_REASON}"),
             "battery_charging_a": _r(batt_a, 2),
             "battery_charging_basis": BATTERY_CHARGING_BASIS,
             "battery_charging_not_determined": BATTERY_CHARGING_NOT_DETERMINED,
@@ -2468,6 +2597,11 @@ def main():
     md = result["maximum_demand"]
     nec = result["nec_220_87"]
     print(f"wrote {OUT.relative_to(ROOT)}")
+    skipped = result["scenarios_not_applicable"]
+    if skipped:
+        print(f"  {len(skipped)} scenario(s)/figure(s) not applicable "
+              f"({skipped[0]['flag']} is false): "
+              + ", ".join(s["item"] for s in skipped))
     print(f"  peak {md['peak_kw']} kW ({md['peak_a']} A) at "
           f"{md['peak_timestamp_local']}, point-determined="
           f"{md['peak_coincident']['point_determined']}")

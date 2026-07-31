@@ -704,6 +704,7 @@
   "battery_breaker_position_note": "the PROPOSED battery/source breaker's end of the busbar, a separate intake field from the existing PV breaker's. Null means no position has been surveyed for a new breaker, which is what makes the battery's position leg not_determined; the existing PV breaker's end is never substituted for it",
   "busbar_rating_a": 200.0,
   "existing_evse_kw": 11.5,
+  "existing_evse_kw_basis": "charger.kw, the home EVSE's rated power from the intake",
   "existing_pv_backfeed_a": 50.0,
   "existing_pv_backfeed_basis": "read_off_the_breaker",
   "existing_pv_backfeed_note": "read off the existing backfeed breaker",
@@ -773,9 +774,10 @@
   "production_reference": "threeway_production_validation.csv",
   "service_voltage_v": 240.0,
   "timezone_handling": "local wall clock as exported; no timezone conversion applied",
-  "voltage_basis": "120/240 V single-phase 3-wire residential service, meter class CL200; service amps taken across the 240 V legs",
+  "voltage_basis": "120/240 V single-phase 3-wire residential service; service amps taken across the 240 V legs",
   "window_days": 395,
   "window_end": "2026-07-26",
   "window_start": "2025-06-27"
- }
+ },
+ "scenarios_not_applicable": []
 }

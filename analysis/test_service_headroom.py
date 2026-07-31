@@ -1717,6 +1717,12 @@ OPTIONAL_READS_WITHOUT_A_PRESENCE_TEST = {
     "panel.main_breaker_position": (
         "same as pv_breaker_position -- with no main end recorded the "
         "'opposite end' test cannot be evaluated and reports not_determined"),
+    "household.has_ev": (
+        "the same contract the new-load flag carries: only an explicit false "
+        "switches the EVSE scenarios off, and absent and null both mean 'not "
+        "answered', which leaves charger.kw required exactly as it was -- the "
+        "conservative direction, since a household that has an EV and never "
+        "set the flag keeps the fail-closed read"),
 }
 
 
@@ -1898,6 +1904,497 @@ def case_artifact_carries_no_identifiers():
     return "the artifact carries no account, meter, path or long-digit identifier"
 
 
+# ---------------------------------------------------------------------------
+# Intake privacy tiers vs the committed artifact
+#
+# CLAUDE.md §4: no private-only or secret intake answer may appear in any
+# committed artifact. The check below is mechanical -- it reads the tiers out of
+# DATA-SOURCES-CHEATSHEET.md and the values out of private/household.yaml, so a
+# field re-tiered tomorrow is checked tomorrow with no test edit. Nothing here
+# hardcodes a value from this household.
+# ---------------------------------------------------------------------------
+
+CHEATSHEET = HH.ROOT / "DATA-SOURCES-CHEATSHEET.md"
+REAL_HOUSEHOLD = HH.ROOT / "private" / "household.yaml"
+
+# The six keys every intake field block declares, and the tier vocabulary.
+FIELD_KEYS = {"id", "question", "type", "required_if", "where", "privacy"}
+TIERS = {"public-ok", "private-only", "secret"}
+
+# Private-only fields whose answer is a DOCUMENT on disk -- a CSV, a PDF, a
+# screen capture -- rather than a value in household.yaml. There is nothing to
+# resolve for these; the files themselves live in gitignored private/ and the
+# artifact's own identifier check covers what could be copied out of them.
+DOCUMENT_FIELDS = {
+    "electric_interval_csv", "electric_bill_pdfs", "gas_bill_pdfs",
+    "plan_comparison_capture", "solar_hourly_consumption_export",
+    "solar_daily_production_export", "ev_charge_stats", "wall_charger_export",
+    "gas_interval_csv",
+}
+
+# A field id maps to household.yaml as <first token>.<rest> -- panel_meter_class
+# is panel.meter_class. These four predate that convention and are declared
+# rather than guessed; an unmapped, unresolvable required field fails the case
+# below rather than being silently skipped.
+YAML_PATH_OVERRIDES = {
+    "install_invoice_usd": "solar.install_invoice_usd",
+    "install_paid_date": "solar.install_paid_date",
+    "itc_claimed": "solar.itc_claimed",
+    "site_latitude": "location.lat",
+}
+
+
+def _cheatsheet_fields():
+    """Every intake field block in the cheatsheet, parsed and shape-checked."""
+    import re
+    import yaml
+    blocks = re.findall(r"```yaml\n(.*?)```", CHEATSHEET.read_text(), re.S)
+    assert len(blocks) > 40, f"only {len(blocks)} field blocks parsed"
+    out = []
+    for b in blocks:
+        d = yaml.safe_load(b)
+        assert isinstance(d, dict), b[:80]
+        missing = FIELD_KEYS - set(d)
+        assert not missing, f"field block {d.get('id')!r} is missing {missing}"
+        assert d["privacy"] in TIERS, (d["id"], d["privacy"])
+        out.append(d)
+    ids = [d["id"] for d in out]
+    assert len(ids) == len(set(ids)), "duplicate field ids in the cheatsheet"
+    return out
+
+
+def _yaml_path_for(field_id):
+    if field_id in YAML_PATH_OVERRIDES:
+        return YAML_PATH_OVERRIDES[field_id]
+    head, _, rest = field_id.partition("_")
+    return f"{head}.{rest}" if rest else head
+
+
+def _resolve(household, path):
+    """(value, found) for a dotted path in a parsed household.yaml."""
+    node = household
+    for key in path.split("."):
+        if isinstance(node, dict) and key in node:
+            node = node[key]
+        else:
+            return None, False
+    return node, True
+
+
+def _leaves(v):
+    if isinstance(v, dict):
+        for x in v.values():
+            yield from _leaves(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _leaves(x)
+    else:
+        yield v
+
+
+# How a private value is looked for depends on what kind of value it is, and the
+# rule is the same one the owner's tier ruling rests on: a bare number is not
+# identifying, free text is.
+#
+#   * a value carrying a digit or a space -- a catalog number, a coordinate, a
+#     date, a price, a multi-word label, a note -- is looked for ANYWHERE in the
+#     serialized artifact, prose included. That is how `meter class CL200` got
+#     into a provenance sentence;
+#   * a single bare word with no digits ("Oven", "Kitchen", "A/C") is ordinary
+#     English before it is a door legend, and it turns up inside unrelated
+#     sentences by coincidence -- "oven" sits inside "provenance". Those are
+#     compared for EQUALITY against the artifact's own string leaves and keys
+#     instead, which still catches the value being published as a value;
+#   * a whole integer below 1000 is skipped: an ampere rating, a pole count or a
+#     slot count comes from a short standard list that millions of dwellings
+#     share, which is the owner's stated reason for tiering the bare ratings
+#     public-ok, and matching on one flags NEC 240.6 arithmetic as a disclosure.
+INTEGER_NEEDLE_FLOOR = 1000
+
+
+def _needles(household, fields):
+    """[(field_id, path, needle, mode)] for every private-only intake value."""
+    import re
+    out = []
+    for f in fields:
+        if f["privacy"] != "private-only" or f["id"] in DOCUMENT_FIELDS:
+            continue
+        path = _yaml_path_for(f["id"])
+        value, found = _resolve(household, path)
+        if not found:
+            continue
+        for v in _leaves(value):
+            if v is None or isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)) and float(v).is_integer() \
+                    and abs(float(v)) < INTEGER_NEEDLE_FLOOR:
+                continue
+            s = str(v)
+            mode = "anywhere" if re.search(r"[\d\s]", s) else "as a value"
+            out.append((f["id"], path, s, mode))
+    return out
+
+
+def _artifact_strings(obj):
+    """Every string the artifact publishes, keys included."""
+    got = set()
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                got.add(k)
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+        elif isinstance(o, str):
+            got.add(o)
+    walk(obj)
+    return got
+
+
+def _leaks(needles, text, obj):
+    low_text = text.lower()
+    low_strings = {s.lower() for s in _artifact_strings(obj)}
+    hits = []
+    for field_id, path, needle, mode in needles:
+        found = (needle.lower() in low_text if mode == "anywhere"
+                 else needle.lower() in low_strings)
+        if found:
+            hits.append((field_id, path, needle, mode))
+    return hits
+
+
+def case_the_cheatsheet_tiers_every_field_it_declares():
+    """Requirement, not decoration: the leak scan below reads its universe of
+    private values out of these blocks, so a block that fails to parse or
+    forgets its privacy tag would shrink that universe silently."""
+    fields = _cheatsheet_fields()
+    tiers = {t: sum(1 for f in fields if f["privacy"] == t) for t in TIERS}
+    assert sum(tiers.values()) == len(fields), tiers
+    panel = [f for f in fields if f["id"].startswith("panel_")]
+    assert panel, "the panel intake block has gone from the cheatsheet"
+    for f in panel:
+        assert "privacy_note" in f and len(f["privacy_note"]) > 40, (
+            f"{f['id']} carries no privacy_note -- this section is tiered field "
+            f"by field, and each field has to say why it is where it is")
+    # every private-only field is either a document or resolvable by name
+    for f in fields:
+        if f["privacy"] != "private-only" or f["id"] in DOCUMENT_FIELDS:
+            continue
+        assert "." in _yaml_path_for(f["id"]), (
+            f"{f['id']} has no household.yaml path -- add it to "
+            f"YAML_PATH_OVERRIDES or to DOCUMENT_FIELDS")
+    return (f"all {len(fields)} intake fields parse and carry a tier "
+            f"({tiers['public-ok']} public-ok, {tiers['private-only']} "
+            f"private-only, {tiers['secret']} secret)")
+
+
+def case_no_private_only_intake_value_reaches_the_artifact():
+    """CLAUDE.md §4, checked instead of asserted. The tiers come from the
+    cheatsheet and the values from the real intake, so this follows a re-tier
+    without being edited.
+
+    It is the case that would have caught the meter class: a private-only
+    answer, quoted inside a provenance sentence, invisible to a key-by-key
+    review of the artifact.
+    """
+    import yaml
+    if not REAL_HOUSEHOLD.is_file():
+        return ("SKIP the private-only leak scan needs private/household.yaml "
+                "(gitignored) -- it has no values to look for without it")
+    household = yaml.safe_load(REAL_HOUSEHOLD.read_text()) or {}
+    fields = _cheatsheet_fields()
+    needles = _needles(household, fields)
+    assert needles, (
+        "no private-only value resolved out of private/household.yaml -- the "
+        "scan has nothing to look for, which is a broken scan, not a clean bill")
+
+    # Every private-only field whose required_if flag this household answers
+    # TRUE must have resolved. A mistyped path would otherwise quietly drop a
+    # field from the universe and leave the scan looking clean.
+    flags = household.get("household", {})
+    resolved = {n[0] for n in needles}
+    for f in fields:
+        if f["privacy"] != "private-only" or f["id"] in DOCUMENT_FIELDS:
+            continue
+        if flags.get(f["required_if"]) is not True:
+            continue
+        assert f["id"] in resolved, (
+            f"{f['id']} is required for this household and resolved to "
+            f"nothing at {_yaml_path_for(f['id'])} -- fix the path, or the "
+            f"intake is missing a required answer")
+
+    text = S.OUT.read_text()
+    hits = _leaks(needles, text, json.loads(text))
+    assert not hits, (
+        "private-only intake value(s) in data/service_headroom.json: "
+        + "; ".join(f"{fid} ({path}) found {mode}" for fid, path, _v, mode
+                    in hits))
+    return (f"none of the {len(needles)} private-only intake values reaches "
+            f"the committed artifact")
+
+
+def case_the_private_leak_scan_catches_a_planted_value():
+    """The positive control. A scan that never fires is indistinguishable from
+    a scan that cannot fire, and this one decides whether a privacy claim gets
+    published -- so it is run against an artifact known to be dirty.
+
+    Synthetic throughout: it plants values of its own rather than reading the
+    real intake, so the control runs in CI where the private file does not
+    exist.
+    """
+    fields = _cheatsheet_fields()
+    private_panel = [f["id"] for f in fields
+                     if f["privacy"] == "private-only"
+                     and f["id"].startswith("panel_")]
+    assert private_panel, "no private-only panel field left to plant"
+    household = {"panel": {"meter_class": "CL999-TEST",
+                           "schedule": [{"device": "TESTCO XY-1234",
+                                         "poles": 2, "amps": 60,
+                                         "label": "Aviary"}]}}
+    needles = _needles(household, fields)
+    planted = {n[2] for n in needles}
+    assert {"CL999-TEST", "TESTCO XY-1234", "Aviary"} <= planted, planted
+    assert "60" not in planted and "2" not in planted, (
+        "a bare ampere rating or pole count is being treated as identifying")
+
+    clean = {"panel": {"service_rating_a": 175.0, "occupancy": {"devices": 1}},
+             "provenance": {"voltage_basis": "120/240 V residential service"}}
+    clean_text = json.dumps(clean, indent=1, sort_keys=True)
+    assert not _leaks(needles, clean_text, clean), \
+        "the scan fires on an artifact that carries none of the planted values"
+
+    # each mode gets its own dirty artifact: one buried in prose, one published
+    # as a value, because the two are looked for by different means
+    prose = dict(clean)
+    prose["provenance"] = {"voltage_basis": "120/240 V service, meter class "
+                                            "CL999-TEST; legs at 240 V"}
+    prose_text = json.dumps(prose, indent=1, sort_keys=True)
+    caught = {n[2] for n in _leaks(needles, prose_text, prose)}
+    assert "CL999-TEST" in caught, \
+        "a private value quoted inside a prose sentence was not caught"
+
+    as_value = {"panel": {"occupancy": {"largest_branch_ocpd_a": 60.0},
+                          "circuits": ["Aviary"]}}
+    value_text = json.dumps(as_value, indent=1, sort_keys=True)
+    caught = {n[2] for n in _leaks(needles, value_text, as_value)}
+    assert "Aviary" in caught, \
+        "a private label published as a value was not caught"
+    return ("the leak scan fires on planted values in prose and as values, and "
+            "stays quiet on a clean artifact")
+
+
+# What the artifact is allowed to say about the panel schedule: counts and sums
+# over it, never a row of it. panel_schedule stays private-only because its
+# `device` markings and door-legend `label`s describe one particular house.
+OCCUPANCY_KEYS = {
+    "branch_ocpd_sum_a", "devices", "largest_branch_ocpd_a", "note",
+    "pole_positions_free", "pole_positions_total", "pole_positions_used",
+    "spaces_free", "spaces_total", "spaces_used", "twin_density_devices",
+}
+
+
+def case_the_artifact_aggregates_the_panel_schedule_away():
+    """The structural half of the privacy boundary. The leak scan catches this
+    household's own strings; this catches the SHAPE that would leak anyone's --
+    a per-device row reaching the artifact at all."""
+    d = json.loads(S.OUT.read_text())
+    occ = d["panel"]["occupancy"]
+    extra = set(occ) - OCCUPANCY_KEYS
+    assert not extra, (
+        f"panel.occupancy has grown {sorted(extra)} -- the schedule is "
+        f"published as aggregates only; add the key here if it is one")
+    for k, v in occ.items():
+        assert k == "note" or isinstance(v, (int, float)), (
+            f"panel.occupancy.{k} is not a count or a sum: {v!r}")
+
+    # A schedule row is recognisable by its own keys. `device` and `poles`
+    # belong to nothing else in this artifact, and `label` beside an amp or
+    # pole figure is a row even where `label` alone is an ordinary caption --
+    # nec_220_87.steps[].label is a step's name, not a door legend.
+    row_only = {"device", "poles"}
+    found = []
+
+    def walk(o, path):
+        if isinstance(o, dict):
+            here = ".".join(path) or "<root>"
+            for k in sorted(row_only & set(o)):
+                found.append(f"{here}.{k}")
+            if "label" in o and {"amps", "poles", "device"} & set(o):
+                found.append(f"{here}.label (beside a device figure)")
+            for k, v in o.items():
+                walk(v, path + [k])
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                walk(v, path + [f"[{i}]"])
+
+    walk(d, [])
+    assert not found, (
+        f"panel-schedule row key(s) in the artifact: {found} -- devices and "
+        f"door-legend labels are private-only and only aggregates over them "
+        f"may be published")
+    return "the artifact publishes aggregates of the panel schedule, never a row of it"
+
+
+# ---------------------------------------------------------------------------
+# household.has_ev -- the second applicability flag
+# ---------------------------------------------------------------------------
+
+PANEL_YAML_NO_CHARGER = PANEL_YAML.replace("charger:\n  kw: 11.5\n", "")
+PANEL_YAML_NO_EV = "household:\n  has_ev: false\n" + PANEL_YAML_NO_CHARGER
+PANEL_YAML_EV_TRUE = "household:\n  has_ev: true\n" + PANEL_YAML_NO_CHARGER
+
+
+def case_charger_kw_is_read_only_where_there_is_an_ev():
+    """The intake contract says a household with has_ev: false may leave the
+    charger: block out. load_panel() read charger.kw unconditionally, so that
+    household stopped on a key the contract permits to be missing -- and
+    has_ev: false with has_new_load_interest: true is an ordinary combination,
+    somebody scoping a heat pump."""
+    # absent flag -> unchanged: the read is still required and still fails closed
+    td = _with_household(PANEL_YAML_NO_CHARGER)
+    try:
+        S.load_panel()
+        raise AssertionError("an absent has_ev excused the charger.kw read")
+    except SystemExit as e:
+        assert "charger.kw" in str(e), e
+    finally:
+        del td
+    # explicit true -> same
+    td = _with_household(PANEL_YAML_EV_TRUE)
+    try:
+        S.load_panel()
+        raise AssertionError("has_ev: true excused the charger.kw read")
+    except SystemExit as e:
+        assert "charger.kw" in str(e), e
+    finally:
+        del td
+    # explicit false -> the key is not read at all, and its absence is fine
+    td = _with_household(PANEL_YAML_NO_EV)
+    panel = S.load_panel()
+    assert panel["has_ev"] is False, panel["has_ev"]
+    assert panel["charger_kw"] is None, panel["charger_kw"]
+    assert panel["service_rating_a"] == 175.0, panel
+    del td
+    # ... and not read even when it IS there: the flag is the authority
+    td = _with_household("household:\n  has_ev: false\n" + PANEL_YAML)
+    panel = S.load_panel()
+    assert panel["charger_kw"] is None, (
+        "charger.kw was read under has_ev: false -- the flag decides whether "
+        "the EVSE scenarios exist, not the presence of the key")
+    del td
+    # a value that is not a YAML boolean is an intake defect, not a default
+    td = _with_household('household:\n  has_ev: "false"\n' + PANEL_YAML)
+    try:
+        S.load_panel()
+        raise AssertionError("a quoted 'false' was accepted as a flag")
+    except SystemExit as e:
+        assert "boolean" in str(e), e
+    del td
+    return "charger.kw is read only where household.has_ev is not explicitly false"
+
+
+def _private_run_ready():
+    """The real intake plus the raw archive the full build() needs."""
+    return (REAL_HOUSEHOLD.is_file()
+            and len(list(S.RAW_DIR.glob("Electric_15_Minute_*.csv"))) == 1
+            and bool(list(S.RAW_DIR.glob("enphase_sam8760_*.csv"))))
+
+
+def _build_with(mutate):
+    """build() against a copy of the real intake, mutated in memory."""
+    import copy
+    import yaml
+    household = yaml.safe_load(REAL_HOUSEHOLD.read_text())
+    household = copy.deepcopy(household)
+    mutate(household)
+    td = _with_household(yaml.safe_dump(household, sort_keys=False))
+    try:
+        return S.build()
+    finally:
+        del td
+
+
+def case_a_household_with_no_ev_still_gets_its_panel_answer():
+    """End to end on the real inputs with the EV taken away: the heat-pump and
+    battery questions still get answered, the second-charger scenarios report
+    themselves not applicable with the flag that did it, and charger.kw is
+    never touched."""
+    if not _private_run_ready():
+        return ("SKIP the end-to-end no-EV run needs the private archive (the "
+                "Green Button export and the Enphase consumption-CT files)")
+
+    def no_ev(h):
+        h["household"]["has_ev"] = False
+        h.pop("charger", None)
+
+    reads = []
+    real_get = HH.get
+
+    def spy(path, required=True):
+        reads.append(path)
+        return real_get(path, required=required)
+
+    HH.get = spy
+    try:
+        d = _build_with(no_ev)
+    finally:
+        HH.get = real_get
+
+    assert "charger.kw" not in reads, \
+        f"charger.kw was read on a household with no EV: {reads}"
+    assert [c["case"] for c in d["cases"]] == \
+        ["heat_pump_only", "heat_pump_and_battery"], [c["case"] for c in d["cases"]]
+    skipped = d["scenarios_not_applicable"]
+    assert skipped, "nothing was reported as skipped"
+    items = {s["item"] for s in skipped}
+    assert {"second_evse_only", "heat_pump_and_second_evse",
+            "heat_pump_second_evse_and_battery",
+            "panel.existing_evse_kw"} <= items, items
+    for s in skipped:
+        assert s["flag"] == "household.has_ev", s
+        assert "has_ev is false" in s["reason"], s
+        assert "charger.kw is not read" in s["reason"], s
+        assert s["to_enable_it"], s
+    assert d["panel"]["existing_evse_kw"] is None, d["panel"]
+    assert "NOT APPLICABLE" in d["panel"]["existing_evse_kw_basis"], d["panel"]
+    assert d["added_load_code_values"]["second_evse_a"] is None, \
+        d["added_load_code_values"]
+    assert "NOT APPLICABLE" in \
+        d["added_load_code_values"]["second_evse_basis"], d["added_load_code_values"]
+    assert [m["mitigation"] for m in d["mitigations"]] == \
+        ["Power control system on the sources (NEC 705.13)"], d["mitigations"]
+
+    # the questions that do not depend on an EV are answered, and answered the
+    # same way: nothing about the demand side or the busbar moved
+    committed = json.loads(S.OUT.read_text())
+    assert d["nec_220_87"] == committed["nec_220_87"], \
+        "the 220.87 chain moved when the EV was taken away"
+    assert d["battery_inverter"] == committed["battery_inverter"], \
+        "the busbar analysis moved when the EV was taken away"
+    hp = next(c for c in d["cases"] if c["case"] == "heat_pump_only")
+    hp_committed = next(c for c in committed["cases"]
+                        if c["case"] == "heat_pump_only")
+    assert hp["remaining_headroom_a"] == hp_committed["remaining_headroom_a"], hp
+    return ("a household with no EV gets the heat-pump and battery answers and "
+            "is told which EVSE scenarios were skipped and why")
+
+
+def case_an_absent_ev_flag_reproduces_the_committed_artifact():
+    """Absence is not false, proved at the only scale that settles it: with the
+    flag deleted the run has to produce the committed artifact byte for byte."""
+    if not _private_run_ready():
+        return ("SKIP the absent-flag reproduction needs the private archive "
+                "(the Green Button export and the Enphase consumption-CT files)")
+    d = _build_with(lambda h: h["household"].pop("has_ev", None))
+    got = (json.dumps(d, indent=1, sort_keys=True) + "\n").encode()
+    assert got == S.OUT.read_bytes(), (
+        "deleting household.has_ev changed the artifact -- an absent flag is "
+        "being read as false somewhere")
+    return "an absent household.has_ev reproduces the committed artifact byte for byte"
+
+
 CASES = [
     case_220_87_chain_on_hand_computed_inputs,
     case_220_87_socket_step_follows_the_three_socket_states,
@@ -1968,22 +2465,37 @@ CASES = [
     case_artifact_sum_rule_counts_the_proposed_breaker,
     case_artifact_carries_the_scoping_caveat,
     case_artifact_carries_no_identifiers,
+    case_the_cheatsheet_tiers_every_field_it_declares,
+    case_no_private_only_intake_value_reaches_the_artifact,
+    case_the_private_leak_scan_catches_a_planted_value,
+    case_the_artifact_aggregates_the_panel_schedule_away,
+    case_charger_kw_is_read_only_where_there_is_an_ev,
+    case_a_household_with_no_ev_still_gets_its_panel_answer,
+    case_an_absent_ev_flag_reproduces_the_committed_artifact,
 ]
 
 
 def main():
     real_path, real_cache = HH.PATH, HH._cache
-    ran = failures = 0
+    ran = skipped = failures = 0
     for case in CASES:
         try:
-            print(f"PASS  {case()}")
-            ran += 1
+            msg = case()
+            # The private-data cases report SKIP rather than passing quietly:
+            # a case that cannot run in CI must say so, not read as green.
+            if msg.startswith("SKIP"):
+                print(f"SKIP  {case.__name__} ({msg[5:]})")
+                skipped += 1
+            else:
+                print(f"PASS  {msg}")
+                ran += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
         finally:
             HH.PATH, HH._cache = real_path, real_cache
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0
 
 
