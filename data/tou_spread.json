@@ -1,0 +1,495 @@
+{
+ "adequacy_test": {
+  "fitted_scale": "ln(spread), so the rate that _payback compounds is the rate that was estimated",
+  "inference_unit": "distinct rate CHANGES, not statement prints: a tariff reprinted unchanged is not a second observation of the price",
+  "min_distinct_vintages": 3,
+  "min_span_days": 365,
+  "spread_rule": "both cells adequate AND the full-window 95% CI excludes zero AND the post-break refit agrees in sign and is itself adequate AND the post-break CI still excludes zero after being widened for having chosen the breakpoint from the data",
+  "stated_before_fitting": true
+ },
+ "battery": {
+  "cost_usd": 14500,
+  "discount": 0.05,
+  "fade_per_yr": 0.01,
+  "per_period": {
+   "summer": {
+    "because": [
+     "the full-window slope does not survive the structural-break check: it is carried by a single step of $0.04844/kWh on 2025-06-11 (21.4% of the prior level), not by an ongoing trend"
+    ],
+    "verdict": "not determined"
+   },
+   "winter": {
+    "because": [
+     "the post-break slope is significant on its own interval ([1.89, 20.81]%/yr) but not once that interval is widened for having CHOSEN the breakpoint from the data ([-6.9, 32.22]%/yr over 4 candidate steps). 4 independent rate changes cannot support a trend claim once breakpoint selection is paid for"
+    ],
+    "verdict": "not determined"
+   }
+  },
+  "seed_source": "battery_dispatch_policies.json post_behavior.mid.battery_marginal",
+  "seed_year1_saving_usd": 2238,
+  "uniform_ladder": {
+   "12%": {
+    "npv10": 13072,
+    "payback_yr": 5.2
+   },
+   "3%": {
+    "npv10": 4249,
+    "payback_yr": 6.2
+   },
+   "5%": {
+    "npv10": 5880,
+    "payback_yr": 5.9
+   },
+   "8%": {
+    "npv10": 8656,
+    "payback_yr": 5.5
+   }
+  }
+ },
+ "delivery_cell_escalation": {
+  "summer_off_peak": {
+   "adequate": false,
+   "distinct_vintages": 1,
+   "escalation_pct_yr": null,
+   "first": "2026-06-11",
+   "independent_units": 1,
+   "label": "estimated",
+   "last": "2026-06-11",
+   "observations": 1,
+   "rate_first": 0.30203,
+   "rate_last": 0.30203,
+   "span_days": 0,
+   "verdict": "not determined -- fit undefined"
+  },
+  "summer_on_peak": {
+   "adequate": true,
+   "distinct_vintages": 5,
+   "escalation_ci95_pct_yr": [
+    1.7,
+    13.91
+   ],
+   "escalation_pct_yr": 7.63,
+   "first": "2024-06-06",
+   "fit_df": 3,
+   "independent_units": 5,
+   "label": "measured",
+   "last": "2026-06-11",
+   "observations": 15,
+   "r2": 0.85,
+   "rate_first": 0.26438,
+   "rate_last": 0.30203,
+   "span_days": 735,
+   "verdict": "measured"
+  },
+  "summer_super_off_peak": {
+   "adequate": true,
+   "distinct_vintages": 4,
+   "escalation_ci95_pct_yr": [
+    -61.54,
+    60.62
+   ],
+   "escalation_pct_yr": -21.4,
+   "first": "2024-06-06",
+   "fit_df": 2,
+   "independent_units": 4,
+   "label": "measured",
+   "last": "2026-06-11",
+   "observations": 15,
+   "r2": 0.512,
+   "rate_first": 0.04013,
+   "rate_last": 0.02606,
+   "span_days": 735,
+   "verdict": "measured"
+  },
+  "winter_off_peak": {
+   "adequate": true,
+   "distinct_vintages": 5,
+   "escalation_ci95_pct_yr": [
+    8.45,
+    15.79
+   ],
+   "escalation_pct_yr": 12.06,
+   "first": "2024-12-29",
+   "fit_df": 3,
+   "independent_units": 5,
+   "label": "measured",
+   "last": "2026-05-14",
+   "observations": 7,
+   "r2": 0.976,
+   "rate_first": 0.26687,
+   "rate_last": 0.31174,
+   "span_days": 501,
+   "verdict": "measured"
+  },
+  "winter_on_peak": {
+   "adequate": true,
+   "distinct_vintages": 5,
+   "escalation_ci95_pct_yr": [
+    7.89,
+    14.82
+   ],
+   "escalation_pct_yr": 11.3,
+   "first": "2024-11-07",
+   "fit_df": 3,
+   "independent_units": 5,
+   "label": "measured",
+   "last": "2026-05-30",
+   "observations": 20,
+   "r2": 0.976,
+   "rate_first": 0.26687,
+   "rate_last": 0.31174,
+   "span_days": 569,
+   "verdict": "measured"
+  },
+  "winter_super_off_peak": {
+   "adequate": true,
+   "distinct_vintages": 5,
+   "escalation_ci95_pct_yr": [
+    -49.31,
+    20.86
+   ],
+   "escalation_pct_yr": -21.73,
+   "first": "2024-05-28",
+   "fit_df": 3,
+   "independent_units": 5,
+   "label": "measured",
+   "last": "2026-05-30",
+   "observations": 21,
+   "r2": 0.518,
+   "rate_first": 0.04013,
+   "rate_last": 0.02606,
+   "span_days": 732,
+   "verdict": "measured"
+  }
+ },
+ "delivery_spread": {
+  "summer": {
+   "cells_adequate": {
+    "on_peak": true,
+    "super_off_peak": true
+   },
+   "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
+   "escalation_ci95_pct_yr": [
+    0.79,
+    26.25
+   ],
+   "escalation_pct_yr": 12.81,
+   "excludes_zero": true,
+   "first": "2024-06-06",
+   "fit_df": 3,
+   "last": "2026-06-11",
+   "mean_fitted_usd_kwh": 0.25495,
+   "mean_spread_usd_kwh": 0.25146,
+   "n": 15,
+   "n_independent": 5,
+   "not_determined_because": [
+    "the full-window slope does not survive the structural-break check: it is carried by a single step of $0.04844/kWh on 2025-06-11 (21.4% of the prior level), not by an ongoing trend"
+   ],
+   "post_break": {
+    "adequate": false,
+    "break_date": "2025-06-11",
+    "break_jump_pct_of_prior_level": 21.4,
+    "break_jump_usd_kwh": 0.04844,
+    "candidate_breakpoints": 4,
+    "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
+    "distinct_levels": 3,
+    "escalation_ci95_pct_yr": [
+     -13.22,
+     16.39
+    ],
+    "escalation_ci95_pct_yr_selection_adjusted": [
+     -44.19,
+     80.98
+    ],
+    "escalation_pct_yr": 0.5,
+    "excludes_zero": false,
+    "excludes_zero_selection_adjusted": false,
+    "first": "2025-06-11",
+    "fit_df": 1,
+    "last": "2026-06-11",
+    "mean_fitted_usd_kwh": 0.27459,
+    "mean_spread_usd_kwh": 0.27464,
+    "n": 8,
+    "n_independent": 3,
+    "r2": 0.156,
+    "selection_adjusted": true,
+    "slope_ci95": [
+     -0.03886,
+     0.04159
+    ],
+    "slope_usd_kwh_per_yr": 0.00137,
+    "span_days": 365,
+    "spread_first_usd_kwh": 0.27518,
+    "spread_last_usd_kwh": 0.27597
+   },
+   "r2": 0.794,
+   "reportable": false,
+   "series": [
+    [
+     "2024-06-06",
+     0.22425
+    ],
+    [
+     "2024-07-11",
+     0.22425
+    ],
+    [
+     "2024-08-11",
+     0.22425
+    ],
+    [
+     "2024-09-11",
+     0.22425
+    ],
+    [
+     "2024-09-28",
+     0.22425
+    ],
+    [
+     "2024-10-13",
+     0.22674
+    ],
+    [
+     "2024-10-29",
+     0.22674
+    ],
+    [
+     "2025-06-11",
+     0.27518
+    ],
+    [
+     "2025-07-13",
+     0.27518
+    ],
+    [
+     "2025-08-12",
+     0.27518
+    ],
+    [
+     "2025-09-11",
+     0.27518
+    ],
+    [
+     "2025-09-28",
+     0.27518
+    ],
+    [
+     "2025-10-14",
+     0.27262
+    ],
+    [
+     "2025-10-30",
+     0.27262
+    ],
+    [
+     "2026-06-11",
+     0.27597
+    ]
+   ],
+   "slope_ci95": [
+    0.002,
+    0.05809
+   ],
+   "slope_usd_kwh_per_yr": 0.03004,
+   "span_days": 735,
+   "spread_first_usd_kwh": 0.22425,
+   "spread_last_usd_kwh": 0.27597,
+   "survives_structural_break": false,
+   "unpaired_observations_dropped": 0,
+   "verdict": "not determined",
+   "would_settle_it": [
+    "More rate CHANGES, not more statements: the interval is set by the 3 distinct spreads in the window, and reprinting the same tariff adds none. At roughly two delivery redesigns a year, a corpus reaching into 2028 would roughly double the independent units.",
+    "A breakpoint fixed in advance from published tariff effective dates rather than chosen as the largest observed step. That removes the selection penalty entirely and the unadjusted interval becomes legitimate.",
+    "Statements from before 2024-05-25, which would extend the pre-break window and let the two segments be compared as a formal change-point model rather than a refit."
+   ]
+  },
+  "winter": {
+   "cells_adequate": {
+    "on_peak": true,
+    "super_off_peak": true
+   },
+   "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
+   "escalation_ci95_pct_yr": [
+    5.94,
+    27.59
+   ],
+   "escalation_pct_yr": 16.26,
+   "excludes_zero": true,
+   "first": "2024-11-07",
+   "fit_df": 3,
+   "last": "2026-05-30",
+   "mean_fitted_usd_kwh": 0.26536,
+   "mean_spread_usd_kwh": 0.26155,
+   "n": 20,
+   "n_independent": 5,
+   "not_determined_because": [
+    "the post-break slope is significant on its own interval ([1.89, 20.81]%/yr) but not once that interval is widened for having CHOSEN the breakpoint from the data ([-6.9, 32.22]%/yr over 4 candidate steps). 4 independent rate changes cannot support a trend claim once breakpoint selection is paid for"
+   ],
+   "post_break": {
+    "adequate": false,
+    "break_date": "2025-02-14",
+    "break_jump_pct_of_prior_level": 12.6,
+    "break_jump_usd_kwh": 0.02858,
+    "candidate_breakpoints": 4,
+    "ci_basis": "escalation_pct_yr, escalation_ci95_pct_yr and excludes_zero come from the ln(spread) fit, which is what gates the verdict and what _payback compounds. slope_usd_kwh_per_yr and slope_ci95 are the descriptive linear fit; on a non-monotonic history the two scales can disagree, so do not read excludes_zero against slope_ci95.",
+    "distinct_levels": 4,
+    "escalation_ci95_pct_yr": [
+     1.89,
+     20.81
+    ],
+    "escalation_ci95_pct_yr_selection_adjusted": [
+     -6.9,
+     32.22
+    ],
+    "escalation_pct_yr": 10.95,
+    "excludes_zero": true,
+    "excludes_zero_selection_adjusted": false,
+    "first": "2025-02-14",
+    "fit_df": 2,
+    "last": "2026-05-30",
+    "mean_fitted_usd_kwh": 0.27502,
+    "mean_spread_usd_kwh": 0.27316,
+    "n": 15,
+    "n_independent": 4,
+    "r2": 0.932,
+    "selection_adjusted": true,
+    "slope_ci95": [
+     0.00424,
+     0.05189
+    ],
+    "slope_usd_kwh_per_yr": 0.02806,
+    "span_days": 470,
+    "spread_first_usd_kwh": 0.25532,
+    "spread_last_usd_kwh": 0.28568
+   },
+   "r2": 0.899,
+   "reportable": false,
+   "series": [
+    [
+     "2024-11-07",
+     0.22674
+    ],
+    [
+     "2024-12-11",
+     0.22674
+    ],
+    [
+     "2024-12-29",
+     0.22674
+    ],
+    [
+     "2025-01-14",
+     0.22674
+    ],
+    [
+     "2025-01-30",
+     0.22674
+    ],
+    [
+     "2025-02-14",
+     0.25532
+    ],
+    [
+     "2025-03-13",
+     0.25532
+    ],
+    [
+     "2025-04-13",
+     0.25532
+    ],
+    [
+     "2025-05-14",
+     0.25532
+    ],
+    [
+     "2025-05-30",
+     0.25532
+    ],
+    [
+     "2025-11-09",
+     0.27262
+    ],
+    [
+     "2025-12-11",
+     0.27262
+    ],
+    [
+     "2025-12-29",
+     0.27262
+    ],
+    [
+     "2026-01-14",
+     0.28646
+    ],
+    [
+     "2026-02-12",
+     0.28646
+    ],
+    [
+     "2026-03-13",
+     0.28646
+    ],
+    [
+     "2026-03-30",
+     0.28646
+    ],
+    [
+     "2026-04-15",
+     0.28568
+    ],
+    [
+     "2026-05-14",
+     0.28568
+    ],
+    [
+     "2026-05-30",
+     0.28568
+    ]
+   ],
+   "slope_ci95": [
+    0.01666,
+    0.06107
+   ],
+   "slope_usd_kwh_per_yr": 0.03887,
+   "span_days": 569,
+   "spread_first_usd_kwh": 0.22674,
+   "spread_last_usd_kwh": 0.28568,
+   "survives_structural_break": false,
+   "unpaired_observations_dropped": 1,
+   "verdict": "not determined",
+   "would_settle_it": [
+    "More rate CHANGES, not more statements: the interval is set by the 4 distinct spreads in the window, and reprinting the same tariff adds none. At roughly two delivery redesigns a year, a corpus reaching into 2028 would roughly double the independent units.",
+    "A breakpoint fixed in advance from published tariff effective dates rather than chosen as the largest observed step. That removes the selection penalty entirely and the unadjusted interval becomes legitimate.",
+    "Statements from before 2024-05-25, which would extend the pre-break window and let the two segments be compared as a formal change-point model rather than a refit."
+   ]
+  }
+ },
+ "inputs": {
+  "exclusion_rule": "rate_per_kwh == 0 with kwh <= 0 is a NEM export settlement deferral, not a price. Asserted, not assumed: a zero on positive kwh aborts the run.",
+  "rows_excluded_settlement_zero": 58,
+  "rows_priced": 158,
+  "rows_total": 216,
+  "source": "data/bill_tou_detail.csv"
+ },
+ "not_determined": {
+  "all_in_spread": {
+   "reason": "The all-in on-peak price is delivery plus generation. With generation undetermined past the provider break, an all-in spread trend would splice a charged tariff to a comparison figure across 72% of the corpus.",
+   "verdict": "not determined",
+   "would_settle_it": [
+    "Same as generation_escalation above."
+   ]
+  },
+  "generation_escalation": {
+   "reason": "On a CCA date this corpus carries no charged generation tariff. The printed generation table is SDG&E's bundled comparison, off the actual CEA charge by -6.8% to +104.3% (issue #3). The provider broke on 2024-12-27, leaving 547 of 763 corpus days (2024-05-25..2026-06-26) with no charged generation price.",
+   "verdict": "not determined",
+   "would_settle_it": [
+    "The CCA's own per-TOU rates, which appear only on the CCA pages of the statements; parse_bills.py does not extract those pages.",
+    "A second bundled-era stretch long enough to fit generation separately -- the corpus has only 216 bundled days."
+   ]
+  }
+ },
+ "window": {
+  "first": "2024-05-28",
+  "last": "2026-06-11"
+ }
+}

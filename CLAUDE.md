@@ -303,9 +303,14 @@ Mono data — with system fallbacks).
      (nav.tier-closed class, driven by the details' native toggle event) but still
      navigate — hash navigation goes through openHashTarget, which opens the tier.
      Verdict-group pills never dim.
-  3. The tier's chart (#carbon, the only canvas inside it) lazy-inits on the first time
-     the tier AND sec13 are both open, double-init guarded; the four §5 basic-tier
-     charts keep initializing on load.
+  3. EVERY canvas inside the tier lazy-inits on first reveal — a Chart.js canvas built
+     while an ancestor <details> is closed measures 0x0 and never recovers. This is a
+     generic registry (`lazyChart(id, build)` + `runLazyCharts()`), never a special case
+     for one canvas: it walks each canvas's own <details> ancestors, is re-run on every
+     details toggle, on deep-link opens (openHashTarget) and before printing
+     (openForPrint), and guards double init. Adding a chart to a collapsed section must
+     need no new wiring beyond one lazyChart() call. The four §5 basic-tier charts sit
+     outside any <details> and keep initializing on load.
   4. Printing force-opens the tier and all inner details via a beforeprint listener
      (plus a matchMedia('print') change fallback) so print always emits the full
      report — CSS alone cannot open a details element.

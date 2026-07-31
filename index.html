@@ -594,6 +594,15 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 </tbody>
 </table>
 <p class="small">Base: $2,238/yr — the battery's POST-EV-fix marginal from the integrated run (the decision-relevant figure; §6), $14,500 install, 1%/yr capacity fade, 5% discount. Evening-only dispatch ($1,720/yr base) is the downside policy bracket. The Monte Carlo in <code>data/deep_results.json</code> draws escalation U(0–10%), fade U(0.5–2.5%)/yr and install price U($12.5k–$17k) around the same $2,238 base: median payback 6.0 yr, p10–p90 5.3–7.0, median 10-yr NPV at 4% +$6,186. Escalation and dispatch policy are the two swing variables; at SDG&amp;E's recent ~8–10%/yr trajectory every variant is NPV-positive.</p>
+<h3 id="spreadesc">Level escalation vs spread escalation — the gap is not measurable from this corpus <span class="pill r">estimated · 4 winter rate changes</span></h3>
+<p>The ladder above raises every price by a single rate, which assumes the distance between them holds. What a battery earns is the <b>difference</b> between the on-peak price it displaces and the super-off-peak price it charged at, so the level and the gap are two separate questions. Prices can climb together and leave the gap where it was. <code>data/bill_tou_detail.csv</code> prints both halves on every statement, so the gap is observable: 158 priced cells across 26 billing periods on 25 statements, <b>2024-05-28 to 2026-06-11</b>. The answer this corpus gives is <b>not determined</b>, for both seasons.</p>
+<div class="chartbox"><canvas id="spread" height="110"></canvas></div>
+<p class="small">Each point is one rate segment, dated at that segment's midpoint. A billing period splits into two segments when a tariff changes mid-cycle, and dating each at its midpoint keeps a rate that ran a week from counting like one that ran a month. Dashed spans precede each season's largest single step.</p>
+<p><b>Winter looks like it is widening, and the appearance does not survive its own test.</b> After the $0.0286 step of 2025-02-14, the winter spread rises at <b>10.95%/yr</b> with a 95% interval of <b>1.89% to 20.81%</b>, which excludes zero. That interval is computed on the window that begins at the largest step in the series, and the largest step was picked by looking at the series. Paying for that choice across the four steps that could have been picked widens the interval to <b>−6.90% to +32.22%</b>, which includes zero. Four independent rate changes cannot both locate a break and estimate a slope through it.</p>
+<p><b>Summer: not determined, and more clearly so.</b> The full-window slope looks strong, and it is one step: $0.0484/kWh on 2025-06-11, 21.4% of the level before it. After that step the slope is <b>0.5%/yr</b> (95% CI −13.22% to +16.39%, widening to −44.19% to +80.98% once the breakpoint choice is paid for), across only three remaining rate changes.</p>
+<p class="small">Two things make the evidence thinner than the bill count suggests. A tariff reprinted unchanged on next month's statement is not a second observation of the price: winter's post-break window prints 15 statement segments carrying <b>4 distinct spreads</b>, and fitting all 15 would report a 95% interval about a fifth as wide, bought entirely by counting reprints. And a break chosen from the data cannot then be tested against the same data at face value. Both corrections can only ever suppress a claim, never create one, which is why applying them after seeing the first result is not tuning the test toward an answer.</p>
+<p><b>So the battery keeps the assumed ladder, not a measured one.</b> No per-period escalation is published, and the 3/5/8/12% table above stands as the sensitivity it always was. The gap may well be widening. What this corpus cannot do is tell a widening gap apart from a one-off redesign followed by two years of noise. What would settle it, in order of how soon it arrives: more rate <i>changes</i> rather than more statements, since at roughly two delivery redesigns a year a corpus reaching into 2028 would about double the independent units; a breakpoint fixed in advance from published tariff effective dates, which removes the selection penalty entirely; and statements from before 2024-05-25, which would let the two segments be compared as a formal change-point model instead of a refit.</p>
+<p class="small">Delivery only. The generation half of the price cannot be escalated from this corpus at all: 547 of its 763 days fall after the community-choice provider break on 2024-12-27, and on those dates the statement prints SDG&amp;E's bundled comparison instead of the rate actually charged, so an all-in spread would splice a charged tariff to a comparison figure across most of the window. What would settle that: the CCA's own per-TOU rates, which appear only on the CCA pages that <code>analysis/parse_bills.py</code> does not extract, or a second bundled-era stretch long enough to fit generation on its own, and the corpus has only 216 bundled days. Script <code>analysis/tou_spread.py</code> → <code>data/tou_spread.json</code>; 58 rows carrying a $0.00000 export rate are excluded as NEM settlement deferrals, not prices, and the script aborts if any such row carries positive kWh.</p>
 <h3>Phantom baseload — decomposed <span class="pill g">measured</span></h3>
 <p>On the 44 nights with zero EV charging, the 1–5am import floor has median <b>1.025 kW</b> (p10 0.785, p90 1.36) ≈ <b>~9,000 kWh/yr (~$1,800/yr at period-weighted prices)</b>. Three structural findings: it <i>cycles</i> (median within-night std 0.14 kW — a compressor-like duty-cycling component, e.g. fridge/freezer/pool equipment, not one flat load); it's <i>seasonal</i> — Sep–Oct nights run 1.37 kW vs 0.845 kW in May, a ~0.5 kW swing suggesting scheduled equipment with seasonal runtimes; and the lowest occupied-day import floor is 10.7–11.7 kWh/day. Resolution: the owner identifies the floor as <b>home-lab computer systems</b> (owner-attested) plus ordinary baseload — an intentional load, de-prioritized as a savings target for this household. The decomposition method (quiet-night floor, cycling signature, seasonal swing) remains the recommended first step for anyone whose floor is unidentified.</p>
 <h3>The marginal price map — what one kWh costs or earns, right now <span class="pill g">measured · bill rates</span></h3>
@@ -629,6 +638,7 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <li><b>Lifetime payback (§11):</b> yearly actual production × blended $/kWh from the no-solar counterfactual (SAM hourly load re-billed on the netting model, old-TOU structure for pre-2026 years), scaled by SDG&amp;E's published average-rate history; ±10% on crossover timing. Invoice and PTO date from source documents.</li>
 <li><b>Carbon (§13):</b> CAISO Today's Outlook history CSVs (co2.csv + demand.csv, 5-min) — <b>28 sampled days</b> across the analysis year (~2 per calendar month, including the original 4 seasonal days); hourly kg/MWh = total CO₂ ÷ demand; the 337 uncovered days use month-hour means of covered days in the same month; applied to the 15-min household data by date and hour. Labeled <i>estimated</i> because 28 of 365 days are measured. <code>analysis/carbon_fullyear.py</code> → <code>data/carbon_fullyear_results.json</code> + intensity table <code>data/caiso_hourly_intensity.csv</code> (original 4-day study: <code>analysis/carbon_timing.py</code>). Grid-average, not marginal.</li>
 <li><b>Extended findings (§6 VPP + resilience, §9 dividend workups, §10 AB 205 + gas decomposition, §13 2039 strategy):</b> <code>analysis/extended_findings.py</code> → <code>data/extended_results.json</code>, computed from the committed artifacts plus cited external constants (EIA gasoline series, FHWA VM-1 fleet economy, CPUC decisions, DSGS program terms, SDG&amp;E reliability report — sources in <code>research/extended-research-notes.md</code>); each figure carries its evidence pill in-line. The "What to do Monday" appendix is content-only — it introduces no new artifacts.</li>
+<li><b>TOU-spread escalation (§13):</b> <code>analysis/tou_spread.py</code> → <code>data/tou_spread.json</code>, fitted on the per-bill printed rates in <code>data/bill_tou_detail.csv</code> rather than on a rate table. Each observation is one rate segment dated at its midpoint (a period splits when a tariff changes mid-cycle), so a rate in force for a week is not weighted like one in force for a month. Rows priced at $0.00000 are excluded as NEM export-settlement deferrals rather than prices; the script asserts that every such row carries kWh ≤ 0 and aborts if one does not, so a genuine zero price cannot be dropped silently. Adequacy rule, fixed before fitting: a cell needs ≥3 distinct rate vintages and ≥365 days. A spread claim needs <i>all four</i> of: both its cells adequate; the full-window 95% CI excludes zero; the refit on the window after the largest single step agrees in sign and is itself adequate; and that post-break CI still excludes zero after being widened for the fact that the breakpoint was chosen from the data. The last two decide the answer on this corpus: winter clears the first two bars and fails the fourth. Inference is fitted on distinct rate changes rather than statement prints, and on ln(spread), so the rate that gets compounded is the rate that was estimated. Each of these bars can suppress a claim but never create one. Delivery component only; the section gives the reason generation cannot join the series.</li>
 <li><b>NBT counterfactual &amp; price map (§13):</b> same netting engine with exports at flat 3/5/8¢ (NBT-style) vs NEM 2.0 netting; price map is the bill-validated rate table itself (<code>data/extra_results.json</code>).</li>
 <li><b>Phantom decomposition (§13):</b> nights with max 1–5am demand &lt; 2 kW (no EV) → per-night median import power; cycling = within-night std; seasonality = monthly medians of those quiet nights.</li>
 </ul>
@@ -656,7 +666,16 @@ const D = {
  bat_now_S:[10.76,9.71,6.94,3.35,2.83,5.1,3.31,3.25,2.17,1.15,0.61,0.72,0.54,0.39,0.09,0.41,0.92,1.95,3.09,3.94,4.1,2.51,2.36,2.18],
  bat_pw3_S:[21.69,11.78,6.94,3.35,2.83,5.1,2.56,2.74,1.81,1.02,0.72,0.78,0.55,0.39,0.06,0.32,0.03,0.22,0.42,1.24,1.7,2,1.92,1.82],
  bat_pw3x_S:[21.72,15.2,7.85,3.35,2.83,5.1,2.56,2.74,1.81,1.02,0.72,0.78,0.55,0.39,0.06,0.32,0.03,0.06,0.16,0.31,0.52,1.55,1.47,1.3],
- carb:[261.3,270.7,280.1,282.1,273.9,259.0,230.5,192.7,140.2,117.4,108.5,105.8,102.3,99.1,93.2,93.6,114.8,138.0,163.6,179.5,186.8,195.7,222.1,243.7]
+ carb:[261.3,270.7,280.1,282.1,273.9,259.0,230.5,192.7,140.2,117.4,108.5,105.8,102.3,99.1,93.2,93.6,114.8,138.0,163.6,179.5,186.8,195.7,222.1,243.7],
+ // On-peak minus super-off-peak DELIVERY spread, $/kWh, per statement date (YY-MM-DD).
+ // Verbatim from data/tou_spread.json → delivery_spread.<season>.series; nulls are the
+ // other season's dates. spBreak = index of each season's structural break: everything
+ // at or before it is drawn dashed; the break point itself is the FIRST point
+ // included in the post-break fit, so only the segment leading into it is excluded.
+ spLabels:["24-06-06","24-07-11","24-08-11","24-09-11","24-09-28","24-10-13","24-10-29","24-11-07","24-12-11","24-12-29","25-01-14","25-01-30","25-02-14","25-03-13","25-04-13","25-05-14","25-05-30","25-06-11","25-07-13","25-08-12","25-09-11","25-09-28","25-10-14","25-10-30","25-11-09","25-12-11","25-12-29","26-01-14","26-02-12","26-03-13","26-03-30","26-04-15","26-05-14","26-05-30","26-06-11"],
+ spSummer:[0.22425,0.22425,0.22425,0.22425,0.22425,0.22674,0.22674,null,null,null,null,null,null,null,null,null,null,0.27518,0.27518,0.27518,0.27518,0.27518,0.27262,0.27262,null,null,null,null,null,null,null,null,null,null,0.27597],
+ spWinter:[null,null,null,null,null,null,null,0.22674,0.22674,0.22674,0.22674,0.22674,0.25532,0.25532,0.25532,0.25532,0.25532,null,null,null,null,null,null,null,0.27262,0.27262,0.27262,0.28646,0.28646,0.28646,0.28646,0.28568,0.28568,0.28568,null],
+ spBreak:{summer:17,winter:12}
 };
 // Palette read from the CSS tokens so charts follow the light/dark theme.
 const V=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -692,20 +711,36 @@ new Chart(document.getElementById('periods'),{type:'bar',data:{
  datasets:[{label:'Annual import kWh',data:[14856,4498,4022],backgroundColor:A(PAL.sub,.55)},
   {label:'Annual import cost $',data:[1875,2316,2998],backgroundColor:A(PAL.on,.75)}]},
  options:{indexAxis:'y',plugins:{title:{display:true,text:'17% of the energy causes ~42% of gross import cost — the on-peak problem in one picture',color:PAL.ink}}}});
-// #carbon lives inside the §13 <details>, itself inside the closed-by-default #advanced tier:
-// lazy-init it once BOTH are open so it sizes correctly (flag guards double init).
-let carbonChart=null;
-function initCarbon(){
- if(carbonChart)return;
- carbonChart=new Chart(document.getElementById('carbon'),{type:'line',data:{labels:hrs,datasets:[
-  {label:'CAISO grid CO₂ intensity (28-day-sampled annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3,pointRadius:0}]},
-  options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data, 28 sampled days) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]});
-}
-const sec13=document.getElementById('sec13');
-const maybeCarbon=()=>{if(adv.open&&sec13.open)initCarbon();};
-sec13.addEventListener('toggle',maybeCarbon);
-adv.addEventListener('toggle',maybeCarbon);
-maybeCarbon();
+// A chart built while any ancestor <details> is closed measures 0x0 and never recovers,
+// so every canvas inside a collapsible section is registered here and built on first
+// reveal rather than on load. The registry walks each canvas's OWN <details> ancestors,
+// so adding a chart to a collapsed section needs no new wiring; `built` guards double
+// init. The four basic-tier charts above sit outside any <details> and init on load.
+const lazyCharts=[];
+const lazyChart=(id,build)=>lazyCharts.push({id,build,built:false});
+const revealed=el=>{
+ for(let d=el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))
+  if(!d.open)return false;
+ return true;
+};
+const runLazyCharts=()=>{for(const c of lazyCharts){
+ if(c.built)continue;
+ const el=document.getElementById(c.id);
+ if(el&&revealed(el)){c.build(el);c.built=true;}
+}};
+lazyChart('carbon',el=>new Chart(el,{type:'line',data:{labels:hrs,datasets:[
+ {label:'CAISO grid CO₂ intensity (28-day-sampled annual avg, kg/MWh)',data:D.carb,borderColor:PAL.off,backgroundColor:A(PAL.off,.12),fill:true,tension:.3,pointRadius:0}]},
+ options:{plugins:{title:{display:true,text:'Grid carbon by hour (real CAISO data, 28 sampled days) — overnight super-off-peak is the DIRTIEST power of the day; solar midday the cleanest',color:PAL.ink}},scales:{y:{title:{display:true,text:'kg CO₂/MWh'}}}},plugins:[onpeakBand]}));
+// No onpeakBand here: this chart's x-axis is calendar dates, not hours of the day, so the
+// 4-9pm band has no meaning on it. The shading rule applies to the hour-axis charts.
+lazyChart('spread',el=>new Chart(el,{type:'line',data:{labels:D.spLabels,datasets:[
+ {label:'Summer on-peak − super-off-peak ($/kWh)',data:D.spSummer,borderColor:PAL.on,spanGaps:true,tension:0,pointRadius:2,
+  segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.summer?[5,3]:undefined}},
+ {label:'Winter on-peak − super-off-peak ($/kWh)',data:D.spWinter,borderColor:PAL.sub,spanGaps:true,tension:0,pointRadius:2,
+  segment:{borderDash:c=>c.p1DataIndex<=D.spBreak.winter?[5,3]:undefined}}]},
+ options:{plugins:{title:{display:true,text:'Delivery spread by rate segment — dashed spans precede each structural break',color:PAL.ink}},scales:{y:{title:{display:true,text:'$/kWh spread'}}}}}));
+document.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',runLazyCharts));
+runLazyCharts();
 
 // --- Navigation enhancements (progressive: page works fully without this script) ---
 // Anchor offset: measure the sticky nav's real height and feed it to h2{scroll-margin-top}.
@@ -737,7 +772,7 @@ function openHashTarget(){
  if(adv.contains(el)&&!adv.open){adv.open=true;opened=true;}
  const det=el.closest('details');
  if(det&&det!==adv&&!det.open){det.open=true;opened=true;}
- if(opened){maybeCarbon();el.scrollIntoView();}
+ if(opened){runLazyCharts();el.scrollIntoView();}
 }
 addEventListener('hashchange',openHashTarget);
 addEventListener('load',openHashTarget);
@@ -777,7 +812,7 @@ adv.addEventListener('toggle',()=>{syncTier();if(adv.open)markScrollables();});
 syncTier();
 // Printing must emit the full report: force-open the tier and every inner details
 // (CSS alone cannot open a <details>); matchMedia('print') is the beforeprint fallback.
-const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);maybeCarbon()};
+const openForPrint=()=>{adv.open=true;document.querySelectorAll('details.sec').forEach(s=>s.open=true);runLazyCharts()};
 addEventListener('beforeprint',openForPrint);
 matchMedia('print').addEventListener('change',e=>{if(e.matches)openForPrint()});
 // Collapse/expand the audit <details> sections from the nav.
