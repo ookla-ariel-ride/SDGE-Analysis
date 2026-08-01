@@ -99,11 +99,15 @@ rules.
 **The class is derived, not listed.** `unsearchable_fields()` in `analysis/privacy_tiers.py`
 takes every `private-only` or `secret` field whose declared `type` is one a literal scan can
 never search — a `bool` — and, where `private/household.yaml` is present, widens that with any
-field whose recorded answer is a scalar that produced no needle. A private-only boolean added
-next year is covered without anyone editing a list, and a field whose answer turns out to be
-searchable in fact (a long free-text note, say) stays with the value scan rather than being
-swept in here. Both halves look for key names and dotted paths and never for a value, so both
-run in CI as well as in the pre-commit hook. Reformatting and
+field whose recorded answer is a scalar that produced no needle **the scanner can use**. That
+last qualifier is read off the same floor constant the scanner applies, so the two cannot
+disagree about which fields the value scan reaches: a needle exists for a bare string of any
+length, but the scanner skips one below the floor in every file it cannot parse, and a field
+answered with a short bare word would otherwise be claimed by neither half. A private-only
+boolean added next year is covered without anyone editing a list, and a field whose answer
+turns out to be searchable in fact (a long free-text note, say) stays with the value scan
+rather than being swept in here. Both halves look for key names and dotted paths and never
+for a value, so both run in CI as well as in the pre-commit hook. Reformatting and
 derivation defeat a literal scan too; TECHNICAL.md §11 states those limits in full.
 
 **Override table** — every id whose path steps 2–3 cannot derive:

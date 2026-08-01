@@ -1528,12 +1528,22 @@ sits, why it sits there, and what a reader should not expect the enforcement to 
   committed rules only, so the local hook is the real gate for anything person-specific.
   The hook then runs `analysis/privacy_tiers.py --staged`, which is the same tier scan the
   suites run, restricted to the blobs this commit would add or change — read out of the
-  index, not the working tree, since those differ. It blocks on a hit, naming the field id,
-  the yaml path and the file and never the value. Where `private/household.yaml` is absent
+  index, not the working tree, since those differ — plus the three files that carry a
+  declared fixture-collision row (§11.5), read out of the index whether or not the commit
+  touches them. That last part is what makes the row counts enforceable at the gate rather
+  than only in a suite nobody is obliged to run: a row can fire only inside the file it
+  names, so reading those files gives the exact count over the tree this commit would
+  produce, at the cost of three blobs rather than a whole-tree scan, and a partial commit
+  cannot switch the check off. It blocks on a hit, naming the field id,
+  the yaml path and the file and never the value, and on a row whose count no longer matches,
+  naming the file, the yaml path and the two counts. Where `private/household.yaml` is absent
   (somebody else's clone) the value half cannot run: the hook says so in terms and allows
   the commit, because refusing would make the repo uncommittable for everyone but its owner,
-  and the key/path rules of §11.5 still run. Cost on this tree: about 0.33 s end to end for
-  an ordinary commit, gitleaks included, and about 0.8 s for the scan over all 108 files.
+  and the key/path rules of §11.5 still run — the collision accounting is skipped there too,
+  since nothing is excused when nothing is searched for. Cost on this tree: about 0.47 s end
+  to end for an ordinary commit, gitleaks included (0.19 s of that is the collision
+  accounting, most of it parsing the 173 KB test module that carries the largest row), and
+  about 0.8 s for the scan over all 107 files.
 - **The commit-msg gate.** The tier table above puts commit messages inside the boundary, and
   a pre-commit hook cannot see one: it runs before the message exists. `.githooks/commit-msg`
   runs `analysis/privacy_tiers.py --message` over the proposed message with the same locally
@@ -1684,7 +1694,19 @@ that reports "clean" is reporting only that it found no literal match:
   — no committed artifact carries a key of that name, and no committed script reads that
   path — and `privacy_tiers.unsearchable_fields()` derives the class it applies to from the
   tiers and the declared field types rather than from a list, so a private-only boolean added
-  later is covered without anyone remembering. `scan_artifact_keys` checks JSON and YAML keys
+  later is covered without anyone remembering. The two mechanisms are made to partition off
+  one constant: `Needle.text_searchable` decides whether the scanner can search for a value
+  in unstructured text at all, and both the scanner's skip and this derivation read it, so a
+  field cannot look searched to one and unsearchable to the other. Say plainly what the
+  substitute reaches, because it is not the value: structured keys and script reads. The
+  sub-floor word itself goes on being unsearched in running prose and in a commit message,
+  which is what the floor is for — dropping it and searching this household's two sub-floor
+  door legends in value position returns four matches on a tree that discloses nothing, in
+  `index.html` and in the two service-headroom modules. The derivation is per FIELD, so a field
+  holding one searchable answer stays with the value scan and a short answer beside it is
+  reached by neither half; pushing it down to the leaf was measured and rejected, since the
+  leaf here is `panel.schedule[].label` and banning the key `label` fires on nine committed
+  artifacts whose labels are chart series and issue-form fields. `scan_artifact_keys` checks JSON and YAML keys
   at any depth and CSV headers; `scan_script_reads` checks the accessor call, a read of a
   container above the key, and the path written as a bare string literal — matched by exact
   equality, so a docstring that merely mentions the path is not a read — and, in the shell and
@@ -1706,7 +1728,9 @@ that reports "clean" is reporting only that it found no literal match:
   excuse a hit is a `DECLARED_FIXTURE_COLLISIONS` row naming the file, the yaml path, the
   exact number of private answers that coincide there, and the reason. A row is checked in
   both directions: used fewer times than it declares it is stale, used more times it is a
-  coincidence nobody has ruled on, and either turns the suite red. It excuses only text the
+  coincidence nobody has ruled on, and either turns the suite red *and* blocks the commit —
+  the count is the whole of what makes the exemption safe, so it is checked where commits are
+  stopped and not only where tests are run. It excuses only text the
   file DECLARES as a literal — the AST node position of a python string, the composer mark of
   a yaml scalar, the cheatsheet's `question:` scalar — so the same value in a comment, a
   docstring or prose still fails, which is the shape the meter class leak actually took. A

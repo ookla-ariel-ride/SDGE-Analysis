@@ -10,8 +10,13 @@
 #      private-only last week matches no gitleaks pattern at all, which is how
 #      one reached three committed files. CLAUDE.md §4 makes this hook the real
 #      gate for anything person-specific: CI has no private/household.yaml and
-#      cannot check a real value. It scans the STAGED content only, so it is a
-#      gate on what is being added; the whole tracked tree is covered by
+#      cannot check a real value. It scans the STAGED content, so it is a gate
+#      on what is being added, plus the handful of files that carry a declared
+#      fixture-collision row — read out of the index, so their declared counts
+#      are checked against the tree this commit would produce however little of
+#      it the commit touches. A count is the whole of what makes such a row
+#      safe, and a count only a test enforces is not enforced at the gate that
+#      blocks commits. The rest of the tracked tree is covered by
 #      `analysis/test_privacy_tiers.py`, which the §9 run keeps green.
 #
 # Nothing here prints a private value — a finding is a field id, a yaml path

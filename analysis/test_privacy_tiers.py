@@ -36,9 +36,12 @@ they invent themselves.
 Run from the repo root:  ./.venv/bin/python analysis/test_privacy_tiers.py
 """
 import collections
+import contextlib
+import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -479,6 +482,90 @@ def case_the_unsearchable_fields_are_derived_from_the_tiers():
             f"name(s): {', '.join(sorted(keys))}")
 
 
+def case_a_sub_floor_bare_answer_is_covered_by_the_substitute_rule():
+    """No value may be skipped by BOTH mechanisms, which one class was.
+
+    `needles` builds a needle for a bare string of any length, so
+    `unsearchable_fields` read the mere existence of one as proof the value
+    scan covered the field and left it out of the key/path substitute.
+    `_found_in` disagreed: it skips a bare word below BARE_WORD_TEXT_MIN_CHARS
+    in every file it cannot parse. A field answered with a short bare word was
+    therefore searched by nothing -- not by the value scan, which skipped it,
+    and not by the substitute, which thought itself unnecessary. Both halves
+    now read `Needle.text_searchable`, computed from the one floor constant.
+
+    Every value here is invented, and the case runs in CI.
+    """
+    fields = PT.cheatsheet_fields()
+    shape = PT.schema()
+    fid, path = "panel_enclosure_type", "panel.enclosure_type"
+    key = path.split(".")[-1]
+    assert PT.yaml_path_for(fid, shape) == path, PT.yaml_path_for(fid, shape)
+    assert [f["privacy"] for f in fields if f["id"] == fid] == ["private-only"]
+    floor = PT.BARE_WORD_TEXT_MIN_CHARS
+
+    # the predicate itself, read off the same constant the scanner applies
+    def needle(value, mode="as a value"):
+        return PT.Needle(fid, path, path, value, mode)
+    assert needle("z" * floor).text_searchable, "the floor moved"
+    assert not needle("z" * (floor - 1)).text_searchable, "the floor moved"
+    assert needle("z 1", "anywhere").text_searchable, \
+        "a value carrying a digit or a space is searchable at any length"
+
+    short = {"panel": {"enclosure_type": "z" * (floor - 1)}}
+    long = {"panel": {"enclosure_type": "z" * floor}}
+    mine = [n for n in PT.needles(short, fields, shape) if n.field_id == fid]
+    assert len(mine) == 1 and mine[0].mode == "as a value", mine
+    assert not mine[0].text_searchable, \
+        "a sub-floor bare answer still counts as searchable"
+
+    # the two mechanisms partition: the short answer moves into the key/path
+    # class, the long one stays with the value scan and is not swept in as well
+    assert fid in PT.unsearchable_fields(short, fields, shape), (
+        "a sub-floor bare answer is covered by neither mechanism -- the value "
+        "scan skips it and the substitute rule does not claim it")
+    assert fid not in PT.unsearchable_fields(long, fields, shape), (
+        "a searchable answer was swept into the key/path rule as well")
+
+    derived = PT.unsearchable_fields(short, fields, shape)
+    banned = PT.banned_keys(derived)
+    v = short["panel"]["enclosure_type"]
+    ns = PT.needles(short, fields, shape)
+    # the substitute rule is what covers it, in each structured format the repo
+    # tracks and in a script; the value scan is silent on all of them, which is
+    # the whole reason the substitute has to bind
+    for rel, text, why in (
+            ("data/x.csv", f"month,{key}\n2026-01,{v}\n", "a CSV column"),
+            ("data/x.yaml", f"panel:\n  {key}: {v}\n", "a YAML key"),
+            ("data/x.json", json.dumps({"panel": {key: v}}), "a JSON key")):
+        assert PT.scan_artifact_keys([(rel, text)], banned), \
+            f"{why} of a sub-floor bare field was not caught"
+    read = [("analysis/thing.py", f'v = hh.get("{path}")\n')]
+    assert PT.scan_script_reads(read, derived), \
+        "a script read of a sub-floor bare field's path was not caught"
+
+    # and the boundary, pinned so it cannot move in silence: below the floor a
+    # bare word is ordinary vocabulary, so it goes on being unsearched in
+    # running prose and in a commit message. Dropping the floor instead was
+    # measured on this tree and returns matches in files that disclose nothing.
+    prose = [("TECHNICAL.md", f"The enclosure is {v}.\n"),
+             (PT.MESSAGE_LABEL, f"panel: the enclosure is {v}\n")]
+    assert not PT.scan_items(ns, prose), \
+        "the sub-floor floor has moved; re-measure before relying on this"
+    # the same field one character longer is caught by the value scan in both
+    long_ns = PT.needles(long, fields, shape)
+    w = long["panel"]["enclosure_type"]
+    caught = PT.scan_items(long_ns, [("TECHNICAL.md", f"| enclosure | {w} |\n"),
+                                     (PT.MESSAGE_LABEL, f"panel: type: {w}\n")])
+    assert {h.where for h in caught} == {"TECHNICAL.md", PT.MESSAGE_LABEL}, \
+        f"a floor-length bare answer was not caught by the value scan: {caught}"
+    return (f"a bare answer below the {floor}-character floor is held to the "
+            f"key/path substitute -- caught as a CSV column, a YAML key, a JSON "
+            f"key and a script read -- and one at the floor stays with the "
+            f"value scan, caught in markdown and in a commit message; neither "
+            f"is claimed by both")
+
+
 def case_a_banned_key_or_path_read_fails():
     """The positive control for both halves of the substitute rule.
 
@@ -747,6 +834,166 @@ def case_the_precommit_gate_blocks_a_staged_leak():
             "unstaged change, and blocks a banned key once it is staged")
 
 
+def case_the_precommit_hook_enforces_the_declared_collision_counts():
+    """The count is the exemption's safety, so the HOOK has to check it.
+
+    `DECLARED_FIXTURE_COLLISIONS` excuses a needle found inside a file's own
+    declared literal span, and the count in each row is the whole of what makes
+    that safe: a file budgeted for three coinciding fixture labels must fail on
+    a fourth. The counts were enforced only here, in a suite nobody is obliged
+    to run before committing, and CI -- which holds no private values -- can
+    never enforce them. So a fourth real door legend pasted into
+    `analysis/test_service_headroom.py` committed cleanly.
+
+    Four claims, on a throwaway repository driven through the real
+    `.githooks/pre-commit`: a commit that touches none of the row-named files
+    still accounts for them (the partial-commit case, which is what a
+    staged-only count would get wrong); a fourth coinciding answer is blocked;
+    a row whose file the commit removes is blocked as stale; and neither
+    blocked commit reaches the history or prints a value.
+
+    Needs the private file, because the counts are counts of real answers. It
+    is SYMLINKED rather than copied: a copy of the intake outside `private/` is
+    the thing this gate exists to prevent, and the throwaway repo gitignores
+    the path either way.
+    """
+    if not PT.REAL_HOUSEHOLD.is_file():
+        raise SkipCase("the declared counts are counts of real answers, so the "
+                       "hook control needs private/household.yaml (gitignored)")
+    if not shutil.which("gitleaks"):                       # pragma: no cover
+        raise SkipCase("the real pre-commit hook refuses to run without "
+                       "gitleaks, so the control cannot drive it")
+    src = PT.ROOT
+    household = yaml.safe_load(PT.REAL_HOUSEHOLD.read_text()) or {}
+    rows = sorted({rel for rel, _ in PT.DECLARED_FIXTURE_COLLISIONS})
+    total = sum(c for c, _ in PT.DECLARED_FIXTURE_COLLISIONS.values())
+    fixture_rel = "analysis/test_service_headroom.py"
+    fixture_leaf = "panel.schedule[].label"
+    declared = PT.DECLARED_FIXTURE_COLLISIONS[(fixture_rel, fixture_leaf)][0]
+
+    # the entry point in process first, so the accounting is reachable other
+    # than through a subprocess: bump a row above what the tree holds and the
+    # gate must exit 1, naming the file, the path and the two counts and no
+    # value. Restored in `finally`, and the restoration is itself asserted.
+    def run(argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = PT.main(argv)
+        return code, err.getvalue()
+
+    saved = dict(PT.DECLARED_FIXTURE_COLLISIONS)
+    try:
+        PT.DECLARED_FIXTURE_COLLISIONS[(fixture_rel, fixture_leaf)] = (
+            declared + 1, "a synthetic control row")
+        code, err = run(["--staged"])
+        assert code == 1, f"a row the tree does not support did not block: {err}"
+        assert f"{fixture_rel} / {fixture_leaf}: declared {declared + 1}, " \
+               f"found {declared}" in err, err
+        assert "stale" in err, err
+        assert PT.collision_accounting(collections.Counter()) == [
+            (k, v[0], 0) for k, v in sorted(PT.DECLARED_FIXTURE_COLLISIONS.items())
+        ], "an unused row is not reported as stale"
+    finally:
+        PT.DECLARED_FIXTURE_COLLISIONS.clear()
+        PT.DECLARED_FIXTURE_COLLISIONS.update(saved)
+    code, err = run(["--staged"])
+    assert code == 0, f"the restored rows do not describe the tree: {err}"
+    assert f"used exactly {total} time(s) as declared" in err, err
+
+    # a REAL answer of the same kind that the file does not already carry, so
+    # pasting it in raises the count by exactly one. Chosen by asking whether
+    # the file holds it, never by looking at it: nothing below prints a value.
+    holds = (src / fixture_rel).read_text()
+    spare = [n for n in PT.needles(household)
+             if n.leaf_path == fixture_leaf and n.text_searchable
+             and not PT._found_in(holds, [n])]
+    assert spare, (f"every {fixture_leaf} answer already occurs in "
+                   f"{fixture_rel}; the control has nothing to add")
+    extra = spare[0].value
+
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        carry = ["analysis/privacy_tiers.py", ".githooks/pre-commit",
+                 ".gitleaks.toml"] + rows
+        for rel in carry:
+            if not (src / rel).is_file():                  # pragma: no cover
+                continue
+            dest = root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((src / rel).read_bytes())
+            dest.chmod(0o755)
+        (root / ".gitignore").write_text("private/\n.venv/\n")
+        (root / "private").mkdir()
+        (root / "private" / "household.yaml").symlink_to(PT.REAL_HOUSEHOLD)
+        # the hook's first interpreter candidate, as a wrapper rather than a
+        # symlink: a venv interpreter linked out of its tree loses the venv
+        (root / ".venv" / "bin").mkdir(parents=True)
+        shim = root / ".venv" / "bin" / "python"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        shim.chmod(0o755)
+
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@x",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+
+        def git(*args, **kw):
+            return subprocess.run(["git", *args], cwd=root, env=env,
+                                  capture_output=True, text=True, **kw)
+
+        def count():
+            out = git("rev-list", "--count", "HEAD")
+            return int(out.stdout.strip()) if out.returncode == 0 else 0
+
+        git("init", "-q", check=True)
+        git("config", "core.hooksPath", ".githooks", check=True)
+        git("add", "-A", check=True)
+        r = git("commit", "-m", "seed the throwaway tree")
+        assert r.returncode == 0, f"the seeded tree was blocked: {r.stderr}"
+        assert count() == 1, r.stderr
+
+        # 1. a commit touching none of the row-named files still accounts for
+        #    every row. A count taken over the staged set alone would read 0
+        #    here and either block this commit or have to stop checking.
+        (root / "notes.md").write_text("# a note that mentions nothing\n")
+        git("add", "-A", check=True)
+        r = git("commit", "-m", "add an unrelated note")
+        assert r.returncode == 0, f"an unrelated commit was blocked: {r.stderr}"
+        assert count() == 2, r.stderr
+        assert f"+{len(rows)} declared-collision file(s) re-read" in r.stderr, \
+            f"the row-named files were not re-read on a partial commit: {r.stderr}"
+        assert f"used exactly {total} time(s) as declared" in r.stderr, r.stderr
+
+        # 2. a fourth real answer in the file budgeted for three
+        dest = root / fixture_rel
+        dest.write_text(dest.read_text()
+                        + f'\nEXTRA_FIXTURE = [{{"label": {extra!r}}}]\n')
+        git("add", "-A", check=True)
+        r = git("commit", "-m", "add one more panel fixture")
+        assert r.returncode != 0, "a fourth real collision was committed"
+        assert "declared fixture collision" in r.stderr, r.stderr
+        assert f"{fixture_rel} / {fixture_leaf}: declared {declared}, found " \
+               f"{declared + 1}" in r.stderr, r.stderr
+        assert extra.lower() not in r.stderr.lower(), "the hook printed a value"
+        assert count() == 2, f"the blocked commit changed the history: {r.stderr}"
+
+        # 3. the other direction: a row whose file this commit removes is
+        #    stale, and the hook says so rather than counting it clean
+        dest.write_bytes((src / fixture_rel).read_bytes())
+        git("add", "-A", check=True)
+        gone = "DATA-SOURCES-CHEATSHEET.md"
+        git("rm", "-q", "--cached", gone, check=True)
+        r = git("commit", "-m", "drop the cheatsheet from the index")
+        assert r.returncode != 0, "a stale collision row was committed"
+        assert f"{gone} / panel.meter_class: declared 1, found 0" in r.stderr, \
+            r.stderr
+        assert "stale" in r.stderr, r.stderr
+        assert count() == 2, f"the blocked commit changed the history: {r.stderr}"
+    return (f"the real pre-commit hook accounts for all {len(rows)} rows "
+            f"({total} coinciding answers) on a commit that touches none of "
+            f"them, blocks a {declared + 1}th real collision in a file "
+            f"budgeted for {declared}, blocks a row gone stale, prints no "
+            f"value, and leaves the commit count unchanged both times")
+
+
 def case_every_intake_key_is_tiered():
     """The reverse gap, and the reason it has to be a test.
 
@@ -797,6 +1044,7 @@ CASES = [
     case_a_test_module_and_the_template_are_scanned_like_any_other_file,
     case_a_declared_collision_excuses_its_own_span_and_nothing_else,
     case_the_unsearchable_fields_are_derived_from_the_tiers,
+    case_a_sub_floor_bare_answer_is_covered_by_the_substitute_rule,
     case_a_banned_key_or_path_read_fails,
     case_the_template_is_excused_from_the_key_rule_in_writing,
     case_the_committed_tree_carries_no_banned_key_or_read,
@@ -806,6 +1054,7 @@ CASES = [
     case_the_example_template_is_tiered_too,
     case_no_private_only_value_appears_in_any_tracked_file,
     case_the_declared_collisions_are_exactly_accounted_for,
+    case_the_precommit_hook_enforces_the_declared_collision_counts,
     case_every_intake_key_is_tiered,
 ]
 

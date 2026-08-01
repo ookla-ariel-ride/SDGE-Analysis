@@ -39,9 +39,24 @@ WHAT THIS CANNOT SEE, stated so the gate is not read as more than it is
     cost, a sum a private figure contributed to;
   * a boolean, and a one-word enum shorter than BARE_WORD_TEXT_MIN_CHARS. That
     class is NOT left uncovered: `unsearchable_fields` derives it from the
-    tiers, and `scan_artifact_keys` / `scan_script_reads` hold it to the
-    greppable substitute the cheatsheet states -- no committed artifact carries
-    a key of that name, and no committed script reads that path;
+    tiers and from `Needle.text_searchable` -- the same floor the scanner
+    applies, so the two cannot disagree about which fields the value scan
+    reaches -- and `scan_artifact_keys` / `scan_script_reads` hold it to the
+    greppable substitute the cheatsheet states: no committed artifact carries a
+    key of that name, and no committed script reads that path. State plainly
+    what that substitute reaches, because it is not the value: JSON, YAML and
+    CSV keys, and python, shell and yaml scripts. The sub-floor word ITSELF
+    goes on being unsearched in running prose and in a commit message, and that
+    is the floor's whole purpose -- dropping it and searching this household's
+    two sub-floor door legends in value position returns four matches on a tree
+    that discloses nothing, in index.html and in the two
+    service-headroom modules;
+  * the same sub-floor word where the FIELD also holds searchable answers. The
+    derivation is per field, and a field with one long answer stays with the
+    value scan, so a short one beside it is covered by neither half. Pushing
+    the derivation down to the leaf was measured and rejected: the leaf here is
+    `panel.schedule[].label`, and banning the key `label` fires on nine
+    committed artifacts whose labels are chart series and issue-form fields;
   * a value that a file declares as its own literal AND that has been declared
     a known collision in DECLARED_FIXTURE_COLLISIONS. There is no file class
     that goes unscanned: a test module and the example template are scanned
@@ -55,6 +70,7 @@ itself is never printed, never written into an assertion message, and never
 appears in this file.
 """
 import ast
+import collections
 import csv
 import io
 import json
@@ -176,6 +192,24 @@ class Needle:
         self.leaf_path = leaf_path
         self.value = value
         self.mode = mode
+
+    @property
+    def text_searchable(self):
+        """Whether unstructured text can be searched for this value at all.
+
+        The ONE place BARE_WORD_TEXT_MIN_CHARS is read, and it is a property
+        rather than a check written twice because the two readers used to
+        disagree. `_found_in` skips a sub-floor bare word in every file it
+        cannot parse, so that needle covers nothing outside JSON; but
+        `unsearchable_fields` counted the mere EXISTENCE of a needle as proof
+        the field was covered by the value scan, and so left it out of the
+        key/path substitute. A field whose answers are all sub-floor bare words
+        fell through both. Both now ask the same question of the same constant,
+        which is the discipline the NEC citation table in `service_headroom.py`
+        uses: state the rule once, compute every use of it from that statement.
+        """
+        return (self.mode == "anywhere"
+                or len(self.value) >= BARE_WORD_TEXT_MIN_CHARS)
 
     def __repr__(self):                                    # pragma: no cover
         # deliberately valueless: a needle must be safe to print
@@ -662,7 +696,7 @@ def _found_in(text, needle_list, structured=None):
             found = v in low
         elif strings is not None:
             found = v in strings
-        elif len(v) < BARE_WORD_TEXT_MIN_CHARS:
+        elif not n.text_searchable:
             continue
         else:
             found = bool(re.search(_VALUE_POSITION % re.escape(v), low, re.M))
@@ -731,7 +765,8 @@ def leaks(needle_list, text, obj=None, relpath=None):
 #     search -- a boolean. True of the FIELD, so it holds in CI, where no
 #     household file exists and the artifact/script halves of this rule still
 #     run in full;
-#   * the household's recorded answer is a scalar that yields no needle: too
+#   * the household's recorded answer is a scalar that yields no needle THE
+#     SCANNER CAN USE -- `Needle.text_searchable`, read off the same floor: too
 #     short, or a whole integer below INTEGER_NEEDLE_FLOOR. That reading needs
 #     the private file, so it widens the set locally and cannot run in CI.
 #     Restricted to scalars on purpose -- a container that produced no needle
@@ -776,10 +811,17 @@ def unsearchable_fields(household=None, fields=None, shape=None):
     `household` is optional: without it the set is the type-derived half alone,
     which is what CI can compute. Pass the parsed private file to widen it with
     the answers that turned out to be unsearchable in fact.
+
+    A field counts as covered by the value scan only where it has a needle the
+    SCANNER can actually use -- `Needle.text_searchable`, off the same floor
+    constant `_found_in` applies. Counting every needle instead was the drift:
+    `needles` builds one for a bare string of any length, so a field answered
+    with a short bare word looked searched here and was skipped there.
     """
     fields = cheatsheet_fields() if fields is None else fields
     shape = schema() if shape is None else shape
-    searched = ({n.field_id for n in needles(household, fields, shape)}
+    searched = ({n.field_id for n in needles(household, fields, shape)
+                 if n.text_searchable}
                 if household is not None else None)
     out = {}
     for f in fields:
@@ -975,18 +1017,14 @@ def tree_items(root=None, files=None):
             for rel in rels if (root / rel).is_file()], rels
 
 
-def staged_items(root=None):
-    """(relpath, text) for every file this commit would ADD or CHANGE.
+def index_items(root, rels):
+    """(relpath, text) read out of the INDEX for the given paths.
 
-    Read out of the INDEX, not the working tree: what the hook has to judge is
-    the content about to be committed, which is not always what is on disk.
+    The index, not the working tree: what a hook has to judge is the content
+    about to be committed, which is not always what is on disk. A path the
+    index does not hold is silently absent from the result -- the caller
+    decides what that means.
     """
-    root = ROOT if root is None else pathlib.Path(root)
-    names = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
-        cwd=root, capture_output=True, text=True, check=True).stdout
-    rels = sorted(p for p in names.split("\0")
-                  if p and not p.startswith("private/"))
     # one `cat-file --batch` rather than one `git show` per file: this runs on
     # every commit, and 107 process spawns were half its wall time. Paths are
     # newline-delimited on the way in, so a path containing a newline (legal,
@@ -1014,7 +1052,64 @@ def staged_items(root=None):
                               capture_output=True, check=False)
         if blob.returncode == 0:
             items.append((rel, blob.stdout.decode("utf8", "replace")))
-    return items, rels
+    return items
+
+
+def staged_items(root=None):
+    """(relpath, text) for every file this commit would ADD or CHANGE."""
+    root = ROOT if root is None else pathlib.Path(root)
+    names = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
+        cwd=root, capture_output=True, text=True, check=True).stdout
+    rels = sorted(p for p in names.split("\0")
+                  if p and not p.startswith("private/"))
+    return index_items(root, rels), rels
+
+
+def collision_audit_items(root=None, have=()):
+    """The index version of every file a collision row names, minus `have`.
+
+    Why the hook reads these files whether or not the commit touches them.
+    `DECLARED_FIXTURE_COLLISIONS` is an exemption, and the COUNT in each row is
+    the whole of what makes it safe: a file budgeted for three coinciding
+    fixture labels must fail on a fourth. Enforcing that count needs the number
+    of times the row actually fired, and a partial commit stages only some
+    files -- so a count taken over the staged set alone says 0 for every row
+    whose file this commit leaves alone, and the check would either block every
+    ordinary commit or have to be switched off exactly when it matters.
+
+    The alternative to scanning the whole prospective tree, which is what the
+    honest version of that check would otherwise cost on every commit: a row
+    can only ever fire in the file it names, so reading the index version of
+    those files -- three of them here, not 107 -- gives the EXACT count for
+    every row over the tree this commit would produce. No partial-commit
+    caveat, and no whole-tree scan. `have` is what the caller has already read,
+    so a staged row-file is not scanned (and counted) twice.
+
+    A row naming a path the index does not hold yields nothing, which shows up
+    as a count of 0 against its declared count: a stale row, and blocked.
+    """
+    root = ROOT if root is None else pathlib.Path(root)
+    want = sorted({rel for rel, _ in DECLARED_FIXTURE_COLLISIONS} - set(have))
+    return index_items(root, want)
+
+
+def collision_accounting(excused):
+    """Rows whose declared count is not the number of hits they excused.
+
+    [(row key, declared, used)], empty when they agree. Checked in BOTH
+    directions, the same as `test_privacy_tiers.py` checks it: used more times
+    than declared is a collision nobody has ruled on, used fewer is a row that
+    has gone stale and is now excusing more than anyone signed off. Counts,
+    file paths and yaml paths only -- there is no value in any of it.
+    """
+    declared = {k: v[0] for k, v in DECLARED_FIXTURE_COLLISIONS.items()}
+    out = []
+    for key in sorted(set(declared) | set(excused)):
+        want, got = declared.get(key, 0), int(excused.get(key, 0))
+        if want != got:
+            out.append((key, want, got))
+    return out
 
 
 def scan_tree(needle_list, root=None, files=None, excused=None):
@@ -1054,9 +1149,24 @@ def gate(items, household=None, fields=None, shape=None, excused=None):
 # message is scanned with no literal-span exemption of any kind, because a
 # commit message declares no fixtures.
 #
+# The two file scopes also ACCOUNT for the declared fixture collisions, which
+# until now only `test_privacy_tiers.py` did -- and nobody is obliged to run a
+# test before committing. An exemption whose safety rests on a count that only
+# a test enforces is not an exemption at the gate that blocks commits: another
+# real door legend pasted into a file budgeted for three of them committed
+# cleanly, and CI, which holds no private values, can never see it. So the
+# count is checked here, over the tree this commit would produce, by reading
+# the row-named files out of the index alongside the staged ones
+# (`collision_audit_items` states why that is exact and why it is cheap). The
+# `--message` scope is left out of it deliberately: a row can only fire inside
+# a file's declared literal spans, a message has none, and blocking a commit
+# message over a stale fixture row in a test module would report the problem in
+# the one place it cannot be about.
+#
 # Exit codes, which both hooks read:
 #   0  clean
-#   1  a tier rule is broken; the commit is blocked
+#   1  a tier rule is broken, or a declared collision row does not match the
+#      tree; the commit is blocked
 #   2  private/household.yaml is absent, so the value half could not run. Not a
 #      failure -- somebody else's clone legitimately has no private file -- but
 #      never silent either
@@ -1072,6 +1182,7 @@ def main(argv=None):
         if flag in argv:
             scope = flag
     try:
+        audited = []
         if scope == "--message":
             where = argv[argv.index("--message") + 1]
             items = [(MESSAGE_LABEL,
@@ -1079,12 +1190,21 @@ def main(argv=None):
             rels = [MESSAGE_LABEL]
         elif scope == "--staged":
             items, rels = staged_items()
+            # the row-named files this commit does not touch, so the declared
+            # counts below are the tree's and not merely the change's
+            audited = collision_audit_items(have=[r for r, _ in items])
+            items = items + audited
         else:
             items, rels = tree_items()
         household = None
         if REAL_HOUSEHOLD.is_file():
             household = yaml.safe_load(REAL_HOUSEHOLD.read_text()) or {}
-        hits, unsearchable = gate(items, household)
+        excused = collections.Counter()
+        hits, unsearchable = gate(items, household, excused=excused)
+        # only where the value scan actually ran: without the private file
+        # nothing is excused, and every row would read as stale
+        mismatched = (collision_accounting(excused)
+                      if household is not None and scope != "--message" else [])
     except Exception as e:                                 # noqa: BLE001
         print(f"privacy tiers: the gate could not run ({type(e).__name__}: "
               f"{e}) -- refusing to pass unscanned.", file=sys.stderr)
@@ -1099,17 +1219,37 @@ def main(argv=None):
         print("Field ids and paths only -- no value is printed. See "
               "DATA-SOURCES-CHEATSHEET.md for the tier of each field.",
               file=sys.stderr)
+    if mismatched:
+        print(f"privacy tiers: BLOCKED. {len(mismatched)} declared fixture "
+              f"collision row(s) do not describe the tree this commit would "
+              f"produce:", file=sys.stderr)
+        for (rel, leaf), want, got in mismatched:
+            why = ("a coinciding answer nobody has declared" if got > want
+                   else "the row is stale and now excuses more than it should")
+            print(f"  - {rel} / {leaf}: declared {want}, found {got} -- {why}",
+                  file=sys.stderr)
+        print("Counts and paths only -- no value is printed. Fix the file, or "
+              "correct DECLARED_FIXTURE_COLLISIONS in analysis/privacy_tiers.py "
+              "with the reason.", file=sys.stderr)
+    if hits or mismatched:
         return 1
     scanned = (subject if scope == "--message"
                else f"{len(rels)} {scope.lstrip('-')} file(s)")
+    if scope == "--staged" and audited:
+        scanned += (f" (+{len(audited)} declared-collision file(s) re-read "
+                    f"from the index)")
     if household is None:
         print(f"privacy tiers: {scanned} clean of the {len(unsearchable)} "
               f"key/path rule(s) that need no private data. NOT CHECKED: the "
               f"real-value scan -- private/household.yaml is absent here, so "
               f"there were no answers to look for.", file=sys.stderr)
         return 2
+    accounted = ("" if scope == "--message" else
+                 f", {len(DECLARED_FIXTURE_COLLISIONS)} declared collision "
+                 f"row(s) used exactly {sum(excused.values())} time(s) as "
+                 f"declared")
     print(f"privacy tiers: {scanned} clean ({len(unsearchable)} unsearchable "
-          f"field(s) held to the key/path rule).", file=sys.stderr)
+          f"field(s) held to the key/path rule{accounted}).", file=sys.stderr)
     return 0
 
 
