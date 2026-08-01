@@ -50,6 +50,7 @@ MANIFEST = {
     "rates.py": "library",
     "rates_history.py": "generator",
     "household.py": "library",
+    "privacy_tiers.py": "library",
     "publish.py": "library",
     "behavior_rebuild.py": "generator",
     "battery_dispatch_policies.py": "generator",

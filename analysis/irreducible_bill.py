@@ -923,7 +923,7 @@ def build_package_floor_fractions(floor, gross):
 
 def build_baseline_floor_fraction(gross):
     """Finding 1, issue #7 FOURTH adversarial review (a Codex pass over the
-    already-committed script). §11's report prose compared
+    already-committed script). §12's report prose compared
     model_baseline_current_rates (data/package_results.json -- a FULLY
     current-rate MODEL of the no-package/baseline scenario: the household's
     own historical interval data, priced at TODAY'S tariff throughout,

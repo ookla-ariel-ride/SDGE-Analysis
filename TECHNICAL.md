@@ -708,19 +708,27 @@ with crossover markers.
 3. **Crossovers**: cumulative value vs invoice gross, and vs invoice × 0.70 (30% federal ITC
    for 2019 systems).
 
-**Constants at the top of the file** (edit for your system): `INVOICE` 37845.0, `ITC` 0.30,
-`PROD` {2020–2026 actual kWh; 2026 partial}, `RATE_IDX` {approx. SDG&E average residential
-¢/kWh by year, 32→48}, `FALLBACK_OLD` **0.4869** $/kWh (pre-2026 TOU structure at current
-rates), `FALLBACK_NEW` **0.3009** $/kWh (current TOU structure) — fallbacks only; when the
-raw inputs are present both blended values and the production denominator are derived from
-the data and written to `data/lifetime_payback.json`.
+**Where its inputs come from.** The per-house facts are read from `private/household.yaml`
+through `analysis/household.py`, which fails closed when the file or a required key is
+missing: `INVOICE` ← `solar.install_invoice_usd` (the figure published as `invoice_usd` in
+`data/lifetime_payback.json` — `public-ok`, §11), `PAID` ← `solar.install_paid_date` (printed
+in the run header, nothing computes from it), `PTO` ← `household.pto_date`. None of the three
+is a literal in the script.
+
+**Constants at the top of the file** (edit for your system): `ITC` 0.30 (a public tariff
+rate, not a household fact), `PROD` {2020–2026 actual kWh; 2026 partial}, `RATE_IDX` {approx.
+SDG&E average residential ¢/kWh by year, 32→48}, `FALLBACK_OLD` **0.4869** $/kWh (pre-2026
+TOU structure at current rates), `FALLBACK_NEW` **0.3009** $/kWh (current TOU structure) —
+fallbacks only; when the raw inputs are present both blended values and the production
+denominator are derived from the data and written to `data/lifetime_payback.json`.
 
 **Results.** Gross crossover **~fall 2025** (~Sep–Oct, 73% through the year); net-of-ITC
 crossover **~early 2024** (~Mar). Headline values live in
 `data/lifetime_payback.json` (script-owned, §9-gated). Caveat printed with the results: the rate
 index is approximate — crossover dates carry roughly ±10% (a few months).
 
-**Run:** `python3 analysis/lifetime_payback.py` (no inputs; constants inline).
+**Run:** `python3 analysis/lifetime_payback.py` (no data files needed; it reads
+`private/household.yaml` for the three per-house facts and carries the rest as constants).
 
 ---
 
@@ -1079,8 +1087,9 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` reads `base_save` from
       artifact); then `package_results.py` → composes `data/package_results.json` (the
       LOW/MID/HIGH package artifact) from the behavior + dispatch artifacts, no new
       computation;
-   8. `lifetime_payback.py` (if you have solar and the install invoice) → update its
-      `INVOICE`/`PROD`/`RATE_IDX`/blended constants first (§3.12);
+   8. `lifetime_payback.py` (if you have solar and the install invoice) → the invoice, the
+      date it was paid and the PTO date come from `private/household.yaml`; update the
+      script's own `PROD`/`RATE_IDX`/blended constants first (§3.12);
    9. `extended_findings.py` → the extended-findings batch (§3.14). Run it only after
       `behavior_rebuild.json` and `battery_dispatch_policies.json` are current: it
       recomputes the battery dispatch figures from the engine and aborts if they drift
@@ -1495,7 +1504,281 @@ are exactly the two readings, that their width equals the interaction, that no b
 `index.html` carries both bounds, states no point attribution, and carries none of the retired
 all-cell figures.
 
-## 11. The irreducible bill (`analysis/irreducible_bill.py`)
+## 11. Intake privacy tiers: what may appear in a committed artifact
+
+Every intake field in [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md) carries one
+of three tiers, and the tier decides where the answer may go:
+
+| tier | may appear in `index.html`, `data/`, `analysis/`, `README.md`, commit messages | where it lives |
+|---|---|---|
+| `public-ok` | yes | `private/household.yaml`, and in artifacts as needed |
+| `private-only` | never | `private/household.yaml` only (gitignored) |
+| `secret` | never | a gitignored `.env` only — never `household.yaml` |
+
+`CLAUDE.md` §4 states the rule as binding. This section records where the boundary actually
+sits, why it sits there, and what a reader should not expect the enforcement to catch.
+
+### 11.1 What enforces it
+
+- **The pre-commit gate**, which runs two scans over the staged content and refuses to
+  commit if either cannot run. `git config core.hooksPath .githooks` turns on a `gitleaks`
+  run over staged changes, chaining the committed generic rules (`.gitleaks.toml`) with the
+  local-only person-specific rules (`private/pii-rules.toml`, gitignored, never committed —
+  it contains the values it guards). CI re-scans full history on every push with the
+  committed rules only, so the local hook is the real gate for anything person-specific.
+  The hook then runs `analysis/privacy_tiers.py --staged`, which is the same tier scan the
+  suites run, restricted to the blobs this commit would add or change — read out of the
+  index, not the working tree, since those differ. Before it scans anything it checks that
+  every tiered field still resolves to a locatable subject and refuses if one does not
+  (§11.6): a rule pointed at nothing reports every tree as clean. It then blocks on a hit,
+  naming the field id, the yaml path and the file and never the value. A hit inside a file's
+  own declared literal is excused only where the same file already declared that literal in
+  the baseline this change is measured against (§11.5), which needs no configuration and no
+  committed count, so the hook behaves the same way in a fork with somebody else's intake in
+  it. Where `private/household.yaml` is absent (somebody else's clone) the value half cannot
+  run: the hook says so in terms and allows the commit, because refusing would make the repo
+  uncommittable for everyone but its owner, and the key/path rules of §11.5 and the resolver
+  check both still run. Cost on this tree: about 0.30 s end to end for an ordinary commit,
+  gitleaks included, and about 1.0 s for the scan over all 107 files. The baseline costs
+  nothing until a coincidence exists — the blob is fetched only for a file whose own literals
+  hold a private answer, which on an ordinary commit is none of them; a commit that re-stages
+  all three files where this tree does coincide pays 0.15 s more.
+- **The commit-msg gate.** The tier table above puts commit messages inside the boundary, and
+  a pre-commit hook cannot see one: it runs before the message exists. `.githooks/commit-msg`
+  runs `analysis/privacy_tiers.py --message` over the proposed message with the same locally
+  resolved needles, blocks on a hit naming the field id and never the value, and fails closed
+  — a scanner that cannot run refuses the commit rather than passing it unscanned. It follows
+  the hook beside it in every other respect: the same interpreter search, the same exit codes,
+  and the same "say so and allow" where `private/household.yaml` is absent. `core.hooksPath`
+  already points at `.githooks`, so the file needs no separate enabling step. Cost: about
+  0.17 s end to end.
+- **A tier scan over one artifact.** `analysis/test_service_headroom.py` parses the
+  cheatsheet's field blocks, reads the matching values out of `private/household.yaml`, and
+  fails if any `private-only` value turns up in `data/service_headroom.json` — as a value or
+  anywhere in its prose. It is the case that would have caught the meter class, which had
+  reached the artifact quoted inside a provenance sentence. It refuses to pass when its
+  needle universe comes back empty, so a broken resolver reads as a broken scan and not as a
+  clean bill.
+- **The id → path contract**, in the cheatsheet under "The `id` → `private/household.yaml`
+  path contract". A tier is attached to a field id; the value sits at a yaml path; anything
+  enforcing the tiers has to resolve one to the other, and a resolver that quietly finds
+  nothing reports every field clean. The contract fixes the resolution order, lists every id
+  whose path cannot be derived, declares the ids that store no yaml value at all, and
+  requires a gate to distinguish *checked* from *unchecked* in what it prints.
+
+- **A repo-wide tier gate.** `analysis/test_privacy_tiers.py` runs the same scan over every
+  tracked file `git ls-files` reports, minus `private/`. It matters that the scope is the
+  tracked tree rather than `data/`: of the eleven places the install figure had reached, six
+  were in `index.html` and this file, neither of which has a generator, so a gate scoped to
+  generator output would have caught fewer than half of them. The suite also fails on an
+  intake key with no cheatsheet block, because a field with no tier contributes no needle and
+  is invisible to the scan by construction.
+- **What CI can and cannot be.** `private/household.yaml` is gitignored, so no runner holds a
+  household answer, and shipping one there would be the disclosure this whole section exists
+  to prevent. The two cases that need real values — the repo-wide value scan and the reverse
+  gate that every intake key is tiered — therefore SKIP on a runner. They skip loudly: the
+  suite prints a banner naming each skipped case and the reason, and the workflow step is
+  named for what it actually covers, so a green check cannot be read as real-value coverage.
+  Everything else runs there in full, including both halves of the §11.5 key/path rule, which
+  need no private data. The real-value scan runs on every commit in the pre-commit hook,
+  which is what `CLAUDE.md` §4 means by the local hook being the real gate.
+
+### 11.2 Two fields re-tiered to `public-ok` (issue #38)
+
+**`solar.install_invoice_usd`** — the total installed price of the array, read off the
+install invoice. It was tagged `private-only` while its value was committed in
+`data/lifetime_payback.json`, in this file, and in five places in the published report. The
+tier was re-examined rather than the value removed, and it moved to `public-ok`:
+
+- The repo publishes the array's kW DC, module count, inverter model and count, the PTO date
+  to the day, the climate zone, the rate plan, the NEM vintage, a year of 15-minute metered
+  consumption and twelve months of billed dollars. An install price for a residential array
+  is a market fact about a transaction next to that, and it is attached to no name, address,
+  account number, meter number or coordinate.
+- It is reconstructible to within about $5 from figures published in the same artifact. The
+  crossover fractions and the cumulative-value series in `data/lifetime_payback.json` bracket
+  it directly, so deleting the key would have removed the label and left the number. A tier
+  that only holds while nobody does the arithmetic is not a tier.
+- Keeping it private would have meant removing the lifetime-payback audit trail, and
+  `CLAUDE.md` §9 requires a committed script that reproduces every headline figure. The
+  invoice is the denominator of the payback headline.
+
+The invoice DOCUMENT stays `private-only`: it carries the name, the address and the account
+details that the price does not.
+
+**`solar.install_paid_date`** — its year-month is the `pto_date`'s year-month, and `pto_date`
+is `public-ok` and published to the day. Holding the paid month private while publishing the
+interconnection day was an inconsistency rather than a rule. `analysis/lifetime_payback.py`
+prints it in its run header and computes nothing from it.
+
+Neither re-tiering changed a published figure. Nothing was added to any artifact and nothing
+was removed from one; what changed is that the artifacts and the tiers now say the same
+thing.
+
+**`solar.itc_claimed` stayed `private-only`.** It is a fact about the household's tax return
+rather than about the array, and no artifact needs it: `lifetime_payback.py` publishes both
+the gross and the net-of-ITC crossover as scenarios, so a `null` answer costs nothing.
+
+### 11.3 The panel fields (issue #6)
+
+Section E3 of the cheatsheet is tiered field by field, not as a block, and the split is
+between a rating and an identity:
+
+- **`public-ok`: the bare equipment ratings** — service amps, busbar amps, meter-socket
+  continuous amps, assembly kA, space and circuit counts, backfeed breaker amps, and which
+  end of the busbar a breaker sits on. Each comes from a short list of standard values that
+  millions of dwellings share, and the published headroom and NEC 705.12(B)(3)(2) verdicts
+  cannot be audited without them.
+- **`private-only`: the identifying detail** — catalog numbers for the main breaker and the
+  enclosure, the breaker family, the enclosure description, the meter class, and the whole
+  circuit schedule, whose `device` markings and door-legend `label`s describe the inside of
+  one particular house.
+- **One derived exception**, admitted deliberately: the ampere rating of the branch
+  overcurrent device serving the existing air conditioning, published as
+  `noncoincident_loads.existing_ac_ocpd_a`. It is a standard NEC 240.6(A) ampere size, and it
+  is load-bearing — the NEC 220.60 noncoincident credit bound is 125% of it. The label that
+  selected it, and the words searched for, stay private.
+
+Issue #38 tiered the three panel keys that had no field block, on the same principle.
+`panel.tandem_density` is `public-ok`: it summarises the schedule more coarsely than
+`data/service_headroom.json` already does, since the artifact publishes the exact
+`twin_density_devices` count derived from the same list. `panel.schedule_confidence` and
+`panel.no_dryer_or_water_heater_circuit` are `private-only`: both are read off the door
+legend, no script reads either, and the exception above admits a schedule-derived value only
+where it is load-bearing and a standard rating. The same fact as the second is available
+publicly from `appliance_fuels`, which is where an artifact takes it from.
+
+### 11.4 The monitoring feeds (issue #38)
+
+The `monitoring` list had no field block at all, so none of its keys had a tier and no gate
+could see them. Section E4 now tiers them per key, on the line between a capability and an
+address:
+
+- **`public-ok`** — `source`, `measures`, `resolution`, `finest_history_interval`,
+  `solar_cts_fitted`, `history_depth_verified`, `live_since`, `status`. These are properties
+  of a product, or measurements of what it returned when probed. Every owner of the same
+  monitor has the same answers.
+- **`private-only`** — `url`, `api`, `owned_by`. A monitoring site URL is usually built
+  around the system id (`/systems/<id>`, `?sid=<id>`), which is the "utility/solar/PVOutput
+  account id" `CLAUDE.md` §4 keeps out of committed artifacts; `api` is an access path into
+  one household's account; `owned_by` is a path on the operator's own machine. The list as a
+  container is `private-only` for the same reason: publishing it publishes those three.
+- **`secret`, and therefore not in `household.yaml` at all** — the credentials themselves.
+  `api` records the access method and the NAMES of the `.env` variables. A key, token,
+  password or session cookie written into that field is a secret in the wrong file.
+
+A tier here follows what the field can hold, not what one household's answer happens to be.
+`monitoring[].url` is `private-only` even where a particular entry holds a bare dashboard
+link with no id in it.
+
+### 11.5 What literal enforcement cannot see
+
+A value scan searches committed files for the answer as it appears in `private/household.yaml`.
+It catches a copy-paste, which is the common failure. It does not catch these, and a gate
+that reports "clean" is reporting only that it found no literal match:
+
+- **Reformatting.** A price held as `30000.0` in the intake is `30,000` in prose, `30000` in
+  JSON and `$30k` in a chart label. A date held as `2021-04` is `Apr 2021` in a sentence. A
+  scan for the intake spelling sees none of those.
+- **Rendering in English.** A month name, a spelled-out number, a rounded figure — all
+  publish the value without publishing the string.
+- **Arithmetic.** A derived figure carries the input without quoting it. The net-of-ITC cost
+  in `data/lifetime_payback.json` is 0.70 × the invoice; the crossover fractions and the
+  cumulative-value series bracket the invoice to about $5. This is not hypothetical — it is
+  the reason `solar.install_invoice_usd` could not have been kept private by deleting the
+  key, and it is recorded in §11.2 as part of that decision.
+- **Non-distinctive values.** A boolean is `true`. A one-word enum is `high`. A scan for
+  either flags every file in the repo, so a literal check on those fields is worthless in
+  both directions. They are not left uncovered: the cheatsheet states a greppable substitute
+  — no committed artifact carries a key of that name, and no committed script reads that
+  path — and `privacy_tiers.unsearchable_fields()` derives the class it applies to from the
+  tiers and the declared field types rather than from a list, so a private-only boolean added
+  later is covered without anyone remembering. The two mechanisms are made to partition off
+  one constant: `Needle.text_searchable` decides whether the scanner can search for a value
+  in unstructured text at all, and both the scanner's skip and this derivation read it, so a
+  field cannot look searched to one and unsearchable to the other. Say plainly what the
+  substitute reaches, because it is not the value: structured keys and script reads. The
+  sub-floor word itself goes on being unsearched in running prose and in a commit message,
+  which is what the floor is for — dropping it and searching this household's two sub-floor
+  door legends in value position returns four matches on a tree that discloses nothing, in
+  `index.html` and in the two service-headroom modules. The derivation is per FIELD, so a field
+  holding one searchable answer stays with the value scan and a short answer beside it is
+  reached by neither half; pushing it down to the leaf was measured and rejected, since the
+  leaf here is `panel.schedule[].label` and banning the key `label` fires on nine committed
+  artifacts whose labels are chart series and issue-form fields. `scan_artifact_keys` checks JSON and YAML keys
+  at any depth and CSV headers; `scan_script_reads` checks the accessor call, a read of a
+  container above the key, and the path written as a bare string literal — matched by exact
+  equality, so a docstring that merely mentions the path is not a read — and, in the shell and
+  yaml this repo also tracks, the dotted path as a whole token outside comments. Markdown and
+  HTML are deliberately not searched for a path: several of them have to name one in order to
+  document this rule. Neither half needs a private value, so both run in CI as well as in the
+  hooks. `household.example.yaml` is exempt from the KEY half in writing, in
+  `KEY_RULE_EXEMPT` — carrying every intake key is what makes it the schema — and stays
+  subject to every value rule.
+- **Anything the tracked tree does not hold.** The gate reads `git ls-files` minus
+  `private/`, so it sees every committed text file, and nothing else. An image, a PDF, and
+  anything not yet added are outside it, covered by the gitleaks hook's patterns and by
+  review — a different net with different holes. Commit messages are inside the boundary and
+  outside this scan; `.githooks/commit-msg` is what covers them (§11.1).
+- **A literal the repository already carried.** A test module and the example template are
+  scanned like any other file — there is no file class the scan skips, and an earlier version
+  of this gate that exempted both was blind to exactly the copy-paste it existed to catch,
+  since neither exemption could tell an invented fixture from a pasted answer. What excuses a
+  hit is the repository's own history: a needle found inside a literal the file DECLARES is
+  excused only where the baseline version of that same file already declared the same
+  literal, and only as many times as the baseline declared it. A literal that was already
+  there was written by somebody who did not have these answers; a literal this change
+  introduces or rewords, and that matches a private answer, is the paste the gate exists to
+  catch. The baseline is the merge base with the trunk, falling back to `HEAD` — so a value
+  pasted in an earlier commit on the same branch cannot launder itself into the next commit's
+  excuse — and a repository with no commits excuses nothing. Only three file classes declare
+  literals at all: a `test_*.py` module, `household.example.yaml`, and the cheatsheet's
+  `question:` scalars. Everywhere else — every artifact in `data/`, every line of prose in
+  `index.html` and `TECHNICAL.md`, which is where the meter-class leak actually landed —
+  nothing is eligible and nothing is excused for being old.
+
+  A span is the AST node position of a python string, the composer mark of a yaml scalar or
+  the cheatsheet's `question:` scalar, so the same value in a comment, a docstring or prose
+  still fails; a python string standing alone as a statement is prose rather than a fixture
+  literal, so a docstring is never eligible. The comparison is on what the literal says
+  rather than on its source bytes, so re-quoting a fixture or moving it to another line does
+  not make it new. Nothing about the rule is household-specific, and that is the point: what
+  it replaces was a committed table of how many of THIS household's answers coincided with
+  the fixtures in each file. That table held for one house. Anyone following the
+  "Reproduce this for your own home" flow in `README.md` has their own labels coinciding a
+  different number of times, and every commit they made would have been blocked as a stale
+  row until they edited shared scanner code to match their own private answers — hostile, and
+  an invitation to write a private figure into a committed file. The baseline rule is also
+  strictly stronger: a count cannot see a swap that keeps the total, and it excused every
+  further occurrence of a value once one was declared, so a fixture label pasted a second
+  time into a sentence that says what it is moved no count. A second occurrence is a second
+  span, and it fails. What it costs, stated plainly: a private value already committed inside
+  one of those three classes' literals before this rule existed goes on being excused, which
+  is exactly what the count rule excused too.
+
+The practical consequence: **a literal scan is a floor, not a proof.** The tier list in the
+cheatsheet is the record of what may be published, and a value's tier is a decision, made
+once and written down with its reasoning — the way the two decisions in §11.2 are written
+down. A gate checks that a decision is being kept where it can see it; it does not make the
+decision, and it does not see everywhere.
+
+### 11.6 A tier whose subject cannot be located
+
+The path contract in [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md) requires that
+anything enforcing the tiers **fail loudly** when a field id resolves to no path and is not
+declared path-less. The reason is stated there: a tier whose subject cannot be located is a
+broken rule, and a gate that reports it clean is the exact failure the contract exists to
+prevent. A mistyped or renamed id resolves to a key the schema has no room for, so it yields
+no needle, bans no key and removes itself from the universe the scan searches — and the scan
+then returns clean, in the reassuring way.
+
+`privacy_tiers.gate()` now makes that check before it scans anything and raises rather than
+continuing; `main()` reports it as a block, naming the ids and the paths they derived to.
+Resolution is a property of the cheatsheet and the committed `household.example.yaml` alone,
+so the check runs identically in CI, in a clone with no private file, and in the hook — the
+one place it had been missing, which is the place CLAUDE.md §4 calls the real gate.
+
+## 12. The irreducible bill (`analysis/irreducible_bill.py`)
 
 Added for issue #7. Every payback the report quotes is against a *projected* annual bill.
 Only ONE component of that bill is owed no matter what the household buys or does: a per-day
@@ -1645,7 +1928,7 @@ their gross imports fall relative to the baseline. Combined (**LOW 21.2%, MID 53
 not a claim about which package is better — and, per the correction above, not itself a floor.
 
 **Baseline floor fraction (`build_baseline_floor_fraction()`).** A fourth adversarial review
-(issue #7 follow-up, this time on the already-merged script) found that §11's report prose
+(issue #7 follow-up, this time on the already-merged script) found that §12's report prose
 compared `model_baseline_current_rates` — `data/package_results.json`'s fully current-rate,
 365-day MODEL of the no-package/baseline scenario, **$4,904/yr** — against `twelve_month_floor`'s
 ACTUAL HISTORICAL 12-month split (`$264.10`/`$479.76`, a real mix of pre- and

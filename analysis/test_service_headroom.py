@@ -44,6 +44,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import household as HH
+import privacy_tiers as PT
 import rates as R
 import service_headroom as S
 
@@ -2233,164 +2234,24 @@ def case_artifact_carries_no_identifiers():
 # DATA-SOURCES-CHEATSHEET.md and the values out of private/household.yaml, so a
 # field re-tiered tomorrow is checked tomorrow with no test edit. Nothing here
 # hardcodes a value from this household.
+#
+# The scan itself now lives in privacy_tiers.py, because one artifact was never
+# the right scope: the value that prompted the rule reached index.html and
+# TECHNICAL.md too, and neither has a generator. test_privacy_tiers.py runs the
+# same needles across every tracked file. What stays here is this artifact's
+# own case -- the file this suite owns, checked where the rest of it is checked.
 # ---------------------------------------------------------------------------
 
-CHEATSHEET = HH.ROOT / "DATA-SOURCES-CHEATSHEET.md"
-REAL_HOUSEHOLD = HH.ROOT / "private" / "household.yaml"
-
-# The six keys every intake field block declares, and the tier vocabulary.
-FIELD_KEYS = {"id", "question", "type", "required_if", "where", "privacy"}
-TIERS = {"public-ok", "private-only", "secret"}
-
-# Private-only fields whose answer is a DOCUMENT on disk -- a CSV, a PDF, a
-# screen capture -- rather than a value in household.yaml. There is nothing to
-# resolve for these; the files themselves live in gitignored private/ and the
-# artifact's own identifier check covers what could be copied out of them.
-DOCUMENT_FIELDS = {
-    "electric_interval_csv", "electric_bill_pdfs", "gas_bill_pdfs",
-    "plan_comparison_capture", "solar_hourly_consumption_export",
-    "solar_daily_production_export", "ev_charge_stats", "wall_charger_export",
-    "gas_interval_csv",
-}
-
-# A field id maps to household.yaml as <first token>.<rest> -- panel_meter_class
-# is panel.meter_class. These four predate that convention and are declared
-# rather than guessed; an unmapped, unresolvable required field fails the case
-# below rather than being silently skipped.
-YAML_PATH_OVERRIDES = {
-    "install_invoice_usd": "solar.install_invoice_usd",
-    "install_paid_date": "solar.install_paid_date",
-    "itc_claimed": "solar.itc_claimed",
-    "site_latitude": "location.lat",
-}
-
-
-def _cheatsheet_fields():
-    """Every intake field block in the cheatsheet, parsed and shape-checked."""
-    import re
-    import yaml
-    blocks = re.findall(r"```yaml\n(.*?)```", CHEATSHEET.read_text(), re.S)
-    assert len(blocks) > 40, f"only {len(blocks)} field blocks parsed"
-    out = []
-    for b in blocks:
-        d = yaml.safe_load(b)
-        assert isinstance(d, dict), b[:80]
-        missing = FIELD_KEYS - set(d)
-        assert not missing, f"field block {d.get('id')!r} is missing {missing}"
-        assert d["privacy"] in TIERS, (d["id"], d["privacy"])
-        out.append(d)
-    ids = [d["id"] for d in out]
-    assert len(ids) == len(set(ids)), "duplicate field ids in the cheatsheet"
-    return out
-
-
-def _yaml_path_for(field_id):
-    if field_id in YAML_PATH_OVERRIDES:
-        return YAML_PATH_OVERRIDES[field_id]
-    head, _, rest = field_id.partition("_")
-    return f"{head}.{rest}" if rest else head
-
-
-def _resolve(household, path):
-    """(value, found) for a dotted path in a parsed household.yaml."""
-    node = household
-    for key in path.split("."):
-        if isinstance(node, dict) and key in node:
-            node = node[key]
-        else:
-            return None, False
-    return node, True
-
-
-def _leaves(v):
-    if isinstance(v, dict):
-        for x in v.values():
-            yield from _leaves(x)
-    elif isinstance(v, list):
-        for x in v:
-            yield from _leaves(x)
-    else:
-        yield v
-
-
-# How a private value is looked for depends on what kind of value it is, and the
-# rule is the same one the owner's tier ruling rests on: a bare number is not
-# identifying, free text is.
-#
-#   * a value carrying a digit or a space -- a catalog number, a coordinate, a
-#     date, a price, a multi-word label, a note -- is looked for ANYWHERE in the
-#     serialized artifact, prose included. That is how `meter class CL200` got
-#     into a provenance sentence;
-#   * a single bare word with no digits ("Oven", "Kitchen", "A/C") is ordinary
-#     English before it is a door legend, and it turns up inside unrelated
-#     sentences by coincidence -- "oven" sits inside "provenance". Those are
-#     compared for EQUALITY against the artifact's own string leaves and keys
-#     instead, which still catches the value being published as a value;
-#   * a whole integer below 1000 is skipped: an ampere rating, a pole count or a
-#     slot count comes from a short standard list that millions of dwellings
-#     share, which is the owner's stated reason for tiering the bare ratings
-#     public-ok, and matching on one flags NEC 240.6 arithmetic as a disclosure.
-INTEGER_NEEDLE_FLOOR = 1000
-
-
-def _needles(household, fields):
-    """[(field_id, path, needle, mode)] for every private-only intake value."""
-    import re
-    out = []
-    for f in fields:
-        if f["privacy"] != "private-only" or f["id"] in DOCUMENT_FIELDS:
-            continue
-        path = _yaml_path_for(f["id"])
-        value, found = _resolve(household, path)
-        if not found:
-            continue
-        for v in _leaves(value):
-            if v is None or isinstance(v, bool):
-                continue
-            if isinstance(v, (int, float)) and float(v).is_integer() \
-                    and abs(float(v)) < INTEGER_NEEDLE_FLOOR:
-                continue
-            s = str(v)
-            mode = "anywhere" if re.search(r"[\d\s]", s) else "as a value"
-            out.append((f["id"], path, s, mode))
-    return out
-
-
-def _artifact_strings(obj):
-    """Every string the artifact publishes, keys included."""
-    got = set()
-
-    def walk(o):
-        if isinstance(o, dict):
-            for k, v in o.items():
-                got.add(k)
-                walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-        elif isinstance(o, str):
-            got.add(o)
-    walk(obj)
-    return got
-
-
-def _leaks(needles, text, obj):
-    low_text = text.lower()
-    low_strings = {s.lower() for s in _artifact_strings(obj)}
-    hits = []
-    for field_id, path, needle, mode in needles:
-        found = (needle.lower() in low_text if mode == "anywhere"
-                 else needle.lower() in low_strings)
-        if found:
-            hits.append((field_id, path, needle, mode))
-    return hits
+CHEATSHEET = PT.CHEATSHEET
+REAL_HOUSEHOLD = PT.REAL_HOUSEHOLD
+TIERS = PT.TIERS
 
 
 def case_the_cheatsheet_tiers_every_field_it_declares():
     """Requirement, not decoration: the leak scan below reads its universe of
     private values out of these blocks, so a block that fails to parse or
     forgets its privacy tag would shrink that universe silently."""
-    fields = _cheatsheet_fields()
+    fields = PT.cheatsheet_fields()
     tiers = {t: sum(1 for f in fields if f["privacy"] == t) for t in TIERS}
     assert sum(tiers.values()) == len(fields), tiers
     panel = [f for f in fields if f["id"].startswith("panel_")]
@@ -2399,13 +2260,13 @@ def case_the_cheatsheet_tiers_every_field_it_declares():
         assert "privacy_note" in f and len(f["privacy_note"]) > 40, (
             f"{f['id']} carries no privacy_note -- this section is tiered field "
             f"by field, and each field has to say why it is where it is")
-    # every private-only field is either a document or resolvable by name
-    for f in fields:
-        if f["privacy"] != "private-only" or f["id"] in DOCUMENT_FIELDS:
-            continue
-        assert "." in _yaml_path_for(f["id"]), (
-            f"{f['id']} has no household.yaml path -- add it to "
-            f"YAML_PATH_OVERRIDES or to DOCUMENT_FIELDS")
+    # every field either resolves to a household.yaml path or is declared to
+    # store no value; an id whose subject cannot be located is a broken rule
+    report = PT.resolution_report(fields=fields)
+    assert not report["unresolvable"], (
+        f"intake id(s) that resolve to no household.yaml path: "
+        f"{report['unresolvable']} -- give them a row in YAML_PATH_OVERRIDES "
+        f"or declare them in PATHLESS_FIELDS")
     return (f"all {len(fields)} intake fields parse and carry a tier "
             f"({tiers['public-ok']} public-ok, {tiers['private-only']} "
             f"private-only, {tiers['secret']} secret)")
@@ -2426,35 +2287,28 @@ def case_no_private_only_intake_value_reaches_the_artifact():
                        "private/household.yaml (gitignored) -- it has no "
                        "values to look for without it")
     household = yaml.safe_load(REAL_HOUSEHOLD.read_text()) or {}
-    fields = _cheatsheet_fields()
-    needles = _needles(household, fields)
+    fields = PT.cheatsheet_fields()
+    needles = PT.needles(household, fields)
     assert needles, (
         "no private-only value resolved out of private/household.yaml -- the "
         "scan has nothing to look for, which is a broken scan, not a clean bill")
 
-    # Every private-only field whose required_if flag this household answers
-    # TRUE must have resolved. A mistyped path would otherwise quietly drop a
-    # field from the universe and leave the scan looking clean.
-    flags = household.get("household", {})
-    resolved = {n[0] for n in needles}
-    for f in fields:
-        if f["privacy"] != "private-only" or f["id"] in DOCUMENT_FIELDS:
-            continue
-        if flags.get(f["required_if"]) is not True:
-            continue
-        assert f["id"] in resolved, (
-            f"{f['id']} is required for this household and resolved to "
-            f"nothing at {_yaml_path_for(f['id'])} -- fix the path, or the "
-            f"intake is missing a required answer")
+    # The universe is reported, not asserted. Its completeness -- that no id
+    # resolves to nothing -- is test_privacy_tiers.py's business; what matters
+    # here is that this artifact was scanned against a universe of a stated
+    # size, so "clean" can be read against how much was looked for.
+    report = PT.resolution_report(household, fields)
+    assert not report["unresolvable"], report["unresolvable"]
 
     text = S.OUT.read_text()
-    hits = _leaks(needles, text, json.loads(text))
+    hits = PT.leaks(needles, text, json.loads(text))
     assert not hits, (
         "private-only intake value(s) in data/service_headroom.json: "
-        + "; ".join(f"{fid} ({path}) found {mode}" for fid, path, _v, mode
-                    in hits))
+        + "; ".join(str(h) for h in hits))
     return (f"none of the {len(needles)} private-only intake values reaches "
-            f"the committed artifact")
+            f"the committed artifact ({len(report['resolved'])} intake fields "
+            f"resolved, {len(report['absent'])} legitimately absent, "
+            f"{len(report['pathless'])} declared path-less)")
 
 
 def case_the_private_leak_scan_catches_a_planted_value():
@@ -2466,7 +2320,7 @@ def case_the_private_leak_scan_catches_a_planted_value():
     real intake, so the control runs in CI where the private file does not
     exist.
     """
-    fields = _cheatsheet_fields()
+    fields = PT.cheatsheet_fields()
     private_panel = [f["id"] for f in fields
                      if f["privacy"] == "private-only"
                      and f["id"].startswith("panel_")]
@@ -2475,8 +2329,8 @@ def case_the_private_leak_scan_catches_a_planted_value():
                            "schedule": [{"device": "TESTCO XY-1234",
                                          "poles": 2, "amps": 60,
                                          "label": "Aviary"}]}}
-    needles = _needles(household, fields)
-    planted = {n[2] for n in needles}
+    needles = PT.needles(household, fields)
+    planted = {n.value for n in needles}
     assert {"CL999-TEST", "TESTCO XY-1234", "Aviary"} <= planted, planted
     assert "60" not in planted and "2" not in planted, (
         "a bare ampere rating or pole count is being treated as identifying")
@@ -2484,7 +2338,7 @@ def case_the_private_leak_scan_catches_a_planted_value():
     clean = {"panel": {"service_rating_a": 175.0, "occupancy": {"devices": 1}},
              "provenance": {"voltage_basis": "120/240 V residential service"}}
     clean_text = json.dumps(clean, indent=1, sort_keys=True)
-    assert not _leaks(needles, clean_text, clean), \
+    assert not PT.leaks(needles, clean_text, clean), \
         "the scan fires on an artifact that carries none of the planted values"
 
     # each mode gets its own dirty artifact: one buried in prose, one published
@@ -2493,15 +2347,15 @@ def case_the_private_leak_scan_catches_a_planted_value():
     prose["provenance"] = {"voltage_basis": "120/240 V service, meter class "
                                             "CL999-TEST; legs at 240 V"}
     prose_text = json.dumps(prose, indent=1, sort_keys=True)
-    caught = {n[2] for n in _leaks(needles, prose_text, prose)}
-    assert "CL999-TEST" in caught, \
+    caught = {h.field_id for h in PT.leaks(needles, prose_text, prose)}
+    assert "panel_meter_class" in caught, \
         "a private value quoted inside a prose sentence was not caught"
 
     as_value = {"panel": {"occupancy": {"largest_branch_ocpd_a": 60.0},
                           "circuits": ["Aviary"]}}
     value_text = json.dumps(as_value, indent=1, sort_keys=True)
-    caught = {n[2] for n in _leaks(needles, value_text, as_value)}
-    assert "Aviary" in caught, \
+    caught = {h.leaf_path for h in PT.leaks(needles, value_text, as_value)}
+    assert "panel.schedule[].label" in caught, \
         "a private label published as a value was not caught"
     return ("the leak scan fires on planted values in prose and as values, and "
             "stays quiet on a clean artifact")
@@ -3206,7 +3060,7 @@ def case_the_existing_ac_ocpd_is_three_valued():
     # exactly what a door legend says, and publishing the list republishes one
     # household's label verbatim -- the private-only leak scan caught it
     assert "air_conditioning_tokens_searched" not in nc, nc
-    values = {v.lower() for v in _artifact_strings(nc) if isinstance(v, str)}
+    values = PT.structured_strings(nc)
     for tok in S.AC_LABEL_TOKENS:
         assert tok not in values, \
             f"{tok!r} is published as a value, and that is what a door legend says"

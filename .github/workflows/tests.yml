@@ -69,3 +69,13 @@ jobs:
         run: python analysis/test_publish.py
       - name: service headroom NEC arithmetic and DST guards
         run: python analysis/test_service_headroom.py
+      # NOT a real-value scan. private/household.yaml is gitignored, so no
+      # runner has a household answer to look for, and putting one here would
+      # be the leak the gate exists to prevent. What runs: the resolver
+      # contract, the tier vocabulary, the synthetic positive controls, and
+      # both halves of the key/path rule for the fields no literal scan can
+      # cover. The two cases that need real values SKIP, and the suite prints
+      # a banner naming them — read it before treating this check as coverage.
+      # The real-value scan runs in the local pre-commit hook (CLAUDE.md §4).
+      - name: intake privacy tiers — contract and synthetic controls (real-value scan SKIPS, no private data on a runner)
+        run: python analysis/test_privacy_tiers.py

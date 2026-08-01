@@ -1,0 +1,59 @@
+#!/bin/sh
+# Block commit MESSAGES containing a private-only intake answer. Enabled by the
+# same setting as the hook beside it: git config core.hooksPath .githooks.
+#
+# CLAUDE.md §4 puts commit messages inside the tier boundary in as many words —
+# "not the report, not data/, not scripts, not commit messages" — and TECHNICAL.md
+# §11's tier table repeats it. Nothing checked them. The pre-commit hook
+# structurally cannot: it runs before the message exists. So the same scan runs
+# here, against the same locally resolved needles, over the proposed message.
+#
+# Same contract as .githooks/pre-commit throughout: the same interpreter search,
+# the same exit codes, the same refusal when the tooling is missing, and the same
+# behaviour where private/household.yaml is absent (somebody else's clone — say
+# so, allow the commit). A scanner ERROR blocks: an unscanned message is not a
+# clean one.
+#
+# Nothing here prints a private value — a finding is a field id and a yaml path.
+MSG_FILE="$1"
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+    echo "commit-msg: no message file passed — refusing to commit unscanned." >&2
+    exit 1
+fi
+TOPLEVEL=$(git rev-parse --show-toplevel)
+
+# Needs an interpreter with pyyaml: this checkout's venv, then the main
+# checkout's (a git worktree shares it and has none of its own), then whatever
+# python is on PATH — each accepted only if it can actually import yaml.
+COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+PY=""
+for candidate in "$TOPLEVEL/.venv/bin/python" "${COMMON%/.git}/.venv/bin/python" python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+        PY="$candidate"
+        break
+    fi
+done
+if [ -z "$PY" ]; then
+    echo "commit-msg: no python with pyyaml found — refusing to commit unscanned for intake-tier leaks." >&2
+    echo "            python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt" >&2
+    exit 1
+fi
+
+GATE="$TOPLEVEL/analysis/privacy_tiers.py"
+if [ ! -f "$GATE" ] || [ ! -r "$GATE" ]; then
+    echo "commit-msg: analysis/privacy_tiers.py is missing or unreadable — refusing to commit unscanned for intake-tier leaks." >&2
+    echo "            CPython exits 2 for 'can't open file' the same way this gate exits 2 for" >&2
+    echo "            a merely-absent household.yaml, so a missing script must be caught here," >&2
+    echo "            before invocation, rather than by reading its exit code." >&2
+    exit 1
+fi
+"$PY" "$GATE" --message "$MSG_FILE"
+case $? in
+    0) ;;
+    2) echo "commit-msg: WARNING — the commit message was not checked for private-only" >&2
+       echo "            intake answers: private/household.yaml is absent here." >&2 ;;
+    *) echo "commit-msg: intake privacy tiers — refusing to commit. Rewrite the message" >&2
+       echo "            without the value. See DATA-SOURCES-CHEATSHEET.md for its tier." >&2
+       exit 1 ;;
+esac
+exit 0

@@ -1,15 +1,70 @@
 #!/bin/sh
-# Block commits containing secrets or private data. Requires gitleaks
-# (brew install gitleaks). Enable with: git config core.hooksPath .githooks
+# Block commits containing secrets or private data. Two gates, in order, both
+# refusing to run unscanned. Enable with: git config core.hooksPath .githooks
 #
-# If private/pii-rules.toml exists (local-only, gitignored), it extends the
-# default rules with personal-data patterns (name, address, account numbers).
+#   1. gitleaks (brew install gitleaks) — secret and PII PATTERNS. If
+#      private/pii-rules.toml exists (local-only, gitignored), it extends the
+#      default rules with personal-data patterns (name, address, account
+#      numbers).
+#   2. analysis/privacy_tiers.py — the INTAKE TIERS. A field somebody tiered
+#      private-only last week matches no gitleaks pattern at all, which is how
+#      one reached three committed files. CLAUDE.md §4 makes this hook the real
+#      gate for anything person-specific: CI has no private/household.yaml and
+#      cannot check a real value. It scans the STAGED content, so it is a gate
+#      on what is being added, and it judges that content against the committed
+#      baseline: a private answer sitting inside a literal a test fixture or the
+#      example template ALREADY declared before this change is excused, and a
+#      literal this change introduces or rewords is not. That rule needs no
+#      configuration and no committed count, so this hook behaves the same way
+#      in a fork with somebody else's intake in it. Before it scans it refuses
+#      outright if any tiered field resolves to no household.yaml path, since a
+#      rule pointed at nothing reports every tree as clean. The rest of the
+#      tracked tree is covered by `analysis/test_privacy_tiers.py`, which the §9
+#      run keeps green.
+#
+# Nothing here prints a private value — a finding is a field id, a yaml path
+# and a filename.
 if ! command -v gitleaks >/dev/null 2>&1; then
     echo "pre-commit: gitleaks not installed (brew install gitleaks) — refusing to commit unscanned." >&2
     exit 1
 fi
 TOPLEVEL=$(git rev-parse --show-toplevel)
 if [ -f "$TOPLEVEL/private/pii-rules.toml" ]; then
-    exec gitleaks git --pre-commit --staged --redact --verbose --config "$TOPLEVEL/private/pii-rules.toml"
+    gitleaks git --pre-commit --staged --redact --verbose --config "$TOPLEVEL/private/pii-rules.toml" || exit 1
+else
+    gitleaks git --pre-commit --staged --redact --verbose || exit 1
 fi
-exec gitleaks git --pre-commit --staged --redact --verbose
+
+# Gate 2. Needs an interpreter with pyyaml: this checkout's venv, then the main
+# checkout's (a git worktree shares it and has none of its own), then whatever
+# python is on PATH — each accepted only if it can actually import yaml.
+COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+PY=""
+for candidate in "$TOPLEVEL/.venv/bin/python" "${COMMON%/.git}/.venv/bin/python" python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+        PY="$candidate"
+        break
+    fi
+done
+if [ -z "$PY" ]; then
+    echo "pre-commit: no python with pyyaml found — refusing to commit unscanned for intake-tier leaks." >&2
+    echo "            python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt" >&2
+    exit 1
+fi
+GATE="$TOPLEVEL/analysis/privacy_tiers.py"
+if [ ! -f "$GATE" ] || [ ! -r "$GATE" ]; then
+    echo "pre-commit: analysis/privacy_tiers.py is missing or unreadable — refusing to commit unscanned for intake-tier leaks." >&2
+    echo "            CPython exits 2 for 'can't open file' the same way this gate exits 2 for" >&2
+    echo "            a merely-absent household.yaml, so a missing script must be caught here," >&2
+    echo "            before invocation, rather than by reading its exit code." >&2
+    exit 1
+fi
+"$PY" "$GATE" --staged
+case $? in
+    0) ;;
+    2) echo "pre-commit: WARNING — the person-specific half of the intake-tier gate did not run." >&2
+       echo "            Commit allowed; the key/path rules above did run." >&2 ;;
+    *) echo "pre-commit: intake privacy tiers — refusing to commit. See DATA-SOURCES-CHEATSHEET.md." >&2
+       exit 1 ;;
+esac
+exit 0
