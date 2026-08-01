@@ -42,14 +42,13 @@ WHAT THIS CANNOT SEE, stated so the gate is not read as more than it is
     tiers, and `scan_artifact_keys` / `scan_script_reads` hold it to the
     greppable substitute the cheatsheet states -- no committed artifact carries
     a key of that name, and no committed script reads that path;
-  * a value the scanned file itself declares as a literal, inside the file
-    classes listed in DECLARED_LITERAL_SOURCES -- a synthetic test fixture and
-    the committed example template invent their own values, and those
-    coincide with a real household's often enough that counting them would
-    make the gate useless. The exemption covers the literal's OWN SOURCE SPAN
-    and nothing else: the same bytes in a comment, in a docstring, or in prose
-    elsewhere in the same file are still scanned, which is the case that has
-    actually happened.
+  * a value that a file declares as its own literal AND that has been declared
+    a known collision in DECLARED_FIXTURE_COLLISIONS. There is no file class
+    that goes unscanned: a test module and the example template are scanned
+    like anything else, and the only thing that can excuse a hit in one is a
+    row naming the file, the yaml path, the exact number of coinciding
+    answers, and the reason. Everything else in those files -- a comment, a
+    docstring, prose, and any value the row does not account for -- fails.
 
 A found needle is reported as a field id, a yaml path and a file. The value
 itself is never printed, never written into an assertion message, and never
@@ -457,34 +456,60 @@ def structured_strings(obj):
 
 
 # ---------------------------------------------------------------------------
-# Two narrow scoping rules, each because the alternative is a gate nobody can
-# keep green. Both are scoped to a REGION -- the source span of one declared
-# literal -- rather than to a file, and neither is keyed on a private value (a
-# table of those would be the leak it is meant to prevent).
+# The one thing that can excuse a hit, and it is a row somebody wrote down.
 #
-#   1. DATA-SOURCES-CHEATSHEET.md's own `question:` text enumerates the
-#      standard values a field can take -- the four utility meter classes, for
-#      instance -- and a household's answer is one of them. That is an
-#      enumeration, not an answer. Only the span of each `question:` scalar is
-#      excluded; the rest of the cheatsheet, `where:` text included, is scanned.
-#   2. A synthetic test fixture and the committed example template invent their
-#      own values, and an invented door legend collides with a real one about
-#      as often as two houses name a circuit the same way -- which is to say
-#      constantly. The span a file DECLARES as a literal is excluded -- not the
-#      file, and not every other occurrence of the same bytes in it.
+# Three file classes declare literals that a household's answer can legitimately
+# coincide with: the cheatsheet's own `question:` text enumerates the standard
+# values a field can take (the utility meter classes, for one) and the answer is
+# one of them; a synthetic test fixture and the committed example template
+# invent door legends, and an invented door legend collides with a real one
+# about as often as two houses name a circuit the same way.
 #
-# The exemption is computed as SOURCE SPANS, from the AST node positions of a
-# python module and the composer marks of a yaml document, and never by
-# blanking every occurrence of a declared string. The difference is the whole
-# point: a value that a module legitimately declares once as a fixture, and
-# then also quotes in a comment or a docstring, must still fail on the comment
-# and the docstring. That is the shape the leak this gate found actually took
-# -- a meter class in an explanatory comment -- and a global blanking rule
-# hides it. For the same reason a python string that is a STATEMENT (a
+# A file-class exemption is the wrong answer to that, and this module carried
+# one until an adversarial pass showed what it costs: every string literal in
+# every test module, and every value in the example template, was unscanned, so
+# a REAL answer pasted into either -- the two files most likely to receive
+# copied sample data -- was invisible. The exemption could not tell a fixture
+# from a copy, which is the only distinction it existed to make.
+#
+# What replaces it is the repo's own idiom: declare the exemption, with the
+# reason, and make a stale declaration break the suite. A hit inside a declared
+# literal span is excused only by a DECLARED_FIXTURE_COLLISIONS row naming the
+# file, the yaml path, the EXACT number of private answers that coincide there,
+# and why. Anything the row does not account for -- a further collision, a value
+# in a comment, in a docstring or in prose -- fails, and `test_privacy_tiers.py`
+# fails a row whose count no longer matches, in both directions.
+#
+# The row is keyed on file and path and NEVER on the value, deliberately. Here
+# the fixture value and the private answer are the same bytes, so a value-keyed
+# allowlist would collect this household's door legend into one committed table
+# -- a sharper disclosure than the scattered fixture context it exempts, and the
+# exact thing CLAUDE.md section 4 forbids. The count is what makes the row
+# enforceable: a fourth real label pasted into a file budgeted for three fails.
+#
+# Spans are computed from the AST node positions of a python module, the
+# composer marks of a yaml document and the `question:` scalars of the
+# cheatsheet, and never by blanking every occurrence of a declared string. That
+# difference is why a value declared once as a fixture and then also quoted in a
+# comment still fails on the comment -- the shape the leak this gate found
+# actually took. For the same reason a python string that is a STATEMENT (a
 # docstring, or any free-standing string expression) is prose, not a fixture
-# literal, and is never exempt.
+# literal, and its span is never eligible.
 # ---------------------------------------------------------------------------
 DECLARED_LITERAL_SOURCES = ("test-module", "example-template", "cheatsheet")
+
+# {(tracked path, yaml leaf path): (how many answers coincide, why)}
+DECLARED_FIXTURE_COLLISIONS = {
+    ("DATA-SOURCES-CHEATSHEET.md", "panel.meter_class"): (
+        1, "the field block's own `question:` enumerates the standard utility "
+           "meter classes, and every household's answer is one of them"),
+    ("analysis/test_service_headroom.py", "panel.schedule[].label"): (
+        3, "synthetic panel fixtures name circuits after the appliances they "
+           "serve, which is what a real door legend does too"),
+    ("household.example.yaml", "panel.schedule[].label"): (
+        2, "the schema template's placeholder schedule names circuits after "
+           "the appliances they serve, for the same reason"),
+}
 
 
 def _file_class(relpath):
@@ -626,18 +651,11 @@ def _mask(text, spans):
     return "".join(chars)
 
 
-def scan_text(text, needle_list, relpath=None, structured=None):
-    """Needles found in one file's text. Returns Hits, never values.
-
-    `structured` is a parsed object when the file is JSON: a bare word is then
-    compared for equality against the artifact's own string leaves and keys,
-    which is the strict reading of "published as a value".
-    """
-    if relpath is not None:
-        text = _mask(text, declared_literal_spans(relpath, text))
+def _found_in(text, needle_list, structured=None):
+    """The needles that occur in one body of text. Returns needles, not Hits."""
     low = text.lower()
     strings = structured_strings(structured) if structured is not None else None
-    hits = []
+    out = []
     for n in needle_list:
         v = n.value.lower()
         if n.mode == "anywhere":
@@ -649,7 +667,42 @@ def scan_text(text, needle_list, relpath=None, structured=None):
         else:
             found = bool(re.search(_VALUE_POSITION % re.escape(v), low, re.M))
         if found:
-            hits.append(Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath))
+            out.append(n)
+    return out
+
+
+def scan_text(text, needle_list, relpath=None, structured=None, excused=None):
+    """Needles found in one file's text. Returns Hits, never values.
+
+    `structured` is a parsed object when the file is JSON: a bare word is then
+    compared for equality against the artifact's own string leaves and keys,
+    which is the strict reading of "published as a value".
+
+    Run twice where the file declares literal spans. The first pass reads the
+    file with those spans blanked, so anything it finds sits in a comment, a
+    docstring or prose and is a leak whatever else the file declares. The second
+    pass reads every byte; what only the second pass finds is a value the file
+    declares as its own, and that is a hit too UNLESS a DECLARED_FIXTURE_
+    COLLISIONS row accounts for it. `excused` is an optional Counter the caller
+    passes to learn which rows were used and how often, which is how a stale row
+    is made to fail.
+    """
+    spans = declared_literal_spans(relpath, text) if relpath is not None else []
+    outside = _found_in(_mask(text, spans), needle_list, structured)
+    hits = [Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath)
+            for n in outside]
+    if not spans:
+        return hits
+    seen = {id(n) for n in outside}
+    for n in _found_in(text, needle_list, structured):
+        if id(n) in seen:
+            continue
+        key = (relpath, n.leaf_path)
+        if key in DECLARED_FIXTURE_COLLISIONS:
+            if excused is not None:
+                excused[key] += 1
+            continue
+        hits.append(Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath))
     return hits
 
 
@@ -700,6 +753,21 @@ PATH_LITERAL_EXEMPT = {
         "the enforcing module: its override table names paths so that the ban "
         "on reading them can be computed at all",
 }
+
+# The one file the KEY half of the rule cannot apply to, declared rather than
+# skipped in silence. It stays subject to every value rule, including the
+# declared-collision accounting above.
+KEY_RULE_EXEMPT = {
+    "household.example.yaml":
+        "the intake schema itself: carrying every intake key, banned ones "
+        "included, is what makes it the schema new households copy",
+}
+
+# The formats the path-read half reaches beyond python. A committed shell hook
+# or workflow reading `solar.itc_claimed` discloses the same thing a python
+# script does, and this repo tracks both. There is no parser for them, so the
+# search is an exact one for the dotted path as a whole token, outside comments.
+SCRIPT_LIKE_SUFFIXES = (".sh", ".bash", ".zsh", ".yml", ".yaml")
 
 
 def unsearchable_fields(household=None, fields=None, shape=None):
@@ -756,17 +824,27 @@ def _json_keys(obj, got=None):
 def scan_artifact_keys(items, banned):
     """Half one of the substitute rule: the key name in a structured artifact.
 
-    JSON keys at any depth, and the header row of a CSV. The key NAME is the
-    disclosure here -- `"itc_claimed": false` publishes the answer whichever way
-    the boolean falls -- so this looks for the key and never for a value.
+    JSON and YAML keys at any depth, and the header row of a CSV. YAML because
+    this repo tracks it -- the workflows and the schema template -- and a rule
+    that stopped at JSON left a whole tracked format returning clean. The key
+    NAME is the disclosure here -- `itc_claimed: false` publishes the answer
+    whichever way the boolean falls -- so this looks for the key, never a value.
     """
     hits = []
     for rel, text in items:
         keys = set()
+        if rel in KEY_RULE_EXEMPT:
+            continue
         if rel.endswith(".json"):
             try:
                 keys = _json_keys(json.loads(text))
             except ValueError:                             # pragma: no cover
+                continue
+        elif rel.endswith((".yaml", ".yml")):
+            try:
+                for doc in yaml.safe_load_all(text):
+                    _json_keys(doc, keys)
+            except yaml.YAMLError:                         # pragma: no cover
                 continue
         elif rel.endswith(".csv"):
             row = next(csv.reader(io.StringIO(text)), [])
@@ -779,15 +857,35 @@ def scan_artifact_keys(items, banned):
     return hits
 
 
+def _uncommented(text):
+    """A shell/yaml file with its comment tails removed.
+
+    Both languages start a comment at a `#` that opens a line or follows
+    whitespace. Removing those is what keeps the search below off prose: a hook
+    or a workflow that MENTIONS a banned path in a comment is not reading it,
+    the same ruling the python half already makes for a docstring.
+    """
+    return "\n".join(re.sub(r"(?:(?<=\s)|^)#.*$", "", line)
+                     for line in text.splitlines())
+
+
 def scan_script_reads(items, unsearchable):
     """Half two: a committed script reading the path.
 
-    Two shapes, because one alone is not enough. The accessor call
+    In python, two shapes, because one alone is not enough. The accessor call
     `hh.get("solar.itc_claimed")` is the direct read, and a read of an ANCESTOR
     (`HH.get("solar")`) pulls the key out with it. The bare path literal catches
     the indirection `P = "solar.itc_claimed"` ... `hh.get(P)`, and is matched by
     exact string equality so that a docstring or a comment MENTIONING the path
     -- which several files legitimately do -- is not a read.
+
+    Python is not the only committed script here: the repo tracks shell (the
+    hooks, `check_coverage.sh`, `stage-private-data.sh`) and yaml (the
+    workflows), and a rule that skipped every file without a `.py` suffix left
+    those returning clean. There is no AST for them, so the search is the
+    conservative shape: the dotted path as a WHOLE TOKEN, outside comments. The
+    prose files -- markdown, html -- are deliberately not searched: several of
+    them have to name these paths in order to document the rule.
     """
     by_path = {path: field_id for field_id, path in unsearchable.items()}
     seen, hits = set(), []
@@ -800,6 +898,15 @@ def scan_script_reads(items, unsearchable):
 
     for rel, text in items:
         if not rel.endswith(".py"):
+            if rel.endswith(SCRIPT_LIKE_SUFFIXES) or text.startswith("#!"):
+                body = _uncommented(text)
+                for path, field_id in by_path.items():
+                    # word boundaries only: `.solar.itc_claimed` is how yq and
+                    # jq spell a read, so a dot to the left must not disqualify
+                    # it. Erring toward a hit is the right direction here
+                    if re.search(r"(?<!\w)%s(?!\w)" % re.escape(path), body):
+                        record(field_id, path, "the path named in a script",
+                               rel)
             continue
         try:
             tree = ast.parse(text)
@@ -845,7 +952,7 @@ def tracked_files(root=None):
                   if p and not p.startswith("private/"))
 
 
-def scan_items(needle_list, items):
+def scan_items(needle_list, items, excused=None):
     """The value scan over (relpath, text) pairs, whatever produced them."""
     hits = []
     for rel, text in items:
@@ -855,7 +962,8 @@ def scan_items(needle_list, items):
                 obj = json.loads(text)
             except ValueError:                             # pragma: no cover
                 obj = None
-        hits.extend(scan_text(text, needle_list, relpath=rel, structured=obj))
+        hits.extend(scan_text(text, needle_list, relpath=rel, structured=obj,
+                              excused=excused))
     return hits
 
 
@@ -909,13 +1017,13 @@ def staged_items(root=None):
     return items, rels
 
 
-def scan_tree(needle_list, root=None, files=None):
+def scan_tree(needle_list, root=None, files=None, excused=None):
     """Scan every tracked file. Returns (hits, files scanned)."""
     items, rels = tree_items(root, files)
-    return scan_items(needle_list, items), rels
+    return scan_items(needle_list, items, excused=excused), rels
 
 
-def gate(items, household=None, fields=None, shape=None):
+def gate(items, household=None, fields=None, shape=None, excused=None):
     """Every enforceable half of the tier rule, over one set of items.
 
     Returns (hits, unsearchable), where `hits` carries no value by
@@ -929,15 +1037,24 @@ def gate(items, household=None, fields=None, shape=None):
     hits = scan_artifact_keys(items, banned_keys(unsearchable))
     hits += scan_script_reads(items, unsearchable)
     if household is not None:
-        hits += scan_items(needles(household, fields, shape), items)
+        hits += scan_items(needles(household, fields, shape), items,
+                           excused=excused)
     return hits, unsearchable
 
 
 # ---------------------------------------------------------------------------
-# The pre-commit entry point (CLAUDE.md section 4: the local hook is the real
-# gate for anything person-specific -- CI has no private file and cannot be).
+# The hook entry point (CLAUDE.md section 4: the local hook is the real gate for
+# anything person-specific -- CI has no private file and cannot be).
 #
-# Exit codes, which .githooks/pre-commit reads:
+# Three scopes. `--staged` and `--tree` judge file content. `--message <file>`
+# judges a proposed commit message, which CLAUDE.md section 4 lists inside the
+# boundary in as many words -- "not the report, not data/, not scripts, not
+# commit messages" -- and which no content scan can ever see: a pre-commit hook
+# runs before the message exists. `.githooks/commit-msg` is where it runs. The
+# message is scanned with no literal-span exemption of any kind, because a
+# commit message declares no fixtures.
+#
+# Exit codes, which both hooks read:
 #   0  clean
 #   1  a tier rule is broken; the commit is blocked
 #   2  private/household.yaml is absent, so the value half could not run. Not a
@@ -945,11 +1062,25 @@ def gate(items, household=None, fields=None, shape=None):
 #      never silent either
 #   3  the gate could not run at all; refuse to commit unscanned
 # ---------------------------------------------------------------------------
+MESSAGE_LABEL = "the commit message"
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    scope = "--tree" if "--tree" in argv else "--staged"
+    scope = "--staged"
+    for flag in ("--tree", "--message"):
+        if flag in argv:
+            scope = flag
     try:
-        items, rels = (staged_items() if scope == "--staged" else tree_items())
+        if scope == "--message":
+            where = argv[argv.index("--message") + 1]
+            items = [(MESSAGE_LABEL,
+                      pathlib.Path(where).read_text(errors="ignore"))]
+            rels = [MESSAGE_LABEL]
+        elif scope == "--staged":
+            items, rels = staged_items()
+        else:
+            items, rels = tree_items()
         household = None
         if REAL_HOUSEHOLD.is_file():
             household = yaml.safe_load(REAL_HOUSEHOLD.read_text()) or {}
@@ -958,16 +1089,19 @@ def main(argv=None):
         print(f"privacy tiers: the gate could not run ({type(e).__name__}: "
               f"{e}) -- refusing to pass unscanned.", file=sys.stderr)
         return 3
+    subject = (MESSAGE_LABEL if scope == "--message"
+               else f"{scope.lstrip('-')} content")
     if hits:
         print(f"privacy tiers: BLOCKED. {len(hits)} tier violation(s) in "
-              f"{scope.lstrip('-')} content:", file=sys.stderr)
+              f"{subject}:", file=sys.stderr)
         for h in sorted({str(x) for x in hits}):
             print(f"  - {h}", file=sys.stderr)
         print("Field ids and paths only -- no value is printed. See "
               "DATA-SOURCES-CHEATSHEET.md for the tier of each field.",
               file=sys.stderr)
         return 1
-    scanned = f"{len(rels)} {scope.lstrip('-')} file(s)"
+    scanned = (subject if scope == "--message"
+               else f"{len(rels)} {scope.lstrip('-')} file(s)")
     if household is None:
         print(f"privacy tiers: {scanned} clean of the {len(unsearchable)} "
               f"key/path rule(s) that need no private data. NOT CHECKED: the "

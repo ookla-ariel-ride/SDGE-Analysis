@@ -88,8 +88,13 @@ cannot work for a boolean, a one-word enum, or a short phrase — `panel.tandem_
 single word such as `high`, and every artifact in the repo contains that word. Fields in that
 class are held to a
 different rule, which is greppable: **no committed artifact carries a key of that name, and
-no committed script reads that path** — `hh.get("<path>")` / `HH.get("<path>")`, a read of
-any container above it, or the path written as a bare string literal.
+no committed script reads that path**. An artifact means JSON and YAML at any depth and a CSV
+header row; a script means python — `hh.get("<path>")` / `HH.get("<path>")`, a read of any
+container above it, or the path written as a bare string literal — and the shell and yaml this
+repo also tracks, where the search is for the dotted path as a whole token outside comments.
+`household.example.yaml` is exempt from the key half, declared in `KEY_RULE_EXEMPT` with the
+reason: carrying every intake key is what makes it the schema. It stays subject to the value
+rules.
 
 **The class is derived, not listed.** `unsearchable_fields()` in `analysis/privacy_tiers.py`
 takes every `private-only` or `secret` field whose declared `type` is one a literal scan can

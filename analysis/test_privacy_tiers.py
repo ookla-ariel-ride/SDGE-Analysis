@@ -37,6 +37,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_privacy_tiers.py
 """
 import collections
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -273,103 +274,168 @@ def case_the_repo_scan_catches_a_planted_value():
             "planted in markdown prose and on one published as a JSON value")
 
 
-def case_the_scoping_rules_scope_to_a_region_not_to_a_file():
-    """The two documented exemptions, controlled the way the scan itself is.
+def case_a_test_module_and_the_template_are_scanned_like_any_other_file():
+    """No file class goes unscanned, which it did until an adversarial pass.
 
-    Each exists because the alternative is a gate nobody can keep green, and
-    each is narrow: a region of a file, or the literals a file declares. The
-    control proves the rest of those same files is still scanned -- an
-    exemption that swallowed the file would be the leak it is meant to
-    prevent.
+    The module used to exempt every assigned string literal in a `test_*.py`
+    and every value in `household.example.yaml`, on the reasoning that a
+    synthetic fixture may legitimately coincide with a real answer. The
+    reasoning is sound and the rule was not: it cannot tell an invented fixture
+    from a real answer someone pasted in, and those two files are the likeliest
+    in the repo to receive copied sample data. A monitoring URL planted in
+    either returned clean while the same bytes failed in an ordinary module.
+
+    So the file class buys nothing on its own. What excuses a hit is a
+    DECLARED_FIXTURE_COLLISIONS row, and the two controls here have none.
     """
     needles = PT.needles(PLANTED)
+    url = [n for n in needles if n.leaf_path == "monitoring[].url"]
+    assert url, "the planted household produced no monitoring url needle"
 
-    # 1. the cheatsheet's own question text enumerates standard values (the
-    #    four meter classes, for one), and a household's answer is one of them.
-    #    An enumeration is not an answer -- but only the question is excluded.
-    cheat_ok = ('```yaml\nid: panel_meter_class\n'
-                'question: "What class is the meter (e.g. CL999-TEST)?"\n'
-                'type: string\nrequired_if: always\nwhere: "on the meter"\n'
-                'privacy: private-only\n```\n')
-    cheat_bad = cheat_ok + "\nThis household's meter is CL999-TEST.\n"
-    name = "DATA-SOURCES-CHEATSHEET.md"
-    assert not PT.scan_text(cheat_ok, needles, relpath=name), \
-        "the cheatsheet's own enumeration of standard values counted as a leak"
-    assert PT.scan_text(cheat_bad, needles, relpath=name), \
-        "prose outside the question text is not being scanned"
-
-    # 2. a synthetic fixture declares its own invented values, and invented
-    #    door legends collide with real ones. What the module DECLARES is
-    #    excluded; a value that arrives through a comment or a docstring is not.
-    fixture = 'PANEL = [{"label": "Zzyzx", "amps": 20}]\n'
-    commented = fixture + '# the meter here is class CL999-TEST\n'
+    # control 1: a household answer in a test-module ASSIGNMENT, the shape the
+    # old rule masked outright
     tname = "analysis/test_demo.py"
-    assert not PT.scan_text(fixture, needles, relpath=tname), \
-        "a value a test fixture declares itself counted as a leak"
-    hits = PT.scan_text(commented, needles, relpath=tname)
-    assert [h.field_id for h in hits] == ["panel_meter_class"], hits
+    fixture = f'FEED = {{"url": "{url[0].value}"}}\n'
+    hits = PT.scan_text(fixture, needles, relpath=tname)
+    assert {h.leaf_path for h in hits} == {"monitoring[].url"}, (
+        f"a household answer assigned in a test module was not caught: {hits}")
 
-    # and neither rule applies anywhere else: the same bytes in an ordinary
-    # file are a leak
-    assert PT.scan_text(cheat_ok, needles, relpath="docs/notes.md"), \
-        "the cheatsheet rule is being applied to files that are not it"
+    # control 2: the same answer in the committed schema template
+    yname = "household.example.yaml"
+    tmpl = f"monitoring:\n  - url: {url[0].value}\n"
+    hits = PT.scan_text(tmpl, needles, relpath=yname)
+    assert {h.leaf_path for h in hits} == {"monitoring[].url"}, (
+        f"a household answer written into the template was not caught: {hits}")
+
+    # and the same bytes in an ordinary module, which always failed
     assert PT.scan_text(fixture, needles, relpath="analysis/thing.py"), \
-        "the fixture rule is being applied outside test modules"
-    return ("both scoping rules exclude a region or a declared literal, and "
-            "the rest of the same file still fails")
+        "the control value does not fail even in an ordinary file"
+    assert ("analysis/test_demo.py", "monitoring[].url") \
+        not in PT.DECLARED_FIXTURE_COLLISIONS, "the control is being excused"
+    return ("a private answer assigned in a test module and one written into "
+            "household.example.yaml both fail: neither file class is exempt")
 
 
-def case_a_declared_literal_is_exempt_only_in_its_own_span():
-    """The exemption covers the literal's SOURCE SPAN, not the whole file.
+def case_a_declared_collision_excuses_its_own_span_and_nothing_else():
+    """The row is the whole exemption, and it reaches one span in one file.
 
-    The distinction is the whole gate. A module that legitimately declares a
-    value as a fixture and ALSO quotes it in a comment must fail on the
-    comment: the leak this gate found was a meter class in an explanatory
-    comment, and an exemption keyed on the string rather than on its position
-    blanks every later occurrence of it in the same file. A docstring is a
-    string constant in the AST and would land in the exemption set for the
-    same reason, so prose in a docstring is excluded from it by name.
+    Three claims, each the failure mode of an obvious weaker design: a row
+    excuses only the (file, path) it names; it excuses only text the file
+    DECLARES as a literal, so the same value in a comment, a docstring or prose
+    still fails; and using it is counted, which is what lets a stale row break
+    the suite in `case_the_declared_collisions_are_exactly_accounted_for`.
 
     Every value here is invented; the case runs in CI.
     """
     needles = PT.needles(PLANTED)
     tname = "analysis/test_demo.py"
-    fixture = 'METER = "CL999-TEST"\nPANEL = [{"label": "Zzyzx"}]\n'
-    assert not PT.scan_text(fixture, needles, relpath=tname), \
-        "a value declared as a fixture literal counted as a leak"
+    key = (tname, "panel.schedule[].label")
+    fixture = 'PANEL = [{"label": "Zzyzx", "amps": 20}]\n'
 
-    # the SAME value, declared as a fixture and repeated in a comment
-    commented = fixture + "# the meter on this synthetic panel is CL999-TEST\n"
-    hits = PT.scan_text(commented, needles, relpath=tname)
-    assert [h.field_id for h in hits] == ["panel_meter_class"], (
-        "declaring a value as a fixture hid the same value in a comment "
-        f"elsewhere in the file: {hits}")
+    # a row only ever fires inside a declared literal span, so a row naming a
+    # file that declares none could never fire and is dead weight pretending to
+    # be an exemption. The three classes that declare spans are the whole list.
+    assert {PT._file_class(r) for r in ("analysis/test_x.py", "cheat.md",
+                                        "household.example.yaml",
+                                        "DATA-SOURCES-CHEATSHEET.md")} \
+        == set(PT.DECLARED_LITERAL_SOURCES) | {None}, "the file classes moved"
+    for rel, _path in PT.DECLARED_FIXTURE_COLLISIONS:
+        assert PT._file_class(rel) in PT.DECLARED_LITERAL_SOURCES, (
+            f"{rel} declares no literal spans, so its collision row can never "
+            f"fire -- remove it or fix the path")
 
-    # and repeated in a docstring, which is a string constant like any other
-    documented = ('"""A demo module.\n\nThe meter is class CL999-TEST.\n"""\n'
-                  + fixture)
-    hits = PT.scan_text(documented, needles, relpath=tname)
-    assert [h.field_id for h in hits] == ["panel_meter_class"], (
-        f"a private value disclosed in a docstring was masked: {hits}")
+    assert PT.scan_text(fixture, needles, relpath=tname), \
+        "a fixture literal with no declared row was excused"
+    saved = dict(PT.DECLARED_FIXTURE_COLLISIONS)
+    try:
+        PT.DECLARED_FIXTURE_COLLISIONS[key] = (1, "a synthetic control row")
+        excused = collections.Counter()
+        assert not PT.scan_text(fixture, needles, relpath=tname,
+                                excused=excused), \
+            "a declared collision did not excuse the span it names"
+        assert excused[key] == 1, dict(excused)
 
-    # a function docstring, and a free-standing string expression, are prose too
-    inner = (fixture + 'def f():\n    """Reads the CL999-TEST meter."""\n'
-             '    return 1\n')
-    assert [h.field_id for h in PT.scan_text(inner, needles, relpath=tname)] \
-        == ["panel_meter_class"], "a function docstring was treated as a fixture"
+        # the row names one path; another private value in the same file is
+        # not covered by it
+        other = fixture + 'METER = "CL999-TEST"\n'
+        hits = PT.scan_text(other, needles, relpath=tname)
+        assert [h.field_id for h in hits] == ["panel_meter_class"], (
+            f"a row for one path excused a different one: {hits}")
 
-    # the same rule in the example template: a declared value is exempt, the
-    # same value in a yaml comment is not
-    yname = "household.example.yaml"
-    ydecl = "panel:\n  meter_class: CL999-TEST\n"
-    assert not PT.scan_text(ydecl, needles, relpath=yname), \
-        "a placeholder the template declares counted as a leak"
-    assert PT.scan_text(ydecl + "# a real one reads CL999-TEST\n", needles,
-                        relpath=yname), \
-        "a value in a template comment was masked by the declaration above it"
-    return ("the literal exemption masks the declared span only: the same "
-            "value in a comment, a module docstring, a function docstring or "
-            "a yaml comment still fails")
+        # and it excuses only what the file DECLARES. The same value in a
+        # comment, in a module docstring, in a function docstring or in a yaml
+        # comment is prose, and prose quoting a private answer is the leak this
+        # gate was built for -- a meter class in an explanatory comment.
+        for src, why in (
+                (fixture + '# the legend on this panel reads Zzyzx\n',
+                 "a comment"),
+                ('"""A demo module.\n\nThe legend reads Zzyzx\n"""\n' + fixture,
+                 "a module docstring"),
+                (fixture + 'def f():\n    """Reads Zzyzx\n    """\n'
+                 '    return 1\n', "a function docstring")):
+            hits = PT.scan_text(src, needles, relpath=tname)
+            assert [h.leaf_path for h in hits] == ["panel.schedule[].label"], (
+                f"a declared row masked the same value in {why}: {hits}")
+
+        yname = "household.example.yaml"
+        PT.DECLARED_FIXTURE_COLLISIONS[(yname, "panel.schedule[].label")] = (
+            1, "a synthetic control row")
+        ydecl = "panel:\n  schedule:\n    - label: Zzyzx\n"
+        assert not PT.scan_text(ydecl, needles, relpath=yname), \
+            "a declared row did not excuse a template placeholder"
+        assert PT.scan_text(ydecl + "# a real one reads Zzyzx\n", needles,
+                            relpath=yname), \
+            "a value in a template comment was masked by the row above it"
+
+        # the cheatsheet, whose declared literal is one `question:` scalar
+        name = "DATA-SOURCES-CHEATSHEET.md"
+        cheat_ok = ('```yaml\nid: panel_meter_class\n'
+                    'question: "What class is the meter (e.g. CL999-TEST)?"\n'
+                    'type: string\nrequired_if: always\nwhere: "on the meter"\n'
+                    'privacy: private-only\n```\n')
+        assert not PT.scan_text(cheat_ok, needles, relpath=name), \
+            "the cheatsheet's own enumeration of standard values counted as a leak"
+        assert PT.scan_text(cheat_ok + "\nThis meter is CL999-TEST.\n",
+                            needles, relpath=name), \
+            "prose outside the question text is not being scanned"
+        assert PT.scan_text(cheat_ok, needles, relpath="docs/notes.md"), \
+            "the cheatsheet rule is being applied to files that are not it"
+    finally:
+        PT.DECLARED_FIXTURE_COLLISIONS.clear()
+        PT.DECLARED_FIXTURE_COLLISIONS.update(saved)
+    return ("a declared row excuses the one span of the one path it names; a "
+            "second value, a comment, a docstring and prose all still fail")
+
+
+def case_the_declared_collisions_are_exactly_accounted_for():
+    """A row that stops being needed has to break the suite, not go quiet.
+
+    The same discipline as the optional-read declaration in
+    `test_service_headroom.py`: checked in BOTH directions. A row used fewer
+    times than it declares is stale -- the fixture changed and the exemption
+    outlived it. A row used more times is a collision nobody has looked at.
+    Needs the private file, since the count is a count of real answers.
+    """
+    if not PT.REAL_HOUSEHOLD.is_file():
+        raise SkipCase("the declared-collision accounting counts real answers, "
+                       "so it needs private/household.yaml (gitignored)")
+    household = yaml.safe_load(PT.REAL_HOUSEHOLD.read_text()) or {}
+    for (rel, path), (count, why) in PT.DECLARED_FIXTURE_COLLISIONS.items():
+        assert isinstance(count, int) and count > 0, (rel, path, count)
+        assert isinstance(why, str) and len(why) > 40, (
+            f"{rel} / {path} is excused with no written reason")
+    excused = collections.Counter()
+    hits, _ = PT.scan_tree(PT.needles(household), excused=excused)
+    assert not hits, "; ".join(sorted(str(h) for h in hits))
+    declared = {k: v[0] for k, v in PT.DECLARED_FIXTURE_COLLISIONS.items()}
+    assert dict(excused) == declared, (
+        "the declared collisions and the ones the tree actually holds differ: "
+        f"declared {declared}, found {dict(excused)} -- a row used fewer times "
+        f"than it declares is stale and must be removed or reduced; one used "
+        f"more is a coincidence nobody has ruled on yet")
+    return (f"{len(declared)} declared collision row(s), each used exactly as "
+            f"many times as it declares ({sum(declared.values())} coinciding "
+            f"answers in total), every one with a written reason")
 
 
 def case_the_unsearchable_fields_are_derived_from_the_tiers():
@@ -426,16 +492,26 @@ def case_a_banned_key_or_path_read_fails():
     key = path.split(".")[-1]
     banned = PT.banned_keys(derived)
 
-    # half one, both artifact shapes, and a near miss that must stay quiet
+    # half one, every artifact shape, and a near miss that must stay quiet.
+    # YAML is in the list because the repo tracks it -- the workflows and the
+    # schema template -- and a rule that stopped at JSON and CSV left a whole
+    # tracked format returning clean.
     dirty_json = [("data/x.json", json.dumps({"panel": {key: True}}))]
     dirty_csv = [("data/x.csv", f"month,{key}\n2026-01,true\n")]
+    dirty_yaml = [("data/x.yaml", f"panel:\n  nested:\n    {key}: true\n")]
+    dirty_yml = [(".github/workflows/x.yml", f"jobs:\n  {key}:\n    runs: no\n")]
     clean = [("data/x.json", json.dumps({"panel": {"spaces": 20}})),
              ("data/x.csv", "month,kwh\n2026-01,5\n"),
+             ("data/x.yaml", "panel:\n  spaces: 20\n"),
              ("data/x.json.md", f'a paragraph naming {key} in prose\n')]
     assert PT.scan_artifact_keys(dirty_json, banned), \
         f"a banned key published as a JSON key was not caught ({key})"
     assert PT.scan_artifact_keys(dirty_csv, banned), \
         f"a banned key published as a CSV column was not caught ({key})"
+    assert PT.scan_artifact_keys(dirty_yaml, banned), \
+        f"a banned key nested in a YAML artifact was not caught ({key})"
+    assert PT.scan_artifact_keys(dirty_yml, banned), \
+        f"a banned key in a .yml file was not caught ({key})"
     assert not PT.scan_artifact_keys(clean, banned), \
         "the key scan fired on an artifact that carries no such key"
 
@@ -451,18 +527,37 @@ def case_a_banned_key_or_path_read_fails():
         assert hits, f"{why} of a banned path was not caught"
         assert all(h.field_id in derived for h in hits), hits
 
+    # half two beyond python: the repo tracks shell and yaml, and a scan that
+    # skipped every file without a `.py` suffix let both read the path clean
+    for rel, src, why in (
+            (".githooks/demo", f'#!/bin/sh\nyq ".{path}" private/x.yaml\n',
+             "a shell hook, recognised by its shebang"),
+            ("tool.sh", f'#!/bin/bash\nP={path}\n', "a .sh script"),
+            (".github/workflows/x.yml",
+             f'jobs:\n  a:\n    run: read {path} < f\n', "a workflow")):
+        hits = PT.scan_script_reads([(rel, src)], derived)
+        assert hits, f"{why} naming a banned path was not caught"
+        assert all(h.field_id in derived for h in hits), hits
+
     # precision: naming the path in prose is not reading it, and several
-    # committed docstrings legitimately do
+    # committed files legitimately do -- in a python docstring, in a shell or
+    # yaml comment, and throughout the markdown that documents this very rule
     quiet = [("analysis/thing.py",
               f'"""A note: a null answer for {path} is fine."""\n'
               f'# {path} is not read here\n'
               f'v = hh.get("misc.{key}")\n'
-              f'w = hh.get("{path}x")\n')]
+              f'w = hh.get("{path}x")\n'),
+             ("tool.sh", f'#!/bin/sh\n# {path} is deliberately not read\n'
+                         f'echo ok  # nor {path} here\n'),
+             (".github/workflows/x.yml", f'# {path} is documented, not read\n'
+                                         f'jobs:\n  a:\n    run: echo hi\n'),
+             ("TECHNICAL.md", f'`{path}` stayed private-only.\n'),
+             ("index.html", f'<p>{path} is a field id</p>\n')]
     hits = PT.scan_script_reads(quiet, derived)
     assert not hits, f"the read scan fired on prose or on a near-miss path: {hits}"
-    return (f"a banned key in JSON and in CSV, and four shapes of script read "
-            f"of a banned path, all fail; prose naming the path and a "
-            f"near-miss path do not")
+    return (f"a banned key in JSON, CSV and YAML, and seven shapes of script "
+            f"read of a banned path across python, shell and yaml, all fail; "
+            f"comments, prose and a near-miss path do not")
 
 
 def case_the_committed_tree_carries_no_banned_key_or_read():
@@ -483,6 +578,135 @@ def case_the_committed_tree_carries_no_banned_key_or_read():
     return (f"{structured} structured artifact(s) carry none of the "
             f"{len(derived)} banned key name(s) and {scripts} script(s) read "
             f"none of the paths, over {len(rels)} tracked files")
+
+
+def case_the_template_is_excused_from_the_key_rule_in_writing():
+    """The schema template carries every intake key, banned ones included.
+
+    That is what makes it the schema, so the KEY half of the substitute rule
+    cannot apply to it. The point of the case is that the exemption is stated
+    and load-bearing rather than a silent skip: the template really does carry
+    a banned key, so dropping the row would turn the suite red, and the row
+    buys nothing beyond the key rule -- the template is scanned for values like
+    any other file.
+    """
+    for rel, why in PT.KEY_RULE_EXEMPT.items():
+        assert isinstance(why, str) and len(why) > 40, (
+            f"{rel} is excused from the key rule with no written reason")
+    text = PT.EXAMPLE_HOUSEHOLD.read_text()
+    derived = PT.unsearchable_fields()
+    banned = PT.banned_keys(derived)
+    rel = "household.example.yaml"
+    assert rel in PT.KEY_RULE_EXEMPT, rel
+    assert not PT.scan_artifact_keys([(rel, text)], banned), \
+        "the declared exemption is not being applied"
+    assert PT.scan_artifact_keys([("data/copy.yaml", text)], banned), (
+        "the template carries no banned key, so its exemption is dead weight "
+        "and should be removed")
+    return (f"{rel} is excused from the key rule in writing, the exemption is "
+            f"load-bearing ({len(banned)} banned key name(s) checked), and it "
+            f"reaches the key rule only")
+
+
+def case_the_commit_message_is_inside_the_boundary_and_scanned():
+    """CLAUDE.md section 4 lists commit messages, and nothing checked them.
+
+    A pre-commit hook structurally cannot: it runs before the message exists.
+    The `--message` scope is where the same needles are run over the proposed
+    message, and it gets no literal-span exemption of any kind, because a
+    commit message declares no fixtures.
+    """
+    needles = PT.needles(PLANTED)
+    assert PT._file_class(PT.MESSAGE_LABEL) is None, \
+        "the commit message is being treated as a file class with exemptions"
+    subject = "panel: record the CL999-TEST meter class\n"
+    body = ("panel: record the meter class\n\nThe meter turned out to be "
+            "class CL999-TEST, which bounds the current.\n")
+    for text, why in ((subject, "the subject"), (body, "the body")):
+        hits = PT.scan_items(needles, [(PT.MESSAGE_LABEL, text)])
+        assert [h.field_id for h in hits] == ["panel_meter_class"], (
+            f"a private answer in {why} of a commit message was not caught: "
+            f"{hits}")
+        assert all(PLANTED["panel"]["meter_class"] not in str(h) for h in hits), \
+            "a finding printed a value"
+    clean = "panel: tier the schedule keys by what they reveal\n"
+    assert not PT.scan_items(needles, [(PT.MESSAGE_LABEL, clean)]), \
+        "the message scan fired on a message that discloses nothing"
+    return ("a private answer in a commit subject and in a commit body are "
+            "both caught, with no span exemption; a clean message is not")
+
+
+def case_the_commit_msg_hook_blocks_and_leaves_the_history_alone():
+    """The hook itself, end to end, on a throwaway repository.
+
+    `core.hooksPath` is already `.githooks`, so a file added there is dispatched
+    by name with no further setup -- the control proves that rather than
+    assuming it. The household here is the invented one, written into the
+    throwaway repo's own `private/household.yaml`, so the case runs in CI: no
+    real answer is involved at any point.
+    """
+    src = PT.ROOT
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        for rel in ("analysis/privacy_tiers.py", "DATA-SOURCES-CHEATSHEET.md",
+                    "household.example.yaml", ".githooks/commit-msg"):
+            dest = root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((src / rel).read_bytes())
+            dest.chmod(0o755)
+        (root / "private").mkdir()
+        (root / "private" / "household.yaml").write_text(yaml.safe_dump(PLANTED))
+        # the hook's first interpreter candidate, so the search is exercised.
+        # A wrapper rather than a symlink: a venv interpreter linked out of its
+        # own tree loses the venv and with it pyyaml.
+        (root / ".venv" / "bin").mkdir(parents=True)
+        shim = root / ".venv" / "bin" / "python"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        shim.chmod(0o755)
+        (root / "README.md").write_text("# throwaway\n")
+
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@x",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+
+        def git(*args, **kw):
+            return subprocess.run(["git", *args], cwd=root, env=env,
+                                  capture_output=True, text=True, **kw)
+
+        git("init", "-q", check=True)
+        git("config", "core.hooksPath", ".githooks", check=True)
+        assert git("config", "core.hooksPath").stdout.strip() == ".githooks", \
+            "the throwaway repo does not reproduce the real hooksPath setting"
+        git("add", "-A", check=True)
+
+        def count():
+            out = git("rev-list", "--count", "HEAD")
+            return int(out.stdout.strip()) if out.returncode == 0 else 0
+
+        for msg, why in (
+                ("panel: record the CL999-TEST meter class",
+                 "a private answer in the subject"),
+                ("panel: record the meter class\n\nIt reads CL999-TEST.\n",
+                 "a private answer in the body")):
+            r = git("commit", "-m", msg)
+            assert r.returncode != 0, f"{why} was committed: {r.stderr}"
+            assert "privacy tiers: BLOCKED" in r.stderr, r.stderr
+            assert "panel_meter_class" in r.stderr, r.stderr
+            assert PLANTED["panel"]["meter_class"] not in r.stderr, \
+                "the hook printed the value"
+            assert count() == 0, f"{why} changed the history: {r.stderr}"
+
+        r = git("commit", "-m", "add a throwaway readme")
+        assert r.returncode == 0, f"a clean message was blocked: {r.stderr}"
+        assert count() == 1, "the clean commit did not land"
+
+        # and the gate fails CLOSED: an unreadable message file is not a clean
+        # one, and a scanner that cannot run refuses rather than waving through
+        assert PT.main(["--message", str(root / "nope.txt")]) == 3, \
+            "an unreadable commit message did not fail closed"
+    return ("the commit-msg hook is dispatched by core.hooksPath alone, blocks "
+            "a private answer in the subject and in the body naming the field "
+            "id only, leaves the commit count at 0, passes a clean message, "
+            "and exits 3 rather than 0 when it cannot read the message")
 
 
 def case_the_precommit_gate_blocks_a_staged_leak():
@@ -570,14 +794,18 @@ CASES = [
     case_every_field_id_resolves_or_is_declared_path_less,
     case_the_resolver_reaches_a_key_inside_a_list,
     case_the_repo_scan_catches_a_planted_value,
-    case_the_scoping_rules_scope_to_a_region_not_to_a_file,
-    case_a_declared_literal_is_exempt_only_in_its_own_span,
+    case_a_test_module_and_the_template_are_scanned_like_any_other_file,
+    case_a_declared_collision_excuses_its_own_span_and_nothing_else,
     case_the_unsearchable_fields_are_derived_from_the_tiers,
     case_a_banned_key_or_path_read_fails,
+    case_the_template_is_excused_from_the_key_rule_in_writing,
     case_the_committed_tree_carries_no_banned_key_or_read,
+    case_the_commit_message_is_inside_the_boundary_and_scanned,
+    case_the_commit_msg_hook_blocks_and_leaves_the_history_alone,
     case_the_precommit_gate_blocks_a_staged_leak,
     case_the_example_template_is_tiered_too,
     case_no_private_only_value_appears_in_any_tracked_file,
+    case_the_declared_collisions_are_exactly_accounted_for,
     case_every_intake_key_is_tiered,
 ]
 

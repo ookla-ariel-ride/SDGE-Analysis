@@ -1532,8 +1532,17 @@ sits, why it sits there, and what a reader should not expect the enforcement to 
   the yaml path and the file and never the value. Where `private/household.yaml` is absent
   (somebody else's clone) the value half cannot run: the hook says so in terms and allows
   the commit, because refusing would make the repo uncommittable for everyone but its owner,
-  and the key/path rules of §11.5 still run. Cost on this tree: about 0.13 s for an ordinary
-  commit and 0.7 s with all 107 files staged, against 0.2 s for the gitleaks run beside it.
+  and the key/path rules of §11.5 still run. Cost on this tree: about 0.33 s end to end for
+  an ordinary commit, gitleaks included, and about 0.8 s for the scan over all 108 files.
+- **The commit-msg gate.** The tier table above puts commit messages inside the boundary, and
+  a pre-commit hook cannot see one: it runs before the message exists. `.githooks/commit-msg`
+  runs `analysis/privacy_tiers.py --message` over the proposed message with the same locally
+  resolved needles, blocks on a hit naming the field id and never the value, and fails closed
+  — a scanner that cannot run refuses the commit rather than passing it unscanned. It follows
+  the hook beside it in every other respect: the same interpreter search, the same exit codes,
+  and the same "say so and allow" where `private/household.yaml` is absent. `core.hooksPath`
+  already points at `.githooks`, so the file needs no separate enabling step. Cost: about
+  0.17 s end to end.
 - **A tier scan over one artifact.** `analysis/test_service_headroom.py` parses the
   cheatsheet's field blocks, reads the matching values out of `private/household.yaml`, and
   fails if any `private-only` value turns up in `data/service_headroom.json` — as a value or
@@ -1675,23 +1684,38 @@ that reports "clean" is reporting only that it found no literal match:
   — no committed artifact carries a key of that name, and no committed script reads that
   path — and `privacy_tiers.unsearchable_fields()` derives the class it applies to from the
   tiers and the declared field types rather than from a list, so a private-only boolean added
-  later is covered without anyone remembering. `scan_artifact_keys` checks JSON keys at any
-  depth and CSV headers; `scan_script_reads` checks the accessor call, a read of a container
-  above the key, and the path written as a bare string literal — matched by exact equality, so
-  a docstring that merely mentions the path is not a read. Neither half needs a private value,
-  so both run in CI as well as in the pre-commit hook.
+  later is covered without anyone remembering. `scan_artifact_keys` checks JSON and YAML keys
+  at any depth and CSV headers; `scan_script_reads` checks the accessor call, a read of a
+  container above the key, and the path written as a bare string literal — matched by exact
+  equality, so a docstring that merely mentions the path is not a read — and, in the shell and
+  yaml this repo also tracks, the dotted path as a whole token outside comments. Markdown and
+  HTML are deliberately not searched for a path: several of them have to name one in order to
+  document this rule. Neither half needs a private value, so both run in CI as well as in the
+  hooks. `household.example.yaml` is exempt from the KEY half in writing, in
+  `KEY_RULE_EXEMPT` — carrying every intake key is what makes it the schema — and stays
+  subject to every value rule.
 - **Anything the tracked tree does not hold.** The gate reads `git ls-files` minus
-  `private/`, so it sees every committed text file, and nothing else. Commit messages, an
-  image, a PDF, and anything not yet added are outside it, covered by the gitleaks hook's
-  patterns and by review — a different net with different holes.
-- **A leak written as a declared literal inside a test module or the example template.**
-  Those files declare invented fixture values that may legitimately coincide, so the scan
-  skips them. What it skips is the literal's own SOURCE SPAN — the AST node position of a
-  python string, the composer mark of a yaml scalar — and not every later occurrence of the
-  same bytes: a value declared once as a fixture and then quoted in a comment, a docstring or
-  prose in the same file still fails, which is the shape the meter class leak actually took.
-  A python string that stands alone as a statement is prose rather than a fixture literal, so
-  a docstring is never exempt.
+  `private/`, so it sees every committed text file, and nothing else. An image, a PDF, and
+  anything not yet added are outside it, covered by the gitleaks hook's patterns and by
+  review — a different net with different holes. Commit messages are inside the boundary and
+  outside this scan; `.githooks/commit-msg` is what covers them (§11.1).
+- **A collision that somebody has declared.** A test module and the example template are
+  scanned like any other file — there is no file class the scan skips, and an earlier version
+  of this gate that exempted both was blind to exactly the copy-paste it existed to catch,
+  since neither exemption could tell an invented fixture from a pasted answer. What can
+  excuse a hit is a `DECLARED_FIXTURE_COLLISIONS` row naming the file, the yaml path, the
+  exact number of private answers that coincide there, and the reason. A row is checked in
+  both directions: used fewer times than it declares it is stale, used more times it is a
+  coincidence nobody has ruled on, and either turns the suite red. It excuses only text the
+  file DECLARES as a literal — the AST node position of a python string, the composer mark of
+  a yaml scalar, the cheatsheet's `question:` scalar — so the same value in a comment, a
+  docstring or prose still fails, which is the shape the meter class leak actually took. A
+  python string standing alone as a statement is prose rather than a fixture literal, so a
+  docstring is never eligible. The rows are keyed on file and path and never on a value: here
+  the fixture and the answer are the same bytes, and a value-keyed table would collect the
+  household's door legend into one committed list — a sharper disclosure than the scattered
+  fixture context it excuses. The tree holds three rows covering six coinciding answers: five
+  circuit labels, and the meter class that the cheatsheet's own question text enumerates.
 
 The practical consequence: **a literal scan is a floor, not a proof.** The tier list in the
 cheatsheet is the record of what may be published, and a value's tier is a decision, made
