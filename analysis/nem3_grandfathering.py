@@ -126,6 +126,7 @@ Run from private/verify with usage.csv, behavior_rebuild.py and rates.py beside 
       # private/1-raw-data/sdge_nbt_export_rates/ (needs that private archive; the
       # normal run above needs only the COMMITTED csv, not the 38 MB raw files)
 """
+import hashlib
 import json
 import os
 import pathlib
@@ -604,6 +605,20 @@ def main():
             "nem_version": "NEM 2.0 (grandfathered, PTO 2019-12-27)",
             "plan": "EV-TOU-5",
         },
+        "rate_table_provenance": {
+            "path": str(RATE_CSV.relative_to(ROOT)),
+            "sha256": hashlib.sha256(RATE_CSV.read_bytes()).hexdigest(),
+            "note": ("A Codex review finding: --build-rates and the normal "
+                     "run are two separate invocations, so a rate-table "
+                     "refresh that regenerates the CSV but skips (or fails "
+                     "during) the follow-up normal run would leave this JSON "
+                     "computed from a STALE table with no way to detect it. "
+                     "This digest ties this JSON to the EXACT csv bytes it "
+                     "was computed from -- a mismatch against the committed "
+                     "CSV's current hash means this JSON is stale and must "
+                     "be regenerated; see "
+                     "case_stale_rate_table_is_detectable_via_digest_mismatch."),
+        },
         "actual_billed_anchor": actual_billed_anchor(),
         "nem2": {
             "annual_bill_usd_modeled": round(nem2_model_bill, 2),
@@ -613,25 +628,49 @@ def main():
         },
         "nbt_counterfactual": nbt_bills,
         "grandfathering_value_range_usd_per_yr": {
+            # The AUTHORITATIVE band (issue #9 AC3: "a single figure with an
+            # uncertainty band"): spans EVERY combination this script actually
+            # computed and cannot yet resolve -- both vintages AND the
+            # generation-component assumption (a Codex review finding: an
+            # earlier version scoped this band to vintage-only, which is
+            # zero-width, silently excluding the $352/yr generation-component
+            # ambiguity that is this analysis's real known uncertainty).
+            "low": round(min(gf_values + [v["grandfathering_value_usd"]
+                                         for v in delivery_only_bills.values()]), 2),
+            "high": round(max(gf_values + [v["grandfathering_value_usd"]
+                                          for v in delivery_only_bills.values()]), 2),
+            "vintages_priced": sorted(RAW_FILES),
+            "band_has_zero_width": False,
+            "primary_point_estimate_usd_per_yr": round(min(gf_values), 2),
+            "note": ("The band's width comes ENTIRELY from the generation-"
+                     "component assumption (see generation_component_"
+                     "sensitivity below), not from vintage: NBT26 and NBT00 "
+                     "price this household's measured export shape "
+                     "identically this tariff year (see vintage_band below). "
+                     "The primary point estimate above (using CEA's own "
+                     "direct statement) is this band's LOW end; the "
+                     "Delivery-only alternative is the HIGH end."),
+        },
+        "vintage_band_usd_per_yr": {
             "low": round(min(gf_values), 2),
             "high": round(max(gf_values), 2),
-            "vintages_priced": sorted(RAW_FILES),
             "band_has_zero_width": identical_vintages,
+            "why_zero_width": (
+                "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are "
+                "byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate "
+                "cells in data/nbt_export_rates_2026.csv) -- both vintages "
+                "price this household's measured export shape at the same "
+                "dollar figure this year. The vintages differ in which "
+                "FUTURE years are contractually guaranteed (NBT26 locks this "
+                "table for 9 years from PTO; NBT00 guarantees only the "
+                "current year and resets annually to a table not yet "
+                "published), not in this year's price level -- widening this "
+                "into a real multi-year band is out of this phase's one-year "
+                "snapshot scope." if identical_vintages else
+                "NBT26 and NBT00 price this household's export shape "
+                "differently in this tariff year; see nbt_counterfactual for "
+                "each vintage's own figure."),
         },
-        "why_the_band_has_zero_width": (
-            "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are "
-            "byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells "
-            "in data/nbt_export_rates_2026.csv) -- both vintages price this "
-            "household's measured export shape at the same dollar figure this "
-            "year. The vintages differ in which FUTURE years are contractually "
-            "guaranteed (NBT26 locks this table for 9 years from PTO; NBT00 "
-            "guarantees only the current year and resets annually to a table "
-            "not yet published), not in this year's price level -- widening "
-            "this into a real multi-year band is out of this phase's one-year "
-            "snapshot scope." if identical_vintages else
-            "NBT26 and NBT00 price this household's export shape differently "
-            "in this tariff year; see nbt_counterfactual for each vintage's "
-            "own figure."),
         "export_credit_shape": {
             "cea_bonus_usd_per_kwh": CEA_BONUS_USD_PER_KWH,
             "cea_bonus_source": CEA_SOURCE,
@@ -684,7 +723,8 @@ def main():
     for rn, v in nbt_bills.items():
         assert v["annual_bill_usd"] > 0, rn
     for k in ("window", "nem2", "nbt_counterfactual",
-              "grandfathering_value_range_usd_per_yr", "export_credit_shape",
+              "grandfathering_value_range_usd_per_yr", "vintage_band_usd_per_yr",
+              "export_credit_shape", "rate_table_provenance",
               "battery_marginal_reconciliation_2039",
               "generation_component_sensitivity"):
         assert k in results, f"results section missing: {k}"
@@ -709,7 +749,9 @@ def main():
               f"${v['export_credit_total_usd']:,.2f} "
               f"(weighted avg {v['export_credit_weighted_avg_usd_per_kwh']} $/kWh), "
               f"grandfathering value ${v['grandfathering_value_usd']:,.2f}/yr")
-    print(f"grandfathering value range: ${min(gf_values):,.2f}-${max(gf_values):,.2f}/yr "
+    gf_range = results["grandfathering_value_range_usd_per_yr"]
+    print(f"grandfathering value range (incl. generation-component uncertainty): "
+          f"${gf_range['low']:,.2f}-${gf_range['high']:,.2f}/yr "
           f"(old bracket for context: ${old_bracket['low_usd_yr']:,}-"
           f"${old_bracket['high_usd_yr']:,}/yr)")
 

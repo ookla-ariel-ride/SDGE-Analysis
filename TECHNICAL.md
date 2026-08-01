@@ -1072,8 +1072,11 @@ Two vintages are priced — NBT26 (9-year lock from PTO) and NBT00 (no-lock, cur
 — both drawn from the same calendar-year-2026 Avoided Cost Calculator table and found to be
 byte-identical this tariff year (see the script's own "GENUINE FINDING" docstring note); they
 diverge only in which *future* years each vintage's schedule is contractually guaranteed, not
-in this year's price level, so the grandfathering-value band this script publishes has zero
-width for now.
+in this year's price level, so the VINTAGE component of the grandfathering-value band has zero
+width for now (`vintage_band_usd_per_yr` in the artifact) — the authoritative published band
+is not zero-width, though; see the generation-component sensitivity below for where its actual
+width comes from (a Codex review finding: an earlier version of this script scoped the
+published band to vintage only, silently excluding that real uncertainty).
 
 **Export credit = SDG&E Delivery + Generation + a flat $0.01/kWh CEA "Solar Impact" bonus,
 with the Generation component disclosed as a genuine, unresolved ambiguity (an adversarial

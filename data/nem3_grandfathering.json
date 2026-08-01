@@ -9,6 +9,11 @@
   "nem_version": "NEM 2.0 (grandfathered, PTO 2019-12-27)",
   "plan": "EV-TOU-5"
  },
+ "rate_table_provenance": {
+  "path": "data/nbt_export_rates_2026.csv",
+  "sha256": "66c89e3a19e469098a1a13d16ee22a884dce42ce4496126a553aa983d9920f0c",
+  "note": "A Codex review finding: --build-rates and the normal run are two separate invocations, so a rate-table refresh that regenerates the CSV but skips (or fails during) the follow-up normal run would leave this JSON computed from a STALE table with no way to detect it. This digest ties this JSON to the EXACT csv bytes it was computed from -- a mismatch against the committed CSV's current hash means this JSON is stale and must be regenerated; see case_stale_rate_table_is_detectable_via_digest_mismatch."
+ },
  "actual_billed_anchor": {
   "total_usd": 3282.22,
   "window": "6/27/25 - 7/28/25 .. 5/29/26 - 6/26/26",
@@ -35,14 +40,21 @@
  },
  "grandfathering_value_range_usd_per_yr": {
   "low": 2103.58,
-  "high": 2103.58,
+  "high": 2455.64,
   "vintages_priced": [
    "NBT00",
    "NBT26"
   ],
-  "band_has_zero_width": true
+  "band_has_zero_width": false,
+  "primary_point_estimate_usd_per_yr": 2103.58,
+  "note": "The band's width comes ENTIRELY from the generation-component assumption (see generation_component_sensitivity below), not from vintage: NBT26 and NBT00 price this household's measured export shape identically this tariff year (see vintage_band below). The primary point estimate above (using CEA's own direct statement) is this band's LOW end; the Delivery-only alternative is the HIGH end."
  },
- "why_the_band_has_zero_width": "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells in data/nbt_export_rates_2026.csv) -- both vintages price this household's measured export shape at the same dollar figure this year. The vintages differ in which FUTURE years are contractually guaranteed (NBT26 locks this table for 9 years from PTO; NBT00 guarantees only the current year and resets annually to a table not yet published), not in this year's price level -- widening this into a real multi-year band is out of this phase's one-year snapshot scope.",
+ "vintage_band_usd_per_yr": {
+  "low": 2103.58,
+  "high": 2103.58,
+  "band_has_zero_width": true,
+  "why_zero_width": "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells in data/nbt_export_rates_2026.csv) -- both vintages price this household's measured export shape at the same dollar figure this year. The vintages differ in which FUTURE years are contractually guaranteed (NBT26 locks this table for 9 years from PTO; NBT00 guarantees only the current year and resets annually to a table not yet published), not in this year's price level -- widening this into a real multi-year band is out of this phase's one-year snapshot scope."
+ },
  "export_credit_shape": {
   "cea_bonus_usd_per_kwh": 0.01,
   "cea_bonus_source": "https://thecleanenergyalliance.org/solar-impact/, fetched 2026-08-01: \"The energy values are based on the same export credit pricing paid by San Diego Gas & Electric (SDG&E)\" + \"Solar Impact customers earn an additional $0.01 per kWh for energy they export to the grid.\"",

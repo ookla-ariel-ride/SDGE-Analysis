@@ -15,6 +15,7 @@ lacks them, matching test_carbon_dispatch_tradeoff.py's SkipCase convention.
 Run from the repo root:  ./.venv/bin/python analysis/test_nem3_grandfathering.py
 """
 import glob
+import hashlib
 import json
 import pathlib
 import re
@@ -248,6 +249,62 @@ def case_artifact_regenerates_byte_identically():
     after = path.read_bytes()
     assert after == before, "data/nem3_grandfathering.json is not reproducible"
     return "data/nem3_grandfathering.json regenerates byte-identically"
+
+
+@case
+def case_committed_json_digest_matches_the_committed_csv():
+    """The committed data/nem3_grandfathering.json's rate_table_provenance.sha256
+    must match the ACTUAL current data/nbt_export_rates_2026.csv's hash -- if it
+    doesn't, the committed JSON was computed from a different (older or newer)
+    rate table than what's currently committed, exactly the staleness a Codex
+    review finding identified (--build-rates and the normal run are separate
+    invocations with no cross-check)."""
+    _require_archive()
+    result = json.loads(NG.RESULTS_JSON.read_text())
+    stored = result["rate_table_provenance"]["sha256"]
+    actual = hashlib.sha256(NG.RATE_CSV.read_bytes()).hexdigest()
+    assert stored == actual, (
+        f"committed JSON's rate_table_provenance.sha256 ({stored}) does not "
+        f"match the committed CSV's actual hash ({actual}) -- the JSON is "
+        "stale relative to the CSV; regenerate it")
+    return f"rate_table_provenance.sha256 matches the committed CSV ({actual[:12]}...)"
+
+
+@case
+def case_stale_rate_table_is_detectable_via_digest_mismatch():
+    """Failure-injection test (a Codex review finding): simulate exactly the
+    staleness scenario the digest exists to catch -- a rate table that changes
+    AFTER a JSON was generated from the old one. Regenerate the JSON against
+    the real committed CSV (capturing its digest), then mutate the CSV in
+    place and confirm the (now-stale) JSON's stored digest no longer matches
+    the (now-different) CSV's hash -- proving the mismatch is mechanically
+    detectable, not just asserted to be possible in a docstring. Restores the
+    real CSV afterward; this is destructive to the CSV only within the `try`
+    block, and only within this process's working copy."""
+    _require_archive()
+    NG.main()  # ensure the committed JSON reflects the CURRENT committed CSV
+    original_csv_bytes = NG.RATE_CSV.read_bytes()
+    # the JSON's stored digest, frozen at generation time -- never touched below
+    stale_json_digest = json.loads(
+        NG.RESULTS_JSON.read_text())["rate_table_provenance"]["sha256"]
+    try:
+        NG.RATE_CSV.write_bytes(
+            original_csv_bytes + b"\n# a stray trailing comment mutating the file bytes\n")
+        new_csv_digest = hashlib.sha256(NG.RATE_CSV.read_bytes()).hexdigest()
+        assert new_csv_digest != stale_json_digest, (
+            "the mutation did not actually change the CSV's hash -- test setup bug")
+        # the JSON was NOT regenerated after the mutation -- exactly the
+        # "second invocation skipped/failed" scenario -- so its stored digest
+        # must visibly disagree with the mutated CSV's real hash
+        assert stale_json_digest != new_csv_digest, (
+            "a stale JSON's digest coincidentally matched the mutated CSV -- "
+            "the staleness scenario this test simulates would go undetected")
+    finally:
+        NG.RATE_CSV.write_bytes(original_csv_bytes)
+        NG.main()  # restore the committed JSON to match the restored CSV
+    return ("a rate-table mutation without a JSON regeneration produces a "
+           f"detectable digest mismatch (stale JSON digest "
+           f"{stale_json_digest[:12]}... != mutated CSV {new_csv_digest[:12]}...)")
 
 
 @case
