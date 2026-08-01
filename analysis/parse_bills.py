@@ -227,6 +227,43 @@ def parse_electric(path):
         delivery = one(r"Total Electric Service\s*\$(" + _NUM + r")", "Total Electric Service")
         bsc = one(r"Base Services Charge\s*\$[\d.]+\s*x\s*\d+\s*days\s*(" + _NUM + r")",
                   "Base Services Charge", required=False)
+        # SDG&E replaced the flat "Monthly Service Fee" ($16.00/month) with a per-day
+        # "Base Services Charge" ($0.79343/day) at the 2025-10-01 billing boundary
+        # (CPUC Resolution E-5355). One statement in this corpus (2025-10-31) prints
+        # BOTH labels because the tariff change lands mid-statement: the pre-10/1 stub
+        # period carries "Monthly Service Fee" and the post-10/1 stub period carries
+        # "Base Services Charge" for the first time. Kept as its own column rather
+        # than merged into base_services_charge — they are different rate structures
+        # (flat-per-month vs. per-day-prorated) and conflating them would misprice a
+        # partial period. required=False mirrors base_services_charge: NaN on
+        # statements that don't carry this label (post-transition periods), exactly
+        # as base_services_charge is NaN on pre-transition periods.
+        msf = one(r"Monthly Service Fee\s+(" + _NUM + r")",
+                  "Monthly Service Fee", required=False)
+        # The reconciled column any downstream consumer (e.g. an irreducible-bill
+        # floor) should read instead of knowing about the tariff transition itself:
+        # base_services_charge where present, else monthly_service_fee, else fail
+        # closed — a period naming NEITHER label is a real gap (layout change, or a
+        # tariff regime this parser has never seen) and must stop the run rather than
+        # silently emit a zero or NaN floor. Mirrors the fallback order in
+        # bill_decomposition.py (`lines.get("base_services_charge",
+        # lines.get("monthly_service_fee"))`). The one shape that reference pattern
+        # doesn't anticipate — BOTH printed on the same period — never occurs in this
+        # corpus (the transition is a one-way, one-time swap), so the same "prefer
+        # base_services_charge" tie-break is used deterministically here too, rather
+        # than treating an occurrence the real bills never produce as a second
+        # fail-closed reason.
+        if bsc is not None:
+            fixed_charge_total = bsc
+        elif msf is not None:
+            fixed_charge_total = msf
+        else:
+            raise SystemExit(
+                f"{path.name} [{period}]: neither a 'Base Services Charge' nor a "
+                f"'Monthly Service Fee' line was found for this period — the "
+                f"fixed-charge floor cannot be computed. Fix the parser, or this "
+                f"statement predates/postdates the tariff labels this parser knows "
+                f"about; see the applicability envelope in the module docstring.")
         # Generation is either billed by the CCA on its own pages, or bundled into
         # SDG&E's "Total Electric Service" when the account is not on a CCA. This
         # household predates its CCA enrollment inside the downloaded corpus, so both
@@ -251,6 +288,8 @@ def parse_electric(path):
             sdge_delivery=delivery, cca_generation=gen,
             current_charges=current,
             base_services_charge=bsc,
+            monthly_service_fee=msf,
+            fixed_charge_total=fixed_charge_total,
         ))
 
         # TOU detail. Anchor on the "<SEASON> USAGE On-Peak ..." headers: the phrase

@@ -623,6 +623,95 @@ def case_partial_overlap_still_fails():
     return "partial overlap with the summary list -> still fails closed"
 
 
+# --- fixed_charge_total reconciliation (issue #7) ---------------------------------
+#
+# SDG&E replaced the flat "Monthly Service Fee" ($16.00/month) with a per-day "Base
+# Services Charge" ($0.79343/day) at the 2025-10-01 billing boundary. Neither shape
+# below occurs in the real corpus (no period has EVER printed neither label, and the
+# one-way transition means no period has ever printed both), so both cases are
+# exercised directly against parse_electric() with a synthetic statement text rather
+# than a real (or deleted) PDF — there is no real PDF whose deletion would produce
+# either shape.
+_SYNTHETIC_BASE = (
+    "Billing Period: 1/1/24 - 1/31/24 Total Days: 31\n"
+    "Total Usage: 500\n"
+    "Non Bypassable Charges Usage: 500\n"
+    "Total Electric Service $100.00\n"
+)
+
+
+def case_neither_fixed_charge_label_present_fails():
+    """A period naming NEITHER 'Base Services Charge' nor 'Monthly Service Fee' is a
+    real gap — a layout change, or a tariff regime this parser has never seen — so
+    the fixed-charge floor cannot be computed. The run must refuse rather than emit a
+    silent zero or NaN for fixed_charge_total."""
+    sys.path.insert(0, str(HERE))
+    import unittest.mock as mock
+    import parse_bills as pb
+    with mock.patch.object(pb, "_text", return_value=_SYNTHETIC_BASE):
+        try:
+            pb.parse_electric(pathlib.Path("sdge_electric_2024-01-01.pdf"))
+        except SystemExit as e:
+            assert ("neither a 'Base Services Charge' nor a 'Monthly Service Fee'"
+                    in str(e)), f"wrong error: {e}"
+        else:
+            raise AssertionError(
+                "a period with neither fixed-charge label present was accepted")
+    return ("neither Base Services Charge nor Monthly Service Fee present -> "
+            "parse_electric refuses")
+
+
+def case_both_fixed_charge_labels_present_prefers_bsc():
+    """A period printing BOTH labels never happens in this corpus (the transition is
+    a one-way, one-time swap), but a malformed statement could produce it. Decided
+    behavior: deterministically prefer Base Services Charge — the tariff currently in
+    force — matching the fallback order bill_decomposition.py already uses
+    (`lines.get("base_services_charge", lines.get("monthly_service_fee"))`) — rather
+    than leaving the case unhandled."""
+    sys.path.insert(0, str(HERE))
+    import unittest.mock as mock
+    import parse_bills as pb
+    txt = (_SYNTHETIC_BASE
+           + "Base Services Charge $.79343 x 31 days 24.60\n"
+           + "Monthly Service Fee 16.00\n")
+    with mock.patch.object(pb, "_text", return_value=txt):
+        rows, _ = pb.parse_electric(pathlib.Path("sdge_electric_2024-01-01.pdf"))
+    assert len(rows) == 1, f"expected exactly one period, got {len(rows)}"
+    row = rows[0]
+    assert row["base_services_charge"] == 24.60, row
+    assert row["monthly_service_fee"] == 16.00, row
+    assert row["fixed_charge_total"] == 24.60, \
+        f"Base Services Charge did not win the tie-break deterministically: {row}"
+    return ("both fixed-charge labels present -> Base Services Charge wins "
+            "deterministically")
+
+
+def case_fixed_charge_total_reconciles_real_statements(tmp):
+    """End-to-end proof against the real corpus: fixed_charge_total must equal the
+    correct label's REAL dollar amount on both sides of the 2025-10-01 transition —
+    the flat Monthly Service Fee before it (sdge_electric_2025-09-02.pdf: $16.00),
+    the per-day Base Services Charge after it (sdge_electric_2025-12-03.pdf: $23.01,
+    $.79343 x 29 days) — read directly off those statements, not fixtures."""
+    _require(tmp / "private" / "1-raw-data" / "electric-bills"
+             / "sdge_electric_2025-09-02.pdf")
+    _require(tmp / "private" / "1-raw-data" / "electric-bills"
+             / "sdge_electric_2025-12-03.pdf")
+    r = _run(tmp)
+    assert r.returncode == 0, f"healthy corpus failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_electric.csv")
+    pre = next((p for p in periods if p["statement_date"] == "2025-09-02"), None)
+    post = next((p for p in periods if p["statement_date"] == "2025-12-03"), None)
+    assert pre is not None, "2025-09-02 statement produced no period"
+    assert post is not None, "2025-12-03 statement produced no period"
+    assert pre["monthly_service_fee"] == "16.0", f"pre-transition row: {pre}"
+    assert pre["base_services_charge"] == "", f"pre-transition row: {pre}"
+    assert pre["fixed_charge_total"] == "16.0", f"pre-transition row: {pre}"
+    assert post["base_services_charge"] == "23.01", f"post-transition row: {post}"
+    assert post["monthly_service_fee"] == "", f"post-transition row: {post}"
+    assert post["fixed_charge_total"] == "23.01", f"post-transition row: {post}"
+    return "fixed_charge_total reconciles real pre- and post-transition statements"
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
@@ -633,7 +722,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_gas_flag_false_retires_gas_artifacts,
                 case_gas_flag_false_with_dir_present_fails,
                 case_fork_summary_built_from_own_corpus,
-                case_partial_overlap_corpus_fails]
+                case_partial_overlap_corpus_fails,
+                case_fixed_charge_total_reconciles_real_statements]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean
@@ -647,7 +737,9 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_overlapping_electric_periods,
                     case_overlapping_gas_periods,
                     case_fork_corpus_skips_presence_check,
-                    case_partial_overlap_still_fails]
+                    case_partial_overlap_still_fails,
+                    case_neither_fixed_charge_label_present_fails,
+                    case_both_fixed_charge_labels_present_prefers_bsc]
 
 
 def main():
