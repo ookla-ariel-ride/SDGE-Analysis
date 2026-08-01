@@ -1,0 +1,110 @@
+{
+ "baseline": {
+  "bill_usd": 4904.13,
+  "co2_kg": 5402.4,
+  "export_co2_avoided_kg": 915.1
+ },
+ "cross_check": {
+  "battery_dispatch_policies_json_pw3_greedy_save_usd": 2329,
+  "run_a_computed_save_usd": 2329,
+  "tolerance_usd": 5,
+  "note": "Run A calls battery_dispatch_policies.run_batt() directly (the same function/policy/capacity the committed battery_dispatch_policies.json's pw3.greedy figure comes from), so the two savings figures must agree within rounding -- a real cross-check, not a coincidence."
+ },
+ "coverage": {
+  "days_covered": 364,
+  "days_interpolated_month_hour_mean": [
+   "2026-03-08"
+  ],
+  "source": "data/caiso_hourly_intensity.csv (committed, verified aggregate)"
+ },
+ "threshold": {
+  "kg_per_mwh": 185.0,
+  "target_clean_frac": 0.4674,
+  "target_dirty_frac": 0.5326,
+  "achieved_clean_frac": 0.4675,
+  "achieved_dirty_frac": 0.5325,
+  "tou_interval_counts": {
+   "sop": 16376,
+   "off": 11364,
+   "on": 7300,
+   "total": 35040
+  },
+  "method": "threshold = intensity value at the np.quantile(inten, sop_frac) of the year's per-interval intensity array, where sop_frac is measured from this household's own rates.period_at TOU assignment (behavior_rebuild.load()), not hardcoded"
+ },
+ "policies": {
+  "A_cost_min": {
+   "bill_usd": 2575.47,
+   "savings_vs_baseline_usd": 2328.66,
+   "co2_kg": 5730.5,
+   "co2_avoided_vs_baseline_kg": -328.2,
+   "export_co2_avoided_kg": 829.4,
+   "kwh_served": 4719.8,
+   "kwh_cycled_thru": 4968.4,
+   "usd_saved_per_kwh_cycled": 0.4687,
+   "co2_avoided_per_kwh_cycled_kg": -0.0661
+  },
+  "B_carbon_min": {
+   "bill_usd": 4675.74,
+   "savings_vs_baseline_usd": 228.39,
+   "co2_kg": 4917.9,
+   "co2_avoided_vs_baseline_kg": 484.5,
+   "export_co2_avoided_kg": 659.6,
+   "kwh_served": 3006.5,
+   "kwh_cycled_thru": 3175.8,
+   "usd_saved_per_kwh_cycled": 0.0719,
+   "co2_avoided_per_kwh_cycled_kg": 0.1526
+  },
+  "C_union": {
+   "bill_usd": 2880.21,
+   "savings_vs_baseline_usd": 2023.91,
+   "co2_kg": 4826.4,
+   "co2_avoided_vs_baseline_kg": 576.0,
+   "export_co2_avoided_kg": 493.9,
+   "kwh_served": 4449.9,
+   "kwh_cycled_thru": 4683.8,
+   "usd_saved_per_kwh_cycled": 0.4321,
+   "co2_avoided_per_kwh_cycled_kg": 0.123
+  }
+ },
+ "tradeoff": {
+  "cost_penalty_of_clean_policy_usd": 2100.27,
+  "cost_penalty_of_clean_policy_usd_per_kwh_cycled": 0.5158,
+  "co2_penalty_of_cheap_policy_kg": 812.7,
+  "co2_penalty_of_cheap_policy_kg_per_kwh_cycled": 0.1996,
+  "normalization_note": "both penalty figures are normalized by the MEAN kWh cycled of runs A and B: they are two different dispatch schedules with different total throughput, so there is no single denominator that is 'the' right one; the mean is used and stated explicitly here rather than silently picking one run's throughput",
+  "cost_penalty_meaning": "Run B's $ cost minus Run A's $ cost -- how much MORE it costs to dispatch for carbon than to dispatch for money",
+  "co2_penalty_meaning": "Run A's CO2 minus Run B's CO2 -- how much MORE carbon the money-optimal dispatch emits than the carbon-optimal one"
+ },
+ "run_c_analysis": {
+  "meaningfully_differs_from_a_and_b": true,
+  "meaningful_threshold_pct": 0.02,
+  "pct_diff_bill_vs_a": 0.1183,
+  "pct_diff_co2_vs_a": 0.1578,
+  "pct_diff_bill_vs_b": 0.384,
+  "pct_diff_co2_vs_b": 0.0186,
+  "note": "Run C is judged to NOT meaningfully differ from A (or B) when BOTH its $ and its CO2 are within 2% of that policy's own figures; otherwise it is reported as a genuinely distinct outcome."
+ },
+ "average_vs_marginal_basis": "All CO2 figures value energy at grid-AVERAGE intensity (kg CO2/MWh delivered, all sources incl. imports, per CAISO's public 'Today's Outlook' history endpoints), never a marginal emissions rate. CAISO's public history endpoints do not publish a marginal rate or per-hour marginal-fuel identification -- a different, more complex data product this repo does not fetch. Direction (not quantified): marginal generation is disproportionately gas overnight (average intensity there is already gas-heavy, so the gap may be small) and increasingly displaces cleaner marginal resources at solar-heavy midday (so a marginal accounting would likely show an even LARGER clean-midday-vs-dirty-overnight gap than these average-based figures already show) -- consistent with carbon_fullyear.py's own stated caveat, not a contradiction of it. Exports (including the export reduction each policy's own solar-charging causes) are valued at the SAME average intensity at the export hour -- the identical 'avoided emissions' convention carbon_fullyear.py uses for its own export-avoided figure -- so a marginal-based export credit would likely differ in the same direction.",
+ "caveat": [
+  "Grid-AVERAGE intensity, not marginal (see average_vs_marginal_basis).",
+  "Run B's threshold is sized to match Run A's measured non-sop TOU fraction of the year, not an invented kg/MWh cutoff; ties at 0.1 kg/MWh resolution mean the achieved split is close to, not exactly, that target (see threshold.achieved_* vs target_*).",
+  "Run B deliberately drops run_batt's on-peak-unconditional discharge carve-out (there is no third, always-serve tier in a binary intensity split); see the module docstring for why.",
+  "Intensity measured on 364/365 real CAISO days; 1 day(s) (2026-03-08) use the month-hour mean of covered days in the same calendar month, identical to carbon_fullyear.py's own treatment.",
+  "All three runs share one battery model (13.5 kWh usable, 11.5 kW, 90% round-trip efficiency) and one billing engine (rates.bill_nem); only the discharge/charge DECISION differs between them, isolating the dispatch-objective effect."
+ ],
+ "provenance": {
+  "inputs": [
+   "private Green Button 15-min interval data, via behavior_rebuild.load() (gitignored, not committed)",
+   "data/caiso_hourly_intensity.csv (committed, 364/365 real CAISO days)",
+   "data/battery_dispatch_policies.json (committed, cross-check only)",
+   "analysis/rates.py (canonical bill-derived billing engine)"
+  ],
+  "generator": "analysis/carbon_dispatch_tradeoff.py",
+  "engine": "rates.bill_nem via battery_dispatch_policies.billed()",
+  "battery": {
+   "cap_kwh": 13.5,
+   "power_kw": 11.5,
+   "rte": 0.9
+  }
+ }
+}
