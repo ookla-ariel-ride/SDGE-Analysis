@@ -277,89 +277,201 @@ def case_positive_kwh_at_zero_rate_is_refused():
 # ---------------------------------------------------------------------------
 @case
 def case_floor_is_internally_consistent():
+    """strictly_irreducible_usd (fixed charge alone) is the only figure
+    this section calls a floor; non_bypassable_usd_historical and
+    combined_usd_historical are reported alongside it, not summed into
+    it -- all three must still each not exceed the window total, and each
+    percentage must match an independent recomputation."""
     _require_corpus()
     result = irr.build()
     floor = result["twelve_month_floor"]
-    assert floor["floor_usd"] <= floor["total_current_charges_usd"] + EPS, \
-        "floor exceeds the window total"
-    expected_pct = round(100.0 * floor["floor_usd"] / floor["total_current_charges_usd"], 2)
-    assert _close(floor["floor_pct_of_total"], expected_pct, eps=0.01), \
-        (floor["floor_pct_of_total"], expected_pct)
+    assert floor["strictly_irreducible_usd"] <= floor["total_current_charges_usd"] + EPS, \
+        "strict floor exceeds the window total"
+    assert floor["combined_usd_historical"] <= floor["total_current_charges_usd"] + EPS, \
+        "combined total exceeds the window total"
+    assert _close(
+        floor["combined_usd_historical"],
+        round(floor["strictly_irreducible_usd"] + floor["non_bypassable_usd_historical"], 2),
+        eps=0.01)
+    expected_strict_pct = round(
+        100.0 * floor["strictly_irreducible_usd"] / floor["total_current_charges_usd"], 2)
+    assert _close(floor["strictly_irreducible_pct_of_total"], expected_strict_pct, eps=0.01), \
+        (floor["strictly_irreducible_pct_of_total"], expected_strict_pct)
+    expected_combined_pct = round(
+        100.0 * floor["combined_usd_historical"] / floor["total_current_charges_usd"], 2)
+    assert _close(floor["combined_pct_of_total_historical"], expected_combined_pct, eps=0.01), \
+        (floor["combined_pct_of_total_historical"], expected_combined_pct)
     assert floor["window_period_count"] == 13, \
         f"expected 13 periods in the window (12 statements, one splitting into " \
         f"two), got {floor['window_period_count']}"
     assert (len(floor["periods_on_monthly_service_fee"])
            + len(floor["periods_on_base_services_charge"])
            == floor["window_period_count"])
-    return (f"floor ${floor['floor_usd']} <= total ${floor['total_current_charges_usd']}, "
-           f"{floor['floor_pct_of_total']}% matches an independent recomputation")
+    return (f"strict floor ${floor['strictly_irreducible_usd']} "
+           f"({floor['strictly_irreducible_pct_of_total']}%) <= total "
+           f"${floor['total_current_charges_usd']}; combined "
+           f"${floor['combined_usd_historical']} "
+           f"({floor['combined_pct_of_total_historical']}%) matches an "
+           "independent recomputation")
 
 
 @case
 def case_floor_recomputed_independently_from_the_artifact_rows():
-    """Recompute floor_usd and its percentage DIRECTLY from result['periods'],
-    independent of build_floor()'s own internal arithmetic, using the same
-    window definition (parse_bills.SUMMARY_STATEMENTS_ELEC)."""
+    """Recompute strictly_irreducible_usd, non_bypassable_usd_historical and
+    their percentages DIRECTLY from result['periods'], independent of
+    build_floor()'s own internal arithmetic, using the same window
+    definition (parse_bills.SUMMARY_STATEMENTS_ELEC)."""
     _require_corpus()
     result = irr.build()
     window = set(irr.SUMMARY_STATEMENTS_ELEC)
     window_rows = [r for r in result["periods"] if r["statement_date"] in window]
-    recomputed_floor = round(sum(r["fixed_daily_usd"] + r["non_bypassable_gross_usd"]
-                                 for r in window_rows), 2)
+    recomputed_strict = round(sum(r["fixed_daily_usd"] for r in window_rows), 2)
+    recomputed_nbc = round(sum(r["non_bypassable_gross_usd"] for r in window_rows), 2)
     recomputed_total = round(sum(r["current_charges_usd"] for r in window_rows), 2)
-    recomputed_pct = round(100.0 * recomputed_floor / recomputed_total, 2)
+    recomputed_strict_pct = round(100.0 * recomputed_strict / recomputed_total, 2)
     floor = result["twelve_month_floor"]
-    assert _close(recomputed_floor, floor["floor_usd"], eps=0.02), \
-        (recomputed_floor, floor["floor_usd"])
-    assert _close(recomputed_pct, floor["floor_pct_of_total"], eps=0.02), \
-        (recomputed_pct, floor["floor_pct_of_total"])
-    return (f"independently recomputed floor ${recomputed_floor} matches the "
-           f"artifact's ${floor['floor_usd']}")
+    assert _close(recomputed_strict, floor["strictly_irreducible_usd"], eps=0.02), \
+        (recomputed_strict, floor["strictly_irreducible_usd"])
+    assert _close(recomputed_nbc, floor["non_bypassable_usd_historical"], eps=0.02), \
+        (recomputed_nbc, floor["non_bypassable_usd_historical"])
+    assert _close(recomputed_strict_pct, floor["strictly_irreducible_pct_of_total"], eps=0.02), \
+        (recomputed_strict_pct, floor["strictly_irreducible_pct_of_total"])
+    return (f"independently recomputed strict floor ${recomputed_strict} matches "
+           f"the artifact's ${floor['strictly_irreducible_usd']}; non-bypassable "
+           f"${recomputed_nbc} matches ${floor['non_bypassable_usd_historical']}")
 
 
 @case
 def case_package_floor_fractions_are_consistent():
-    """Post-Finding-1 (second review) shape: fixed_daily_usd_current_rate_vintage
-    IS still constant across packages (a per-day charge cannot be package-
-    specific), and it is now priced at the SAME current rate vintage as
-    everything else in the fraction (annual_days x rates.BSC), not the
-    household's historical mixed-vintage fixed-charge total. floor_usd and
-    non_bypassable_gross_usd are NOT constant across packages -- each package
-    gets its own recomputation from compute_package_gross_imports()."""
+    """Post-third-review shape: strictly_irreducible_usd IS constant across
+    packages (a per-day charge cannot be package-specific), priced at the
+    SAME current rate vintage as everything else in the computation
+    (annual_days x rates.BSC), not the household's historical mixed-vintage
+    fixed-charge total. non_bypassable_usd and combined_usd are NOT
+    constant across packages -- each package gets its own recomputation
+    from compute_package_gross_imports(). combined_usd is kept for
+    reference only; it is strictly_irreducible_usd, not combined_usd, that
+    this artifact calls a floor."""
     _require_corpus()
     result = irr.build()
     pf = result["package_floor_fractions"]
     assert set(pf) == {"LOW", "MID", "HIGH"}, sorted(pf)
     expected_fixed = round(pf["LOW"]["annual_days"] * irr.R.BSC, 2)
     for name, row in pf.items():
-        assert _close(row["fixed_daily_usd_current_rate_vintage"], expected_fixed, eps=0.01)
-        assert row["fixed_daily_usd_current_rate_vintage"] == \
-            pf["LOW"]["fixed_daily_usd_current_rate_vintage"], \
-            "fixed_daily_usd_current_rate_vintage must still be constant across packages"
-        expected_floor = round(row["fixed_daily_usd_current_rate_vintage"]
-                               + row["non_bypassable_gross_usd"], 2)
-        assert _close(row["floor_usd"], expected_floor, eps=0.01), (name, row)
-        expected_frac = round(row["floor_usd"] / row["projected_bill_current_rates_yr"], 4)
-        assert _close(row["floor_fraction_of_projected_bill"], expected_frac, eps=1e-6)
-    # The three floor_usd values are NOT required to be equal any more --
-    # that was exactly the bug (Finding 1). Assert they actually differ, so a
+        assert _close(row["strictly_irreducible_usd"], expected_fixed, eps=0.01)
+        assert row["strictly_irreducible_usd"] == \
+            pf["LOW"]["strictly_irreducible_usd"], \
+            "strictly_irreducible_usd must still be constant across packages"
+        expected_combined = round(row["strictly_irreducible_usd"]
+                                  + row["non_bypassable_usd"], 2)
+        assert _close(row["combined_usd"], expected_combined, eps=0.01), (name, row)
+        expected_strict_frac = round(
+            row["strictly_irreducible_usd"] / row["projected_bill_current_rates_yr"], 4)
+        assert _close(row["strictly_irreducible_fraction_of_projected_bill"],
+                     expected_strict_frac, eps=1e-6)
+        expected_nbc_frac = round(
+            row["non_bypassable_usd"] / row["projected_bill_current_rates_yr"], 4)
+        assert _close(row["non_bypassable_fraction_of_projected_bill"],
+                     expected_nbc_frac, eps=1e-6)
+        expected_combined_frac = round(
+            row["combined_usd"] / row["projected_bill_current_rates_yr"], 4)
+        assert _close(row["combined_fraction_of_projected_bill"],
+                     expected_combined_frac, eps=1e-6)
+    # The three combined_usd values are NOT required to be equal -- that was
+    # exactly the bug (Finding 1). Assert they actually differ, so a
     # regression back to "held constant" would be caught here.
-    floors = {pf[n]["floor_usd"] for n in ("LOW", "MID", "HIGH")}
-    assert len(floors) > 1, \
-        f"all three packages report the same floor_usd {floors} -- looks like " \
+    combined = {pf[n]["combined_usd"] for n in ("LOW", "MID", "HIGH")}
+    assert len(combined) > 1, \
+        f"all three packages report the same combined_usd {combined} -- looks like " \
         "the constant-floor bug is back"
+    # strictly_irreducible_usd, by contrast, MUST be identical across all
+    # three -- that invariance is exactly what makes it (and only it) a
+    # genuine floor.
+    strict = {pf[n]["strictly_irreducible_usd"] for n in ("LOW", "MID", "HIGH")}
+    assert len(strict) == 1, \
+        f"strictly_irreducible_usd differs across packages {strict} -- a per-day " \
+        "fixed charge must not depend on usage"
     # On this real corpus HIGH has the smallest projected bill of the three,
-    # and its floor_usd is close to LOW/MID's, so it comes out with the
+    # and its combined_usd is close to LOW/MID's, so it comes out with the
     # largest fraction -- observed on this data, not guaranteed by
     # construction now that the numerators differ too.
-    assert pf["HIGH"]["floor_fraction_of_projected_bill"] >= \
-        pf["MID"]["floor_fraction_of_projected_bill"] >= \
-        pf["LOW"]["floor_fraction_of_projected_bill"]
-    return (f"LOW {pf['LOW']['floor_fraction_of_projected_bill']*100:.1f}% / "
-           f"MID {pf['MID']['floor_fraction_of_projected_bill']*100:.1f}% / "
-           f"HIGH {pf['HIGH']['floor_fraction_of_projected_bill']*100:.1f}% "
-           "of each package's projected bill, each package's own floor_usd "
-           "now recomputed at one current rate vintage throughout")
+    assert pf["HIGH"]["combined_fraction_of_projected_bill"] >= \
+        pf["MID"]["combined_fraction_of_projected_bill"] >= \
+        pf["LOW"]["combined_fraction_of_projected_bill"]
+    return (f"strict floor {pf['LOW']['strictly_irreducible_fraction_of_projected_bill']*100:.1f}% "
+           "(identical across packages) / non-bypassable LOW "
+           f"{pf['LOW']['non_bypassable_fraction_of_projected_bill']*100:.1f}% / MID "
+           f"{pf['MID']['non_bypassable_fraction_of_projected_bill']*100:.1f}% / HIGH "
+           f"{pf['HIGH']['non_bypassable_fraction_of_projected_bill']*100:.1f}% "
+           "of each package's projected bill -- non-bypassable varies by package, "
+           "the strict floor does not")
+
+
+# ---------------------------------------------------------------------------
+# The conceptual fix (issue #7, third adversarial review): NBC is real but
+# usage-dependent; only the fixed charge is a genuine, unconditional floor.
+# These two cases pin exactly that distinction on the REAL household corpus,
+# as explicit, named assertions -- not something a reader has to infer from
+# the raw numbers.
+# ---------------------------------------------------------------------------
+@case
+def case_reducing_gross_imports_reduces_non_bypassable_usd():
+    """Direct proof, on the real corpus, that non_bypassable_usd is NOT a
+    fixed dollar floor: it is billed on gross imported kWh, and a package
+    that reduces gross imports relative to the baseline reduces this dollar
+    figure too. MID and HIGH (the two grid-charged battery packages) both
+    reduce gross imports relative to LOW (which equals the baseline exactly,
+    by construction -- an EV shift only moves timing) -- so both must report
+    a LOWER non_bypassable_usd than LOW, not the same or a higher one. This
+    is the artifact's own evidence that 'non-bypassable' (cannot be avoided
+    by switching generation provider) is a different claim from 'the dollar
+    amount cannot be reduced' -- a purchase demonstrably reduces it here."""
+    _require_corpus()
+    result = irr.build()
+    pf = result["package_floor_fractions"]
+    gross = irr.compute_package_gross_imports()
+    assert gross["MID"]["gross_kwh"] < gross["baseline_gross_kwh"], \
+        "expected MID to import less gross kWh than the baseline on this corpus"
+    assert gross["HIGH"]["gross_kwh"] < gross["baseline_gross_kwh"], \
+        "expected HIGH to import less gross kWh than the baseline on this corpus"
+    assert pf["MID"]["non_bypassable_usd"] < pf["LOW"]["non_bypassable_usd"], \
+        (pf["MID"]["non_bypassable_usd"], pf["LOW"]["non_bypassable_usd"])
+    assert pf["HIGH"]["non_bypassable_usd"] < pf["LOW"]["non_bypassable_usd"], \
+        (pf["HIGH"]["non_bypassable_usd"], pf["LOW"]["non_bypassable_usd"])
+    return (f"MID's gross imports ({gross['MID']['gross_kwh']} kWh) and HIGH's "
+           f"({gross['HIGH']['gross_kwh']} kWh) both sit below the baseline "
+           f"({gross['baseline_gross_kwh']} kWh); their non_bypassable_usd "
+           f"(${pf['MID']['non_bypassable_usd']}, ${pf['HIGH']['non_bypassable_usd']}) "
+           f"are both below LOW's (${pf['LOW']['non_bypassable_usd']}) as a direct "
+           "result -- non_bypassable_usd is not a fixed floor")
+
+
+@case
+def case_strictly_irreducible_usd_is_identical_across_packages_on_real_data():
+    """Pin the one property that actually makes strictly_irreducible_usd a
+    floor: it must be IDENTICAL across LOW/MID/HIGH despite their different
+    gross-import totals (LOW at the baseline, MID and HIGH lower, per
+    case_reducing_gross_imports_reduces_non_bypassable_usd above) -- a
+    per-day charge cannot depend on how much energy is imported. This is
+    already true by construction (strictly_irreducible_usd is computed from
+    annual_days x rates.BSC alone, never from gross_kwh), but pinned here
+    as an explicit assertion on the real artifact so a future change that
+    accidentally makes it usage-dependent is caught immediately."""
+    _require_corpus()
+    result = irr.build()
+    pf = result["package_floor_fractions"]
+    gross_kwh = {name: pf[name]["gross_import_kwh"] for name in ("LOW", "MID", "HIGH")}
+    assert len(set(gross_kwh.values())) == 3, \
+        f"expected LOW/MID/HIGH to have three DIFFERENT gross-import totals on " \
+        f"this corpus (otherwise this test cannot prove the fixed charge is " \
+        f"invariant despite usage differing): {gross_kwh}"
+    strict = {pf[name]["strictly_irreducible_usd"] for name in ("LOW", "MID", "HIGH")}
+    assert len(strict) == 1, \
+        f"strictly_irreducible_usd differs across packages despite differing " \
+        f"gross imports {gross_kwh}: {strict}"
+    return (f"gross imports differ across all three packages {gross_kwh}, but "
+           f"strictly_irreducible_usd is identical (${strict.pop()}) for all "
+           "three -- the fixed charge does not move with usage")
 
 
 @case
@@ -446,10 +558,11 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
     """A pure, corpus-free proof of the ARITHMETIC (not the real household's
     data): feed build_package_floor_fractions() a synthetic gross-import dict
     where MID/HIGH are known to sit below and above the baseline
-    respectively, and assert the resulting non_bypassable_gross_usd and
-    floor_usd move in the SAME direction as the synthetic input -- i.e. the
-    function actually computes the direction from its argument rather than
-    asserting one."""
+    respectively, and assert the resulting non_bypassable_usd and combined_usd
+    move in the SAME direction as the synthetic input -- i.e. the function
+    actually computes the direction from its argument rather than asserting
+    one. strictly_irreducible_usd must NOT move at all -- it depends only on
+    annual_days x rates.BSC, never on gross_kwh."""
     # Only historical_gross_kwh_window is actually read by
     # build_package_floor_fractions()/_sanity_check_gross_imports() -- the
     # fixed-charge term now comes from gross["annual_days"] x rates.BSC, not
@@ -478,15 +591,20 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
         pf = irr.build_package_floor_fractions(floor, gross)
     finally:
         irr.PACKAGE_JSON = real_package_json
-    assert pf["LOW"]["non_bypassable_gross_usd"] == round(20000.0 * irr.R.NBC, 2), pf
-    assert pf["MID"]["non_bypassable_gross_usd"] < pf["LOW"]["non_bypassable_gross_usd"], pf
-    assert pf["HIGH"]["non_bypassable_gross_usd"] > pf["LOW"]["non_bypassable_gross_usd"], pf
-    assert pf["MID"]["floor_usd"] < pf["LOW"]["floor_usd"] < pf["HIGH"]["floor_usd"], pf
+    assert pf["LOW"]["non_bypassable_usd"] == round(20000.0 * irr.R.NBC, 2), pf
+    assert pf["MID"]["non_bypassable_usd"] < pf["LOW"]["non_bypassable_usd"], pf
+    assert pf["HIGH"]["non_bypassable_usd"] > pf["LOW"]["non_bypassable_usd"], pf
+    assert pf["MID"]["combined_usd"] < pf["LOW"]["combined_usd"] < pf["HIGH"]["combined_usd"], pf
+    assert pf["LOW"]["strictly_irreducible_usd"] == pf["MID"]["strictly_irreducible_usd"] \
+        == pf["HIGH"]["strictly_irreducible_usd"], \
+        "strictly_irreducible_usd moved with a synthetic gross-import change -- " \
+        "it must depend only on annual_days x rates.BSC"
     assert irr.PACKAGE_JSON is real_package_json  # restored, real path untouched
     return ("a synthetic gross-import dict with MID below and HIGH above the "
-           "baseline produces non_bypassable_gross_usd/floor_usd that move in "
-           "the SAME direction -- proves the direction is computed from the "
-           "argument, not hardcoded")
+           "baseline produces non_bypassable_usd/combined_usd that move in "
+           "the SAME direction, while strictly_irreducible_usd stays fixed -- "
+           "proves the direction is computed from the argument, not hardcoded, "
+           "and that only the fixed-charge term is invariant")
 
 
 @case

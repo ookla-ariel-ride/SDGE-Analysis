@@ -1498,25 +1498,38 @@ all-cell figures.
 ## 11. The irreducible bill (`analysis/irreducible_bill.py`)
 
 Added for issue #7. Every payback the report quotes is against a *projected* annual bill.
-Some of that bill is owed no matter what the household buys or does: a per-day fixed charge
-and non-bypassable charges (NBC) billed on gross imported kWh, both mandated independent of
-net usage. This script states that floor in dollars, as a share of the trailing 12 months of
-actual bills, and as a share of each `package_results.json` package's own projected bill, so a
-reader can see how much of a package's headline saving is even reachable.
+Only ONE component of that bill is owed no matter what the household buys or does: a per-day
+fixed charge (Base Services Charge, or the Monthly Service Fee it replaced). This script states
+that STRICT floor in dollars, as a share of the trailing 12 months of actual bills and of each
+`package_results.json` package's own projected bill.
+
+Non-bypassable charges (NBC), billed on gross imported kWh, are reported alongside it as a
+**separate** figure — real money, currently owed, that cannot be avoided by switching
+generation provider or NEM structure — but NOT summed into the floor. A third adversarial
+review of this script (issue #7 follow-up) found an earlier version conflated the two: NBC
+"cannot be avoided by switching provider" does not mean its DOLLAR AMOUNT is fixed regardless
+of usage. NBC is billed *per gross-imported kWh*, so a purchase that reduces gross imports
+(a bigger battery, more solar, a load reduction) reduces the dollar amount too — this script's
+own `compute_package_gross_imports()` proves it: MID and HIGH import less gross power than the
+baseline, and `build_package_floor_fractions()` correctly recomputes a *lower* NBC dollar figure
+for both as a direct result. Only the fixed charge is invariant under every purchase, by
+construction — that invariance is what a genuine floor requires.
 
 **The four-bucket classification.** Every one of the 26 electric periods in
 `data/bill_periods_electric.csv` is split into exactly four buckets that sum to
 `current_charges` to within the reconciliation tolerance (below):
 
-| bucket | source | reducible? |
+| bucket | source | genuinely irreducible? |
 |---|---|---|
-| `fixed_daily` | `bill_periods_electric.fixed_charge_total` — whichever of Base Services Charge or the Monthly Service Fee it replaced that period actually billed | no — accrues per day regardless of usage |
-| `non_bypassable_gross` | printed "Non-Bypassable Charges" + "Wildfire Fund Charge", both billed on **gross** imported kWh | no — survives any purchase that still imports any grid power |
-| `taxes_and_fees` | printed "Total Taxes & Fees on Electric Charges" | not part of the floor — its two largest components (Franchise Fee Equivalent Surcharge, State Regulatory Fee) are levied on the energy charge or on kWh counted elsewhere, so they shrink roughly in proportion to whatever a purchase reduces |
-| `netted_energy` | the residual: `current_charges − fixed_daily − non_bypassable_gross − taxes_and_fees` | yes — the only bucket a battery, behavior change or bigger panel can ever touch |
+| `fixed_daily` | `bill_periods_electric.fixed_charge_total` — whichever of Base Services Charge or the Monthly Service Fee it replaced that period actually billed | **yes** — accrues per day regardless of usage; this is the only bucket the artifact calls a floor |
+| `non_bypassable_gross` | printed "Non-Bypassable Charges" + "Wildfire Fund Charge", both billed on **gross** imported kWh | no — real, currently owed, and cannot be avoided by switching generation provider, but its dollar amount scales with gross imports and a purchase that reduces them reduces this bucket too |
+| `taxes_and_fees` | printed "Total Taxes & Fees on Electric Charges" | no — its two largest components (Franchise Fee Equivalent Surcharge, State Regulatory Fee) are levied on the energy charge or on kWh counted elsewhere, so they shrink roughly in proportion to whatever a purchase reduces |
+| `netted_energy` | the residual: `current_charges − fixed_daily − non_bypassable_gross − taxes_and_fees` | no — the bucket a battery, behavior change or bigger panel can most directly touch, though `non_bypassable_gross` also moves under those same purchases |
 
-`FLOOR = fixed_daily + non_bypassable_gross`, summed only over the window below — the other
-two buckets are excluded by construction, not netted out after the fact.
+`STRICTLY_IRREDUCIBLE = fixed_daily`, summed only over the window below — the other three
+buckets are excluded by construction, not netted out after the fact. `non_bypassable_gross`
+is reported alongside it as its own figure, not summed in; `combined` (both added together) is
+kept for reference but is explicitly not itself called a floor (see below).
 
 **The independent cross-check.** A residual proves nothing by construction — bucket 4 could
 silently absorb an extraction error in any of the other three. So `netted_energy` is checked
@@ -1554,7 +1567,7 @@ each period's `Billing Period: … Total Days: N` anchor through to that period'
 what `bill_periods_electric.csv` says the statement carries. Each period's Non-Bypassable
 Charges / Wildfire Fund Charge / Total Taxes & Fees are then read from its own chunk only.
 
-**The 12-month floor.** `build_floor()` sums `fixed_daily + non_bypassable_gross` over
+**The 12-month floor.** `build_floor()` sums `fixed_daily` alone over
 `parse_bills.SUMMARY_STATEMENTS_ELEC` — this repo's own existing definition of "the most
 recent 12 months of bills," reused rather than re-derived (12 statements; 2025-10-31 splits
 into two periods, both in-window, so the window covers 13 periods). **One rate vintage per
@@ -1563,48 +1576,67 @@ actually billed — $16.00/month before 2025-10-01, the per-day Base Services Ch
 2025-10-01 (the CPUC Resolution E-5355 transition; see `analysis/rates_history.py`) — never
 today's rate applied backward onto an older period. In the current window, 4 of 13 periods
 billed the flat Monthly Service Fee and 9 billed the per-day Base Services Charge. On the most
-recent 12-month window the floor is **$743.86, 22.66%** of that window's $3,282.22 billed
-total.
+recent 12-month window the STRICT floor is `strictly_irreducible_usd` = **$264.10, 8.05%** of
+that window's $3,282.22 billed total. `non_bypassable_usd_historical` is reported alongside it,
+not summed in — **$479.76, 14.62%** — real money actually billed over the same window, but not
+itself a floor (see below). `combined_usd_historical` (**$743.86, 22.66%**) sums the two for
+reference only; it is explicitly not the answer to "what can never be removed."
 
 **Per-package floor fractions.** `build_package_floor_fractions()` reports what share of each
 LOW/MID/HIGH package's `projected_bill_current_rates_yr` (`data/package_results.json`, itself a
-fully current-rate, 365-day model via `rates.bill_nem_monthly()`) the floor represents — how
-much of a package's headline saving is even reachable, since a package cannot save money on a
-charge it cannot touch. This fraction is a **different question** from the standalone 12-month
-floor above, and is built at a **single, current, rate vintage throughout**, matching how its
-own denominator was constructed (CLAUDE.md §9 — a second adversarial review found the first
-fix only carried this halfway, see below):
+fully current-rate, 365-day model via `rates.bill_nem_monthly()`) is the STRICT floor, and
+SEPARATELY what share is non-bypassable charges at that package's own modeled usage — how much
+of a package's headline saving is even reachable, and how much of what's left is real-but-
+movable rather than structural. Built at a **single, current, rate vintage throughout**,
+matching how the denominator was constructed (CLAUDE.md §9 — a second adversarial review found
+the first fix only carried this halfway, see below):
 
-- `non_bypassable_gross_usd` is `compute_package_gross_imports()`'s actual per-package modeled
-  gross-import kWh × `rates.NBC` — re-running the EXACT package definitions
-  `battery_dispatch_policies.py` already committed to (LOW = `behavior_rebuild.shift_ev()`'s
-  100%-EV-shift scenario; MID/HIGH = `battery_dispatch_policies.run_batt()` at 13.5/27.0 kWh
-  usable, policy `"greedy"`), read-only against the raw interval export. A first-review finding
-  had shown the retired "held constant, conservative understatement" claim was asserted, not
-  computed — the real direction is case-by-case (LOW's imports are unchanged by construction;
-  MID's and HIGH's move in either direction depending on dispatch, not only upward from
-  round-trip loss).
-- `fixed_daily_usd_current_rate_vintage` is `annual_days × rates.BSC` — the SAME construction
+- `strictly_irreducible_usd` is `annual_days × rates.BSC` — the SAME construction
   `rates.bill_nem_monthly()` itself uses to price the fixed charge inside every package's own
   `projected_bill_current_rates_yr` (`days.nunique() × BSC`, summed month by month).
   `annual_days` is `compute_package_gross_imports()`'s own distinct-calendar-day count of the
   365-day interval frame the package models were built from, not a hardcoded 365. This term is
-  invariant across packages (a per-day charge does not depend on how much energy is imported).
+  invariant across packages (a per-day charge does not depend on how much energy is imported) —
+  the ONLY figure here that is a genuine floor.
+- `non_bypassable_usd` is `compute_package_gross_imports()`'s actual per-package modeled
+  gross-import kWh × `rates.NBC` — re-running the EXACT package definitions
+  `battery_dispatch_policies.py` already committed to (LOW = `behavior_rebuild.shift_ev()`'s
+  100%-EV-shift scenario; MID/HIGH = `battery_dispatch_policies.run_batt()` at 13.5/27.0 kWh
+  usable, policy `"greedy"`), read-only against the raw interval export. A first-review finding
+  had shown a retired "held constant, conservative understatement" claim was asserted, not
+  computed — the real direction is case-by-case (LOW's imports are unchanged by construction;
+  MID's and HIGH's move in either direction depending on dispatch, not only upward from
+  round-trip loss). This term is NOT held constant across packages, and it is NOT itself
+  irreducible — a different or larger purchase would move it further.
+- `combined_usd` sums both for reference; it is not itself a floor.
 
-A second adversarial review (issue #7 follow-up) found that the first review's fix left this
-second term at `fixed_daily_usd_historical` — the household's ACTUAL historical 12-month total,
-a real mix of the pre-2025-10-01 flat Monthly Service Fee and the post-transition per-day Base
-Services Charge. Dividing a numerator whose other term (`non_bypassable_gross_usd`) was already
-current-vintage, and whose denominator was fully current-vintage, by a fixed-charge term that
-was historical mixed a third rate vintage into the same fraction — exactly the mixing CLAUDE.md
-§9 forbids. Fixed by pricing the fixed-charge term at the same current vintage as everything
-else being divided, per above. `twelve_month_floor` is untouched by this fix and stays entirely
-historical on purpose — it answers "what did the floor actually cost over the last 12 real
-months," a different question from "what fraction of a current-rate projected bill is floor."
+A second adversarial review (issue #7 follow-up) found that the first review's fix left the
+fixed-charge term at the household's ACTUAL historical 12-month total, a real mix of the
+pre-2025-10-01 flat Monthly Service Fee and the post-transition per-day Base Services Charge —
+mixing a third rate vintage into a fraction whose other term and denominator were already
+current-vintage, exactly what CLAUDE.md §9 forbids. Fixed by pricing the fixed-charge term at
+the same current vintage as everything else being divided, per above.
 
-On the current artifacts: **LOW 21.2%** of its $3,683/yr projected bill, **MID 53.7%** of
-$1,445/yr, **HIGH 63.2%** of $1,229/yr — the floor is a larger fraction of a *smaller* projected
-bill by arithmetic necessity, not a claim about which package is better.
+A **third** adversarial review (issue #7 follow-up) found that, even after both terms were
+vintage-consistent, they were still being SUMMED into one `floor_usd` and both called
+irreducible. That is wrong for the non-bypassable term: "non-bypassable" means a charge cannot
+be avoided by switching generation provider, not that its dollar amount is fixed regardless of
+usage — NBC is billed per gross-imported kWh, and `non_bypassable_usd` is a per-package
+recomputation that, on this corpus, comes out LOWER for MID and HIGH than for LOW/the baseline,
+proving a purchase moves it. Fixed by reporting `strictly_irreducible_usd` and
+`non_bypassable_usd` as separate figures, with only the former called a floor.
+`twelve_month_floor` is untouched by any of this and stays entirely historical on purpose — it
+answers "what did these components actually cost over the last 12 real months," a different
+question from "what fraction of a current-rate projected bill is each component."
+
+On the current artifacts, the STRICT floor (identical dollars, $289.60/yr, across all three
+packages) is **LOW 7.9%** of its $3,683/yr projected bill, **MID 20.0%** of $1,445/yr, **HIGH
+23.6%** of $1,229/yr. Non-bypassable charges at each package's own modeled usage add **LOW
+13.3%** ($490.91), **MID 33.6%** ($485.78), **HIGH 39.6%** ($487.02) — MID and HIGH both lower
+in dollars than LOW despite the larger percentage, because their projected bills are smaller and
+their gross imports fall relative to the baseline. Combined (**LOW 21.2%, MID 53.7%, HIGH
+63.2%**), the figure is a larger fraction of a *smaller* projected bill by arithmetic necessity,
+not a claim about which package is better — and, per the correction above, not itself a floor.
 
 **Minimum-bill provision.** This household's pre-2025-10-01 statements (the template dropped
 the block after that date) carry a "Minimum Charge Adjustment" concept in their Net Metering
@@ -1644,14 +1676,24 @@ Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs
 corpus, the same dependency shape as `parse_bills.py` and `bill_decomposition.py`), so the §9
 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_irreducible_bill.py`, 32 cases. Nine run in a clean checkout with no
-private archive (the PCIA sign-handling and multi-segment-summing cases against synthetic
-text, the mixed-sign annual-vs-monthly minimum-bill-trigger case, the synthetic package-floor-
-fraction arithmetic-direction case, the gross-import sanity-check unit test, the raw-interval-CSV
+**Tests** `analysis/test_irreducible_bill.py`, 34 cases (32 plus two added for the third
+adversarial review's regression, below). Nine run in a clean checkout with no private archive
+(the PCIA sign-handling and multi-segment-summing cases against synthetic text, the mixed-sign
+annual-vs-monthly minimum-bill-trigger case, the synthetic package-floor-fraction
+arithmetic-direction case, the gross-import sanity-check unit test, the raw-interval-CSV
 match-count check, and the fail-closed cases against the committed `bill_periods_electric.csv`
-and synthetic charge-line text); the remaining twenty-three — the four-bucket reconciliation,
-the netted-energy cross-check, the dual-period-statement scoping proof, the floor and
+and synthetic charge-line text); the remaining twenty-five — the four-bucket reconciliation,
+the netted-energy cross-check, the dual-period-statement scoping proof, the strict-floor and
 package-fraction consistency checks, the minimum-bill-provision check against the real corpus,
 the NBC-on-gross re-derivation, and the byte-identical regeneration case — need the private bill
 PDF corpus and skip by name (`SkipCase`) when it is absent, matching
 `test_bill_decomposition.py`'s own guard.
+
+Two of those twenty-five are the regression pair the third adversarial review asked for, on the
+real corpus rather than synthetic data: `case_reducing_gross_imports_reduces_non_bypassable_usd`
+pins that MID's and HIGH's `non_bypassable_usd` are each strictly lower than LOW's (the direction
+the artifact's own numbers already showed, now an explicit named assertion instead of something a
+reader has to infer), and
+`case_strictly_irreducible_usd_is_identical_across_packages_on_real_data` pins that
+`strictly_irreducible_usd` is identical across all three packages despite their gross-import
+totals differing — the one invariance that actually makes it a floor.
