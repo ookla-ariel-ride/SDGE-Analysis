@@ -654,7 +654,8 @@
     "9": 70.09
    },
    "net_usd": 270.36,
-   "opportunity_cost_usd": -15.34
+   "opportunity_cost_usd": -15.34,
+   "total_discharge_kwh": 245.9
   },
   "reserve_20pct": {
    "gross_usd": 242.89,
@@ -671,7 +672,8 @@
     "9": 67.39
    },
    "net_usd": 259.09,
-   "opportunity_cost_usd": -16.2
+   "opportunity_cost_usd": -16.2,
+   "total_discharge_kwh": 238.39
   }
  },
  "second_program_year_event_list_2024": {
@@ -689,5 +691,6 @@
   "statewide_2hr_event_dates_note": "The three statewide 2-hour VPP events (page 23's chart title and page 20's 'three statewide 2-hour events' annotation agree), each a 2-hour block within hour-ending 19-21. These are the only 2024 dates legible unambiguously in the source's charts; the remaining PG&E-only/SCE-SDG&E-only event dates are stated in the source but not transcribed here to avoid misreading a chart axis."
  },
  "tesla_sanity_check_note": "\u00a76's existing program-terms estimate cites $150-$350/season; this backtest's empirically-rated gross revenue for the 4 in-window participation month(s) is $242.89 -- same order of magnitude as a partial (not full 6-month) season at the program-terms rate.",
+ "total_discharge_kwh_note": "AC4's 'kWh exported' figure: total battery discharge across the in-window event hours (event-forced discharge -- which this dispatch model routes entirely to export, see run_batt_vpp -- plus any concurrent ordinary/BAU discharge that hour). This matches the CEC's own Net Discharge crediting basis (both avoided import and true export reduce net metered demand identically for DSGS purposes), not a narrower grid-export-only figure.",
  "udc_identity_caveat": "UDC 2 in the CEC anonymized file is an INFERENCE (candidate SDG&E) by 2025 enrollment scale, cross-checked against the 2024 CEC analysis's real utility names showing the same relative ordering one year earlier -- not a confirmed identity. See this script's module docstring for the full site-month and nameplate-MW figures."
 }

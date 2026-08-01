@@ -804,13 +804,19 @@ failed run changes nothing on disk.
 **Inputs.** `usage.csv` (the Green Button export) beside the script, the two SAM-8760 files
 and the gas Green Button CSV under `private/1-raw-data/`, `data/weather_daily_tmean.csv`
 (HDD base 65°F), the committed `data/battery_dispatch_policies.json` (as the
-cross-artifact assertion target), and the imported modules `behavior_rebuild.py`,
-`battery_dispatch_policies.py`, and `rates.py` — plus **cited external constants** recorded
-with sources in `research/extended-research-notes.md`: EIA California gasoline 12-month mean
-$4.65/gal, FHWA Highway Statistics VM-1 on-road fleet economy 23.4 mpg, supercharger price
-estimate $0.45/kWh (labeled estimate), DSGS/Tesla VPP program terms ($150–350/season),
-SDG&E 2024 reliability report SAIDI figures, CPUC D.24-05-028 / Resolution E-5355 (BSC
-$24.15/mo = $0.79343/day, matching `rates.py` exactly).
+cross-artifact assertion target), the committed `data/dsgs_vpp_backtest.json` (read-only —
+the DSGS tornado lever's two revenue points, §3.19), and the imported modules
+`behavior_rebuild.py`, `battery_dispatch_policies.py`, and `rates.py` — plus **cited
+external constants** recorded with sources in `research/extended-research-notes.md`: EIA
+California gasoline 12-month mean $4.65/gal, FHWA Highway Statistics VM-1 on-road fleet
+economy 23.4 mpg, supercharger price estimate $0.45/kWh (labeled estimate), SDG&E 2024
+reliability report SAIDI figures, CPUC D.24-05-028 / Resolution E-5355 (BSC $24.15/mo =
+$0.79343/day, matching `rates.py` exactly). The DSGS/Tesla VPP program-terms figure
+($150–350/season) that used to seed the tornado's `dsgs_revenue` lever directly is
+retired from this script (issue #10): the lever now reads its two revenue points from
+`dsgs_vpp_backtest.py`'s committed backtest instead (`_load_dsgs_backtest()`, fail-closed
+if the artifact or its expected keys are missing — the same read-only convention
+`nem3_grandfathering.py`'s `load_nbt_2039_reference()` uses for its own sibling artifact).
 All repo paths (`data/`, `private/1-raw-data/`) resolve against the repo root, found by
 walking up from the CWD (then from the script's location), so the documented
 `private/verify` copy-and-run sandbox needs no path edits.
@@ -848,11 +854,14 @@ spread uniformly, and both the baseline and the shifted year are re-billed with
 HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
 therms/yr), `nbt_2039` (price-aware battery marginal $2,506–2,540/yr under 3–8¢ flat
 exports vs $2,329 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.2 yr >
-install quote 2.1 > escalation 0.9 > DSGS 0.8 > EV-fix interaction 0.3 around the 6.2-yr
-base). Figures derived purely from external program terms (DSGS dollars, outage-hour
-exposure) carry **estimated** pills in the report; artifact-derived ones carry
-**modeled**/**measured** per source. The report's "What to do Monday" appendix is
-**content-only** — it cites §5/§6/§9/§13 figures and introduces no new artifacts.
+install quote 2.1 > escalation 0.9 > DSGS 0.6 > EV-fix interaction 0.3 around the 6.2-yr
+base — the DSGS swing shrank from an earlier 0.8 yr once its lever switched from the
+$150–350/season program-terms guess to the $259.09/$270.36 backtested net-revenue figures,
+§3.19). Figures derived purely from external estimates (outage-hour exposure) carry
+**estimated** pills in the report; artifact-derived ones, including DSGS VPP revenue since
+issue #10, carry **modeled**/**measured** per source. The report's "What to do Monday"
+appendix is **content-only** — it cites §5/§6/§9/§13 figures and introduces no new
+artifacts.
 
 ### 3.15 `analysis/carbon_fullyear.py` — full-year CAISO carbon sampling (`data/carbon_fullyear_results.json`)
 
@@ -1149,6 +1158,136 @@ anchor, context only), `data/extended_results.json` (the `nbt_2039` reference, r
 and the imported `battery_dispatch_policies` module (`bp.run_batt`, not re-implemented). Run
 from `private/verify` with `usage.csv`, `behavior_rebuild.py`, `battery_dispatch_policies.py`
 and `rates.py` beside it; writes `data/nem3_grandfathering.json`.
+
+### 3.19 `analysis/dsgs_vpp_backtest.py` — DSGS VPP revenue backtest against the real 2025 event calendar (`data/dsgs_vpp_backtest.json`, `data/dsgs_event_calendar_2025.csv`)
+
+**Purpose (issue #10).** §6's DSGS revenue figure used to be a program-terms extrapolation
+("estimated · program terms cited", ~$150–350/season from Tesla's own marketing). This
+script replaces it with a backtest: the REAL 2025 DSGS Option 3 event calendar, replayed
+against this household's own measured 15-minute load and solar, for a HYPOTHETICAL
+Powerwall 3 (this household owns no battery today). Every figure in the artifact is
+labeled hypothetical for that reason.
+
+**Source data.** California Energy Commission docket 22-RENEW-01: TN 269155 (filed
+2026-03-12, "Anonymized Data - Staff Analysis of the DSGS 2025 Program Performance",
+`private/1-raw-data/dsgs_events/dsgs_2025_performance.xlsx` — Data Dictionary, Monthly
+Aggregation Dataset, and a 361,008-row Hourly Discharge Dataset covering the full May–Oct
+2025 season) and TN 266629 (filed 2025-10-16, "Staff Analysis of the DSGS Program 2024
+Performance Data", pages 10/20/23, for the second program year's event list). Public CEC
+policy data, not personal to this household — same commit reasoning as §3.18's rate table.
+
+**Genuine finding: no real 2025 emergency dispatches.** The Data Dictionary states outright
+that the "Capacity" (LMP-triggered) and "Energy-Only" (day-of EEA) event types had zero
+occurrences in 2025; every event hour that season is "Test Capacity" or "Test
+Non-Capacity" — a mandatory monthly test, not an actual grid emergency. Confirmed
+independently against the raw 361,008-row dataset, not just quoted from the dictionary
+text.
+
+**Disclosed ambiguities (checked, not silently resolved):**
+- **UDC identity.** The file anonymizes utilities as "UDC 1"–"UDC 4"; UDC2 is inferred as
+  SDG&E by 2025 enrollment scale (82,776 site-months — third largest, plausible for SDG&E's
+  smaller territory) and cross-checked against TN 266629's 2024 analysis, which uses real
+  utility names and shows the same relative ordering (PG&E > SCE > SDG&E > LADWP) one year
+  earlier. Corroborating, not proof — anonymization is anonymization.
+- **Aggregation union, an upper bound on event frequency.** Restricted to
+  UDC2 × Residential × Stationary × 2-hour resource duration (the category matching a
+  residential Powerwall-class battery), ~14 distinct anonymized aggregations each run their
+  own monthly test on their own schedule; a real household sees only ONE aggregation's
+  hours, not all of them. This backtest uses the UNION of all distinct (date, hour) event
+  slots across that category (68 slots; 16 with aggregations disagreeing on event type,
+  resolved by majority vote, ties toward "Test Capacity") — deliberately inclusive, so it
+  overstates event frequency rather than guessing at one arbitrary aggregation's schedule.
+- **Payment-rate source.** Primary: EMPIRICAL — each month's "Monthly Capacity Payment ($)"
+  ÷ "Demonstrated Capacity (MW)" across UDC2/Residential/2-hr rows with positive
+  demonstrated capacity, essentially constant within a month (<0.03% relative spread).
+  Tesla's $150–350/season program-terms figure is kept only as an order-of-magnitude sanity
+  check (same commit as §6's retired framing), not the rate source.
+- **Backup reserve, flagged for a parent decision.** The issue text asserted that "§6's
+  outage work establishes what reserve the household would plausibly hold" — checked against
+  `battery_backup_sims.py` and `extended_findings.py` and found NOT TRUE: no numeric reserve
+  fraction exists anywhere in this repo, and the outage-endurance sims assume the OPPOSITE
+  convention (a full battery at outage start, no reserve withheld). `BACKUP_RESERVE_FRAC =
+  0.20` here is therefore an assumed, uncited operating parameter, with a 0%-reserve
+  sensitivity computed alongside it so the report can see how much the assumption matters.
+- **2026-season enrollment eligibility.** Per Olivine's DSGS Option 3 FAQ, storage
+  participation in the 2026 season is limited to aggregators that already participated in
+  October 2025. This household owns no battery today, so a new storage enrollment (buying a
+  Powerwall 3 now) cannot join DSGS for the 2026 season at all — only a later season. These
+  figures are a backtest of what 2025 participation would have earned, not a currently
+  obtainable revenue stream for a not-yet-purchased battery. Stated plainly in the artifact
+  and in §6, not buried.
+
+**Dispatch model.** `run_batt_vpp()` mirrors `battery_dispatch_policies.run_batt()`'s
+"greedy" policy exactly for non-event intervals (asserted byte-identical against an empty
+event set in `test_dsgs_vpp_backtest.py`) and, only during a real 2025 DSGS event hour
+inside this household's measured window, forces discharge up to the greater of the
+household's own load and its remaining headroom above the reserve floor and the 11.5 kW
+power cap — the behavior a revenue-maximizing VPP aggregator actually commands. An event
+hour where SOC is already at or below the reserve floor is a MISS (SOC-constrained,
+counted, not hidden).
+
+**Revenue, net.** GROSS = the empirical $/kW-month rate × this household's monthly
+LMP-weighted demonstrated capacity (Test Capacity hours only, per the Data Dictionary's
+own rule; demonstrated capacity nets a prescriptive baseline derived the same empirical
+way, ~10.8% of nameplate), summed over the participation months inside the measured
+window: **$242.89/yr**. OPPORTUNITY COST is COMPUTED, not assumed — `rates.bill_nem`
+re-billed for the full measured window with vs without the VPP dispatch modification (the
+same "re-bill the modified year" technique the rest of this repo's battery/behavior work
+uses, CLAUDE.md §1b) — and came out small and slightly NEGATIVE (**−$16.20/yr**): DSGS
+event hours fall inside 4–9pm on-peak, already this household's highest-value discharge
+window under ordinary price-aware dispatch, so the extra forced export there mostly draws
+down SOC that would otherwise have been used in cheaper off-peak/super-off-peak hours
+(refilled overnight anyway) rather than costing expensive on-peak service later — a real,
+computed NEM-netting effect specific to this household's usage pattern, not an assumption.
+NET = **$259.09/yr** at the 20% reserve (primary); a 0%-reserve sensitivity gives $255.02
+gross, −$15.34 opportunity cost, **$270.36/yr** net. AC4's kWh figure: **238.39 kWh**
+delivered across the 46 in-window event hours at 20% reserve (245.90 kWh at 0% reserve) —
+`revenue.<scenario>.total_discharge_kwh` in the artifact, event-forced discharge (which
+`run_batt_vpp` routes entirely to export) plus any concurrent ordinary/BAU discharge that
+hour, matching the CEC's own Net Discharge crediting basis rather than a narrower
+grid-export-only figure (see the artifact's `total_discharge_kwh_note`). Miss rate: 7 of 46 in-window event
+hours (15.2%) at 20% reserve vs 17 of 46 (37.0%) at 0% reserve — counterintuitively HIGHER
+at the more aggressive setting, traced hour-by-hour to consecutive-event-hour days where a
+larger first-hour draw leaves nothing for the second hour (a real tradeoff between total
+throughput and miss count, not an inversion bug; documented with a specific example date in
+the artifact's `miss_rate.note`).
+
+**Coverage gaps, disclosed rather than filled.** This household's measured window starts
+2025-07-24, so 22 May–July 2025 event hours are outside it and get zero revenue attributed
+— a data-availability gap, not extrapolated. The 2026 DSGS season's tail overlaps the
+window, but the CEC had not published 2026 performance data as of this run (2025's data
+itself was not filed until March 2026) — also zero revenue attributed, for the same reason.
+The 2024 event list from TN 266629 (three statewide 2-hour events on 2024-07-10,
+2024-09-04, 2024-09-05, plus an aggregate 26 event-hours/16 days) satisfies the
+second-program-year requirement but contributes no revenue either way: it predates this
+household's measured window regardless of whether a rate could be found for it, and in
+fact no 2024 per-event payment rate is published (TN 266629 states the rate "varies by
+month" without printing the figures) — disclosed as **not determined** for 2024
+specifically, never guessed from 2025's empirical rate.
+
+**Reconciliation with §6.** The retired estimate's $150–350/season range and this
+backtest's $242.89 gross for the ~4 in-window participation months are the same order of
+magnitude (a partial season at the program-terms rate) — the sanity check the module's
+own docstring sets out to perform. `extended_findings.py`'s `tornado_battery.dsgs_revenue`
+lever reads this artifact's two net-revenue figures read-only (§3.14) rather than the
+retired $250/$350 program-terms guesses, shrinking that lever's payback swing from 0.8 yr
+to 0.6 yr around the same 6.2-yr base.
+
+**Fail-closed design.** Every ambiguity above is checked and asserted in
+`test_dsgs_vpp_backtest.py`, not just narrated. The event calendar and results JSON are
+each written to a temp file and `os.replace`d, so a partial/failed run changes neither.
+`--build-calendar` (rebuilding `data/dsgs_event_calendar_2025.csv` from the raw archive)
+is a separate, explicit flag from the normal run (which reads the committed CSV) — the
+raw `.xlsx` is not required for a normal regeneration.
+
+**Inputs and provenance.** `usage.csv` (Green Button) via `behavior_rebuild.load()`, the
+committed `data/dsgs_event_calendar_2025.csv`, and the imported `battery_dispatch_policies`
+module (`bp.run_batt`/`bp.billed`, not reimplemented). Run from `private/verify` with
+`usage.csv`, `behavior_rebuild.py`, `battery_dispatch_policies.py` and `rates.py` beside
+it; writes `data/dsgs_vpp_backtest.json` (and, with `--build-calendar` and the raw archive
+present, `data/dsgs_event_calendar_2025.csv`).
+
+---
 
 ## 4. Battery simulation methodology
 

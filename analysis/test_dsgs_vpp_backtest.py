@@ -441,13 +441,21 @@ def case_committed_results_json_has_expected_sections():
               "udc_identity_caveat", "finding_2025_no_real_emergency_events",
               "finding_2026_enrollment_eligibility", "backup_reserve_caveat",
               "payment_rate_source", "events_outside_window", "events_in_window",
-              "miss_rate", "revenue", "opportunity_cost_note"):
+              "miss_rate", "revenue", "opportunity_cost_note",
+              "second_program_year_event_list_2024", "total_discharge_kwh_note"):
         assert k in result, f"results section missing: {k}"
     assert result["hypothetical"] is True
     assert result["household_has_battery_today"] is False
     rev = result["revenue"]["reserve_20pct"]
     assert rev["gross_usd"] >= 0
     assert rev["net_usd"] == round(rev["gross_usd"] - rev["opportunity_cost_usd"], 2)
+    assert rev["total_discharge_kwh"] > 0, "AC4 needs a reported kWh-exported figure"
+    rev0 = result["revenue"]["reserve_0pct_sensitivity"]
+    assert rev0["total_discharge_kwh"] >= rev["total_discharge_kwh"], (
+        "0% reserve should deliver at least as much total kWh as 20% reserve")
+    y2024 = result["second_program_year_event_list_2024"]
+    assert y2024["program_year"] == 2024
+    assert y2024["replayable"] is False
     miss = result["miss_rate"]["reserve_20pct"]
     assert 0 <= miss["misses"] <= miss["total"]
     return f"gross=${rev['gross_usd']:.2f} net=${rev['net_usd']:.2f} miss={miss}"

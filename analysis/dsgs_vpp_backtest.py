@@ -561,13 +561,16 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     gross_revenue0 = round(sum(monthly_gross0.values()), 2)
     net_revenue0 = round(gross_revenue0 - opp_cost0, 2)
     misses0 = 0
+    total_kwh_0pct = 0.0
     for r in hour_rows:
         key = (dt.date.fromisoformat(r["date"]), r["hour_end"] - 1)
         idxs = idx_by_hour.get(key, [])
         total0 = float(sum(event_kwh0[j] + bau_kwh0[j] for j in idxs))
+        total_kwh_0pct += total0
         if total0 < 1.0:
             misses0 += 1
     miss_rate0 = round(misses0 / n_hours_in_window, 4) if n_hours_in_window else None
+    total_kwh_20pct = sum(r["total_discharge_kwh"] for r in hour_rows)
 
     # ---- Tesla program-terms sanity check ----
     tesla_note = (
@@ -654,6 +657,7 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
                 "gross_usd": gross_revenue,
                 "opportunity_cost_usd": opportunity_cost,
                 "net_usd": net_revenue,
+                "total_discharge_kwh": round(total_kwh_20pct, 2),
                 "monthly_gross_usd": {str(k): v for k, v in monthly_gross.items()},
                 "monthly_demonstrated_capacity_kw": {str(k): v for k, v in demonstrated_capacity_by_month.items()},
             },
@@ -661,9 +665,18 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
                 "gross_usd": gross_revenue0,
                 "opportunity_cost_usd": opp_cost0,
                 "net_usd": net_revenue0,
+                "total_discharge_kwh": round(total_kwh_0pct, 2),
                 "monthly_gross_usd": {str(k): v for k, v in monthly_gross0.items()},
             },
         },
+        "total_discharge_kwh_note": (
+            "AC4's 'kWh exported' figure: total battery discharge across the "
+            "in-window event hours (event-forced discharge -- which this dispatch "
+            "model routes entirely to export, see run_batt_vpp -- plus any "
+            "concurrent ordinary/BAU discharge that hour). This matches the CEC's "
+            "own Net Discharge crediting basis (both avoided import and true "
+            "export reduce net metered demand identically for DSGS purposes), not "
+            "a narrower grid-export-only figure."),
         "second_program_year_event_list_2024": SECOND_PROGRAM_YEAR_EVENT_LIST_2024,
         "tesla_sanity_check_note": tesla_note,
         "opportunity_cost_note": (

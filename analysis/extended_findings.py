@@ -22,7 +22,13 @@ Cited constants (sources in research notes / report prose):
   gasoline $4.65/gal (EIA CA regular, Jun 2025-May 2026 trailing 12-mo published);
   fleet 23.4 mpg (FHWA VM-1 2024 on-road light-duty);
   supercharging $0.45/kWh (estimate, typical CA range $0.40-0.50);
-  DSGS VPP $150-350/season (Tesla-stated cap $350, 2026 30% capacity bonus).
+  DSGS VPP net revenue: $259.09/yr (20% backup reserve, primary) / $270.36/yr
+  (0%-reserve sensitivity) -- empirically backtested against the real 2025 DSGS
+  event calendar and this household's own measured load (data/dsgs_vpp_
+  backtest.json, analysis/dsgs_vpp_backtest.py, issue #10); read from that
+  committed artifact at runtime below, not hardcoded here. Retired: the earlier
+  $150-350/season Tesla program-terms extrapolation, kept only as an
+  order-of-magnitude sanity check inside dsgs_vpp_backtest.py itself.
 
 Writes data/extended_results.json. Requires usage.csv (Green Button) beside it,
 plus data/weather_daily_tmean.csv and the two SAM-8760 files in
@@ -165,6 +171,35 @@ BATT_COST = 14500       # PW3 installed cost, $ — the SAME figure package_resu
                         # declares as PW3_COST (research/battery-research-notes.md:
                         # PW3 installed ~$14,500). Tornado lever "install_cost"
                         # varies it across the 12k-17k quote range.
+
+def _load_dsgs_backtest():
+    """Read-only load of dsgs_vpp_backtest.py's committed backtest (data/
+    dsgs_vpp_backtest.json) — the empirically-rated 2025 DSGS VPP net revenue,
+    replayed against the real 2025 event calendar and this household's own
+    measured load (issue #10). NEVER recomputed here — the same read-only,
+    fail-closed convention nem3_grandfathering.py's load_nbt_2039_reference()
+    uses for a sibling generator's committed JSON. A stale/absent reference
+    must abort the run, not silently fall back to a guessed number."""
+    p = DATA / "dsgs_vpp_backtest.json"
+    if not p.exists():
+        raise SystemExit(
+            f"_load_dsgs_backtest: {p} is missing — run dsgs_vpp_backtest.py "
+            "first (or restore the committed artifact); the DSGS tornado "
+            "lever needs its backtested net-revenue figures.")
+    j = json.loads(p.read_text())
+    try:
+        net_20pct = j["revenue"]["reserve_20pct"]["net_usd"]
+        net_0pct_sens = j["revenue"]["reserve_0pct_sensitivity"]["net_usd"]
+    except KeyError as e:
+        raise SystemExit(f"{p}: missing expected revenue key {e} — cannot "
+                          "use as a DSGS tornado-lever input")
+    return float(net_20pct), float(net_0pct_sens)
+
+DSGS_NET_20PCT_USD, DSGS_NET_0PCT_SENS_USD = _load_dsgs_backtest()
+                        # $259.09 / $270.36 as of the committed backtest —
+                        # read at runtime, not pinned, so a future rerun of
+                        # dsgs_vpp_backtest.py (e.g. a later CEC filing year)
+                        # flows through here automatically.
 
 # Section -> governing intake flag. Mapping rationale (what each CONSUMES):
 #   electrification_dividend (B): EV charging kWh detected in usage.csv,
@@ -473,8 +508,11 @@ levers = {
                         (round(POL_SAVE["twowin"]), BATT_COST / POL_SAVE["twowin"]),
                         (round(G), BATT_COST / G)],
     "post_behavior": [(round(G_POST), BATT_COST / G_POST), (round(G), BATT_COST / G)],
-    "dsgs_revenue": [(0, BATT_COST / G), (250, BATT_COST / (G + 250)),
-                     (350, BATT_COST / (G + 350))],
+    "dsgs_revenue": [(0, BATT_COST / G),
+                     (round(DSGS_NET_20PCT_USD, 2),
+                      BATT_COST / (G + DSGS_NET_20PCT_USD)),
+                     (round(DSGS_NET_0PCT_SENS_USD, 2),
+                      BATT_COST / (G + DSGS_NET_0PCT_SENS_USD))],
     "escalation_5yr_avg": [(0.0, BATT_COST / G), (0.05, BATT_COST / (G * 1.104)),
                            (0.08, BATT_COST / (G * 1.17))],  # avg uplift over payback horizon
 }
