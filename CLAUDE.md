@@ -65,7 +65,7 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 
 # Coverage gate (local, needs the private archive like the §9 gate): every test
 # suite plus every generator on the real inputs must keep the analysis package
-# at >= 90% statement coverage (currently ~95%):
+# at >= 90% statement coverage (currently ~93%):
 ./analysis/check_coverage.sh                          # fails under 90%
 
 # Full-history secret scan (CI runs the generic rules automatically on every push):
