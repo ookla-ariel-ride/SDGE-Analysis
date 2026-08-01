@@ -303,10 +303,41 @@ def build_rate_table():
 
 def load_rate_table():
     """The committed public rate table -> {(rate_name, month, day_type, hour):
-    total export credit $/kWh (Delivery + Generation + CEA bonus)}, one dict per
-    rate_name. Fails closed if the committed CSV is missing, malformed, or
-    incomplete -- this is the ONLY place a household-facing consumer of this
-    table needs to look, and it never silently fills a gap."""
+    total export credit $/kWh}, one dict per rate_name, PLUS a second,
+    delivery-only dict for the sensitivity check below. Fails closed if the
+    committed CSV is missing, malformed, or incomplete -- this is the ONLY
+    place a household-facing consumer of this table needs to look, and it
+    never silently fills a gap.
+
+    GENERATION-COMPONENT AMBIGUITY, disclosed rather than silently resolved
+    (an adversarial review finding): this household takes generation service
+    from a CCA (Clean Energy Alliance), not SDG&E's own bundled generation.
+    SDG&E's own export-pricing methodology page states its Generation
+    component is "applicable only to bundled customers" (fetched 2026-08-01,
+    https://www.sdge.com/solar/solar-billing-plan/export-pricing) -- i.e. NOT
+    to CCA customers like this household, at least as SDG&E constructs ITS
+    OWN rate table. Against that, Clean Energy Alliance's own "Solar Impact"
+    program page states, unhedged: "The energy values are based on the same
+    export credit pricing paid by San Diego Gas & Electric (SDG&E)" plus the
+    $0.01/kWh bonus (same source as CEA_SOURCE above) -- a direct, first-party
+    statement from the entity that actually generates this household's export
+    credit, not merely SDG&E's own internal construction note. CEA's own
+    published "Adopted Residential Rates" schedule (fetched 2026-08-01,
+    https://thecleanenergyalliance.org/wp-content/uploads/2024/09/CEA-Adopted-
+    Residential-Rate-Schedule-Effective-2024_11_01.pdf) lists a flat $0.06/kWh
+    "Net Surplus Compensation" for "Personal Impact/Solar Impact" -- but this
+    is NEM's ANNUAL leftover-surplus true-up mechanism (a different program
+    from NBT's ONGOING hourly export credit this script models), so it does
+    not resolve the question either way; no CEA document describing an NBT-
+    specific generation-component rate, separate from SDG&E's, was found.
+    This script uses Delivery + Generation + CEA bonus as its PRIMARY figure
+    (CEA's own direct customer-facing statement is the most specific evidence
+    for what this household's account actually receives), but reports a
+    Delivery-only + CEA-bonus SENSITIVITY figure alongside it in the results
+    (see main()'s "generation_component_sensitivity" section) so a reader can
+    see the range this genuine, unresolved ambiguity creates rather than one
+    number presented with unwarranted certainty.
+    """
     if not RATE_CSV.exists():
         raise SystemExit(
             f"{RATE_CSV} is missing. Run this script with --build-rates first "
@@ -319,6 +350,7 @@ def load_rate_table():
         raise SystemExit(f"{RATE_CSV}: missing column(s) {sorted(missing_cols)}")
 
     lookups = {}
+    delivery_only_lookups = {}
     for rate_name, g in tab.groupby("rate_name"):
         piv = g.pivot_table(index=["month", "day_type", "hour"],
                             columns="component", values="value_usd_per_kwh")
@@ -339,10 +371,12 @@ def load_rate_table():
                 "generation value in an otherwise-present bucket.")
         credit = piv["delivery"] + piv["generation"] + CEA_BONUS_USD_PER_KWH
         lookups[rate_name] = credit.to_dict()
+        delivery_only_lookups[rate_name] = (
+            piv["delivery"] + CEA_BONUS_USD_PER_KWH).to_dict()
     missing_vintages = set(RAW_FILES) - set(lookups)
     if missing_vintages:
         raise SystemExit(f"{RATE_CSV}: missing vintage(s) {sorted(missing_vintages)}")
-    return lookups
+    return lookups, delivery_only_lookups
 
 
 # ------------------------------------------------------------ billing engines
@@ -517,7 +551,7 @@ def main():
     d["exp"] = d["Generation"].astype(float)
 
     nem2_model_bill = R.bill_nem(d)
-    credit_lookups = load_rate_table()
+    credit_lookups, delivery_only_lookups = load_rate_table()
 
     nbt_bills = {}
     for rate_name in sorted(RAW_FILES):
@@ -533,6 +567,21 @@ def main():
 
     gf_values = [v["grandfathering_value_usd"] for v in nbt_bills.values()]
     identical_vintages = bool((max(gf_values) - min(gf_values)) < 0.005)
+
+    # GENERATION-COMPONENT SENSITIVITY (see load_rate_table()'s docstring): the
+    # PRIMARY figures above assume this household's CCA generation credit
+    # equals SDG&E's own Delivery+Generation export rate (CEA's own stated
+    # policy). This computes the alternative -- Delivery-only, if SDG&E's
+    # "Generation applies only to bundled customers" caveat means CCA
+    # customers should NOT receive that component -- so the genuine,
+    # unresolved ambiguity is visible as a range, not hidden behind one number.
+    delivery_only_bills = {}
+    for rate_name in sorted(RAW_FILES):
+        bill, _, _ = bill_nbt(d, delivery_only_lookups[rate_name])
+        delivery_only_bills[rate_name] = {
+            "annual_bill_usd": round(bill, 2),
+            "grandfathering_value_usd": round(bill - nem2_model_bill, 2),
+        }
 
     # simple (hour-equal-weighted) stats for the docstring's mechanism narrative,
     # computed from the committed table, not restated from memory
@@ -597,6 +646,26 @@ def main():
                      "above) sits well below the simple hour-equal-weighted "
                      "mean."),
         },
+        "generation_component_sensitivity": {
+            "primary_assumption": "delivery + generation + CEA bonus (see load_rate_table docstring)",
+            "alternative_assumption": "delivery + CEA bonus only (no SDG&E Generation component)",
+            "alternative_bills": delivery_only_bills,
+            "note": ("SDG&E's own export-pricing methodology page states its "
+                     "Generation component is 'applicable only to bundled "
+                     "customers' -- this household is on CCA (Clean Energy "
+                     "Alliance) generation, not SDG&E bundled generation. "
+                     "Against that, CEA's own 'Solar Impact' program page "
+                     "states unhedged that its export credit equals SDG&E's "
+                     "own published pricing plus the $0.01/kWh bonus, with no "
+                     "component breakdown. No CEA document describing an "
+                     "NBT-specific generation-component rate, separate from "
+                     "SDG&E's, was found. This is a genuine, unresolved "
+                     "public-data ambiguity, not a computational error -- "
+                     "the PRIMARY figures above use CEA's direct statement; "
+                     "this section discloses what the Delivery-only "
+                     "alternative would be instead, so the reader can see "
+                     "the range rather than one figure presented as certain."),
+        },
         "old_bracket_for_context": old_bracket,
         "mechanism_of_change_from_old_bracket": (
             "The old bracket applied ONE flat export credit (3c/5c/8c, an "
@@ -616,8 +685,11 @@ def main():
         assert v["annual_bill_usd"] > 0, rn
     for k in ("window", "nem2", "nbt_counterfactual",
               "grandfathering_value_range_usd_per_yr", "export_credit_shape",
-              "battery_marginal_reconciliation_2039"):
+              "battery_marginal_reconciliation_2039",
+              "generation_component_sensitivity"):
         assert k in results, f"results section missing: {k}"
+    for rn, v in delivery_only_bills.items():
+        assert v["annual_bill_usd"] > 0, rn
     for rn, v in results["battery_marginal_reconciliation_2039"][
             "battery_marginal_real_hourly_usd_yr"].items():
         assert v["battery_marginal_usd_yr"] > 0, (

@@ -269,6 +269,33 @@ def case_grandfathering_value_is_in_the_right_ballpark_vs_the_old_bracket():
     return f"new range ${lo:,.0f}-${hi:,.0f}/yr vs old ${old_lo:,}-${old_hi:,}/yr -- same order of magnitude"
 
 
+@case
+def case_generation_component_sensitivity_is_disclosed_and_higher_than_primary():
+    """An adversarial review finding: this household is on CCA (not SDG&E
+    bundled) generation, and SDG&E's own methodology page states its
+    Generation export-rate component applies only to bundled customers.
+    Rather than silently resolving this ambiguity, the artifact must publish
+    a Delivery-only alternative alongside the primary (Delivery+Generation)
+    figure. Removing the Generation credit LOWERS the NBT export credit,
+    which RAISES the NBT bill and therefore WIDENS the grandfathering value
+    -- assert that direction holds (a sign flip would indicate the
+    alternative was wired backwards), not just that the field exists."""
+    _require_archive()
+    result = json.loads(NG.RESULTS_JSON.read_text())
+    sens = result["generation_component_sensitivity"]
+    assert sens["alternative_bills"], "no alternative_bills computed"
+    for rate_name, alt in sens["alternative_bills"].items():
+        primary_gf = result["nbt_counterfactual"][rate_name]["grandfathering_value_usd"]
+        alt_gf = alt["grandfathering_value_usd"]
+        assert alt_gf > primary_gf, (
+            f"{rate_name}: delivery-only grandfathering value ${alt_gf} is not "
+            f"greater than the primary ${primary_gf} -- removing the "
+            "Generation credit should raise the NBT bill and widen the gap")
+    return (f"generation-component sensitivity disclosed: primary "
+           f"${result['nbt_counterfactual']['NBT00']['grandfathering_value_usd']:,.2f}/yr "
+           f"vs delivery-only ${sens['alternative_bills']['NBT00']['grandfathering_value_usd']:,.2f}/yr")
+
+
 # ---------------------------------------------------------------------------
 # (e) battery-marginal reconciliation vs extended_findings.py's nbt_2039
 #     (issue #9 Phase 3, AC6) -- fail-closed reference loading + arithmetic

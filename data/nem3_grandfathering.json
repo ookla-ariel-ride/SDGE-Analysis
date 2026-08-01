@@ -51,6 +51,21 @@
   "hour_equal_weighted_max_usd_per_kwh": 1.07977,
   "note": "the equal-weighted range spans ~1c/kWh (spring midday oversupply hours) to ~$1.08/kWh (August evening post-solar ramp); this household's exports concentrate at midday, so its OWN kWh-weighted realized credit (export_credit_weighted_avg_usd_per_kwh, per vintage above) sits well below the simple hour-equal-weighted mean."
  },
+ "generation_component_sensitivity": {
+  "primary_assumption": "delivery + generation + CEA bonus (see load_rate_table docstring)",
+  "alternative_assumption": "delivery + CEA bonus only (no SDG&E Generation component)",
+  "alternative_bills": {
+   "NBT00": {
+    "annual_bill_usd": 7359.77,
+    "grandfathering_value_usd": 2455.64
+   },
+   "NBT26": {
+    "annual_bill_usd": 7359.77,
+    "grandfathering_value_usd": 2455.64
+   }
+  },
+  "note": "SDG&E's own export-pricing methodology page states its Generation component is 'applicable only to bundled customers' -- this household is on CCA (Clean Energy Alliance) generation, not SDG&E bundled generation. Against that, CEA's own 'Solar Impact' program page states unhedged that its export credit equals SDG&E's own published pricing plus the $0.01/kWh bonus, with no component breakdown. No CEA document describing an NBT-specific generation-component rate, separate from SDG&E's, was found. This is a genuine, unresolved public-data ambiguity, not a computational error -- the PRIMARY figures above use CEA's direct statement; this section discloses what the Delivery-only alternative would be instead, so the reader can see the range rather than one figure presented as certain."
+ },
  "old_bracket_for_context": {
   "low_usd_yr": 1772,
   "high_usd_yr": 2268,

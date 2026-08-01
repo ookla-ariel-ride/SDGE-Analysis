@@ -1075,12 +1075,22 @@ diverge only in which *future* years each vintage's schedule is contractually gu
 in this year's price level, so the grandfathering-value band this script publishes has zero
 width for now.
 
-**Export credit = SDG&E Delivery + Generation + a flat $0.01/kWh CEA "Solar Impact" bonus**
-(this household is on a CCA, so SDG&E's own Generation rate doesn't directly apply, but CEA's
-own program page states it uses "the same export credit pricing paid by SDG&E" plus the
-$0.01/kWh adder). Import side stays gross-billed at `rates.allin()` (no monthly netting) —
-the same assumption `extended_findings.py`'s own `bill_flat_export()` already uses for its
-flat-credit NBT proxy.
+**Export credit = SDG&E Delivery + Generation + a flat $0.01/kWh CEA "Solar Impact" bonus,
+with the Generation component disclosed as a genuine, unresolved ambiguity (an adversarial
+review finding), not silently assumed.** This household is on a CCA (Clean Energy Alliance),
+and SDG&E's own export-pricing methodology page states its Generation component is
+"applicable only to bundled customers" — not CCA customers. Against that, CEA's own "Solar
+Impact" program page states, unhedged, that its export credit equals "the same export credit
+pricing paid by SDG&E" plus the $0.01/kWh adder, with no component breakdown; no CEA document
+spelling out a separate NBT-specific generation-credit rate was found. The script uses CEA's
+direct statement as the primary assumption (the most specific evidence for what this
+household's account actually receives) but publishes a Delivery-only alternative alongside
+it (`generation_component_sensitivity` in the artifact) so the reader sees the range this
+ambiguity creates: $2,103.58/yr (primary) vs $2,455.64/yr (Delivery-only) — removing the
+Generation credit raises the NBT bill and widens the grandfathering value, so the primary
+figure is the more conservative (lower) of the two. Import side stays gross-billed at
+`rates.allin()` (no monthly netting) — the same assumption `extended_findings.py`'s own
+`bill_flat_export()` already uses for its flat-credit NBT proxy.
 
 **Grandfathering result.** NEM 2.0 modeled bill $4,904.13/yr vs NBT counterfactual
 $7,007.70/yr (both vintages) → **$2,103.58/yr** grandfathering value, kWh-weighted realized
