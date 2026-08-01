@@ -1093,7 +1093,10 @@ figure is the more conservative (lower) of the two. Import side stays gross-bill
 `bill_flat_export()` already uses for its flat-credit NBT proxy.
 
 **Grandfathering result.** NEM 2.0 modeled bill $4,904.13/yr vs NBT counterfactual
-$7,007.70/yr (both vintages) → **$2,103.58/yr** grandfathering value, kWh-weighted realized
+$7,007.70/yr (both vintages) → **$2,103.58/yr** grandfathering value (computed from the
+full-precision bill figures before rounding either total to display precision — subtracting
+the two rounded totals shown here gives $2,103.57, one cent off; the artifact's own stored
+value, rounded once at the end, is the correct one), kWh-weighted realized
 export credit ~4.7¢/kWh (this household's exports concentrate at midday, exactly where the
 real hourly schedule is cheapest). Same order of magnitude as the retired flat-cent bracket
 in `data/extra_results.json → nbt.gf_value` ($1,772–2,268/yr, issue #34, not touched by this
