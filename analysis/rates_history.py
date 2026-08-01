@@ -76,9 +76,15 @@ WHAT SOURCES WHAT (requirement: name the artifact column behind each component)
         period. The artifact holds only the period TOTAL (the printed daily
         unit rate is not captured by the parser), so the quotient carries the
         bill's rounding of the total. Populated only from the 10/1/25–10/27/25
-        period onward; whether that charge is new, renamed from another line,
-        or a parser gap is an OPEN question — before that date the engine
-        returns a flagged absence that raises when read, never an invented 0.
+        period onward. SETTLED, no longer an OPEN question (issue #7): SDG&E
+        replaced the flat Monthly Service Fee with this per-day Base Services
+        Charge at that exact 2025-10-01 billing boundary under CPUC Resolution
+        E-5355, confirmed against this household's own bill corpus (the
+        2025-10-31 statement spans the transition and prints both labels,
+        split precisely at the calendar date, in its two stub periods). Before
+        10/1/25 the charge genuinely did not exist, so the engine returns a
+        flagged absence that raises when read — that was always the correct
+        behavior, not a placeholder for an unresolved question.
   * PCIA and NBC
         genuinely NOT sourceable: bill_tou_detail carries only the TOU energy
         "Rate/kWh" lines; the PCIA and non-bypassable-charge bill lines are not
@@ -831,9 +837,13 @@ class RateSet:
                 f"base_services_charge on {self.date}: bill_periods_electric.csv "
                 f"carries no Base Services Charge for period {self._period['period']} "
                 "— the column is populated only from the 10/1/25–10/27/25 period "
-                "onward, and whether the charge is new, renamed from another line, "
-                "or a parser gap is an OPEN question (issue #2). Refusing to invent "
-                "a value.")
+                "onward. This is SETTLED, no longer an OPEN question (issue #7): "
+                "SDG&E replaced the flat Monthly Service Fee with this per-day "
+                "charge at that exact 2025-10-01 boundary under CPUC Resolution "
+                "E-5355, confirmed against the bill corpus (a statement spanning "
+                "the transition prints both labels, split at the calendar date). "
+                "Before that date the charge genuinely did not exist, so this is "
+                "a real absence, never an invented value.")
         return total / self._period["days"]
 
     def cells(self):
@@ -1420,8 +1430,12 @@ def _vintage_rows():
                      "" if p["bsc_total"] is None
                      else f"{p['bsc_total'] / p['days']:.5f}", "",
                      "absent" if p["bsc_total"] is None else "derived",
-                     "no base_services_charge line parsed for this period — new "
-                     "charge, renamed line, or parser gap is an OPEN question"
+                     "no base_services_charge line parsed for this period — "
+                     "SETTLED, no longer an OPEN question (issue #7): the charge "
+                     "did not exist before 2025-10-01, when SDG&E replaced the "
+                     "flat Monthly Service Fee with this per-day charge under "
+                     "CPUC Resolution E-5355 (confirmed against the bill corpus); "
+                     "a real absence, not a parser gap"
                      if p["bsc_total"] is None else
                      f"period total {p['bsc_total']:.2f} / {p['days']} days "
                      f"(the printed daily unit rate is not captured by the parser)"])

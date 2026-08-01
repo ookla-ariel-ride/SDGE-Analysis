@@ -71,6 +71,7 @@ MANIFEST = {
     "bill_decomposition.py": "generator",
     "tou_audit.py": "generator",
     "service_headroom.py": "generator",
+    "irreducible_bill.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -103,6 +104,7 @@ OWNS = {
     "bill_decomposition.py":        [("data", "bill_decomposition.json")],
     "tou_spread.py":                [("data", "tou_spread.json")],
     "service_headroom.py":          [("data", "service_headroom.json")],
+    "irreducible_bill.py":          [("data", "irreducible_bill.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -273,6 +275,11 @@ NEEDS_PRIVATE_ARCHIVE = {
     "service_headroom.py": ("the SAM 8760 exports (the only independent gross-load "
                             "instrument) and the raw Green Button export, neither of "
                             "which has a stand-in carrying a real solar day"),
+    "irreducible_bill.py": ("the bill PDF corpus (private/1-raw-data/electric-bills/*.pdf, "
+                            "same dependency shape as parse_bills.py and "
+                            "bill_decomposition.py) plus data/bill_periods_electric.csv and "
+                            "data/bill_tou_detail.csv, which themselves derive from that "
+                            "corpus"),
     "battery_plan_matrix.py": ("its fail-closed tie-out compares against "
                                "battery_dispatch_policies.json, which is built from the "
                                "real year, so invented inputs must diverge"),
