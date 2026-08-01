@@ -1528,22 +1528,21 @@ sits, why it sits there, and what a reader should not expect the enforcement to 
   committed rules only, so the local hook is the real gate for anything person-specific.
   The hook then runs `analysis/privacy_tiers.py --staged`, which is the same tier scan the
   suites run, restricted to the blobs this commit would add or change — read out of the
-  index, not the working tree, since those differ — plus the three files that carry a
-  declared fixture-collision row (§11.5), read out of the index whether or not the commit
-  touches them. That last part is what makes the row counts enforceable at the gate rather
-  than only in a suite nobody is obliged to run: a row can fire only inside the file it
-  names, so reading those files gives the exact count over the tree this commit would
-  produce, at the cost of three blobs rather than a whole-tree scan, and a partial commit
-  cannot switch the check off. It blocks on a hit, naming the field id,
-  the yaml path and the file and never the value, and on a row whose count no longer matches,
-  naming the file, the yaml path and the two counts. Where `private/household.yaml` is absent
-  (somebody else's clone) the value half cannot run: the hook says so in terms and allows
-  the commit, because refusing would make the repo uncommittable for everyone but its owner,
-  and the key/path rules of §11.5 still run — the collision accounting is skipped there too,
-  since nothing is excused when nothing is searched for. Cost on this tree: about 0.47 s end
-  to end for an ordinary commit, gitleaks included (0.19 s of that is the collision
-  accounting, most of it parsing the 173 KB test module that carries the largest row), and
-  about 0.8 s for the scan over all 107 files.
+  index, not the working tree, since those differ. Before it scans anything it checks that
+  every tiered field still resolves to a locatable subject and refuses if one does not
+  (§11.6): a rule pointed at nothing reports every tree as clean. It then blocks on a hit,
+  naming the field id, the yaml path and the file and never the value. A hit inside a file's
+  own declared literal is excused only where the same file already declared that literal in
+  the baseline this change is measured against (§11.5), which needs no configuration and no
+  committed count, so the hook behaves the same way in a fork with somebody else's intake in
+  it. Where `private/household.yaml` is absent (somebody else's clone) the value half cannot
+  run: the hook says so in terms and allows the commit, because refusing would make the repo
+  uncommittable for everyone but its owner, and the key/path rules of §11.5 and the resolver
+  check both still run. Cost on this tree: about 0.30 s end to end for an ordinary commit,
+  gitleaks included, and about 1.0 s for the scan over all 107 files. The baseline costs
+  nothing until a coincidence exists — the blob is fetched only for a file whose own literals
+  hold a private answer, which on an ordinary commit is none of them; a commit that re-stages
+  all three files where this tree does coincide pays 0.15 s more.
 - **The commit-msg gate.** The tier table above puts commit messages inside the boundary, and
   a pre-commit hook cannot see one: it runs before the message exists. `.githooks/commit-msg`
   runs `analysis/privacy_tiers.py --message` over the proposed message with the same locally
@@ -1721,28 +1720,60 @@ that reports "clean" is reporting only that it found no literal match:
   anything not yet added are outside it, covered by the gitleaks hook's patterns and by
   review — a different net with different holes. Commit messages are inside the boundary and
   outside this scan; `.githooks/commit-msg` is what covers them (§11.1).
-- **A collision that somebody has declared.** A test module and the example template are
+- **A literal the repository already carried.** A test module and the example template are
   scanned like any other file — there is no file class the scan skips, and an earlier version
   of this gate that exempted both was blind to exactly the copy-paste it existed to catch,
-  since neither exemption could tell an invented fixture from a pasted answer. What can
-  excuse a hit is a `DECLARED_FIXTURE_COLLISIONS` row naming the file, the yaml path, the
-  exact number of private answers that coincide there, and the reason. A row is checked in
-  both directions: used fewer times than it declares it is stale, used more times it is a
-  coincidence nobody has ruled on, and either turns the suite red *and* blocks the commit —
-  the count is the whole of what makes the exemption safe, so it is checked where commits are
-  stopped and not only where tests are run. It excuses only text the
-  file DECLARES as a literal — the AST node position of a python string, the composer mark of
-  a yaml scalar, the cheatsheet's `question:` scalar — so the same value in a comment, a
-  docstring or prose still fails, which is the shape the meter class leak actually took. A
-  python string standing alone as a statement is prose rather than a fixture literal, so a
-  docstring is never eligible. The rows are keyed on file and path and never on a value: here
-  the fixture and the answer are the same bytes, and a value-keyed table would collect the
-  household's door legend into one committed list — a sharper disclosure than the scattered
-  fixture context it excuses. The tree holds three rows covering six coinciding answers: five
-  circuit labels, and the meter class that the cheatsheet's own question text enumerates.
+  since neither exemption could tell an invented fixture from a pasted answer. What excuses a
+  hit is the repository's own history: a needle found inside a literal the file DECLARES is
+  excused only where the baseline version of that same file already declared the same
+  literal, and only as many times as the baseline declared it. A literal that was already
+  there was written by somebody who did not have these answers; a literal this change
+  introduces or rewords, and that matches a private answer, is the paste the gate exists to
+  catch. The baseline is the merge base with the trunk, falling back to `HEAD` — so a value
+  pasted in an earlier commit on the same branch cannot launder itself into the next commit's
+  excuse — and a repository with no commits excuses nothing. Only three file classes declare
+  literals at all: a `test_*.py` module, `household.example.yaml`, and the cheatsheet's
+  `question:` scalars. Everywhere else — every artifact in `data/`, every line of prose in
+  `index.html` and `TECHNICAL.md`, which is where the meter-class leak actually landed —
+  nothing is eligible and nothing is excused for being old.
+
+  A span is the AST node position of a python string, the composer mark of a yaml scalar or
+  the cheatsheet's `question:` scalar, so the same value in a comment, a docstring or prose
+  still fails; a python string standing alone as a statement is prose rather than a fixture
+  literal, so a docstring is never eligible. The comparison is on what the literal says
+  rather than on its source bytes, so re-quoting a fixture or moving it to another line does
+  not make it new. Nothing about the rule is household-specific, and that is the point: what
+  it replaces was a committed table of how many of THIS household's answers coincided with
+  the fixtures in each file. That table held for one house. Anyone following the
+  "Reproduce this for your own home" flow in `README.md` has their own labels coinciding a
+  different number of times, and every commit they made would have been blocked as a stale
+  row until they edited shared scanner code to match their own private answers — hostile, and
+  an invitation to write a private figure into a committed file. The baseline rule is also
+  strictly stronger: a count cannot see a swap that keeps the total, and it excused every
+  further occurrence of a value once one was declared, so a fixture label pasted a second
+  time into a sentence that says what it is moved no count. A second occurrence is a second
+  span, and it fails. What it costs, stated plainly: a private value already committed inside
+  one of those three classes' literals before this rule existed goes on being excused, which
+  is exactly what the count rule excused too.
 
 The practical consequence: **a literal scan is a floor, not a proof.** The tier list in the
 cheatsheet is the record of what may be published, and a value's tier is a decision, made
 once and written down with its reasoning — the way the two decisions in §11.2 are written
 down. A gate checks that a decision is being kept where it can see it; it does not make the
 decision, and it does not see everywhere.
+
+### 11.6 A tier whose subject cannot be located
+
+The path contract in [`DATA-SOURCES-CHEATSHEET.md`](DATA-SOURCES-CHEATSHEET.md) requires that
+anything enforcing the tiers **fail loudly** when a field id resolves to no path and is not
+declared path-less. The reason is stated there: a tier whose subject cannot be located is a
+broken rule, and a gate that reports it clean is the exact failure the contract exists to
+prevent. A mistyped or renamed id resolves to a key the schema has no room for, so it yields
+no needle, bans no key and removes itself from the universe the scan searches — and the scan
+then returns clean, in the reassuring way.
+
+`privacy_tiers.gate()` now makes that check before it scans anything and raises rather than
+continuing; `main()` reports it as a block, naming the ids and the paths they derived to.
+Resolution is a property of the cheatsheet and the committed `household.example.yaml` alone,
+so the check runs identically in CI, in a clone with no private file, and in the hook — the
+one place it had been missing, which is the place CLAUDE.md §4 calls the real gate.

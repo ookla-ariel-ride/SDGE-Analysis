@@ -11,13 +11,16 @@
 #      one reached three committed files. CLAUDE.md §4 makes this hook the real
 #      gate for anything person-specific: CI has no private/household.yaml and
 #      cannot check a real value. It scans the STAGED content, so it is a gate
-#      on what is being added, plus the handful of files that carry a declared
-#      fixture-collision row — read out of the index, so their declared counts
-#      are checked against the tree this commit would produce however little of
-#      it the commit touches. A count is the whole of what makes such a row
-#      safe, and a count only a test enforces is not enforced at the gate that
-#      blocks commits. The rest of the tracked tree is covered by
-#      `analysis/test_privacy_tiers.py`, which the §9 run keeps green.
+#      on what is being added, and it judges that content against the committed
+#      baseline: a private answer sitting inside a literal a test fixture or the
+#      example template ALREADY declared before this change is excused, and a
+#      literal this change introduces or rewords is not. That rule needs no
+#      configuration and no committed count, so this hook behaves the same way
+#      in a fork with somebody else's intake in it. Before it scans it refuses
+#      outright if any tiered field resolves to no household.yaml path, since a
+#      rule pointed at nothing reports every tree as clean. The rest of the
+#      tracked tree is covered by `analysis/test_privacy_tiers.py`, which the §9
+#      run keeps green.
 #
 # Nothing here prints a private value — a finding is a field id, a yaml path
 # and a filename.

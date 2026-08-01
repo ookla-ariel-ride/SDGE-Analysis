@@ -57,13 +57,14 @@ WHAT THIS CANNOT SEE, stated so the gate is not read as more than it is
     the derivation down to the leaf was measured and rejected: the leaf here is
     `panel.schedule[].label`, and banning the key `label` fires on nine
     committed artifacts whose labels are chart series and issue-form fields;
-  * a value that a file declares as its own literal AND that has been declared
-    a known collision in DECLARED_FIXTURE_COLLISIONS. There is no file class
-    that goes unscanned: a test module and the example template are scanned
-    like anything else, and the only thing that can excuse a hit in one is a
-    row naming the file, the yaml path, the exact number of coinciding
-    answers, and the reason. Everything else in those files -- a comment, a
-    docstring, prose, and any value the row does not account for -- fails.
+  * a value that a file declares as its own literal AND that the same file
+    already declared in the committed baseline this change is measured against.
+    There is no file class that goes unscanned: a test module and the example
+    template are scanned like anything else, and the only thing that can excuse
+    a hit in one is that the literal was demonstrably there before this change
+    -- so whoever wrote it did not have these answers. Everything else in those
+    files -- a comment, a docstring, prose, a reworded literal, a second copy
+    of an old one -- fails.
 
 A found needle is reported as a field id, a yaml path and a file. The value
 itself is never printed, never written into an assertion message, and never
@@ -490,7 +491,7 @@ def structured_strings(obj):
 
 
 # ---------------------------------------------------------------------------
-# The one thing that can excuse a hit, and it is a row somebody wrote down.
+# The one thing that can excuse a hit, and it is the repository's own history.
 #
 # Three file classes declare literals that a household's answer can legitimately
 # coincide with: the cheatsheet's own `question:` text enumerates the standard
@@ -506,44 +507,69 @@ def structured_strings(obj):
 # copied sample data -- was invisible. The exemption could not tell a fixture
 # from a copy, which is the only distinction it existed to make.
 #
-# What replaces it is the repo's own idiom: declare the exemption, with the
-# reason, and make a stale declaration break the suite. A hit inside a declared
-# literal span is excused only by a DECLARED_FIXTURE_COLLISIONS row naming the
-# file, the yaml path, the EXACT number of private answers that coincide there,
-# and why. Anything the row does not account for -- a further collision, a value
-# in a comment, in a docstring or in prose -- fails, and `test_privacy_tiers.py`
-# fails a row whose count no longer matches, in both directions.
+# What replaces it is a question the repository can answer about itself, for any
+# household: WAS THIS LITERAL ALREADY HERE? A literal that has been in the
+# committed tree since before this change is by construction not something this
+# user just pasted -- whoever wrote it did not have these answers. A literal
+# this change INTRODUCES or REWORDS, and that matches a private answer, is
+# exactly the paste the gate exists to catch. So a needle found inside a
+# declared literal span is excused only where the BASELINE version of that same
+# file already declares the same literal, and only as many times as the baseline
+# declares it.
 #
-# The row is keyed on file and path and NEVER on the value, deliberately. Here
-# the fixture value and the private answer are the same bytes, so a value-keyed
-# allowlist would collect this household's door legend into one committed table
-# -- a sharper disclosure than the scattered fixture context it exempts, and the
-# exact thing CLAUDE.md section 4 forbids. The count is what makes the row
-# enforceable: a fourth real label pasted into a file budgeted for three fails.
+# Nothing in that rule is household-specific, which is the whole point. The
+# version this replaces was a committed table of how many of one household's
+# answers coincided with the fixtures in each file -- 1, 3 and 2 here. It holds
+# for one house. Anyone who clones this repo, fills in their own
+# private/household.yaml and enables the hook (the flow README.md documents and
+# CLAUDE.md section 12 requires) has their own door legends and meter class
+# coinciding with those same fixtures a DIFFERENT number of times, and every
+# commit they made would have been blocked as a stale row until they edited
+# shared, committed scanner code to match their own private answers. That is
+# hostile, and it is a standing invitation to write a household-specific number
+# into a committed file.
 #
-# Spans are computed from the AST node positions of a python module, the
-# composer marks of a yaml document and the `question:` scalars of the
-# cheatsheet, and never by blanking every occurrence of a declared string. That
-# difference is why a value declared once as a fixture and then also quoted in a
-# comment still fails on the comment -- the shape the leak this gate found
-# actually took. For the same reason a python string that is a STATEMENT (a
-# docstring, or any free-standing string expression) is prose, not a fixture
-# literal, and its span is never eligible.
+# The baseline rule is also strictly stronger than a count. A count cannot see a
+# swap that keeps the total; and it excused every occurrence of a value once one
+# was declared, so a fixture label pasted a SECOND time -- into a sentence that
+# says what it is -- moved no count. Here the second occurrence is a second
+# span, the baseline holds one, and it fails.
+#
+# What it costs, stated plainly: a private value that was already committed
+# inside one of those three classes' literals before this rule existed goes on
+# being excused, exactly as the count rule excused it. That is why the class
+# list stays closed. For every other file -- every artifact in data/, every line
+# of prose in index.html and TECHNICAL.md, where the leak that prompted all this
+# actually landed -- no span is eligible and nothing is ever excused by age.
+#
+# The resolution for a blocked fixture is always available and needs no
+# configuration: a fixture value is invented, so change it. That is what makes
+# the rule safe to apply to everyone.
+#
+# Spans come from the AST node positions of a python module, the composer marks
+# of a yaml document and the `question:` scalars of the cheatsheet, and never
+# from blanking every occurrence of a string. That difference is why a value
+# declared once as a fixture and then also quoted in a comment still fails on
+# the comment -- the shape the leak this gate found actually took. For the same
+# reason a python string that is a STATEMENT (a docstring, or any free-standing
+# string expression) is prose, not a fixture literal, and its span is never
+# eligible.
+#
+# The comparison is on the literal's VALUE rather than on its source bytes:
+# re-quoting a fixture, or moving it to another line, does not make it new.
 # ---------------------------------------------------------------------------
 DECLARED_LITERAL_SOURCES = ("test-module", "example-template", "cheatsheet")
 
-# {(tracked path, yaml leaf path): (how many answers coincide, why)}
-DECLARED_FIXTURE_COLLISIONS = {
-    ("DATA-SOURCES-CHEATSHEET.md", "panel.meter_class"): (
-        1, "the field block's own `question:` enumerates the standard utility "
-           "meter classes, and every household's answer is one of them"),
-    ("analysis/test_service_headroom.py", "panel.schedule[].label"): (
-        3, "synthetic panel fixtures name circuits after the appliances they "
-           "serve, which is what a real door legend does too"),
-    ("household.example.yaml", "panel.schedule[].label"): (
-        2, "the schema template's placeholder schedule names circuits after "
-           "the appliances they serve, for the same reason"),
-}
+# The refs a change is measured against, in order. The merge base is preferred,
+# so a branch is judged against the trunk it will land on rather than against
+# its own last commit -- otherwise a value pasted in an earlier commit on the
+# same branch launders itself into the baseline of the next one. The remote
+# spellings are there for a clone that has no local trunk branch. HEAD is the
+# fallback: a clone sitting on the default branch, a shallow clone with no merge
+# base, a repo whose trunk is named something else. A repository with no commits
+# at all -- the throwaway trees the controls build -- has no baseline, and
+# nothing is excused there.
+TRUNK_NAMES = ("main", "master", "origin/main", "origin/master")
 
 
 def _file_class(relpath):
@@ -579,8 +605,8 @@ def _char_offset(text, offs, lineno, col):
                                                                   "ignore"))
 
 
-def _python_literal_spans(text):
-    """Source spans of the string literals a python module declares.
+def _python_literals(text):
+    """The string literals a python module declares, with their source spans.
 
     Excludes every string that stands alone as a statement: a module, class or
     function docstring, and any free-standing string expression. Those carry
@@ -594,36 +620,37 @@ def _python_literal_spans(text):
              if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
              and isinstance(n.value.value, str)}
     offs = _offset_table(text)
-    spans = []
+    out = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Constant)
                 and isinstance(node.value, str)) or id(node) in prose:
             continue
         if node.end_lineno is None:                        # pragma: no cover
             continue
-        spans.append((_char_offset(text, offs, node.lineno, node.col_offset),
-                      _char_offset(text, offs, node.end_lineno,
-                                   node.end_col_offset)))
-    return spans
+        out.append((_char_offset(text, offs, node.lineno, node.col_offset),
+                    _char_offset(text, offs, node.end_lineno,
+                                 node.end_col_offset),
+                    node.value))
+    return out
 
 
-def _yaml_value_spans(text, base=0):
-    """Source spans of the string SCALARS a yaml document holds as values.
+def _yaml_value_literals(text, base=0):
+    """The string SCALARS a yaml document holds as values, with their spans.
 
     Composed rather than loaded, because only the composer keeps the marks. A
-    mapping's keys are not values and are not exempt.
+    mapping's keys are not values and are not eligible.
     """
     try:
         root = yaml.compose(text)
     except yaml.YAMLError:                                 # pragma: no cover
         return []
-    spans = []
+    out = []
 
     def walk(node):
         if isinstance(node, yaml.ScalarNode):
             if node.tag.endswith(":str"):
-                spans.append((base + node.start_mark.index,
-                              base + node.end_mark.index))
+                out.append((base + node.start_mark.index,
+                            base + node.end_mark.index, node.value))
         elif isinstance(node, yaml.SequenceNode):
             for child in node.value:
                 walk(child)
@@ -632,16 +659,16 @@ def _yaml_value_spans(text, base=0):
                 walk(value)
     if root is not None:
         walk(root)
-    return spans
+    return out
 
 
-def _cheatsheet_question_spans(text):
-    """Source span of each field block's `question:` scalar, and nothing else.
+def _cheatsheet_question_literals(text):
+    """Each field block's `question:` scalar, with its span, and nothing else.
 
     Lenient on purpose: this is a scoping rule, not the shape check, and it has
     to work on a synthetic cheatsheet in the positive control.
     """
-    spans = []
+    out = []
     for m in re.finditer(r"```yaml\n(.*?)```", text, re.S):
         try:
             node = yaml.compose(m.group(1))
@@ -652,26 +679,91 @@ def _cheatsheet_question_spans(text):
         for key, value in node.value:
             if (isinstance(key, yaml.ScalarNode) and key.value == "question"
                     and isinstance(value, yaml.ScalarNode)):
-                spans.append((m.start(1) + value.start_mark.index,
-                              m.start(1) + value.end_mark.index))
-    return spans
+                out.append((m.start(1) + value.start_mark.index,
+                            m.start(1) + value.end_mark.index, value.value))
+    return out
 
 
-def declared_literal_spans(relpath, text):
-    """(start, end) character spans a file declares as its own literals.
+def declared_literals(relpath, text):
+    """(start, end, value) for each literal a file declares as its own.
 
     Empty for every file outside the three classes above, so the default is
-    that every byte of a file is scanned. Spans, not strings: see the block
-    comment above for why the difference decides whether this gate works.
+    that every byte of a file is scanned. Spans rather than strings, because a
+    value declared once as a fixture and quoted again in a comment must still
+    fail on the comment; values as well as spans, because the baseline
+    comparison is on what the literal SAYS, so re-quoting one or moving it to
+    another line does not make it new.
     """
     kind = _file_class(relpath)
     if kind == "test-module":
-        return _python_literal_spans(text)
+        return _python_literals(text)
     if kind == "example-template":
-        return _yaml_value_spans(text)
+        return _yaml_value_literals(text)
     if kind == "cheatsheet":
-        return _cheatsheet_question_spans(text)
+        return _cheatsheet_question_literals(text)
     return []
+
+
+def _git_out(root, *args):
+    """stdout of a git command, or None if it failed. Never raises."""
+    try:
+        r = subprocess.run(["git", *args], cwd=root, capture_output=True)
+    except OSError:                                        # pragma: no cover
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+class Baseline:
+    """The committed content a change is measured against.
+
+    `text(relpath)` is that file as of the baseline ref, or None where the ref
+    does not hold it -- a file this change adds, or a repository with no
+    commits. Reads are lazy and memoized, and the only file ever fetched is one
+    whose own declared literals hold a private answer, which on an ordinary
+    commit is none of them: the baseline costs nothing until a collision exists.
+
+    A default-constructed Baseline knows nothing, so nothing is excused. That is
+    the right default for a caller holding one file's text and no repository --
+    every positive control in `test_privacy_tiers.py` relies on it.
+    """
+
+    __slots__ = ("root", "ref", "_texts", "_cache")
+
+    def __init__(self, root=None, ref=None, texts=None):
+        self.root = pathlib.Path(root) if root is not None else None
+        self.ref = ref
+        self._texts = dict(texts) if texts else {}
+        self._cache = {}
+
+    @classmethod
+    def of(cls, root=None):
+        """The baseline of a working repository: merge base, else HEAD."""
+        root = ROOT if root is None else pathlib.Path(root)
+        if _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
+            return cls()                       # no commits: nothing pre-exists
+        for trunk in TRUNK_NAMES:
+            out = _git_out(root, "merge-base", "HEAD", trunk)
+            if out and out.strip():
+                return cls(root, out.decode().strip())
+        return cls(root, "HEAD")
+
+    @property
+    def label(self):
+        return (self.ref or "no baseline")[:12]
+
+    def text(self, relpath):
+        if relpath in self._texts:
+            return self._texts[relpath]
+        if self.root is None or self.ref is None or relpath is None:
+            return None
+        if relpath not in self._cache:
+            blob = _git_out(self.root, "show", f"{self.ref}:{relpath}")
+            self._cache[relpath] = (None if blob is None
+                                    else blob.decode("utf8", "replace"))
+        return self._cache[relpath]
+
+    def __repr__(self):                                    # pragma: no cover
+        return f"<Baseline {self.label}>"
 
 
 def _mask(text, spans):
@@ -705,44 +797,64 @@ def _found_in(text, needle_list, structured=None):
     return out
 
 
-def scan_text(text, needle_list, relpath=None, structured=None, excused=None):
+def scan_text(text, needle_list, relpath=None, structured=None, baseline=None,
+              excused=None):
     """Needles found in one file's text. Returns Hits, never values.
 
     `structured` is a parsed object when the file is JSON: a bare word is then
     compared for equality against the artifact's own string leaves and keys,
     which is the strict reading of "published as a value".
 
-    Run twice where the file declares literal spans. The first pass reads the
-    file with those spans blanked, so anything it finds sits in a comment, a
-    docstring or prose and is a leak whatever else the file declares. The second
-    pass reads every byte; what only the second pass finds is a value the file
-    declares as its own, and that is a hit too UNLESS a DECLARED_FIXTURE_
-    COLLISIONS row accounts for it. `excused` is an optional Counter the caller
-    passes to learn which rows were used and how often, which is how a stale row
-    is made to fail.
+    The scan reads every byte of the file EXCEPT the literal spans this file
+    declares and the baseline version of the same file already declared -- and
+    those only as many times as the baseline declared them. So a comment, a
+    docstring, prose, a reworded literal, a brand-new literal and a second copy
+    of an old one are all read and all fail; only a literal that was already
+    there is skipped. `baseline` is the Baseline to ask; the default knows
+    nothing, and then nothing is excused.
+
+    `excused` is an optional Counter, keyed (relpath, leaf path), recording the
+    pre-existing literals actually skipped. Counts and paths only -- there is no
+    value in any of it -- and it is what lets a caller report the size of the
+    excuse instead of asserting a number nobody can see.
     """
-    spans = declared_literal_spans(relpath, text) if relpath is not None else []
-    outside = _found_in(_mask(text, spans), needle_list, structured)
-    hits = [Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath)
-            for n in outside]
-    if not spans:
-        return hits
-    seen = {id(n) for n in outside}
-    for n in _found_in(text, needle_list, structured):
-        if id(n) in seen:
-            continue
-        key = (relpath, n.leaf_path)
-        if key in DECLARED_FIXTURE_COLLISIONS:
-            if excused is not None:
-                excused[key] += 1
-            continue
-        hits.append(Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath))
-    return hits
+    literals = declared_literals(relpath, text) if relpath is not None else []
+
+    def hits_for(found):
+        return [Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath)
+                for n in found]
+
+    if not literals:
+        return hits_for(_found_in(text, needle_list, structured))
+    # the fast path, and it is the usual one: if blanking EVERY declared literal
+    # changes nothing, no needle sits inside one, so there is nothing to excuse
+    # and the baseline is never read.
+    everywhere = _found_in(text, needle_list, structured)
+    free = _found_in(_mask(text, [(a, b) for a, b, _ in literals]),
+                     needle_list, structured)
+    if len(free) == len(everywhere):
+        return hits_for(everywhere)
+
+    base = baseline.text(relpath) if baseline is not None else None
+    already = collections.Counter(
+        v for _a, _b, v in declared_literals(relpath, base)) if base else \
+        collections.Counter()
+    keep = []
+    for a, b, v in literals:
+        if already[v]:
+            already[v] -= 1
+            keep.append((a, b))
+    if excused is not None:
+        for a, b in keep:
+            for n in _found_in(text[a:b], needle_list):
+                excused[(relpath, n.leaf_path)] += 1
+    return hits_for(_found_in(_mask(text, keep), needle_list, structured))
 
 
-def leaks(needle_list, text, obj=None, relpath=None):
+def leaks(needle_list, text, obj=None, relpath=None, baseline=None):
     """scan_text with the argument order the artifact scan already used."""
-    return scan_text(text, needle_list, relpath=relpath, structured=obj)
+    return scan_text(text, needle_list, relpath=relpath, structured=obj,
+                     baseline=baseline)
 
 
 # ---------------------------------------------------------------------------
@@ -790,8 +902,8 @@ PATH_LITERAL_EXEMPT = {
 }
 
 # The one file the KEY half of the rule cannot apply to, declared rather than
-# skipped in silence. It stays subject to every value rule, including the
-# declared-collision accounting above.
+# skipped in silence. It stays subject to every value rule above, baseline
+# included: a placeholder it did not already carry is a hit like any other.
 KEY_RULE_EXEMPT = {
     "household.example.yaml":
         "the intake schema itself: carrying every intake key, banned ones "
@@ -994,7 +1106,7 @@ def tracked_files(root=None):
                   if p and not p.startswith("private/"))
 
 
-def scan_items(needle_list, items, excused=None):
+def scan_items(needle_list, items, baseline=None, excused=None):
     """The value scan over (relpath, text) pairs, whatever produced them."""
     hits = []
     for rel, text in items:
@@ -1005,7 +1117,7 @@ def scan_items(needle_list, items, excused=None):
             except ValueError:                             # pragma: no cover
                 obj = None
         hits.extend(scan_text(text, needle_list, relpath=rel, structured=obj,
-                              excused=excused))
+                              baseline=baseline, excused=excused))
     return hits
 
 
@@ -1066,74 +1178,66 @@ def staged_items(root=None):
     return index_items(root, rels), rels
 
 
-def collision_audit_items(root=None, have=()):
-    """The index version of every file a collision row names, minus `have`.
+def scan_tree(needle_list, root=None, files=None, baseline=None, excused=None):
+    """Scan every tracked file. Returns (hits, files scanned).
 
-    Why the hook reads these files whether or not the commit touches them.
-    `DECLARED_FIXTURE_COLLISIONS` is an exemption, and the COUNT in each row is
-    the whole of what makes it safe: a file budgeted for three coinciding
-    fixture labels must fail on a fourth. Enforcing that count needs the number
-    of times the row actually fired, and a partial commit stages only some
-    files -- so a count taken over the staged set alone says 0 for every row
-    whose file this commit leaves alone, and the check would either block every
-    ordinary commit or have to be switched off exactly when it matters.
-
-    The alternative to scanning the whole prospective tree, which is what the
-    honest version of that check would otherwise cost on every commit: a row
-    can only ever fire in the file it names, so reading the index version of
-    those files -- three of them here, not 107 -- gives the EXACT count for
-    every row over the tree this commit would produce. No partial-commit
-    caveat, and no whole-tree scan. `have` is what the caller has already read,
-    so a staged row-file is not scanned (and counted) twice.
-
-    A row naming a path the index does not hold yields nothing, which shows up
-    as a count of 0 against its declared count: a stale row, and blocked.
+    Unlike `scan_text`, this one knows which repository it is reading, so it
+    resolves that repository's baseline unless the caller passes one. A tree
+    with no commits resolves to a Baseline that knows nothing, which is what the
+    synthetic controls want and get without asking.
     """
-    root = ROOT if root is None else pathlib.Path(root)
-    want = sorted({rel for rel, _ in DECLARED_FIXTURE_COLLISIONS} - set(have))
-    return index_items(root, want)
-
-
-def collision_accounting(excused):
-    """Rows whose declared count is not the number of hits they excused.
-
-    [(row key, declared, used)], empty when they agree. Checked in BOTH
-    directions, the same as `test_privacy_tiers.py` checks it: used more times
-    than declared is a collision nobody has ruled on, used fewer is a row that
-    has gone stale and is now excusing more than anyone signed off. Counts,
-    file paths and yaml paths only -- there is no value in any of it.
-    """
-    declared = {k: v[0] for k, v in DECLARED_FIXTURE_COLLISIONS.items()}
-    out = []
-    for key in sorted(set(declared) | set(excused)):
-        want, got = declared.get(key, 0), int(excused.get(key, 0))
-        if want != got:
-            out.append((key, want, got))
-    return out
-
-
-def scan_tree(needle_list, root=None, files=None, excused=None):
-    """Scan every tracked file. Returns (hits, files scanned)."""
     items, rels = tree_items(root, files)
-    return scan_items(needle_list, items, excused=excused), rels
+    baseline = Baseline.of(root) if baseline is None else baseline
+    return scan_items(needle_list, items, baseline=baseline,
+                      excused=excused), rels
 
 
-def gate(items, household=None, fields=None, shape=None, excused=None):
+class UnresolvableField(Exception):
+    """A tiered field whose subject cannot be located, which is a broken rule.
+
+    Raised by `gate` BEFORE it scans anything. A field id that resolves to no
+    household.yaml path -- mistyped, renamed, or given a shape steps 3-5 cannot
+    derive -- yields no needle and bans no key, so the rule someone wrote in the
+    cheatsheet is enforced against nothing and every scan of it comes back
+    clean. That is the one failure this gate must never report as a pass, and
+    until now only the suite caught it: the hook, which CLAUDE.md section 4
+    calls the real gate, scanned on and said nothing.
+
+    It is a property of the cheatsheet and the committed schema template alone,
+    so it is checkable everywhere -- in CI, and in a clone with no
+    private/household.yaml -- and it is checked there.
+    """
+
+    def __init__(self, fields):
+        self.fields = list(fields)
+        super().__init__("; ".join(f"{fid} -> {path}"
+                                   for fid, path in self.fields))
+
+
+def gate(items, household=None, fields=None, shape=None, baseline=None,
+         excused=None):
     """Every enforceable half of the tier rule, over one set of items.
 
     Returns (hits, unsearchable), where `hits` carries no value by
     construction. The two halves of the substitute rule run whether or not the
     private file is present; the value scan needs it and is skipped without it,
     which the caller has to report rather than count as clean.
+
+    Raises UnresolvableField before scanning if any tiered field has no
+    locatable subject -- a scan that cannot find what a rule is about must not
+    return a clean bill for it.
     """
     fields = cheatsheet_fields() if fields is None else fields
     shape = schema() if shape is None else shape
+    unresolvable = resolution_report(fields=fields, shape=shape)["unresolvable"]
+    if unresolvable:
+        raise UnresolvableField(unresolvable)
     unsearchable = unsearchable_fields(household, fields, shape)
     hits = scan_artifact_keys(items, banned_keys(unsearchable))
     hits += scan_script_reads(items, unsearchable)
     if household is not None:
         hits += scan_items(needles(household, fields, shape), items,
-                           excused=excused)
+                           baseline=baseline, excused=excused)
     return hits, unsearchable
 
 
@@ -1149,24 +1253,26 @@ def gate(items, household=None, fields=None, shape=None, excused=None):
 # message is scanned with no literal-span exemption of any kind, because a
 # commit message declares no fixtures.
 #
-# The two file scopes also ACCOUNT for the declared fixture collisions, which
-# until now only `test_privacy_tiers.py` did -- and nobody is obliged to run a
-# test before committing. An exemption whose safety rests on a count that only
-# a test enforces is not an exemption at the gate that blocks commits: another
-# real door legend pasted into a file budgeted for three of them committed
-# cleanly, and CI, which holds no private values, can never see it. So the
-# count is checked here, over the tree this commit would produce, by reading
-# the row-named files out of the index alongside the staged ones
-# (`collision_audit_items` states why that is exact and why it is cheap). The
-# `--message` scope is left out of it deliberately: a row can only fire inside
-# a file's declared literal spans, a message has none, and blocking a commit
-# message over a stale fixture row in a test module would report the problem in
-# the one place it cannot be about.
+# The two file scopes measure the content against the repository's own
+# BASELINE: a needle inside a declared literal span is excused only where the
+# baseline version of that file already declared the same literal. That check
+# belongs at the gate that blocks commits and not only in a suite nobody is
+# obliged to run -- CI, which holds no private values, can never make it. It
+# needs no configuration and no committed count, so it holds for any household
+# that clones this repo; `Baseline` and the block comment above it say why the
+# count it replaces did not. The `--message` scope has no literal spans at all,
+# so no baseline is read for it.
+#
+# Before any of that, the gate checks that every tiered field still resolves to
+# a locatable subject, and refuses to scan if one does not: a rule pointed at
+# nothing reports every tree as clean, which is the one failure a gate must
+# never dress up as a pass. That check reads only the cheatsheet and the
+# committed schema, so it runs in a clone with no private file too.
 #
 # Exit codes, which both hooks read:
 #   0  clean
-#   1  a tier rule is broken, or a declared collision row does not match the
-#      tree; the commit is blocked
+#   1  a tier rule is broken, or a tiered field resolves to nothing; the commit
+#      is blocked
 #   2  private/household.yaml is absent, so the value half could not run. Not a
 #      failure -- somebody else's clone legitimately has no private file -- but
 #      never silent either
@@ -1182,7 +1288,7 @@ def main(argv=None):
         if flag in argv:
             scope = flag
     try:
-        audited = []
+        baseline = Baseline()
         if scope == "--message":
             where = argv[argv.index("--message") + 1]
             items = [(MESSAGE_LABEL,
@@ -1190,21 +1296,27 @@ def main(argv=None):
             rels = [MESSAGE_LABEL]
         elif scope == "--staged":
             items, rels = staged_items()
-            # the row-named files this commit does not touch, so the declared
-            # counts below are the tree's and not merely the change's
-            audited = collision_audit_items(have=[r for r, _ in items])
-            items = items + audited
+            baseline = Baseline.of()
         else:
             items, rels = tree_items()
+            baseline = Baseline.of()
         household = None
         if REAL_HOUSEHOLD.is_file():
             household = yaml.safe_load(REAL_HOUSEHOLD.read_text()) or {}
         excused = collections.Counter()
-        hits, unsearchable = gate(items, household, excused=excused)
-        # only where the value scan actually ran: without the private file
-        # nothing is excused, and every row would read as stale
-        mismatched = (collision_accounting(excused)
-                      if household is not None and scope != "--message" else [])
+        hits, unsearchable = gate(items, household, baseline=baseline,
+                                  excused=excused)
+    except UnresolvableField as e:
+        print(f"privacy tiers: BLOCKED. {len(e.fields)} cheatsheet field(s) "
+              f"resolve to no household.yaml path, so their tier is enforced "
+              f"against nothing and every scan of them reports clean:",
+              file=sys.stderr)
+        for fid, path in e.fields:
+            print(f"  - {fid} -> {path}", file=sys.stderr)
+        print("Give each a row in YAML_PATH_OVERRIDES, declare it in "
+              "PATHLESS_FIELDS if it stores no value, or fix the id. See the "
+              "path contract in DATA-SOURCES-CHEATSHEET.md.", file=sys.stderr)
+        return 1
     except Exception as e:                                 # noqa: BLE001
         print(f"privacy tiers: the gate could not run ({type(e).__name__}: "
               f"{e}) -- refusing to pass unscanned.", file=sys.stderr)
@@ -1217,37 +1329,24 @@ def main(argv=None):
         for h in sorted({str(x) for x in hits}):
             print(f"  - {h}", file=sys.stderr)
         print("Field ids and paths only -- no value is printed. See "
-              "DATA-SOURCES-CHEATSHEET.md for the tier of each field.",
-              file=sys.stderr)
-    if mismatched:
-        print(f"privacy tiers: BLOCKED. {len(mismatched)} declared fixture "
-              f"collision row(s) do not describe the tree this commit would "
-              f"produce:", file=sys.stderr)
-        for (rel, leaf), want, got in mismatched:
-            why = ("a coinciding answer nobody has declared" if got > want
-                   else "the row is stale and now excuses more than it should")
-            print(f"  - {rel} / {leaf}: declared {want}, found {got} -- {why}",
-                  file=sys.stderr)
-        print("Counts and paths only -- no value is printed. Fix the file, or "
-              "correct DECLARED_FIXTURE_COLLISIONS in analysis/privacy_tiers.py "
-              "with the reason.", file=sys.stderr)
-    if hits or mismatched:
+              "DATA-SOURCES-CHEATSHEET.md for the tier of each field. A hit in "
+              "a test fixture or in household.example.yaml means the literal is "
+              "NEW since the baseline: if it is an invented placeholder, invent "
+              "a different one.", file=sys.stderr)
         return 1
     scanned = (subject if scope == "--message"
                else f"{len(rels)} {scope.lstrip('-')} file(s)")
-    if scope == "--staged" and audited:
-        scanned += (f" (+{len(audited)} declared-collision file(s) re-read "
-                    f"from the index)")
     if household is None:
         print(f"privacy tiers: {scanned} clean of the {len(unsearchable)} "
               f"key/path rule(s) that need no private data. NOT CHECKED: the "
               f"real-value scan -- private/household.yaml is absent here, so "
               f"there were no answers to look for.", file=sys.stderr)
         return 2
-    accounted = ("" if scope == "--message" else
-                 f", {len(DECLARED_FIXTURE_COLLISIONS)} declared collision "
-                 f"row(s) used exactly {sum(excused.values())} time(s) as "
-                 f"declared")
+    total = sum(excused.values())
+    accounted = ("" if not total else
+                 f", {total} pre-existing fixture literal(s) in "
+                 f"{len(excused)} file/path pair(s) excused as already "
+                 f"committed at {baseline.label}")
     print(f"privacy tiers: {scanned} clean ({len(unsearchable)} unsearchable "
           f"field(s) held to the key/path rule{accounted}).", file=sys.stderr)
     return 0

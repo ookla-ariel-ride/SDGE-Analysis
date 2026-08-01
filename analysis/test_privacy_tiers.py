@@ -288,8 +288,8 @@ def case_a_test_module_and_the_template_are_scanned_like_any_other_file():
     in the repo to receive copied sample data. A monitoring URL planted in
     either returned clean while the same bytes failed in an ordinary module.
 
-    So the file class buys nothing on its own. What excuses a hit is a
-    DECLARED_FIXTURE_COLLISIONS row, and the two controls here have none.
+    So the file class buys nothing on its own. What excuses a hit is a baseline
+    that already declared the same literal, and neither control here has one.
     """
     needles = PT.needles(PLANTED)
     url = [n for n in needles if n.leaf_path == "monitoring[].url"]
@@ -313,132 +313,238 @@ def case_a_test_module_and_the_template_are_scanned_like_any_other_file():
     # and the same bytes in an ordinary module, which always failed
     assert PT.scan_text(fixture, needles, relpath="analysis/thing.py"), \
         "the control value does not fail even in an ordinary file"
-    assert ("analysis/test_demo.py", "monitoring[].url") \
-        not in PT.DECLARED_FIXTURE_COLLISIONS, "the control is being excused"
+    assert PT.Baseline().text(tname) is None, \
+        "the controls above are being handed a baseline, so they prove nothing"
     return ("a private answer assigned in a test module and one written into "
             "household.example.yaml both fail: neither file class is exempt")
 
 
-def case_a_declared_collision_excuses_its_own_span_and_nothing_else():
-    """The row is the whole exemption, and it reaches one span in one file.
+def case_only_a_literal_the_baseline_already_held_is_excused():
+    """The whole exemption, and it is a question about the repo's own history.
 
-    Three claims, each the failure mode of an obvious weaker design: a row
-    excuses only the (file, path) it names; it excuses only text the file
-    DECLARES as a literal, so the same value in a comment, a docstring or prose
-    still fails; and using it is counted, which is what lets a stale row break
-    the suite in `case_the_declared_collisions_are_exactly_accounted_for`.
+    A fixture literal is excused only where the BASELINE version of the same
+    file already declared the same literal, and only as many times. Every
+    weaker design this replaces has its own claim here: a brand-new file
+    excuses nothing; a second copy of a baselined literal is a second span and
+    fails; a reworded one fails; the same value in a comment, a docstring or
+    prose fails even when the baseline is the identical file; another file's
+    baseline excuses nothing; and outside the three declaring classes age
+    excuses nothing at all, so a value already committed in an artifact or in
+    prose stays a finding.
 
-    Every value here is invented; the case runs in CI.
+    Every value here is invented; the case runs in CI, with no repository and
+    no private file.
     """
+    assert not hasattr(PT, "DECLARED_FIXTURE_COLLISIONS"), (
+        "the per-household collision table is back -- the counts in it are one "
+        "household's and block every other clone's commits")
     needles = PT.needles(PLANTED)
     tname = "analysis/test_demo.py"
-    key = (tname, "panel.schedule[].label")
     fixture = 'PANEL = [{"label": "Zzyzx", "amps": 20}]\n'
 
-    # a row only ever fires inside a declared literal span, so a row naming a
-    # file that declares none could never fire and is dead weight pretending to
-    # be an exemption. The three classes that declare spans are the whole list.
+    # only these three classes declare literals at all; everywhere else every
+    # byte is scanned however old it is
     assert {PT._file_class(r) for r in ("analysis/test_x.py", "cheat.md",
                                         "household.example.yaml",
                                         "DATA-SOURCES-CHEATSHEET.md")} \
         == set(PT.DECLARED_LITERAL_SOURCES) | {None}, "the file classes moved"
-    for rel, _path in PT.DECLARED_FIXTURE_COLLISIONS:
-        assert PT._file_class(rel) in PT.DECLARED_LITERAL_SOURCES, (
-            f"{rel} declares no literal spans, so its collision row can never "
-            f"fire -- remove it or fix the path")
 
+    # a brand-new file has no baseline, so its fixture literals excuse nothing
     assert PT.scan_text(fixture, needles, relpath=tname), \
-        "a fixture literal with no declared row was excused"
-    saved = dict(PT.DECLARED_FIXTURE_COLLISIONS)
-    try:
-        PT.DECLARED_FIXTURE_COLLISIONS[key] = (1, "a synthetic control row")
-        excused = collections.Counter()
-        assert not PT.scan_text(fixture, needles, relpath=tname,
-                                excused=excused), \
-            "a declared collision did not excuse the span it names"
-        assert excused[key] == 1, dict(excused)
+        "a fixture literal in a file with no baseline was excused"
+    assert PT.Baseline().text(tname) is None, "an empty baseline holds a file"
 
-        # the row names one path; another private value in the same file is
-        # not covered by it
-        other = fixture + 'METER = "CL999-TEST"\n'
-        hits = PT.scan_text(other, needles, relpath=tname)
-        assert [h.field_id for h in hits] == ["panel_meter_class"], (
-            f"a row for one path excused a different one: {hits}")
+    base = PT.Baseline(texts={tname: fixture})
+    excused = collections.Counter()
+    assert not PT.scan_text(fixture, needles, relpath=tname, baseline=base,
+                            excused=excused), \
+        "a literal the baseline already held was not excused"
+    assert excused[(tname, "panel.schedule[].label")] == 1, dict(excused)
 
-        # and it excuses only what the file DECLARES. The same value in a
-        # comment, in a module docstring, in a function docstring or in a yaml
-        # comment is prose, and prose quoting a private answer is the leak this
-        # gate was built for -- a meter class in an explanatory comment.
-        for src, why in (
-                (fixture + '# the legend on this panel reads Zzyzx\n',
-                 "a comment"),
-                ('"""A demo module.\n\nThe legend reads Zzyzx\n"""\n' + fixture,
-                 "a module docstring"),
-                (fixture + 'def f():\n    """Reads Zzyzx\n    """\n'
-                 '    return 1\n', "a function docstring")):
-            hits = PT.scan_text(src, needles, relpath=tname)
-            assert [h.leaf_path for h in hits] == ["panel.schedule[].label"], (
-                f"a declared row masked the same value in {why}: {hits}")
+    # a SECOND copy of that literal is a second span, and the baseline holds
+    # one. This is the case a count could not see: the count did not move.
+    hits = PT.scan_text(fixture + 'SPARE = "Zzyzx"\n', needles, relpath=tname,
+                        baseline=base)
+    assert [h.leaf_path for h in hits] == ["panel.schedule[].label"], (
+        f"a second copy of a baselined literal was excused by the first: {hits}")
 
-        yname = "household.example.yaml"
-        PT.DECLARED_FIXTURE_COLLISIONS[(yname, "panel.schedule[].label")] = (
-            1, "a synthetic control row")
-        ydecl = "panel:\n  schedule:\n    - label: Zzyzx\n"
-        assert not PT.scan_text(ydecl, needles, relpath=yname), \
-            "a declared row did not excuse a template placeholder"
-        assert PT.scan_text(ydecl + "# a real one reads Zzyzx\n", needles,
-                            relpath=yname), \
-            "a value in a template comment was masked by the row above it"
+    # a reworded literal carrying the same answer is a new literal. Shown with
+    # a value-carrying needle, since a bare word is only ever looked for in
+    # value position and a sentence around it is not value position anywhere.
+    meter = 'METER = "CL999-TEST"\n'
+    mbase = PT.Baseline(texts={tname: meter})
+    assert not PT.scan_text(meter, needles, relpath=tname, baseline=mbase), \
+        "a baselined literal was not excused"
+    assert PT.scan_text('METER = "the CL999-TEST meter"\n', needles,
+                        relpath=tname, baseline=mbase), \
+        "a reworded literal holding a private answer was excused"
+    # but re-quoting one, or moving it to another line, is not a rewording:
+    # the comparison is on what the literal says, not on its source bytes
+    assert not PT.scan_text("PANEL = [{'label':\n           'Zzyzx',\n"
+                            "          'amps': 20}]\n", needles, relpath=tname,
+                            baseline=base), \
+        "re-quoting a baselined fixture counted as introducing it"
 
-        # the cheatsheet, whose declared literal is one `question:` scalar
-        name = "DATA-SOURCES-CHEATSHEET.md"
-        cheat_ok = ('```yaml\nid: panel_meter_class\n'
-                    'question: "What class is the meter (e.g. CL999-TEST)?"\n'
-                    'type: string\nrequired_if: always\nwhere: "on the meter"\n'
-                    'privacy: private-only\n```\n')
-        assert not PT.scan_text(cheat_ok, needles, relpath=name), \
-            "the cheatsheet's own enumeration of standard values counted as a leak"
-        assert PT.scan_text(cheat_ok + "\nThis meter is CL999-TEST.\n",
-                            needles, relpath=name), \
-            "prose outside the question text is not being scanned"
-        assert PT.scan_text(cheat_ok, needles, relpath="docs/notes.md"), \
-            "the cheatsheet rule is being applied to files that are not it"
-    finally:
-        PT.DECLARED_FIXTURE_COLLISIONS.clear()
-        PT.DECLARED_FIXTURE_COLLISIONS.update(saved)
-    return ("a declared row excuses the one span of the one path it names; a "
-            "second value, a comment, a docstring and prose all still fail")
+    # another file's baseline is not this file's
+    assert PT.scan_text(fixture, needles, relpath=tname,
+                        baseline=PT.Baseline(texts={"analysis/test_x.py":
+                                                    fixture})), \
+        "a literal was excused by a different file's baseline"
+
+    # a second private value in the same file, which the baseline never held
+    hits = PT.scan_text(fixture + 'METER = "CL999-TEST"\n', needles,
+                        relpath=tname, baseline=base)
+    assert [h.field_id for h in hits] == ["panel_meter_class"], (
+        f"one excused literal excused an unrelated value beside it: {hits}")
+
+    # prose is never a declared literal, so an identical baseline excuses none
+    # of it -- a private answer in a comment or a docstring is the shape the
+    # leak this gate was built for actually took
+    for src, why in (
+            (fixture + '# the legend on this panel reads Zzyzx\n', "a comment"),
+            ('"""A demo module.\n\nThe legend reads Zzyzx\n"""\n' + fixture,
+             "a module docstring"),
+            (fixture + 'def f():\n    """Reads Zzyzx\n    """\n'
+             '    return 1\n', "a function docstring")):
+        hits = PT.scan_text(src, needles, relpath=tname,
+                            baseline=PT.Baseline(texts={tname: src}))
+        assert [h.leaf_path for h in hits] == ["panel.schedule[].label"], (
+            f"a baselined file's own {why} was excused: {hits}")
+
+    yname = "household.example.yaml"
+    ydecl = "panel:\n  schedule:\n    - label: Zzyzx\n"
+    assert PT.scan_text(ydecl, needles, relpath=yname), \
+        "a template placeholder with no baseline was excused"
+    assert not PT.scan_text(ydecl, needles, relpath=yname,
+                            baseline=PT.Baseline(texts={yname: ydecl})), \
+        "a baselined template placeholder was not excused"
+    ycomment = ydecl + "# a real one reads Zzyzx\n"
+    assert PT.scan_text(ycomment, needles, relpath=yname,
+                        baseline=PT.Baseline(texts={yname: ycomment})), \
+        "a value in a template comment was excused by the scalar above it"
+
+    # the cheatsheet, whose declared literal is one `question:` scalar
+    name = "DATA-SOURCES-CHEATSHEET.md"
+    cheat_ok = ('```yaml\nid: panel_meter_class\n'
+                'question: "What class is the meter (e.g. CL999-TEST)?"\n'
+                'type: string\nrequired_if: always\nwhere: "on the meter"\n'
+                'privacy: private-only\n```\n')
+    cheat_base = PT.Baseline(texts={name: cheat_ok})
+    assert not PT.scan_text(cheat_ok, needles, relpath=name,
+                            baseline=cheat_base), \
+        "the cheatsheet's own standing enumeration counted as a leak"
+    assert PT.scan_text(cheat_ok + "\nThis meter is CL999-TEST.\n", needles,
+                        relpath=name,
+                        baseline=PT.Baseline(texts={name: cheat_ok})), \
+        "prose outside the question text is not being scanned"
+    assert PT.scan_text(cheat_ok, needles, relpath="docs/notes.md",
+                        baseline=PT.Baseline(texts={"docs/notes.md":
+                                                    cheat_ok})), \
+        "the cheatsheet rule is being applied to files that are not it"
+
+    # and the boundary that keeps an old leak a leak: outside the three
+    # classes nothing is eligible, so age excuses nothing. A private value
+    # already committed in an ordinary module, in data/ or in prose is still
+    # a finding on every scan.
+    for rel in ("analysis/thing.py", "data/results.json", "TECHNICAL.md"):
+        assert PT.scan_text(fixture, needles, relpath=rel,
+                            baseline=PT.Baseline(texts={rel: fixture})), \
+            f"{rel} had a private value excused merely for being old"
+
+    # which ref a repository resolves to, in the three shapes a clone comes in
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@x",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+
+        def git(*args):
+            return subprocess.run(["git", *args], cwd=root, env=env,
+                                  capture_output=True, text=True)
+        git("init", "-q", "-b", "trunk")
+        assert PT.Baseline.of(root).ref is None, \
+            "a repository with no commits resolved to a baseline"
+        (root / "a.txt").write_text("a\n")
+        git("add", "-A")
+        git("commit", "-m", "one")
+        # a trunk named neither main nor master: HEAD is the fallback, and it
+        # is a ref rather than a merge base
+        assert PT.Baseline.of(root).ref == "HEAD", PT.Baseline.of(root).ref
+        assert PT.Baseline.of(root).text("a.txt") == "a\n"
+        assert PT.Baseline.of(root).text("nope.txt") is None
+        git("branch", "main")
+        git("checkout", "-q", "-b", "feature")
+        (root / "a.txt").write_text("b\n")
+        git("commit", "-qam", "two")
+        # with a trunk, the baseline is the merge base with it, so this
+        # branch's own commit cannot launder itself into its successor's excuse
+        base_ref = PT.Baseline.of(root)
+        assert base_ref.ref not in ("HEAD", None), base_ref.ref
+        assert base_ref.text("a.txt") == "a\n", \
+            "the baseline followed the branch instead of the merge base"
+    return ("a fixture literal is excused only where the same file's baseline "
+            "already declared it: a new file, a second copy, a rewording, a "
+            "comment, a docstring, another file's baseline and every file "
+            "outside the three declaring classes all still fail")
 
 
-def case_the_declared_collisions_are_exactly_accounted_for():
-    """A row that stops being needed has to break the suite, not go quiet.
+def case_the_tree_is_clean_and_the_baseline_is_what_excuses_it():
+    """The excuse has to be load-bearing, and it has to be the baseline.
 
-    The same discipline as the optional-read declaration in
-    `test_service_headroom.py`: checked in BOTH directions. A row used fewer
-    times than it declares is stale -- the fixture changed and the exemption
-    outlived it. A row used more times is a collision nobody has looked at.
-    Needs the private file, since the count is a count of real answers.
+    A gate that reports a clean tree because it excused everything is
+    indistinguishable from one that found nothing, so this case makes the
+    difference visible: the tree scans clean against its real baseline, the
+    SAME tree with no baseline does not, and every file the difference lands in
+    is one of the three classes that declare literals. Nothing is asserted
+    about how many answers this household happens to hold -- that number is the
+    thing the module no longer commits anywhere.
+
+    Needs the private file, since the collisions are collisions with real
+    answers.
     """
     if not PT.REAL_HOUSEHOLD.is_file():
-        raise SkipCase("the declared-collision accounting counts real answers, "
-                       "so it needs private/household.yaml (gitignored)")
+        raise SkipCase("what the baseline excuses is a coincidence with real "
+                       "answers, so this needs private/household.yaml "
+                       "(gitignored)")
     household = yaml.safe_load(PT.REAL_HOUSEHOLD.read_text()) or {}
-    for (rel, path), (count, why) in PT.DECLARED_FIXTURE_COLLISIONS.items():
-        assert isinstance(count, int) and count > 0, (rel, path, count)
-        assert isinstance(why, str) and len(why) > 40, (
-            f"{rel} / {path} is excused with no written reason")
+    needles = PT.needles(household)
     excused = collections.Counter()
-    hits, _ = PT.scan_tree(PT.needles(household), excused=excused)
+    hits, _rels = PT.scan_tree(needles, excused=excused)
     assert not hits, "; ".join(sorted(str(h) for h in hits))
-    declared = {k: v[0] for k, v in PT.DECLARED_FIXTURE_COLLISIONS.items()}
-    assert dict(excused) == declared, (
-        "the declared collisions and the ones the tree actually holds differ: "
-        f"declared {declared}, found {dict(excused)} -- a row used fewer times "
-        f"than it declares is stale and must be removed or reduced; one used "
-        f"more is a coincidence nobody has ruled on yet")
-    return (f"{len(declared)} declared collision row(s), each used exactly as "
-            f"many times as it declares ({sum(declared.values())} coinciding "
-            f"answers in total), every one with a written reason")
+    assert excused, (
+        "nothing was excused, so this case proves nothing about the rule that "
+        "excuses -- if the fixtures no longer collide, say so and delete it")
+    for rel, _leaf in excused:
+        assert PT._file_class(rel) in PT.DECLARED_LITERAL_SOURCES, (
+            f"{rel} declares no literals, so nothing in it may be excused")
+
+    bare, _rels = PT.scan_tree(needles, baseline=PT.Baseline())
+    assert bare, (
+        "the same tree scans clean with no baseline at all, so the baseline is "
+        "not what is excusing anything and this rule is dead weight")
+    assert {h.where for h in bare} == {rel for rel, _ in excused}, (
+        f"the files the baseline excuses and the files that fail without one "
+        f"differ: {sorted({h.where for h in bare})} vs "
+        f"{sorted({rel for rel, _ in excused})}")
+    base = PT.Baseline.of()
+    assert base.ref, "the repository resolved to no baseline ref"
+
+    # and the entry point the hooks call, in process, over the same tree: it
+    # reports the baseline it used and how much it excused rather than
+    # asserting a number no reader can check
+    for scope in ("--tree", "--staged"):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = PT.main([scope])
+        said = err.getvalue()
+        assert code == 0, f"{scope} did not come back clean: {said}"
+        if scope == "--tree":
+            assert base.label in said and "pre-existing fixture literal(s)" \
+                in said, said
+    return (f"the tracked tree is clean against {base.label}; the same tree "
+            f"with no baseline fails in {len({h.where for h in bare})} file(s), "
+            f"all of them declaring classes, on "
+            f"{sum(excused.values())} pre-existing literal(s) -- so the excuse "
+            f"is the baseline and nothing else")
 
 
 def case_the_unsearchable_fields_are_derived_from_the_tiers():
@@ -834,97 +940,82 @@ def case_the_precommit_gate_blocks_a_staged_leak():
             "unstaged change, and blocks a banned key once it is staged")
 
 
-def case_the_precommit_hook_enforces_the_declared_collision_counts():
-    """The count is the exemption's safety, so the HOOK has to check it.
+# A SECOND invented household, and the fixture module a repository carries. The
+# labels below coincide with that fixture five times, which is a different
+# number from the owner's coincidences with the fixtures in THIS tree -- which
+# is the whole point of `case_the_precommit_hook_is_portable_to_another_house`.
+# `spare` is a sixth answer of the same kind that no committed file holds, so
+# pasting it in is a fresh disclosure. Nothing here comes from any real intake.
+OTHER_HOUSEHOLD = {
+    "panel": {"meter_class": "CL777-OTHER",
+              "enclosure_catalog": "OTHERCO QQ-0002",
+              "schedule": [{"label": "Quorra", "amps": 20},
+                           {"label": "Xylanth", "amps": 30},
+                           {"label": "Vibrino", "amps": 40},
+                           {"label": "Meridax", "amps": 50},
+                           {"label": "Thalos", "amps": 15},
+                           {"label": "Ombrix", "amps": 25}]},
+}
+OTHER_PLANTED = 5                     # how many of those the fixture declares
+OTHER_SPARE = "Ombrix"                # the one it does not
+OTHER_FIXTURE = '''"""A synthetic panel fixture module."""
+PANEL = [
+    {"label": "Quorra", "amps": 20},
+    {"label": "Xylanth", "amps": 30},
+    {"label": "Vibrino", "amps": 40},
+    {"label": "Meridax", "amps": 50},
+    {"label": "Thalos", "amps": 15},
+]
+'''
 
-    `DECLARED_FIXTURE_COLLISIONS` excuses a needle found inside a file's own
-    declared literal span, and the count in each row is the whole of what makes
-    that safe: a file budgeted for three coinciding fixture labels must fail on
-    a fourth. The counts were enforced only here, in a suite nobody is obliged
-    to run before committing, and CI -- which holds no private values -- can
-    never enforce them. So a fourth real door legend pasted into
-    `analysis/test_service_headroom.py` committed cleanly.
 
-    Four claims, on a throwaway repository driven through the real
-    `.githooks/pre-commit`: a commit that touches none of the row-named files
-    still accounts for them (the partial-commit case, which is what a
-    staged-only count would get wrong); a fourth coinciding answer is blocked;
-    a row whose file the commit removes is blocked as stale; and neither
-    blocked commit reaches the history or prints a value.
+def case_the_precommit_hook_is_portable_to_another_household():
+    """The gate has to work for a household that is not this repo's owner.
 
-    Needs the private file, because the counts are counts of real answers. It
-    is SYMLINKED rather than copied: a copy of the intake outside `private/` is
-    the thing this gate exists to prevent, and the throwaway repo gitignores
-    the path either way.
+    README.md documents cloning this repo, filling in your own
+    `private/household.yaml` and turning the hook on, and CLAUDE.md section 12
+    makes that flow a requirement. The version of this gate that this case
+    replaces committed a table of how many of THIS household's answers coincide
+    with each fixture file -- 1, 3 and 2. A second household's door legends
+    coincide with the same fixtures a different number of times, so every
+    ordinary commit it made was blocked as a stale row until it edited shared
+    scanner code to match its own private answers.
+
+    So the control is a clone with somebody else's intake in it. The private
+    file is written AFTER the seed commit, which is the real order of events: a
+    fork's fixtures arrive already committed, and the household file comes
+    later. Six claims, all through the real `.githooks/pre-commit`: the seed
+    commit passes with no private file at all; an ordinary commit passes; a
+    commit that re-stages the fixture module passes, with its five coinciding
+    literals excused as already committed; a sixth answer pasted into that
+    module is blocked; a SECOND copy of an already-committed literal is blocked
+    (a count could not see that one); and an ordinary fixture edit that holds no
+    private answer passes.
+
+    Every value here is invented, so the case needs no private data and runs in
+    CI wherever gitleaks is installed.
     """
-    if not PT.REAL_HOUSEHOLD.is_file():
-        raise SkipCase("the declared counts are counts of real answers, so the "
-                       "hook control needs private/household.yaml (gitignored)")
     if not shutil.which("gitleaks"):                       # pragma: no cover
         raise SkipCase("the real pre-commit hook refuses to run without "
                        "gitleaks, so the control cannot drive it")
     src = PT.ROOT
-    household = yaml.safe_load(PT.REAL_HOUSEHOLD.read_text()) or {}
-    rows = sorted({rel for rel, _ in PT.DECLARED_FIXTURE_COLLISIONS})
-    total = sum(c for c, _ in PT.DECLARED_FIXTURE_COLLISIONS.values())
-    fixture_rel = "analysis/test_service_headroom.py"
-    fixture_leaf = "panel.schedule[].label"
-    declared = PT.DECLARED_FIXTURE_COLLISIONS[(fixture_rel, fixture_leaf)][0]
-
-    # the entry point in process first, so the accounting is reachable other
-    # than through a subprocess: bump a row above what the tree holds and the
-    # gate must exit 1, naming the file, the path and the two counts and no
-    # value. Restored in `finally`, and the restoration is itself asserted.
-    def run(argv):
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            code = PT.main(argv)
-        return code, err.getvalue()
-
-    saved = dict(PT.DECLARED_FIXTURE_COLLISIONS)
-    try:
-        PT.DECLARED_FIXTURE_COLLISIONS[(fixture_rel, fixture_leaf)] = (
-            declared + 1, "a synthetic control row")
-        code, err = run(["--staged"])
-        assert code == 1, f"a row the tree does not support did not block: {err}"
-        assert f"{fixture_rel} / {fixture_leaf}: declared {declared + 1}, " \
-               f"found {declared}" in err, err
-        assert "stale" in err, err
-        assert PT.collision_accounting(collections.Counter()) == [
-            (k, v[0], 0) for k, v in sorted(PT.DECLARED_FIXTURE_COLLISIONS.items())
-        ], "an unused row is not reported as stale"
-    finally:
-        PT.DECLARED_FIXTURE_COLLISIONS.clear()
-        PT.DECLARED_FIXTURE_COLLISIONS.update(saved)
-    code, err = run(["--staged"])
-    assert code == 0, f"the restored rows do not describe the tree: {err}"
-    assert f"used exactly {total} time(s) as declared" in err, err
-
-    # a REAL answer of the same kind that the file does not already carry, so
-    # pasting it in raises the count by exactly one. Chosen by asking whether
-    # the file holds it, never by looking at it: nothing below prints a value.
-    holds = (src / fixture_rel).read_text()
-    spare = [n for n in PT.needles(household)
-             if n.leaf_path == fixture_leaf and n.text_searchable
-             and not PT._found_in(holds, [n])]
-    assert spare, (f"every {fixture_leaf} answer already occurs in "
-                   f"{fixture_rel}; the control has nothing to add")
-    extra = spare[0].value
+    fixture_rel = "analysis/test_panel_fixtures.py"
+    leaf = "panel.schedule[].label"
 
     with tempfile.TemporaryDirectory() as td:
         root = pathlib.Path(td)
-        carry = ["analysis/privacy_tiers.py", ".githooks/pre-commit",
-                 ".gitleaks.toml"] + rows
-        for rel in carry:
-            if not (src / rel).is_file():                  # pragma: no cover
-                continue
+        # a clone of the parts of this repo the gate reads, plus the largest
+        # fixture module in it, so the other household is judged against the
+        # same committed fixtures the owner is
+        for rel in ("analysis/privacy_tiers.py", ".githooks/pre-commit",
+                    "DATA-SOURCES-CHEATSHEET.md", "household.example.yaml",
+                    "analysis/test_service_headroom.py"):
             dest = root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes((src / rel).read_bytes())
             dest.chmod(0o755)
+        (root / fixture_rel).write_text(OTHER_FIXTURE)
         (root / ".gitignore").write_text("private/\n.venv/\n")
-        (root / "private").mkdir()
-        (root / "private" / "household.yaml").symlink_to(PT.REAL_HOUSEHOLD)
         # the hook's first interpreter candidate, as a wrapper rather than a
         # symlink: a venv interpreter linked out of its tree loses the venv
         (root / ".venv" / "bin").mkdir(parents=True)
@@ -943,55 +1034,140 @@ def case_the_precommit_hook_enforces_the_declared_collision_counts():
             out = git("rev-list", "--count", "HEAD")
             return int(out.stdout.strip()) if out.returncode == 0 else 0
 
+        def commit(message, body=None):
+            if body is not None:
+                (root / fixture_rel).write_text(body)
+            git("add", "-A", check=True)
+            return git("commit", "-m", message)
+
         git("init", "-q", check=True)
         git("config", "core.hooksPath", ".githooks", check=True)
-        git("add", "-A", check=True)
-        r = git("commit", "-m", "seed the throwaway tree")
-        assert r.returncode == 0, f"the seeded tree was blocked: {r.stderr}"
+
+        # 1. the clone commits before it has any private file, which is how
+        #    every fork starts and the state CI is permanently in
+        r = commit("seed the clone")
+        assert r.returncode == 0, f"the seeded clone was blocked: {r.stderr}"
+        assert "NOT CHECKED" in r.stderr, \
+            f"a scan with no private file did not say what it skipped: {r.stderr}"
         assert count() == 1, r.stderr
 
-        # 1. a commit touching none of the row-named files still accounts for
-        #    every row. A count taken over the staged set alone would read 0
-        #    here and either block this commit or have to stop checking.
-        (root / "notes.md").write_text("# a note that mentions nothing\n")
-        git("add", "-A", check=True)
-        r = git("commit", "-m", "add an unrelated note")
-        assert r.returncode == 0, f"an unrelated commit was blocked: {r.stderr}"
+        # now the second household fills in its own intake, gitignored
+        (root / "private").mkdir()
+        (root / "private" / "household.yaml").write_text(
+            yaml.safe_dump(OTHER_HOUSEHOLD))
+        assert PT._found_in((root / fixture_rel).read_text(),
+                            [n for n in PT.needles(OTHER_HOUSEHOLD)
+                             if n.value == OTHER_SPARE]) == [], \
+            "the spare answer is already in the fixture; the control is void"
+
+        # 2. an ordinary commit, touching none of it
+        (root / "notes.md").write_text("# a note that discloses nothing\n")
+        r = commit("add an unrelated note")
+        assert r.returncode == 0, (
+            f"an ordinary commit by a second household was blocked: {r.stderr}")
         assert count() == 2, r.stderr
-        assert f"+{len(rows)} declared-collision file(s) re-read" in r.stderr, \
-            f"the row-named files were not re-read on a partial commit: {r.stderr}"
-        assert f"used exactly {total} time(s) as declared" in r.stderr, r.stderr
 
-        # 2. a fourth real answer in the file budgeted for three
-        dest = root / fixture_rel
-        dest.write_text(dest.read_text()
-                        + f'\nEXTRA_FIXTURE = [{{"label": {extra!r}}}]\n')
-        git("add", "-A", check=True)
-        r = git("commit", "-m", "add one more panel fixture")
-        assert r.returncode != 0, "a fourth real collision was committed"
-        assert "declared fixture collision" in r.stderr, r.stderr
-        assert f"{fixture_rel} / {fixture_leaf}: declared {declared}, found " \
-               f"{declared + 1}" in r.stderr, r.stderr
-        assert extra.lower() not in r.stderr.lower(), "the hook printed a value"
-        assert count() == 2, f"the blocked commit changed the history: {r.stderr}"
+        # 3. a commit that re-stages the fixture module itself: its five
+        #    coinciding literals are excused because the clone already carried
+        #    them, and the hook says how many rather than asserting a number
+        r = commit("annotate the panel fixtures",
+                   OTHER_FIXTURE + "\n# an ordinary comment\n")
+        assert r.returncode == 0, f"re-staging the fixtures was blocked: {r.stderr}"
+        assert f"{OTHER_PLANTED} pre-existing fixture literal(s)" in r.stderr, \
+            f"the pre-existing literals were not excused: {r.stderr}"
+        assert count() == 3, r.stderr
 
-        # 3. the other direction: a row whose file this commit removes is
-        #    stale, and the hook says so rather than counting it clean
-        dest.write_bytes((src / fixture_rel).read_bytes())
-        git("add", "-A", check=True)
-        gone = "DATA-SOURCES-CHEATSHEET.md"
-        git("rm", "-q", "--cached", gone, check=True)
-        r = git("commit", "-m", "drop the cheatsheet from the index")
-        assert r.returncode != 0, "a stale collision row was committed"
-        assert f"{gone} / panel.meter_class: declared 1, found 0" in r.stderr, \
-            r.stderr
-        assert "stale" in r.stderr, r.stderr
-        assert count() == 2, f"the blocked commit changed the history: {r.stderr}"
-    return (f"the real pre-commit hook accounts for all {len(rows)} rows "
-            f"({total} coinciding answers) on a commit that touches none of "
-            f"them, blocks a {declared + 1}th real collision in a file "
-            f"budgeted for {declared}, blocks a row gone stale, prints no "
-            f"value, and leaves the commit count unchanged both times")
+        # 4. a sixth answer, which no committed file holds: a fresh paste
+        r = commit("add one more panel fixture",
+                   OTHER_FIXTURE + f'\nEXTRA = [{{"label": "{OTHER_SPARE}"}}]\n')
+        assert r.returncode != 0, "a freshly pasted private answer was committed"
+        assert "privacy tiers: BLOCKED" in r.stderr, r.stderr
+        assert leaf in r.stderr and fixture_rel in r.stderr, r.stderr
+        assert OTHER_SPARE.lower() not in r.stderr.lower(), \
+            "the hook printed a value"
+        assert count() == 3, f"the blocked commit changed the history: {r.stderr}"
+
+        # 5. a SECOND copy of a literal the baseline already holds. The count
+        #    this rule replaces did not move for this one: the value was
+        #    already declared once, so every further occurrence rode on it.
+        r = commit("quote a fixture label again",
+                   OTHER_FIXTURE + '\nSPARE = "Quorra"\n')
+        assert r.returncode != 0, "a second copy of a fixture label was committed"
+        assert "privacy tiers: BLOCKED" in r.stderr, r.stderr
+        assert leaf in r.stderr, r.stderr
+        assert count() == 3, f"the blocked commit changed the history: {r.stderr}"
+
+        # 6. and the ordinary case this must not disturb: editing a fixture
+        #    file without introducing a private answer
+        r = commit("add an invented fixture",
+                   OTHER_FIXTURE + '\nOTHERS = [{"label": "Nonesuch"}]\n')
+        assert r.returncode == 0, f"an invented fixture was blocked: {r.stderr}"
+        assert count() == 4, r.stderr
+
+        # 7. the resolver check the hook now makes before it scans anything:
+        #    a field id the schema cannot locate is a rule pointed at nothing,
+        #    and it blocks -- with the private file, and without it
+        cheat = root / "DATA-SOURCES-CHEATSHEET.md"
+        whole = cheat.read_text()
+        assert "id: panel_meter_class" in whole, "the control's field id moved"
+        cheat.write_text(whole.replace("id: panel_meter_class",
+                                       "id: panel_no_such_key", 1))
+        for why in ("with the private file", "without it"):
+            r = commit(f"retype a field id ({why})")
+            assert r.returncode != 0, f"an unresolvable field committed {why}"
+            assert "privacy tiers: BLOCKED" in r.stderr, r.stderr
+            assert "panel_no_such_key -> panel.no_such_key" in r.stderr, \
+                f"the blocked commit did not name the field: {r.stderr}"
+            assert count() == 4, r.stderr
+            (root / "private" / "household.yaml").unlink(missing_ok=True)
+    return (f"a second household's clone seeds, commits, re-stages its fixture "
+            f"module with all {OTHER_PLANTED} coinciding literals excused, and "
+            f"edits a fixture freely -- with no committed count and nothing to "
+            f"configure; a sixth answer pasted in and a second copy of an "
+            f"existing literal are both blocked, as is a field id that resolves "
+            f"to nothing, with or without a private file")
+
+
+def case_the_gate_refuses_a_tier_whose_subject_it_cannot_locate():
+    """A rule pointed at nothing must not report every tree as clean.
+
+    `yaml_path_for` returns the id itself when steps 1-4 derive nothing, and a
+    path the schema has no room for resolves to no value, produces no needle
+    and bans no key. So a mistyped or renamed field id silently removes itself
+    from the universe and every scan of it comes back clean -- the one failure
+    mode a gate must never dress up as a pass. `resolution_report` has always
+    named those, `test_privacy_tiers` has always failed on them, and the hook
+    scanned straight past. `gate` now refuses before it scans.
+
+    Public data only -- an id, a type and a yaml path -- so it runs in CI and
+    in a clone with no private file, which is the point: resolution is a
+    property of the cheatsheet and the committed template, not of an intake.
+    """
+    fields = PT.cheatsheet_fields()
+    shape = PT.schema()
+    broken = list(fields) + [{"id": "panel_no_such_key", "question": "?",
+                              "type": "string", "required_if": "always",
+                              "where": "-", "privacy": "private-only"}]
+    assert not PT.resolution_report(fields=fields, shape=shape)["unresolvable"]
+    assert [fid for fid, _ in
+            PT.resolution_report(fields=broken, shape=shape)["unresolvable"]] \
+        == ["panel_no_such_key"], "the control field resolves after all"
+
+    # with a household and without one: the check reads neither
+    for household, why in ((None, "no private file"), (PLANTED, "one")):
+        try:
+            PT.gate([("data/x.json", "{}")], household, fields=broken,
+                    shape=shape)
+            assert False, f"the gate scanned past an unresolvable field ({why})"
+        except PT.UnresolvableField as e:
+            assert [fid for fid, _ in e.fields] == ["panel_no_such_key"], e.fields
+            assert "panel.no_such_key" in str(e), str(e)
+    # and it does not fire on the committed cheatsheet
+    hits, _ = PT.gate([("data/x.json", "{}")], None, fields=fields, shape=shape)
+    assert not hits, hits
+    return ("the gate refuses to scan when a tiered field resolves to no "
+            "household.yaml path, naming the id and the path, with or without "
+            "a private file present")
 
 
 def case_every_intake_key_is_tiered():
@@ -1042,19 +1218,20 @@ CASES = [
     case_the_resolver_reaches_a_key_inside_a_list,
     case_the_repo_scan_catches_a_planted_value,
     case_a_test_module_and_the_template_are_scanned_like_any_other_file,
-    case_a_declared_collision_excuses_its_own_span_and_nothing_else,
+    case_only_a_literal_the_baseline_already_held_is_excused,
     case_the_unsearchable_fields_are_derived_from_the_tiers,
     case_a_sub_floor_bare_answer_is_covered_by_the_substitute_rule,
     case_a_banned_key_or_path_read_fails,
     case_the_template_is_excused_from_the_key_rule_in_writing,
     case_the_committed_tree_carries_no_banned_key_or_read,
     case_the_commit_message_is_inside_the_boundary_and_scanned,
+    case_the_gate_refuses_a_tier_whose_subject_it_cannot_locate,
     case_the_commit_msg_hook_blocks_and_leaves_the_history_alone,
     case_the_precommit_gate_blocks_a_staged_leak,
+    case_the_precommit_hook_is_portable_to_another_household,
     case_the_example_template_is_tiered_too,
     case_no_private_only_value_appears_in_any_tracked_file,
-    case_the_declared_collisions_are_exactly_accounted_for,
-    case_the_precommit_hook_enforces_the_declared_collision_counts,
+    case_the_tree_is_clean_and_the_baseline_is_what_excuses_it,
     case_every_intake_key_is_tiered,
 ]
 
