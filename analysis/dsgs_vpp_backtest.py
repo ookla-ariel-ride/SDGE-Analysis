@@ -149,6 +149,22 @@ season. The revenue figures in this artifact are therefore a backtest of what WO
 been earned had the household been enrolled during 2025 -- not a currently obtainable
 revenue stream for a not-yet-purchased battery. Stated plainly, not buried.
 
+GRANDFATHERING INTERACTION -- SEARCHED, NOTHING FOUND. The issue asks separately whether
+DSGS ENROLLMENT (as opposed to mere battery ownership) affects NEM 2.0 grandfathering in
+any way. Searched the authoritative source directly: the CEC's DSGS Program Guidelines,
+Fifth Edition (89 pages, efiling.energy.ca.gov/GetDocument.aspx?tn=269649) for every
+occurrence of "NEM", "net energy metering", "net billing", "NBT", and "grandfath" -- the
+only 4 "NEM" hits are all part of the unrelated term "VNEM" (Virtual Net Energy Metering,
+a multi-tenant billing arrangement, not this household's individual tariff), and "grandfath"
+has zero hits. Also checked Olivine's DSGS Option 3 FAQ (already fetched above) -- no NEM
+mention there either. Consistent with this repo's own finding on the actual NEM 2.0
+grandfathering forfeiture mechanism (nem3_grandfathering.py, issue #9, citing SDG&E's
+tariff Schedule NEM Special Condition 7(b) / D.16-04-020): forfeiture is triggered by
+ADDING GENERATING OR STORAGE EQUIPMENT beyond a nameplate threshold, not by enrolling
+already-installed equipment in a demand-response/VPP program. No source found that DSGS
+enrollment itself has any grandfathering effect -- a searched, sourced absence, not an
+assumption.
+
 SECOND PROGRAM YEAR (AC1). The event list above covers 2025 in full (dates, hours, and a
 payment rate, all sourced). A second program year's event list is also required: CEC TN
 266629 ("Staff Analysis of the DSGS Program 2024 Performance Data") documents 2024's Option
@@ -607,6 +623,21 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
             "all -- only a later season. These backtested figures are retrospective "
             "(what 2025 participation would have earned), not a currently obtainable "
             "revenue stream for a not-yet-purchased battery."),
+        "grandfathering_interaction_finding": (
+            "SEARCHED, NOTHING FOUND: whether DSGS ENROLLMENT (distinct from mere "
+            "battery ownership) affects NEM 2.0 grandfathering. The CEC's DSGS "
+            "Program Guidelines, Fifth Edition (89 pages, TN 269649) contain zero "
+            "occurrences of 'net energy metering', 'net billing', 'NBT', or "
+            "'grandfath'; its 4 'NEM' hits are all the unrelated term 'VNEM' "
+            "(Virtual Net Energy Metering, a multi-tenant billing arrangement). "
+            "Olivine's DSGS Option 3 FAQ has no NEM mention either. Consistent with "
+            "nem3_grandfathering.py's (issue #9) finding that NEM 2.0 forfeiture "
+            "(SDG&E tariff Schedule NEM Special Condition 7(b), D.16-04-020) is "
+            "triggered by ADDING generating/storage equipment past a nameplate "
+            "threshold, not by enrolling existing equipment in a demand-response "
+            "program. No source found that DSGS enrollment itself has any "
+            "grandfathering effect -- a searched, sourced absence, not an "
+            "assumption."),
         "backup_reserve_caveat": (
             "BACKUP_RESERVE_FRAC=0.20 is an ASSUMED, uncited operating parameter -- "
             "no reserve figure is established elsewhere in this repository (checked "

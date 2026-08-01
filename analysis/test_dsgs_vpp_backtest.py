@@ -439,11 +439,13 @@ def case_committed_results_json_has_expected_sections():
     result = json.loads(vb.RESULTS_JSON.read_text())
     for k in ("hypothetical", "household_has_battery_today", "measured_window",
               "udc_identity_caveat", "finding_2025_no_real_emergency_events",
-              "finding_2026_enrollment_eligibility", "backup_reserve_caveat",
-              "payment_rate_source", "events_outside_window", "events_in_window",
-              "miss_rate", "revenue", "opportunity_cost_note",
+              "finding_2026_enrollment_eligibility", "grandfathering_interaction_finding",
+              "backup_reserve_caveat", "payment_rate_source", "events_outside_window",
+              "events_in_window", "miss_rate", "revenue", "opportunity_cost_note",
               "second_program_year_event_list_2024", "total_discharge_kwh_note"):
         assert k in result, f"results section missing: {k}"
+    assert "VNEM" in result["grandfathering_interaction_finding"], (
+        "AC6's grandfathering-interaction check must cite what was actually searched")
     assert result["hypothetical"] is True
     assert result["household_has_battery_today"] is False
     rev = result["revenue"]["reserve_20pct"]
