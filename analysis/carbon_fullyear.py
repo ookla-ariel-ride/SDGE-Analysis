@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Full-year grid-carbon analysis for the solar+EV household (CAISO / SDG&E).
 
-Upgrade of carbon_timing.py from 4 seasonal sample days to 28 sampled CAISO days
-spread across the analysis year (2025-07-24 .. 2026-07-23), roughly 2 per calendar
-month plus the original 4 mid-season days.
+Upgrade of carbon_timing.py from 4 seasonal sample days to a full year of cached
+CAISO days across the analysis year (2025-07-24 .. 2026-07-23): 365/365 days
+fetched and cached individually in private/1-raw-data/caiso_raw/ (issue #8). A
+hard fail-closed gate (COVERAGE_MIN = 350/365) refuses to run — and names the
+missing calendar dates — if that cache ever falls below the issue's coverage
+bar; the month-hour-mean interpolation path below still exists for any day that
+cache is missing, but at full coverage it has nothing left to interpolate.
 
 Carbon-intensity source (REAL DATA, no synthetic curves):
   CAISO "Today's Outlook" official history endpoints:
@@ -27,6 +31,11 @@ Fail-closed + atomic (CLAUDE.md 9):
   * if the available coverage (raw cache or committed CSV) has FEWER covered days
     than the committed carbon_fullyear_results.json, the script ABORTS — it never
     silently rebuilds a degraded artifact;
+  * independent of that regression check, coverage below COVERAGE_MIN (350/365,
+    issue #8's own bar) is a hard abort too, even on a first-ever run with no
+    prior committed artifact to regress against — the missing calendar dates are
+    named individually (never just a count) so a human can see exactly which
+    days are affected, and it is never interpolated past silently;
   * all outputs are validated first, then BOTH artifacts (CSV + JSON) are written
     to temp files and os.replace'd — a failed run changes nothing on disk.
 
@@ -174,7 +183,13 @@ CO2_COLS = ["Biogas CO2", "Biomass CO2", "Natural Gas CO2",
             "Coal CO2", "Imports CO2", "Geothermal CO2"]
 SOP_NIGHT = list(range(0, 6))     # 00:00-06:00
 MIDDAY = list(range(10, 14))      # 10:00-14:00
-COVERED_LABEL_MIN = 300           # >=300 covered days -> "measured"
+# One threshold, not two: issue #8's own bar for calling coverage "measured" is
+# >=350/365 days, and that is also the hard fail-closed floor below which the
+# script refuses to run at all (see the assertion in main()). Earlier drafts of
+# this script had two different constants (a soft 300-day label threshold and,
+# before that, no hard floor at all) with no stated reason for the gap; now
+# there is exactly one number, and it means both things at once.
+COVERAGE_MIN = 350                # >=350 covered days -> "measured"; <350 -> abort
 
 
 def hourly_intensity(day):
@@ -261,6 +276,7 @@ def main():
 
     days = pd.date_range(YEAR_START, YEAR_END, freq="D")
     n_cov = sum(1 for dt_ in days if dt_ in covered)
+    missing_dates = [dt_.strftime("%Y-%m-%d") for dt_ in days if dt_ not in covered]
 
     # ---------- FAIL CLOSED: never rebuild with less coverage than committed ----
     if RESULTS_JSON.exists():
@@ -272,6 +288,16 @@ def main():
                 f"committed {RESULTS_JSON.name} was built from {prev_cov}; "
                 "refusing to silently rebuild a degraded artifact. Restore "
                 f"{CAISO_DIR} or the committed {HOURLY_CSV.name} first.")
+
+    # ---------- FAIL CLOSED: issue #8's own bar is >=350/365 covered days ----
+    # "never interpolated silently" means a human must be able to see exactly
+    # which calendar dates are affected, not just a count -- so name them.
+    if n_cov < COVERAGE_MIN:
+        raise SystemExit(
+            f"FAIL-CLOSED: only {n_cov}/365 days covered (need >={COVERAGE_MIN}); "
+            f"missing {len(missing_dates)} date(s): {', '.join(missing_dates)}. "
+            f"Restore the raw day-cache at {CAISO_DIR} for these dates (or the "
+            f"committed {HOURLY_CSV.name}) before regenerating.")
 
     # ---------- full-year intensity: covered day -> itself, else month-hour mean ----
     cov = pd.DataFrame({"date": [d for d in covered for _ in range(24)],
@@ -321,7 +347,11 @@ def main():
     annual = np.mean([inten_map[dt_] for dt_ in days], axis=0)
     of = old["footprints_kg_co2_per_yr"]
 
-    label = ("measured" if n_cov >= COVERED_LABEL_MIN
+    # by the time we reach this line the hard fail-closed gate above has already
+    # guaranteed n_cov >= COVERAGE_MIN, so the else branch is unreachable in
+    # practice; it is kept as a documented, harmless defense rather than deleted,
+    # in case a future edit ever reorders these two blocks.
+    label = ("measured" if n_cov >= COVERAGE_MIN
              else f"estimated ({n_cov} days sampled)")
     results = {
         "source": {
@@ -329,13 +359,18 @@ def main():
             "endpoints": [
                 "https://www.caiso.com/outlook/history/YYYYMMDD/co2.csv",
                 "https://www.caiso.com/outlook/history/YYYYMMDD/demand.csv"],
-            "fetched": "2026-07-25",
+            "fetched": "2026-08-01",
             "method": ("per covered day: hourly kg CO2/MWh = 1000 * mean(total CO2 mT/h, "
                        "all sources incl. imports) / mean(CAISO demand MW); uncovered days "
                        "use the month-hour mean of covered days in the same calendar month; "
                        "applied to the household's 15-min data by date and hour"),
-            "legacy_seasonal_days": ("4 original days reused from carbon_results.json "
-                                     "hourly arrays (raw 5-min files no longer cached)"),
+            "legacy_seasonal_days": ("4 original days (one per season) that seeded the very "
+                                     "first carbon_timing.py study; kept as a fallback in "
+                                     "carbon_results.json for build_covered_from_raw() to "
+                                     "reuse ONLY if the raw cache is ever missing one of "
+                                     "these 4 exact dates -- with a full 365-day raw cache "
+                                     "in place this fallback does not trigger, since every "
+                                     "one of those 4 dates now has its own raw CAISO file"),
             "public_intensity_table": "data/caiso_hourly_intensity.csv"},
         "coverage": {
             "analysis_year": f"{YEAR_START} .. {YEAR_END} (365 days)",
@@ -344,10 +379,21 @@ def main():
             "covered_dates": [dt_.strftime("%Y-%m-%d") for dt_ in sorted(covered)
                               if days[0] <= dt_ <= days[-1]],
             "days_interpolated_month_hour_mean": 365 - n_cov,
-            "why_not_365": ("CAISO endpoints unreachable from the sandboxed analysis "
-                            "environment (proxy allowlist); days were fetched individually "
-                            "through the permitted fetch channel, so coverage was capped at "
-                            "~2 days per calendar month plus the 4 original seasonal days")},
+            "missing_dates": missing_dates,
+            "coverage_achieved": (
+                f"{n_cov}/365 days fetched directly from CAISO's public per-day "
+                "history endpoints (private/1-raw-data/caiso_raw/, gitignored local "
+                "archive); no proxy/allowlist barrier was encountered fetching this "
+                "full year. Fall-back day 2025-11-02 IS covered, with a documented "
+                "approximation (see caveats). Spring-forward day 2026-03-08 has a "
+                "genuinely BLANK (not merely unused) 02:00 hour in CAISO's own raw "
+                "files for both co2 and demand -- every 5-minute row that hour is "
+                "empty -- so the existing all-24-hours validity check drops the "
+                "whole day rather than just the one hour that is actually bad, and "
+                "it falls back to that March's month-hour mean like any other "
+                "uncovered day; the other 23 real hours of that date go unused as "
+                "a result. This is a real finding from this run's own raw files, "
+                "not merely the two-day approximation anticipated going in.")},
         "label": label,
         "intensity_kg_per_mwh": {
             "annual_avg_by_hour": [round(x, 1) for x in annual],
@@ -375,7 +421,9 @@ def main():
         "solar_exports_avoided_kg_co2_per_yr": round(export_avoided_kg, 1),
         "old_vs_new": {
             "old_basis": "4 seasonal sample days (carbon_results.json)",
-            "new_basis": f"{n_cov} sampled days + month-hour-mean interpolation",
+            "new_basis": (f"{n_cov}/365 real CAISO days" if n_cov == 365 else
+                          f"{n_cov} real CAISO days + month-hour-mean interpolation "
+                          f"for the other {365 - n_cov}"),
             "annual_import_footprint_kg": {
                 "old": of["a_current_imports"],
                 "new": round(base_kg, 1),
@@ -399,10 +447,12 @@ def main():
                       "correct dollar saving for fixing mistimed charging is scenario 'a' in "
                       f"behavior_rebuild.json (${scenario_a:,.2f}/yr), unchanged "
                       "by this carbon rerun."),
-        "caveats": [
-            f"Intensity measured on {n_cov} real CAISO days; the other {365 - n_cov} days "
-            "use month-hour means of covered days (day-to-day weather/hydro/outage "
-            "variation only partially captured).",
+        "caveats": ([
+            f"Intensity measured on {n_cov} real CAISO days; the other "
+            f"{365 - n_cov} day{'s' if 365 - n_cov != 1 else ''} "
+            f"{'use' if 365 - n_cov != 1 else 'uses'} month-hour means of covered days "
+            "(day-to-day weather/hydro/outage variation only partially captured)."]
+           if n_cov < 365 else []) + [
             "Grid-AVERAGE intensity, not marginal; marginal overnight emissions (usually "
             "gas on the margin) would widen the overnight-vs-midday gap.",
             "Export credit uses the same grid-average intensity at export hours (standard "
@@ -411,7 +461,24 @@ def main():
             "exporting); on sunny spring days midday hourly intensity goes slightly "
             "negative under this accounting, which the 4-day version never sampled.",
             "Moved EV energy assumed spread uniformly across the destination window on its "
-            "own day."]}
+            "own day.",
+            "DST transition days are a documented, narrow approximation, not a full "
+            "redesign, on both 2025-11-02 (fall-back) and 2026-03-08 (spring-forward) -- "
+            "unlike the household meter, which genuinely has two distinct 01:00 "
+            "quarter-hour blocks on fall-back (100 intervals that day) and none labeled "
+            "02:00 on spring-forward (92 intervals that day). On fall-back, CAISO's own "
+            "file carries a flat 24-hour grid with no duplicate hour, so both of the "
+            "household's real 01:00 blocks are matched against CAISO's single reported "
+            "01:00 value -- an unavoidable approximation, since CAISO's own data does not "
+            "distinguish the two. On spring-forward, CAISO's file is NOT simply flat: its "
+            "02:00 hour is present as a row label but every 5-minute value that hour is "
+            "blank in both the co2 and demand files (confirmed by inspecting the raw "
+            "files directly, not assumed) -- so this script's existing all-24-hours "
+            "validity check drops the WHOLE day rather than the one bad hour, and "
+            "2026-03-08 is interpolated from March's month-hour mean like any other "
+            "uncovered day, even though its other 23 real hours are perfectly good. No "
+            "household interval that day has hour=2 either way, so this only costs one "
+            "day's worth of otherwise-usable measured hours, not correctness."]}
 
     # ---------- validate, then write BOTH artifacts atomically ----------
     rows = [(dt_.strftime("%Y-%m-%d"), h, round(v[h], 1))
