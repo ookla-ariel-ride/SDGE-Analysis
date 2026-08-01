@@ -1517,16 +1517,22 @@ construction — that invariance is what a genuine floor requires.
 
 **The four-bucket classification.** Every one of the 26 electric periods in
 `data/bill_periods_electric.csv` is split into exactly four buckets that sum to
-`current_charges` to within the reconciliation tolerance (below):
+`current_charges` to within the reconciliation tolerance (below). Note that this sum
+(`four_bucket_arithmetic_check_pass` in the artifact) is a TAUTOLOGY, not independent
+verification: bucket 4 (`netted_energy`) is *defined* as the residual of the other three, so
+adding all four back together is algebraically guaranteed to reproduce `current_charges`
+regardless of whether buckets 1–3 were extracted from the bill correctly — it can only ever
+miss by cent-rounding. It is published only as a coding-error sanity check. The actual
+independent verification is the cross-check described next.
 
 | bucket | source | genuinely irreducible? |
 |---|---|---|
-| `fixed_daily` | `bill_periods_electric.fixed_charge_total` — whichever of Base Services Charge or the Monthly Service Fee it replaced that period actually billed | **yes** — accrues per day regardless of usage; this is the only bucket the artifact calls a floor |
+| `fixed_charge` | `bill_periods_electric.fixed_charge_total` — whichever of Base Services Charge or the Monthly Service Fee it replaced that period actually billed | **yes** — accrues per day regardless of usage; this is the only bucket the artifact calls a floor |
 | `non_bypassable_gross` | printed "Non-Bypassable Charges" + "Wildfire Fund Charge", both billed on **gross** imported kWh | no — real, currently owed, and cannot be avoided by switching generation provider, but its dollar amount scales with gross imports and a purchase that reduces them reduces this bucket too |
 | `taxes_and_fees` | printed "Total Taxes & Fees on Electric Charges" | no — its two largest components (Franchise Fee Equivalent Surcharge, State Regulatory Fee) are levied on the energy charge or on kWh counted elsewhere, so they shrink roughly in proportion to whatever a purchase reduces |
-| `netted_energy` | the residual: `current_charges − fixed_daily − non_bypassable_gross − taxes_and_fees` | no — the bucket a battery, behavior change or bigger panel can most directly touch, though `non_bypassable_gross` also moves under those same purchases |
+| `netted_energy` | the residual: `current_charges − fixed_charge − non_bypassable_gross − taxes_and_fees` | no — the bucket a battery, behavior change or bigger panel can most directly touch, though `non_bypassable_gross` also moves under those same purchases |
 
-`STRICTLY_IRREDUCIBLE = fixed_daily`, summed only over the window below — the other three
+`STRICTLY_IRREDUCIBLE = fixed_charge`, summed only over the window below — the other three
 buckets are excluded by construction, not netted out after the fact. `non_bypassable_gross`
 is reported alongside it as its own figure, not summed in; `combined` (both added together) is
 kept for reference but is explicitly not itself called a floor (see below).
@@ -1567,11 +1573,11 @@ each period's `Billing Period: … Total Days: N` anchor through to that period'
 what `bill_periods_electric.csv` says the statement carries. Each period's Non-Bypassable
 Charges / Wildfire Fund Charge / Total Taxes & Fees are then read from its own chunk only.
 
-**The 12-month floor.** `build_floor()` sums `fixed_daily` alone over
+**The 12-month floor.** `build_floor()` sums `fixed_charge` alone over
 `parse_bills.SUMMARY_STATEMENTS_ELEC` — this repo's own existing definition of "the most
 recent 12 months of bills," reused rather than re-derived (12 statements; 2025-10-31 splits
 into two periods, both in-window, so the window covers 13 periods). **One rate vintage per
-period, not one vintage for the whole sum:** each period's `fixed_daily` is what that period
+period, not one vintage for the whole sum:** each period's `fixed_charge` is what that period
 actually billed — $16.00/month before 2025-10-01, the per-day Base Services Charge from
 2025-10-01 (the CPUC Resolution E-5355 transition; see `analysis/rates_history.py`) — never
 today's rate applied backward onto an older period. In the current window, 4 of 13 periods
@@ -1721,21 +1727,24 @@ Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs
 corpus, the same dependency shape as `parse_bills.py` and `bill_decomposition.py`), so the §9
 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_irreducible_bill.py`, 38 cases (34 plus four added for the fourth
-adversarial review's two findings, below). Nine run in a clean checkout with no private archive
-(the PCIA sign-handling and multi-segment-summing cases against synthetic text, the mixed-sign
-annual-vs-monthly minimum-bill-trigger case — now built on `group_periods_by_true_up_year()`
-directly with a synthetic true-up-date mapping rather than a monkey-patched window — the
-synthetic package-floor-fraction arithmetic-direction case, the gross-import sanity-check unit
-test, the raw-interval-CSV match-count check, and the fail-closed cases against the committed
-`bill_periods_electric.csv` and synthetic charge-line text); the remaining twenty-nine — the
-four-bucket reconciliation, the netted-energy cross-check, the dual-period-statement scoping
-proof, the strict-floor, package-fraction and baseline-floor consistency checks, the
-minimum-bill-provision and true-up-year-grouping checks against the real corpus, the NBC-on-gross
-re-derivation, and the byte-identical regeneration case — need the private bill PDF corpus and
-skip by name (`SkipCase`) when it is absent, matching `test_bill_decomposition.py`'s own guard.
+**Tests** `analysis/test_irreducible_bill.py`, 43 cases. Thirteen run in a clean checkout with no
+private archive (the PCIA sign-handling and multi-segment-summing cases against synthetic text,
+the mixed-sign annual-vs-monthly minimum-bill-trigger case — built on
+`group_periods_by_true_up_year()` directly with a synthetic true-up-date mapping rather than a
+monkey-patched window — the synthetic package-floor-fraction arithmetic-direction case, the
+gross-import sanity-check unit test, the raw-interval-CSV match-count check, the fail-closed
+cases against the committed `bill_periods_electric.csv` and synthetic charge-line text, and two
+cases added in a later review pass (Finding 2) that cover `_select_true_up_years()`'s two
+previously-untested branches directly against synthetic true-up-year groups — zero complete
+cycles found (`closest_available_approximation`, picks the group covering the most days) and no
+true-up-year groups at all (`no_true_up_date_found`)); the remaining thirty — the four-bucket
+arithmetic check, the netted-energy cross-check, the dual-period-statement scoping proof, the
+strict-floor, package-fraction and baseline-floor consistency checks, the minimum-bill-provision
+and true-up-year-grouping checks against the real corpus, the NBC-on-gross re-derivation, and the
+byte-identical regeneration case — need the private bill PDF corpus and skip by name (`SkipCase`)
+when it is absent, matching `test_bill_decomposition.py`'s own guard.
 
-Two of those twenty-nine are the regression pair the third adversarial review asked for, on the
+Two of those thirty are the regression pair the third adversarial review asked for, on the
 real corpus rather than synthetic data: `case_reducing_gross_imports_reduces_non_bypassable_usd`
 pins that MID's and HIGH's `non_bypassable_usd` are each strictly lower than LOW's (the direction
 the artifact's own numbers already showed, now an explicit named assertion instead of something a

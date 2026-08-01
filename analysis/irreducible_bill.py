@@ -86,7 +86,7 @@ why this script does not call it for that purpose.
 
 THE FOUR BUCKETS, per period (extraction only -- see below for which of these
 is actually the strict floor):
-  1. fixed_daily          bill_periods_electric.csv's own fixed_charge_total
+  1. fixed_charge          bill_periods_electric.csv's own fixed_charge_total
                            (whichever of Base Services Charge / Monthly
                            Service Fee that period actually billed). THE ONLY
                            bucket that is a genuine, unconditional floor: a
@@ -125,9 +125,19 @@ Development Program Credit, Applied Generation Credit, and either the CCA
 page's own charged total or, on a bundled period, the SDG&E generation
 table). The two must agree to within the issue's own $0.50 tolerance; on
 this corpus the worst period agrees to within $0.02 (rounding), so the
-tolerance was never widened.
+tolerance was never widened. That comparison is netted_energy_cross_check_
+pass/_diff_usd, the ONLY reconciliation field this artifact publishes that
+is genuine independent verification. The artifact also publishes
+four_bucket_arithmetic_check_pass/_diff_usd/_sum_usd -- summing buckets (1)
+through (4) and comparing to current_charges -- but because bucket (4) IS
+defined as that same subtraction, this can only ever confirm the arithmetic
+was carried out without a coding error (it cannot miss by more than _c()'s
+own cent-rounding); it is not, and structurally cannot be, a second
+independent proof that (1)-(3) were extracted from the bill correctly (a
+prior version of this docstring/artifact read as if it were -- fixed here,
+issue #7 review after the sixth pass).
 
-STRICTLY_IRREDUCIBLE_USD = fixed_daily, summed over
+STRICTLY_IRREDUCIBLE_USD = fixed_charge, summed over
 parse_bills.SUMMARY_STATEMENTS_ELEC (this repo's own definition of "the most
 recent 12 months of bills", reused rather than re-invented). This is the
 ONLY figure this script calls a floor: it accrues per day no matter what,
@@ -442,17 +452,21 @@ def classify_periods(periods):
         else:
             lines = charge_lines_for_period(bd.statement_text(stmt), label)
 
-        fixed_daily = p["fixed_charge_total"]
+        fixed_charge = p["fixed_charge_total"]
         non_bypassable_gross = _c(lines["non_bypassable_charges"]
                                   + lines["wildfire_fund_charge"])
         taxes_and_fees = lines["total_taxes_and_fees"]
         current_charges = p["current_charges"]
-        netted_energy = _c(current_charges - fixed_daily - non_bypassable_gross
+        netted_energy = _c(current_charges - fixed_charge - non_bypassable_gross
                           - taxes_and_fees)
 
-        four_bucket_sum = _c(fixed_daily + non_bypassable_gross + taxes_and_fees
-                            + netted_energy)
-        four_bucket_diff = _c(four_bucket_sum - current_charges)
+        # four_bucket_arithmetic_{sum,diff,check_pass} below is a TAUTOLOGY,
+        # not independent verification -- see the naming and the docstring
+        # note where it is stored, and _assert_periods_reconcile()'s own
+        # docstring for why it is still gated on despite that.
+        four_bucket_arithmetic_sum = _c(fixed_charge + non_bypassable_gross
+                                       + taxes_and_fees + netted_energy)
+        four_bucket_arithmetic_diff = _c(four_bucket_arithmetic_sum - current_charges)
 
         delivery_sum, generation_sum = tou_sums(stmt, period)
         independent, cancel = independent_netted_energy(p, lines, delivery_sum,
@@ -467,16 +481,35 @@ def classify_periods(periods):
             "net_kwh": p["net_kwh"],
             "gross_kwh": p["gross_kwh"],
             "current_charges_usd": current_charges,
-            "fixed_daily_usd": fixed_daily,
+            "fixed_charge_usd": fixed_charge,
             "non_bypassable_gross_usd": non_bypassable_gross,
             "taxes_and_fees_usd": taxes_and_fees,
             "netted_energy_usd": netted_energy,
             "netted_energy_independent_usd": independent,
             "netted_energy_cross_check_diff_usd": cross_check_diff,
             "netted_energy_cross_check_pass": abs(cross_check_diff) <= RECON_TOLERANCE_USD,
-            "four_bucket_sum_usd": four_bucket_sum,
-            "four_bucket_diff_usd": four_bucket_diff,
-            "four_bucket_check_pass": abs(four_bucket_diff) <= RECON_TOLERANCE_USD,
+            # NOT independent verification: netted_energy_usd (above) is
+            # DEFINED as current_charges - fixed_charge - non_bypassable_gross
+            # - taxes_and_fees, so substituting that definition back in makes
+            # this sum algebraically equal to current_charges on every
+            # period, regardless of whether the three subtracted buckets
+            # were extracted from the bill CORRECTLY -- it can only ever miss
+            # by _c()'s own cent-rounding, far below RECON_TOLERANCE_USD. It
+            # is kept (and still gated on, see _assert_periods_reconcile())
+            # only as a tautological arithmetic sanity check -- confirmation
+            # that these four fields were extracted and summed without a
+            # coding error, not that the bucket CLASSIFICATION (which lines
+            # went into which bucket) is correct. That real, independent
+            # proof is netted_energy_cross_check_pass/_diff_usd above, which
+            # compares netted_energy_usd against a SEPARATELY sourced
+            # computation from bill_tou_detail.csv's own TOU segments plus
+            # the printed adjustment lines -- a computation that does not
+            # reuse fixed_charge/non_bypassable_gross/taxes_and_fees at all
+            # and can therefore actually disagree with netted_energy_usd.
+            "four_bucket_arithmetic_sum_usd": four_bucket_arithmetic_sum,
+            "four_bucket_arithmetic_diff_usd": four_bucket_arithmetic_diff,
+            "four_bucket_arithmetic_check_pass":
+                abs(four_bucket_arithmetic_diff) <= RECON_TOLERANCE_USD,
             "generation_credit_cancel_usd": cancel,
             # Finding 1 (issue #7 SECOND adversarial review, this pass): this
             # value used to be computed and stored but never gated on --
@@ -506,13 +539,13 @@ def worst_residual(rows):
 # Step 3: the 12-month floor
 # ---------------------------------------------------------------------------
 def build_floor(rows):
-    """The STRICT, unconditional floor -- fixed_daily alone -- summed over
+    """The STRICT, unconditional floor -- fixed_charge alone -- summed over
     parse_bills.SUMMARY_STATEMENTS_ELEC -- this repo's own definition of "the
     most recent 12 months of bills" (12 statements; the 2025-10-31 statement
     carries two periods, both in-window by construction since they share its
     statement_date, so the window covers 13 periods).
 
-    strictly_irreducible_usd (bucket 1, fixed_daily) is the ONLY figure this
+    strictly_irreducible_usd (bucket 1, fixed_charge) is the ONLY figure this
     function calls a floor: it is billed per day no matter what, even at
     zero kWh imported, and no purchase -- battery, behavior change, or bigger
     panel -- changes that.
@@ -536,21 +569,21 @@ def build_floor(rows):
 
     ONE RATE VINTAGE PER PERIOD, not one vintage for the whole sum (CLAUDE.md
     9's rule, applied to a floor rather than a projection): each period's
-    fixed_daily_usd is that period's OWN ACTUALLY BILLED fixed charge --
+    fixed_charge_usd is that period's OWN ACTUALLY BILLED fixed charge --
     $16.00/month before 2025-10-01, $0.79343/day after -- never today's rate
     applied backward. The transition falls inside this window: of the 13
     periods, the ones below list which used which.
 
     SANITY-CHECKED, NOT bounded by, the window total (issue #7 THIRD
-    adversarial review). combined_usd_historical (fixed_daily +
+    adversarial review). combined_usd_historical (fixed_charge +
     non_bypassable_gross) is NOT guaranteed to sit below
     total_current_charges_usd in general -- that would require netted_energy
     (the signed NEM settlement bucket) to always be non-negative, which is
     only true for a net-IMPORTING household. In a net-EXPORTING window,
     export credits can legitimately push netted_energy negative enough that
-    current_charges falls below fixed_daily + non_bypassable_gross alone.
+    current_charges falls below fixed_charge + non_bypassable_gross alone.
     What this function DOES verify is the aggregate four-bucket identity --
-    fixed_daily + non_bypassable_gross + taxes_and_fees + netted_energy ==
+    fixed_charge + non_bypassable_gross + taxes_and_fees + netted_energy ==
     total_current_charges_usd, the window-summed version of the same
     per-period check classify_periods() already performs -- which holds
     regardless of netted_energy's sign."""
@@ -563,7 +596,7 @@ def build_floor(rows):
         raise SystemExit(f"SUMMARY_STATEMENTS_ELEC names statement(s) with no row in "
                          f"bill_periods_electric.csv: {sorted(missing_stmts)}")
 
-    strictly_irreducible_usd = _c(sum(r["fixed_daily_usd"] for r in window_rows))
+    strictly_irreducible_usd = _c(sum(r["fixed_charge_usd"] for r in window_rows))
     non_bypassable_usd_historical = _c(
         sum(r["non_bypassable_gross_usd"] for r in window_rows))
     combined_usd_historical = _c(strictly_irreducible_usd + non_bypassable_usd_historical)
@@ -571,12 +604,12 @@ def build_floor(rows):
 
     # Sanity check on the AGGREGATE four-bucket identity (issue #7 THIRD
     # adversarial review; this replaces a PRIOR guard here that asserted
-    # combined_usd_historical -- fixed_daily + non_bypassable_gross ALONE,
+    # combined_usd_historical -- fixed_charge + non_bypassable_gross ALONE,
     # omitting netted_energy -- could never exceed total_current_charges_usd.
     # That was false in general: netted_energy (bucket 4) is a signed NEM
     # settlement term, and in a window where the household is a net EXPORTER
     # its export credits can make netted_energy negative enough that
-    # current_charges legitimately falls BELOW fixed_daily +
+    # current_charges legitimately falls BELOW fixed_charge +
     # non_bypassable_gross alone -- even though every period reconciles
     # exactly and nothing is wrong. This household is a net importer in
     # every period of the current corpus (net_kwh > 0 throughout), so the
@@ -584,26 +617,29 @@ def build_floor(rows):
     # regenerate the artifact the moment a net-export window appeared. The
     # actual invariant -- true regardless of netted_energy's sign -- is the
     # same four-bucket identity classify_periods() already checks per period
-    # (four_bucket_check_pass), summed over the window: fixed_daily +
-    # non_bypassable_gross + taxes_and_fees + netted_energy must equal
-    # total_current_charges_usd. Computed here only to gate on, not stored
-    # in the returned dict -- the window total is already fully described by
-    # the fields below.
+    # (four_bucket_arithmetic_check_pass -- itself a TAUTOLOGY, not
+    # independent verification, since netted_energy_usd is defined as this
+    # same residual; see that field's own comment in classify_periods()),
+    # summed over the window: fixed_charge + non_bypassable_gross +
+    # taxes_and_fees + netted_energy must equal total_current_charges_usd.
+    # Computed here only to gate on, not stored in the returned dict -- the
+    # window total is already fully described by the fields below.
     taxes_and_fees_usd_historical = _c(
         sum(r["taxes_and_fees_usd"] for r in window_rows))
     netted_energy_usd_historical = _c(
         sum(r["netted_energy_usd"] for r in window_rows))
-    four_bucket_sum_historical = _c(
+    four_bucket_arithmetic_sum_historical = _c(
         strictly_irreducible_usd + non_bypassable_usd_historical
         + taxes_and_fees_usd_historical + netted_energy_usd_historical)
-    four_bucket_diff_historical = _c(four_bucket_sum_historical - total_current_charges_usd)
-    if abs(four_bucket_diff_historical) > RECON_TOLERANCE_USD:
+    four_bucket_arithmetic_diff_historical = _c(
+        four_bucket_arithmetic_sum_historical - total_current_charges_usd)
+    if abs(four_bucket_arithmetic_diff_historical) > RECON_TOLERANCE_USD:
         raise SystemExit(
-            "the aggregated four-bucket identity (fixed_daily + "
+            "the aggregated four-bucket identity (fixed_charge + "
             "non_bypassable_gross + taxes_and_fees + netted_energy) does not "
             f"match the window's total current_charges: sum="
-            f"${four_bucket_sum_historical} total=${total_current_charges_usd} "
-            f"diff=${four_bucket_diff_historical} (tolerance "
+            f"${four_bucket_arithmetic_sum_historical} total=${total_current_charges_usd} "
+            f"diff=${four_bucket_arithmetic_diff_historical} (tolerance "
             f"${RECON_TOLERANCE_USD}) -- that cannot be right")
 
     strict_pct = round(100.0 * strictly_irreducible_usd / total_current_charges_usd, 2)
@@ -635,7 +671,7 @@ def build_floor(rows):
             "billed the pre-2025-10-01 flat Monthly Service Fee ($16.00/month); "
             f"{len(bsc_periods)} billed the per-day Base Services Charge "
             "($0.79343/day) that replaced it 2025-10-01. Each period's own "
-            "fixed_daily_usd is what THAT period actually billed -- the per-day "
+            "fixed_charge_usd is what THAT period actually billed -- the per-day "
             "rate is never applied backward onto a period billed the flat fee."),
         "periods_on_monthly_service_fee": monthly_fee_periods,
         "periods_on_base_services_charge": bsc_periods,
@@ -1413,42 +1449,68 @@ CAVEAT = (
     "and stored per period but never checked before build() returned, "
     "exactly the 'computed a check, never asked it anything' gap the first "
     "adversarial review already fixed for netted_energy_cross_check_pass "
-    "and four_bucket_check_pass -- generation_credit_cancel_pass closes it, "
-    "checked on every period (trivially satisfied on non-CCA periods, where "
-    "it is hardcoded to 0.0, but checked uniformly rather than exempted)."
+    "and four_bucket_arithmetic_check_pass -- generation_credit_cancel_pass "
+    "closes it, checked on every period (trivially satisfied on non-CCA "
+    "periods, where it is hardcoded to 0.0, but checked uniformly rather "
+    "than exempted). four_bucket_arithmetic_check_pass is named, and "
+    "documented in classify_periods(), as a TAUTOLOGICAL arithmetic check "
+    "only: netted_energy_usd is defined as the residual of the other three "
+    "buckets, so this sum is algebraically guaranteed to equal "
+    "current_charges and can only miss by cent-rounding -- it is not, and "
+    "cannot be, independent proof that the bucket classification itself is "
+    "correct. That proof is netted_energy_cross_check_pass alone, which "
+    "compares netted_energy_usd against a separately sourced computation "
+    "from bill_tou_detail.csv and the printed adjustment lines."
 )
 
 
 def _assert_periods_reconcile(rows):
     """Finding 2 (issue #7 adversarial review): classify_periods() computes
-    netted_energy_cross_check_pass and four_bucket_check_pass per period but,
-    before that fix, nothing ever CHECKED them before build() returned --
-    main() would write whatever came back, failed reconciliation or not. A
-    parser regression, a corrupted CSV row, or a future statement with
-    unexpected formatting could produce a period that fails its own
+    netted_energy_cross_check_pass and four_bucket_arithmetic_check_pass per
+    period but, before that fix, nothing ever CHECKED them before build()
+    returned -- main() would write whatever came back, failed reconciliation
+    or not. A parser regression, a corrupted CSV row, or a future statement
+    with unexpected formatting could produce a period that fails its own
     reconciliation, and the artifact would still be generated and atomically
     replace the committed one, with the failed boolean sitting quietly
     inside it.
 
+    NOTE on what four_bucket_arithmetic_check_pass actually proves (issue #7
+    THIRD review, later pass): it is a TAUTOLOGY, not independent
+    verification -- netted_energy_usd is DEFINED as the residual
+    (current_charges - fixed_charge - non_bypassable_gross - taxes_and_fees),
+    so summing all four back together is algebraically guaranteed to equal
+    current_charges regardless of whether the three subtracted buckets were
+    extracted from the bill correctly; it can only ever fail from _c()'s own
+    cent-rounding. It is still gated on here, alongside the genuinely
+    independent netted_energy_cross_check_pass (which compares netted_energy_
+    usd against a SEPARATELY sourced computation from bill_tou_detail.csv's
+    TOU segments plus the printed adjustment lines, and so CAN actually
+    disagree), as a cheap sanity check that the four fields were extracted
+    and summed without a coding error -- not as a second proof that the
+    bucket classification itself is correct. That proof is
+    netted_energy_cross_check_pass alone.
+
     THREE conditions are checked, not two (Finding 1, issue #7 SECOND
     adversarial review, this pass): generation_credit_cancel_pass was added
-    alongside netted_energy_cross_check_pass and four_bucket_check_pass, but
-    was never added to THIS gate -- the same "computed a check, never asked
-    it anything" failure the first two conditions were already fixed for.
-    independent_netted_energy()'s docstring calls the CCA generation-charge /
-    generation-credit pair "nets to zero by construction" and uses that as
-    license to exclude both from the independent supply term rather than
-    include-and-subtract them; if the generation-credit regex ever silently
-    stopped matching a real credit line (a bill template change, a corrupted
-    PDF, a future statement with different wording), gen_credit would fall
-    back to lines.get(..., 0.0) = 0.0, the cancellation would come out
-    nonzero, and -- before this fix -- nothing would catch it.
+    alongside netted_energy_cross_check_pass and
+    four_bucket_arithmetic_check_pass, but was never added to THIS gate --
+    the same "computed a check, never asked it anything" failure the first
+    two conditions were already fixed for. independent_netted_energy()'s
+    docstring calls the CCA generation-charge / generation-credit pair "nets
+    to zero by construction" and uses that as license to exclude both from
+    the independent supply term rather than include-and-subtract them; if
+    the generation-credit regex ever silently stopped matching a real credit
+    line (a bill template change, a corrupted PDF, a future statement with
+    different wording), gen_credit would fall back to
+    lines.get(..., 0.0) = 0.0, the cancellation would come out nonzero, and
+    -- before this fix -- nothing would catch it.
 
     Called from build(), before anything downstream is computed or returned,
     so it cannot be bypassed by calling build() directly."""
     bad_recon = [r for r in rows
                 if not r["netted_energy_cross_check_pass"]
-                or not r["four_bucket_check_pass"]]
+                or not r["four_bucket_arithmetic_check_pass"]]
     bad_cancel = [r for r in rows if not r["generation_credit_cancel_pass"]]
     if bad_recon or bad_cancel:
         parts = []
@@ -1458,7 +1520,7 @@ def _assert_periods_reconcile(rows):
                 "; ".join(
                     f"{r['statement_date']}/{r['period']} "
                     f"(cross_check_diff=${r['netted_energy_cross_check_diff_usd']:+.2f}, "
-                    f"four_bucket_diff=${r['four_bucket_diff_usd']:+.2f})"
+                    f"four_bucket_arithmetic_diff=${r['four_bucket_arithmetic_diff_usd']:+.2f})"
                     for r in bad_recon))
         if bad_cancel:
             parts.append(

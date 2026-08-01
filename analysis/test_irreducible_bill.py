@@ -69,20 +69,34 @@ def _close(a, b, eps=EPS):
 
 
 # ---------------------------------------------------------------------------
-# The core reconciliation (AC1): four buckets sum to current_charges, AND the
-# residual bucket agrees with an independently sourced computation.
+# The core reconciliation (AC1): four buckets sum to current_charges (a
+# TAUTOLOGICAL arithmetic check -- see below), AND the residual bucket
+# agrees with an independently sourced computation (the REAL verification;
+# case_netted_energy_cross_check_agrees_every_period, next).
 # ---------------------------------------------------------------------------
 @case
-def case_four_bucket_sum_matches_current_charges_every_period():
+def case_four_bucket_arithmetic_check_passes_every_period():
+    """NOT independent verification -- netted_energy_usd is DEFINED as the
+    residual current_charges - fixed_charge - non_bypassable_gross -
+    taxes_and_fees, so summing all four back together is algebraically
+    guaranteed to equal current_charges regardless of whether the first
+    three buckets were extracted from the bill correctly; it can only ever
+    miss by _c()'s own cent-rounding, far below RECON_TOLERANCE_USD. This
+    case exists only to prove the arithmetic itself (and _assert_periods_
+    reconcile()'s gate on it) has no coding error -- the actual proof that
+    the bucket CLASSIFICATION is correct is
+    case_netted_energy_cross_check_agrees_every_period, which compares
+    against a computation that does not reuse these same three buckets."""
     _require_corpus()
     result = irr.build()
-    bad = [r for r in result["periods"] if not r["four_bucket_check_pass"]]
-    assert not bad, f"{len(bad)} period(s) failed the four-bucket reconciliation: " \
-        f"{[(r['statement_date'], r['period'], r['four_bucket_diff_usd']) for r in bad]}"
+    bad = [r for r in result["periods"] if not r["four_bucket_arithmetic_check_pass"]]
+    assert not bad, f"{len(bad)} period(s) failed the four-bucket arithmetic check: " \
+        f"{[(r['statement_date'], r['period'], r['four_bucket_arithmetic_diff_usd']) for r in bad]}"
     assert result["period_count"] == 26, \
         f"expected 26 periods (25 single-period statements + 1 two-period), got " \
         f"{result['period_count']}"
-    return f"all {result['period_count']} periods reconcile to current_charges " \
+    return f"all {result['period_count']} periods pass the tautological four-bucket " \
+        f"arithmetic check (a coding-error guard, not independent verification) " \
         f"within ${irr.RECON_TOLERANCE_USD}"
 
 
@@ -336,7 +350,7 @@ def case_floor_recomputed_independently_from_the_artifact_rows():
     result = irr.build()
     window = set(irr.SUMMARY_STATEMENTS_ELEC)
     window_rows = [r for r in result["periods"] if r["statement_date"] in window]
-    recomputed_strict = round(sum(r["fixed_daily_usd"] for r in window_rows), 2)
+    recomputed_strict = round(sum(r["fixed_charge_usd"] for r in window_rows), 2)
     recomputed_nbc = round(sum(r["non_bypassable_gross_usd"] for r in window_rows), 2)
     recomputed_total = round(sum(r["current_charges_usd"] for r in window_rows), 2)
     recomputed_strict_pct = round(100.0 * recomputed_strict / recomputed_total, 2)
@@ -355,13 +369,13 @@ def case_floor_recomputed_independently_from_the_artifact_rows():
 @case
 def case_build_floor_accepts_a_net_export_window():
     """THIRD adversarial review, issue #7. build_floor() used to raise
-    SystemExit if combined_usd_historical (fixed_daily + non_bypassable_gross
+    SystemExit if combined_usd_historical (fixed_charge + non_bypassable_gross
     alone) exceeded total_current_charges_usd, treating that as impossible.
     It is not impossible: netted_energy is a signed NEM settlement bucket,
     and a window where the household is a net EXPORTER can legitimately
     price netted_energy negative enough that current_charges falls BELOW
-    fixed_daily + non_bypassable_gross alone, even though every period still
-    reconciles exactly (fixed_daily + non_bypassable_gross + taxes_and_fees +
+    fixed_charge + non_bypassable_gross alone, even though every period still
+    reconciles exactly (fixed_charge + non_bypassable_gross + taxes_and_fees +
     netted_energy == current_charges). This household's real corpus is a
     net importer throughout (net_kwh > 0 in every period), so this state
     can't be driven from real data -- construct it synthetically instead,
@@ -375,7 +389,7 @@ def case_build_floor_accepts_a_net_export_window():
             # a single degenerate row.
             "statement_date": "2099-01-31",
             "period": "2099-01-31",
-            "fixed_daily_usd": 20.00,
+            "fixed_charge_usd": 20.00,
             "non_bypassable_gross_usd": 15.00,
             "taxes_and_fees_usd": 5.00,
             "netted_energy_usd": 10.00,
@@ -386,11 +400,11 @@ def case_build_floor_accepts_a_net_export_window():
         {
             # The net-EXPORT period: export credits make netted_energy
             # negative enough that current_charges (15.00) falls below
-            # fixed_daily + non_bypassable_gross alone (20 + 30 = 50) --
+            # fixed_charge + non_bypassable_gross alone (20 + 30 = 50) --
             # exactly the condition the old guard refused.
             "statement_date": "2099-02-28",
             "period": "2099-02-28",
-            "fixed_daily_usd": 20.00,
+            "fixed_charge_usd": 20.00,
             "non_bypassable_gross_usd": 30.00,
             "taxes_and_fees_usd": 5.00,
             "netted_energy_usd": -40.00,
@@ -1082,6 +1096,86 @@ def case_two_complete_true_up_cycles_are_both_reported():
            f"one (2098-12-31) rather than nulling out")
 
 
+@case
+def case_closest_available_approximation_when_no_complete_true_up_cycle_exists():
+    """Finding 2 (issue #7 review, follow-up pass after six prior review
+    rounds). _select_true_up_years() has three branches:
+    'complete_true_up_cycle' (exercised above and by every real-corpus
+    minimum-bill-provision case), 'closest_available_approximation' (zero
+    complete cycles found), and 'no_true_up_date_found' (the next case).
+    The middle branch had zero test coverage despite being real,
+    financially-meaningful logic (the actual NEM minimum-bill trigger).
+
+    Constructs two INCOMPLETE synthetic true-up-year groups directly, in the
+    same shape group_periods_by_true_up_year() itself returns --
+    _select_true_up_years() is a pure function that only reads
+    complete_true_up_cycle / total_days / true_up_date off whatever dicts
+    it's given, so no PDF or even group_periods_by_true_up_year() call is
+    needed. Neither group is a complete cycle (one, or both, of
+    contiguous / ends_on_true_up_date / a real year's total_days is false),
+    so complete_years is empty and the function must fall back to the
+    'closest available' branch: the group covering the MOST days, a
+    non-null annual_trigger_limitation explaining why, and
+    most_recent_true_up_year still populated (never null just because no
+    complete cycle exists)."""
+    true_up_years = [
+        # A short stub slice: only 120 of a real year's days covered, and
+        # does not end on its own true-up date either -- clearly
+        # incomplete on both grounds.
+        {"true_up_date": "2095-12-31", "statements": ["2095-08-01"],
+         "period_count": 1, "total_days": 120,
+         "coverage_start": "2095-08-01", "coverage_end": "2095-11-28",
+         "contiguous": True, "ends_on_true_up_date": False,
+         "complete_true_up_cycle": False,
+         "annual_net_kwh_sum": 200.0, "annual_net_generator": False},
+        # A closer, but still incomplete, slice -- 300 of a real year's
+        # days -- this is the one "closest available" should pick.
+        {"true_up_date": "2096-12-31", "statements": ["2096-03-01"],
+         "period_count": 1, "total_days": 300,
+         "coverage_start": "2096-03-01", "coverage_end": "2096-12-25",
+         "contiguous": True, "ends_on_true_up_date": False,
+         "complete_true_up_cycle": False,
+         "annual_net_kwh_sum": -50.0, "annual_net_generator": True},
+    ]
+    (basis, chosen_years, limitation,
+     most_recent) = irr._select_true_up_years(true_up_years)
+    assert basis == "closest_available_approximation", basis
+    assert limitation is not None and "closest available" in limitation, limitation
+    assert len(chosen_years) == 1, \
+        f"expected exactly one 'closest available' year chosen, got {chosen_years}"
+    assert chosen_years[0]["true_up_date"] == "2096-12-31", chosen_years[0]
+    assert chosen_years[0]["total_days"] == 300, chosen_years[0]
+    assert most_recent is not None, \
+        "most_recent_true_up_year came back None despite a non-empty fallback"
+    assert most_recent["true_up_date"] == "2096-12-31", most_recent
+    return (f"zero complete true-up cycles -> basis={basis}; closest available "
+           f"is {chosen_years[0]['true_up_date']} ({chosen_years[0]['total_days']} "
+           "of a real year's days covered), a non-null limitation is stated, and "
+           "most_recent_true_up_year is still populated")
+
+
+@case
+def case_no_true_up_date_found_when_no_true_up_years_exist():
+    """The third, previously-untested branch of _select_true_up_years():
+    zero true-up-year groups at all -- group_periods_by_true_up_year()
+    returns [] when it is given no periods (e.g. a corpus where every
+    statement's printed True-Up Date field failed to parse upstream, or
+    simply no periods at all). Assert the basis names this condition
+    explicitly, a non-null limitation is stated, chosen_years is empty, and
+    most_recent_true_up_year is None (there is nothing to pick a 'most
+    recent' from) -- a sensible, non-crashing answer, not a null field that
+    reads as if something went uncaught."""
+    (basis, chosen_years, limitation,
+     most_recent) = irr._select_true_up_years([])
+    assert basis == "no_true_up_date_found", basis
+    assert limitation is not None and "no true-up date" in limitation.lower(), limitation
+    assert chosen_years == [], chosen_years
+    assert most_recent is None, most_recent
+    return (f"empty true_up_years -> basis={basis}, most_recent_true_up_year=None, "
+           "a non-null limitation is stated instead of crashing or silently "
+           "reporting a real-looking-but-empty answer")
+
+
 # ---------------------------------------------------------------------------
 # NBC-on-gross re-verification: dynamically derived, not hardcoded
 # ---------------------------------------------------------------------------
@@ -1199,12 +1293,12 @@ def case_missing_required_charge_line_stops_the_run():
 @case
 def case_build_stops_on_a_period_that_fails_its_own_reconciliation():
     """Finding 2 (issue #7 adversarial review): classify_periods() computes
-    netted_energy_cross_check_pass / four_bucket_check_pass per period, but
-    nothing used to check them before build() returned -- main() would write
-    whatever came back. Poison one real period's cross-check flag to False
-    and prove build() (and therefore main(), which never gets that far)
-    refuses, naming the failing period, and that the committed artifact is
-    left untouched."""
+    netted_energy_cross_check_pass / four_bucket_arithmetic_check_pass per
+    period, but nothing used to check them before build() returned -- main()
+    would write whatever came back. Poison one real period's cross-check
+    flag to False and prove build() (and therefore main(), which never gets
+    that far) refuses, naming the failing period, and that the committed
+    artifact is left untouched."""
     _require_corpus()
     real_classify_periods = irr.classify_periods
     label_holder = {}
@@ -1237,9 +1331,13 @@ def case_build_stops_on_a_period_that_fails_its_own_reconciliation():
 
 
 @case
-def case_build_stops_on_a_period_that_fails_the_four_bucket_check():
-    """Same guard, the other flag: four_bucket_check_pass=False must also
-    stop the run, not just netted_energy_cross_check_pass."""
+def case_build_stops_on_a_period_that_fails_the_four_bucket_arithmetic_check():
+    """Same guard, the other flag: four_bucket_arithmetic_check_pass=False
+    must also stop the run, not just netted_energy_cross_check_pass. (This
+    field is a tautological arithmetic check, not independent verification
+    -- see its own comment in classify_periods() -- but _assert_periods_
+    reconcile() still gates on it as a coding-error guard, so a poisoned
+    value here must still stop the run.)"""
     _require_corpus()
     real_classify_periods = irr.classify_periods
     label_holder = {}
@@ -1247,8 +1345,8 @@ def case_build_stops_on_a_period_that_fails_the_four_bucket_check():
     def poisoned(periods):
         rows = real_classify_periods(periods)
         target = dict(rows[-1])
-        target["four_bucket_check_pass"] = False
-        target["four_bucket_diff_usd"] = -12.34
+        target["four_bucket_arithmetic_check_pass"] = False
+        target["four_bucket_arithmetic_diff_usd"] = -12.34
         rows[-1] = target
         label_holder["label"] = f"{target['statement_date']}/{target['period']}"
         return rows
@@ -1261,13 +1359,13 @@ def case_build_stops_on_a_period_that_fails_the_four_bucket_check():
         except SystemExit as e:
             assert label_holder["label"] in str(e), str(e)
         else:
-            raise AssertionError("expected SystemExit on a failed four-bucket check")
+            raise AssertionError("expected SystemExit on a failed four-bucket arithmetic check")
     finally:
         irr.classify_periods = real_classify_periods
     after = irr.OUT.read_bytes() if irr.OUT.exists() else None
     assert after == before, "the artifact changed despite build() raising"
-    return (f"a poisoned four_bucket_check_pass=False on {label_holder['label']} "
-           "stops main() with SystemExit naming that period")
+    return (f"a poisoned four_bucket_arithmetic_check_pass=False on "
+           f"{label_holder['label']} stops main() with SystemExit naming that period")
 
 
 @case
@@ -1278,16 +1376,17 @@ def case_build_stops_on_a_cca_period_with_a_generation_credit_mismatch():
     computed and stored per period specifically to prove that -- but nothing
     ever CHECKED it before build() returned, the same "computed a check,
     never asked it anything" gap the FIRST adversarial review already fixed
-    for netted_energy_cross_check_pass and four_bucket_check_pass. If the
-    generation-credit regex ever silently stopped matching a real credit
-    line (a bill template change, a corrupted PDF, a future statement with
-    different wording), gen_credit would fall back to a 0.0 default,
+    for netted_energy_cross_check_pass and four_bucket_arithmetic_check_pass.
+    If the generation-credit regex ever silently stopped matching a real
+    credit line (a bill template change, a corrupted PDF, a future statement
+    with different wording), gen_credit would fall back to a 0.0 default,
     cancel would come out nonzero, and -- before this fix -- nothing would
     catch it.
 
     Poison one real CCA period's generation_credit_cancel_pass/_usd (same
-    technique as case_build_stops_on_a_period_that_fails_the_four_bucket_
-    check) and prove build()/main() now refuses, naming both the period and
+    technique as
+    case_build_stops_on_a_period_that_fails_the_four_bucket_arithmetic_check)
+    and prove build()/main() now refuses, naming both the period and
     the cancellation residual, with the committed artifact left untouched."""
     _require_corpus()
     real_classify_periods = irr.classify_periods
