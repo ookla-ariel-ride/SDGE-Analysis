@@ -114,11 +114,15 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 ## Grid & markets
 
+**Average emissions rate** — The grid-wide average kg CO₂ per MWh generated at a given time, computed from every generation source dispatched in that period — what `carbon_fullyear.py` actually computes from CAISO's public hourly CO₂-by-source and demand data. It answers "how clean is the grid mix right now," not "what happens if I add or remove one more kWh of demand" — that second question needs the marginal rate below. [CAISO emissions](https://www.caiso.com/todays-outlook/emissions)
+
 **CAISO (California Independent System Operator)** — The nonprofit that runs California's high-voltage grid and wholesale electricity market, and publishes real-time data on demand, supply, and emissions. This report's grid-carbon numbers come from its public "Today's Outlook" data. [CAISO Today's Outlook](https://www.caiso.com/todays-outlook)
 
 **Duck curve** — The shape of California's daily grid demand after subtracting solar: a midday belly (lots of sun) and a steep evening neck (sun sets while demand peaks). It explains why midday power is cheap and clean while 4–9pm is expensive. [DOE: confronting the duck curve](https://www.energy.gov/eere/articles/confronting-duck-curve-how-address-over-generation-solar-energy)
 
 **Grid carbon intensity** — How much CO₂ is emitted per unit of grid electricity (kg CO₂/MWh), which varies by hour. Measured from CAISO data, midday grid power here is about 2.2× cleaner than overnight power. [CAISO emissions](https://www.caiso.com/todays-outlook/emissions)
+
+**Marginal emissions rate** — The emissions rate of the specific generating resource that would ramp up or down to meet one more (or one less) kWh of demand at a given moment — usually whichever fuel sits at the margin, often natural gas even in hours when the average mix looks clean (midday, when solar supplies most average generation but a load spike gets met by a gas peaker). This report does not compute a marginal rate: CAISO's public "Today's Outlook" history endpoints — the only source `carbon_fullyear.py` fetches (`carbon_dispatch_tradeoff.py` only reads its already-committed output, `data/caiso_hourly_intensity.csv`) — don't publish one. A marginal accounting would likely show the day/night carbon gap this report measures as even larger, not smaller, since gas is disproportionately the marginal resource at exactly the hours (overnight) where this report already reports the dirtiest average intensity. [WattTime: what is marginal emissions](https://www.watttime.org/aer/what-is-marginal-emissions/)
 
 **PSPS (Public Safety Power Shutoff)** — A deliberate, pre-announced utility shutoff during dangerous fire weather, concentrated in high fire-threat districts. Coastal urban circuits like this home's sit outside those tiers — the December 2024 PSPS added roughly zero coastal outage minutes — which is why this report prices resilience low here. [CPUC: PSPS](https://www.cpuc.ca.gov/psps/)
 

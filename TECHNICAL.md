@@ -621,7 +621,7 @@ scenario-a value as of that run; the current committed `behavior_rebuild.json` s
 $1,220.85); `caveats` (4 sample days, not 365;
 grid-average not marginal intensity; displacement assumption for exports).
 
-**Status.** Superseded as the report's §13 carbon basis by the 28-day sampling in
+**Status.** Superseded as the report's §13 carbon basis by the 364/365-day full year in
 `carbon_fullyear.py` (§3.15); this 4-day study remains the workpaper and supplies the four
 legacy seasonal days that `carbon_fullyear.py` reconstructs from `carbon_results.json`.
 
@@ -854,16 +854,31 @@ exposure) carry **estimated** pills in the report; artifact-derived ones carry
 **modeled**/**measured** per source. The report's "What to do Monday" appendix is
 **content-only** — it cites §5/§6/§9/§13 figures and introduces no new artifacts.
 
-### 3.15 `analysis/carbon_fullyear.py` — expanded CAISO carbon sampling (`data/carbon_fullyear_results.json`)
+### 3.15 `analysis/carbon_fullyear.py` — full-year CAISO carbon sampling (`data/carbon_fullyear_results.json`)
 
-Upgrades the §13 carbon workup from 4 seasonal days to **28 covered days** (~2 per calendar
-month across the Jul 2025–Jul 2026 window, including the original 4 seasonal days from
-`carbon_results.json`). Per covered day: hourly kg CO₂/MWh = 1000 × mean(total CO₂ mT/h,
-all sources incl. imports) ÷ mean(CAISO demand MW) from the Today's Outlook history CSVs.
-The **337 uncovered days are interpolated with month-hour means** of covered days in the
-same calendar month, then the per-date-per-hour intensity table
+Upgrades the §13 carbon workup from 4 seasonal days (and this issue's own prior 28-day
+sample) to the **full analysis year**: all 365 days from 2025-07-24 to 2026-07-23 were
+fetched individually from CAISO's public per-day history endpoints —
+`https://www.caiso.com/outlook/history/YYYYMMDD/co2.csv` (5-min CO₂ by source, mT/h) and
+`.../demand.csv` (5-min CAISO demand, MW) — by direct HTTP fetch; no proxy or allowlist
+barrier was encountered fetching a full year in this environment. 364 of the 365 requests
+came back usable and are cached individually in `private/1-raw-data/caiso_raw/`
+(gitignored). Per covered day: hourly kg CO₂/MWh = 1000 × mean(total CO₂ mT/h, all sources
+incl. imports) ÷ mean(CAISO demand MW). The one uncovered day is interpolated with that
+month's hour-of-day mean of the covered days, then the per-date-per-hour intensity table
 (`data/caiso_hourly_intensity.csv`, committed) is applied to the household's 15-minute
 import/export data by date and hour.
+
+**The one gap is a finding, not a fetch failure.** 2026-03-08 (the spring-forward DST date)
+carries a row labeled 02:00 in CAISO's own raw CO₂ and demand files, but every 5-minute
+value in that row is genuinely blank in both files — confirmed by inspecting the raw files
+directly, not assumed. The script's existing all-24-hours validity check correctly refuses
+to trust a day it cannot fully verify, so it drops the whole date rather than accepting
+twenty-three good hours beside one bad one, and 2026-03-08 falls back to March's month-hour
+mean like any other uncovered day. The fall-back date, 2025-11-02, needed no such fallback:
+CAISO publishes a flat 24-hour grid for it, so the household's two real 1am quarter-hour
+blocks both match against CAISO's single reported 1am value — an approximation, stated as
+one, not a second gap.
 
 **Intensity-source resolution order (fail-closed, atomic).** The script resolves its
 intensity input in this order: (1) the raw per-day CAISO cache
@@ -878,16 +893,33 @@ than silently rebuilding a degraded artifact; a truncated/empty aggregate CSV al
 **Atomic dual-write:** all outputs are validated first, then the CSV and JSON are written
 to temp files and `os.replace`d together — a failed run changes nothing on disk. All paths
 resolve against the repo root (found by walking up from the CWD, then from the script), so
-the `private/verify` sandbox pattern needs no path edits. **Label rule:** results are tagged
-`estimated · 28 days sampled` — never "measured" — because 28 of 365 days are observed and
-the rest interpolated (the script's `COVERED_LABEL_MIN` only permits a `measured` label at
-≥300 covered days). Headline outputs: import footprint 5,379.4 kg/yr; export
-displacement 882.9 kg/yr (−28% vs the 4-day estimate — fuller sampling catches sunny spring
-middays where CAISO's import-inclusive accounting drives intensity to ~0); mistimed-EV
-shift +254.0 kg/yr (to overnight) vs −188.2 (to midday), gap 442.2 kg/yr; window means
-271.2 / 103.9 / 156.5 kg/MWh (overnight 00–06 / midday 10–14 / on-peak 16–21). Grid-average
-(not marginal) intensity; the dollar side of EV retiming is unchanged (both destination
-windows are super-off-peak on EV-TOU-5).
+the `private/verify` sandbox pattern needs no path edits.
+
+**One coverage number, not two.** `COVERAGE_MIN = 350` (of 365) is now the single constant
+that both gates the run (fewer than 350 covered days is a hard abort, even on a first-ever
+run with no prior artifact to regress against — the missing dates are named individually,
+never just a count) and decides the `measured` label (≥350 covered days). Earlier drafts of
+this script carried two different constants for those two decisions (a soft 300-day label
+threshold, and before that no hard floor at all) with no stated reason for the gap; there is
+now exactly one number, and it means both things at once. At 364/365 covered, this run
+clears it by 14 days and is labeled `measured`.
+
+**Headline outputs** (`data/carbon_fullyear_results.json`): import footprint 5,402.4 kg/yr;
+export displacement 915.1 kg/yr; mistimed-EV shift +232.8 kg/yr (to overnight) vs −182.8
+(to midday), gap 415.6 kg/yr; window means 270.1 / 109.1 / 158.4 kg/MWh (overnight 00–06 /
+midday 10–14 / on-peak 16–21). Grid-average (not marginal) intensity; the dollar side of EV
+retiming is unchanged (both destination windows are super-off-peak on EV-TOU-5).
+
+**AC3 reproduction check (`test_carbon_fullyear.py::case_ac3_28day_reproduction_within_2pct`).**
+Before the 28-day intensity source was retired in favor of the full 365-day raw cache, the
+new source had to be shown to agree with the old one — CLAUDE.md's evidence-based principle
+(0) demands the measured gap, not an asserted boolean. For each of the 28 dates the old,
+committed 28-day `data/caiso_hourly_intensity.csv` covered, the test recomputes hourly
+kg/MWh from the fresh 365-day raw cache and compares hour-by-hour against the old snapshot
+(embedded in the test so the check survives the file's shape changing to 365 days). Result:
+overall mean absolute relative difference **0.039%**, worst date 2026-05-08 at **0.137%** —
+both far inside the test's 2% tolerance, confirming the new source before the old one was
+retired.
 
 ### 3.16 `analysis/battery_plan_matrix.py` — battery × plan matrix (`data/battery_plan_matrix.json`)
 
@@ -909,6 +941,120 @@ on EV-TOU-5, so it strengthens (not changes) the plan answer. The artifact also 
 table-rate column are the rate basis (published tables vs bill-derived) and the holiday
 convention (§6.5). Run from `private/verify` (repo root found by walking up); writes
 `data/battery_plan_matrix.json` atomically.
+
+### 3.17 `analysis/carbon_dispatch_tradeoff.py` — does cost-minimizing dispatch fight carbon-minimizing dispatch? (`data/carbon_dispatch_tradeoff.json`)
+
+§3.15 established that the cheapest grid hours are also the dirtiest. This script asks the
+question that observation implies but §3.13's dispatch comparison never answered: does the
+battery's own cost-minimizing schedule make the household's grid CO₂ worse than not having a
+battery at all, and what would fixing that cost in dollars?
+
+**Three runs, one battery model.** All three share the exact constants `battery_dispatch_
+policies.py` already uses (13.5 kWh usable, 11.5 kW, 90% round-trip efficiency), imported
+rather than re-declared, and the same billing engine (`rates.bill_nem` via `battery_
+dispatch_policies.billed()`); the charge/discharge decision differs between them by design,
+but that decision difference also changes how much load each policy serves (Run A cycles
+4,968 kWh/yr against Run B's 2,425), so this does not isolate a pure objective effect at
+matched utilization — see the throughput caveat below.
+
+- **Run A (cost-minimizing).** Calls `battery_dispatch_policies.run_batt(..., "greedy")`
+  directly, unmodified — the same policy `data/battery_dispatch_policies.json`'s published
+  `pw3.greedy` figure comes from. A cross-check inside the artifact asserts Run A's computed
+  saving against that committed figure within $5, so the two are guaranteed to agree rather
+  than coincidentally match.
+- **Run B (carbon-minimizing, new).** Mirrors Run A's control structure with the TOU-period
+  decision replaced by an intensity-based one: discharge when the measured per-interval grid
+  intensity is above a threshold ("dirty"), grid-charge only when below it ("clean"). One
+  deliberate narrowing, stated rather than left implicit: Run A's actual discharge window is
+  the OR of an unconditional on-peak carve-out and a non-super-off-peak/low-kW clause: a
+  binary clean/dirty split has no analogue for the unconditional carve-out, so Run B omits it.
+  Unlike Run A, Run B also declines to store solar surplus during a dirty hour rather than
+  exporting it (an adversarial review finding): storing it instead of exporting forgoes that
+  hour's own (large, dirty-hour) export credit for an uncertain future discharge credit, and
+  after round-trip losses that trade is not guaranteed to pay off even though the later
+  discharge is also, separately, classified dirty — measured directly on the real committed
+  year, 14.6% of solar-surplus intervals are themselves above the charge threshold, not a rare
+  edge case. Run A has no analogue to this risk (price has no equivalent "forgone credit"
+  failure mode). Run B also uses a SEPARATE, higher threshold for discharge than for charge
+  (a second adversarial review finding, the same underlying issue in a different guise):
+  charging c kWh delivers only c·ETA² (~0.9, the round-trip efficiency) on later discharge, so
+  a single shared threshold lets a near-threshold pair straddle the break-even line — e.g.
+  charging at 184 kg/MWh and discharging at 186 with a 185 threshold nets MORE emissions
+  (186 < 184/0.9 = 204.4), even though each side individually passed its own dirty/clean test.
+  The discharge threshold (charge threshold ÷ ETA² = 185.0 ÷ 0.9 = 205.6 kg/MWh here)
+  guarantees every allowed charge/discharge combination is net non-negative for carbon,
+  regardless of which specific charged kWh a pooled (non-FIFO) state of charge later delivers
+  at which specific discharge — proved directly from the arithmetic in
+  `test_carbon_dispatch_tradeoff.py`, not merely asserted.
+- **Run C (union/efficient, new).** Discharges whenever either Run A's or Run B's condition
+  holds; grid-charges only when both cheap AND clean hold. This isolates the genuinely
+  conflicting hours (cheap-but-dirty, clean-but-expensive) from the hours both objectives
+  would serve anyway.
+
+**Run B's charge threshold is derived, not invented.** Its charge window is sized to the same
+fraction of the year as Run A's non-super-off-peak discharge window, measured directly from
+this household's own TOU assignment (`rates.period_at` via `behavior_rebuild.load()`) rather
+than hardcoded — so the comparison isolates *which* hours get served, not how many. Charge
+threshold = the intensity value at that fraction's quantile of the year's per-interval
+intensity array: 185.0 kg/MWh. Target clean/dirty split 46.74%/53.26%; achieved 46.75%/53.25%
+(ties at the underlying data's 0.1 kg/MWh resolution keep the achieved split close to, not
+exactly on, the target). The discharge threshold (185.0 ÷ 0.9 = 205.6 kg/MWh) is derived from
+that charge threshold, not independently fit, so it carries no separate free parameter.
+
+**Net, not gross, CO₂.** The three policies consume different amounts of exportable solar via
+battery charging (Run A's own solar-charging displaces 829.4 kg/yr of exports, Run C's only
+623.7), so ranking policies on gross import CO₂ alone silently drops that difference and can
+invert which policy is actually cleaner for the atmosphere — an adversarial review caught
+exactly this: the gross-import figures published in an earlier draft ranked Run C as cleaner
+than Run B (4,826.4 vs 4,917.9 kg), but net accounting (import minus that policy's own
+export-avoided) reverses it (Run B is actually cleaner). Every comparison below is therefore
+NET; gross import and gross export-avoided are still reported per policy in the artifact as a
+breakdown, never discarded.
+
+**Results** (all figures against the no-battery baseline: $4,904.13/yr, 4,487.2 kg net
+CO₂/yr): Run A saves $2,328.66/yr but *raises* net CO₂ by 413.9 kg/yr above the baseline —
+grid-charging during super-off-peak means charging during the year's dirtiest hours (270.1
+kg/MWh overnight vs. 158.4 on-peak, §3.15's own window means). Run B avoids 221.0 kg/yr net
+but keeps only $34.19 of the saving. Run C recovers $1,842.66/yr (79% of Run A's saving)
+while still avoiding 145.4 kg/yr net — 75.6 kg/yr less than Run B, a real but small carbon
+cost for capturing roughly 54 times more of the dollar saving. Run C is still judged a
+genuinely distinct third outcome (not merely a blend reducible to A or B) by requiring BOTH
+its $ and its CO₂ to be within 2% of a policy's own figures to count as "not meaningfully
+different": its bill sits 37.1% from Run B's, so the test fails against B even though its net
+CO₂ now sits within 1.8% of Run B's own.
+
+**Tradeoff figures.** Cost penalty of the clean policy (Run B's bill minus Run A's bill):
+$2,294.47/yr. CO₂ penalty of the cheap policy (Run A's net CO₂ minus Run B's net CO₂): 634.9
+kg/yr. Both are also expressed per kWh cycled (62.1¢/kWh and 0.172 kg/kWh respectively),
+normalized by the **mean** of Run A's and Run B's own kWh cycled-through figures — the two
+runs are different dispatch schedules with different total throughput, so no single run's
+throughput is uniquely "the" right denominator; the mean is used and stated explicitly rather
+than silently picking one side. Because Run A and Run B are not throughput-matched (see
+above), these $/kg figures describe these two specific heuristic policies as implemented, not
+a bound on what a jointly re-optimized, throughput-matched carbon-vs-cost tradeoff would show.
+
+**Average vs. marginal basis (GLOSSARY: average vs. marginal emissions rate).** Every CO₂
+figure here, like §3.15's, values energy at grid-average intensity — the only figure CAISO's
+public history endpoints support; they do not publish a marginal rate or per-hour
+marginal-fuel identification. Direction, stated rather than quantified: marginal generation
+is disproportionately gas overnight (where average intensity is already gas-heavy, so the
+marginal-vs-average gap there may be small) and increasingly displaces cleaner marginal
+resources at solar-heavy midday — so a marginal accounting would likely show an even larger
+clean-midday-vs-dirty-overnight gap than the average-based figures above already show, the
+same directional caveat §3.15 states for its own figures. Exports (including the export
+reduction each policy's own solar-charging causes) are valued at the same average intensity
+at the export hour, the identical "avoided emissions" convention §3.15 uses for its own
+export-avoided figure.
+
+**Inputs and provenance.** Intensity: the committed `data/caiso_hourly_intensity.csv`
+(364/365 real days), read via `carbon_fullyear.build_covered_from_committed_csv()` (imported,
+not re-implemented); the raw CAISO day-cache is not touched by this script. The one uncovered
+day (2026-03-08, §3.15) is filled by that month's hour-of-day mean, mirroring `carbon_
+fullyear.py`'s own construction (not exposed there as a standalone function, so mirrored here
+rather than imported — the underlying CSV reader is shared). Household side: private Green
+Button 15-min data via `behavior_rebuild.load()`. Run from `private/verify` with `usage.csv`,
+`behavior_rebuild.py`, `battery_dispatch_policies.py`, `carbon_fullyear.py` and `rates.py`
+beside it; writes `data/carbon_dispatch_tradeoff.json`.
 
 ## 4. Battery simulation methodology
 
@@ -960,7 +1106,7 @@ Mapping of every canvas id → `D` arrays → producing computation:
 | `battery` | line, 3 series | `bat_now_S`, `bat_pw3_S`, `bat_pw3x_S` (24 each) | summer average grid-import kW by hour: today, with 1× PW3, with PW3+Expansion | `bat_now_S` is `hourlyS_imp` rounded; the two battery series are the **§3.13 price-aware dispatch** applied to summer intervals and re-averaged by hour — committed as `data/battery_dispatch_policies.json → pw3/pw3x.greedy_profile_S` (on-peak imports fall 4,022 → 870 kWh/yr with PW3, → 329 with the expansion) |
 | `monthly` | bar ×2 + line | `mLabels` (13), `mImp`, `mExp` (kWh), `mCost` ($) | calendar months Jul 2025*–Jul 2026* (* = partial) | `mImp`/`mExp` = `monthly.csv` (from `analyze.py`), rounded; `mCost` = `report_data.json → monthly.cost`, the canonical per-month netted energy cost (bill-derived rates; excludes the non-bypassable charges and the daily BSC) |
 | `periods` | horizontal bar ×2 | inline literals: kWh `[14856, 4498, 4022]`, $ `[1875, 2316, 2998]` | annual import kWh and gross import cost (imports × all-in rate, before export credits) for super-off-peak / off-peak / on-peak | `report_data.json → periods_chart`, produced by `analysis/report_data.py`; the on-peak $2,998 matches `report_data.json → onpeak.import_cost`, and `analysis/test_report_consistency.py` asserts both arrays against the artifact |
-| `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 28 sampled CAISO days + month-hour-mean interpolation; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
+| `carbon` | line, 1 series | `carb` (24) | CAISO grid CO₂ intensity, kg/MWh, annual average by hour of day | `data/carbon_fullyear_results.json → intensity_kg_per_mwh.annual_avg_by_hour` (from `carbon_fullyear.py` §3.15 — 364/365 real CAISO days + one month-hour-mean interpolated day; the original 4-day `carbon_results.json` series from `carbon_timing.py` remains as the §3.10 workpaper) |
 
 Everything else in the report (plan table §3, battery tables §4/§6, package cards §7, deep-dive
 figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`,
@@ -968,7 +1114,7 @@ figures §9, bill audit §10) is static HTML transcribed from `plan_results.csv`
 `backup_endurance.json`, `deep_results.json`,
 `weather_results.json`, and the bill summaries. The extended findings woven into §6
 (VPP/resilience, tornado), §9 (dividend, away-days, supercharge/weekend workups), §10
-(AB 205, gas HDD decomposition), §13 (2039 NBT strategy, 28-day carbon) and the
+(AB 205, gas HDD decomposition), §13 (2039 NBT strategy, full-year carbon) and the
 "What to do Monday" appendix are transcribed the same way from `extended_results.json` and
 `carbon_fullyear_results.json`. After any rerun, update both the `D` block and
 the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §3).
@@ -981,7 +1127,7 @@ the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §
   2025 tariffs), which is noted as non-comparable.
 - **Confidence labels:** inline pills tag claims as `measured` (meters/bills/multi-source),
   `modeled` (validated model at current rates), or `estimated` (rate index, single cleaning
-  event, 28 sampled CAISO days, cited external program terms). §§1–10 are measured/modeled
+  event, cited external program terms). §§1–10 are measured/modeled
   throughout; pills appear in §§11–13 where evidence is thinner, plus on the extended
   findings inside §6 (VPP revenue / resilience value — estimated), §9 (dividend —
   estimated) and §10 (AB 205 — measured), and §14 defines the legend.
