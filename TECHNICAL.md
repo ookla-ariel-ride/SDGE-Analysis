@@ -1056,6 +1056,100 @@ Button 15-min data via `behavior_rebuild.load()`. Run from `private/verify` with
 `behavior_rebuild.py`, `battery_dispatch_policies.py`, `carbon_fullyear.py` and `rates.py`
 beside it; writes `data/carbon_dispatch_tradeoff.json`.
 
+### 3.18 `analysis/nem3_grandfathering.py` — NEM 2.0 grandfathering value + battery-marginal reconciliation (`data/nem3_grandfathering.json`)
+
+**Purpose.** Two related questions, both re-billed on the same measured 15-minute year:
+what is this household's NEM 2.0 grandfathering actually worth against SDG&E's real Net
+Billing Tariff (NBT, "Solar Billing Plan") export pricing (rather than the flat 3–8¢/kWh
+assumption used elsewhere), and — added in a later phase — how does the price-aware
+battery's own marginal value under that same real hourly schedule compare with
+`extended_findings.py`'s existing flat-credit `nbt_2039` figures.
+
+**Rate table (`data/nbt_export_rates_2026.csv`, public).** Built from SDG&E's own published
+MIDAS export-pricing files (`--build-rates`, needs the private raw archive at
+`private/1-raw-data/sdge_nbt_export_rates/`; the normal run needs only the committed CSV).
+Two vintages are priced for TARIFF_YEAR = 2026 only — NBT26 (a 9-year *escalating* rate
+schedule, of which only year 1/2026 is priced here) and NBT00 (no-lock, current-year-only) —
+found to be byte-identical in this one year (see the script's own "GENUINE FINDING" docstring
+note). A Codex review finding, corrected: an earlier version of this note said NBT26 "locks
+this table" flat for 9 years; the raw NBT26 archive actually shows genuinely escalating rates
+year over year (this household's own "Jan Weekend HS0" Generation rate: $0.087115/kWh in 2026,
+$0.090474/kWh in 2027), so NBT26 locks a 9-year *schedule*, not a repeated snapshot — this
+script prices only that schedule's first year, as an apples-to-apples comparison against
+NBT00's own single-year guarantee, not a claim about the full 9-year path. Because both
+vintages' YEAR 1 happens to coincide, the VINTAGE component of the grandfathering-value band
+has zero width for now (`vintage_band_usd_per_yr` in the artifact) — the authoritative
+published band is not zero-width, though; see the generation-component sensitivity below for
+where its actual width comes from (a separate Codex review finding: an earlier version of this
+script scoped the published band to vintage only, silently excluding that real uncertainty).
+
+**Export credit = SDG&E Delivery + Generation + a flat $0.01/kWh CEA "Solar Impact" bonus,
+with the Generation component disclosed as a genuine, unresolved ambiguity (an adversarial
+review finding), not silently assumed.** This household is on a CCA (Clean Energy Alliance),
+and SDG&E's own export-pricing methodology page states its Generation component is
+"applicable only to bundled customers" — not CCA customers. Against that, CEA's own "Solar
+Impact" program page states, unhedged, that its export credit equals "the same export credit
+pricing paid by SDG&E" plus the $0.01/kWh adder, with no component breakdown; no CEA document
+spelling out a separate NBT-specific generation-credit rate was found. The script uses CEA's
+direct statement as the primary assumption (the most specific evidence for what this
+household's account actually receives) but publishes a Delivery-only alternative alongside
+it (`generation_component_sensitivity` in the artifact) so the reader sees the range this
+ambiguity creates: $2,103.58/yr (primary) vs $2,455.64/yr (Delivery-only) — removing the
+Generation credit raises the NBT bill and widens the grandfathering value, so the primary
+figure is the more conservative (lower) of the two. Import side stays gross-billed at
+`rates.allin()` (no monthly netting) — the same assumption `extended_findings.py`'s own
+`bill_flat_export()` already uses for its flat-credit NBT proxy.
+
+**Grandfathering result.** NEM 2.0 modeled bill $4,904.13/yr vs NBT counterfactual
+$7,007.70/yr (both vintages) → **$2,103.58/yr** grandfathering value (computed from the
+full-precision bill figures before rounding either total to display precision — subtracting
+the two rounded totals shown here gives $2,103.57, one cent off; the artifact's own stored
+value, rounded once at the end, is the correct one), kWh-weighted realized
+export credit ~4.7¢/kWh (this household's exports concentrate at midday, exactly where the
+real hourly schedule is cheapest). Same order of magnitude as the retired flat-cent bracket
+in `data/extra_results.json → nbt.gf_value` ($1,772–2,268/yr, issue #34, not touched by this
+script), now a single computed, traceable figure instead of an assumed sensitivity range.
+
+**Battery-marginal reconciliation vs `extended_findings.py`'s `nbt_2039` (issue #9 AC6).**
+`extended_findings.py`'s `nbt_2039` block prices the price-aware battery's marginal bill
+savings (no-battery bill minus with-battery bill, `bp.run_batt(d, imp0, gen0, 13.5,
+"greedy")`) under three FLAT export-credit assumptions: $2,540/yr at 3¢, $2,527/yr at 5¢,
+$2,506/yr at 8¢, against $2,329/yr under NEM 2.0 today. This script adds the same marginal
+priced against the REAL hourly NBT schedule for TARIFF_YEAR = 2026 only (a snapshot, not a
+projection to 2039 or any other future year — a Codex review finding, corrected: an earlier
+version of this section, and of `index.html`, presented this 2026-rate figure under a
+"planning for 2039" framing, which overclaimed precision this script does not have; NBT26's
+own true 9-year schedule escalates, and 2039 is 13 years beyond even that lock period), reusing
+the identical `bp.run_batt` dispatch (so only the export-pricing assumption differs, never the
+physical battery behavior) and billing both the no-battery and with-battery series through
+its own `bill_nbt()`. Result: **$2,521.55/yr** for both vintages (NBT26/NBT00 year-1 figures
+again coincide) — **+$192.55** above the NEM 2.0 figure (confirming the existing nbt_2039
+finding that the battery is worth more once exports price at NBT rather than near-retail), and
+**inside** the existing flat 3–8¢ bracket ($2,506–2,540/yr), landing within $5.45 of the 5¢
+figure specifically (vs −$18.45 from the 3¢ figure and +$15.55 from the 8¢ figure). The
+disagreement is stated explicitly for each reference point in the artifact
+(`battery_marginal_reconciliation_vs_nbt_2039 → disagreement_vs_reference`), not averaged or
+hidden: for this household's measured export shape, the real hourly schedule happens to land
+close to the middle of the flat-cent bracket that was always meant as a placeholder for it, so
+the two methods corroborate rather than contradict each other at today's rates. `extended_
+findings.py` and its `nbt_2039` figures are read-only from this script's perspective
+(`json.load`, never recomputed) — issue #34 owns any future change to that generator.
+
+**Fail-closed design.** `load_rate_table()` and `bill_nbt()` abort (`SystemExit`) on any
+(month, day-type, hour) bucket the household's data touches that the committed rate table
+does not cover, never interpolating or zero-filling. `load_nbt_2039_reference()` similarly
+aborts if `data/extended_results.json` or its `nbt_2039` section (or one of its 3c/5c/8c
+buckets) is missing — a stale or absent reference must not be silently treated as "nothing to
+reconcile against." The CSV and JSON outputs are both written to temp files and `os.replace`d,
+so a partial/failed run changes neither.
+
+**Inputs and provenance.** `usage.csv` (Green Button) via `behavior_rebuild.load()`, the
+committed `data/nbt_export_rates_2026.csv`, `data/electric_bill_summary.csv` (actual-billed
+anchor, context only), `data/extended_results.json` (the `nbt_2039` reference, read-only),
+and the imported `battery_dispatch_policies` module (`bp.run_batt`, not re-implemented). Run
+from `private/verify` with `usage.csv`, `behavior_rebuild.py`, `battery_dispatch_policies.py`
+and `rates.py` beside it; writes `data/nem3_grandfathering.json`.
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py` (REMOVED — superseded by the integrated pipeline),

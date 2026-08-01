@@ -73,6 +73,7 @@ MANIFEST = {
     "tou_audit.py": "generator",
     "service_headroom.py": "generator",
     "irreducible_bill.py": "generator",
+    "nem3_grandfathering.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -107,6 +108,7 @@ OWNS = {
     "tou_spread.py":                [("data", "tou_spread.json")],
     "service_headroom.py":          [("data", "service_headroom.json")],
     "irreducible_bill.py":          [("data", "irreducible_bill.json")],
+    "nem3_grandfathering.py":       [("data", "nem3_grandfathering.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -260,6 +262,13 @@ CI_RUNNABLE = {
     # reads only data/bill_tou_detail.csv and data/battery_dispatch_policies.json,
     # both committed, so it runs anywhere too
     "tou_spread.py",
+    # needs only usage.csv (via behavior_rebuild.load()), the committed PUBLIC
+    # rate table data/nbt_export_rates_2026.csv (exhaustive over all 12 months x
+    # 2 day-types x 24 hours, so any calendar-real synthetic export lands in a
+    # covered bucket), and the committed data/extended_results.json (read-only
+    # reconciliation reference) -- no raw MIDAS archive needed for the normal
+    # run (only --build-rates needs that, and CI never passes that flag)
+    "nem3_grandfathering.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
