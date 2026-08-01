@@ -794,6 +794,19 @@ def case_minimum_bill_provision_never_triggered_in_this_data():
     assert mb["annual_net_generator"] is False
     assert mb["annual_net_kwh_sum"] > 0
     assert mb["provision_triggered_in_this_data"] is False
+    # Finding 2 (issue #7 SECOND adversarial review): this corpus has
+    # exactly ONE complete true-up cycle today, so annual_trigger_years
+    # must carry exactly that one year's full detail (not a bare list of
+    # dates), and most_recent_true_up_year must be that SAME year -- proving
+    # the fix reproduces today's real answer exactly, only changing what
+    # happens once a second complete cycle appears.
+    assert len(mb["annual_trigger_years"]) == 1, mb["annual_trigger_years"]
+    assert mb["annual_trigger_years"][0]["true_up_date"] == "2025-12-26"
+    assert mb["most_recent_true_up_year"] is not None
+    assert mb["most_recent_true_up_year"]["true_up_date"] == "2025-12-26"
+    assert mb["most_recent_true_up_year"] == mb["annual_trigger_years"][0]
+    assert mb["most_recent_true_up_year"]["annual_net_kwh_sum"] == mb["annual_net_kwh_sum"]
+    assert mb["most_recent_true_up_year"]["annual_net_generator"] == mb["annual_net_generator"]
     return (f"{len(window_periods)} rolling-window periods checked, all net_kwh > 0; "
            f"the complete true-up year (2025-12-26) sums to "
            f"{mb['annual_net_kwh_sum']} kWh > 0 -- the provision's own annual "
@@ -900,6 +913,85 @@ def case_true_up_year_annual_sum_differs_from_naive_window_sum():
     return (f"true-up-year annual sum {true_up_sum} kWh differs from the naive "
            f"SUMMARY_STATEMENTS_ELEC window sum {naive_window_sum} kWh -- the fix "
            "changes the actual number, not just its label")
+
+
+@case
+def case_two_complete_true_up_cycles_are_both_reported():
+    """Finding 2 (issue #7 SECOND adversarial review). Today's real corpus
+    has exactly one complete true-up cycle, so the retired
+    'chosen_years[0] if len(chosen_years) == 1 else None' collapse happened
+    to work -- but the moment a SECOND complete cycle appears (a near-future
+    certainty, not a hypothetical, as this repo's own bills accumulate),
+    that collapse would null out annual_trigger_true_up_date/
+    annual_net_kwh_sum/annual_net_generator even though
+    provision_triggered_in_this_data (aggregated via any() over the full
+    chosen-years list) would still report a real answer.
+
+    Constructs a SYNTHETIC two-complete-cycle scenario directly (no PDF, no
+    private archive needed -- group_periods_by_true_up_year() and
+    _select_true_up_years() are both pure functions over plain dicts) and
+    proves: both years are reported in full (nothing collapsed to a single
+    nullable slot), neither year's detail is null, and
+    most_recent_true_up_year correctly picks the LATER of the two."""
+    rows = [
+        # Older complete cycle: single period spanning all of synthetic
+        # year 2097 (365 days, not a leap year), ending exactly on its own
+        # true-up date -- net importer (positive net_kwh), not a net
+        # generator.
+        {"statement_date": "2097-12-31", "period": "1/1/97 - 12/31/97",
+         "days": 365, "net_kwh": 500.0},
+        # More recent complete cycle: single period spanning all of
+        # synthetic year 2098 (also 365 days), ending on ITS OWN true-up
+        # date -- net generator (negative net_kwh sum).
+        {"statement_date": "2098-12-31", "period": "1/1/98 - 12/31/98",
+         "days": 365, "net_kwh": -300.0},
+    ]
+    true_up_date_by_stmt = {
+        "2097-12-31": dt.date(2097, 12, 31),
+        "2098-12-31": dt.date(2098, 12, 31),
+    }
+    true_up_years = irr.group_periods_by_true_up_year(rows, true_up_date_by_stmt)
+    assert len(true_up_years) == 2, true_up_years
+    assert all(g["complete_true_up_cycle"] for g in true_up_years), \
+        f"expected both synthetic years to be complete cycles: {true_up_years}"
+
+    (basis, chosen_years, limitation, most_recent) = irr._select_true_up_years(true_up_years)
+    assert basis == "complete_true_up_cycle", basis
+    assert limitation is None, limitation
+
+    # THE property this finding is about: BOTH years must come back, full
+    # detail, nothing nulled just because there are two of them.
+    assert len(chosen_years) == 2, \
+        f"expected both complete cycles to be chosen, not collapsed: {chosen_years}"
+    by_date = {g["true_up_date"]: g for g in chosen_years}
+    assert set(by_date) == {"2097-12-31", "2098-12-31"}, sorted(by_date)
+    for tud, g in by_date.items():
+        assert g["annual_net_kwh_sum"] is not None, \
+            f"{tud}: annual_net_kwh_sum spuriously null"
+        assert g["annual_net_generator"] is not None, \
+            f"{tud}: annual_net_generator spuriously null"
+    assert _close(by_date["2097-12-31"]["annual_net_kwh_sum"], 500.0)
+    assert by_date["2097-12-31"]["annual_net_generator"] is False
+    assert _close(by_date["2098-12-31"]["annual_net_kwh_sum"], -300.0)
+    assert by_date["2098-12-31"]["annual_net_generator"] is True
+
+    # most_recent_true_up_year must be populated (not None just because
+    # there are two chosen years) and must be the LATER of the two.
+    assert most_recent is not None, \
+        "most_recent_true_up_year came back None despite two chosen years"
+    assert most_recent["true_up_date"] == "2098-12-31", most_recent
+    assert most_recent["annual_net_generator"] is True
+
+    # The aggregate trigger (mirroring what build_minimum_bill_provision()
+    # itself computes) still sees the real answer from BOTH years, exactly
+    # as it did before this fix -- only the singular/collapsed fields were
+    # ever wrong.
+    provision_triggered = any(g["annual_net_generator"] for g in chosen_years)
+    assert provision_triggered is True
+    return (f"two complete true-up cycles (2097-12-31 net_kwh=500, "
+           f"2098-12-31 net_kwh=-300) both reported in full via "
+           f"annual_trigger_years; most_recent_true_up_year picks the later "
+           f"one (2098-12-31) rather than nulling out")
 
 
 # ---------------------------------------------------------------------------
@@ -1088,6 +1180,60 @@ def case_build_stops_on_a_period_that_fails_the_four_bucket_check():
     assert after == before, "the artifact changed despite build() raising"
     return (f"a poisoned four_bucket_check_pass=False on {label_holder['label']} "
            "stops main() with SystemExit naming that period")
+
+
+@case
+def case_build_stops_on_a_cca_period_with_a_generation_credit_mismatch():
+    """Finding 1 (issue #7 SECOND adversarial review). independent_netted_
+    energy()'s docstring calls the CCA generation-charge / generation-credit
+    pair "nets to zero by construction," and generation_credit_cancel_usd was
+    computed and stored per period specifically to prove that -- but nothing
+    ever CHECKED it before build() returned, the same "computed a check,
+    never asked it anything" gap the FIRST adversarial review already fixed
+    for netted_energy_cross_check_pass and four_bucket_check_pass. If the
+    generation-credit regex ever silently stopped matching a real credit
+    line (a bill template change, a corrupted PDF, a future statement with
+    different wording), gen_credit would fall back to a 0.0 default,
+    cancel would come out nonzero, and -- before this fix -- nothing would
+    catch it.
+
+    Poison one real CCA period's generation_credit_cancel_pass/_usd (same
+    technique as case_build_stops_on_a_period_that_fails_the_four_bucket_
+    check) and prove build()/main() now refuses, naming both the period and
+    the cancellation residual, with the committed artifact left untouched."""
+    _require_corpus()
+    real_classify_periods = irr.classify_periods
+    label_holder = {}
+
+    def poisoned(periods):
+        rows = real_classify_periods(periods)
+        cca_idx = next(i for i, r in enumerate(rows) if r["generation_provider"] == "CCA")
+        target = dict(rows[cca_idx])
+        target["generation_credit_cancel_usd"] = 12.34
+        target["generation_credit_cancel_pass"] = False
+        rows[cca_idx] = target
+        label_holder["label"] = f"{target['statement_date']}/{target['period']}"
+        return rows
+
+    irr.classify_periods = poisoned
+    before = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    try:
+        try:
+            irr.main()
+        except SystemExit as e:
+            msg = str(e)
+            assert label_holder["label"] in msg, msg
+            assert "12.34" in msg, msg
+        else:
+            raise AssertionError(
+                "expected SystemExit on a failed generation-credit cancellation")
+    finally:
+        irr.classify_periods = real_classify_periods
+    after = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    assert after == before, "the artifact changed despite build() raising"
+    return (f"a poisoned generation_credit_cancel_pass=False (residual $12.34) on "
+           f"{label_holder['label']} stops main() with SystemExit naming both the "
+           "period and the residual, and the committed artifact is untouched")
 
 
 @case

@@ -467,6 +467,19 @@ def classify_periods(periods):
             "four_bucket_diff_usd": four_bucket_diff,
             "four_bucket_check_pass": abs(four_bucket_diff) <= RECON_TOLERANCE_USD,
             "generation_credit_cancel_usd": cancel,
+            # Finding 1 (issue #7 SECOND adversarial review, this pass): this
+            # value used to be computed and stored but never gated on --
+            # independent_netted_energy()'s docstring calls the CCA
+            # generation/credit pair "nets to zero by construction," but
+            # nothing ever checked that the printed pair actually DID cancel
+            # on this period. Checked here, uniformly, on EVERY period (not
+            # just CCA ones): on a bundled (non-CCA) period, cancel is
+            # hardcoded to 0.0 above (there is no credit pair to cancel
+            # there), so the check is trivially satisfied today -- but
+            # checking it uniformly, rather than carving out a CCA-only
+            # exemption, means a future change to that hardcoding would still
+            # be caught by the same gate instead of needing a new one.
+            "generation_credit_cancel_pass": abs(cancel) <= RECON_TOLERANCE_USD,
             "fixed_charge_kind": ("monthly_service_fee"
                                  if p["monthly_service_fee"] is not None
                                  else "base_services_charge"),
@@ -986,6 +999,67 @@ def group_periods_by_true_up_year(rows, true_up_date_by_stmt):
     return out
 
 
+def _select_true_up_years(true_up_years):
+    """Finding 2 (issue #7 SECOND adversarial review, this pass). Given the
+    true-up-year groups group_periods_by_true_up_year() returns, decide which
+    ones the annual minimum-bill trigger is actually evaluated against
+    (chosen_years), on what basis (annual_trigger_basis /
+    annual_trigger_limitation), and the most recent one of those
+    (most_recent_year).
+
+    Pulled out of build_minimum_bill_provision() as its own pure function --
+    no PDF reads, no statement text -- specifically so it is unit-testable
+    against a synthetic multi-complete-year corpus without needing the
+    private bill-PDF archive (see test_irreducible_bill.py's
+    case_two_complete_true_up_cycles_are_both_reported).
+
+    THE BUG THIS FIXES: the retired call site picked
+    'chosen_years[0] if len(chosen_years) == 1 else None' -- correct only
+    because this household's corpus today has exactly one complete true-up
+    cycle. The moment a second complete cycle appears (which will happen
+    naturally as more billing data accumulates -- not a hypothetical edge
+    case), that collapsed to None and the caller's three singular fields
+    (annual_trigger_true_up_date / annual_net_kwh_sum / annual_net_generator)
+    went null, even though annual_trigger_basis would still correctly say
+    'complete_true_up_cycle' and provision_triggered_in_this_data (computed
+    separately, via any() over the FULL chosen_years list) would still report
+    a real, aggregated answer -- an internally inconsistent artifact.
+
+    FIX: most_recent_year is always populated whenever chosen_years is
+    non-empty (picked by true_up_date, which sorts correctly as an ISO
+    string), never nulled out just because there happen to be two or more
+    chosen years. The caller keeps reporting the FULL chosen_years list
+    (every year's own detail, not just one) as the primary structure, and
+    uses most_recent_year only for the backward-compatible singular
+    fields."""
+    complete_years = [g for g in true_up_years if g["complete_true_up_cycle"]]
+
+    if complete_years:
+        annual_trigger_basis = "complete_true_up_cycle"
+        annual_trigger_limitation = None
+        chosen_years = complete_years
+    elif true_up_years:
+        annual_trigger_basis = "closest_available_approximation"
+        chosen_years = [max(true_up_years, key=lambda g: g["total_days"])]
+        annual_trigger_limitation = (
+            "no true-up year in this corpus is fully covered by a "
+            "contiguous run of periods from the day after the prior "
+            "true-up date through a period ending exactly on this one -- "
+            f"reporting the closest available true-up year "
+            f"({chosen_years[0]['true_up_date']}, {chosen_years[0]['total_days']} "
+            "of a real year's days covered) instead, with this limitation "
+            "stated rather than silently treated as a complete year")
+    else:
+        annual_trigger_basis = "no_true_up_date_found"
+        chosen_years = []
+        annual_trigger_limitation = (
+            "no true-up date could be established for any period in this data")
+
+    most_recent_year = (max(chosen_years, key=lambda g: g["true_up_date"])
+                        if chosen_years else None)
+    return annual_trigger_basis, chosen_years, annual_trigger_limitation, most_recent_year
+
+
 def build_minimum_bill_provision(rows, statements):
     """What the tariff/bills say about a minimum-bill provision, and whether
     it was ever actually triggered in this household's own 12-month window.
@@ -1049,7 +1123,16 @@ def build_minimum_bill_provision(rows, statements):
         any_period_net_generator_in_window flag are kept as before --
         useful, explicitly month-level, informational context over the
         rolling billing window -- but they were never the trigger and still
-        are not; only the true-up-year-grouped annual figures are."""
+        are not; only the true-up-year-grouped annual figures are.
+
+        FINDING 2, issue #7 SECOND adversarial review (this pass): the
+        annual_trigger_true_up_date / annual_net_kwh_sum / annual_net_generator
+        fields below are singular by name but must NOT collapse to null just
+        because the corpus completes more than one true-up cycle -- see
+        _select_true_up_years()'s docstring. annual_trigger_years now carries
+        every chosen year's own full detail (the primary structure), and
+        most_recent_true_up_year names, explicitly, which one the singular
+        fields are sourced from."""
     sentence_statements = []
     line_item_statements = []
     for stmt in statements:
@@ -1081,31 +1164,11 @@ def build_minimum_bill_provision(rows, statements):
     # true-up year need not align with that window at all.
     true_up_date_by_stmt = {stmt: statement_true_up_date(stmt) for stmt in statements}
     true_up_years = group_periods_by_true_up_year(rows, true_up_date_by_stmt)
+    (annual_trigger_basis, chosen_years, annual_trigger_limitation,
+     most_recent_year) = _select_true_up_years(true_up_years)
     complete_years = [g for g in true_up_years if g["complete_true_up_cycle"]]
 
-    if complete_years:
-        annual_trigger_basis = "complete_true_up_cycle"
-        annual_trigger_limitation = None
-        chosen_years = complete_years
-    elif true_up_years:
-        annual_trigger_basis = "closest_available_approximation"
-        chosen_years = [max(true_up_years, key=lambda g: g["total_days"])]
-        annual_trigger_limitation = (
-            "no true-up year in this corpus is fully covered by a "
-            "contiguous run of periods from the day after the prior "
-            "true-up date through a period ending exactly on this one -- "
-            f"reporting the closest available true-up year "
-            f"({chosen_years[0]['true_up_date']}, {chosen_years[0]['total_days']} "
-            "of a real year's days covered) instead, with this limitation "
-            "stated rather than silently treated as a complete year")
-    else:
-        annual_trigger_basis = "no_true_up_date_found"
-        chosen_years = []
-        annual_trigger_limitation = (
-            "no true-up date could be established for any period in this data")
-
     provision_triggered_in_this_data = any(g["annual_net_generator"] for g in chosen_years)
-    single_year = chosen_years[0] if len(chosen_years) == 1 else None
 
     return {
         "sentence_found_in_statements": sentence_statements,
@@ -1129,9 +1192,27 @@ def build_minimum_bill_provision(rows, statements):
         "complete_true_up_years": [g["true_up_date"] for g in complete_years],
         "annual_trigger_basis": annual_trigger_basis,
         "annual_trigger_limitation": annual_trigger_limitation,
-        "annual_trigger_true_up_date": single_year["true_up_date"] if single_year else None,
-        "annual_net_kwh_sum": single_year["annual_net_kwh_sum"] if single_year else None,
-        "annual_net_generator": single_year["annual_net_generator"] if single_year else None,
+        # Finding 2 (issue #7 SECOND adversarial review, this pass): report
+        # EVERY chosen year's own full detail here, rather than collapsing to
+        # one nullable "the" year -- see _select_true_up_years()'s docstring
+        # for why collapsing broke the moment a second complete true-up cycle
+        # appears in the corpus. chosen_years is the SAME list
+        # provision_triggered_in_this_data (above) already aggregates over,
+        # so this field can never disagree with that one about how many
+        # years were actually used.
+        "annual_trigger_years": chosen_years,
+        # Always populated whenever chosen_years is non-empty (never null
+        # just because there happen to be two or more) -- the one
+        # explicitly-named "pick one" field a consumer that wants a single
+        # year, rather than the full list, can read.
+        "most_recent_true_up_year": most_recent_year,
+        # Backward-compatible singular fields, kept for existing consumers --
+        # now sourced from most_recent_year (the latest of chosen_years) so
+        # they stay populated even when chosen_years grows past one entry,
+        # instead of nulling out as they did before this fix.
+        "annual_trigger_true_up_date": most_recent_year["true_up_date"] if most_recent_year else None,
+        "annual_net_kwh_sum": most_recent_year["annual_net_kwh_sum"] if most_recent_year else None,
+        "annual_net_generator": most_recent_year["annual_net_generator"] if most_recent_year else None,
         "provision_triggered_in_this_data": provision_triggered_in_this_data,
     }
 
@@ -1254,32 +1335,78 @@ CAVEAT = (
     "annual_trigger_limitation say whether a complete cycle was found. "
     "monthly_net_position_window/any_period_net_generator_in_window remain "
     "separate, informational, month-level detail over the rolling billing "
-    "window -- never the trigger."
+    "window -- never the trigger. A SECOND adversarial review then found "
+    "that annual_trigger_true_up_date/annual_net_kwh_sum/annual_net_generator "
+    "collapsed to null the moment more than one complete true-up cycle was "
+    "chosen -- not a problem in this corpus today (exactly one complete "
+    "cycle), but a near-certain future one as this repo's own bills "
+    "accumulate. Fixed by reporting annual_trigger_years (every chosen "
+    "year's own full detail, never collapsed) as the primary structure, and "
+    "most_recent_true_up_year (always populated whenever any year was "
+    "chosen) as the explicitly-named single-year pick the singular fields "
+    "are sourced from -- so no field reads as null while a sibling field "
+    "reports a real, aggregated answer from the same underlying data. "
+    "generation_credit_cancel_usd is also now gated: it used to be computed "
+    "and stored per period but never checked before build() returned, "
+    "exactly the 'computed a check, never asked it anything' gap the first "
+    "adversarial review already fixed for netted_energy_cross_check_pass "
+    "and four_bucket_check_pass -- generation_credit_cancel_pass closes it, "
+    "checked on every period (trivially satisfied on non-CCA periods, where "
+    "it is hardcoded to 0.0, but checked uniformly rather than exempted)."
 )
 
 
 def _assert_periods_reconcile(rows):
     """Finding 2 (issue #7 adversarial review): classify_periods() computes
     netted_energy_cross_check_pass and four_bucket_check_pass per period but,
-    before this fix, nothing ever CHECKED them before build() returned --
+    before that fix, nothing ever CHECKED them before build() returned --
     main() would write whatever came back, failed reconciliation or not. A
     parser regression, a corrupted CSV row, or a future statement with
     unexpected formatting could produce a period that fails its own
     reconciliation, and the artifact would still be generated and atomically
     replace the committed one, with the failed boolean sitting quietly
-    inside it. Called from build(), before anything downstream is computed
-    or returned, so it cannot be bypassed by calling build() directly."""
-    bad = [r for r in rows
-          if not r["netted_energy_cross_check_pass"] or not r["four_bucket_check_pass"]]
-    if bad:
-        detail = "; ".join(
-            f"{r['statement_date']}/{r['period']} "
-            f"(cross_check_diff=${r['netted_energy_cross_check_diff_usd']:+.2f}, "
-            f"four_bucket_diff=${r['four_bucket_diff_usd']:+.2f})"
-            for r in bad)
-        raise SystemExit(
-            f"{len(bad)} period(s) failed their own reconciliation and cannot be "
-            f"published: {detail}")
+    inside it.
+
+    THREE conditions are checked, not two (Finding 1, issue #7 SECOND
+    adversarial review, this pass): generation_credit_cancel_pass was added
+    alongside netted_energy_cross_check_pass and four_bucket_check_pass, but
+    was never added to THIS gate -- the same "computed a check, never asked
+    it anything" failure the first two conditions were already fixed for.
+    independent_netted_energy()'s docstring calls the CCA generation-charge /
+    generation-credit pair "nets to zero by construction" and uses that as
+    license to exclude both from the independent supply term rather than
+    include-and-subtract them; if the generation-credit regex ever silently
+    stopped matching a real credit line (a bill template change, a corrupted
+    PDF, a future statement with different wording), gen_credit would fall
+    back to lines.get(..., 0.0) = 0.0, the cancellation would come out
+    nonzero, and -- before this fix -- nothing would catch it.
+
+    Called from build(), before anything downstream is computed or returned,
+    so it cannot be bypassed by calling build() directly."""
+    bad_recon = [r for r in rows
+                if not r["netted_energy_cross_check_pass"]
+                or not r["four_bucket_check_pass"]]
+    bad_cancel = [r for r in rows if not r["generation_credit_cancel_pass"]]
+    if bad_recon or bad_cancel:
+        parts = []
+        if bad_recon:
+            parts.append(
+                f"{len(bad_recon)} period(s) failed their own reconciliation: " +
+                "; ".join(
+                    f"{r['statement_date']}/{r['period']} "
+                    f"(cross_check_diff=${r['netted_energy_cross_check_diff_usd']:+.2f}, "
+                    f"four_bucket_diff=${r['four_bucket_diff_usd']:+.2f})"
+                    for r in bad_recon))
+        if bad_cancel:
+            parts.append(
+                f"{len(bad_cancel)} period(s) failed generation-credit "
+                "cancellation (docstring claims this pair nets to zero by "
+                "construction; it did not on this period): " +
+                "; ".join(
+                    f"{r['statement_date']}/{r['period']} "
+                    f"(generation_credit_cancel_usd=${r['generation_credit_cancel_usd']:+.2f})"
+                    for r in bad_cancel))
+        raise SystemExit("; ".join(parts) + " -- cannot publish")
 
 
 def _assert_nbc_gross_check_confirmed(nbc_check):
