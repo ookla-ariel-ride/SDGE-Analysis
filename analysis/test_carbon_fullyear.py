@@ -17,6 +17,7 @@ private-archive-SKIP convention as test_bill_decomposition.py.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_carbon_fullyear.py
 """
+import glob
 import json
 import pathlib
 import sys
@@ -167,10 +168,23 @@ def case_partial_raw_cache_merges_with_a_valid_committed_csv():
         pd.DataFrame(rows, columns=["date", "hour", "kgco2_per_mwh"]).to_csv(
             committed_csv, index=False)
 
-        old_dir, old_csv, old_results = C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON
+        # main() calls behavior_rebuild.load(), whose CSV default is the bare
+        # relative "usage.csv" (the private/verify sandbox convention) -- this
+        # suite runs from the repo root under check_coverage.sh, not from
+        # private/verify, so point it at the real archive by absolute path
+        # (same fix test_carbon_dispatch_tradeoff.py's _load_modules() applies).
+        import behavior_rebuild as br
+        usage_files = sorted(glob.glob(
+            str(C.ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")))
+        if not usage_files:
+            return ("SKIP the merge-vs-shadow check needs the real Green Button "
+                     "archive, which this checkout does not have")
+        old_dir, old_csv, old_results, old_br_csv = (
+            C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV)
         C.CAISO_DIR = cdir
         C.HOURLY_CSV = committed_csv
         C.RESULTS_JSON = pathlib.Path(td) / "results.json"  # no prior baseline
+        br.CSV = usage_files[0]
         try:
             C.main()
             written = json.loads(C.RESULTS_JSON.read_text())
@@ -181,6 +195,7 @@ def case_partial_raw_cache_merges_with_a_valid_committed_csv():
             assert n_cov == len(days), (n_cov, len(days))
         finally:
             C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON = old_dir, old_csv, old_results
+            br.CSV = old_br_csv
     return ("main merges a 1-day raw cache with a fully-covered committed CSV "
             "rather than letting the partial cache shadow it")
 
