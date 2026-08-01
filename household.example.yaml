@@ -17,7 +17,11 @@ household:
   climate_zone: "Coastal"            # read off the DETAILED BILL — never guessed from ZIP
   utility: "SDG&E"                   # SDG&E / PG&E / SCE / other
   cca: "Example Community Energy"    # generation provider + product; null if utility-bundled
-  plan: "EV-TOU-5"                   # current rate plan, from the bill header
+  plan: "EV-TOU-5"                   # current rate plan, from the bill header. The intake
+                                     # field id for this key is `rate_plan`, not `plan` —
+                                     # the mapping is in the cheatsheet's id-to-path
+                                     # override table, which is where a tier-enforcement
+                                     # tool reads it.
   nem_version: "NEM 2.0"             # NEM 1.0 / NEM 2.0 / NBT (Solar Billing Plan)
   pto_date: 2019-01-01               # permission-to-operate date (placeholder)
   has_ev: true                       # cheatsheet has_ev — APPLICABILITY flag, consumed by
@@ -44,14 +48,27 @@ location:
 solar:                               # omit only if you have no solar (has_solar: false)
   kw_dc: 7.50                        # nameplate DC size (registered with the utility)
   module_count: 20                   # modules x watts should equal kw_dc — verify
-  inverter_model: "Example IQ Micro" # microinverter or string-inverter model
-  inverter_count: 20
-  kw_ac: 6.00                        # AC ceiling: inverter count x rating
-  install_invoice_usd: 30000         # total installed price (private-only in the real file)
-  install_paid_date: 2019-01         # month the invoice was paid
-  itc_claimed: null                  # true / false / null; null = not determined — the
-                                     # payback script reports BOTH crossovers (gross and
-                                     # net-of-ITC) as scenarios, so null is fine
+  inverter_model: "Example IQ Micro" # [public-ok] microinverter or string-inverter model
+  inverter_count: 20                 # [public-ok] published with the model as the PV AC
+                                     # ceiling's basis in data/service_headroom.json
+  kw_ac: 6.00                        # [public-ok] AC ceiling: inverter count x per-unit AC
+                                     # rating. REQUIRED by service_headroom.py, which has no
+                                     # default for it — it is the physical bound credited to
+                                     # every hour the production record does not cover.
+  install_invoice_usd: 30000         # [public-ok] total installed price off the install
+                                     # invoice. The invoice DOCUMENT stays in private/ (it
+                                     # carries name, address and account details); the price
+                                     # is published, and data/lifetime_payback.json carries
+                                     # it. See DATA-SOURCES-CHEATSHEET.md §E and
+                                     # TECHNICAL.md §11 for why.
+  install_paid_date: 2019-01         # [public-ok] month the invoice was paid — same
+                                     # year-month as pto_date, which is published to the day
+  itc_claimed: null                  # [private-only] true / false / null; null = not
+                                     # determined — the payback script reports BOTH
+                                     # crossovers (gross and net-of-ITC) as scenarios, so
+                                     # null is fine. A tax fact about the household, and it
+                                     # never needs to reach an artifact: both scenarios are
+                                     # published either way.
 
 vehicles:                            # one entry per EV; [] if none (has_ev: false)
   - make_model: "Example EV Long Range"
@@ -168,6 +185,53 @@ panel:                               # omit only if you don't want a service-hea
     - {device: "EX-2P40",  poles: 2, amps: 40, label: "Range"}
     - {device: "EX-T2020 tandem", poles: 2, amps: [20, 20], label: "Kitchen"}
     - {device: "EX-2P30",  poles: 2, amps: 30, label: "Solar PV (backfed)"}
+  schedule_confidence: "example: devices read directly; two legend entries unpaired"
+                                     # [private-only] how firm the schedule above is: the
+                                     # device markings are read directly, the legend-to-
+                                     # device mapping is inferred from position. A qualifier
+                                     # on a private-only list, and no script reads it — a
+                                     # published caveat about the mapping is derived by
+                                     # service_headroom.py, not quoted from here.
+  tandem_density: "low"              # [public-ok] how heavily the panel already uses
+                                     # twin-density devices. Coarser than the exact
+                                     # twin_density_devices count service_headroom.py
+                                     # derives and publishes from the schedule.
+  no_dryer_or_water_heater_circuit: false
+                                     # [private-only] true where neither appliance has an
+                                     # electric circuit in this panel. Derived from the
+                                     # private legend and read by no script; a committed
+                                     # artifact takes the same fact from appliance_fuels.
+
+monitoring:                          # energy-monitoring feeds beyond the utility meter.
+                                     # [] if you have none. TIERS ARE PER KEY here, as in
+                                     # the panel block: what a feed MEASURES is a product
+                                     # capability and public-ok; what ADDRESSES the account
+                                     # (url, api, owned_by) is private-only, because a
+                                     # monitoring URL usually carries the site id CLAUDE.md
+                                     # §4 keeps out of committed artifacts. Credentials are
+                                     # NEITHER — an API key, password or token is `secret`
+                                     # and belongs only in a gitignored .env.
+  - source: "Example Solar Monitoring"   # [public-ok] product/platform name
+    measures: "gross production; consumption at the mains"
+                                         # [public-ok] which quantity is METERED, not derived
+    solar_cts_fitted: true               # [public-ok] consumption CTs actually installed?
+    resolution: "15MIN live, 15MIN stored"
+                                         # [public-ok] live vs STORED resolution
+    finest_history_interval: "15MIN"     # [public-ok] finest interval HISTORY returns
+    history_depth_verified: "probed back 4 years at daily, 2 years at 15-minute"
+                                         # [public-ok] observed retention, not documented
+    live_since: 2019-01-01               # [public-ok] first date the feed recorded
+    status: "ingested; used for the hourly consumption series"
+                                         # [public-ok] ingestion state + measured capability.
+                                         # No id and no credential in this free text.
+    url: "https://example-monitoring.invalid/systems/000000"
+                                         # [private-only] the site page — the id in the path
+                                         # is the account identifier
+    api: "example_client 1.0 (PyPI); credentials in .env as EXAMPLE_USER/EXAMPLE_PASSWORD"
+                                         # [private-only] access METHOD and the .env variable
+                                         # NAMES. Never the key/token/password itself.
+    owned_by: "../example-poller"        # [private-only] where the polling code lives; null
+                                         # where the feed is read by hand
 
 cleaning_history:                    # PAST panel cleanings only (CLAUDE.md §0: events are
                                      # recorded AFTER they happen — never list a scheduled

@@ -23,7 +23,8 @@ rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
 
 # 1) the test suites, in-process
 for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
-         test_carbon_fullyear test_household test_publish test_service_headroom; do
+         test_carbon_fullyear test_household test_publish test_service_headroom \
+         test_privacy_tiers; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null
   echo "suite  $t"
 done

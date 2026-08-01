@@ -20,8 +20,9 @@ answer `type` (string / number / date / file / bool / list), when it's `required
 `where` to get it (the
 portal walkthrough), and its `privacy` tier — `public-ok` (may appear in the published
 report: system kW, climate zone, plan name, odometer readings), `private-only`
-(street-level details, invoice amounts, billing-account context — lives only in the
-gitignored `private/`), or `secret` (API keys and monitoring tokens). An agent running Phase A of
+(street-level details, account and meter identifiers, monitoring account addresses, the
+statement and invoice DOCUMENTS that carry all of those, billing-account context — lives
+only in the gitignored `private/`), or `secret` (API keys and monitoring tokens). An agent running Phase A of
 `reusable-prompt.md` drives the interview from these field ids, records answers in
 `private/household.yaml` (schema template: `household.example.yaml` at the repo root), and
 logs progress in `private/intake-status.md`. **No `private-only` or `secret` answer may
@@ -31,6 +32,111 @@ not commit messages. Secrets go ONLY into a gitignored `.env` file — never int
 and fail closed without it.
 
 Legend: 📥 = file you download · 🔗 = link to note · ✍️ = value to write down · 🔒 = contains personal info, keep private.
+
+### The `id` → `private/household.yaml` path contract
+
+A field id is the name a tier is attached to; a yaml path is where the answer sits. Anything
+that enforces the tiers has to get from one to the other, and this is the whole of how. The
+steps are tried in order, and the first one that answers wins:
+
+1. **The declared path-less list comes first.** An id listed at the end of this section
+   stores no value in `household.yaml`, and no later step may invent one for it. The order
+   matters: `gas_bill_pdfs` would otherwise derive to `gas.bill_pdfs` at step 3, a key that
+   exists in no household's file.
+2. **Then the override table.** If an id has a row there, that row is its path.
+3. **Otherwise split the id at its first underscore.** Where the leading segment names a
+   top-level block of `household.yaml` — `household`, `location`, `solar`, `charger`,
+   `panel`, `monitoring`, `gas`, `misc` — the path is `<block>.<remainder>`:
+   `panel_busbar_rating_a` → `panel.busbar_rating_a`, `solar_kw_dc` → `solar.kw_dc`,
+   `charger_kw` → `charger.kw`, `gas_therm_allin_usd` → `gas.therm_allin_usd`,
+   `monitoring_url` → `monitoring[].url`.
+4. **Otherwise the id is itself a top-level key**: `vehicles` → `vehicles`,
+   `cleaning_history` → `cleaning_history`.
+5. **Lists.** `path[]` is the list itself; `path[].key` is that key inside every entry. A
+   tier on `monitoring[].url` binds that key in every entry that carries it, including
+   entries added later; entries without the key hold nothing to check. A tier on the list
+   itself (`monitoring_feeds` → `monitoring[]`, `panel_schedule` → `panel.schedule`) binds
+   the container: publishing the whole list publishes its private-only keys with it. A
+   resolver that walks dotted keys through dictionaries alone reaches none of these
+   `path[].key` fields, and skipping them silently is the failure mode this contract names.
+
+**A tier belongs to the field, not to one household's answer.** `monitoring[].url` is
+private-only because a monitoring site URL usually carries the site id that names the
+account. A household whose entry happens to hold a bare dashboard link with no id in it is
+still holding a private-only field.
+
+**The contract.** Any tool that enforces these tiers:
+
+- resolves every id in this file by steps 1–5 and, for each `private-only` and `secret` id,
+  reads the value at that path;
+- **fails loudly** when an id resolves to no path and is not declared path-less below. A tier
+  whose subject cannot be located is a broken rule, and a gate that reports it clean is the
+  exact failure this contract exists to prevent;
+- **separates *checked* from *unchecked*** in what it reports. A path that resolves to a key
+  absent from `private/household.yaml` means the household does not hold that answer, which
+  several blocks here sanction in terms (`panel_main_breaker_position`,
+  `panel_battery_breaker_position` and `panel_meter_socket_continuous_a` all say to leave the
+  key out until someone has looked). That is not a failure and it is not a pass — a gate that
+  prints a clean bill for a field it never had a value for is telling the reader something
+  false;
+- gets no new rows: a field added later SHOULD be given an id of the form `<block>_<key>` so
+  that step 3 resolves it and the table below stops growing.
+
+**What a value scan can see.** Searching committed files for the literal value works where
+the value is distinctive: a coordinate, a catalog number, a dollar amount, a meter class. It
+cannot work for a boolean, a one-word enum, or a short phrase — `panel.tandem_density` holds a
+single word such as `high`, and every artifact in the repo contains that word. Fields in that
+class are held to a
+different rule, which is greppable: **no committed script reads the key** (`hh.get("<path>")`
+/ `HH.get("<path>")`) **and no committed artifact carries a key of that name.** The
+`private-only` fields in this class today are `solar.itc_claimed`,
+`panel.schedule_confidence` and `panel.no_dryer_or_water_heater_circuit`. Reformatting and
+derivation defeat a literal scan too; TECHNICAL.md §11 states those limits in full.
+
+**Override table** — every id whose path steps 2–3 cannot derive:
+
+| field id | `private/household.yaml` path | why the row exists |
+|---|---|---|
+| `climate_zone` | `household.climate_zone` | section-A ids drop the `household.` prefix |
+| `utility` | `household.utility` | same |
+| `cca` | `household.cca` | same |
+| `nem_version` | `household.nem_version` | same |
+| `pto_date` | `household.pto_date` | same |
+| `has_ev` | `household.has_ev` | same |
+| `has_gas` | `household.has_gas` | same |
+| `has_new_load_interest` | `household.has_new_load_interest` | same |
+| `rate_plan` | `household.plan` | the id and the key were named differently; the key is `plan` |
+| `site_latitude` | `location.lat` | the block is `location`, the key is `lat` |
+| `module_count` | `solar.module_count` | section-E ids drop the `solar.` prefix |
+| `inverter_model` | `solar.inverter_model` | same |
+| `install_invoice_usd` | `solar.install_invoice_usd` | same |
+| `install_paid_date` | `solar.install_paid_date` | same |
+| `itc_claimed` | `solar.itc_claimed` | same |
+| `miles_per_year` | `misc.miles_per_year` | the block is `misc` |
+| `supercharge_kwh_yr` | `misc.supercharge_kwh_yr` | same |
+| `monitoring_feeds` | `monitoring[]` | the list itself has no key name of its own, and step 3 would otherwise read `feeds` as a key inside each entry |
+
+**Declared path-less** — ids that store no value in `household.yaml` at all. A tool treats
+these as resolved by declaration, which is a different outcome from failing to resolve:
+
+- **The answer is a document** in gitignored `private/1-raw-data/`: `electric_interval_csv`,
+  `electric_bill_pdfs`, `gas_bill_pdfs`, `gas_interval_csv`, `plan_comparison_capture`,
+  `cca_rate_schedule`, `rate_table_pdfs`, `solar_hourly_consumption_export`,
+  `solar_daily_production_export`, `ev_charge_stats`, `wall_charger_export`.
+- **The answer is a source or a research finding** recorded in the report and its
+  methodology: `tou_windows_source`, `baseline_allowance_source`, `rate_history_source`,
+  `weather_temps_source`, `precip_source`, `grid_co2_source`, `reliability_reports`,
+  `fuel_constants_source`, `battery_price_quotes`, `incentive_status`, `vpp_programs`,
+  `fixed_charge_status`.
+- **Applicability flags answered by the shape of the file**: `has_solar` (the `solar` block
+  is present), `has_battery`, `has_battery_interest`.
+- **Folded into another field, or carried in prose**: `appliance_fuels` (asked at intake,
+  carried in the report's prose and in `gas.therm_allin_usd`'s scope), `metering_config`
+  (recorded per feed as `monitoring[].measures` and `monitoring[].solar_cts_fitted`),
+  `gas_rate_schedule` (the schedule name is read off the gas bill and carried in the report
+  and TECHNICAL.md §9).
+- **Secret, so it is not in this file at all**: `pvoutput_api_key` lives only in a gitignored
+  `.env`.
 
 ---
 
@@ -333,8 +439,28 @@ id: inverter_model
 question: "What inverter(s) — model and count?"
 type: string
 required_if: has_solar
-where: "Enlighten: Devices/Details → inverter model & count; gives the kW AC ceiling (count × per-unit VA) and the clipping analysis its nameplate."
+where: "Enlighten: Devices/Details → inverter model & count; gives the kW AC ceiling (count × per-unit VA) and the clipping analysis its nameplate. The count and the resulting kW AC are separate stored answers — the two blocks below."
 privacy: public-ok
+```
+
+```yaml
+id: solar_inverter_count
+question: "How many inverters (or microinverters) are installed?"
+type: number
+required_if: has_solar
+where: "Enlighten: Devices → the microinverter count (a string system usually has one or two). With the per-unit AC rating it gives the array's AC nameplate, the field below."
+privacy: public-ok
+privacy_note: "Published today: data/service_headroom.json states the PV AC ceiling as '<count> x <model>, <kW> kW AC', and the headroom bound cannot be audited without it. Same class of fact as module_count and solar_kw_dc, both already public-ok."
+```
+
+```yaml
+id: solar_kw_ac
+question: "What is the array's AC nameplate in kW — inverter count × per-unit AC rating?"
+type: number
+required_if: has_solar
+where: "Inverter count × the per-unit continuous AC rating from the inverter datasheet; cross-check against the 'Max System AC Current' figure on the interconnection placard. It is below the kW DC on almost every array, and it is the ceiling the array can physically put onto the service."
+privacy: public-ok
+privacy_note: "analysis/service_headroom.py requires it and has no default for it, and data/service_headroom.json publishes it as the bound credited to every hour the production record does not cover. A nameplate rating, of the same kind as the kW DC already published."
 ```
 
 ```yaml
@@ -360,8 +486,9 @@ id: install_invoice_usd
 question: "What was the total installed price on your solar invoice/contract?"
 type: number
 required_if: has_solar
-where: "Solar install invoice/contract 📥🔒 ✍️ — total installed price $______ — required for the lifetime-payback analysis. The invoice document itself stays in private/."
-privacy: private-only
+where: "Solar install invoice/contract 📥🔒 ✍️ — total installed price $______ — required for the lifetime-payback analysis. The invoice DOCUMENT stays in private/: it carries your name, address and account details. The price read off it does not."
+privacy: public-ok
+privacy_note: "The repo already publishes the array's kW DC, module count, inverter model and count, the PTO date to the day, the climate zone, the rate plan, the NEM vintage, a year of 15-minute metered consumption and twelve months of billed dollars. Against that, an install price is a market fact about a transaction, attached to no name, address, account number, meter number or coordinate. It is also recoverable to within a few dollars from the crossover fractions and cumulative-value series data/lifetime_payback.json publishes, so private-only was a tier the repo was not keeping and could not keep without removing the lifetime-payback audit trail CLAUDE.md §9 requires a script for. TECHNICAL.md §11 records the decision."
 ```
 
 ```yaml
@@ -369,8 +496,9 @@ id: install_paid_date
 question: "When was the invoice paid?"
 type: date
 required_if: has_solar
-where: "Date paid ______ — on the install invoice/contract."
-privacy: private-only
+where: "Date paid ______ — on the install invoice/contract. Month precision is enough; analysis/lifetime_payback.py prints it in its header and computes nothing from it."
+privacy: public-ok
+privacy_note: "Its year-month is the pto_date's year-month, and pto_date is public-ok and published to the day. Holding the paid month private while publishing the interconnection day was an inconsistency rather than a rule."
 ```
 
 ```yaml
@@ -656,6 +784,172 @@ privacy: private-only
 privacy_note: "The strongest private-only field in this section: `device` gives catalog numbers, and `label` and any note transcribe a door legend describing what the inside of one particular house runs. No committed artifact may carry a device string, a label string or per-device detail — only aggregates over the schedule (device count, spaces and pole positions used and free, twin-density count, the branch-OCPD sum and the largest branch OCPD), plus one derived single-device figure: the ampere rating of the branch overcurrent device serving the existing air conditioning, published as `noncoincident_loads.existing_ac_ocpd_a` alongside the count of schedule entries that matched. It is admitted for the same reason the bare service, busbar and backfeed ratings are public-ok — a standard NEC 240.6(A) ampere size shared by millions of dwellings — and it is load-bearing: the NEC 220.60 noncoincident credit bound is 125% of it. The label that selected it, and the words searched for, stay private."
 ```
 
+```yaml
+id: panel_schedule_confidence
+question: "How firm is the schedule you just recorded — which parts are read directly, and which are inferred?"
+type: string
+required_if: has_new_load_interest
+where: "Your own note on the two halves of the schedule: device markings read off each breaker are firm, and the door-legend-to-device mapping is inferred from position. Name the positions you could not pair with a legend entry."
+privacy: private-only
+privacy_note: "A qualifier on the private-only schedule, and meaningless apart from it. Nothing computes from it: where a published aggregate needs a caveat about the mapping, analysis/service_headroom.py derives its own wording from the schedule rather than quoting this text."
+```
+
+```yaml
+id: panel_tandem_density
+question: "How heavily does the panel already use tandem (twin-density) breakers?"
+type: string
+required_if: has_new_load_interest
+where: "Count the twin-density devices as you record the schedule. A panel near its labelled circuit ceiling has less room to consolidate than its free-space count suggests."
+privacy: public-ok
+privacy_note: "An aggregate over the schedule, and a coarser one than the artifact already carries: data/service_headroom.json publishes the exact twin_density_devices count that service_headroom.py derives from the same list. Keeping a summary of a published count private would be a rule the repo is not keeping."
+```
+
+```yaml
+id: panel_no_dryer_or_water_heater_circuit
+question: "Does the panel have no dryer circuit and no water-heater circuit — that is, are both of those appliances non-electric here?"
+type: bool
+required_if: has_new_load_interest
+where: "Read it off the door legend while recording the schedule, then confirm it against appliance_fuels rather than the legend alone: a legend can be years out of date."
+privacy: private-only
+privacy_note: "A claim about what one house's circuit legend does not contain, derived from the private-only schedule and read by no script. The same fact is available publicly from appliance_fuels, which is where a committed artifact takes it from. The rule issue #6 settled admits a schedule-derived value only where it is load-bearing and a standard NEC rating; this is neither."
+```
+
+## E4. Household energy-monitoring feeds ✍️🔒 (optional — a second, independent meter)
+
+A monitoring feed is a second measurement of the same house: a solar platform's production
+and consumption records, a whole-home monitor at the mains, a public PVOutput history. It
+earns its place by being able to contradict the utility meter, which is worth more than
+another model built on the same data. Record every feed that exists, including ones this
+analysis does not read yet — the inventory is what tells a later reader which cross-check was
+available and which was not.
+
+Tiers here are per field, as in E3. What a feed MEASURES and how finely is a property of a
+product, shared by everyone who owns one, and `public-ok`. What ADDRESSES the account — the
+site URL, the access method, the machine that runs the poller — is `private-only`: CLAUDE.md
+§4 names utility, solar and PVOutput account ids as PII, and a monitoring URL is usually
+built around one. Credentials are neither tier: an API key, password, token or session cookie
+is `secret` and belongs ONLY in a gitignored `.env`, never in `household.yaml`.
+
+```yaml
+id: monitoring_feeds
+question: "What energy-monitoring feeds does the household have, beyond the utility meter? One entry per feed. An empty list is a complete answer."
+type: list
+required_if: always
+where: "Your own inventory: the solar monitoring platform (Enlighten, SolarEdge, Tesla, SMA), any whole-home monitor at the mains (Sense, Emporia, IotaWatt), any public feed you publish to (PVOutput). One entry per feed, carrying the keys defined by the blocks below."
+privacy: private-only
+privacy_note: "The container holds the private-only address keys (url, api, owned_by) alongside the public capability keys, so the list as a whole stays in private/. The capability facts are public-ok on their own, one key at a time, as their blocks say."
+```
+
+```yaml
+id: monitoring_source
+question: "For each feed: what is it — the product or platform name?"
+type: string
+required_if: always
+where: "The product's own name (Enphase Enlighten, Sense, Emporia Vue, PVOutput). Answer once per entry in the monitoring list; nothing to answer where the list is empty."
+privacy: public-ok
+privacy_note: "A product name that every installation of it shares; the repo already names the solar monitoring platform throughout TECHNICAL.md §2."
+```
+
+```yaml
+id: monitoring_measures
+question: "For each feed: what does it actually measure — gross production, whole-home load at the mains, per-circuit, or a mix?"
+type: string
+required_if: always
+where: "The device's documentation, checked against what its dashboard shows. Say which quantity is METERED rather than derived: a platform that computes consumption from production plus net metering is not measuring it."
+privacy: public-ok
+privacy_note: "A capability of the product, identical for every unit of it."
+```
+
+```yaml
+id: monitoring_resolution
+question: "For each feed: what time resolution does it record, and does its history keep that resolution?"
+type: string
+required_if: always
+where: "The export or API documentation. Live resolution and STORED resolution differ often — a monitor that samples at 1 Hz may keep only daily totals."
+privacy: public-ok
+privacy_note: "A product capability."
+```
+
+```yaml
+id: monitoring_status
+question: "For each feed: is it ingested into this analysis, and what did probing it show it can and cannot answer?"
+type: string
+required_if: always
+where: "Your own record of what you tested. Write the measured capability rather than the impression: which quantity, over which window, at which interval. This field carries no account identifier and no credential — those have their own keys below."
+privacy: public-ok
+privacy_note: "A finding about the feed's usefulness. Public-ok on the condition stated in `where`: an account id or a credential written into this free text is a private-only or secret value sitting in a public-ok field, which the tier does not sanction."
+```
+
+```yaml
+id: monitoring_solar_cts_fitted
+question: "For each feed: are consumption current transformers actually fitted, or is only production metered?"
+type: bool
+required_if: always
+where: "The platform's device list, or look for the CT clamps in the combiner. It decides whether whole-home load is measured or derived (load = production − exports + imports) — the same question metering_config asks of the solar platform."
+privacy: public-ok
+privacy_note: "A hardware configuration fact of the same kind as metering_config, which is already public-ok and which the load reconstruction cannot be read without."
+```
+
+```yaml
+id: monitoring_live_since
+question: "For each feed: what date did it start recording?"
+type: date
+required_if: always
+where: "The earliest date the platform's own history returns. It bounds every window the feed can support, so record it before planning an analysis around the feed."
+privacy: public-ok
+privacy_note: "A date of the same kind as pto_date, which the report publishes to the day."
+```
+
+```yaml
+id: monitoring_history_depth_verified
+question: "For each feed: how far back did history actually return when you probed it, and at what interval?"
+type: string
+required_if: always
+where: "Probe it — request a window a year older than you expect and see what comes back. Documented retention and observed retention differ, and the observed one is what an analysis can spend."
+privacy: public-ok
+privacy_note: "A measured retention depth. It names a date the feed reaches back to, which says no more about the household than the published PTO date does."
+```
+
+```yaml
+id: monitoring_finest_history_interval
+question: "For each feed: what is the finest interval its HISTORY returns, as opposed to its live view?"
+type: string
+required_if: always
+where: "From the same probe: DAY, HOUR, 15MIN, 5MIN. A monitor that streams at 1 Hz and stores daily totals answers DAY, and that is the answer an analysis has to plan against."
+privacy: public-ok
+privacy_note: "A product capability, and the one that decides whether a feed can cross-check 15-minute meter data at all."
+```
+
+```yaml
+id: monitoring_url
+question: "For each feed: what URL is its dashboard or site page?"
+type: string
+required_if: always
+where: "The address you land on when you open the feed. It stays in private/household.yaml and goes into no committed artifact."
+privacy: private-only
+privacy_note: "A monitoring site URL usually carries the system or site id inside it (Enlighten /systems/<id>, PVOutput ?sid=<id>), which is the 'utility/solar/PVOutput account id' CLAUDE.md §4 keeps out of committed artifacts. The tier follows what the field can hold, so a bare dashboard link with no id in it is private-only too."
+```
+
+```yaml
+id: monitoring_api
+question: "For each feed: how is it read programmatically — which API or client library, and which .env variable names hold its credentials?"
+type: string
+required_if: always
+where: "The platform's API documentation, or the client library you use. Record the ACCESS METHOD and the NAMES of the .env variables. A key, token, password or session cookie written here is a secret in the wrong file — move it to the gitignored .env and leave the name behind."
+privacy: private-only
+privacy_note: "An access path into one household's account. Private-only rather than secret because the field holds the method and the variable names; the values those names stand for are secret and never enter household.yaml."
+```
+
+```yaml
+id: monitoring_owned_by
+question: "For each feed: where does the code that polls it live?"
+type: string
+required_if: always
+where: "The repo or path running the poller, where it is not this one. Null where the feed is read by hand."
+privacy: private-only
+privacy_note: "A filesystem path or repo name on the operator's own machine, which can carry a username or a directory layout. It describes the setup rather than the energy data, and no analysis script reads it."
+```
+
 ## F. Gas usage 📥🔒 (if you have gas)
 
 ```yaml
@@ -781,7 +1075,10 @@ measured cleaning effect, cleaning dates + a multi-year daily production history
 
 ## Privacy reminder 🔒
 Files in **B, D, E, F** (including the install invoice) contain your name, address, and
-account/meter numbers. Keep them in a gitignored `private/` folder. Only de-identified
+account/meter numbers. Keep them in a gitignored `private/` folder. A document's tier and
+the tier of a value read off it are separate questions — the install invoice stays private
+while the price on it is `public-ok`, and the detailed bills stay private while the climate
+zone and rate plan printed on them are published. Only de-identified
 aggregates belong in a public repo. Every intake field above carries a `privacy` tier:
 `private-only` and `secret` answers must NEVER appear in a committed artifact, and
 secrets (the PVOutput API key, any monitoring token) go ONLY into a gitignored `.env` —
