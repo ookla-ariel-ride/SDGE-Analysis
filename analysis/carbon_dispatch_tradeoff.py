@@ -91,7 +91,7 @@ so a marginal-based export credit would likely differ in the same direction.
 NET VS. GROSS CO2 (why this matters here specifically, unlike carbon_fullyear.py's
 single-scenario report): the three policies consume different amounts of
 exportable solar via battery charging, so their export-avoided credits differ
-from each other (Run A 829.4 kg/yr vs Run C's 493.9 on the real committed year --
+from each other (Run A 829.4 kg/yr vs Run C's 623.7 on the real committed year --
 Run C's own battery-charging behavior displaces less would-be-exported solar).
 Ranking policies on GROSS import CO2 alone silently drops that difference and
 can invert which policy is actually cleaner for the atmosphere. Every
@@ -456,7 +456,7 @@ def compute():
         # displaced) is the atmospherically meaningful figure and the one
         # every comparison/ranking below uses. The three policies consume
         # different amounts of exportable solar via battery charging (Run A
-        # 829.4 kg export-avoided vs Run C's 493.9, on the real committed
+        # 829.4 kg export-avoided vs Run C's 623.7, on the real committed
         # year), so ranking on gross import CO2 alone silently drops that
         # difference and can invert which policy is actually cleaner -- a
         # ranking-reversal an adversarial review caught by computing this net
