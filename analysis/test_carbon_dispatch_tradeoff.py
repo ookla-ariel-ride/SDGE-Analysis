@@ -5,21 +5,27 @@ carbon_dispatch_tradeoff.py imports behavior_rebuild.py at module top level --
 the same convention its two sibling generators, battery_dispatch_policies.py
 and carbon_fullyear.py, already use -- and behavior_rebuild.py reads
 private/household.yaml at ITS OWN module top level, failing closed (SystemExit)
-if that file is absent. So carbon_dispatch_tradeoff (and everything upstream of
-it) is imported LAZILY here, inside each case, only after _require_archive()
-has confirmed the private Green Button archive and private/household.yaml both
-exist -- keeping THIS test file importable on a clean checkout with no private/
-at all, the same reason test_irreducible_bill.py defers behavior_rebuild.
+if that file is absent. test_carbon_fullyear.py already solved this for the
+identical problem: point household.PATH at a synthetic, invented household
+BEFORE importing, so the whole chain (behavior_rebuild -> battery_dispatch_
+policies / carbon_fullyear -> carbon_dispatch_tradeoff) imports cleanly on any
+checkout, private/ or not. Applied here too, so all four modules import
+unconditionally at the top of this file rather than per-case.
 
-Every case that needs a real year of dispatch simulation raises SkipCase
-(matching test_irreducible_bill.py's / test_bill_decomposition.py's own
-private-archive-SKIP convention) when that archive is absent; there is no
-synthetic stand-in that would prove anything about the real cross-check
-against battery_dispatch_policies.json, the real TOU split, or the real
-CAISO intensity data. The dispatch-LOGIC cases (EV-spillover exclusion, the
-A/B/C control-flow divergence) use small hand-built synthetic frames instead
-of the real 35,040-row year, but they still need carbon_dispatch_tradeoff
-imported, so they too sit behind the same guard.
+That only fixes IMPORTING the modules, not what each case can prove. Two
+different needs follow from it:
+  * The dispatch-LOGIC cases (EV-spillover exclusion, the A/B/C control-flow
+    divergence, the fail-closed corrupt/insufficient-CSV cases) call pure
+    functions on small hand-built synthetic frames or throwaway temp files --
+    nothing about them depends on the real archive, so they run unconditionally
+    in CI now (previously they were needlessly gated behind the same
+    private-archive check the import problem forced on everything).
+  * Cases that call br.load() for the real 35,040-row year, or need the real
+    cross-check against battery_dispatch_policies.json / the real CAISO
+    intensity data, still call _require_archive() and raise SkipCase (matching
+    test_irreducible_bill.py's / test_bill_decomposition.py's own
+    private-archive-SKIP convention) when that archive is absent -- there is no
+    synthetic stand-in that would prove anything about those.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_carbon_dispatch_tradeoff.py
 """
@@ -33,6 +39,27 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# Same fix as test_carbon_fullyear.py, for the same reason: point the intake
+# loader at a synthetic, invented household before the transitive import of
+# behavior_rebuild fires, so this whole file (and every case in it) imports on
+# a clean checkout with no private/ at all. Values are invented; nothing here
+# depends on them except the cases that explicitly load the real archive below.
+import household as _hh
+_HH_DIR = tempfile.TemporaryDirectory()
+_hh.PATH = pathlib.Path(_HH_DIR.name) / "household.yaml"
+_hh.PATH.write_text(
+    "household:\n  pto_date: 2019-12-01\nlocation:\n  lat: 33.0\n"
+    "solar:\n  install_invoice_usd: 30000\n  install_paid_date: 2019-12-01\n"
+    "charger:\n  kw: 11.5\ncleaning_history: []\n"
+    "gas:\n  therm_allin_usd: 2.0\n"
+    "misc:\n  miles_per_year: 12000\n  supercharge_kwh_yr: 500\n")
+_hh._cache = None
+
+import behavior_rebuild as br
+import battery_dispatch_policies as bp
+import carbon_fullyear as CF
+import carbon_dispatch_tradeoff as CDT
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
@@ -53,6 +80,10 @@ class SkipCase(Exception):
 
 
 def _require_archive():
+    """Only for cases that need the REAL archive (br.load() on the actual
+    35,040-row year, or a cross-check against a committed artifact built from
+    it) -- the module import above already succeeded unconditionally using the
+    synthetic household, so this gates DATA, not importability."""
     files = sorted(glob.glob(USAGE_GLOB))
     if not files or not HOUSEHOLD_YAML.is_file():
         raise SkipCase(f"needs the private archive ({USAGE_GLOB}) and "
@@ -61,17 +92,12 @@ def _require_archive():
 
 
 def _load_modules():
-    """Lazy import, called only after _require_archive() has already
-    succeeded. Points behavior_rebuild.CSV at the real archive file (its
-    default is the bare relative "usage.csv", the private/verify sandbox
-    convention) so this suite runs straight from the repo root with no
-    sandbox copy step."""
+    """Points behavior_rebuild.CSV at the real archive file (its default is
+    the bare relative "usage.csv", the private/verify sandbox convention) so
+    this suite runs straight from the repo root with no sandbox copy step.
+    Raises SkipCase (via _require_archive) if the real archive is absent."""
     usage = _require_archive()
-    import behavior_rebuild as br
     br.CSV = usage
-    import battery_dispatch_policies as bp
-    import carbon_fullyear as CF
-    import carbon_dispatch_tradeoff as CDT
     return br, bp, CF, CDT
 
 
@@ -83,9 +109,9 @@ def _result():
     case still calls _require_archive() itself first via _load_modules(), so
     the memoization never hides a missing-archive skip)."""
     if "result" not in _CACHE:
-        _, _, _, CDT = _load_modules()
-        _CACHE["result"] = CDT.compute()
-        _CACHE["CDT"] = CDT
+        _, _, _, CDT_ = _load_modules()
+        _CACHE["result"] = CDT_.compute()
+        _CACHE["CDT"] = CDT_
     return _CACHE["result"], _CACHE["CDT"]
 
 
@@ -164,8 +190,10 @@ def case_ev_spillover_excluded_in_run_b_the_same_way_as_run_a():
             the documented, deliberate simplification in this module's
             docstring ("Run B" section) captured as an executable assertion,
             not left as an unverified claim.
+    No _load_modules()/_require_archive() call: the module import at the top
+    of this file already succeeded unconditionally (synthetic household), and
+    this case's frame is entirely hand-built, so it needs no real archive.
     """
-    _, _, _, CDT = _load_modules()
     d = pd.DataFrame({
         "p": ["off", "off", "sop", "on"],
         "hour": [7.0, 7.25, 2.0, 17.0],
@@ -208,8 +236,8 @@ def case_run_c_discharges_on_either_condition_and_charges_only_on_both():
     would rather charge for carbon -- a genuinely conflicting hour) must come
     out matching RUN A under the union rule, since disch_win is an OR and
     Run A's on-peak condition alone already satisfies it. row2 (both agree
-    it's a good charging hour) must still charge."""
-    _, _, _, CDT = _load_modules()
+    it's a good charging hour) must still charge. No _load_modules() call
+    needed: hand-built frame, no real archive required."""
     d = pd.DataFrame({
         "p": ["off", "off", "sop", "on"],
         "hour": [7.0, 7.25, 2.0, 17.0],
@@ -281,8 +309,8 @@ def case_energy_conservation_bounds_hold_for_all_three_runs():
 @case
 def case_fails_closed_on_a_corrupt_intensity_csv():
     """A truncated/malformed committed CSV must abort build_intensity_map(),
-    not silently produce a degraded map."""
-    _, _, CF, CDT = _load_modules()
+    not silently produce a degraded map. No real archive needed: this writes
+    its own throwaway CSV."""
     with tempfile.TemporaryDirectory() as td:
         bad = pathlib.Path(td) / "bad.csv"
         pd.DataFrame({"wrong": [1, 2, 3]}).to_csv(bad, index=False)
@@ -302,8 +330,8 @@ def case_fails_closed_on_a_corrupt_intensity_csv():
 def case_fails_closed_on_insufficient_coverage():
     """A committed CSV with real schema but too few covered days (< carbon_
     fullyear.COVERAGE_MIN) must abort rather than silently interpolate almost
-    the whole year."""
-    _, _, CF, CDT = _load_modules()
+    the whole year. No real archive needed: this writes its own throwaway
+    CSV."""
     with tempfile.TemporaryDirectory() as td:
         thin = pathlib.Path(td) / "thin.csv"
         rows = [("2026-01-15", h, 200.0) for h in range(24)]
