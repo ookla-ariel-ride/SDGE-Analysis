@@ -66,6 +66,7 @@ MANIFEST = {
     "analyze.py": "generator",
     "analyze_norelief.py": "generator",
     "carbon_fullyear.py": "generator",
+    "carbon_dispatch_tradeoff.py": "generator",
     "soiling_analysis.py": "generator",
     "parse_bills.py": "generator",
     "bill_decomposition.py": "generator",
@@ -98,6 +99,7 @@ OWNS = {
                                      ("data", "monthly.csv")],
     "carbon_fullyear.py":           [("data", "carbon_fullyear_results.json"),
                                      ("data", "caiso_hourly_intensity.csv")],
+    "carbon_dispatch_tradeoff.py":  [("data", "carbon_dispatch_tradeoff.json")],
     "tou_audit.py":                 [("data", "tou_audit.csv"),
                                      ("data", "tou_audit_summary.json")],
     "lifetime_payback.py":          [("data", "lifetime_payback.json")],
@@ -283,6 +285,12 @@ NEEDS_PRIVATE_ARCHIVE = {
     "battery_plan_matrix.py": ("its fail-closed tie-out compares against "
                                "battery_dispatch_policies.json, which is built from the "
                                "real year, so invented inputs must diverge"),
+    "carbon_dispatch_tradeoff.py": ("its cross-check compares its own freshly-computed "
+                                    "Run A saving against the committed "
+                                    "battery_dispatch_policies.json's pw3.greedy.save "
+                                    "(built from the real year) within a $5 tolerance -- "
+                                    "the same tie-out shape as battery_plan_matrix.py, "
+                                    "so synthetic inputs must diverge and trip it"),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
