@@ -224,8 +224,8 @@ schema and pipeline in depth.
 | `data/cleaning_study_daily.csv` | Multi-year daily production windows around the 2024 panel cleaning (diff-in-diff inputs) |
 | `data/soiling_results.json` | Soiling/rain-recovery study results (rain events, regressions, annual economics) |
 | `data/carbon_results.json` | Grid-carbon timing results (CAISO hourly intensity, household footprint, EV-timing deltas) — the retired 4-day study, kept as a workpaper; its stored cost note predates the canonical-engine rebase (`TECHNICAL.md` §3.10) |
-| `data/carbon_fullyear_results.json` | Expanded carbon results: 28 sampled CAISO days + month-hour-mean interpolation (the report's §13 carbon basis) |
-| `data/caiso_hourly_intensity.csv` | Per-day hourly CAISO CO₂ intensity table behind the 28-day carbon sampling |
+| `data/carbon_fullyear_results.json` | Full-year carbon results: 364 of 365 days measured from CAISO, one day filled by month-hour-mean (the report's §13 carbon basis) |
+| `data/caiso_hourly_intensity.csv` | Per-day hourly CAISO CO₂ intensity table behind the full-year carbon measurement |
 | `data/carbon_dispatch_tradeoff.json` | Three battery dispatch policies compared on cost and CO2 against the same no-battery baseline: cost-minimizing (the existing dispatch policy, reused unmodified), carbon-minimizing (new, mirrors its structure with intensity swapped for price), and a third policy serving either condition — the tradeoff and cross-check figures between them |
 | `data/extra_results.json` | Phantom-baseload decomposition, rate-escalation ladder, marginal price map, NBT re-billing, cleaning-cadence model |
 | `data/extended_results.json` | Extended findings: AB 205 fixed-charge status, electrification dividend, away-days, supercharging/weekend-SOP shifts, gas HDD decomposition, 2039 NBT strategy, battery-payback tornado |
