@@ -148,6 +148,43 @@ def case_no_intensity_source_fails_closed():
     return "main refuses to run when neither intensity source exists"
 
 
+def case_partial_raw_cache_merges_with_a_valid_committed_csv():
+    """A stray/partial raw cache used to be selected outright over the
+    committed CSV whenever it had even one file, so a 1-day raw cache could
+    fail the >=350 coverage gate even with a fully-covered committed CSV sitting
+    right beside it, unused (an adversarial review finding). Build exactly
+    that scenario -- a 1-day raw cache plus a fully-covered synthetic committed
+    CSV -- and confirm main() succeeds using the MERGED coverage, not just the
+    raw cache's 1 day."""
+    with tempfile.TemporaryDirectory() as td:
+        cdir = pathlib.Path(td) / "caiso_raw"
+        cdir.mkdir()
+        days = pd.date_range(C.YEAR_START, C.YEAR_END, freq="D")
+        _write_caiso_day(cdir, days[0].strftime("%Y%m%d"))  # exactly 1 raw day
+
+        rows = [(d.strftime("%Y-%m-%d"), h, 200.0) for d in days for h in range(24)]
+        committed_csv = pathlib.Path(td) / "hourly.csv"
+        pd.DataFrame(rows, columns=["date", "hour", "kgco2_per_mwh"]).to_csv(
+            committed_csv, index=False)
+
+        old_dir, old_csv, old_results = C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON
+        C.CAISO_DIR = cdir
+        C.HOURLY_CSV = committed_csv
+        C.RESULTS_JSON = pathlib.Path(td) / "results.json"  # no prior baseline
+        try:
+            C.main()
+            written = json.loads(C.RESULTS_JSON.read_text())
+            n_cov = written["coverage"]["days_covered"]
+            assert n_cov > 1, (
+                f"only {n_cov} day(s) covered -- the 1-day raw cache shadowed "
+                "the fully-covered committed CSV instead of merging with it")
+            assert n_cov == len(days), (n_cov, len(days))
+        finally:
+            C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON = old_dir, old_csv, old_results
+    return ("main merges a 1-day raw cache with a fully-covered committed CSV "
+            "rather than letting the partial cache shadow it")
+
+
 def case_intensity_sanity_bounds_reject_garbage():
     try:
         C._check("test", np.array([1e6] * 24, dtype=float))
@@ -308,6 +345,7 @@ CASES = [
     case_build_covered_from_raw_reads_the_cache_and_legacy_days,
     case_committed_csv_schema_and_truncation_fail_closed,
     case_no_intensity_source_fails_closed,
+    case_partial_raw_cache_merges_with_a_valid_committed_csv,
     case_intensity_sanity_bounds_reject_garbage,
     case_coverage_below_350_fails_closed_and_names_the_missing_dates,
     case_ac3_28day_reproduction_within_2pct,

@@ -248,9 +248,25 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     """Carbon-minimizing dispatch -- see module docstring "Run B" for the full
     reasoning. Mirrors battery_dispatch_policies.run_batt's "greedy" control
     structure (charge from solar surplus first unless this interval both wants
-    to discharge AND has import; otherwise grid-charge in clean hours, up to
-    full capacity; otherwise discharge in dirty hours under the EV-spillover
-    gate), with the TOU-period test replaced by an intensity-threshold test.
+    to discharge AND has import, AND unless the hour is itself dirty; otherwise
+    grid-charge in clean hours, up to full capacity; otherwise discharge in
+    dirty hours under the EV-spillover gate), with the TOU-period test replaced
+    by an intensity-threshold test.
+
+    The "AND unless dirty" surplus-charging gate (Run A has no analogue, since
+    price has no equivalent risk -- see below) exists because storing a dirty-
+    hour kWh instead of exporting it can be net-CARBON-NEGATIVE: exporting it
+    immediately credits the FULL, high dirty-hour intensity; storing it instead
+    forgoes that credit and, after round-trip losses (ETA**2 ~= 0.9 delivered
+    per kWh charged), only avoids an import later at whatever that later hour's
+    intensity happens to be -- which is not guaranteed to exceed the forgone
+    credit even though that later hour is ALSO classified dirty (dirty is a
+    binary threshold test, not a magnitude comparison). Measured directly on
+    the real committed year: 14.6% of solar-surplus intervals are themselves
+    dirty, so this is not a rare edge case. Gating the surplus-charge on
+    `not dirty` lets that surplus export at its full (large) credit instead;
+    the battery still charges to capacity during clean hours via the branch
+    below, so this does not starve the battery of charge.
     """
     imp = imp0.copy()
     exp = gen0.copy()
@@ -261,7 +277,11 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     for i in range(len(d)):
         dirty = inten[i] > threshold
         disch_win = dirty and kw[i] < 2.5
-        if exp[i] > 0 and not (disch_win and imp[i] > 0):
+        # disch_win implies dirty, so "not dirty" alone already covers the
+        # "not (disch_win and imp[i] > 0)" exception run_batt/run_batt_union
+        # need; spelled out once here since it is not obvious from the
+        # simplified form alone.
+        if exp[i] > 0 and not dirty:
             c = min(exp[i], (cap - soc) / ETA, PWRQ)
             if c > 0:
                 soc += c * ETA
@@ -290,6 +310,14 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
     non-sop-with-low-kW, exactly as battery_dispatch_policies.run_batt computes
     it for "greedy") OR Run B's condition (dirty AND low-kW) holds; grid-
     charges only when BOTH cheap (sop) and clean (intensity <= threshold) hold.
+
+    Same "unless the hour is itself dirty" surplus-charging gate as Run B, for
+    the identical reason (see run_batt_carbon's docstring): storing a dirty-
+    hour kWh instead of exporting it forgoes that hour's own large export
+    credit for an uncertain future one. Unlike Run B, Run C's disch_win can
+    also be true for a NON-dirty reason (cond_a, Run A's price-based window),
+    so this gate is a genuinely separate condition here, not implied by
+    disch_win the way it is in run_batt_carbon.
     """
     imp = imp0.copy()
     exp = gen0.copy()
@@ -300,11 +328,12 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
     h = d.hour.values
     kw = imp0 * 4
     for i in range(len(d)):
+        dirty = inten[i] > threshold
         cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
-        cond_b = (inten[i] > threshold) and (kw[i] < 2.5)
+        cond_b = dirty and (kw[i] < 2.5)
         disch_win = cond_a or cond_b
         cheap_clean = (p[i] == "sop") and (inten[i] <= threshold)
-        if exp[i] > 0 and not (disch_win and imp[i] > 0):
+        if exp[i] > 0 and not dirty and not (disch_win and imp[i] > 0):
             c = min(exp[i], (cap - soc) / ETA, PWRQ)
             if c > 0:
                 soc += c * ETA

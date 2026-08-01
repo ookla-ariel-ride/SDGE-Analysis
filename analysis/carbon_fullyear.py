@@ -257,14 +257,29 @@ def build_covered_from_committed_csv():
 
 
 def main():
-    # ---------- intensity source resolution (raw cache, else committed CSV) ----
-    if CAISO_DIR.is_dir() and glob.glob(f"{CAISO_DIR}/caiso_co2_*.csv"):
-        covered, mode = build_covered_from_raw(), f"raw cache ({CAISO_DIR})"
-    elif HOURLY_CSV.exists():
-        covered, mode = build_covered_from_committed_csv(), f"committed CSV ({HOURLY_CSV})"
-    else:
+    # ---------- intensity source resolution: build BOTH available sources and
+    # merge, raw cache winning per-day where it has that day, rather than an
+    # either/or choice that lets a partial raw cache shadow a complete
+    # committed CSV. A raw cache with even one file used to be selected
+    # outright and never fall back to (or merge with) the committed CSV, so a
+    # stray/partial cache directory could fail the coverage gate below even
+    # while a fully-covered committed CSV sat right beside it unused.
+    has_raw = CAISO_DIR.is_dir() and bool(glob.glob(f"{CAISO_DIR}/caiso_co2_*.csv"))
+    has_committed = HOURLY_CSV.exists()
+    if not has_raw and not has_committed:
         raise SystemExit("no intensity source available: neither the raw cache "
                          f"{CAISO_DIR} nor the committed {HOURLY_CSV} exists")
+    covered_raw = build_covered_from_raw() if has_raw else {}
+    covered_committed = build_covered_from_committed_csv() if has_committed else {}
+    covered = {**covered_committed, **covered_raw}  # raw wins per-day where present
+    if has_raw and has_committed:
+        mode = (f"raw cache ({CAISO_DIR}, {len(covered_raw)} day(s)) merged over "
+                f"committed CSV ({HOURLY_CSV}, {len(covered_committed)} day(s)) "
+                f"-> {len(covered)} day(s) total")
+    elif has_raw:
+        mode = f"raw cache ({CAISO_DIR})"
+    else:
+        mode = f"committed CSV ({HOURLY_CSV})"
     # resolve the upstream behavior figure once, up front, so its NOTICE lands
     # before the run's own output rather than in the middle of it
     scenario_a = _scenario_a_saved()
