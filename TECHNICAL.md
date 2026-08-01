@@ -1494,3 +1494,129 @@ are exactly the two readings, that their width equals the interaction, that no b
 `price_usd`/`quantity_usd` key exists, that the reading names the cells it covers, and that
 `index.html` carries both bounds, states no point attribution, and carries none of the retired
 all-cell figures.
+
+## 11. The irreducible bill (`analysis/irreducible_bill.py`)
+
+Added for issue #7. Every payback the report quotes is against a *projected* annual bill.
+Some of that bill is owed no matter what the household buys or does: a per-day fixed charge
+and non-bypassable charges (NBC) billed on gross imported kWh, both mandated independent of
+net usage. This script states that floor in dollars, as a share of the trailing 12 months of
+actual bills, and as a share of each `package_results.json` package's own projected bill, so a
+reader can see how much of a package's headline saving is even reachable.
+
+**The four-bucket classification.** Every one of the 26 electric periods in
+`data/bill_periods_electric.csv` is split into exactly four buckets that sum to
+`current_charges` to within the reconciliation tolerance (below):
+
+| bucket | source | reducible? |
+|---|---|---|
+| `fixed_daily` | `bill_periods_electric.fixed_charge_total` — whichever of Base Services Charge or the Monthly Service Fee it replaced that period actually billed | no — accrues per day regardless of usage |
+| `non_bypassable_gross` | printed "Non-Bypassable Charges" + "Wildfire Fund Charge", both billed on **gross** imported kWh | no — survives any purchase that still imports any grid power |
+| `taxes_and_fees` | printed "Total Taxes & Fees on Electric Charges" | not part of the floor — its two largest components (Franchise Fee Equivalent Surcharge, State Regulatory Fee) are levied on the energy charge or on kWh counted elsewhere, so they shrink roughly in proportion to whatever a purchase reduces |
+| `netted_energy` | the residual: `current_charges − fixed_daily − non_bypassable_gross − taxes_and_fees` | yes — the only bucket a battery, behavior change or bigger panel can ever touch |
+
+`FLOOR = fixed_daily + non_bypassable_gross`, summed only over the window below — the other
+two buckets are excluded by construction, not netted out after the fact.
+
+**The independent cross-check.** A residual proves nothing by construction — bucket 4 could
+silently absorb an extraction error in any of the other three. So `netted_energy` is checked
+against a *second*, independently sourced computation per period: the printed delivery TOU
+table plus the actual charged supply (the CCA page total on a CCA period, or the SDG&E
+generation TOU table on a bundled period) plus the riders that ride on top of supply (PCIA,
+the Incremental Procurement Cost Adjustment, the Economic Development Program Credit, the
+Applied Generation Credit). On a CCA period SDG&E also prints its own bundled-generation
+comparison table plus a matching credit that cancels it to the cent — checked per period as
+`generation_credit_cancel_usd` and excluded from the supply term (it nets to zero by
+construction; the CCA page total is the actual charge). The two computations must agree to
+within **$0.50** (the issue's own stated tolerance, never widened) on every one of the 26
+periods; the worst observed residual is $0.02, on the 9/26/24 – 10/25/24 period, so the
+tolerance was never tested against its own edge.
+
+**Two parsing gaps found while building this, fixed locally.** `bill_decomposition._LINE_PATTERNS`
+anchors its per-kWh-rate lines on a literal `x $`, with no allowance for a minus sign printed
+*before* the dollar sign — SDG&E prints PCIA that way routinely (`PCIA 2023 802 kWh x -$.03161
+-25.35`, 2025-03-04 statement), and the unmodified pattern simply fails to match, silently
+undercounting PCIA. Also, those same per-kWh-rate lines (Wildfire Fund Charge, PCIA, the
+Incremental Procurement Cost Adjustment) can reprint more than once *within a single period*
+when a mid-cycle rate change splits it into segments (confirmed: wildfire on 2025-03-04 and
+2026-02-02; PCIA on 2025-03-04 and 2026-05-04) — each reprint is a portion of the same charge
+and must be summed, not conflated with a genuine conflict. `irreducible_bill.py` carries its
+own patterns (`_OWN_PATTERNS`) that allow the leading sign and sum same-name segments
+(`_SUM_ACROSS_SEGMENTS`); `bill_decomposition.py` itself is untouched — it is owned by a
+sibling phase — and its own conflict guard still correctly refuses a *genuine* same-period
+duplicate with differing values (e.g. two different "Non-Bypassable Charges" totals).
+
+**Scoping a two-period statement.** The 2025-10-31 statement carries two billing periods (a
+5-day stub then a 27-day remainder) in one PDF. Rather than allocate the statement's totals
+across the two periods by a formula, `period_text_chunks()` splits the statement's own text at
+each period's `Billing Period: … Total Days: N` anchor through to that period's own closing
+`Total Electric Service $X` line, and fails closed if the anchor count found does not match
+what `bill_periods_electric.csv` says the statement carries. Each period's Non-Bypassable
+Charges / Wildfire Fund Charge / Total Taxes & Fees are then read from its own chunk only.
+
+**The 12-month floor.** `build_floor()` sums `fixed_daily + non_bypassable_gross` over
+`parse_bills.SUMMARY_STATEMENTS_ELEC` — this repo's own existing definition of "the most
+recent 12 months of bills," reused rather than re-derived (12 statements; 2025-10-31 splits
+into two periods, both in-window, so the window covers 13 periods). **One rate vintage per
+period, not one vintage for the whole sum:** each period's `fixed_daily` is what that period
+actually billed — $16.00/month before 2025-10-01, the per-day Base Services Charge from
+2025-10-01 (the CPUC Resolution E-5355 transition; see `analysis/rates_history.py`) — never
+today's rate applied backward onto an older period. In the current window, 4 of 13 periods
+billed the flat Monthly Service Fee and 9 billed the per-day Base Services Charge. On the most
+recent 12-month window the floor is **$743.86, 22.66%** of that window's $3,282.22 billed
+total.
+
+**Per-package floor fractions.** `build_package_floor_fractions()` reports what share of each
+LOW/MID/HIGH package's `projected_bill_current_rates_yr` (`data/package_results.json`) the
+floor represents — how much of a package's headline saving is even reachable, since a package
+cannot save money on a charge it cannot touch. The floor's dollar figure is held **constant**
+across all three packages rather than recomputed from a package-specific gross-import kWh, for
+two reasons: `fixed_daily` is a per-day charge unrelated to consumption, so it is identical
+under every package by construction; and `non_bypassable_gross` depends on gross imported
+kWh, which *could* change under a package, but no committed artifact reports a package-specific
+post-purchase annual gross-import figure to recompute it from (`battery_dispatch_policies.json`
+reports `kwh_served`, not a resulting gross-import total; `behavior_rebuild.json`'s EV-shift
+scenarios report `kwh_moved`, not a post-shift gross-import total). This is a stated, not
+hidden, limitation: holding the floor constant is likely a slight *understatement* of the true
+floor for MID/HIGH, never an overstatement, because a grid-charged battery's round-trip
+losses (the dispatch engine's own `notes.rte` = 0.9) mean serving a kWh of load from a
+battery charged off the grid requires importing more raw kWh than serving that load directly,
+not less. On the current artifacts: **LOW 20.2%** of its $3,683/yr projected bill, **MID
+51.5%** of $1,445/yr, **HIGH 60.5%** of $1,229/yr — the floor is a larger fraction of a
+*smaller* projected bill by arithmetic necessity, not a claim about which package is better.
+
+**Minimum-bill provision.** This household's pre-2025-10-01 statements (the template dropped
+the block after that date) carry a "Minimum Charge Adjustment" concept in their Net Metering
+Summary glossary: if the household is a net generator for the year, basic service fees plus
+taxes represent all it owes. No statement in the 26-period corpus ever prints this as an
+actual dollar line item (checked by regex over every statement's text, not by inspection of
+one), and the provision's own trigger condition — being a net generator over a year — never
+held: `net_kwh` is positive in every one of the 13 window periods. Separately,
+`research/rates-reference.md`'s $0.413/day minimum-bill figure belongs to a different,
+separately-metered legacy EV-TOU variant, confirmed not applicable to this household's bundled-
+meter EV-TOU-5 plan by every statement's own "Rate: Time of Use - EVTOU5-Residential" header.
+No EV-TOU-5-specific minimum-bill dollar figure was found anywhere in the bills or in
+`research/rates-reference.md`.
+
+**NBC-on-gross re-verification.** `rates.py`'s docstring already claims NBC is billed on
+gross imported kWh, never netted. This script re-derives that claim independently rather than
+citing it: it locates the printed Wildfire Fund Charge line on the 9/26/25 – 9/30/25 period of
+the 2025-10-31 statement (`Wildfire Fund Charge 308 kWh x $.00595 1.83`) and confirms the
+printed 308 kWh matches `bill_periods_electric.csv`'s `gross_kwh` (308) for that period and
+differs from its `net_kwh` (224) — CONFIRMED. `test_irreducible_bill.py` proves this is a live
+re-derivation rather than a hardcoded constant by feeding a fabricated statement text with a
+different kWh figure and checking the reported value moves with it.
+
+**Output** `data/irreducible_bill.json`, written atomically; run twice → byte-identical.
+Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs the bill PDF
+corpus, the same dependency shape as `parse_bills.py` and `bill_decomposition.py`), so the §9
+byte-for-byte gate covers it locally.
+
+**Tests** `analysis/test_irreducible_bill.py`, 20 cases. Five run in a clean checkout with no
+private archive (the PCIA sign-handling and multi-segment-summing cases against synthetic
+text, and the two fail-closed cases against the committed `bill_periods_electric.csv` and
+synthetic charge-line text); the remaining fifteen — the four-bucket reconciliation, the
+netted-energy cross-check, the dual-period-statement scoping proof, the floor and
+package-fraction consistency checks, the minimum-bill-provision check, the NBC-on-gross
+re-derivation, and the byte-identical regeneration case — need the private bill PDF corpus and
+skip by name (`SkipCase`) when it is absent, matching `test_bill_decomposition.py`'s own guard.
