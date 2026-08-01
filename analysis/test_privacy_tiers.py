@@ -1497,6 +1497,108 @@ def case_the_precommit_hook_blocks_an_unparseable_staged_script():
             "commit count unchanged")
 
 
+def case_the_hooks_refuse_to_run_when_the_gate_script_is_missing():
+    """A missing `analysis/privacy_tiers.py` must not read as "ran clean."
+
+    CPython exits 2 when it cannot open the target script at all (`can't open
+    file ...: [Errno 2] No such file or directory`) -- the SAME code this gate
+    returns from inside `main()` to mean "ran fine, household.yaml is just
+    absent, so only the value scan was skipped." Before this fix, both hooks
+    read that collision as the legitimate case and printed "Commit allowed;
+    the key/path rules above did run" -- when in fact nothing had run at all,
+    not even the key/path half. Reproduced directly (not through this suite)
+    in throwaway repos before the fix: deleting the script let a staged
+    `itc_claimed` key, and a commit message carrying a private literal, both
+    through.
+
+    Two throwaway repos, one hook each -- the sibling hook file is simply
+    absent from `.githooks/`, so `core.hooksPath` dispatch has nothing else to
+    run, isolating each hook the way `case_the_commit_msg_hook_blocks_and_
+    leaves_the_history_alone` already does. `analysis/privacy_tiers.py` is
+    never written into either repo, so every commit attempt is the vulnerable
+    case from the first one.
+    """
+    if not shutil.which("gitleaks"):                       # pragma: no cover
+        raise SkipCase("the real pre-commit hook refuses to run without "
+                       "gitleaks, so the control cannot drive it")
+    src = PT.ROOT
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@x",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+
+    def seed_hook_only(root, hook_rel):
+        dest = root / hook_rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((src / hook_rel).read_bytes())
+        dest.chmod(0o755)
+        (root / ".gitignore").write_text("private/\n.venv/\n")
+        # the hook's first interpreter candidate, as a wrapper rather than a
+        # symlink: a venv interpreter linked out of its tree loses the venv
+        (root / ".venv" / "bin").mkdir(parents=True)
+        shim = root / ".venv" / "bin" / "python"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        shim.chmod(0o755)
+
+    def git(root, *args, **kw):
+        return subprocess.run(["git", *args], cwd=root, env=env,
+                              capture_output=True, text=True, **kw)
+
+    def count(root):
+        out = git(root, "rev-list", "--count", "HEAD")
+        return int(out.stdout.strip()) if out.returncode == 0 else 0
+
+    # 1. .githooks/pre-commit alone, gate script never present: a staged file
+    #    carrying a banned key (itc_claimed, private-only per the cheatsheet)
+    #    must not slip through on a false "ran clean."
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        seed_hook_only(root, ".githooks/pre-commit")
+        (root / "data").mkdir()
+        (root / "data" / "leak.json").write_text('{"itc_claimed": true}\n')
+        git(root, "init", "-q", check=True)
+        git(root, "config", "core.hooksPath", ".githooks", check=True)
+        git(root, "add", "-A", check=True)
+        assert not (root / "analysis" / "privacy_tiers.py").exists(), \
+            "the control committed the gate script; it must stay absent"
+        r = git(root, "commit", "-m",
+                 "stage a banned key with the gate script missing")
+        assert r.returncode != 0, (
+            f"a banned key was committed while the gate script was missing: "
+            f"{r.stderr}")
+        assert "analysis/privacy_tiers.py" in r.stderr, r.stderr
+        assert ("missing" in r.stderr or "unreadable" in r.stderr), r.stderr
+        assert "Commit allowed" not in r.stderr, (
+            f"the old false-pass message survived the fix: {r.stderr}")
+        assert count(root) == 0, f"the blocked commit changed the history: {r.stderr}"
+
+    # 2. .githooks/commit-msg alone, gate script never present: a commit
+    #    message carrying a private-only literal must not slip through either.
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        seed_hook_only(root, ".githooks/commit-msg")
+        (root / "README.md").write_text("# throwaway\n")
+        git(root, "init", "-q", check=True)
+        git(root, "config", "core.hooksPath", ".githooks", check=True)
+        git(root, "add", "-A", check=True)
+        assert not (root / "analysis" / "privacy_tiers.py").exists(), \
+            "the control committed the gate script; it must stay absent"
+        r = git(root, "commit", "-m",
+                 "panel: record the CL999-TEST meter class")
+        assert r.returncode != 0, (
+            f"a commit was allowed while the gate script was missing: "
+            f"{r.stderr}")
+        assert "analysis/privacy_tiers.py" in r.stderr, r.stderr
+        assert ("missing" in r.stderr or "unreadable" in r.stderr), r.stderr
+        assert "WARNING" not in r.stderr, (
+            f"the old false-pass warning survived the fix: {r.stderr}")
+        assert count(root) == 0, f"the blocked commit changed the history: {r.stderr}"
+    return ("both hooks refuse to run, naming analysis/privacy_tiers.py, "
+            "when the gate script itself is missing -- rather than reading "
+            "CPython's exit code 2 for 'can't open file' as the unrelated, "
+            "legitimate exit code 2 the script returns for an absent "
+            "household.yaml -- and neither blocked commit changes the "
+            "history")
+
+
 def case_every_intake_key_is_tiered():
     """The reverse gap, and the reason it has to be a test.
 
@@ -1558,6 +1660,7 @@ CASES = [
     case_the_gate_refuses_an_untiered_private_key,
     case_a_staged_python_syntax_error_blocks_the_scan,
     case_the_precommit_hook_blocks_an_unparseable_staged_script,
+    case_the_hooks_refuse_to_run_when_the_gate_script_is_missing,
     case_the_commit_msg_hook_blocks_and_leaves_the_history_alone,
     case_the_precommit_gate_blocks_a_staged_leak,
     case_the_precommit_hook_is_portable_to_another_household,

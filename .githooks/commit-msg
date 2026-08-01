@@ -39,7 +39,15 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-"$PY" "$TOPLEVEL/analysis/privacy_tiers.py" --message "$MSG_FILE"
+GATE="$TOPLEVEL/analysis/privacy_tiers.py"
+if [ ! -f "$GATE" ] || [ ! -r "$GATE" ]; then
+    echo "commit-msg: analysis/privacy_tiers.py is missing or unreadable — refusing to commit unscanned for intake-tier leaks." >&2
+    echo "            CPython exits 2 for 'can't open file' the same way this gate exits 2 for" >&2
+    echo "            a merely-absent household.yaml, so a missing script must be caught here," >&2
+    echo "            before invocation, rather than by reading its exit code." >&2
+    exit 1
+fi
+"$PY" "$GATE" --message "$MSG_FILE"
 case $? in
     0) ;;
     2) echo "commit-msg: WARNING — the commit message was not checked for private-only" >&2
