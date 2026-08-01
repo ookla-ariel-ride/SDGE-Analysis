@@ -1567,36 +1567,68 @@ recent 12-month window the floor is **$743.86, 22.66%** of that window's $3,282.
 total.
 
 **Per-package floor fractions.** `build_package_floor_fractions()` reports what share of each
-LOW/MID/HIGH package's `projected_bill_current_rates_yr` (`data/package_results.json`) the
-floor represents — how much of a package's headline saving is even reachable, since a package
-cannot save money on a charge it cannot touch. The floor's dollar figure is held **constant**
-across all three packages rather than recomputed from a package-specific gross-import kWh, for
-two reasons: `fixed_daily` is a per-day charge unrelated to consumption, so it is identical
-under every package by construction; and `non_bypassable_gross` depends on gross imported
-kWh, which *could* change under a package, but no committed artifact reports a package-specific
-post-purchase annual gross-import figure to recompute it from (`battery_dispatch_policies.json`
-reports `kwh_served`, not a resulting gross-import total; `behavior_rebuild.json`'s EV-shift
-scenarios report `kwh_moved`, not a post-shift gross-import total). This is a stated, not
-hidden, limitation: holding the floor constant is likely a slight *understatement* of the true
-floor for MID/HIGH, never an overstatement, because a grid-charged battery's round-trip
-losses (the dispatch engine's own `notes.rte` = 0.9) mean serving a kWh of load from a
-battery charged off the grid requires importing more raw kWh than serving that load directly,
-not less. On the current artifacts: **LOW 20.2%** of its $3,683/yr projected bill, **MID
-51.5%** of $1,445/yr, **HIGH 60.5%** of $1,229/yr — the floor is a larger fraction of a
-*smaller* projected bill by arithmetic necessity, not a claim about which package is better.
+LOW/MID/HIGH package's `projected_bill_current_rates_yr` (`data/package_results.json`, itself a
+fully current-rate, 365-day model via `rates.bill_nem_monthly()`) the floor represents — how
+much of a package's headline saving is even reachable, since a package cannot save money on a
+charge it cannot touch. This fraction is a **different question** from the standalone 12-month
+floor above, and is built at a **single, current, rate vintage throughout**, matching how its
+own denominator was constructed (CLAUDE.md §9 — a second adversarial review found the first
+fix only carried this halfway, see below):
+
+- `non_bypassable_gross_usd` is `compute_package_gross_imports()`'s actual per-package modeled
+  gross-import kWh × `rates.NBC` — re-running the EXACT package definitions
+  `battery_dispatch_policies.py` already committed to (LOW = `behavior_rebuild.shift_ev()`'s
+  100%-EV-shift scenario; MID/HIGH = `battery_dispatch_policies.run_batt()` at 13.5/27.0 kWh
+  usable, policy `"greedy"`), read-only against the raw interval export. A first-review finding
+  had shown the retired "held constant, conservative understatement" claim was asserted, not
+  computed — the real direction is case-by-case (LOW's imports are unchanged by construction;
+  MID's and HIGH's move in either direction depending on dispatch, not only upward from
+  round-trip loss).
+- `fixed_daily_usd_current_rate_vintage` is `annual_days × rates.BSC` — the SAME construction
+  `rates.bill_nem_monthly()` itself uses to price the fixed charge inside every package's own
+  `projected_bill_current_rates_yr` (`days.nunique() × BSC`, summed month by month).
+  `annual_days` is `compute_package_gross_imports()`'s own distinct-calendar-day count of the
+  365-day interval frame the package models were built from, not a hardcoded 365. This term is
+  invariant across packages (a per-day charge does not depend on how much energy is imported).
+
+A second adversarial review (issue #7 follow-up) found that the first review's fix left this
+second term at `fixed_daily_usd_historical` — the household's ACTUAL historical 12-month total,
+a real mix of the pre-2025-10-01 flat Monthly Service Fee and the post-transition per-day Base
+Services Charge. Dividing a numerator whose other term (`non_bypassable_gross_usd`) was already
+current-vintage, and whose denominator was fully current-vintage, by a fixed-charge term that
+was historical mixed a third rate vintage into the same fraction — exactly the mixing CLAUDE.md
+§9 forbids. Fixed by pricing the fixed-charge term at the same current vintage as everything
+else being divided, per above. `twelve_month_floor` is untouched by this fix and stays entirely
+historical on purpose — it answers "what did the floor actually cost over the last 12 real
+months," a different question from "what fraction of a current-rate projected bill is floor."
+
+On the current artifacts: **LOW 21.2%** of its $3,683/yr projected bill, **MID 53.7%** of
+$1,445/yr, **HIGH 63.2%** of $1,229/yr — the floor is a larger fraction of a *smaller* projected
+bill by arithmetic necessity, not a claim about which package is better.
 
 **Minimum-bill provision.** This household's pre-2025-10-01 statements (the template dropped
 the block after that date) carry a "Minimum Charge Adjustment" concept in their Net Metering
-Summary glossary: if the household is a net generator for the year, basic service fees plus
+Summary glossary: if the household is a net generator **for the year**, basic service fees plus
 taxes represent all it owes. No statement in the 26-period corpus ever prints this as an
 actual dollar line item (checked by regex over every statement's text, not by inspection of
-one), and the provision's own trigger condition — being a net generator over a year — never
-held: `net_kwh` is positive in every one of the 13 window periods. Separately,
-`research/rates-reference.md`'s $0.413/day minimum-bill figure belongs to a different,
-separately-metered legacy EV-TOU variant, confirmed not applicable to this household's bundled-
-meter EV-TOU-5 plan by every statement's own "Rate: Time of Use - EVTOU5-Residential" header.
-No EV-TOU-5-specific minimum-bill dollar figure was found anywhere in the bills or in
-`research/rates-reference.md`.
+one). The provision's own trigger condition is the **annual sum** of `net_kwh` over the whole
+window, not any single period being net-negative — a second adversarial review (issue #7
+follow-up) found the first version tested `any(net_kwh < 0)` across the 13 window periods and
+reported that as the annual answer, which a future window with one export month and eleven
+larger import months would have gotten wrong even though the annual sum stayed positive. Fixed:
+`annual_net_kwh_sum` (the sum) and `annual_net_generator` (its sign) are the real trigger
+condition; `monthly_net_position_window` and `any_period_net_generator_in_window` are kept as
+separate, explicitly month-level, informational detail — which periods were individually
+net-negative, distinct from whether the year was. On this household's own data both checks
+agree: `annual_net_kwh_sum` is positive (13,102 kWh) and every individual period is net-positive
+too, so the provision's trigger condition never held here — but a test with a mixed-sign
+synthetic window (`test_irreducible_bill.py`) proves the fix reports the annual answer
+correctly even when a lone net-negative period would make the month-level check disagree.
+Separately, `research/rates-reference.md`'s $0.413/day minimum-bill figure belongs to a
+different, separately-metered legacy EV-TOU variant, confirmed not applicable to this
+household's bundled-meter EV-TOU-5 plan by every statement's own "Rate: Time of Use -
+EVTOU5-Residential" header. No EV-TOU-5-specific minimum-bill dollar figure was found anywhere
+in the bills or in `research/rates-reference.md`.
 
 **NBC-on-gross re-verification.** `rates.py`'s docstring already claims NBC is billed on
 gross imported kWh, never netted. This script re-derives that claim independently rather than
@@ -1612,11 +1644,14 @@ Registered in `test_scripts_runnable.py` under `NEEDS_PRIVATE_ARCHIVE` (it needs
 corpus, the same dependency shape as `parse_bills.py` and `bill_decomposition.py`), so the §9
 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_irreducible_bill.py`, 20 cases. Five run in a clean checkout with no
+**Tests** `analysis/test_irreducible_bill.py`, 32 cases. Nine run in a clean checkout with no
 private archive (the PCIA sign-handling and multi-segment-summing cases against synthetic
-text, and the two fail-closed cases against the committed `bill_periods_electric.csv` and
-synthetic charge-line text); the remaining fifteen — the four-bucket reconciliation, the
-netted-energy cross-check, the dual-period-statement scoping proof, the floor and
-package-fraction consistency checks, the minimum-bill-provision check, the NBC-on-gross
-re-derivation, and the byte-identical regeneration case — need the private bill PDF corpus and
-skip by name (`SkipCase`) when it is absent, matching `test_bill_decomposition.py`'s own guard.
+text, the mixed-sign annual-vs-monthly minimum-bill-trigger case, the synthetic package-floor-
+fraction arithmetic-direction case, the gross-import sanity-check unit test, the raw-interval-CSV
+match-count check, and the fail-closed cases against the committed `bill_periods_electric.csv`
+and synthetic charge-line text); the remaining twenty-three — the four-bucket reconciliation,
+the netted-energy cross-check, the dual-period-statement scoping proof, the floor and
+package-fraction consistency checks, the minimum-bill-provision check against the real corpus,
+the NBC-on-gross re-derivation, and the byte-identical regeneration case — need the private bill
+PDF corpus and skip by name (`SkipCase`) when it is absent, matching
+`test_bill_decomposition.py`'s own guard.

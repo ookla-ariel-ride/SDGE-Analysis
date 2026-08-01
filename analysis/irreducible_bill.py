@@ -100,7 +100,12 @@ component is actually recomputed, package by package, from each package's
 own modeled gross-import kWh rather than held constant -- an adversarial
 review of this script (issue #7 follow-up) found the original "held
 constant... conservative" claim was asserted, not computed, and the real
-direction turned out to be case-by-case, not one-directional).
+direction turned out to be case-by-case, not one-directional; a SECOND
+adversarial review then found that fix had only made the non-bypassable
+term current-vintage, leaving the fixed-charge term historical -- see
+build_package_floor_fractions()'s docstring for the full fix, which now
+prices BOTH terms of the per-package fraction at the same current rate
+vintage as the projected bill it divides into).
 """
 import csv
 import datetime as dt
@@ -563,7 +568,18 @@ def compute_package_gross_imports():
     energy), so a 100%-EV-shift scenario cannot change the annual gross-
     import total at all -- if it ever does, something in the reused pipeline
     is not doing what its own docstring says, and this must fail closed
-    rather than publish a wrong LOW figure."""
+    rather than publish a wrong LOW figure.
+
+    ALSO RETURNS annual_days: the exact number of distinct calendar days in
+    the loaded frame (br.load() slices exactly WINDOW_END-365d..WINDOW_END
+    and br.R.validate_interval_coverage() already fails closed on any gap, so
+    this is not a guess -- it is the same day count rates.bill_nem_monthly()
+    itself sums BSC over, one month at a time, when package_results.json's
+    projected_bill_current_rates_yr was built). Finding 1 (issue #7 second
+    adversarial review) uses this to price the per-package floor's fixed-
+    charge component at the SAME current-rate vintage as everything else in
+    that fraction, instead of the household's historical mixed-vintage
+    fixed-charge total."""
     real_csv = br.CSV
     br.CSV = str(_raw_interval_csv())
     try:
@@ -594,12 +610,15 @@ def compute_package_gross_imports():
     high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0, "greedy")
     high_gross_kwh = float(high_imp.sum())
 
+    annual_days = int(d.dt.dt.date.nunique())
+
     return {
         "baseline_gross_kwh": round(baseline_gross_kwh, 1),
         "LOW": {"gross_kwh": round(low_gross_kwh, 1)},
         "MID": {"gross_kwh": round(mid_gross_kwh, 1), "kwh_served": round(mid_served, 1)},
         "HIGH": {"gross_kwh": round(high_gross_kwh, 1), "kwh_served": round(high_served, 1)},
         "kwh_moved_ev_shift": round(moved, 1),
+        "annual_days": annual_days,
         "method": (
             "behavior_rebuild.load() on the raw Green Button interval export "
             "(private/1-raw-data/" + RAW_INTERVAL_GLOB + "), behavior_rebuild."
@@ -607,7 +626,11 @@ def compute_package_gross_imports():
             "package sits on top of, then battery_dispatch_policies.run_batt("
             "..., 'greedy') at 13.5 kWh (MID) and 27.0 kWh (HIGH) usable -- "
             "the same calls and package definitions battery_dispatch_policies."
-            "json's own committed post_behavior block already uses."),
+            "json's own committed post_behavior block already uses. "
+            "annual_days is the distinct-calendar-day count of that same "
+            "365-day interval frame, used by build_package_floor_fractions() "
+            "to price the fixed-charge component at the current rate "
+            "vintage."),
     }
 
 
@@ -639,34 +662,46 @@ def build_package_floor_fractions(floor, gross):
     much of the package's headline saving is even reachable, since a package
     cannot save money on a charge it cannot touch.
 
-    METHOD (Finding 1, issue #7 adversarial review -- see
-    compute_package_gross_imports()'s docstring for what changed and why):
-      1. fixed_daily is held at its historical 12-month dollar total, the
-         SAME figure for every package -- this part of the floor really is
-         invariant: a per-day charge does not depend on how much energy is
-         imported or when, so no package-specific recomputation is possible
-         or needed for it.
-      2. non_bypassable_gross is now RECOMPUTED per package from
-         compute_package_gross_imports()'s actual modeled gross-import kWh
-         for that package, multiplied by rates.NBC (the current-vintage
-         combined non-bypassable-charge + Wildfire Fund Charge rate,
-         $/kWh, the same constant analysis/rates.py already uses inside
-         bill_nem_monthly() to build every package's own
-         projected_bill_current_rates_yr). This is a LABELED VINTAGE MIX,
-         not a mistake papered over: fixed_daily is the household's actual
-         historical (partly pre-2025-10-01, partly post) dollar total, while
-         non_bypassable_gross is a forward, CURRENT-rate-vintage estimate --
-         there is no bill for a future package scenario to read a per-
-         package NBC dollar figure off of, so this is the same "at current
-         rates" assumption package_results.json's own
-         projected_bill_current_rates_yr already makes and labels.
+    ONE RATE VINTAGE FOR THIS WHOLE FRACTION (Finding 1, issue #7 SECOND
+    adversarial review -- CLAUDE.md 9's rule, applied here after the FIRST
+    review's fix only carried it halfway). The denominator,
+    projected_bill_current_rates_yr, is a fully current-rate, 365-day MODELED
+    bill (rates.bill_nem_monthly() at constant current rates, via
+    data/package_results.json). The prior fix already made
+    non_bypassable_gross_usd current-vintage (this package's own modeled
+    gross-import kWh x rates.NBC). But it left the fixed-charge component at
+    fixed_daily_usd_historical -- the household's ACTUAL historical 12-month
+    total, a real mix of the pre-2025-10-01 flat Monthly Service Fee and the
+    post-transition per-day Base Services Charge. Dividing a current-rate,
+    all-current-vintage numerator's sibling term by a bill built the SAME way
+    while THIS term stayed historical mixed a third vintage into the same
+    fraction. Fixed here:
+      1. fixed_daily_usd_current_rate_vintage = annual_days x rates.BSC (the
+         current per-day Base Services Charge), where annual_days is
+         compute_package_gross_imports()'s own distinct-calendar-day count of
+         the exact 365-day interval frame package_results.json's own model
+         was built from -- i.e. the SAME construction bill_nem_monthly()
+         itself uses (days.nunique() x BSC, one month at a time, summed).
+         This term does NOT vary by package: a per-day charge does not depend
+         on how much energy is imported or when.
+      2. non_bypassable_gross_usd stays the Finding-1 (first review)
+         recomputation: this package's own modeled gross-import kWh
+         (compute_package_gross_imports()) x rates.NBC.
+    Both components of floor_usd are now CURRENT-rate-vintage, matching the
+    denominator they are divided into -- the whole fraction is internally
+    vintage-consistent, per CLAUDE.md 9. This is DELIBERATELY DIFFERENT from
+    twelve_month_floor (build_floor(), $743.86/22.66%), which stays entirely
+    historical on purpose -- that section answers "what did the floor
+    actually cost over the last 12 real months," not "what fraction of a
+    current-rate projected bill is floor." The two sections answer different
+    questions and must not be reconciled to each other.
     The result: no single "held constant" dollar figure is shared across
-    packages any more, and the direction is whatever the reused dispatch/
-    behavior pipeline actually computes for each package -- which, on this
-    corpus, does NOT match the retired docstring's one-directional
-    "conservative understatement" claim (see the module docstring)."""
+    packages, and the direction is whatever the reused dispatch/behavior
+    pipeline actually computes for each package -- which, on this corpus,
+    does NOT match the retired docstring's one-directional "conservative
+    understatement" claim (see the module docstring)."""
     _sanity_check_gross_imports(gross, floor)
-    fixed_daily_usd = floor["fixed_daily_usd_historical"]
+    fixed_daily_usd = _c(gross["annual_days"] * R.BSC)
     packages = json.loads(PACKAGE_JSON.read_text())["packages"]
     out = {}
     for name, pkg in packages.items():
@@ -678,19 +713,25 @@ def build_package_floor_fractions(floor, gross):
         floor_usd = _c(fixed_daily_usd + non_bypassable_gross_usd)
         out[name] = {
             "projected_bill_current_rates_yr": bill,
-            "fixed_daily_usd_historical": fixed_daily_usd,
+            "fixed_daily_usd_current_rate_vintage": fixed_daily_usd,
+            "annual_days": gross["annual_days"],
             "gross_import_kwh": pkg_gross_kwh,
             "gross_import_kwh_vs_baseline": _c(pkg_gross_kwh - gross["baseline_gross_kwh"]),
             "non_bypassable_gross_usd": non_bypassable_gross_usd,
             "floor_usd": floor_usd,
             "floor_fraction_of_projected_bill": round(floor_usd / bill, 4),
-            "method": ("fixed_daily_usd_historical held at the household's actual "
-                      "historical 12-month total (invariant across packages); "
+            "method": ("this per-package fraction is ONE current rate vintage "
+                      "throughout, matching projected_bill_current_rates_yr's "
+                      "own construction (unlike twelve_month_floor, which is "
+                      "entirely historical, on purpose): "
+                      "fixed_daily_usd_current_rate_vintage = annual_days x "
+                      "rates.BSC (current per-day Base Services Charge; "
+                      "invariant across packages, a per-day charge does not "
+                      "depend on how much energy is imported); "
                       "non_bypassable_gross_usd = this package's own modeled "
                       "gross-import kWh (compute_package_gross_imports()) x "
                       "rates.NBC (current-vintage combined NBC + Wildfire Fund "
-                      "Charge rate, $/kWh) -- a labeled current-rate-vintage "
-                      "estimate, not a historical bill figure"),
+                      "Charge rate, $/kWh)"),
         }
     return out
 
@@ -729,11 +770,26 @@ def build_minimum_bill_provision(rows, statements):
         legacy)" variant -- NOT this household's actual EV-TOU-5 BUNDLED-
         meter plan. No EV-TOU-5-specific minimum-bill dollar figure was
         found in the bills or in research/rates-reference.md / TECHNICAL.md.
-    (c) The provision only binds in a year the household is a NET GENERATOR.
-        Tested here against every period in the 12-month window: net_kwh
-        (per data/bill_periods_electric.csv) is POSITIVE in every one of
-        them -- the household was a net IMPORTER throughout, so the
-        provision's own trigger condition never held in this data."""
+    (c) The provision only binds in a year the household is a NET GENERATOR
+        -- and "the year" means the ANNUAL SUM of net_kwh over the whole
+        "Relevant Period" (per the sentence quoted in (a)), not any single
+        month. (Finding 2, issue #7 second adversarial review: an earlier
+        version of this function tested any(net_kwh < 0 across the 13
+        window periods) and reported THAT as "the year" -- a future window
+        with one export month and eleven larger import months would have
+        been wrongly reported as having triggered the annual provision, even
+        though the annual sum was positive throughout. Fixed here: sum
+        net_kwh over the whole window first, THEN test its sign --
+        annual_net_generator is the real trigger condition.) The per-period
+        breakdown (monthly_net_position_window) is kept too -- which months
+        were net-negative, even in a year the annual sum was not -- but it is
+        explicitly NOT the trigger; any_period_net_generator_in_window is
+        labeled as month-level, distinct from annual_net_generator, so the
+        two cannot be confused. On this household's own 12-month window
+        (data/bill_periods_electric.csv), net_kwh sums positive throughout
+        AND every individual period is net-positive too, so both checks
+        happen to agree here -- but they are not the same claim, and only
+        the annual one is what the tariff provision actually tests."""
     sentence_statements = []
     line_item_statements = []
     for stmt in statements:
@@ -752,7 +808,16 @@ def build_minimum_bill_provision(rows, statements):
         {"statement_date": r["statement_date"], "period": r["period"],
          "net_kwh": r["net_kwh"], "is_net_generator_this_period": r["net_kwh"] < 0}
         for r in window_rows]
-    ever_net_generator = any(m["is_net_generator_this_period"] for m in monthly_net_position)
+    # Month-level only -- informative (which periods were individually net-
+    # negative) but explicitly NOT the tariff's own trigger condition. Kept
+    # separate from annual_net_generator below so the two cannot be confused
+    # (Finding 2, issue #7 second adversarial review).
+    any_period_net_generator_in_window = any(
+        m["is_net_generator_this_period"] for m in monthly_net_position)
+    # THE actual trigger condition: the ANNUAL sum of net_kwh over the whole
+    # window, per the provision's own "net generator for the year" wording.
+    annual_net_kwh_sum = _c(sum(r["net_kwh"] for r in window_rows))
+    annual_net_generator = annual_net_kwh_sum < 0
 
     return {
         "sentence_found_in_statements": sentence_statements,
@@ -771,8 +836,10 @@ def build_minimum_bill_provision(rows, statements):
                                  "EVTOU5-Residential')."),
         "ev_tou_5_specific_min_bill_found": False,
         "monthly_net_position_window": monthly_net_position,
-        "ever_net_generator_in_window": ever_net_generator,
-        "provision_triggered_in_this_data": ever_net_generator,
+        "any_period_net_generator_in_window": any_period_net_generator_in_window,
+        "annual_net_kwh_sum": annual_net_kwh_sum,
+        "annual_net_generator": annual_net_generator,
+        "provision_triggered_in_this_data": annual_net_generator,
     }
 
 
@@ -843,22 +910,31 @@ CAVEAT = (
     "re-derived directly from statement text; nothing in it is modeled or projected "
     "forward at a different rate vintage. It does not prove any package will actually "
     "reach this floor -- a package's projected bill can sit well above it. "
-    "package_floor_fractions is DIFFERENT: its non_bypassable_gross_usd is a "
-    "per-package RECOMPUTATION (see build_package_floor_fractions()'s and "
+    "package_floor_fractions is DIFFERENT and answers a different question: what "
+    "share of a fully CURRENT-rate projected bill (data/package_results.json) is "
+    "floor. Both of ITS components are current-rate-vintage, matching the "
+    "denominator they are divided into -- non_bypassable_gross_usd is a per-package "
+    "RECOMPUTATION (see build_package_floor_fractions()'s and "
     "compute_package_gross_imports()'s docstrings) built by re-running "
     "behavior_rebuild.py's and battery_dispatch_policies.py's own committed package "
     "definitions against the raw interval export, then pricing the result at "
-    "rates.NBC -- the CURRENT rate vintage, since no bill exists for a future package "
-    "scenario. Its fixed_daily_usd_historical component is still the actual "
-    "historical 12-month total, so each package's floor_usd deliberately mixes one "
-    "historical-vintage figure with one current-vintage figure; that mix is labeled "
-    "in each package's own 'method' string rather than hidden. An earlier version of "
-    "this script asserted the constant-floor approximation was a one-directional "
-    "'conservative understatement' for MID/HIGH; that claim was not computed and, on "
-    "this corpus, is not what the recomputation actually shows (see the module "
-    "docstring). The minimum-bill-provision test is against the NEM true-up 'Minimum "
-    "Charge Adjustment' concept printed on this household's own pre-2025-10-01 "
-    "statements, not against a dollar figure specific to EV-TOU-5 -- none was found."
+    "rates.NBC; fixed_daily_usd_current_rate_vintage is annual_days x rates.BSC, the "
+    "same construction rates.bill_nem_monthly() itself uses to build "
+    "projected_bill_current_rates_yr. This fraction is deliberately NOT reconciled "
+    "against twelve_month_floor's historical $743.86/22.66% -- the two sections "
+    "answer different questions (what actually happened over 12 real months, vs. "
+    "what fraction of a current-rate projected bill is floor) and mixing their "
+    "vintages was exactly Finding 1 of this script's second adversarial review. An "
+    "earlier version of this script asserted the constant-floor approximation was a "
+    "one-directional 'conservative understatement' for MID/HIGH; that claim was not "
+    "computed and, on this corpus, is not what the recomputation actually shows (see "
+    "the module docstring). The minimum-bill-provision test is against the NEM "
+    "true-up 'Minimum Charge Adjustment' concept printed on this household's own "
+    "pre-2025-10-01 statements, not against a dollar figure specific to EV-TOU-5 -- "
+    "none was found. Its trigger condition is the ANNUAL sum of net_kwh over the "
+    "window (annual_net_generator), not any single period being net-negative "
+    "(any_period_net_generator_in_window is kept as separate, informational, "
+    "month-level detail -- Finding 2 of the same review)."
 )
 
 

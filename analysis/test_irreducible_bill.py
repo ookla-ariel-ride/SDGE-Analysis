@@ -319,18 +319,24 @@ def case_floor_recomputed_independently_from_the_artifact_rows():
 
 @case
 def case_package_floor_fractions_are_consistent():
-    """Post-Finding-1 shape: fixed_daily_usd_historical IS still constant
-    across packages (a per-day charge cannot be package-specific), but
-    floor_usd and non_bypassable_gross_usd are NOT any more -- each package
+    """Post-Finding-1 (second review) shape: fixed_daily_usd_current_rate_vintage
+    IS still constant across packages (a per-day charge cannot be package-
+    specific), and it is now priced at the SAME current rate vintage as
+    everything else in the fraction (annual_days x rates.BSC), not the
+    household's historical mixed-vintage fixed-charge total. floor_usd and
+    non_bypassable_gross_usd are NOT constant across packages -- each package
     gets its own recomputation from compute_package_gross_imports()."""
     _require_corpus()
     result = irr.build()
-    floor = result["twelve_month_floor"]
     pf = result["package_floor_fractions"]
     assert set(pf) == {"LOW", "MID", "HIGH"}, sorted(pf)
+    expected_fixed = round(pf["LOW"]["annual_days"] * irr.R.BSC, 2)
     for name, row in pf.items():
-        assert row["fixed_daily_usd_historical"] == floor["fixed_daily_usd_historical"]
-        expected_floor = round(row["fixed_daily_usd_historical"]
+        assert _close(row["fixed_daily_usd_current_rate_vintage"], expected_fixed, eps=0.01)
+        assert row["fixed_daily_usd_current_rate_vintage"] == \
+            pf["LOW"]["fixed_daily_usd_current_rate_vintage"], \
+            "fixed_daily_usd_current_rate_vintage must still be constant across packages"
+        expected_floor = round(row["fixed_daily_usd_current_rate_vintage"]
                                + row["non_bypassable_gross_usd"], 2)
         assert _close(row["floor_usd"], expected_floor, eps=0.01), (name, row)
         expected_frac = round(row["floor_usd"] / row["projected_bill_current_rates_yr"], 4)
@@ -353,7 +359,7 @@ def case_package_floor_fractions_are_consistent():
            f"MID {pf['MID']['floor_fraction_of_projected_bill']*100:.1f}% / "
            f"HIGH {pf['HIGH']['floor_fraction_of_projected_bill']*100:.1f}% "
            "of each package's projected bill, each package's own floor_usd "
-           "now recomputed rather than a single shared figure")
+           "now recomputed at one current rate vintage throughout")
 
 
 @case
@@ -444,12 +450,11 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
     floor_usd move in the SAME direction as the synthetic input -- i.e. the
     function actually computes the direction from its argument rather than
     asserting one."""
-    floor = {
-        "floor_usd": 700.0,
-        "fixed_daily_usd_historical": 260.0,
-        "non_bypassable_gross_usd_historical": 440.0,
-        "historical_gross_kwh_window": 20000.0,
-    }
+    # Only historical_gross_kwh_window is actually read by
+    # build_package_floor_fractions()/_sanity_check_gross_imports() -- the
+    # fixed-charge term now comes from gross["annual_days"] x rates.BSC, not
+    # from this floor dict (Finding 1, second adversarial review).
+    floor = {"historical_gross_kwh_window": 20000.0}
     packages_json = {"packages": {
         "LOW": {"projected_bill_current_rates_yr": 3000.0},
         "MID": {"projected_bill_current_rates_yr": 1400.0},
@@ -457,6 +462,7 @@ def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
     }}
     gross = {
         "baseline_gross_kwh": 20000.0,
+        "annual_days": 365,
         "LOW": {"gross_kwh": 20000.0},
         "MID": {"gross_kwh": 19000.0, "kwh_served": 100.0},   # DOWN vs baseline
         "HIGH": {"gross_kwh": 21000.0, "kwh_served": 100.0},  # UP vs baseline
@@ -583,10 +589,45 @@ def case_minimum_bill_provision_never_triggered_in_this_data():
     assert len(window_periods) == 13
     assert all(p["net_kwh"] > 0 for p in window_periods), \
         "expected every period in the window to show a positive (net-import) net_kwh"
-    assert mb["ever_net_generator_in_window"] is False
+    assert mb["any_period_net_generator_in_window"] is False
+    assert mb["annual_net_generator"] is False
+    assert mb["annual_net_kwh_sum"] > 0
     assert mb["provision_triggered_in_this_data"] is False
-    return (f"{len(window_periods)} periods checked, all net_kwh > 0 -- the "
-           "provision's own trigger condition never held in this data")
+    return (f"{len(window_periods)} periods checked, all net_kwh > 0, annual sum "
+           f"{mb['annual_net_kwh_sum']} kWh > 0 -- the provision's own annual "
+           "trigger condition never held in this data")
+
+
+@case
+def case_minimum_bill_annual_trigger_is_the_sum_not_any_single_month():
+    """Finding 2 (issue #7 second adversarial review): a mixed-sign synthetic
+    window -- one net-negative period, several larger net-positive periods,
+    annual sum still positive -- must report annual_net_generator False even
+    though a month-level any() check would say True for that one period. This
+    is exactly the scenario Codex identified as silently mishandled by the
+    retired ever_net_generator_in_window == any(...) logic."""
+    rows = [
+        {"statement_date": "2099-01-01", "period": "p1", "net_kwh": -50.0},
+        {"statement_date": "2099-02-01", "period": "p2", "net_kwh": 300.0},
+        {"statement_date": "2099-03-01", "period": "p3", "net_kwh": 300.0},
+    ]
+    real_window = irr.SUMMARY_STATEMENTS_ELEC
+    irr.SUMMARY_STATEMENTS_ELEC = ["2099-01-01", "2099-02-01", "2099-03-01"]
+    try:
+        mb = irr.build_minimum_bill_provision(rows, [])
+    finally:
+        irr.SUMMARY_STATEMENTS_ELEC = real_window
+    assert mb["any_period_net_generator_in_window"] is True, \
+        "expected the lone net-negative period to trip the month-level flag"
+    assert _close(mb["annual_net_kwh_sum"], 550.0), mb["annual_net_kwh_sum"]
+    assert mb["annual_net_generator"] is False, \
+        "the annual SUM is positive (550 kWh) even though one month was " \
+        "net-negative -- annual_net_generator must follow the sum, not any()"
+    assert mb["provision_triggered_in_this_data"] is False
+    return ("one net-negative period (-50 kWh) among two larger net-positive "
+           "periods (+300 each): any_period_net_generator_in_window=True but "
+           "annual_net_generator=False (sum +550 kWh) -- the annual trigger "
+           "follows the sum, not any single month")
 
 
 # ---------------------------------------------------------------------------
