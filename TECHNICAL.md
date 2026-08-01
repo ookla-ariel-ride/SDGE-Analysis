@@ -952,8 +952,10 @@ battery at all, and what would fixing that cost in dollars?
 **Three runs, one battery model.** All three share the exact constants `battery_dispatch_
 policies.py` already uses (13.5 kWh usable, 11.5 kW, 90% round-trip efficiency), imported
 rather than re-declared, and the same billing engine (`rates.bill_nem` via `battery_
-dispatch_policies.billed()`); only the charge/discharge decision differs between them, so
-the comparison isolates the dispatch objective, not the hardware or the biller.
+dispatch_policies.billed()`); the charge/discharge decision differs between them by design,
+but that decision difference also changes how much load each policy serves (Run A cycles
+4,968 kWh/yr against Run B's 3,176), so this does not isolate a pure objective effect at
+matched utilization — see the throughput caveat below.
 
 - **Run A (cost-minimizing).** Calls `battery_dispatch_policies.run_batt(..., "greedy")`
   directly, unmodified — the same policy `data/battery_dispatch_policies.json`'s published
@@ -979,22 +981,37 @@ than hardcoded — so the comparison isolates *which* hours get served, not how 
 Target clean/dirty split 46.74%/53.26%; achieved 46.75%/53.25% (ties at the underlying data's
 0.1 kg/MWh resolution keep the achieved split close to, not exactly on, the target).
 
-**Results** (all figures against the no-battery baseline: $4,904.13/yr, 5,402.4 kg CO₂/yr):
-Run A saves $2,328.66/yr but *raises* CO₂ by 328.2 kg/yr above the baseline — grid-charging
-during super-off-peak means charging during the year's dirtiest hours (270.1 kg/MWh overnight
-vs. 158.4 on-peak, §3.15's own window means). Run B avoids 484.5 kg/yr but keeps only
-$228.39 of the saving. Run C recovers $2,023.91/yr and 576.0 kg/yr avoided at once — judged a
-genuinely distinct third outcome (not merely a blend reducible to A or B) by requiring BOTH
-its $ and its CO₂ to be within 2% of a policy's own figures to count as "not meaningfully
-different"; Run C fails that test against both A and B.
+**Net, not gross, CO₂.** The three policies consume different amounts of exportable solar via
+battery charging (Run A's own solar-charging displaces 829.4 kg/yr of exports, Run C's only
+493.9), so ranking policies on gross import CO₂ alone silently drops that difference and can
+invert which policy is actually cleaner for the atmosphere — an adversarial review caught
+exactly this: the gross-import figures published in an earlier draft ranked Run C as cleaner
+than Run B (4,826.4 vs 4,917.9 kg), but net accounting (import minus that policy's own
+export-avoided) reverses it (Run C 4,332.5 vs Run B 4,258.2 — Run B is actually cleaner).
+Every comparison below is therefore NET; gross import and gross export-avoided are still
+reported per policy in the artifact as a breakdown, never discarded.
+
+**Results** (all figures against the no-battery baseline: $4,904.13/yr, 4,487.2 kg net
+CO₂/yr): Run A saves $2,328.66/yr but *raises* net CO₂ by 413.9 kg/yr above the baseline —
+grid-charging during super-off-peak means charging during the year's dirtiest hours (270.1
+kg/MWh overnight vs. 158.4 on-peak, §3.15's own window means). Run B avoids 229.0 kg/yr net
+but keeps only $228.39 of the saving. Run C recovers $2,023.91/yr (87% of Run A's saving)
+while still avoiding 154.8 kg/yr net — 74.2 kg/yr less than Run B, a real but small carbon
+cost for capturing nine times more of the dollar saving. Run C is still judged a genuinely
+distinct third outcome (not merely a blend reducible to A or B) by requiring BOTH its $ and
+its CO₂ to be within 2% of a policy's own figures to count as "not meaningfully different":
+its bill sits 38.4% from Run B's, so the test fails against B even though its net CO₂ now
+sits within 1.7% of Run B's own.
 
 **Tradeoff figures.** Cost penalty of the clean policy (Run B's bill minus Run A's bill):
-$2,100.27/yr. CO₂ penalty of the cheap policy (Run A's CO₂ minus Run B's CO₂): 812.7 kg/yr.
-Both are also expressed per kWh cycled (51.6¢/kWh and 0.1996 kg/kWh respectively), normalized
-by the **mean** of Run A's and Run B's own kWh cycled-through figures — the two runs are
-different dispatch schedules with different total throughput, so no single run's throughput
-is uniquely "the" right denominator; the mean is used and stated explicitly rather than
-silently picking one side.
+$2,100.27/yr. CO₂ penalty of the cheap policy (Run A's net CO₂ minus Run B's net CO₂): 642.9
+kg/yr. Both are also expressed per kWh cycled (51.6¢/kWh and 0.158 kg/kWh respectively),
+normalized by the **mean** of Run A's and Run B's own kWh cycled-through figures — the two
+runs are different dispatch schedules with different total throughput, so no single run's
+throughput is uniquely "the" right denominator; the mean is used and stated explicitly rather
+than silently picking one side. Because Run A and Run B are not throughput-matched (see
+above), these $/kg figures describe these two specific heuristic policies as implemented, not
+a bound on what a jointly re-optimized, throughput-matched carbon-vs-cost tradeoff would show.
 
 **Average vs. marginal basis (GLOSSARY: average vs. marginal emissions rate).** Every CO₂
 figure here, like §3.15's, values energy at grid-average intensity — the only figure CAISO's

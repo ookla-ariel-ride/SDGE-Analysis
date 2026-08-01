@@ -432,15 +432,15 @@ def case_reports_the_tradeoff_numbers():
     assert t["co2_penalty_of_cheap_policy_kg"] >= 0, \
         "the cost-min policy came out CLEANER than the carbon-min one -- surprising, verify"
     return (
-        f"baseline ${result['baseline']['bill_usd']:,.2f}, {result['baseline']['co2_kg']:,.0f} kg | "
+        f"baseline ${result['baseline']['bill_usd']:,.2f}, {result['baseline']['net_co2_kg']:,.0f} kg net | "
         f"A(cost-min): ${a['bill_usd']:,.2f} save ${a['savings_vs_baseline_usd']:,.2f}, "
-        f"{a['co2_kg']:,.0f} kg avoided {a['co2_avoided_vs_baseline_kg']:,.0f} | "
+        f"{a['net_co2_kg']:,.0f} kg net avoided {a['co2_avoided_vs_baseline_kg']:,.0f} | "
         f"B(carbon-min): ${b['bill_usd']:,.2f} save ${b['savings_vs_baseline_usd']:,.2f}, "
-        f"{b['co2_kg']:,.0f} kg avoided {b['co2_avoided_vs_baseline_kg']:,.0f} | "
+        f"{b['net_co2_kg']:,.0f} kg net avoided {b['co2_avoided_vs_baseline_kg']:,.0f} | "
         f"C(union): ${c['bill_usd']:,.2f} save ${c['savings_vs_baseline_usd']:,.2f}, "
-        f"{c['co2_kg']:,.0f} kg avoided {c['co2_avoided_vs_baseline_kg']:,.0f} | "
+        f"{c['net_co2_kg']:,.0f} kg net avoided {c['co2_avoided_vs_baseline_kg']:,.0f} | "
         f"cost penalty of clean ${t['cost_penalty_of_clean_policy_usd']:,.2f}/yr | "
-        f"CO2 penalty of cheap {t['co2_penalty_of_cheap_policy_kg']:,.1f} kg/yr | "
+        f"CO2 penalty of cheap {t['co2_penalty_of_cheap_policy_kg']:,.1f} kg/yr (net) | "
         f"Run C meaningfully differs: {result['run_c_analysis']['meaningfully_differs_from_a_and_b']}")
 
 

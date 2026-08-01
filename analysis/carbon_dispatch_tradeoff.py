@@ -84,6 +84,22 @@ average intensity at the export hour, the identical "avoided emissions"
 convention carbon_fullyear.py already uses for its own export-avoided figure --
 so a marginal-based export credit would likely differ in the same direction.
 
+NET VS. GROSS CO2 (why this matters here specifically, unlike carbon_fullyear.py's
+single-scenario report): the three policies consume different amounts of
+exportable solar via battery charging, so their export-avoided credits differ
+from each other (Run A 829.4 kg/yr vs Run C's 493.9 on the real committed year --
+Run C's own battery-charging behavior displaces less would-be-exported solar).
+Ranking policies on GROSS import CO2 alone silently drops that difference and
+can invert which policy is actually cleaner for the atmosphere. Every
+comparison/ranking figure here (co2_avoided_vs_baseline_kg, the tradeoff's
+co2_penalty_of_cheap_policy_kg, run_c_analysis's co2 percentage diffs) is
+therefore computed on NET CO2 (import minus that policy's own export-avoided),
+never on gross import alone. Gross import and gross export-avoided are still
+reported per policy as a breakdown (import_co2_kg, export_co2_avoided_kg), never
+silently discarded -- an adversarial review caught the earlier gross-only
+version inverting the B-vs-C ranking by hand-computing this net figure from the
+published artifact.
+
 Run from private/verify with usage.csv, behavior_rebuild.py, battery_dispatch_
 policies.py, carbon_fullyear.py and rates.py beside it (repo paths resolve
 automatically, same convention as the sibling generators):
@@ -334,6 +350,7 @@ def compute():
 
     base_co2 = float((imp0 * inten).sum() * KG)
     base_export_avoided = float((gen0 * inten).sum() * KG)
+    base_net_co2 = base_co2 - base_export_avoided
     if base_co2 <= 0:
         raise SystemExit(f"baseline CO2 footprint {base_co2} kg is not positive")
 
@@ -368,16 +385,30 @@ def compute():
     expC = float((eC * inten).sum() * KG)
 
     def policy_block(bill, co2, export_avoided, served, thru):
+        # NET CO2 (import minus the export this policy's own solar-charging
+        # displaced) is the atmospherically meaningful figure and the one
+        # every comparison/ranking below uses. The three policies consume
+        # different amounts of exportable solar via battery charging (Run A
+        # 829.4 kg export-avoided vs Run C's 493.9, on the real committed
+        # year), so ranking on gross import CO2 alone silently drops that
+        # difference and can invert which policy is actually cleaner -- a
+        # ranking-reversal an adversarial review caught by computing this net
+        # figure by hand from the previously-published import-only artifact.
+        # Gross import and gross export-avoided are still reported below as a
+        # breakdown, never silently discarded.
+        net_co2 = co2 - export_avoided
         return {
             "bill_usd": round(bill, 2),
             "savings_vs_baseline_usd": round(base - bill, 2),
-            "co2_kg": round(co2, 1),
-            "co2_avoided_vs_baseline_kg": round(base_co2 - co2, 1),
+            "import_co2_kg": round(co2, 1),
             "export_co2_avoided_kg": round(export_avoided, 1),
+            "net_co2_kg": round(net_co2, 1),
+            "co2_avoided_vs_baseline_kg": round(base_net_co2 - net_co2, 1),
             "kwh_served": round(served, 1),
             "kwh_cycled_thru": round(thru, 1),
             "usd_saved_per_kwh_cycled": round((base - bill) / thru, 4) if thru else None,
-            "co2_avoided_per_kwh_cycled_kg": round((base_co2 - co2) / thru, 4) if thru else None,
+            "co2_avoided_per_kwh_cycled_kg": (
+                round((base_net_co2 - net_co2) / thru, 4) if thru else None),
         }
 
     policies = {
@@ -386,8 +417,12 @@ def compute():
         "C_union": policy_block(billC, co2C, expC, servedC, thruC),
     }
 
+    net_co2A = co2A - expA
+    net_co2B = co2B - expB
+    net_co2C = co2C - expC
+
     cost_penalty = billB - billA
-    co2_penalty = co2A - co2B
+    co2_penalty = net_co2A - net_co2B
     mean_thru_ab = (thruA + thruB) / 2.0
 
     tradeoff = {
@@ -402,20 +437,24 @@ def compute():
             "runs A and B: they are two different dispatch schedules with "
             "different total throughput, so there is no single denominator "
             "that is 'the' right one; the mean is used and stated explicitly "
-            "here rather than silently picking one run's throughput"),
+            "here rather than silently picking one run's throughput. CO2 "
+            "figures are NET (import minus this policy's own export-avoided), "
+            "not gross import -- see policies.*.net_co2_kg."),
         "cost_penalty_meaning": ("Run B's $ cost minus Run A's $ cost -- how "
                                  "much MORE it costs to dispatch for carbon "
                                  "than to dispatch for money"),
-        "co2_penalty_meaning": ("Run A's CO2 minus Run B's CO2 -- how much "
-                                "MORE carbon the money-optimal dispatch emits "
-                                "than the carbon-optimal one"),
+        "co2_penalty_meaning": ("Run A's NET CO2 minus Run B's NET CO2 -- how "
+                                "much MORE carbon (imports less the export "
+                                "each policy's own solar-charging displaced) "
+                                "the money-optimal dispatch emits than the "
+                                "carbon-optimal one"),
     }
 
     def pct_diff(x, y):
         return abs(x - y) / abs(y) if y else float("inf")
 
-    c_vs_a = {"bill": pct_diff(billC, billA), "co2": pct_diff(co2C, co2A)}
-    c_vs_b = {"bill": pct_diff(billC, billB), "co2": pct_diff(co2C, co2B)}
+    c_vs_a = {"bill": pct_diff(billC, billA), "co2": pct_diff(net_co2C, net_co2A)}
+    c_vs_b = {"bill": pct_diff(billC, billB), "co2": pct_diff(net_co2C, net_co2B)}
     close_to_a = c_vs_a["bill"] < MEANINGFUL_PCT and c_vs_a["co2"] < MEANINGFUL_PCT
     close_to_b = c_vs_b["bill"] < MEANINGFUL_PCT and c_vs_b["co2"] < MEANINGFUL_PCT
     run_c_analysis = {
@@ -434,8 +473,9 @@ def compute():
     result = {
         "baseline": {
             "bill_usd": round(base, 2),
-            "co2_kg": round(base_co2, 1),
+            "import_co2_kg": round(base_co2, 1),
             "export_co2_avoided_kg": round(base_export_avoided, 1),
+            "net_co2_kg": round(base_net_co2, 1),
         },
         "cross_check": {
             "battery_dispatch_policies_json_pw3_greedy_save_usd": committed_save_a,
@@ -484,14 +524,29 @@ def compute():
             "Run B deliberately drops run_batt's on-peak-unconditional discharge "
                 "carve-out (there is no third, always-serve tier in a binary "
                 "intensity split); see the module docstring for why.",
+            f"Run A and Run B are NOT throughput-matched: Run A cycles "
+                f"{thruA:,.0f} kWh/yr, Run B only {thruB:,.0f} kWh/yr (Run C "
+                f"{thruC:,.0f}) -- Run B's own design (the missing on-peak "
+                "carve-out above, plus a different discharge window) serves "
+                "less load, not just a different schedule of the SAME load. "
+                "The $/kWh-cycled and kg/kWh-cycled figures normalize for "
+                "this, but the absolute $/kg penalty figures reflect these "
+                "SPECIFIC heuristic policies as implemented, not a bound on "
+                "what a jointly re-optimized, throughput-matched carbon-vs-"
+                "cost tradeoff would show -- issue #8 asked for a second "
+                "policy and a union of the two, not a joint re-optimization, "
+                "and this script does not claim to be one.",
             f"Intensity measured on {n_covered}/365 real CAISO days; "
                 f"{len(interpolated_dates)} day(s) ({', '.join(interpolated_dates)}) "
                 "use the month-hour mean of covered days in the same calendar "
                 "month, identical to carbon_fullyear.py's own treatment.",
             "All three runs share one battery model (13.5 kWh usable, 11.5 kW, "
                 "90% round-trip efficiency) and one billing engine "
-                "(rates.bill_nem); only the discharge/charge DECISION differs "
-                "between them, isolating the dispatch-objective effect.",
+                "(rates.bill_nem); the discharge/charge DECISION differs "
+                "between them by design, but (see the throughput caveat above) "
+                "that decision difference also changes how much load each "
+                "policy serves, so this does not isolate a pure objective "
+                "effect at matched utilization.",
         ],
         "provenance": {
             "inputs": [
@@ -531,11 +586,11 @@ def main(out_path=None):
         raise
     print(f"wrote {out_path}")
     print(f"baseline bill ${result['baseline']['bill_usd']:,.2f} | "
-          f"CO2 {result['baseline']['co2_kg']:,.0f} kg")
+          f"net CO2 {result['baseline']['net_co2_kg']:,.0f} kg")
     for name in ("A_cost_min", "B_carbon_min", "C_union"):
         p = result["policies"][name]
         print(f"  {name}: bill ${p['bill_usd']:,.2f} (save ${p['savings_vs_baseline_usd']:,.2f}) | "
-              f"CO2 {p['co2_kg']:,.0f} kg (avoided {p['co2_avoided_vs_baseline_kg']:,.0f}) | "
+              f"net CO2 {p['net_co2_kg']:,.0f} kg (avoided {p['co2_avoided_vs_baseline_kg']:,.0f}) | "
               f"cycled {p['kwh_cycled_thru']:,.0f} kWh")
     t = result["tradeoff"]
     print(f"cost penalty of the clean policy: ${t['cost_penalty_of_clean_policy_usd']:,.2f}/yr "
