@@ -16,7 +16,10 @@ things, and no more:
      five-step contract stated in that file ("The `id` -> `private/household.yaml`
      path contract"), reporting each id as resolved, legitimately absent, or
      unresolvable -- the last being a broken rule, not a clean bill;
-  3. turns the private-only values into "needles" and scans text for them;
+  3. turns the private-only values into "needles" and scans every tracked file
+     for them -- structurally where the file has a structure to walk (JSON and
+     YAML: string leaves and keys, compared for equality), as text everywhere
+     else, and both ways for YAML, which has comments outside its structure;
   4. for the fields no literal scan can cover -- a boolean, a short enum --
      enforces the greppable substitute the cheatsheet states instead: no
      committed artifact carries a key of that name, and no committed script
@@ -164,6 +167,10 @@ YAML_PATH_OVERRIDES = {
 #     a cell, after a colon), and only from BARE_WORD_TEXT_MIN_CHARS up --
 #     below that the word is generic vocabulary that every file in the repo
 #     contains for reasons of its own;
+#
+# Which of those two applies is decided by the FORMAT, in STRUCTURED_FORMATS
+# below, because "in value position" is a question a parser answers exactly and
+# a regex only approximates.
 #   * a whole integer below INTEGER_NEEDLE_FLOOR is skipped: an ampere rating,
 #     a pole count or a slot count comes from a short standard list that
 #     millions of dwellings share, which is the owner's stated reason for
@@ -176,6 +183,31 @@ BARE_WORD_TEXT_MIN_CHARS = 5
 # A bare word counts as published only in value position: opening a line, or
 # preceded by a quote, comma, colon, bracket or pipe, and closed the same way.
 _VALUE_POSITION = r'(?:^|[">,|:=\[\(\s])\s*%s\s*(?:$|["<,|\]\)])'
+
+# ---------------------------------------------------------------------------
+# Which formats the scan reads structurally, and how far the structure goes.
+#
+# The regex above is a guess at where a value ends, and on a format that has a
+# grammar it is the wrong tool: `label: Zzyzx # copied from the intake` and
+# `{key: Zzyzx}` are both a scalar `Zzyzx` to a parser, and both fell outside a
+# pattern that had to enumerate the closing characters itself. Widening the
+# pattern only moves the boundary; parsing removes it. So a format this repo
+# tracks AND can parse is walked the way JSON already was -- every string leaf
+# and every key, compared for equality.
+#
+#   json  -- structure only. There is nothing outside it: every byte is a key,
+#            a value or punctuation, so the walk IS the whole file.
+#   yaml  -- structure AND text. YAML has comments, and a private answer quoted
+#            in one is published just the same while being no part of the
+#            structure. The two readings are a union: the walk catches what the
+#            pattern's boundaries missed, the pattern catches what the parser
+#            never sees.
+#
+# Everything else -- markdown, html, shell, plain text, a commit message -- has
+# no structure to read and stays with the pattern alone.
+# ---------------------------------------------------------------------------
+STRUCTURED_FORMATS = {".json": "json", ".yaml": "yaml", ".yml": "yaml"}
+TEXT_READ_TOO = ("yaml",)
 
 
 class Needle:
@@ -201,7 +233,8 @@ class Needle:
         The ONE place BARE_WORD_TEXT_MIN_CHARS is read, and it is a property
         rather than a check written twice because the two readers used to
         disagree. `_found_in` skips a sub-floor bare word in every file it
-        cannot parse, so that needle covers nothing outside JSON; but
+        cannot parse, so that needle covers nothing outside the structured
+        formats; but
         `unsearchable_fields` counted the mere EXISTENCE of a needle as proof
         the field was covered by the value scan, and so left it out of the
         key/path substitute. A field whose answers are all sub-floor bare words
@@ -472,14 +505,81 @@ def needles(household, fields=None, shape=None):
     return unique
 
 
+class UnparseableArtifact(Exception):
+    """A structured artifact the scan could not read, which is not a clean bill.
+
+    A `.json` or `.yaml` file that will not parse is walked by nothing, so the
+    equality half of the value scan and the key half of the substitute rule
+    both return quiet for it -- quiet for the reason a gate must never be quiet
+    for. Skipping it in silence is what this replaces; callers report it and
+    refuse to pass the tree.
+
+    It carries the path, the error CLASS and the line, and never the parser's
+    own message: a yaml or json error quotes the offending source, and the
+    offending source is exactly the content this module may not print.
+    """
+
+    def __init__(self, relpath, exc):
+        self.relpath = relpath
+        self.kind = type(exc).__name__
+        mark = getattr(exc, "problem_mark", None)
+        self.line = (mark.line + 1 if mark is not None
+                     else getattr(exc, "lineno", None))
+        where = "" if self.line is None else f", line {self.line}"
+        super().__init__(f"{relpath}: {self.kind}{where}")
+
+
+def structured_format(relpath):
+    """The format whose structure `relpath` is read through, or None."""
+    if relpath is None:
+        return None
+    dot = relpath.rfind(".")
+    return STRUCTURED_FORMATS.get(relpath[dot:].lower()) if dot >= 0 else None
+
+
+def parse_structured(relpath, text):
+    """The parsed object behind a structured artifact, or None if it is not one.
+
+    Multi-document YAML comes back as the LIST of its documents, so a value in
+    the second one is walked like a value in the first. Anchors and aliases are
+    resolved by the loader, which makes an alias the same object as its anchor
+    and the walk below idempotent about it.
+
+    Raises UnparseableArtifact rather than returning None for a file that
+    claims a structured suffix and does not parse.
+    """
+    fmt = structured_format(relpath)
+    if fmt == "json":
+        try:
+            return json.loads(text)
+        except ValueError as e:
+            raise UnparseableArtifact(relpath, e) from None
+    if fmt == "yaml":
+        try:
+            return list(yaml.safe_load_all(text))
+        except yaml.YAMLError as e:
+            raise UnparseableArtifact(relpath, e) from None
+    return None
+
+
 def structured_strings(obj):
-    """Every string a parsed artifact publishes, keys included."""
-    got = set()
+    """Every string a parsed artifact publishes, keys included.
+
+    Keys are stringified rather than assumed to be strings: YAML types its
+    scalars, so `on:` in a workflow is the key `True` and a date key is a
+    `datetime.date`. The visited set is there for the same reason -- a yaml
+    anchor can alias its own container, and the loader builds the cycle.
+    """
+    got, seen = set(), set()
 
     def walk(o):
+        if isinstance(o, (dict, list)):
+            if id(o) in seen:
+                return
+            seen.add(id(o))
         if isinstance(o, dict):
             for k, v in o.items():
-                got.add(k.lower())
+                got.add(str(k).lower())
                 walk(v)
         elif isinstance(o, list):
             for v in o:
@@ -777,8 +877,14 @@ def _mask(text, spans):
     return "".join(chars)
 
 
-def _found_in(text, needle_list, structured=None):
-    """The needles that occur in one body of text. Returns needles, not Hits."""
+def _found_in(text, needle_list, structured=None, as_text=True):
+    """The needles that occur in one body of text. Returns needles, not Hits.
+
+    `structured` is the parsed object when the file has a structure to walk;
+    `as_text` says whether the pattern is run over the bytes as well. The two
+    are independent because the formats differ: JSON is structure only, YAML is
+    both, everything else is text only.
+    """
     low = text.lower()
     strings = structured_strings(structured) if structured is not None else None
     out = []
@@ -786,12 +892,11 @@ def _found_in(text, needle_list, structured=None):
         v = n.value.lower()
         if n.mode == "anywhere":
             found = v in low
-        elif strings is not None:
-            found = v in strings
-        elif not n.text_searchable:
-            continue
         else:
-            found = bool(re.search(_VALUE_POSITION % re.escape(v), low, re.M))
+            found = strings is not None and v in strings
+            if not found and as_text and n.text_searchable:
+                found = bool(re.search(_VALUE_POSITION % re.escape(v), low,
+                                       re.M))
         if found:
             out.append(n)
     return out
@@ -801,9 +906,16 @@ def scan_text(text, needle_list, relpath=None, structured=None, baseline=None,
               excused=None):
     """Needles found in one file's text. Returns Hits, never values.
 
-    `structured` is a parsed object when the file is JSON: a bare word is then
-    compared for equality against the artifact's own string leaves and keys,
-    which is the strict reading of "published as a value".
+    A file whose suffix names a format in STRUCTURED_FORMATS is parsed here and
+    walked: a bare word is compared for equality against the artifact's own
+    string leaves and keys, which is the strict reading of "published as a
+    value" and the only reading that gets the boundaries right. YAML is read as
+    text as well, for what its comments carry. `structured` is for a caller
+    that already holds the parsed object and no path to derive the format from;
+    it is read as JSON, which is the only shape any caller passes.
+
+    Raises UnparseableArtifact for a file that claims a structured suffix and
+    does not parse -- an artifact the walk cannot read is not a clean one.
 
     The scan reads every byte of the file EXCEPT the literal spans this file
     declares and the baseline version of the same file already declared -- and
@@ -819,19 +931,42 @@ def scan_text(text, needle_list, relpath=None, structured=None, baseline=None,
     excuse instead of asserting a number nobody can see.
     """
     literals = declared_literals(relpath, text) if relpath is not None else []
+    fmt = structured_format(relpath) or ("json" if structured is not None
+                                         else None)
+    as_text = fmt not in ("json",)
+    reparse = structured is None and structured_format(relpath) is not None
+    if reparse:
+        structured = parse_structured(relpath, text)
+
+    def look(t):
+        """The needles in one rendering of this file, structure included.
+
+        Masking a declared literal has to blank it out of the PARSE as well,
+        or a value the baseline already excused would come back through the
+        structural half. Blanking a scalar leaves a well-formed document -- the
+        key keeps its colon and loses its value -- but if some shape does not
+        survive it, the unmasked parse is used and the excuse simply does not
+        apply, which errs toward a hit.
+        """
+        s = structured
+        if reparse and t is not text:
+            try:
+                s = parse_structured(relpath, t)
+            except UnparseableArtifact:                     # pragma: no cover
+                s = structured
+        return _found_in(t, needle_list, s, as_text)
 
     def hits_for(found):
         return [Hit(n.field_id, n.path, n.leaf_path, n.mode, relpath)
                 for n in found]
 
     if not literals:
-        return hits_for(_found_in(text, needle_list, structured))
+        return hits_for(look(text))
     # the fast path, and it is the usual one: if blanking EVERY declared literal
     # changes nothing, no needle sits inside one, so there is nothing to excuse
     # and the baseline is never read.
-    everywhere = _found_in(text, needle_list, structured)
-    free = _found_in(_mask(text, [(a, b) for a, b, _ in literals]),
-                     needle_list, structured)
+    everywhere = look(text)
+    free = look(_mask(text, [(a, b) for a, b, _ in literals]))
     if len(free) == len(everywhere):
         return hits_for(everywhere)
 
@@ -848,7 +983,7 @@ def scan_text(text, needle_list, relpath=None, structured=None, baseline=None,
         for a, b in keep:
             for n in _found_in(text[a:b], needle_list):
                 excused[(relpath, n.leaf_path)] += 1
-    return hits_for(_found_in(_mask(text, keep), needle_list, structured))
+    return hits_for(look(_mask(text, keep)))
 
 
 def leaks(needle_list, text, obj=None, relpath=None, baseline=None):
@@ -983,23 +1118,18 @@ def scan_artifact_keys(items, banned):
     that stopped at JSON left a whole tracked format returning clean. The key
     NAME is the disclosure here -- `itc_claimed: false` publishes the answer
     whichever way the boolean falls -- so this looks for the key, never a value.
+
+    Both formats are parsed through `parse_structured`, which raises rather
+    than skipping a file it cannot read: a key rule that returns quiet for an
+    artifact nothing parsed is quiet for the wrong reason.
     """
     hits = []
     for rel, text in items:
         keys = set()
         if rel in KEY_RULE_EXEMPT:
             continue
-        if rel.endswith(".json"):
-            try:
-                keys = _json_keys(json.loads(text))
-            except ValueError:                             # pragma: no cover
-                continue
-        elif rel.endswith((".yaml", ".yml")):
-            try:
-                for doc in yaml.safe_load_all(text):
-                    _json_keys(doc, keys)
-            except yaml.YAMLError:                         # pragma: no cover
-                continue
+        if structured_format(rel) is not None:
+            _json_keys(parse_structured(rel, text), keys)
         elif rel.endswith(".csv"):
             row = next(csv.reader(io.StringIO(text)), [])
             keys = {c.strip().lower() for c in row}
@@ -1023,15 +1153,45 @@ def _uncommented(text):
                      for line in text.splitlines())
 
 
+def read_paths(path):
+    """Every accessor argument that constitutes a read of `path`.
+
+    A read of a CONTAINER hands over everything underneath it, so an ancestor
+    is a read of the leaf, which is why this is a set and not an equality. The
+    set is derived from the path's own structure rather than by comparing
+    string prefixes, because the contract's `[]` marker is notation and not
+    part of any key name: `monitoring[].url` is handed over by `monitoring[]`
+    and, since that is how the accessor spells it, by `monitoring` -- and a
+    prefix test on the dotted string sees neither, which left the three tiered
+    keys inside `monitoring[]` reachable by `HH.get("monitoring")` with nothing
+    to say about it. Walking the segments gives every intermediate container
+    for free, so `a[].b[].c` needs no further patch.
+    """
+    out, prefix = set(), ""
+    for seg in path.split("."):
+        prefix = f"{prefix}.{seg}" if prefix else seg
+        out.add(prefix)
+        if prefix.endswith("[]"):
+            out.add(prefix[:-2])
+    return out
+
+
 def scan_script_reads(items, unsearchable):
     """Half two: a committed script reading the path.
 
     In python, two shapes, because one alone is not enough. The accessor call
     `hh.get("solar.itc_claimed")` is the direct read, and a read of an ANCESTOR
-    (`HH.get("solar")`) pulls the key out with it. The bare path literal catches
-    the indirection `P = "solar.itc_claimed"` ... `hh.get(P)`, and is matched by
-    exact string equality so that a docstring or a comment MENTIONING the path
-    -- which several files legitimately do -- is not a read.
+    (`HH.get("solar")`, `HH.get("monitoring")`) pulls the key out with it --
+    `read_paths` above is the whole set, marker included. The bare path literal
+    catches the indirection `P = "solar.itc_claimed"` ... `hh.get(P)`, and is
+    matched by exact string equality so that a docstring or a comment MENTIONING
+    the path -- which several files legitimately do -- is not a read.
+
+    Ancestors are the accessor call's business alone. The other two shapes
+    match a bare token, and a container's bare name is `panel`, `solar`,
+    `monitoring`: banning those as tokens would fire on most of the tree and
+    say nothing. A parsed accessor call naming a container is unambiguous; a
+    word in a shell script is not.
 
     Python is not the only committed script here: the repo tracks shell (the
     hooks, `check_coverage.sh`, `stage-private-data.sh`) and yaml (the
@@ -1042,6 +1202,7 @@ def scan_script_reads(items, unsearchable):
     them have to name these paths in order to document the rule.
     """
     by_path = {path: field_id for field_id, path in unsearchable.items()}
+    reads = {path: read_paths(path) for path in by_path}
     seen, hits = set(), []
 
     def record(field_id, path, mode, rel):
@@ -1077,7 +1238,7 @@ def scan_script_reads(items, unsearchable):
                     and isinstance(node.args[0].value, str)):
                 arg = node.args[0].value
                 for path, field_id in by_path.items():
-                    if arg == path or path.startswith(arg + "."):
+                    if arg in reads[path]:
                         record(field_id, path, "an accessor read", rel)
             elif (rel not in PATH_LITERAL_EXEMPT
                     and isinstance(node, ast.Constant)
@@ -1107,16 +1268,16 @@ def tracked_files(root=None):
 
 
 def scan_items(needle_list, items, baseline=None, excused=None):
-    """The value scan over (relpath, text) pairs, whatever produced them."""
+    """The value scan over (relpath, text) pairs, whatever produced them.
+
+    `scan_text` decides from the path which files have a structure to walk and
+    parses them itself, and raises UnparseableArtifact for one that claims a
+    structured suffix and does not parse. That propagates: an artifact nothing
+    could read is reported, never counted as scanned.
+    """
     hits = []
     for rel, text in items:
-        obj = None
-        if rel.endswith(".json"):
-            try:
-                obj = json.loads(text)
-            except ValueError:                             # pragma: no cover
-                obj = None
-        hits.extend(scan_text(text, needle_list, relpath=rel, structured=obj,
+        hits.extend(scan_text(text, needle_list, relpath=rel,
                               baseline=baseline, excused=excused))
     return hits
 
@@ -1225,7 +1386,8 @@ def gate(items, household=None, fields=None, shape=None, baseline=None,
 
     Raises UnresolvableField before scanning if any tiered field has no
     locatable subject -- a scan that cannot find what a rule is about must not
-    return a clean bill for it.
+    return a clean bill for it, and UnparseableArtifact if a file claiming a
+    structured suffix will not parse, for the same reason one step down.
     """
     fields = cheatsheet_fields() if fields is None else fields
     shape = schema() if shape is None else shape
@@ -1276,7 +1438,9 @@ def gate(items, household=None, fields=None, shape=None, baseline=None,
 #   2  private/household.yaml is absent, so the value half could not run. Not a
 #      failure -- somebody else's clone legitimately has no private file -- but
 #      never silent either
-#   3  the gate could not run at all; refuse to commit unscanned
+#   3  part of the content could not be scanned -- the gate failed outright, or
+#      a file claiming a structured suffix would not parse, so nothing walked
+#      it; refuse to commit unscanned
 # ---------------------------------------------------------------------------
 MESSAGE_LABEL = "the commit message"
 
@@ -1317,6 +1481,15 @@ def main(argv=None):
               "PATHLESS_FIELDS if it stores no value, or fix the id. See the "
               "path contract in DATA-SOURCES-CHEATSHEET.md.", file=sys.stderr)
         return 1
+    except UnparseableArtifact as e:
+        at = "" if e.line is None else f" at line {e.line}"
+        print(f"privacy tiers: BLOCKED. {e.relpath} claims a structured format "
+              f"and does not parse ({e.kind}{at}), so nothing walked its keys "
+              f"or its values and the scan of it would report clean for the "
+              f"wrong reason. Fix the file, or give it a suffix that does not "
+              f"claim a format. (The parser's own message is withheld: it "
+              f"quotes the offending source.)", file=sys.stderr)
+        return 3
     except Exception as e:                                 # noqa: BLE001
         print(f"privacy tiers: the gate could not run ({type(e).__name__}: "
               f"{e}) -- refusing to pass unscanned.", file=sys.stderr)

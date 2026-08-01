@@ -445,10 +445,15 @@ def case_only_a_literal_the_baseline_already_held_is_excused():
     # and the boundary that keeps an old leak a leak: outside the three
     # classes nothing is eligible, so age excuses nothing. A private value
     # already committed in an ordinary module, in data/ or in prose is still
-    # a finding on every scan.
-    for rel in ("analysis/thing.py", "data/results.json", "TECHNICAL.md"):
-        assert PT.scan_text(fixture, needles, relpath=rel,
-                            baseline=PT.Baseline(texts={rel: fixture})), \
+    # a finding on every scan. Each file gets content its own suffix can carry,
+    # because a `.json` that does not parse is now a finding of its own and
+    # would prove this claim by the wrong route.
+    for rel, src in (("analysis/thing.py", fixture),
+                     ("data/results.json", json.dumps({"circuits": ["Zzyzx"]})),
+                     ("data/results.yaml", "circuits:\n  - Zzyzx\n"),
+                     ("TECHNICAL.md", fixture)):
+        assert PT.scan_text(src, needles, relpath=rel,
+                            baseline=PT.Baseline(texts={rel: src})), \
             f"{rel} had a private value excused merely for being old"
 
     # which ref a repository resolves to, in the three shapes a clone comes in
@@ -545,6 +550,175 @@ def case_the_tree_is_clean_and_the_baseline_is_what_excuses_it():
             f"all of them declaring classes, on "
             f"{sum(excused.values())} pre-existing literal(s) -- so the excuse "
             f"is the baseline and nothing else")
+
+
+def case_a_yaml_artifact_is_read_structurally_and_not_by_pattern():
+    """A bare word in a YAML file is found by parsing it, not by a regex.
+
+    The "as a value" pattern has to enumerate the characters that can close a
+    value, and YAML has more of them than any pattern kept up with: a trailing
+    comment and a flow mapping both put a private answer in plain value
+    position and both fell outside it. Widening the pattern moves the boundary;
+    parsing removes it, so a tracked format the repo can parse is now walked --
+    every string leaf and every key, compared for equality, exactly as JSON
+    already was.
+
+    YAML keeps the pattern as well, because comments are not part of the
+    structure and a private answer quoted in one is published just the same.
+
+    Every value here is invented, and the case runs in CI.
+    """
+    needles = PT.needles(PLANTED)
+    legend = [n for n in needles if n.leaf_path == "panel.schedule[].label"]
+    assert legend and legend[0].mode == "as a value", legend
+    v = legend[0].value
+    rel = "data/x.yaml"
+
+    # the two shapes the pattern missed, plus the plain block scalar it caught,
+    # plus a second document and an alias -- each is a value position to a
+    # parser and each must be a hit
+    for text, why in (
+            (f"panel:\n  label: {v} # copied from the intake\n",
+             "a scalar with a trailing comment"),
+            (f"panel: {{key: {v}}}\n", "a flow mapping"),
+            (f"panel:\n  label: {v}\n", "a plain block scalar"),
+            (f"panel:\n  label: other\n---\npanel:\n  label: {v}\n",
+             "the second document of a multi-document file"),
+            (f"defaults: &d\n  label: {v}\npanel:\n  <<: *d\n",
+             "a value reached through an alias"),
+            (f"panel:\n  labels: [a, {v}, b]\n", "a flow sequence member"),
+            (f"panel:\n  label: \"{v}\"\n", "a quoted scalar"),
+            (f"{v}:\n  label: a\n", "a mapping KEY")):
+        hits = PT.scan_text(text, needles, relpath=rel)
+        assert [h.leaf_path for h in hits] == ["panel.schedule[].label"], (
+            f"a private answer as {why} in a YAML artifact was not caught: "
+            f"{hits}")
+        assert all(v not in str(h) for h in hits), "a finding printed a value"
+
+    # the reading this replaces, run on the same bytes: the pattern alone, with
+    # no structure to fall back on, which is every YAML file's whole scan
+    # before this change
+    for text, why in (
+            (f"panel:\n  label: {v} # copied from the intake\n",
+             "a trailing comment"),
+            (f"panel: {{key: {v}}}\n", "a flow mapping"),
+            (f"{v}:\n  label: a\n", "a mapping key")):
+        assert not PT._found_in(text, needles), (
+            f"the pattern alone already caught {why} -- this control proves "
+            f"nothing")
+
+    # and the pattern is still run, because a comment is outside the structure
+    comment = f"panel:\n  label: other  # the real one reads {v}\n"
+    assert PT.parse_structured(rel, comment) == [{"panel": {"label": "other"}}]
+    assert [h.leaf_path for h in PT.scan_text(comment, needles, relpath=rel)] \
+        == ["panel.schedule[].label"], \
+        "a private answer in a YAML comment is outside the structure and was " \
+        "not read as text either"
+
+    # a YAML artifact that will not parse is REPORTED, not skipped: nothing
+    # walked its keys or its values, so a quiet return would be quiet for the
+    # one reason a gate may never be quiet
+    broken = f"panel:\n  label: {v}\n   bad: [unclosed\n"
+    try:
+        PT.scan_text(broken, needles, relpath=rel)
+        raise AssertionError("an unparseable YAML artifact scanned clean")
+    except PT.UnparseableArtifact as e:
+        assert e.relpath == rel and v not in str(e), \
+            f"the unparseable report leaked the source it could not parse: {e}"
+    try:
+        PT.scan_artifact_keys([(rel, broken)], {})
+        raise AssertionError("the key rule skipped an unparseable artifact")
+    except PT.UnparseableArtifact:
+        pass
+    # the same file with a suffix that claims no format is text, not an error
+    assert PT.scan_text(broken, needles, relpath="notes.txt"), \
+        "the same bytes under a suffix claiming no format should just be text"
+
+    # the two tracked YAML shapes behave as documented. The workflows parse and
+    # disclose nothing; the schema template's placeholders stay excused by its
+    # baseline, which means the mask has to reach the PARSE and not only the
+    # bytes -- or the structural half would hand back what the baseline excused.
+    items = dict(PT.tree_items()[0])
+    flows = [r for r in items if r.startswith(".github/") and
+             r.endswith((".yml", ".yaml"))]
+    assert len(flows) >= 5, flows
+    for r in flows:
+        assert PT.parse_structured(r, items[r]) is not None, r
+        assert not PT.scan_text(items[r], needles, relpath=r), r
+    yname = "household.example.yaml"
+    ydecl = f"panel:\n  schedule:\n    - label: {v}\n"
+    assert PT.scan_text(ydecl, needles, relpath=yname), \
+        "a template placeholder with no baseline was excused"
+    assert not PT.scan_text(ydecl, needles, relpath=yname,
+                            baseline=PT.Baseline(texts={yname: ydecl})), \
+        "the mask did not reach the structural half: a baselined template " \
+        "placeholder came back through the parse"
+    return ("a YAML artifact is walked structurally -- trailing comment, flow "
+            "mapping, second document, alias, sequence member and mapping key "
+            "all fail, three of which the pattern alone missed -- and is read "
+            "as text as well for its comments; an unparseable one is reported "
+            f"without quoting itself; {len(flows)} tracked workflows and the "
+            f"schema template behave as documented")
+
+
+def case_a_container_read_hands_over_the_keys_inside_it():
+    """An ancestor of a list-member path is an ancestor, marker and all.
+
+    The ban on reading an unsearchable field's path has always covered a read
+    of a CONTAINER, since the container hands the key over. It compared dotted
+    string prefixes to find one, and `monitoring[].url` does not start with
+    `monitoring.`, so the list marker hid every container of every list-member
+    path: `HH.get("monitoring")` returns the url, the api and the owner of
+    every feed, and the scan had nothing to say about it. `read_paths` derives
+    the set from the path's segments instead, so an intermediate container and
+    a doubly-nested list are covered without another patch.
+
+    Synthetic paths, so the case runs in CI.
+    """
+    # the plain dotted case is unchanged, which is what keeps the real tree
+    # where it was. Spelled with an invented path: naming a genuinely banned
+    # one here would be this module reading it, and the rule below would fire
+    # on this very file.
+    assert PT.read_paths("block.leaf") == {"block", "block.leaf"}, \
+        "the dotted case changed shape"
+    assert PT.read_paths("monitoring[].url") == {"monitoring", "monitoring[]",
+                                                 "monitoring[].url"}
+    assert PT.read_paths("a[].b[].c") == {"a", "a[]", "a[].b", "a[].b[]",
+                                          "a[].b[].c"}
+
+    derived = {"monitoring_url": "monitoring[].url", "deep_c": "a[].b[].c"}
+    for src, why in (
+            ('v = HH.get("monitoring")\n', "the container by its bare name"),
+            ('v = HH.get("monitoring[]")\n', "the container with its marker"),
+            ('v = hh.get("monitoring[].url")\n', "the path itself"),
+            ('v = hh.get("a")\n', "the outer container of a nested list"),
+            ('v = hh.get("a[].b")\n', "an intermediate container"),
+            ('v = hh.get("a[].b[]")\n', "an intermediate list")):
+        hits = PT.scan_script_reads([("analysis/thing.py", src)], derived)
+        assert hits, f"a read of {why} was not caught"
+        assert all(h.field_id in derived for h in hits), hits
+
+    # the reading this replaces, on the same arguments: a dotted prefix test,
+    # which is why a container read of a list-member path returned clean
+    for arg, path in (("monitoring", "monitoring[].url"),
+                      ("a", "a[].b[].c"), ("a[].b", "a[].b[].c")):
+        assert not (arg == path or path.startswith(arg + ".")), (
+            f"the prefix test already matched {arg!r} -> {path!r} -- this "
+            f"control proves nothing")
+
+    # precision: a neighbouring key, a sibling list and a prefix of a name are
+    # not reads of it
+    quiet = [("analysis/thing.py",
+              'a = hh.get("monitoringx")\n'
+              'b = hh.get("mon")\n'
+              'c = hh.get("monitoring[].source")\n'
+              'd = hh.get("a[].bb")\n')]
+    hits = PT.scan_script_reads(quiet, derived)
+    assert not hits, f"the read scan fired on a near-miss container: {hits}"
+    return ("every container of a list-member path is a read of it -- the bare "
+            "name, the `[]` spelling, and each intermediate container of "
+            "`a[].b[].c` -- where the dotted prefix test matched none of them; "
+            "a neighbouring key and a name prefix stay quiet")
 
 
 def case_the_unsearchable_fields_are_derived_from_the_tiers():
@@ -1219,6 +1393,8 @@ CASES = [
     case_the_repo_scan_catches_a_planted_value,
     case_a_test_module_and_the_template_are_scanned_like_any_other_file,
     case_only_a_literal_the_baseline_already_held_is_excused,
+    case_a_yaml_artifact_is_read_structurally_and_not_by_pattern,
+    case_a_container_read_hands_over_the_keys_inside_it,
     case_the_unsearchable_fields_are_derived_from_the_tiers,
     case_a_sub_floor_bare_answer_is_covered_by_the_substitute_rule,
     case_a_banned_key_or_path_read_fails,
