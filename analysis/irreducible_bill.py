@@ -171,8 +171,19 @@ from parse_bills import SUMMARY_STATEMENTS_ELEC  # noqa: E402 -- reused, not re-
 # Neither module is modified here, and neither of their own artifacts
 # (behavior_rebuild.json, battery_dispatch_policies.json) is touched --
 # compute_package_gross_imports() below only calls their pure functions.
-import behavior_rebuild as br            # noqa: E402  -- read-only use
-import battery_dispatch_policies as bdp  # noqa: E402  -- read-only use
+#
+# behavior_rebuild and battery_dispatch_policies are deliberately NOT
+# imported here at module top level: both execute code at import time that
+# reads private/household.yaml and fail closed (SystemExit) if it is
+# absent. That is correct behavior FOR THOSE MODULES (they always need real
+# household data), but it means importing THIS module would transitively
+# crash in any environment without private/household.yaml -- including a
+# fresh CI checkout that has no private/ directory at all, and including
+# test_irreducible_bill.py's own corpus-independent tests, which do not
+# need private data and must still be able to import this module and run.
+# Import them lazily, inside compute_package_gross_imports() itself (the
+# ONLY function that uses them), so only that specific code path fails
+# closed when it is actually invoked without the household file present.
 
 
 def _repo_root():
@@ -707,6 +718,9 @@ def compute_package_gross_imports():
     charge component at the SAME current-rate vintage as everything else in
     that fraction, instead of the household's historical mixed-vintage
     fixed-charge total."""
+    import behavior_rebuild as br            # noqa: E402  -- read-only use, lazy (see top-of-file note)
+    import battery_dispatch_policies as bdp  # noqa: E402  -- read-only use, lazy (see top-of-file note)
+
     real_csv = br.CSV
     br.CSV = str(_raw_interval_csv())
     try:

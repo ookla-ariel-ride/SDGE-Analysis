@@ -30,8 +30,18 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bill_decomposition as bd    # noqa: E402
-import behavior_rebuild as br      # noqa: E402
 import irreducible_bill as irr     # noqa: E402
+# behavior_rebuild is NOT imported here at module top level: it reads
+# private/household.yaml at import time and fails closed (SystemExit) if
+# absent, same reason irreducible_bill.py itself no longer imports it (or
+# battery_dispatch_policies) at module top level (issue #7 CI fix). This
+# module's own top-level import must succeed with no private/ directory at
+# all so the corpus-independent cases below can run and the corpus-
+# dependent ones can SkipCase gracefully instead of crashing the whole
+# file. The one case that needs behavior_rebuild
+# (case_low_conservation_guard_fires_on_a_poisoned_shift) imports it
+# lazily, and only after _require_corpus() has confirmed the private
+# archive is present.
 
 ROOT = irr.ROOT
 EPS = 1e-9
@@ -782,6 +792,8 @@ def case_low_conservation_guard_fires_on_a_poisoned_shift():
     missing 100 kWh and prove the guard fires rather than silently
     publishing a wrong LOW figure."""
     _require_corpus()
+    import behavior_rebuild as br  # lazy: only safe once the corpus guard above has passed
+
     real_shift_ev = br.shift_ev
 
     def poisoned(d, ev, sessions, mask, sop_idx, sop_ts):
@@ -790,7 +802,12 @@ def case_low_conservation_guard_fires_on_a_poisoned_shift():
         imp[0] -= 100.0  # silently drop 100 kWh -- must be caught
         return imp, moved
 
-    irr.br.shift_ev = poisoned
+    # Patch the shared behavior_rebuild module object directly (not via an
+    # irr.br attribute -- irreducible_bill.py now imports behavior_rebuild
+    # lazily inside compute_package_gross_imports() itself, so there is no
+    # module-level irr.br to patch until that function runs; sys.modules
+    # caching means this br IS the same object that import will bind to).
+    br.shift_ev = poisoned
     try:
         try:
             irr.compute_package_gross_imports()
@@ -799,7 +816,7 @@ def case_low_conservation_guard_fires_on_a_poisoned_shift():
         else:
             raise AssertionError("expected SystemExit on a broken LOW conservation")
     finally:
-        irr.br.shift_ev = real_shift_ev
+        br.shift_ev = real_shift_ev
     return "a poisoned shift_ev() that drops 100 kWh is caught by the LOW " \
         "conservation guard, not silently published"
 
