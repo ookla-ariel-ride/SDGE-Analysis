@@ -47,17 +47,29 @@ GENUINE FINDING, FLAGGED RATHER THAN PAPERED OVER (materially affects AC3's "ran
   NBT26's and NBT00's calendar-year-2026 rate tables are BYTE-IDENTICAL. Checked
   directly: merging both files' 2026 rows on (RIN-component, ValueName) gives 1,152
   matched cells with max|NBT00 - NBT26| = 0.0. SDG&E computes both vintages from the
-  same year's Avoided Cost Calculator; NBT26 vintage customers then get today's table
-  LOCKED for 9 years from PTO, while NBT00 customers get only THIS year's table
-  guaranteed (next year resets to a new, not-yet-published table) -- the vintages
-  differ in which FUTURE years are contractually guaranteed, not in this year's price
-  level. Consequently, the "NBT26 vs NBT00" grandfathering-value band computed here for
-  a ONE-YEAR snapshot has ZERO WIDTH: both ends are the same dollar figure. Widening it
-  into a real band would require pricing multiple future years under each vintage's
-  actual guarantee (NBT26 flat for 9 years vs NBT00's genuinely unknown annual resets)
-  -- a multi-year model outside this phase's one-year-bill scope. Both vintages are
-  still computed and published separately below (never collapsed into one to hide
-  this), so a reader can see they coincide rather than being told they were assumed to.
+  same year's Avoided Cost Calculator; NBT00 customers get only THIS year's table
+  guaranteed (next year resets to a new, not-yet-published table), while NBT26
+  vintage customers get a 9-YEAR SCHEDULE OF ESCALATING RATES locked in at
+  enrollment -- NOT the same 2026 table repeated for 9 years (an earlier version
+  of this note wrongly said "locked... flat for 9 years"; corrected after an
+  adversarial Codex review pulled the raw NBT26 file directly and found its
+  rates genuinely change year over year, e.g. this household's own "Jan
+  Weekend HS0" Generation rate: 0.087115 $/kWh in 2026, 0.090474 in 2027).
+  This script prices only NBT26's FIRST year (2026, the same TARIFF_YEAR as
+  NBT00) as an apples-to-apples one-year snapshot -- it does NOT model NBT26's
+  full 9-year escalation path, which is a real, larger undertaking outside this
+  phase's scope (see the PHASE 3 ADDITION section below for why that also means
+  no figure here should be read as a projection to any specific future year,
+  including 2039). Because both vintages' FIRST year happens to be
+  byte-identical, the "NBT26 vs NBT00" grandfathering-value band computed here
+  for THIS ONE-YEAR snapshot has ZERO WIDTH: both ends are the same dollar
+  figure. This zero width is a property of year 1 only, not of the two
+  vintages' full guarantee periods -- widening it into a real multi-year band
+  would require pricing NBT26's actual escalating schedule against NBT00's
+  genuinely unknown future annual resets, year by year, which this phase does
+  not attempt. Both vintages are still computed and published separately below
+  (never collapsed into one to hide this), so a reader can see they coincide
+  in year 1 rather than being told they were assumed to.
 
 EXPORT CREDIT FORMULA (this household is on a CCA, so SDG&E's own Generation-rate
 component does not directly apply to it):
@@ -100,8 +112,8 @@ Fail-closed + atomic (CLAUDE.md 9): the export-rate lookup ABORTS (SystemExit) o
 silently interpolated or zero-filled. The committed CSV and JSON are both written to
 temp files and os.replace'd; a failed/partial run changes neither.
 
-PHASE 3 ADDITION -- battery value under the REAL hourly NBT schedule, reconciled
-with extended_findings.py's nbt_2039 (issue #9 AC6):
+PHASE 3 ADDITION -- battery value under the REAL 2026 hourly NBT schedule,
+reconciled with extended_findings.py's nbt_2039 (issue #9 AC6):
   extended_findings.py's own nbt_2039 block prices the price-aware battery's
   MARGINAL bill savings (no-battery bill minus with-battery bill) under three
   FLAT export-credit assumptions (3c/5c/8c: $2,540/$2,527/$2,506/yr) and, for
@@ -117,6 +129,24 @@ with extended_findings.py's nbt_2039 (issue #9 AC6):
   minus with-battery) is compared explicitly against each of the four nbt_2039
   reference figures (3c, 5c, 8c, NEM 2.0) -- the disagreement is stated in
   dollars, never averaged or hidden, per the issue's AC6.
+
+  NOT A 2039 PROJECTION (an adversarial Codex review finding, corrected): this
+  figure -- like the grandfathering value above -- prices the CURRENT (2026)
+  published rate schedule, never any future year's rates. The raw NBT26 file
+  actually contains a genuinely escalating 20-year schedule (per SDG&E/CPUC
+  Resolution E-5301's required 20-year export-rate disclosure) -- e.g. this
+  household's real "Jan Weekend HS0" Generation rate reads 0.087115 $/kWh in
+  2026 but 0.090474 in 2027 in the committed raw archive, NOT a flat repeat --
+  so an earlier version of this docstring's "NBT26 locks THIS TABLE for 9
+  years" claim was wrong: NBT26 locks a 9-year SCHEDULE of escalating rates,
+  and this script only prices that schedule's FIRST year (2026). Reusing that
+  2026 snapshot as if it answered "what happens when NEM 2.0 expires in 2039"
+  would overclaim precision this script does not have: 2039's actual NBT rates
+  (whatever vintage applies 13 years from now) do not exist yet, and NBT26's
+  own 9-year lock (from a 2026 PTO) would not even still be in its guaranteed
+  window by 2039. Every result below is therefore labeled and reported as a
+  2026-rate snapshot -- useful as "what NBT would cost this household TODAY,"
+  not as a forecast of the actual 2039 transition.
 
 Run from private/verify with usage.csv, behavior_rebuild.py and rates.py beside it
 (repo paths resolve automatically, same convention as this repo's other generators):
@@ -482,10 +512,12 @@ def load_nbt_2039_reference():
 
 def battery_marginal_under_real_nbt(d, credit_lookups):
     """The price-aware battery's marginal bill savings priced against the REAL
-    hourly NBT export schedule, for each vintage -- reusing the SAME dispatch
-    (bp.run_batt) extended_findings.py's nbt_2039 already runs, so only the
-    export-PRICING assumption differs between this figure and nbt_2039's flat
-    3c/5c/8c figures, never the physical battery behavior.
+    hourly NBT export schedule for TARIFF_YEAR (2026 -- a snapshot, not a
+    projection to 2039 or any other future year; see the module docstring's
+    "NOT A 2039 PROJECTION" note), for each vintage -- reusing the SAME
+    dispatch (bp.run_batt) extended_findings.py's nbt_2039 already runs, so
+    only the export-PRICING assumption differs between this figure and
+    nbt_2039's flat 3c/5c/8c figures, never the physical battery behavior.
 
     Bills both the no-battery series (imp0/gen0) and the with-battery series
     (i2/e2) through THIS script's own bill_nbt(), for every vintage in
@@ -535,8 +567,10 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
         "method": ("Same battery physical dispatch as nbt_2039 "
                   "(bp.run_batt(d, imp0, gen0, 13.5, 'greedy')); both the "
                   "no-battery and with-battery series billed through this "
-                  "script's own bill_nbt() (real hourly NBT export schedule) "
-                  "per vintage, marginal = no-battery bill - with-battery bill."),
+                  "script's own bill_nbt() (real hourly NBT export schedule, "
+                  f"tariff year {TARIFF_YEAR} only -- a snapshot, not a "
+                  "projection to 2039 or any other future year) per vintage, "
+                  "marginal = no-battery bill - with-battery bill."),
         "served_kwh_yr": round(float(served_kwh), 1),
         "throughput_kwh_yr": round(float(thru_kwh), 1),
         "battery_marginal_real_hourly_usd_yr": per_vintage,
@@ -656,17 +690,21 @@ def main():
             "high": round(max(gf_values), 2),
             "band_has_zero_width": identical_vintages,
             "why_zero_width": (
-                "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are "
-                "byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate "
-                "cells in data/nbt_export_rates_2026.csv) -- both vintages "
-                "price this household's measured export shape at the same "
-                "dollar figure this year. The vintages differ in which "
-                "FUTURE years are contractually guaranteed (NBT26 locks this "
-                "table for 9 years from PTO; NBT00 guarantees only the "
-                "current year and resets annually to a table not yet "
-                "published), not in this year's price level -- widening this "
-                "into a real multi-year band is out of this phase's one-year "
-                "snapshot scope." if identical_vintages else
+                "SDG&E's NBT26 and NBT00 calendar-year-2026 (YEAR 1 ONLY) rate "
+                "tables are byte-identical (max|NBT00-NBT26| = 0.0 across all "
+                "1,152 rate cells in data/nbt_export_rates_2026.csv) -- both "
+                "vintages price this household's measured export shape at the "
+                "same dollar figure in this one year. NBT26 actually locks a "
+                "9-year SCHEDULE OF ESCALATING RATES from PTO, not this same "
+                "table repeated (e.g. this household's own 'Jan Weekend HS0' "
+                "Generation rate reads 0.087115 $/kWh in 2026 but 0.090474 in "
+                "2027 in the raw archive); NBT00 guarantees only the current "
+                "year and resets annually to a table not yet published. This "
+                "script prices only year 1 of each, so this zero width is a "
+                "year-1 coincidence, not a claim that the two vintages track "
+                "identically over their full guarantee periods -- widening "
+                "this into a real multi-year band is out of this phase's "
+                "one-year snapshot scope." if identical_vintages else
                 "NBT26 and NBT00 price this household's export shape "
                 "differently in this tariff year; see nbt_counterfactual for "
                 "each vintage's own figure."),
@@ -715,7 +753,7 @@ def main():
             "peak) -- so pricing the REAL export shape against the REAL "
             "hourly schedule yields a single computed figure, traceable to a "
             "committed public rate table, rather than an assumed range."),
-        "battery_marginal_reconciliation_2039": battery_marginal_under_real_nbt(
+        "battery_marginal_reconciliation_vs_nbt_2039": battery_marginal_under_real_nbt(
             d, credit_lookups),
     }
 
@@ -725,12 +763,12 @@ def main():
     for k in ("window", "nem2", "nbt_counterfactual",
               "grandfathering_value_range_usd_per_yr", "vintage_band_usd_per_yr",
               "export_credit_shape", "rate_table_provenance",
-              "battery_marginal_reconciliation_2039",
+              "battery_marginal_reconciliation_vs_nbt_2039",
               "generation_component_sensitivity"):
         assert k in results, f"results section missing: {k}"
     for rn, v in delivery_only_bills.items():
         assert v["annual_bill_usd"] > 0, rn
-    for rn, v in results["battery_marginal_reconciliation_2039"][
+    for rn, v in results["battery_marginal_reconciliation_vs_nbt_2039"][
             "battery_marginal_real_hourly_usd_yr"].items():
         assert v["battery_marginal_usd_yr"] > 0, (
             f"{rn}: battery marginal under the real hourly NBT schedule is not "
@@ -755,9 +793,10 @@ def main():
           f"(old bracket for context: ${old_bracket['low_usd_yr']:,}-"
           f"${old_bracket['high_usd_yr']:,}/yr)")
 
-    recon = results["battery_marginal_reconciliation_2039"]
+    recon = results["battery_marginal_reconciliation_vs_nbt_2039"]
     ref = recon["reference_nbt_2039"]
-    print(f"\nbattery marginal reconciliation (2039 NBT transition):")
+    print(f"\nbattery marginal reconciliation (2026-rate NBT snapshot, "
+         f"vs extended_findings.py's nbt_2039 reference):")
     print(f"  nbt_2039 reference: NEM 2.0 ${ref['battery_marginal_under_nem2_usd_yr']:,}/yr, "
           f"flat-credit {ref['battery_marginal_under_flat_nbt_usd_yr']}")
     for rn, v in recon["battery_marginal_real_hourly_usd_yr"].items():

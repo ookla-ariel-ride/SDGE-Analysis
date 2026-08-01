@@ -53,7 +53,7 @@
   "low": 2103.58,
   "high": 2103.58,
   "band_has_zero_width": true,
-  "why_zero_width": "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells in data/nbt_export_rates_2026.csv) -- both vintages price this household's measured export shape at the same dollar figure this year. The vintages differ in which FUTURE years are contractually guaranteed (NBT26 locks this table for 9 years from PTO; NBT00 guarantees only the current year and resets annually to a table not yet published), not in this year's price level -- widening this into a real multi-year band is out of this phase's one-year snapshot scope."
+  "why_zero_width": "SDG&E's NBT26 and NBT00 calendar-year-2026 (YEAR 1 ONLY) rate tables are byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells in data/nbt_export_rates_2026.csv) -- both vintages price this household's measured export shape at the same dollar figure in this one year. NBT26 actually locks a 9-year SCHEDULE OF ESCALATING RATES from PTO, not this same table repeated (e.g. this household's own 'Jan Weekend HS0' Generation rate reads 0.087115 $/kWh in 2026 but 0.090474 in 2027 in the raw archive); NBT00 guarantees only the current year and resets annually to a table not yet published. This script prices only year 1 of each, so this zero width is a year-1 coincidence, not a claim that the two vintages track identically over their full guarantee periods -- widening this into a real multi-year band is out of this phase's one-year snapshot scope."
  },
  "export_credit_shape": {
   "cea_bonus_usd_per_kwh": 0.01,
@@ -84,8 +84,8 @@
   "source": "data/extra_results.json nbt.gf_value (flat 3c/5c/8c export credit; NOT modified by this script, see issue #34)"
  },
  "mechanism_of_change_from_old_bracket": "The old bracket applied ONE flat export credit (3c/5c/8c, an assumed sensitivity range) to every export kWh all year. The real SDG&E-published hourly schedule varies far more (see export_credit_shape) and is lowest exactly when this household's solar produces (midday) and highest when it does not (evening peak) -- so pricing the REAL export shape against the REAL hourly schedule yields a single computed figure, traceable to a committed public rate table, rather than an assumed range.",
- "battery_marginal_reconciliation_2039": {
-  "method": "Same battery physical dispatch as nbt_2039 (bp.run_batt(d, imp0, gen0, 13.5, 'greedy')); both the no-battery and with-battery series billed through this script's own bill_nbt() (real hourly NBT export schedule) per vintage, marginal = no-battery bill - with-battery bill.",
+ "battery_marginal_reconciliation_vs_nbt_2039": {
+  "method": "Same battery physical dispatch as nbt_2039 (bp.run_batt(d, imp0, gen0, 13.5, 'greedy')); both the no-battery and with-battery series billed through this script's own bill_nbt() (real hourly NBT export schedule, tariff year 2026 only -- a snapshot, not a projection to 2039 or any other future year) per vintage, marginal = no-battery bill - with-battery bill.",
   "served_kwh_yr": 4719.8,
   "throughput_kwh_yr": 4968.4,
   "battery_marginal_real_hourly_usd_yr": {

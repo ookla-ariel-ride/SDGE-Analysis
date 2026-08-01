@@ -1068,15 +1068,20 @@ battery's own marginal value under that same real hourly schedule compare with
 **Rate table (`data/nbt_export_rates_2026.csv`, public).** Built from SDG&E's own published
 MIDAS export-pricing files (`--build-rates`, needs the private raw archive at
 `private/1-raw-data/sdge_nbt_export_rates/`; the normal run needs only the committed CSV).
-Two vintages are priced — NBT26 (9-year lock from PTO) and NBT00 (no-lock, current-year-only)
-— both drawn from the same calendar-year-2026 Avoided Cost Calculator table and found to be
-byte-identical this tariff year (see the script's own "GENUINE FINDING" docstring note); they
-diverge only in which *future* years each vintage's schedule is contractually guaranteed, not
-in this year's price level, so the VINTAGE component of the grandfathering-value band has zero
-width for now (`vintage_band_usd_per_yr` in the artifact) — the authoritative published band
-is not zero-width, though; see the generation-component sensitivity below for where its actual
-width comes from (a Codex review finding: an earlier version of this script scoped the
-published band to vintage only, silently excluding that real uncertainty).
+Two vintages are priced for TARIFF_YEAR = 2026 only — NBT26 (a 9-year *escalating* rate
+schedule, of which only year 1/2026 is priced here) and NBT00 (no-lock, current-year-only) —
+found to be byte-identical in this one year (see the script's own "GENUINE FINDING" docstring
+note). A Codex review finding, corrected: an earlier version of this note said NBT26 "locks
+this table" flat for 9 years; the raw NBT26 archive actually shows genuinely escalating rates
+year over year (this household's own "Jan Weekend HS0" Generation rate: $0.087115/kWh in 2026,
+$0.090474/kWh in 2027), so NBT26 locks a 9-year *schedule*, not a repeated snapshot — this
+script prices only that schedule's first year, as an apples-to-apples comparison against
+NBT00's own single-year guarantee, not a claim about the full 9-year path. Because both
+vintages' YEAR 1 happens to coincide, the VINTAGE component of the grandfathering-value band
+has zero width for now (`vintage_band_usd_per_yr` in the artifact) — the authoritative
+published band is not zero-width, though; see the generation-component sensitivity below for
+where its actual width comes from (a separate Codex review finding: an earlier version of this
+script scoped the published band to vintage only, silently excluding that real uncertainty).
 
 **Export credit = SDG&E Delivery + Generation + a flat $0.01/kWh CEA "Solar Impact" bonus,
 with the Generation component disclosed as a genuine, unresolved ambiguity (an adversarial
@@ -1110,21 +1115,25 @@ script), now a single computed, traceable figure instead of an assumed sensitivi
 savings (no-battery bill minus with-battery bill, `bp.run_batt(d, imp0, gen0, 13.5,
 "greedy")`) under three FLAT export-credit assumptions: $2,540/yr at 3¢, $2,527/yr at 5¢,
 $2,506/yr at 8¢, against $2,329/yr under NEM 2.0 today. This script adds the same marginal
-priced against the REAL hourly NBT schedule instead of a flat assumption, reusing the
-identical `bp.run_batt` dispatch (so only the export-pricing assumption differs, never the
+priced against the REAL hourly NBT schedule for TARIFF_YEAR = 2026 only (a snapshot, not a
+projection to 2039 or any other future year — a Codex review finding, corrected: an earlier
+version of this section, and of `index.html`, presented this 2026-rate figure under a
+"planning for 2039" framing, which overclaimed precision this script does not have; NBT26's
+own true 9-year schedule escalates, and 2039 is 13 years beyond even that lock period), reusing
+the identical `bp.run_batt` dispatch (so only the export-pricing assumption differs, never the
 physical battery behavior) and billing both the no-battery and with-battery series through
-its own `bill_nbt()`. Result: **$2,521.55/yr** for both vintages (NBT26/NBT00 again coincide
-this year) — **+$192.55** above the NEM 2.0 figure (confirming the existing nbt_2039 finding
-that the battery is worth more once exports price at NBT rather than near-retail), and
+its own `bill_nbt()`. Result: **$2,521.55/yr** for both vintages (NBT26/NBT00 year-1 figures
+again coincide) — **+$192.55** above the NEM 2.0 figure (confirming the existing nbt_2039
+finding that the battery is worth more once exports price at NBT rather than near-retail), and
 **inside** the existing flat 3–8¢ bracket ($2,506–2,540/yr), landing within $5.45 of the 5¢
 figure specifically (vs −$18.45 from the 3¢ figure and +$15.55 from the 8¢ figure). The
 disagreement is stated explicitly for each reference point in the artifact
-(`battery_marginal_reconciliation_2039 → disagreement_vs_reference`), not averaged or hidden:
-for this household's measured export shape, the real hourly schedule happens to land close to
-the middle of the flat-cent bracket that was always meant as a placeholder for it, so the two
-methods corroborate rather than contradict each other. `extended_findings.py` and its
-`nbt_2039` figures are read-only from this script's perspective (`json.load`, never
-recomputed) — issue #34 owns any future change to that generator.
+(`battery_marginal_reconciliation_vs_nbt_2039 → disagreement_vs_reference`), not averaged or
+hidden: for this household's measured export shape, the real hourly schedule happens to land
+close to the middle of the flat-cent bracket that was always meant as a placeholder for it, so
+the two methods corroborate rather than contradict each other at today's rates. `extended_
+findings.py` and its `nbt_2039` figures are read-only from this script's perspective
+(`json.load`, never recomputed) — issue #34 owns any future change to that generator.
 
 **Fail-closed design.** `load_rate_table()` and `bill_nbt()` abort (`SystemExit`) on any
 (month, day-type, hour) bucket the household's data touches that the committed rate table

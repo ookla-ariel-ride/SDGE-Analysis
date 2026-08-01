@@ -127,9 +127,11 @@ def case_committed_rate_csv_has_expected_vintages_and_shape():
 
 @case
 def case_nbt26_and_nbt00_are_identical_for_this_tariff_year():
-    """The documented, flagged finding: both vintages' TARIFF_YEAR schedules
-    coincide exactly, which is WHY the grandfathering-value band this
-    generator publishes has zero width. If a future MIDAS refresh ever makes
+    """The documented, flagged finding: both vintages' TARIFF_YEAR (2026,
+    year 1 only) schedules coincide exactly, which is WHY vintage_band_usd_
+    per_yr (the vintage-only sub-band, NOT the full published range -- see
+    generation_component_sensitivity for what actually gives the published
+    range its width) has zero width. If a future MIDAS refresh ever makes
     them diverge, this case (not just prose) will catch it."""
     tab = pd.read_csv(NG.RATE_CSV)
     piv = tab.pivot_table(index=["component", "month", "day_type", "hour"],
@@ -480,7 +482,7 @@ def case_battery_marginal_reconciliation_regenerates_and_is_internally_consisten
     check on top of the byte-identical regeneration case above."""
     _require_archive()
     result = json.loads(NG.RESULTS_JSON.read_text())
-    recon = result["battery_marginal_reconciliation_2039"]
+    recon = result["battery_marginal_reconciliation_vs_nbt_2039"]
     ref = recon["reference_nbt_2039"]
     flat_ref = ref["battery_marginal_under_flat_nbt_usd_yr"]
     nem2_ref = ref["battery_marginal_under_nem2_usd_yr"]
@@ -497,7 +499,7 @@ def case_battery_marginal_reconciliation_regenerates_and_is_internally_consisten
         # losses only add to throughput, never subtract from it)
     assert recon["served_kwh_yr"] > 0
     assert recon["throughput_kwh_yr"] >= recon["served_kwh_yr"]
-    return (f"battery_marginal_reconciliation_2039's own disagreement fields are "
+    return (f"battery_marginal_reconciliation_vs_nbt_2039's own disagreement fields are "
            f"internally consistent with its reference and real-hourly figures "
            f"({len(recon['battery_marginal_real_hourly_usd_yr'])} vintages)")
 
