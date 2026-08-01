@@ -1520,11 +1520,20 @@ sits, why it sits there, and what a reader should not expect the enforcement to 
 
 ### 11.1 What enforces it
 
-- **The pre-commit gate.** `git config core.hooksPath .githooks` turns on a `gitleaks` run
-  over staged changes, chaining the committed generic rules (`.gitleaks.toml`) with the
+- **The pre-commit gate**, which runs two scans over the staged content and refuses to
+  commit if either cannot run. `git config core.hooksPath .githooks` turns on a `gitleaks`
+  run over staged changes, chaining the committed generic rules (`.gitleaks.toml`) with the
   local-only person-specific rules (`private/pii-rules.toml`, gitignored, never committed —
   it contains the values it guards). CI re-scans full history on every push with the
   committed rules only, so the local hook is the real gate for anything person-specific.
+  The hook then runs `analysis/privacy_tiers.py --staged`, which is the same tier scan the
+  suites run, restricted to the blobs this commit would add or change — read out of the
+  index, not the working tree, since those differ. It blocks on a hit, naming the field id,
+  the yaml path and the file and never the value. Where `private/household.yaml` is absent
+  (somebody else's clone) the value half cannot run: the hook says so in terms and allows
+  the commit, because refusing would make the repo uncommittable for everyone but its owner,
+  and the key/path rules of §11.5 still run. Cost on this tree: about 0.13 s for an ordinary
+  commit and 0.7 s with all 107 files staged, against 0.2 s for the gitleaks run beside it.
 - **A tier scan over one artifact.** `analysis/test_service_headroom.py` parses the
   cheatsheet's field blocks, reads the matching values out of `private/household.yaml`, and
   fails if any `private-only` value turns up in `data/service_headroom.json` — as a value or
@@ -1546,6 +1555,15 @@ sits, why it sits there, and what a reader should not expect the enforcement to 
   generator output would have caught fewer than half of them. The suite also fails on an
   intake key with no cheatsheet block, because a field with no tier contributes no needle and
   is invisible to the scan by construction.
+- **What CI can and cannot be.** `private/household.yaml` is gitignored, so no runner holds a
+  household answer, and shipping one there would be the disclosure this whole section exists
+  to prevent. The two cases that need real values — the repo-wide value scan and the reverse
+  gate that every intake key is tiered — therefore SKIP on a runner. They skip loudly: the
+  suite prints a banner naming each skipped case and the reason, and the workflow step is
+  named for what it actually covers, so a green check cannot be read as real-value coverage.
+  Everything else runs there in full, including both halves of the §11.5 key/path rule, which
+  need no private data. The real-value scan runs on every commit in the pre-commit hook,
+  which is what `CLAUDE.md` §4 means by the local hook being the real gate.
 
 ### 11.2 Two fields re-tiered to `public-ok` (issue #38)
 
@@ -1653,17 +1671,27 @@ that reports "clean" is reporting only that it found no literal match:
   key, and it is recorded in §11.2 as part of that decision.
 - **Non-distinctive values.** A boolean is `true`. A one-word enum is `high`. A scan for
   either flags every file in the repo, so a literal check on those fields is worthless in
-  both directions. The cheatsheet names the fields in that class and holds them to a
-  greppable substitute: no committed script reads the key, and no artifact carries a key of
-  that name.
+  both directions. They are not left uncovered: the cheatsheet states a greppable substitute
+  — no committed artifact carries a key of that name, and no committed script reads that
+  path — and `privacy_tiers.unsearchable_fields()` derives the class it applies to from the
+  tiers and the declared field types rather than from a list, so a private-only boolean added
+  later is covered without anyone remembering. `scan_artifact_keys` checks JSON keys at any
+  depth and CSV headers; `scan_script_reads` checks the accessor call, a read of a container
+  above the key, and the path written as a bare string literal — matched by exact equality, so
+  a docstring that merely mentions the path is not a read. Neither half needs a private value,
+  so both run in CI as well as in the pre-commit hook.
 - **Anything the tracked tree does not hold.** The gate reads `git ls-files` minus
   `private/`, so it sees every committed text file, and nothing else. Commit messages, an
   image, a PDF, and anything not yet added are outside it, covered by the gitleaks hook's
   patterns and by review — a different net with different holes.
 - **A leak written as a declared literal inside a test module or the example template.**
   Those files declare invented fixture values that may legitimately coincide, so the scan
-  skips their literals. Comments, docstrings and prose in the same files are still scanned,
-  which is the shape the meter class leak actually took.
+  skips them. What it skips is the literal's own SOURCE SPAN — the AST node position of a
+  python string, the composer mark of a yaml scalar — and not every later occurrence of the
+  same bytes: a value declared once as a fixture and then quoted in a comment, a docstring or
+  prose in the same file still fails, which is the shape the meter class leak actually took.
+  A python string that stands alone as a statement is prose rather than a fixture literal, so
+  a docstring is never exempt.
 
 The practical consequence: **a literal scan is a floor, not a proof.** The tier list in the
 cheatsheet is the record of what may be published, and a value's tier is a decision, made

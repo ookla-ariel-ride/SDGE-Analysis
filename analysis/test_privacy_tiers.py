@@ -14,14 +14,20 @@ generator output would have found fewer than half of it.
 What runs where:
 
   * WITHOUT private/household.yaml (CI): the resolver contract, the tier
-    vocabulary, and the synthetic positive controls -- which plant invented
-    values in a temporary git tree and prove the scan is quiet on a clean tree,
-    fires on a planted one, and that its two scoping rules scope to a region
-    rather than to a file.
+    vocabulary, the synthetic positive controls -- which plant invented values
+    in a temporary git tree and prove the scan is quiet on a clean tree, fires
+    on a planted one, and that its scoping rule covers a declared literal's own
+    source span and nothing more -- and BOTH halves of the substitute rule for
+    the fields no literal scan can cover, which look for key names and dotted
+    paths and so need no private data at all.
   * ONLY with private/household.yaml: the two cases that need real values --
     the repo-wide scan itself, and the reverse gate that every intake key is
-    tiered. They raise SkipCase, so a case that cannot run says so instead of
-    reading as green.
+    tiered. They raise SkipCase, and `main` prints what was skipped and why in
+    a banner, because a green check that does not say what it did not check is
+    worse than a red one. CI cannot ever run those two: the private file is
+    gitignored and shipping it to a runner would be the leak this gate exists
+    to prevent. `.githooks/pre-commit` is where they run on every commit,
+    which is what CLAUDE.md §4 means by "the local hook is the real gate".
 
 Nothing in this file contains a value from the household. Findings are reported
 as a field id, a yaml path and a filename; the positive controls plant values
@@ -313,6 +319,210 @@ def case_the_scoping_rules_scope_to_a_region_not_to_a_file():
             "the rest of the same file still fails")
 
 
+def case_a_declared_literal_is_exempt_only_in_its_own_span():
+    """The exemption covers the literal's SOURCE SPAN, not the whole file.
+
+    The distinction is the whole gate. A module that legitimately declares a
+    value as a fixture and ALSO quotes it in a comment must fail on the
+    comment: the leak this gate found was a meter class in an explanatory
+    comment, and an exemption keyed on the string rather than on its position
+    blanks every later occurrence of it in the same file. A docstring is a
+    string constant in the AST and would land in the exemption set for the
+    same reason, so prose in a docstring is excluded from it by name.
+
+    Every value here is invented; the case runs in CI.
+    """
+    needles = PT.needles(PLANTED)
+    tname = "analysis/test_demo.py"
+    fixture = 'METER = "CL999-TEST"\nPANEL = [{"label": "Zzyzx"}]\n'
+    assert not PT.scan_text(fixture, needles, relpath=tname), \
+        "a value declared as a fixture literal counted as a leak"
+
+    # the SAME value, declared as a fixture and repeated in a comment
+    commented = fixture + "# the meter on this synthetic panel is CL999-TEST\n"
+    hits = PT.scan_text(commented, needles, relpath=tname)
+    assert [h.field_id for h in hits] == ["panel_meter_class"], (
+        "declaring a value as a fixture hid the same value in a comment "
+        f"elsewhere in the file: {hits}")
+
+    # and repeated in a docstring, which is a string constant like any other
+    documented = ('"""A demo module.\n\nThe meter is class CL999-TEST.\n"""\n'
+                  + fixture)
+    hits = PT.scan_text(documented, needles, relpath=tname)
+    assert [h.field_id for h in hits] == ["panel_meter_class"], (
+        f"a private value disclosed in a docstring was masked: {hits}")
+
+    # a function docstring, and a free-standing string expression, are prose too
+    inner = (fixture + 'def f():\n    """Reads the CL999-TEST meter."""\n'
+             '    return 1\n')
+    assert [h.field_id for h in PT.scan_text(inner, needles, relpath=tname)] \
+        == ["panel_meter_class"], "a function docstring was treated as a fixture"
+
+    # the same rule in the example template: a declared value is exempt, the
+    # same value in a yaml comment is not
+    yname = "household.example.yaml"
+    ydecl = "panel:\n  meter_class: CL999-TEST\n"
+    assert not PT.scan_text(ydecl, needles, relpath=yname), \
+        "a placeholder the template declares counted as a leak"
+    assert PT.scan_text(ydecl + "# a real one reads CL999-TEST\n", needles,
+                        relpath=yname), \
+        "a value in a template comment was masked by the declaration above it"
+    return ("the literal exemption masks the declared span only: the same "
+            "value in a comment, a module docstring, a function docstring or "
+            "a yaml comment still fails")
+
+
+def case_the_unsearchable_fields_are_derived_from_the_tiers():
+    """The class a literal scan cannot cover, and how it is found.
+
+    `needles` drops a boolean and skips a short bare word, correctly. The
+    cheatsheet has always named a substitute for that class -- no artifact
+    carries a key of that name, no script reads the path -- and the set it
+    applies to has to be DERIVED, or a private-only boolean added next year is
+    covered only if somebody remembers to add it to a list.
+
+    Runs in CI: field ids, types and yaml paths are public, so the whole
+    substitute rule is enforceable without any private data.
+    """
+    fields = PT.cheatsheet_fields()
+    shape = PT.schema()
+    derived = PT.unsearchable_fields(fields=fields, shape=shape)
+    assert derived, "no field resolved into the unsearchable class"
+
+    tiers = {f["id"]: f["privacy"] for f in fields}
+    for fid in derived:
+        assert tiers[fid] != "public-ok", f"{fid} is public-ok and banned"
+    # the claim that makes it derived rather than listed
+    should = {f["id"] for f in fields
+              if f["privacy"] != "public-ok"
+              and f["type"] in PT.UNSEARCHABLE_TYPES
+              and PT.yaml_path_for(f["id"], shape) is not None}
+    assert should <= set(derived), sorted(should - set(derived))
+    # and a field whose answer IS searchable must not be swept in with them:
+    # the two halves are alternatives, not belt and braces
+    searchable = [f["id"] for f in fields
+                  if f["privacy"] == "private-only" and f["type"] == "string"
+                  and f["id"] in derived]
+    assert not searchable, (
+        f"{searchable} are searchable by value and should not also be held to "
+        f"the key/path rule")
+    keys = PT.banned_keys(derived)
+    assert len(keys) == len(derived), f"two fields share a key name: {keys}"
+    return (f"{len(derived)} field(s) derived into the unsearchable class from "
+            f"the tiers and the declared types, banning {len(keys)} key "
+            f"name(s): {', '.join(sorted(keys))}")
+
+
+def case_a_banned_key_or_path_read_fails():
+    """The positive control for both halves of the substitute rule.
+
+    Half one: the key name published in a structured artifact -- and the key
+    name IS the disclosure, since `"itc_claimed": false` publishes the answer
+    whichever way the boolean falls. Half two: a committed script reading the
+    path. Each is planted, proved to fail, and the clean shape proved not to.
+    """
+    derived = PT.unsearchable_fields()
+    path = sorted(derived.values())[0]
+    key = path.split(".")[-1]
+    banned = PT.banned_keys(derived)
+
+    # half one, both artifact shapes, and a near miss that must stay quiet
+    dirty_json = [("data/x.json", json.dumps({"panel": {key: True}}))]
+    dirty_csv = [("data/x.csv", f"month,{key}\n2026-01,true\n")]
+    clean = [("data/x.json", json.dumps({"panel": {"spaces": 20}})),
+             ("data/x.csv", "month,kwh\n2026-01,5\n"),
+             ("data/x.json.md", f'a paragraph naming {key} in prose\n')]
+    assert PT.scan_artifact_keys(dirty_json, banned), \
+        f"a banned key published as a JSON key was not caught ({key})"
+    assert PT.scan_artifact_keys(dirty_csv, banned), \
+        f"a banned key published as a CSV column was not caught ({key})"
+    assert not PT.scan_artifact_keys(clean, banned), \
+        "the key scan fired on an artifact that carries no such key"
+
+    # half two: the accessor call, an ancestor read that pulls the key out
+    # with it, and the indirection through a name
+    parent = path.rsplit(".", 1)[0]
+    for src, why in (
+            (f'v = hh.get("{path}")\n', "a direct accessor read"),
+            (f'v = HH.get("{path}", required=False)\n', "a keyword-arg read"),
+            (f'v = HH.get("{parent}")\n', "a read of the containing block"),
+            (f'P = "{path}"\nv = hh.get(P)\n', "the path via a name")):
+        hits = PT.scan_script_reads([("analysis/thing.py", src)], derived)
+        assert hits, f"{why} of a banned path was not caught"
+        assert all(h.field_id in derived for h in hits), hits
+
+    # precision: naming the path in prose is not reading it, and several
+    # committed docstrings legitimately do
+    quiet = [("analysis/thing.py",
+              f'"""A note: a null answer for {path} is fine."""\n'
+              f'# {path} is not read here\n'
+              f'v = hh.get("misc.{key}")\n'
+              f'w = hh.get("{path}x")\n')]
+    hits = PT.scan_script_reads(quiet, derived)
+    assert not hits, f"the read scan fired on prose or on a near-miss path: {hits}"
+    return (f"a banned key in JSON and in CSV, and four shapes of script read "
+            f"of a banned path, all fail; prose naming the path and a "
+            f"near-miss path do not")
+
+
+def case_the_committed_tree_carries_no_banned_key_or_read():
+    """The substitute rule, run over the real tracked tree, in CI.
+
+    The value scan needs the private file and skips without it. This half does
+    not: it looks for key names and dotted paths, both of which are public.
+    """
+    items, rels = PT.tree_items()
+    derived = PT.unsearchable_fields()
+    hits = PT.scan_artifact_keys(items, PT.banned_keys(derived))
+    hits += PT.scan_script_reads(items, derived)
+    assert not hits, (
+        "a committed file carries a key or a read of an unsearchable "
+        "private-only field: " + "; ".join(sorted(str(h) for h in hits)))
+    structured = sum(1 for r, _ in items if r.endswith((".json", ".csv")))
+    scripts = sum(1 for r, _ in items if r.endswith(".py"))
+    return (f"{structured} structured artifact(s) carry none of the "
+            f"{len(derived)} banned key name(s) and {scripts} script(s) read "
+            f"none of the paths, over {len(rels)} tracked files")
+
+
+def case_the_precommit_gate_blocks_a_staged_leak():
+    """The hook's entry point, on a throwaway repository.
+
+    CLAUDE.md section 4 makes the local hook the real gate for anything
+    person-specific, so the thing that has to be controlled is the exit code
+    the hook branches on -- and that it reads the INDEX, since what gets
+    committed is not always what is on disk.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        derived = PT.unsearchable_fields()
+        path = sorted(derived.values())[0]
+        key = path.split(".")[-1]
+        _tree(root, dict(CLEAN_TREE))
+        items, _ = PT.staged_items(root)
+        assert {r for r, _ in items} == set(CLEAN_TREE), items
+        hits, _ = PT.gate(items, PLANTED)
+        assert not hits, f"the gate fired on a clean staged tree: {hits}"
+
+        # the index is what is judged: change the file on disk WITHOUT staging
+        # it and the gate must still see the staged bytes
+        (root / "data" / "results.json").write_text(
+            json.dumps({key: True}))
+        items, _ = PT.staged_items(root)
+        hits, _ = PT.gate(items, PLANTED)
+        assert not hits, "the gate read the working tree instead of the index"
+
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        items, _ = PT.staged_items(root)
+        hits, _ = PT.gate(items, PLANTED)
+        assert [h.leaf_path for h in hits] == [key], (
+            f"a banned key staged for commit was not blocked: {hits}")
+        assert all(PLANTED["panel"]["meter_class"] not in str(h) for h in hits), \
+            "a finding printed a value"
+    return ("the staged-content gate is quiet on a clean index, ignores an "
+            "unstaged change, and blocks a banned key once it is staged")
+
+
 def case_every_intake_key_is_tiered():
     """The reverse gap, and the reason it has to be a test.
 
@@ -361,6 +571,11 @@ CASES = [
     case_the_resolver_reaches_a_key_inside_a_list,
     case_the_repo_scan_catches_a_planted_value,
     case_the_scoping_rules_scope_to_a_region_not_to_a_file,
+    case_a_declared_literal_is_exempt_only_in_its_own_span,
+    case_the_unsearchable_fields_are_derived_from_the_tiers,
+    case_a_banned_key_or_path_read_fails,
+    case_the_committed_tree_carries_no_banned_key_or_read,
+    case_the_precommit_gate_blocks_a_staged_leak,
     case_the_example_template_is_tiered_too,
     case_no_private_only_value_appears_in_any_tracked_file,
     case_every_intake_key_is_tiered,
@@ -379,22 +594,38 @@ def main():
     assert not unlisted, (
         f"case function(s) defined but not in CASES, so they never run: "
         f"{unlisted}")
-    ran = skipped = failures = 0
+    ran, failures, skipped = 0, 0, []
     for case in CASES:
         try:
             print(f"PASS  {case.__name__}: {case()}")
             ran += 1
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
-            skipped += 1
+            skipped.append((case.__name__, str(e)))
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
         except Exception as e:                     # noqa: BLE001
             print(f"FAIL  {case.__name__}: {type(e).__name__}: {e}")
             failures += 1
-    tail = f", {skipped} skipped" if skipped else ""
+    tail = f", {len(skipped)} skipped" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")
+    # A green check that does not say what it did not check is the failure
+    # this banner exists to prevent: on a runner there is no household file,
+    # so nothing here has looked at a real answer, and the name of the step
+    # must not imply otherwise.
+    if skipped:
+        print(f"\n{'=' * 72}\nNOT CHECKED HERE — private/household.yaml is "
+              f"gitignored and absent, so no case below ran against a real "
+              f"intake answer:")
+        for name, why in skipped:
+            print(f"  · {name}\n      {why}")
+        print("These run only where the private archive lives; "
+              "`.githooks/pre-commit` is the gate that runs them on every "
+              f"commit there (CLAUDE.md §4).\n{'=' * 72}")
+    else:
+        print("\nThe real-value scan RAN: private/household.yaml is present "
+              "and every case above was checked against it.")
     return 1 if failures else 0
 
 

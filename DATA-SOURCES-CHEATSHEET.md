@@ -87,10 +87,18 @@ the value is distinctive: a coordinate, a catalog number, a dollar amount, a met
 cannot work for a boolean, a one-word enum, or a short phrase — `panel.tandem_density` holds a
 single word such as `high`, and every artifact in the repo contains that word. Fields in that
 class are held to a
-different rule, which is greppable: **no committed script reads the key** (`hh.get("<path>")`
-/ `HH.get("<path>")`) **and no committed artifact carries a key of that name.** The
-`private-only` fields in this class today are `solar.itc_claimed`,
-`panel.schedule_confidence` and `panel.no_dryer_or_water_heater_circuit`. Reformatting and
+different rule, which is greppable: **no committed artifact carries a key of that name, and
+no committed script reads that path** — `hh.get("<path>")` / `HH.get("<path>")`, a read of
+any container above it, or the path written as a bare string literal.
+
+**The class is derived, not listed.** `unsearchable_fields()` in `analysis/privacy_tiers.py`
+takes every `private-only` or `secret` field whose declared `type` is one a literal scan can
+never search — a `bool` — and, where `private/household.yaml` is present, widens that with any
+field whose recorded answer is a scalar that produced no needle. A private-only boolean added
+next year is covered without anyone editing a list, and a field whose answer turns out to be
+searchable in fact (a long free-text note, say) stays with the value scan rather than being
+swept in here. Both halves look for key names and dotted paths and never for a value, so both
+run in CI as well as in the pre-commit hook. Reformatting and
 derivation defeat a literal scan too; TECHNICAL.md §11 states those limits in full.
 
 **Override table** — every id whose path steps 2–3 cannot derive:
