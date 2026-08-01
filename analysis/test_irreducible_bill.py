@@ -21,6 +21,7 @@ silently skip and still read green).
 Run from the repo root:  ./.venv/bin/python analysis/test_irreducible_bill.py
 """
 import csv
+import datetime as dt
 import json
 import pathlib
 import re
@@ -408,6 +409,81 @@ def case_package_floor_fractions_are_consistent():
 
 
 # ---------------------------------------------------------------------------
+# Finding 1 (issue #7 fourth adversarial review): baseline_floor prices the
+# no-package scenario's fixed/non-bypassable split at the SAME current rate
+# vintage as model_baseline_current_rates ($4,904/yr), instead of §11's
+# retired comparison against twelve_month_floor's historical split.
+# ---------------------------------------------------------------------------
+@case
+def case_baseline_floor_matches_current_rate_split():
+    """baseline_floor's fixed + non-bypassable terms must (a) be internally
+    consistent (combined_usd = the sum, fractions = usd / the current-rate
+    bill), (b) be priced at the SAME current rate vintage as every package
+    (strictly_irreducible_usd = annual_days x rates.BSC, identical to
+    package_floor_fractions' LOW/MID/HIGH), and (c) be divided into
+    model_baseline_current_rates -- the SAME fully current-rate figure the
+    report's $4,904/yr headline actually is, not a historical bill total."""
+    _require_corpus()
+    result = irr.build()
+    bf = result["baseline_floor"]
+    pkg_doc = json.loads(irr.PACKAGE_JSON.read_text())
+    assert bf["projected_bill_current_rates_yr"] == pkg_doc["model_baseline_current_rates"]
+    expected_fixed = round(bf["annual_days"] * irr.R.BSC, 2)
+    assert _close(bf["strictly_irreducible_usd"], expected_fixed, eps=0.01)
+    pf = result["package_floor_fractions"]
+    assert bf["strictly_irreducible_usd"] == pf["LOW"]["strictly_irreducible_usd"], \
+        "the baseline's fixed term must be priced identically to every package's " \
+        "(same 365-day frame, same current BSC) -- it is the same construction, " \
+        "just against a different (no-package) denominator"
+    expected_nbc = round(bf["gross_import_kwh"] * irr.R.NBC, 2)
+    assert _close(bf["non_bypassable_usd"], expected_nbc, eps=0.01)
+    expected_combined = round(bf["strictly_irreducible_usd"] + bf["non_bypassable_usd"], 2)
+    assert _close(bf["combined_usd"], expected_combined, eps=0.01)
+    bill = bf["projected_bill_current_rates_yr"]
+    assert _close(bf["strictly_irreducible_fraction_of_projected_bill"],
+                 round(bf["strictly_irreducible_usd"] / bill, 4), eps=1e-6)
+    assert _close(bf["non_bypassable_fraction_of_projected_bill"],
+                 round(bf["non_bypassable_usd"] / bill, 4), eps=1e-6)
+    assert _close(bf["combined_fraction_of_projected_bill"],
+                 round(bf["combined_usd"] / bill, 4), eps=1e-6)
+    return (f"baseline_floor: ${bf['strictly_irreducible_usd']} fixed "
+           f"({bf['strictly_irreducible_fraction_of_projected_bill']*100:.1f}%) + "
+           f"${bf['non_bypassable_usd']} non-bypassable "
+           f"({bf['non_bypassable_fraction_of_projected_bill']*100:.1f}%) of the "
+           f"current-rate ${bill}/yr baseline bill -- same vintage throughout")
+
+
+@case
+def case_baseline_floor_differs_from_historical_split():
+    """The whole point of Finding 1: baseline_floor's current-rate split
+    must NOT equal twelve_month_floor's historical 12-month split -- if it
+    did, either the fix is a no-op or the two vintages coincidentally
+    matched, and either way the vintage-mixing bug this fix targets (the
+    $4,904 current-rate total was being compared against the $264.10/$479.76
+    historical split in the same paragraph) would not be caught by this
+    test. On this corpus they differ because 4 of the historical window's
+    13 periods billed the pre-2025-10-01 flat Monthly Service Fee rather
+    than today's per-day BSC, and the historical NBC total reflects
+    whatever gross kWh was actually imported that year, not today's rate
+    applied to compute_package_gross_imports()'s baseline figure."""
+    _require_corpus()
+    result = irr.build()
+    bf = result["baseline_floor"]
+    floor = result["twelve_month_floor"]
+    assert not _close(bf["strictly_irreducible_usd"],
+                      floor["strictly_irreducible_usd"], eps=0.01), \
+        (bf["strictly_irreducible_usd"], floor["strictly_irreducible_usd"])
+    assert not _close(bf["non_bypassable_usd"],
+                      floor["non_bypassable_usd_historical"], eps=0.01), \
+        (bf["non_bypassable_usd"], floor["non_bypassable_usd_historical"])
+    return (f"baseline_floor current-rate split (${bf['strictly_irreducible_usd']} / "
+           f"${bf['non_bypassable_usd']}) differs from twelve_month_floor's historical "
+           f"split (${floor['strictly_irreducible_usd']} / "
+           f"${floor['non_bypassable_usd_historical']}) -- the fix changes the "
+           "comparison, not just the label")
+
+
+# ---------------------------------------------------------------------------
 # The conceptual fix (issue #7, third adversarial review): NBC is real but
 # usage-dependent; only the fixed charge is a genuine, unconditional floor.
 # These two cases pin exactly that distinction on the REAL household corpus,
@@ -708,44 +784,122 @@ def case_minimum_bill_provision_never_triggered_in_this_data():
     assert all(p["net_kwh"] > 0 for p in window_periods), \
         "expected every period in the window to show a positive (net-import) net_kwh"
     assert mb["any_period_net_generator_in_window"] is False
+    # Finding 2 (fourth adversarial review): the annual trigger is now
+    # evaluated per true-up year, not per SUMMARY_STATEMENTS_ELEC's rolling
+    # billing window -- these assertions are on the true-up-year figure.
+    assert mb["annual_trigger_basis"] == "complete_true_up_cycle", mb["annual_trigger_basis"]
+    assert mb["annual_trigger_limitation"] is None
+    assert mb["annual_trigger_true_up_date"] == "2025-12-26"
+    assert mb["complete_true_up_years"] == ["2025-12-26"]
     assert mb["annual_net_generator"] is False
     assert mb["annual_net_kwh_sum"] > 0
     assert mb["provision_triggered_in_this_data"] is False
-    return (f"{len(window_periods)} periods checked, all net_kwh > 0, annual sum "
+    return (f"{len(window_periods)} rolling-window periods checked, all net_kwh > 0; "
+           f"the complete true-up year (2025-12-26) sums to "
            f"{mb['annual_net_kwh_sum']} kWh > 0 -- the provision's own annual "
            "trigger condition never held in this data")
 
 
 @case
 def case_minimum_bill_annual_trigger_is_the_sum_not_any_single_month():
-    """Finding 2 (issue #7 second adversarial review): a mixed-sign synthetic
-    window -- one net-negative period, several larger net-positive periods,
+    """Finding 2 (issue #7 second adversarial review): a mixed-sign true-up
+    year -- one net-negative period, several larger net-positive periods,
     annual sum still positive -- must report annual_net_generator False even
     though a month-level any() check would say True for that one period. This
     is exactly the scenario Codex identified as silently mishandled by the
-    retired ever_net_generator_in_window == any(...) logic."""
+    retired ever_net_generator_in_window == any(...) logic.
+
+    Uses group_periods_by_true_up_year() directly with a synthetic
+    true_up_date_by_stmt mapping (Finding 2, fourth adversarial review: the
+    grouping itself is a pure function over rows + an already-resolved
+    true-up date per statement, so this needs no backing PDF -- unlike
+    statement_true_up_date(), which reads bd.statement_text())."""
     rows = [
-        {"statement_date": "2099-01-01", "period": "p1", "net_kwh": -50.0},
-        {"statement_date": "2099-02-01", "period": "p2", "net_kwh": 300.0},
-        {"statement_date": "2099-03-01", "period": "p3", "net_kwh": 300.0},
+        {"statement_date": "2099-01-01", "period": "1/1/99 - 1/31/99",
+         "days": 31, "net_kwh": -50.0},
+        {"statement_date": "2099-02-01", "period": "2/1/99 - 3/2/99",
+         "days": 30, "net_kwh": 300.0},
+        {"statement_date": "2099-03-01", "period": "3/3/99 - 4/1/99",
+         "days": 30, "net_kwh": 300.0},
     ]
-    real_window = irr.SUMMARY_STATEMENTS_ELEC
-    irr.SUMMARY_STATEMENTS_ELEC = ["2099-01-01", "2099-02-01", "2099-03-01"]
-    try:
-        mb = irr.build_minimum_bill_provision(rows, [])
-    finally:
-        irr.SUMMARY_STATEMENTS_ELEC = real_window
-    assert mb["any_period_net_generator_in_window"] is True, \
-        "expected the lone net-negative period to trip the month-level flag"
-    assert _close(mb["annual_net_kwh_sum"], 550.0), mb["annual_net_kwh_sum"]
-    assert mb["annual_net_generator"] is False, \
-        "the annual SUM is positive (550 kWh) even though one month was " \
+    true_up = {r["statement_date"]: dt.date(2099, 4, 1) for r in rows}
+    groups = irr.group_periods_by_true_up_year(rows, true_up)
+    assert len(groups) == 1, groups
+    g = groups[0]
+    assert _close(g["annual_net_kwh_sum"], 550.0), g["annual_net_kwh_sum"]
+    assert g["annual_net_generator"] is False, \
+        "the annual SUM is positive (550 kWh) even though one period was " \
         "net-negative -- annual_net_generator must follow the sum, not any()"
-    assert mb["provision_triggered_in_this_data"] is False
     return ("one net-negative period (-50 kWh) among two larger net-positive "
-           "periods (+300 each): any_period_net_generator_in_window=True but "
-           "annual_net_generator=False (sum +550 kWh) -- the annual trigger "
-           "follows the sum, not any single month")
+           "periods (+300 each), grouped into one true-up year: "
+           "annual_net_generator=False (sum +550 kWh) even though a lone-period "
+           "any() check would say True -- the annual trigger follows the sum, "
+           "not any single month")
+
+
+@case
+def case_true_up_years_group_by_printed_true_up_date():
+    """Finding 2 (issue #7 fourth adversarial review), on the real corpus.
+    Every statement prints its own 'True-Up Date:' field, and this
+    household's true-up date is 12/26 (2024, 2025) then 12/28 (2026) -- the
+    true-up YEAR the printed field anchors to. parse_bills.
+    SUMMARY_STATEMENTS_ELEC (Aug 2025 - Jul 2026) straddles TWO of these:
+    its first 6 periods print 12/26/2025, its last 6 print 12/28/2026. This
+    test proves group_periods_by_true_up_year() actually separates them
+    (rather than, say, collapsing everything into one group by accident),
+    and that exactly one true-up year in this corpus is a COMPLETE cycle:
+    12/26/2025, running contiguously from the day after the 12/26/2024
+    settlement (2024-12-27) through a period ending exactly on 12/26/2025,
+    365 days -- the year SUMMARY_STATEMENTS_ELEC's own window does NOT
+    fully contain (it starts mid-way through that year, at 2025-08-01)."""
+    _require_corpus()
+    result = irr.build()
+    mb = result["minimum_bill_provision"]
+    tuy = {g["true_up_date"]: g for g in mb["true_up_years"]}
+    assert set(tuy) == {"2024-12-26", "2025-12-26", "2026-12-28"}, sorted(tuy)
+    assert tuy["2024-12-26"]["complete_true_up_cycle"] is False, \
+        "2024-12-26's group starts mid-corpus (statements begin 2024-06-27), " \
+        "not the day after a prior true-up date -- must not read as complete"
+    assert tuy["2025-12-26"]["complete_true_up_cycle"] is True
+    assert tuy["2025-12-26"]["total_days"] == 365
+    assert tuy["2025-12-26"]["coverage_start"] == "2024-12-27"
+    assert tuy["2025-12-26"]["coverage_end"] == "2025-12-26"
+    assert tuy["2026-12-28"]["complete_true_up_cycle"] is False, \
+        "2026-12-28 has not been reached yet in this corpus -- still accruing"
+    # The rolling SUMMARY_STATEMENTS_ELEC window straddles the two most
+    # recent groups -- neither is wholly inside it nor wholly outside it.
+    window = set(irr.SUMMARY_STATEMENTS_ELEC)
+    straddled = [tud for tud, g in tuy.items()
+                if set(g["statements"]) & window and set(g["statements"]) - window]
+    assert "2025-12-26" in straddled, \
+        "expected SUMMARY_STATEMENTS_ELEC to only partially cover the complete " \
+        "true-up year -- if it fully contained it, the bug this fix targets " \
+        "would not actually be observable on this corpus"
+    return (f"true-up years found: {sorted(tuy)}; 2025-12-26 is the one COMPLETE "
+           f"cycle ({tuy['2025-12-26']['total_days']} days, "
+           f"{tuy['2025-12-26']['period_count']} periods), straddled (not "
+           "contained) by the SUMMARY_STATEMENTS_ELEC rolling window")
+
+
+@case
+def case_true_up_year_annual_sum_differs_from_naive_window_sum():
+    """Finding 2's actual consequence, on the real corpus: the per-true-up-
+    year annual sum (12124 kWh, the complete 2025-12-26 cycle) must differ
+    from the naive sum over parse_bills.SUMMARY_STATEMENTS_ELEC's rolling
+    window (13102 kWh, mixing 6 periods of true-up year 2025-12-26 with 6
+    of the still-accruing 2026-12-28) -- proving the fix is not a no-op
+    that happens to reproduce the old (wrong) window-based figure."""
+    _require_corpus()
+    result = irr.build()
+    mb = result["minimum_bill_provision"]
+    window_rows = mb["monthly_net_position_window"]
+    naive_window_sum = round(sum(p["net_kwh"] for p in window_rows), 2)
+    true_up_sum = mb["annual_net_kwh_sum"]
+    assert not _close(true_up_sum, naive_window_sum, eps=1.0), \
+        (true_up_sum, naive_window_sum)
+    return (f"true-up-year annual sum {true_up_sum} kWh differs from the naive "
+           f"SUMMARY_STATEMENTS_ELEC window sum {naive_window_sum} kWh -- the fix "
+           "changes the actual number, not just its label")
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,27 @@
 {
- "caveat": "strictly_irreducible_usd, in BOTH twelve_month_floor and package_floor_fractions, is the ONLY figure in this artifact that is a genuine, unconditional floor: the per-day fixed charge, billed no matter what the household buys or does, even at zero kWh imported. non_bypassable_usd_historical / non_bypassable_usd is a SEPARATE figure, not summed into the floor: non-bypassable charges (NBC), billed on GROSS imported kWh. NBC cannot be avoided by switching generation provider or NEM structure -- but its DOLLAR AMOUNT is not fixed; it scales with gross imports, and a purchase that reduces gross imports reduces it too. combined_usd_historical / combined_usd sums both components for reference (what they actually cost together) but is explicitly NOT itself called a floor -- only strictly_irreducible_usd is. twelve_month_floor states what these two components ACTUALLY cost over the most recent 12 months of statements: every dollar figure in that section is read from the PDFs this repository already has committed derivatives of (data/bill_periods_electric.csv, data/bill_tou_detail.csv) or re-derived directly from statement text; nothing in it is modeled or projected forward at a different rate vintage. package_floor_fractions answers a DIFFERENT question: what share of a fully CURRENT-rate projected bill (data/package_results.json) is each component. Both of its components are current-rate-vintage, matching the denominator they are divided into -- non_bypassable_usd is a per-package RECOMPUTATION (see build_package_floor_fractions()'s and compute_package_gross_imports()'s docstrings) built by re-running behavior_rebuild.py's and battery_dispatch_policies.py's own committed package definitions against the raw interval export, then pricing the result at rates.NBC; strictly_irreducible_usd is annual_days x rates.BSC, the same construction rates.bill_nem_monthly() itself uses to build projected_bill_current_rates_yr. package_floor_fractions is deliberately NOT reconciled against twelve_month_floor's historical figures -- the two sections answer different questions (what actually happened over 12 real months, vs. what fraction of a current-rate projected bill each component is) and mixing their vintages was exactly Finding 1 of this script's second adversarial review. A THIRD adversarial review found that, even after both terms were vintage-consistent, they were still being summed into one 'floor' and both called irreducible -- non_bypassable_usd is a per-package recomputation, and on this corpus MID and HIGH's own modeled gross imports (and therefore their non_bypassable_usd) come out LOWER than LOW's/the baseline's, proving a purchase moves this component; it is reported separately here rather than summed into the floor. The minimum-bill-provision test is against the NEM true-up 'Minimum Charge Adjustment' concept printed on this household's own pre-2025-10-01 statements, not against a dollar figure specific to EV-TOU-5 -- none was found. Its trigger condition is the ANNUAL sum of net_kwh over the window (annual_net_generator), not any single period being net-negative (any_period_net_generator_in_window is kept as separate, informational, month-level detail -- Finding 2 of the second adversarial review).",
+ "baseline_floor": {
+  "annual_days": 365,
+  "combined_fraction_of_projected_bill": 0.1592,
+  "combined_usd": 780.51,
+  "gross_import_kwh": 23376.5,
+  "method": "the no-package baseline's own current-rate-vintage split, priced the same way as build_package_floor_fractions()'s LOW/MID/HIGH entries so it can be compared against the equally current-rate model_baseline_current_rates total (issue #7 fourth adversarial review, CLAUDE.md 9): strictly_irreducible_usd = annual_days x rates.BSC (same 365-day frame as every package -- a per-day charge that does not depend on usage). non_bypassable_usd = gross['baseline_gross_kwh'] x rates.NBC -- the household's own modeled gross imports with no purchase applied. Both terms are current-vintage, matching the denominator (model_baseline_current_rates); this is a distinct question from twelve_month_floor's historical split, which stays historical on purpose and must not be compared against a current-rate total.",
+  "non_bypassable_fraction_of_projected_bill": 0.1001,
+  "non_bypassable_usd": 490.91,
+  "projected_bill_current_rates_yr": 4904,
+  "strictly_irreducible_fraction_of_projected_bill": 0.0591,
+  "strictly_irreducible_usd": 289.6
+ },
+ "caveat": "strictly_irreducible_usd, in BOTH twelve_month_floor and package_floor_fractions, is the ONLY figure in this artifact that is a genuine, unconditional floor: the per-day fixed charge, billed no matter what the household buys or does, even at zero kWh imported. non_bypassable_usd_historical / non_bypassable_usd is a SEPARATE figure, not summed into the floor: non-bypassable charges (NBC), billed on GROSS imported kWh. NBC cannot be avoided by switching generation provider or NEM structure -- but its DOLLAR AMOUNT is not fixed; it scales with gross imports, and a purchase that reduces gross imports reduces it too. combined_usd_historical / combined_usd sums both components for reference (what they actually cost together) but is explicitly NOT itself called a floor -- only strictly_irreducible_usd is. twelve_month_floor states what these two components ACTUALLY cost over the most recent 12 months of statements: every dollar figure in that section is read from the PDFs this repository already has committed derivatives of (data/bill_periods_electric.csv, data/bill_tou_detail.csv) or re-derived directly from statement text; nothing in it is modeled or projected forward at a different rate vintage. package_floor_fractions answers a DIFFERENT question: what share of a fully CURRENT-rate projected bill (data/package_results.json) is each component. Both of its components are current-rate-vintage, matching the denominator they are divided into -- non_bypassable_usd is a per-package RECOMPUTATION (see build_package_floor_fractions()'s and compute_package_gross_imports()'s docstrings) built by re-running behavior_rebuild.py's and battery_dispatch_policies.py's own committed package definitions against the raw interval export, then pricing the result at rates.NBC; strictly_irreducible_usd is annual_days x rates.BSC, the same construction rates.bill_nem_monthly() itself uses to build projected_bill_current_rates_yr. package_floor_fractions is deliberately NOT reconciled against twelve_month_floor's historical figures -- the two sections answer different questions (what actually happened over 12 real months, vs. what fraction of a current-rate projected bill each component is) and mixing their vintages was exactly Finding 1 of this script's second adversarial review. A THIRD adversarial review found that, even after both terms were vintage-consistent, they were still being summed into one 'floor' and both called irreducible -- non_bypassable_usd is a per-package recomputation, and on this corpus MID and HIGH's own modeled gross imports (and therefore their non_bypassable_usd) come out LOWER than LOW's/the baseline's, proving a purchase moves this component; it is reported separately here rather than summed into the floor. baseline_floor (issue #7 fourth adversarial review) answers the SAME current-rate-vintage question as package_floor_fractions but for the no-package baseline: what share of model_baseline_current_rates (the no-solar-purchase, fully current-rate model in data/package_results.json) is the strict floor vs. non-bypassable charges at baseline usage -- priced the same way, so it can be safely compared against that same current-rate total, unlike twelve_month_floor's historical split. The minimum-bill-provision test is against the NEM true-up 'Minimum Charge Adjustment' concept printed on this household's own pre-2025-10-01 statements, not against a dollar figure specific to EV-TOU-5 -- none was found. Its trigger condition (Finding 2, fourth adversarial review) is the ANNUAL sum of net_kwh over the true-up year(s) the corpus actually completes (true_up_years, grouped by each statement's own printed 'True-Up Date:' field, not by parse_bills.SUMMARY_STATEMENTS_ELEC's rolling billing window, which was found to straddle two different true-up years on this corpus) -- annual_net_kwh_sum/annual_net_generator now refer to that true-up-year figure, and annual_trigger_basis/annual_trigger_limitation say whether a complete cycle was found. monthly_net_position_window/any_period_net_generator_in_window remain separate, informational, month-level detail over the rolling billing window -- never the trigger.",
  "minimum_bill_provision": {
   "annual_net_generator": false,
-  "annual_net_kwh_sum": 13102.0,
+  "annual_net_kwh_sum": 12124.0,
+  "annual_trigger_basis": "complete_true_up_cycle",
+  "annual_trigger_limitation": null,
+  "annual_trigger_true_up_date": "2025-12-26",
   "any_period_net_generator_in_window": false,
+  "complete_true_up_years": [
+   "2025-12-26"
+  ],
   "dollar_line_item_ever_printed": [],
   "ev_tou_5_specific_min_bill_found": false,
   "legacy_figure_applicable_to_this_household": false,
@@ -107,6 +125,75 @@
    "2025-07-02",
    "2025-08-01",
    "2025-09-02"
+  ],
+  "true_up_years": [
+   {
+    "annual_net_generator": false,
+    "annual_net_kwh_sum": 5053.0,
+    "complete_true_up_cycle": false,
+    "contiguous": true,
+    "coverage_end": "2024-12-26",
+    "coverage_start": "2024-05-25",
+    "ends_on_true_up_date": true,
+    "period_count": 7,
+    "statements": [
+     "2024-06-27",
+     "2024-07-29",
+     "2024-08-28",
+     "2024-09-27",
+     "2024-10-29",
+     "2024-11-27",
+     "2024-12-30"
+    ],
+    "total_days": 216,
+    "true_up_date": "2024-12-26"
+   },
+   {
+    "annual_net_generator": false,
+    "annual_net_kwh_sum": 12124.0,
+    "complete_true_up_cycle": true,
+    "contiguous": true,
+    "coverage_end": "2025-12-26",
+    "coverage_start": "2024-12-27",
+    "ends_on_true_up_date": true,
+    "period_count": 13,
+    "statements": [
+     "2025-01-31",
+     "2025-03-04",
+     "2025-04-02",
+     "2025-05-02",
+     "2025-06-03",
+     "2025-07-02",
+     "2025-08-01",
+     "2025-09-02",
+     "2025-10-01",
+     "2025-10-31",
+     "2025-12-03",
+     "2026-01-06"
+    ],
+    "total_days": 365,
+    "true_up_date": "2025-12-26"
+   },
+   {
+    "annual_net_generator": false,
+    "annual_net_kwh_sum": 5582.0,
+    "complete_true_up_cycle": false,
+    "contiguous": true,
+    "coverage_end": "2026-06-26",
+    "coverage_start": "2025-12-27",
+    "ends_on_true_up_date": false,
+    "period_count": 6,
+    "statements": [
+     "2026-02-02",
+     "2026-03-04",
+     "2026-04-02",
+     "2026-05-04",
+     "2026-06-03",
+     "2026-07-02"
+    ],
+    "total_days": 182,
+    "true_up_date": "2026-12-28"
+   }
   ]
  },
  "nbc_gross_reverification": {

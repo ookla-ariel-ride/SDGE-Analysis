@@ -809,6 +809,80 @@ def build_package_floor_fractions(floor, gross):
     return out
 
 
+def build_baseline_floor_fraction(gross):
+    """Finding 1, issue #7 FOURTH adversarial review (a Codex pass over the
+    already-committed script). §11's report prose compared
+    model_baseline_current_rates (data/package_results.json -- a FULLY
+    current-rate MODEL of the no-package/baseline scenario: the household's
+    own historical interval data, priced at TODAY'S tariff throughout,
+    including today's BSC and NBC) against twelve_month_floor's ACTUAL
+    HISTORICAL 12-month split ($264.10 fixed / $479.76 non-bypassable -- a
+    real mix of pre- and post-2025-10-01 tariffs, whatever each period
+    actually billed). That is the exact CLAUDE.md 9 vintage-mixing violation
+    the THIRD adversarial review already fixed for the LOW/MID/HIGH package
+    fractions in build_package_floor_fractions() -- just missed here,
+    because it is a different paragraph about a different scenario (no
+    purchase at all, not a package) that this script had not yet priced at
+    a consistent vintage.
+
+    SAME CONSTRUCTION as build_package_floor_fractions(), at baseline (no
+    purchase) instead of a package, so the split is priced at the SAME
+    current-rate vintage as the $4,904/yr total it is compared against:
+      1. strictly_irreducible_usd = annual_days x rates.BSC -- IDENTICAL to
+         every package's fixed term (all four scenarios -- baseline, LOW,
+         MID, HIGH -- sit on the same 365-day interval frame,
+         gross['annual_days']; a per-day charge does not depend on usage).
+      2. non_bypassable_usd = gross['baseline_gross_kwh'] (compute_package_
+         gross_imports()'s own baseline figure -- already computed and
+         sanity-checked there, not re-derived here) x rates.NBC.
+    Both terms are current-rate-vintage, matching model_baseline_current_
+    rates, the denominator they are divided into. This is DELIBERATELY
+    SEPARATE from twelve_month_floor, which stays entirely historical on
+    purpose (see build_floor()'s and build_package_floor_fractions()'s own
+    docstrings for why the two sections are not reconciled to each other).
+
+    Returned as its own top-level artifact entry (baseline_floor), parallel
+    to but distinct from package_floor_fractions' LOW/MID/HIGH: the
+    baseline is "no package" -- not one of the three purchase options -- so
+    it does not belong inside that dict."""
+    strictly_irreducible_usd = _c(gross["annual_days"] * R.BSC)
+    non_bypassable_usd = _c(gross["baseline_gross_kwh"] * R.NBC)
+    combined_usd = _c(strictly_irreducible_usd + non_bypassable_usd)
+    pkg_doc = json.loads(PACKAGE_JSON.read_text())
+    bill = pkg_doc["model_baseline_current_rates"]
+    if bill <= 0:
+        raise SystemExit(f"model_baseline_current_rates is non-positive: {bill}")
+    return {
+        "projected_bill_current_rates_yr": bill,
+        "strictly_irreducible_usd": strictly_irreducible_usd,
+        "strictly_irreducible_fraction_of_projected_bill":
+            round(strictly_irreducible_usd / bill, 4),
+        "annual_days": gross["annual_days"],
+        "gross_import_kwh": gross["baseline_gross_kwh"],
+        "non_bypassable_usd": non_bypassable_usd,
+        "non_bypassable_fraction_of_projected_bill":
+            round(non_bypassable_usd / bill, 4),
+        "combined_usd": combined_usd,
+        "combined_fraction_of_projected_bill": round(combined_usd / bill, 4),
+        "method": (
+            "the no-package baseline's own current-rate-vintage split, "
+            "priced the same way as build_package_floor_fractions()'s "
+            "LOW/MID/HIGH entries so it can be compared against the "
+            "equally current-rate model_baseline_current_rates total (issue "
+            "#7 fourth adversarial review, CLAUDE.md 9): "
+            "strictly_irreducible_usd = annual_days x rates.BSC (same "
+            "365-day frame as every package -- a per-day charge that does "
+            "not depend on usage). non_bypassable_usd = "
+            "gross['baseline_gross_kwh'] x rates.NBC -- the household's own "
+            "modeled gross imports with no purchase applied. Both terms are "
+            "current-vintage, matching the denominator "
+            "(model_baseline_current_rates); this is a distinct question "
+            "from twelve_month_floor's historical split, which stays "
+            "historical on purpose and must not be compared against a "
+            "current-rate total."),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Step 5: minimum-bill provision
 # ---------------------------------------------------------------------------
@@ -819,6 +893,97 @@ _MIN_CHARGE_SENTENCE = re.compile(
     r"applicable\s+taxes\s+will\s+represent\s+all\s+you\s+have\s+to\s+pay\.")
 _MIN_CHARGE_LINE_ITEM = re.compile(
     rf"Minimum Charge Adjustment\D{{0,20}}([−-]?\${bd._NUM})")
+
+# A true-up year is a calendar year (365 days), or 366 across a February
+# that includes the 29th -- used to decide whether a group of periods
+# sharing one printed true-up date is a COMPLETE cycle or a partial slice.
+_TRUE_UP_YEAR_MIN_DAYS = 365
+_TRUE_UP_YEAR_MAX_DAYS = 366
+
+
+def statement_true_up_date(stmt):
+    """Finding 2 (issue #7 review). This statement's own printed 'True-Up
+    Date:' field -- bd._TRUE_UP_FIELD, reused read-only, not re-derived as a
+    new pattern. Confirmed against every statement in this household's
+    corpus: the field prints on EVERY statement (25/25), not only the
+    annual-settlement one, and survives the 2025-10-01 template change that
+    dropped the deferral SENTENCE bd.classify_statement()'s accrual branch
+    depends on -- so reading this field directly works uniformly across old
+    and new template statements alike, where the heavier NEM-ledger
+    classification needs different branches for each. bd._true_up_date() is
+    NOT used here: it parses the deferral sentence's 'Mon Day, Year' form,
+    whereas this field prints 'MM/DD/YYYY' directly, so the date is parsed
+    with that format instead."""
+    txt = bd.statement_text(stmt)
+    m = bd._TRUE_UP_FIELD.search(txt)
+    if not m:
+        raise SystemExit(
+            f"{stmt}: no printed 'True-Up Date:' field found -- cannot "
+            "group this statement's period(s) into a true-up year")
+    return dt.datetime.strptime(m.group(1), "%m/%d/%Y").date()
+
+
+def group_periods_by_true_up_year(rows, true_up_date_by_stmt):
+    """Finding 2 (issue #7 review). Group periods (dicts carrying at least
+    statement_date, period, days, net_kwh) by the true-up date the printed
+    field on their OWN statement names -- NOT by
+    parse_bills.SUMMARY_STATEMENTS_ELEC's rolling 12-statement billing
+    window, which was found to straddle two different true-up years on this
+    corpus: its first 6 periods print true-up date 12/26/2025 and its last
+    6 print 12/28/2026 -- two different actual settlement years, previously
+    summed together as if they were one "annual" figure.
+
+    true_up_date_by_stmt maps each row's statement_date to an already-
+    resolved dt.date (statement_true_up_date() in real use, reading the
+    printed field off a real PDF; supplied directly in a test using
+    synthetic statement dates with no backing PDF -- this function itself
+    never reads a PDF, so it is unit-testable without the private archive).
+
+    For each true-up-date group, reports whether the corpus covers a
+    COMPLETE true-up CYCLE for it -- not just enough periods to sum to
+    something -- by requiring all three:
+      1. contiguous: the group's periods, ordered by start date, must each
+         start the day after the previous one ends (no gap, no overlap).
+      2. ends_on_true_up_date: the LAST period must end exactly ON the
+         group's true-up date -- i.e. the settlement period itself is in
+         the corpus, not just periods still accruing toward it.
+      3. total_days is a real year: 365, or 366 across a leap-year
+         February (_TRUE_UP_YEAR_MIN_DAYS/_MAX_DAYS).
+    A group failing any of these is an incomplete slice: the tail or head
+    of a year this corpus does not fully carry, or a year still accruing
+    (has not yet reached its own true-up date)."""
+    by_true_up = {}
+    for r in rows:
+        tud = true_up_date_by_stmt[r["statement_date"]]
+        by_true_up.setdefault(tud, []).append(r)
+
+    out = []
+    for tud, group in sorted(by_true_up.items()):
+        ordered = sorted(group, key=lambda r: bd._period_dates(r["period"])[0])
+        spans = [bd._period_dates(r["period"]) for r in ordered]
+        gaps_days = [(spans[i + 1][0] - spans[i][1]).days
+                    for i in range(len(spans) - 1)]
+        contiguous = all(g == 1 for g in gaps_days)
+        total_days = sum(r["days"] for r in ordered)
+        coverage_start, coverage_end = spans[0][0], spans[-1][1]
+        ends_on_true_up_date = coverage_end == tud
+        complete = (contiguous and ends_on_true_up_date
+                   and _TRUE_UP_YEAR_MIN_DAYS <= total_days <= _TRUE_UP_YEAR_MAX_DAYS)
+        annual_net_kwh_sum = _c(sum(r["net_kwh"] for r in ordered))
+        out.append({
+            "true_up_date": tud.isoformat(),
+            "statements": sorted({r["statement_date"] for r in ordered}),
+            "period_count": len(ordered),
+            "total_days": total_days,
+            "coverage_start": coverage_start.isoformat(),
+            "coverage_end": coverage_end.isoformat(),
+            "contiguous": contiguous,
+            "ends_on_true_up_date": ends_on_true_up_date,
+            "complete_true_up_cycle": complete,
+            "annual_net_kwh_sum": annual_net_kwh_sum,
+            "annual_net_generator": annual_net_kwh_sum < 0,
+        })
+    return out
 
 
 def build_minimum_bill_provision(rows, statements):
@@ -846,23 +1011,45 @@ def build_minimum_bill_provision(rows, statements):
     (c) The provision only binds in a year the household is a NET GENERATOR
         -- and "the year" means the ANNUAL SUM of net_kwh over the whole
         "Relevant Period" (per the sentence quoted in (a)), not any single
-        month. (Finding 2, issue #7 second adversarial review: an earlier
-        version of this function tested any(net_kwh < 0 across the 13
-        window periods) and reported THAT as "the year" -- a future window
-        with one export month and eleven larger import months would have
-        been wrongly reported as having triggered the annual provision, even
-        though the annual sum was positive throughout. Fixed here: sum
-        net_kwh over the whole window first, THEN test its sign --
-        annual_net_generator is the real trigger condition.) The per-period
-        breakdown (monthly_net_position_window) is kept too -- which months
-        were net-negative, even in a year the annual sum was not -- but it is
-        explicitly NOT the trigger; any_period_net_generator_in_window is
-        labeled as month-level, distinct from annual_net_generator, so the
-        two cannot be confused. On this household's own 12-month window
-        (data/bill_periods_electric.csv), net_kwh sums positive throughout
-        AND every individual period is net-positive too, so both checks
-        happen to agree here -- but they are not the same claim, and only
-        the annual one is what the tariff provision actually tests."""
+        month, and not any arbitrary 12-statement window either. (Finding 2,
+        issue #7 second adversarial review: an earlier version of this
+        function tested any(net_kwh < 0) across the 13 window periods and
+        reported that as "the year" -- fixed by summing first, then testing
+        the sign. A FOURTH adversarial review then found that "the window"
+        being summed was itself wrong: parse_bills.SUMMARY_STATEMENTS_ELEC
+        is a rolling 12-statement BILLING window, not the utility's own
+        annual NEM TRUE-UP year, which is anchored to this household's PTO
+        date (12/27/2019) and prints its own "True-Up Date:" field on every
+        statement. On this corpus SUMMARY_STATEMENTS_ELEC's 13 periods
+        straddle TWO different true-up years -- printed true-up date
+        12/26/2025 on its first 6 periods, 12/28/2026 on its last 6 -- so
+        summing across the whole window mixed partial data from two
+        different actual settlement years, not "net generator for the
+        year" in the sense the provision means it.
+
+        FIXED: statement_true_up_date() reads each statement's own printed
+        True-Up Date field (bd._TRUE_UP_FIELD, reused read-only) and
+        group_periods_by_true_up_year() groups ALL periods in the corpus
+        (not just the SUMMARY_STATEMENTS_ELEC window -- a true-up year can,
+        and on this corpus does, sit partly or wholly outside that rolling
+        window) by which true-up year they accrue toward, then checks
+        whether the corpus covers a COMPLETE cycle for each: contiguous
+        periods from the day after the prior true-up date through a period
+        ending exactly on this one, totalling a real year's days. The
+        annual trigger (annual_net_kwh_sum / annual_net_generator /
+        provision_triggered_in_this_data below) is now evaluated against
+        the true-up year(s) the corpus actually completes, not the rolling
+        billing window -- see true_up_years for the full per-year detail
+        and annual_trigger_basis/annual_trigger_limitation for whether a
+        complete cycle was found or the closest available approximation is
+        being reported instead, with that limitation stated rather than
+        silently treated as a complete year.
+
+        The per-period breakdown (monthly_net_position_window) and its
+        any_period_net_generator_in_window flag are kept as before --
+        useful, explicitly month-level, informational context over the
+        rolling billing window -- but they were never the trigger and still
+        are not; only the true-up-year-grouped annual figures are."""
     sentence_statements = []
     line_item_statements = []
     for stmt in statements:
@@ -881,16 +1068,44 @@ def build_minimum_bill_provision(rows, statements):
         {"statement_date": r["statement_date"], "period": r["period"],
          "net_kwh": r["net_kwh"], "is_net_generator_this_period": r["net_kwh"] < 0}
         for r in window_rows]
-    # Month-level only -- informative (which periods were individually net-
-    # negative) but explicitly NOT the tariff's own trigger condition. Kept
-    # separate from annual_net_generator below so the two cannot be confused
-    # (Finding 2, issue #7 second adversarial review).
+    # Month-level only, over the rolling billing window -- informative
+    # (which periods were individually net-negative) but explicitly NOT the
+    # tariff's own trigger condition, and NOT the true-up year either
+    # (Finding 2, issue #7 second and fourth adversarial reviews).
     any_period_net_generator_in_window = any(
         m["is_net_generator_this_period"] for m in monthly_net_position)
-    # THE actual trigger condition: the ANNUAL sum of net_kwh over the whole
-    # window, per the provision's own "net generator for the year" wording.
-    annual_net_kwh_sum = _c(sum(r["net_kwh"] for r in window_rows))
-    annual_net_generator = annual_net_kwh_sum < 0
+
+    # THE actual trigger condition (Finding 2, fourth adversarial review):
+    # grouped by each period's own printed True-Up Date, over the WHOLE
+    # corpus (rows), not the SUMMARY_STATEMENTS_ELEC rolling window -- a
+    # true-up year need not align with that window at all.
+    true_up_date_by_stmt = {stmt: statement_true_up_date(stmt) for stmt in statements}
+    true_up_years = group_periods_by_true_up_year(rows, true_up_date_by_stmt)
+    complete_years = [g for g in true_up_years if g["complete_true_up_cycle"]]
+
+    if complete_years:
+        annual_trigger_basis = "complete_true_up_cycle"
+        annual_trigger_limitation = None
+        chosen_years = complete_years
+    elif true_up_years:
+        annual_trigger_basis = "closest_available_approximation"
+        chosen_years = [max(true_up_years, key=lambda g: g["total_days"])]
+        annual_trigger_limitation = (
+            "no true-up year in this corpus is fully covered by a "
+            "contiguous run of periods from the day after the prior "
+            "true-up date through a period ending exactly on this one -- "
+            f"reporting the closest available true-up year "
+            f"({chosen_years[0]['true_up_date']}, {chosen_years[0]['total_days']} "
+            "of a real year's days covered) instead, with this limitation "
+            "stated rather than silently treated as a complete year")
+    else:
+        annual_trigger_basis = "no_true_up_date_found"
+        chosen_years = []
+        annual_trigger_limitation = (
+            "no true-up date could be established for any period in this data")
+
+    provision_triggered_in_this_data = any(g["annual_net_generator"] for g in chosen_years)
+    single_year = chosen_years[0] if len(chosen_years) == 1 else None
 
     return {
         "sentence_found_in_statements": sentence_statements,
@@ -910,9 +1125,14 @@ def build_minimum_bill_provision(rows, statements):
         "ev_tou_5_specific_min_bill_found": False,
         "monthly_net_position_window": monthly_net_position,
         "any_period_net_generator_in_window": any_period_net_generator_in_window,
-        "annual_net_kwh_sum": annual_net_kwh_sum,
-        "annual_net_generator": annual_net_generator,
-        "provision_triggered_in_this_data": annual_net_generator,
+        "true_up_years": true_up_years,
+        "complete_true_up_years": [g["true_up_date"] for g in complete_years],
+        "annual_trigger_basis": annual_trigger_basis,
+        "annual_trigger_limitation": annual_trigger_limitation,
+        "annual_trigger_true_up_date": single_year["true_up_date"] if single_year else None,
+        "annual_net_kwh_sum": single_year["annual_net_kwh_sum"] if single_year else None,
+        "annual_net_generator": single_year["annual_net_generator"] if single_year else None,
+        "provision_triggered_in_this_data": provision_triggered_in_this_data,
     }
 
 
@@ -1013,14 +1233,28 @@ CAVEAT = (
     "recomputation, and on this corpus MID and HIGH's own modeled gross "
     "imports (and therefore their non_bypassable_usd) come out LOWER than "
     "LOW's/the baseline's, proving a purchase moves this component; it is "
-    "reported separately here rather than summed into the floor. The "
+    "reported separately here rather than summed into the floor. "
+    "baseline_floor (issue #7 fourth adversarial review) answers the SAME "
+    "current-rate-vintage question as package_floor_fractions but for the "
+    "no-package baseline: what share of model_baseline_current_rates (the "
+    "no-solar-purchase, fully current-rate model in data/package_results.json) "
+    "is the strict floor vs. non-bypassable charges at baseline usage -- "
+    "priced the same way, so it can be safely compared against that same "
+    "current-rate total, unlike twelve_month_floor's historical split. The "
     "minimum-bill-provision test is against the NEM true-up 'Minimum Charge "
     "Adjustment' concept printed on this household's own pre-2025-10-01 "
     "statements, not against a dollar figure specific to EV-TOU-5 -- none "
-    "was found. Its trigger condition is the ANNUAL sum of net_kwh over the "
-    "window (annual_net_generator), not any single period being net-negative "
-    "(any_period_net_generator_in_window is kept as separate, informational, "
-    "month-level detail -- Finding 2 of the second adversarial review)."
+    "was found. Its trigger condition (Finding 2, fourth adversarial review) "
+    "is the ANNUAL sum of net_kwh over the true-up year(s) the corpus "
+    "actually completes (true_up_years, grouped by each statement's own "
+    "printed 'True-Up Date:' field, not by parse_bills.SUMMARY_STATEMENTS_ELEC's "
+    "rolling billing window, which was found to straddle two different "
+    "true-up years on this corpus) -- annual_net_kwh_sum/annual_net_generator "
+    "now refer to that true-up-year figure, and annual_trigger_basis/"
+    "annual_trigger_limitation say whether a complete cycle was found. "
+    "monthly_net_position_window/any_period_net_generator_in_window remain "
+    "separate, informational, month-level detail over the rolling billing "
+    "window -- never the trigger."
 )
 
 
@@ -1074,6 +1308,7 @@ def build():
     floor = build_floor(rows)
     gross = compute_package_gross_imports()
     package_fractions = build_package_floor_fractions(floor, gross)
+    baseline_floor = build_baseline_floor_fraction(gross)
     all_statements = sorted({r["statement_date"] for r in rows})
     min_bill = build_minimum_bill_provision(rows, all_statements)
     nbc_check = build_nbc_gross_check(rows)
@@ -1092,6 +1327,7 @@ def build():
         "reconciliation_tolerance_usd": RECON_TOLERANCE_USD,
         "twelve_month_floor": floor,
         "package_floor_fractions": package_fractions,
+        "baseline_floor": baseline_floor,
         "minimum_bill_provision": min_bill,
         "nbc_gross_reverification": nbc_check,
         "caveat": CAVEAT,
@@ -1138,6 +1374,15 @@ def main():
               f"{pf['strictly_irreducible_fraction_of_projected_bill']*100:.1f}%, "
               f"+ non-bypassable {pf['non_bypassable_fraction_of_projected_bill']*100:.1f}%, "
               f"of the projected ${pf['projected_bill_current_rates_yr']}/yr bill")
+    bf = result["baseline_floor"]
+    print(f"  baseline (no package), current rates: strict floor is "
+          f"{bf['strictly_irreducible_fraction_of_projected_bill']*100:.1f}%, "
+          f"+ non-bypassable {bf['non_bypassable_fraction_of_projected_bill']*100:.1f}%, "
+          f"of the projected ${bf['projected_bill_current_rates_yr']}/yr bill")
+    mb = result["minimum_bill_provision"]
+    print(f"  minimum-bill annual trigger basis: {mb['annual_trigger_basis']} "
+          f"({mb['annual_trigger_true_up_date']}): "
+          f"triggered={mb['provision_triggered_in_this_data']}")
     w = result["worst_residual_period"]
     print(f"  worst per-period cross-check residual: ${w['cross_check_diff_usd']:+.2f} "
           f"({w['statement_date']} / {w['period']})")
