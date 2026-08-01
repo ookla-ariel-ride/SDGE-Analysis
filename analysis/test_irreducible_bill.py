@@ -506,7 +506,7 @@ def case_package_floor_fractions_are_consistent():
 # ---------------------------------------------------------------------------
 # Finding 1 (issue #7 fourth adversarial review): baseline_floor prices the
 # no-package scenario's fixed/non-bypassable split at the SAME current rate
-# vintage as model_baseline_current_rates ($4,904/yr), instead of §11's
+# vintage as model_baseline_current_rates ($4,904/yr), instead of §12's
 # retired comparison against twelve_month_floor's historical split.
 # ---------------------------------------------------------------------------
 @case

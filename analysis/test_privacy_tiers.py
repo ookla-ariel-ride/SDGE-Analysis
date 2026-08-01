@@ -1344,6 +1344,159 @@ def case_the_gate_refuses_a_tier_whose_subject_it_cannot_locate():
             "a private file present")
 
 
+def case_the_gate_refuses_an_untiered_private_key():
+    """A key present in household.yaml with NO field id at all -- worse than
+    an id that fails to resolve, because nothing declared it in the first
+    place.
+
+    `UnresolvableField` (the case above) catches a field id the schema cannot
+    locate. This is the reverse gap: a key that exists in the household and
+    that no cheatsheet field id resolves to, in either direction, builds no
+    needle and bans no key -- invisible to every mechanism in this module by
+    construction, and a tree holding it reported clean until now.
+    `untiered_leaf_paths` has always computed this set; `gate` did not call it.
+
+    Synthetic, so the planted key runs in CI: nothing here is a real answer.
+    """
+    fields = PT.cheatsheet_fields()
+    shape = PT.schema()
+    planted = dict(PLANTED, an_untiered_field="an answer nobody gave a tier")
+    untiered = PT.untiered_leaf_paths(planted, fields, shape)
+    assert untiered == ["an_untiered_field"], untiered
+
+    try:
+        PT.gate([("data/x.json", "{}")], planted, fields=fields, shape=shape)
+        assert False, "the gate scanned past an untiered private key"
+    except PT.UntieredKey as e:
+        assert e.paths == ["an_untiered_field"], e.paths
+        assert "an_untiered_field" in str(e), str(e)
+
+    # without a private file there is nothing to find an untiered key IN, so
+    # the check is skipped -- not passed -- and the gate proceeds
+    hits, _ = PT.gate([("data/x.json", "{}")], None, fields=fields, shape=shape)
+    assert isinstance(hits, list)
+
+    # the ordinary case this must not disturb: PLANTED itself is fully tiered,
+    # which every other control in this file already relies on
+    PT.gate([("data/x.json", "{}")], PLANTED, fields=fields, shape=shape)
+
+    if not PT.REAL_HOUSEHOLD.is_file():
+        return ("the gate raises UntieredKey, naming the leaf path, only "
+                "when a household is given and it holds an untiered key; the "
+                "real-household leg was skipped -- no private/household.yaml "
+                "here")
+    household = yaml.safe_load(PT.REAL_HOUSEHOLD.read_text()) or {}
+    # must not raise: the real intake is confirmed fully tiered through the
+    # same gate a commit is judged by, not only through untiered_leaf_paths
+    # directly (case_every_intake_key_is_tiered, below)
+    PT.gate([("data/x.json", "{}")], household, fields=fields, shape=shape)
+    return ("the gate raises UntieredKey, naming the leaf path, when a "
+            "private household key has no cheatsheet field id at all -- with "
+            "no private file the check is skipped rather than passed -- and "
+            "the real household.yaml passes the same gate untiered-key-free")
+
+
+BROKEN_PY_SYNTAX = "def broken(:\n    pass\n"
+
+
+def case_a_staged_python_syntax_error_blocks_the_scan():
+    """A staged `.py` file that fails to parse must not go unscanned.
+
+    `scan_script_reads` used to `continue` past a `SyntaxError`, so a read of
+    a banned path hidden inside a file that fails to parse went unchecked --
+    inconsistent with the fail-closed treatment an unparseable JSON/YAML
+    artifact already gets (`UnparseableArtifact`, which blocks). It now raises
+    the same exception, carrying the path, the error class and the line, and
+    never the source.
+    """
+    derived = PT.unsearchable_fields()
+    try:
+        PT.scan_script_reads(
+            [("analysis/broken_module.py", BROKEN_PY_SYNTAX)], derived)
+        assert False, ("scan_script_reads silently skipped a staged .py file "
+                       "with a syntax error")
+    except PT.UnparseableArtifact as e:
+        assert e.relpath == "analysis/broken_module.py", e.relpath
+        assert e.kind == "SyntaxError", e.kind
+        assert e.line is not None, "no line number carried for the syntax error"
+
+    # and through the gate a commit is actually judged by, on a throwaway
+    # staged tree -- not just the scanning function in isolation
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        tree = dict(CLEAN_TREE)
+        tree["analysis/broken_module.py"] = BROKEN_PY_SYNTAX
+        _tree(root, tree)
+        items, _ = PT.staged_items(root)
+        try:
+            PT.gate(items, PLANTED)
+            assert False, "the gate scanned past an unparseable staged .py file"
+        except PT.UnparseableArtifact as e:
+            assert e.relpath == "analysis/broken_module.py", e.relpath
+    return ("a staged .py file with a genuine syntax error raises "
+            "UnparseableArtifact from scan_script_reads and from gate, "
+            "naming the file and the error class rather than being silently "
+            "skipped")
+
+
+def case_the_precommit_hook_blocks_an_unparseable_staged_script():
+    """The real hook, not just the scanning function, on a broken `.py` file.
+
+    Same throwaway-repository control the other hook-level cases use: the
+    real `.githooks/pre-commit`, dispatched by `core.hooksPath`, against a
+    commit that stages a `.py` file which does not parse. No private file is
+    present -- this is the state CI and a fresh clone are permanently in --
+    so this exercises the half of the rule that has to hold even then.
+    """
+    if not shutil.which("gitleaks"):                       # pragma: no cover
+        raise SkipCase("the real pre-commit hook refuses to run without "
+                       "gitleaks, so the control cannot drive it")
+    src = PT.ROOT
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        for rel in ("analysis/privacy_tiers.py", ".githooks/pre-commit",
+                    "DATA-SOURCES-CHEATSHEET.md", "household.example.yaml"):
+            dest = root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((src / rel).read_bytes())
+            dest.chmod(0o755)
+        (root / ".gitignore").write_text("private/\n.venv/\n")
+        (root / ".venv" / "bin").mkdir(parents=True)
+        shim = root / ".venv" / "bin" / "python"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        shim.chmod(0o755)
+        (root / "README.md").write_text("# throwaway\n")
+
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@x",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+
+        def git(*args, **kw):
+            return subprocess.run(["git", *args], cwd=root, env=env,
+                                  capture_output=True, text=True, **kw)
+
+        def count():
+            out = git("rev-list", "--count", "HEAD")
+            return int(out.stdout.strip()) if out.returncode == 0 else 0
+
+        git("init", "-q", check=True)
+        git("config", "core.hooksPath", ".githooks", check=True)
+        git("add", "-A", check=True)
+        r = git("commit", "-m", "seed the clone")
+        assert r.returncode == 0, f"the seed commit was blocked: {r.stderr}"
+        assert count() == 1, r.stderr
+
+        (root / "analysis" / "broken_module.py").write_text(BROKEN_PY_SYNTAX)
+        git("add", "-A", check=True)
+        r = git("commit", "-m", "add a module with a syntax error")
+        assert r.returncode != 0, "a staged .py file with a syntax error was committed"
+        assert "privacy tiers" in r.stderr and "BLOCKED" in r.stderr, r.stderr
+        assert "broken_module.py" in r.stderr, r.stderr
+        assert count() == 1, f"the blocked commit changed the history: {r.stderr}"
+    return ("the real pre-commit hook blocks a commit that stages a .py file "
+            "with a genuine syntax error, naming the file, and leaves the "
+            "commit count unchanged")
+
+
 def case_every_intake_key_is_tiered():
     """The reverse gap, and the reason it has to be a test.
 
@@ -1402,6 +1555,9 @@ CASES = [
     case_the_committed_tree_carries_no_banned_key_or_read,
     case_the_commit_message_is_inside_the_boundary_and_scanned,
     case_the_gate_refuses_a_tier_whose_subject_it_cannot_locate,
+    case_the_gate_refuses_an_untiered_private_key,
+    case_a_staged_python_syntax_error_blocks_the_scan,
+    case_the_precommit_hook_blocks_an_unparseable_staged_script,
     case_the_commit_msg_hook_blocks_and_leaves_the_history_alone,
     case_the_precommit_gate_blocks_a_staged_leak,
     case_the_precommit_hook_is_portable_to_another_household,

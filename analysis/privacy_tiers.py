@@ -506,17 +506,23 @@ def needles(household, fields=None, shape=None):
 
 
 class UnparseableArtifact(Exception):
-    """A structured artifact the scan could not read, which is not a clean bill.
+    """A file the scan could not read, which is not a clean bill.
 
     A `.json` or `.yaml` file that will not parse is walked by nothing, so the
     equality half of the value scan and the key half of the substitute rule
     both return quiet for it -- quiet for the reason a gate must never be quiet
     for. Skipping it in silence is what this replaces; callers report it and
-    refuse to pass the tree.
+    refuse to pass the tree. `scan_script_reads` raises the same exception for
+    a staged `.py` file that fails to parse: an unparseable script is read by
+    neither of that rule's two shapes (the accessor call, the bare path
+    literal), which is the identical silence one layer down, so it is held to
+    the same fail-closed rule rather than given a fourth exception type for
+    the same underlying situation.
 
     It carries the path, the error CLASS and the line, and never the parser's
-    own message: a yaml or json error quotes the offending source, and the
-    offending source is exactly the content this module may not print.
+    own message: a yaml, json or python syntax error quotes the offending
+    source, and the offending source is exactly the content this module may
+    not print.
     """
 
     def __init__(self, relpath, exc):
@@ -715,6 +721,13 @@ def _python_literals(text):
     try:
         tree = ast.parse(text)
     except SyntaxError:                                    # pragma: no cover
+        # Safe in the direction the empty return takes: no literal here is
+        # excused as a pre-existing fixture, so the whole file is left to the
+        # ordinary value scan, which reads it as text -- strictly MORE of it
+        # scanned, never less. That is the opposite of `scan_script_reads`'s
+        # site below, where the same exception used to mean "skip this file's
+        # reads entirely" -- silently less scanned -- which is why only that
+        # one was changed to fail closed.
         return []
     prose = {id(n.value) for n in ast.walk(tree)
              if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
@@ -1179,6 +1192,11 @@ def read_paths(path):
 def scan_script_reads(items, unsearchable):
     """Half two: a committed script reading the path.
 
+    Raises UnparseableArtifact for a `.py` file that will not parse: a script
+    this cannot read is read by neither shape below, which is silent for the
+    same reason an unreadable JSON/YAML artifact is silent elsewhere in this
+    module, and it is held to the same refusal rather than being skipped.
+
     In python, two shapes, because one alone is not enough. The accessor call
     `hh.get("solar.itc_claimed")` is the direct read, and a read of an ANCESTOR
     (`HH.get("solar")`, `HH.get("monitoring")`) pulls the key out with it --
@@ -1225,8 +1243,17 @@ def scan_script_reads(items, unsearchable):
             continue
         try:
             tree = ast.parse(text)
-        except SyntaxError:                                # pragma: no cover
-            continue
+        except SyntaxError as e:
+            # Fail closed, matching the treatment already given an unparseable
+            # JSON/YAML artifact: a staged `.py` file that will not parse is
+            # read by nothing below, so the accessor-read and path-literal
+            # checks both go quiet for it -- quiet for the reason this whole
+            # module refuses to be quiet for. `UnparseableArtifact` already
+            # carries exactly (path, error kind, line) with no source quoted,
+            # and `SyntaxError.lineno` is 1-indexed like the `problem_mark`
+            # branch expects, so it is reused rather than inventing a fourth
+            # exception for the same underlying situation.
+            raise UnparseableArtifact(rel, e) from None
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
@@ -1375,6 +1402,34 @@ class UnresolvableField(Exception):
                                    for fid, path in self.fields))
 
 
+class UntieredKey(Exception):
+    """A private household.yaml key that no cheatsheet field id covers at all.
+
+    Raised by `gate` BEFORE it scans anything, and a worse silence than
+    `UnresolvableField` above rather than a milder one: an id that fails to
+    resolve is at least DECLARED, so `resolution_report` can name it. A key
+    that is present in `private/household.yaml` with no field id pointing at
+    it in either direction has no tier, and so builds no needle, bans no key
+    and is read by no script check -- invisible to every mechanism in this
+    module by construction, not merely one of them. `untiered_leaf_paths` has
+    always computed exactly this set; until now nothing called it from the
+    gate that blocks a commit, so only running `test_privacy_tiers.py`'s own
+    dedicated case caught a new key added without a matching cheatsheet block,
+    and only if someone remembered to run it.
+
+    It is a property of the ACTUAL private data, not of the cheatsheet and
+    schema template alone: `untiered_leaf_paths` needs household.yaml's own
+    keys to know what exists, which `resolution_report`'s checks do not.  So
+    unlike `UnresolvableField`, this one cannot be raised, and is not checked,
+    when `household` is None -- there is no private/household.yaml in CI or in
+    a fresh clone, and nothing to report untiered keys FROM.
+    """
+
+    def __init__(self, paths):
+        self.paths = list(paths)
+        super().__init__("; ".join(self.paths))
+
+
 def gate(items, household=None, fields=None, shape=None, baseline=None,
          excused=None):
     """Every enforceable half of the tier rule, over one set of items.
@@ -1386,14 +1441,26 @@ def gate(items, household=None, fields=None, shape=None, baseline=None,
 
     Raises UnresolvableField before scanning if any tiered field has no
     locatable subject -- a scan that cannot find what a rule is about must not
-    return a clean bill for it, and UnparseableArtifact if a file claiming a
-    structured suffix will not parse, for the same reason one step down.
+    return a clean bill for it -- UnparseableArtifact if a file claiming a
+    structured suffix will not parse, for the same reason one step down, and
+    UntieredKey if `household` is given and holds a leaf path that no
+    cheatsheet field id resolves to at all: a key with no tier is invisible to
+    every needle, key and path check in this module by construction, which is
+    the worse case `UnresolvableField` does not cover. That last check can only
+    run with the actual private data in hand -- it needs household.yaml's own
+    keys to know what exists -- so it is skipped, not passed, when `household`
+    is None; the other two need only the cheatsheet and the committed schema
+    template and always run.
     """
     fields = cheatsheet_fields() if fields is None else fields
     shape = schema() if shape is None else shape
     unresolvable = resolution_report(fields=fields, shape=shape)["unresolvable"]
     if unresolvable:
         raise UnresolvableField(unresolvable)
+    if household is not None:
+        untiered = untiered_leaf_paths(household, fields, shape)
+        if untiered:
+            raise UntieredKey(untiered)
     unsearchable = unsearchable_fields(household, fields, shape)
     hits = scan_artifact_keys(items, banned_keys(unsearchable))
     hits += scan_script_reads(items, unsearchable)
@@ -1431,16 +1498,30 @@ def gate(items, household=None, fields=None, shape=None, baseline=None,
 # never dress up as a pass. That check reads only the cheatsheet and the
 # committed schema, so it runs in a clone with no private file too.
 #
+# A third, worse case that check does not cover: a key PRESENT in
+# private/household.yaml with no cheatsheet field id at all, tiered or not --
+# not mistyped, not renamed, simply never given a block. That key builds no
+# needle and bans no key name, so it is invisible to every check in this
+# module by construction, and the tree it sits in reports clean. Where a
+# private file exists, `gate` also refuses to scan until `untiered_leaf_paths`
+# comes back empty (`UntieredKey` below). This one CANNOT run without the
+# actual private data -- there is no private file in CI, and nothing to find
+# an untiered key IN -- so it is a gap the local hook alone closes, same as
+# the value scan itself.
+#
 # Exit codes, which both hooks read:
 #   0  clean
-#   1  a tier rule is broken, or a tiered field resolves to nothing; the commit
-#      is blocked
-#   2  private/household.yaml is absent, so the value half could not run. Not a
-#      failure -- somebody else's clone legitimately has no private file -- but
-#      never silent either
-#   3  part of the content could not be scanned -- the gate failed outright, or
-#      a file claiming a structured suffix would not parse, so nothing walked
-#      it; refuse to commit unscanned
+#   1  a tier rule is broken, a tiered field resolves to nothing, or (with a
+#      private file present) a household.yaml key has no field id covering it
+#      at all; the commit is blocked
+#   2  private/household.yaml is absent, so the value half -- and the untiered-
+#      key check, which needs the same file -- could not run. Not a failure --
+#      somebody else's clone legitimately has no private file -- but never
+#      silent either
+#   3  part of the content could not be scanned -- the gate failed outright, a
+#      file claiming a structured suffix would not parse, or a staged `.py`
+#      file failed to parse as python, so nothing walked it; refuse to commit
+#      unscanned
 # ---------------------------------------------------------------------------
 MESSAGE_LABEL = "the commit message"
 
@@ -1483,13 +1564,24 @@ def main(argv=None):
         return 1
     except UnparseableArtifact as e:
         at = "" if e.line is None else f" at line {e.line}"
-        print(f"privacy tiers: BLOCKED. {e.relpath} claims a structured format "
-              f"and does not parse ({e.kind}{at}), so nothing walked its keys "
-              f"or its values and the scan of it would report clean for the "
-              f"wrong reason. Fix the file, or give it a suffix that does not "
-              f"claim a format. (The parser's own message is withheld: it "
-              f"quotes the offending source.)", file=sys.stderr)
+        print(f"privacy tiers: BLOCKED. {e.relpath} could not be parsed "
+              f"({e.kind}{at}), so nothing walked its structure -- its keys, "
+              f"its values, or (for a .py file) its reads -- and the scan of "
+              f"it would report clean for the wrong reason. Fix the file. "
+              f"(The parser's own message is withheld: it quotes the "
+              f"offending source.)", file=sys.stderr)
         return 3
+    except UntieredKey as e:
+        print(f"privacy tiers: BLOCKED. {len(e.paths)} key(s) in "
+              f"private/household.yaml have no cheatsheet field id covering "
+              f"them at all, so they carry no tier and are invisible to every "
+              f"needle, key and path check in this module:", file=sys.stderr)
+        for path in e.paths:
+            print(f"  - {path}", file=sys.stderr)
+        print("Give each a field block in DATA-SOURCES-CHEATSHEET.md with a "
+              "privacy tier. See the path contract there for how a field id "
+              "resolves to this path.", file=sys.stderr)
+        return 1
     except Exception as e:                                 # noqa: BLE001
         print(f"privacy tiers: the gate could not run ({type(e).__name__}: "
               f"{e}) -- refusing to pass unscanned.", file=sys.stderr)
@@ -1512,8 +1604,9 @@ def main(argv=None):
     if household is None:
         print(f"privacy tiers: {scanned} clean of the {len(unsearchable)} "
               f"key/path rule(s) that need no private data. NOT CHECKED: the "
-              f"real-value scan -- private/household.yaml is absent here, so "
-              f"there were no answers to look for.", file=sys.stderr)
+              f"real-value scan, and whether every household.yaml key is "
+              f"tiered -- private/household.yaml is absent here, so there "
+              f"were no answers to look for.", file=sys.stderr)
         return 2
     total = sum(excused.values())
     accounted = ("" if not total else
