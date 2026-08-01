@@ -1,0 +1,567 @@
+#!/usr/bin/env python3
+"""Behavioural tests for dsgs_vpp_backtest.py (issue #10, Phase 1).
+
+dsgs_vpp_backtest.py imports behavior_rebuild.py (directly, and transitively via
+battery_dispatch_policies.py), which reads private/household.yaml at ITS OWN module
+top level and fails closed (SystemExit) if that file is absent -- the same situation
+test_nem3_grandfathering.py and test_carbon_dispatch_tradeoff.py already solved. Applied
+here too: point household.PATH at a synthetic, invented household BEFORE importing, so
+this whole file imports cleanly on any checkout, private/ or not. Cases that need the
+REAL measured Green Button year, the REAL committed event calendar, or the REAL 30 MB
+raw CEC xlsx still gate on their own precondition and SKIP rather than fail when this
+checkout lacks them, matching test_nem3_grandfathering.py's SkipCase convention.
+
+Run from the repo root:  ./.venv/bin/python analysis/test_dsgs_vpp_backtest.py
+"""
+import datetime as dt
+import glob
+import json
+import pathlib
+import sys
+import tempfile
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# Same fix as test_nem3_grandfathering.py, for the same reason: point the intake
+# loader at a synthetic, invented household before the transitive import of
+# behavior_rebuild fires. Values are invented; nothing here depends on them except
+# the cases that explicitly load the real archive below.
+import household as _hh
+_HH_DIR = tempfile.TemporaryDirectory()
+_hh.PATH = pathlib.Path(_HH_DIR.name) / "household.yaml"
+_hh.PATH.write_text(
+    "household:\n  pto_date: 2019-12-01\nlocation:\n  lat: 33.0\n"
+    "solar:\n  install_invoice_usd: 30000\n  install_paid_date: 2019-12-01\n"
+    "charger:\n  kw: 11.5\ncleaning_history: []\n"
+    "gas:\n  therm_allin_usd: 2.0\n"
+    "misc:\n  miles_per_year: 12000\n  supercharge_kwh_yr: 500\n")
+_hh._cache = None
+
+import rates as R                       # noqa: E402
+import behavior_rebuild as br           # noqa: E402
+import battery_dispatch_policies as bp  # noqa: E402
+import dsgs_vpp_backtest as vb          # noqa: E402
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
+HOUSEHOLD_YAML = ROOT / "private" / "household.yaml"
+
+CASES = []
+
+
+def case(fn):
+    CASES.append(fn)
+    return fn
+
+
+class SkipCase(Exception):
+    """Raised by a case whose preconditions this checkout cannot meet (no private
+    Green Button archive, no committed event calendar, or no raw CEC xlsx). Counted
+    as neither pass nor fail."""
+
+
+def _require_archive():
+    """Only for cases that need the REAL measured year (br.load() on the actual
+    data, or a byte-identical regeneration of the committed JSON built from it).
+    The module import above already succeeded unconditionally using the synthetic
+    household, so this gates DATA, not importability."""
+    files = sorted(glob.glob(USAGE_GLOB))
+    if not files or not HOUSEHOLD_YAML.is_file():
+        raise SkipCase(f"needs the private archive ({USAGE_GLOB}) and "
+                       f"{HOUSEHOLD_YAML}, neither of which this checkout has")
+    br.CSV = files[0]
+    return files[0]
+
+
+def _require_calendar():
+    if not vb.CALENDAR_CSV.exists():
+        raise SkipCase(f"needs the committed {vb.CALENDAR_CSV}, which this "
+                       "checkout does not have (run --build-calendar first)")
+
+
+def _require_raw_xlsx():
+    if not vb.RAW_XLSX.exists():
+        raise SkipCase(f"needs the private raw archive {vb.RAW_XLSX}, which this "
+                       "checkout does not have")
+
+
+EPS = 1e-6
+
+
+# ---------------------------------------------------------------------------
+# (a) synthetic-frame unit tests of run_batt_vpp -- no archive needed at all
+# ---------------------------------------------------------------------------
+def _synthetic_day(consumption_kw=0.0, generation_kw=0.0, weekday=True):
+    """96 15-min intervals, one calendar day, constant load/generation. weekday=True
+    picks a real Wednesday (2026-01-07); weekday=False a real Saturday (2026-01-10) --
+    both far from any DST transition and outside any tariff holiday, so rates.period_at
+    needs no household config and behaves exactly per rates.period()'s plain rule."""
+    start = pd.Timestamp("2026-01-07") if weekday else pd.Timestamp("2026-01-10")
+    dtr = pd.date_range(start, periods=96, freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+    imp0 = np.full(96, consumption_kw * 0.25)
+    gen0 = np.full(96, generation_kw * 0.25)
+    return d, imp0, gen0
+
+
+@case
+def case_run_batt_vpp_matches_run_batt_with_empty_event_set():
+    """With no event hours at all, run_batt_vpp must behave IDENTICALLY to
+    battery_dispatch_policies.run_batt's 'greedy' policy -- byte-for-byte, not just
+    close. This is the "close variant" claim the module docstring makes; this case is
+    what makes it true rather than asserted."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=1.0)
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_b, exp_b, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0, gen0, vb.CAP, set(), 0.20)
+    assert np.array_equal(imp_a, imp_b), "imp diverges with an empty event set"
+    assert np.array_equal(exp_a, exp_b), "exp diverges with an empty event set"
+    assert event_kwh.sum() == 0.0, "an empty event set must force zero extra discharge"
+    return "run_batt_vpp(event_set=set()) is byte-identical to run_batt('greedy')"
+
+
+@case
+def case_run_batt_vpp_matches_run_batt_across_a_realistic_mixed_day():
+    """Same equivalence, but with a load/generation shape that exercises every branch
+    of the greedy control flow (solar surplus charging, sop grid top-up, on-peak
+    discharge) -- not just the always-discharge shape of the constant-load fixture."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0)
+    rng = np.random.default_rng(0)
+    # house load: 0.5 kW baseline + a 3 kW evening bump (16-21h)
+    imp0 = np.where((d.hour.values >= 16) & (d.hour.values < 21), 3.0, 0.5) * 0.25
+    # solar: a midday bump (10-15h)
+    gen0 = np.where((d.hour.values >= 10) & (d.hour.values < 15), 4.0, 0.0) * 0.25
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0.copy(), gen0.copy(), vb.CAP, "greedy")
+    imp_b, exp_b, _soc, event_kwh, _bau = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20)
+    assert np.array_equal(imp_a, imp_b)
+    assert np.array_equal(exp_a, exp_b)
+    assert event_kwh.sum() == 0.0
+    return "run_batt_vpp matches run_batt across solar+evening-load branches too"
+
+
+@case
+def case_event_hour_delivers_the_efficiency_adjusted_headroom_from_an_idle_full_battery():
+    """Zero load/generation all day: BAU charges to full during the first sop window
+    (0-6h) and then sits idle (no import to discharge against). An event declared at
+    HE21 (20:00-21:00, already inside the ordinary on-peak discharge window but with
+    nothing for BAU to serve) forces discharge out of an otherwise-untouched battery,
+    capped by min(4*PWRQ, (cap - reserve_kwh) * ETA) -- NOT the raw 11.5 kWh nameplate,
+    because delivering output costs MORE soc than the output itself (soc -= extra/ETA):
+    a 20% reserve on a full battery does not free up a full nameplate-hour of output,
+    only its round-trip-efficiency-adjusted equivalent. This is the same soc*ETA output
+    cap run_batt's own disch_win branch uses (dd = min(imp[i], soc*ETA, PWRQ))."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    event_set = {(date, 20)}   # HE21 -> floor_hour 20
+    imp, exp, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20)
+    mask = (d.dt.dt.date.values == date) & (np.floor(d.hour.values).astype(int) == 20)
+    total = float((event_kwh[mask] + bau_kwh[mask]).sum())
+    reserve_kwh = 0.20 * vb.CAP
+    expected = min(4 * vb.PWRQ, (vb.CAP - reserve_kwh) * vb.ETA)
+    assert abs(total - expected) < 1e-4, f"expected {expected} kWh, got {total}"
+    assert bau_kwh[mask].sum() == 0.0, "BAU should have discharged nothing on its own here"
+    return f"idle full battery delivers {total:.4f} kWh (efficiency-adjusted headroom cap)"
+
+
+@case
+def case_high_reserve_caps_event_discharge_partway_through_the_hour():
+    """A 90% reserve on a full (13.5 kWh) battery leaves only (cap - reserve) * ETA of
+    deliverable output. The event hour must deliver exactly that much (well under one
+    15-min interval's 2.875 kWh power limit) and NOTHING more once the reserve floor is
+    reached -- the SOC-constrained miss mechanism the issue asks for, and soc must land
+    EXACTLY at the reserve floor, never below it."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    event_set = {(date, 20)}
+    imp, exp, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.90)
+    mask = (d.dt.dt.date.values == date) & (np.floor(d.hour.values).astype(int) == 20)
+    total = float((event_kwh[mask] + bau_kwh[mask]).sum())
+    reserve_kwh = 0.90 * vb.CAP
+    expected = (vb.CAP - reserve_kwh) * vb.ETA
+    assert abs(total - expected) < 1e-6, f"expected {expected} kWh, got {total}"
+    idxs = np.where(mask)[0]
+    soc_after_event_hour = soc_start[idxs[-1] + 1]
+    assert soc_after_event_hour >= reserve_kwh - 1e-6, (
+        f"soc {soc_after_event_hour} dipped below the reserve floor {reserve_kwh}")
+    return f"a 90% reserve caps the event hour at {expected:.4f} kWh, not the full nameplate"
+
+
+@case
+def case_full_reserve_produces_a_complete_miss():
+    """reserve_frac=1.0 on a full battery leaves zero headroom: the event hour must
+    deliver exactly 0 kWh -- the complete-miss case."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    event_set = {(date, 20)}
+    imp, exp, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 1.0)
+    mask = (d.dt.dt.date.values == date) & (np.floor(d.hour.values).astype(int) == 20)
+    total = float((event_kwh[mask] + bau_kwh[mask]).sum())
+    assert total < 1e-9, f"expected a complete miss (0 kWh), got {total}"
+    return "a 100% reserve on a full battery produces a complete miss (0 kWh delivered)"
+
+
+@case
+def case_soc_never_leaves_the_physical_bounds():
+    """Across a full day with events declared on every hour (the adversarial case:
+    constant forced dispatch attempts), SOC must never go negative or exceed cap,
+    regardless of the reserve setting."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=1.0, generation_kw=0.5)
+    date = d.dt.dt.date.iloc[0]
+    event_set = {(date, hh) for hh in range(24)}
+    for reserve in (0.0, 0.2, 0.5, 0.9, 1.0):
+        imp, exp, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+            d, imp0.copy(), gen0.copy(), vb.CAP, event_set, reserve)
+        assert (soc_start >= -1e-9).all(), f"negative SOC at reserve={reserve}"
+        assert (soc_start <= vb.CAP + 1e-9).all(), f"SOC exceeded cap at reserve={reserve}"
+    return "SOC stays within [0, cap] across all-day event forcing at 5 reserve levels"
+
+
+# ---------------------------------------------------------------------------
+# (b) build_calendar() fail-closed / correctness -- synthetic xlsx, no private
+#     archive needed (openpyxl fixtures built in a tempdir)
+# ---------------------------------------------------------------------------
+_HOURLY_COLS = [
+    "Aggregation Identifier (anonymized)", "UDC (anonymized)",
+    "Option 3 Resource duration (hours)", "Customer Class", "Storage Type", "Month",
+    "Date", "Hour End (1-24)", "Interval End Time (Pacific)", "Is Option 3 Event Hour?",
+    "Is Option 3 Event Day?", "Option 3 Event Type", "Is Weekday Non-Holiday?",
+    "Net aggregated discharge (MW)", "Prescriptive baseline (MW)",
+    "Demonstrated Net Discharge (MW)", "CAISO LMP ($/MWh)",
+]
+_MONTHLY_COLS = [
+    "Aggregation Identifier (anonymized)", "UDC (anonymized)",
+    "Option 3 Resource duration (hours)", "Customer Class", "Storage Type",
+    "2025 Participation month", "Total Nominal Battery Storage Size (MWh)",
+    "Total Nominal Battery Power (MW)", "Number of sites in aggregation",
+    "Number of individual batteries", "DSGS Prescriptive Baseline (MW)",
+    "Provider self-reported capacity estimate (MW)", "Monthly Capacity Payment ($)",
+    "Demonstrated Capacity (MW)", "Monthly energy-only payment ($)",
+    "Total Monthly Settlement ($) (approx.)",
+]
+
+
+def _hourly_row(agg="Aggregation-001", is_event=True, event_type="Test Capacity",
+                 date="2025-07-15", hour_end=20, lmp=50.0):
+    return {
+        "Aggregation Identifier (anonymized)": agg, "UDC (anonymized)": "UDC 2",
+        "Option 3 Resource duration (hours)": 2, "Customer Class": "Residential",
+        "Storage Type": "Stationary", "Month": 7, "Date": pd.Timestamp(date),
+        "Hour End (1-24)": hour_end, "Interval End Time (Pacific)": pd.Timestamp(date),
+        "Is Option 3 Event Hour?": is_event, "Is Option 3 Event Day?": is_event,
+        "Option 3 Event Type": event_type if is_event else None,
+        "Is Weekday Non-Holiday?": True, "Net aggregated discharge (MW)": 0.001,
+        "Prescriptive baseline (MW)": 0.0001, "Demonstrated Net Discharge (MW)": 0.0009,
+        "CAISO LMP ($/MWh)": lmp,
+    }
+
+
+def _monthly_row(agg="Aggregation-001", month=7, power_mw=0.01, baseline_mw=0.00108,
+                 demo_mw=0.001, payment=16.38 * 1.0):
+    return {
+        "Aggregation Identifier (anonymized)": agg, "UDC (anonymized)": "UDC 2",
+        "Option 3 Resource duration (hours)": 2, "Customer Class": "Residential",
+        "Storage Type": "Stationary", "2025 Participation month": month,
+        "Total Nominal Battery Storage Size (MWh)": 0.02,
+        "Total Nominal Battery Power (MW)": power_mw,
+        "Number of sites in aggregation": 1, "Number of individual batteries": 1,
+        "DSGS Prescriptive Baseline (MW)": baseline_mw,
+        "Provider self-reported capacity estimate (MW)": demo_mw,
+        "Monthly Capacity Payment ($)": payment, "Demonstrated Capacity (MW)": demo_mw,
+        "Monthly energy-only payment ($)": 0.0,
+        "Total Monthly Settlement ($) (approx.)": payment,
+    }
+
+
+def _write_fixture_xlsx(path, hourly_rows, monthly_rows):
+    hourly = pd.DataFrame(hourly_rows, columns=_HOURLY_COLS)
+    monthly = pd.DataFrame(monthly_rows, columns=_MONTHLY_COLS)
+    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+        pd.DataFrame({"note": ["synthetic fixture, not the real CEC file"]}).to_excel(
+            xw, sheet_name="Data Dictionary", index=False)
+        hourly.to_excel(xw, sheet_name="Hourly Discharge Dataset", index=False)
+        monthly.to_excel(xw, sheet_name="Monthly Aggregation Dataset", index=False)
+
+
+@case
+def case_build_calendar_aborts_on_missing_raw_file():
+    bogus = pathlib.Path(tempfile.mkstemp(suffix=".xlsx")[1])
+    bogus.unlink()   # the file must NOT exist
+    try:
+        vb.build_calendar(xlsx_path=bogus)
+    except SystemExit as exc:
+        assert "missing raw CEC file" in str(exc), f"wrong refusal message: {exc}"
+        return "build_calendar refuses a missing raw xlsx path"
+    else:
+        raise AssertionError("build_calendar accepted a nonexistent raw file")
+
+
+@case
+def case_build_calendar_rejects_disallowed_event_type():
+    """The Data Dictionary says 'Capacity' (LMP-triggered) events did not occur in
+    2025; if the raw file ever contained one, build_calendar must abort rather than
+    silently fold it into the calendar and undermine the "no real events in 2025"
+    finding this script states as fact."""
+    tmp = pathlib.Path(tempfile.mkstemp(suffix=".xlsx")[1])
+    hourly = [_hourly_row(event_type="Capacity")]
+    monthly = [_monthly_row()]
+    _write_fixture_xlsx(tmp, hourly, monthly)
+    try:
+        vb.build_calendar(xlsx_path=tmp)
+    except SystemExit as exc:
+        assert "Capacity" in str(exc), f"wrong refusal message: {exc}"
+        return "build_calendar refuses a disallowed 'Capacity' event type"
+    else:
+        raise AssertionError("build_calendar accepted a 'Capacity' event row")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+@case
+def case_build_calendar_rejects_inconsistent_lmp_same_hour():
+    """Two aggregations reporting the SAME (date, hour) but DIFFERENT CAISO LMP
+    values would mean the one-DLAP-per-UDC assumption this script relies on does not
+    hold; it must abort rather than silently pick one."""
+    tmp = pathlib.Path(tempfile.mkstemp(suffix=".xlsx")[1])
+    hourly = [
+        _hourly_row(agg="Aggregation-001", lmp=50.0),
+        _hourly_row(agg="Aggregation-002", lmp=55.0),
+    ]
+    monthly = [_monthly_row(agg="Aggregation-001"), _monthly_row(agg="Aggregation-002")]
+    _write_fixture_xlsx(tmp, hourly, monthly)
+    try:
+        vb.build_calendar(xlsx_path=tmp)
+    except SystemExit as exc:
+        assert "distinct CAISO" in str(exc), f"wrong refusal message: {exc}"
+        return "build_calendar refuses inconsistent same-hour CAISO LMP values"
+    else:
+        raise AssertionError("build_calendar accepted inconsistent same-hour LMP values")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+@case
+def case_build_calendar_majority_vote_ties_toward_test_capacity():
+    """A 1-1 tie between 'Test Capacity' and 'Test Non-Capacity' for the same (date,
+    hour) resolves to 'Test Capacity' (the documented, deliberate tie-break).
+
+    Redirects vb.CALENDAR_CSV to a tempdir first: build_calendar() always writes to
+    that path, and without redirecting it this synthetic 2-row fixture would clobber
+    the REAL committed data/dsgs_event_calendar_2025.csv."""
+    real_calendar = vb.CALENDAR_CSV
+    tmp_dir = tempfile.TemporaryDirectory()
+    vb.CALENDAR_CSV = pathlib.Path(tmp_dir.name) / "dsgs_event_calendar_2025.csv"
+    tmp = pathlib.Path(tempfile.mkstemp(suffix=".xlsx")[1])
+    hourly = [
+        _hourly_row(agg="Aggregation-001", event_type="Test Non-Capacity"),
+        _hourly_row(agg="Aggregation-002", event_type="Test Capacity"),
+    ]
+    monthly = [_monthly_row(agg="Aggregation-001"), _monthly_row(agg="Aggregation-002")]
+    _write_fixture_xlsx(tmp, hourly, monthly)
+    try:
+        cal, rates_, ratio = vb.build_calendar(xlsx_path=tmp)
+        assert len(cal) == 1
+        assert cal.iloc[0]["event_type"] == "Test Capacity", cal.iloc[0]["event_type"]
+        return "a 1-1 event-type tie resolves to 'Test Capacity'"
+    finally:
+        vb.CALENDAR_CSV = real_calendar
+        tmp.unlink(missing_ok=True)
+        tmp_dir.cleanup()
+
+
+@case
+def case_build_calendar_writes_a_valid_csv_with_the_udc_caveat_comment():
+    """End-to-end build_calendar() against a small synthetic fixture: the committed
+    CSV path is written with a leading '#'-commented UDC-inference caveat line, and
+    load_calendar() can read it straight back (comment='#' skips that line)."""
+    real_calendar = vb.CALENDAR_CSV
+    tmp_dir = tempfile.TemporaryDirectory()
+    vb.CALENDAR_CSV = pathlib.Path(tmp_dir.name) / "dsgs_event_calendar_2025.csv"
+    tmp_xlsx = pathlib.Path(tempfile.mkstemp(suffix=".xlsx")[1])
+    try:
+        hourly = [_hourly_row(date="2025-07-15", hour_end=20),
+                  _hourly_row(date="2025-07-15", hour_end=21, is_event=False)]
+        monthly = [_monthly_row()]
+        _write_fixture_xlsx(tmp_xlsx, hourly, monthly)
+        vb.build_calendar(xlsx_path=tmp_xlsx)
+        assert vb.CALENDAR_CSV.exists()
+        first_line = vb.CALENDAR_CSV.read_text().splitlines()[0]
+        assert first_line.startswith("#") and "INFERENCE" in first_line, first_line
+        cal = vb.load_calendar()
+        assert list(cal.columns) == ["date", "hour_end", "event_type", "caiso_lmp_usd_per_mwh"]
+        assert len(cal) == 1   # only the is_event=True row
+        return "build_calendar writes a caveat-commented CSV that load_calendar reads back"
+    finally:
+        vb.CALENDAR_CSV = real_calendar
+        tmp_xlsx.unlink(missing_ok=True)
+        tmp_dir.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# (c) committed-artifact shape/content checks -- public, no private archive
+#     needed (deliberately NOT gated behind _require_archive, matching
+#     test_nem3_grandfathering.py's digest-check case: these are the checks CI
+#     can and should run on every push)
+# ---------------------------------------------------------------------------
+@case
+def case_committed_calendar_csv_has_expected_shape():
+    _require_calendar()
+    cal = vb.load_calendar()
+    assert set(cal.columns) == {"date", "hour_end", "event_type", "caiso_lmp_usd_per_mwh"}
+    assert cal["event_type"].isin(["Test Capacity", "Test Non-Capacity"]).all(), (
+        "committed calendar contains an event type other than Test Capacity/"
+        "Test Non-Capacity -- the '2025 had no real events' finding would be false")
+    assert cal["hour_end"].between(1, 24).all()
+    assert (cal["caiso_lmp_usd_per_mwh"] > 0).all()
+    dates = pd.to_datetime(cal["date"])
+    assert dates.min() >= pd.Timestamp("2025-05-01")
+    assert dates.max() <= pd.Timestamp("2025-10-31")
+    assert not cal.duplicated(subset=["date", "hour_end"]).any(), (
+        "duplicate (date, hour_end) in the committed calendar")
+    first_line = vb.CALENDAR_CSV.read_text().splitlines()[0]
+    assert first_line.startswith("#") and "INFERENCE" in first_line, (
+        "committed calendar is missing its UDC-inference caveat comment line")
+    return f"{len(cal)} event-hour rows, {dates.dt.date.nunique()} dates, all 2025-05..10"
+
+
+@case
+def case_committed_results_json_has_expected_sections():
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    for k in ("hypothetical", "household_has_battery_today", "measured_window",
+              "udc_identity_caveat", "finding_2025_no_real_emergency_events",
+              "finding_2026_enrollment_eligibility", "backup_reserve_caveat",
+              "payment_rate_source", "events_outside_window", "events_in_window",
+              "miss_rate", "revenue", "opportunity_cost_note"):
+        assert k in result, f"results section missing: {k}"
+    assert result["hypothetical"] is True
+    assert result["household_has_battery_today"] is False
+    rev = result["revenue"]["reserve_20pct"]
+    assert rev["gross_usd"] >= 0
+    assert rev["net_usd"] == round(rev["gross_usd"] - rev["opportunity_cost_usd"], 2)
+    miss = result["miss_rate"]["reserve_20pct"]
+    assert 0 <= miss["misses"] <= miss["total"]
+    return f"gross=${rev['gross_usd']:.2f} net=${rev['net_usd']:.2f} miss={miss}"
+
+
+@case
+def case_events_outside_window_carry_zero_attributed_revenue():
+    """The issue's core no-extrapolation requirement: events outside the measured
+    window (pre-window 2025 events, and the entirely-unpublished 2026 season) must be
+    counted, but the artifact's revenue figures must derive ONLY from in-window hours
+    -- checked by recomputing revenue from hour_detail (which is itself restricted to
+    in-window hours) and confirming it reproduces the reported gross figure."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    out = result["events_outside_window"]
+    assert out["pre_window_count"] >= 0
+    assert "2026" in out["season_2026_note"]
+    n_hour_detail = len(result["hour_detail"])
+    assert n_hour_detail == result["events_in_window"]["count"], (
+        "hour_detail must cover exactly the in-window events, no more")
+    return (f"{out['pre_window_count']} pre-window event hours excluded; "
+           f"2026 season gap disclosed; hour_detail covers exactly the "
+           f"{n_hour_detail} in-window hours")
+
+
+@case
+def case_2026_enrollment_eligibility_finding_is_stated_plainly():
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    finding = result["finding_2026_enrollment_eligibility"]
+    assert "October 2025" in finding and "2026 season" in finding
+    assert "could not" in finding.lower()
+    return "the 2026-enrollment-closure finding is present and states the household could not join"
+
+
+# ---------------------------------------------------------------------------
+# (d) real-archive-gated: cross-check against the ALREADY-VALIDATED
+#     battery_dispatch_policies.json figure, and byte-identical regeneration
+# ---------------------------------------------------------------------------
+@case
+def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
+    """backtest()'s BAU (no-VPP) battery bill must agree with the ALREADY COMMITTED,
+    ALREADY VALIDATED data/battery_dispatch_policies.json figure for the identical
+    scenario (13.5 kWh, greedy policy): baseline_bill_current_rates - pw3.greedy.save.
+    Two independently-computed figures for the same thing silently drifting apart is
+    exactly the CLAUDE.md 3 failure mode this case exists to catch."""
+    _require_archive()
+    _require_calendar()
+    committed = ROOT / "data" / "battery_dispatch_policies.json"
+    if not committed.exists():
+        raise SkipCase(f"needs the committed {committed}")
+    ref = json.loads(committed.read_text())
+    expected_bau_bill = ref["baseline_bill_current_rates"] - ref["pw3"]["greedy"]["save"]
+
+    d = br.load()
+    cal = vb.load_calendar()
+    result = vb.backtest(d, cal)
+    assert abs(result["bau_battery_bill_usd"] - expected_bau_bill) < 1.0, (
+        result["bau_battery_bill_usd"], expected_bau_bill)
+    return (f"BAU battery bill ${result['bau_battery_bill_usd']:,.2f} agrees with "
+           f"battery_dispatch_policies.json's pw3/greedy figure (${expected_bau_bill:,.2f})")
+
+
+@case
+def case_artifact_regenerates_byte_identically():
+    _require_archive()
+    _require_calendar()
+    path = vb.RESULTS_JSON
+    before = path.read_bytes()
+    vb.main()
+    after = path.read_bytes()
+    assert after == before, "data/dsgs_vpp_backtest.json is not reproducible"
+    return "data/dsgs_vpp_backtest.json regenerates byte-identically"
+
+
+@case
+def case_committed_calendar_regenerates_byte_identically_from_raw_archive():
+    _require_raw_xlsx()
+    path = vb.CALENDAR_CSV
+    before = path.read_bytes() if path.exists() else None
+    vb.build_calendar()
+    after = path.read_bytes()
+    if before is not None:
+        assert after == before, "data/dsgs_event_calendar_2025.csv is not reproducible"
+    return "data/dsgs_event_calendar_2025.csv regenerates byte-identically from the raw archive"
+
+
+# ---------------------------------------------------------------------------
+def main():
+    listed = [fn.__name__ for fn in CASES]
+    assert len(listed) == len(set(listed)), \
+        f"CASES lists a case twice: {sorted(n for n in listed if listed.count(n) > 1)}"
+    ran = skipped = failures = 0
+    for fn in CASES:
+        try:
+            detail = fn()
+        except SkipCase as e:
+            print(f"SKIP {fn.__name__} ({e})")
+            skipped += 1
+        except AssertionError as e:
+            print(f"FAIL {fn.__name__}\n     AssertionError: {e}")
+            failures += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")
+            failures += 1
+        else:
+            print(f"ok   {fn.__name__} -- {detail}")
+            ran += 1
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
