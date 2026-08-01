@@ -271,7 +271,7 @@ schema and pipeline in depth.
 | `analysis/battery_backup_sims.py` | Battery arbitrage + backup endurance simulations |
 | `analysis/soiling_analysis.py` | Soiling from rain-recovery events + days-since-rain regression (NOAA/RCC ACIS precipitation) |
 | `analysis/carbon_timing.py` | Grid-carbon timing from CAISO Today's Outlook history data (CO2 + demand) — original 4-day study |
-| `analysis/carbon_fullyear.py` | Expanded carbon sampling: 28 CAISO days + month-hour-mean interpolation → `data/carbon_fullyear_results.json` |
+| `analysis/carbon_fullyear.py` | Full-year carbon measurement: 364 of 365 CAISO days measured, one day filled by month-hour-mean → `data/carbon_fullyear_results.json` |
 | `analysis/carbon_dispatch_tradeoff.py` | Runs the household battery three ways on the same measured year — cost-minimizing, carbon-minimizing, and a policy serving either condition — and compares all three on dollars and CO2 against the same no-battery baseline → `data/carbon_dispatch_tradeoff.json` |
 | `analysis/extended_findings.py` | Extended-findings computations (AB 205, electrification dividend, gas HDD decomposition, 2039 strategy, tornado) → `data/extended_results.json` |
 | `analysis/deep_analyses.py` | Deep-dive script: TOU-DR-P wildcard, phantom load, EV sessions, vacation detection, Monte Carlo |
