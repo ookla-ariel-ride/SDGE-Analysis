@@ -95,8 +95,12 @@ are billed regardless of net usage: the fixed charge accrues per day no
 matter what; NBC is billed on GROSS imported kWh, which persists even under
 heavy solar/battery/behavior use as long as the household ever imports
 anything (see build_floor()'s docstring for the vintage-mixing rule and
-build_package_floor_fractions()'s docstring for why the floor is held
-constant, not recomputed, across the LOW/MID/HIGH packages).
+build_package_floor_fractions()'s docstring for how the non-bypassable
+component is actually recomputed, package by package, from each package's
+own modeled gross-import kWh rather than held constant -- an adversarial
+review of this script (issue #7 follow-up) found the original "held
+constant... conservative" claim was asserted, not computed, and the real
+direction turned out to be case-by-case, not one-directional).
 """
 import csv
 import datetime as dt
@@ -111,6 +115,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bill_decomposition as bd          # noqa: E402  -- read-only use
 import rates as R                        # noqa: E402  -- read-only use
 from parse_bills import SUMMARY_STATEMENTS_ELEC  # noqa: E402 -- reused, not re-declared
+# read-only reuse for Finding 1 (issue #7 review): actually compute each
+# package's own modified gross-import kWh instead of asserting a direction.
+# Neither module is modified here, and neither of their own artifacts
+# (behavior_rebuild.json, battery_dispatch_policies.json) is touched --
+# compute_package_gross_imports() below only calls their pure functions.
+import behavior_rebuild as br            # noqa: E402  -- read-only use
+import battery_dispatch_policies as bdp  # noqa: E402  -- read-only use
 
 
 def _repo_root():
@@ -136,6 +147,17 @@ OUT = DATA / "irreducible_bill.json"
 
 RECON_TOLERANCE_USD = 0.50  # the issue's own stated tolerance; never widened here
 EPS = 1e-9
+
+# The raw Green Button 15-min export, globbed rather than named outright
+# because the committed filename embeds the export's own date range and
+# changes on every refresh (see CLAUDE.md's own "cp ... usage.csv" command).
+# Needed only by compute_package_gross_imports() (Finding 1, issue #7 review).
+RAW_INTERVAL_GLOB = "Electric_15_Minute_*.csv"
+# A package-specific gross-import figure sanity-checked against this must sit
+# within this fraction of the household's actual historical gross-import
+# total (see compute_package_gross_imports()) or something has gone wrong
+# with the reused pipeline -- refuse rather than publish a bad recomputation.
+GROSS_IMPORT_SANITY_FRACTION = 0.15
 
 # The Wildfire Fund Charge evidence the docstring in rates.py cites (NBC on
 # GROSS kWh, not net) -- re-verified independently in build_nbc_gross_check().
@@ -438,13 +460,16 @@ def build_floor(rows):
         raise SystemExit(f"SUMMARY_STATEMENTS_ELEC names statement(s) with no row in "
                          f"bill_periods_electric.csv: {sorted(missing_stmts)}")
 
-    floor_usd = _c(sum(r["fixed_daily_usd"] + r["non_bypassable_gross_usd"]
-                       for r in window_rows))
+    fixed_daily_usd_historical = _c(sum(r["fixed_daily_usd"] for r in window_rows))
+    non_bypassable_gross_usd_historical = _c(
+        sum(r["non_bypassable_gross_usd"] for r in window_rows))
+    floor_usd = _c(fixed_daily_usd_historical + non_bypassable_gross_usd_historical)
     total_current_charges_usd = _c(sum(r["current_charges_usd"] for r in window_rows))
     if floor_usd > total_current_charges_usd + EPS:
         raise SystemExit("the floor exceeds the window's total current_charges -- "
                          "that cannot be a floor")
     pct = round(100.0 * floor_usd / total_current_charges_usd, 2)
+    historical_gross_kwh_window = _c(sum(r["gross_kwh"] for r in window_rows))
 
     monthly_fee_periods = sorted(
         f"{r['statement_date']}/{r['period']}" for r in window_rows
@@ -457,6 +482,9 @@ def build_floor(rows):
         "window_statements": sorted(window_stmts),
         "window_period_count": len(window_rows),
         "floor_usd": floor_usd,
+        "fixed_daily_usd_historical": fixed_daily_usd_historical,
+        "non_bypassable_gross_usd_historical": non_bypassable_gross_usd_historical,
+        "historical_gross_kwh_window": historical_gross_kwh_window,
         "total_current_charges_usd": total_current_charges_usd,
         "floor_pct_of_total": pct,
         "tariff_transition_note": (
@@ -474,50 +502,195 @@ def build_floor(rows):
 # ---------------------------------------------------------------------------
 # Step 4: the floor under each package
 # ---------------------------------------------------------------------------
-def build_package_floor_fractions(floor):
+def _raw_interval_csv():
+    """Locate the raw Green Button 15-min export under private/1-raw-data/ --
+    the same file CLAUDE.md's own documented sandbox command copies to
+    usage.csv. Globbed because the committed filename embeds the export's own
+    date range and changes on every refresh. Fails closed on anything but
+    exactly one match, rather than silently picking the wrong statement year
+    or a stale leftover copy."""
+    hits = sorted((ROOT / "private" / "1-raw-data").glob(RAW_INTERVAL_GLOB))
+    if len(hits) != 1:
+        raise SystemExit(
+            f"expected exactly one {RAW_INTERVAL_GLOB!r} file under "
+            f"private/1-raw-data/ to compute package-specific gross imports "
+            f"(Finding 1, issue #7 review); found {len(hits)}: {hits}")
+    return hits[0]
+
+
+def compute_package_gross_imports():
+    """Finding 1 (issue #7 adversarial review). The retired version of
+    build_package_floor_fractions() held non_bypassable_gross CONSTANT at its
+    historical dollar figure for every package, reasoning (one-directionally)
+    that a grid-charged battery can only ADD gross imports via round-trip
+    loss. That reasoning was incomplete: battery_dispatch_policies.run_batt()
+    charges from solar surplus FIRST (decrementing exports, not imports) and
+    only tops up from the grid during super-off-peak hours when surplus falls
+    short; it also DISCHARGES during high-value windows, decreasing imports.
+    Whether the net effect on GROSS imports goes up or down is a real
+    empirical question, not a one-directional certainty -- so this function
+    actually answers it instead of asserting a direction.
+
+    METHOD: re-run the EXACT package definitions battery_dispatch_policies.py
+    already committed to (its own post_behavior block), not a new
+    configuration invented for this check:
+      LOW  = behavior_rebuild.shift_ev(), the 100%-compliance EV-only shift
+             (scenario a) -- the same call package_results.json's LOW is
+             built from.
+      MID  = battery_dispatch_policies.run_batt() on the EV-shifted series,
+             13.5 kWh usable, policy "greedy" -- battery_dispatch_policies.
+             json's post_behavior.mid.
+      HIGH = the same, 27.0 kWh usable -- post_behavior.high.
+    behavior_rebuild.py and battery_dispatch_policies.py are called as
+    READ-ONLY libraries: neither is modified, and neither
+    behavior_rebuild.json nor battery_dispatch_policies.json is written here
+    -- those artifacts stay owned exclusively by their own generators. The
+    raw interval CSV path is set on behavior_rebuild.CSV only for the
+    duration of the load() call and restored immediately after, so this
+    function works regardless of the caller's own working directory (unlike
+    running behavior_rebuild.py itself, which expects a literal ./usage.csv
+    in its cwd, per the private/verify sandbox convention).
+
+    SANITY CHECKS (before any of this is trusted): the computed baseline
+    (package-free) gross-import total must sit within
+    GROSS_IMPORT_SANITY_FRACTION of the household's actual historical
+    gross-import total (data/bill_periods_electric.csv, summed over the same
+    12-month window build_floor() uses) -- a wildly different figure would
+    mean the interval export, the household config, or the reused pipeline
+    has drifted, not that the household's usage changed. LOW's gross imports
+    must equal the baseline's EXACTLY: shift_ev() only moves WHEN energy is
+    drawn (and _conserve() already refuses a run that drops or invents
+    energy), so a 100%-EV-shift scenario cannot change the annual gross-
+    import total at all -- if it ever does, something in the reused pipeline
+    is not doing what its own docstring says, and this must fail closed
+    rather than publish a wrong LOW figure."""
+    real_csv = br.CSV
+    br.CSV = str(_raw_interval_csv())
+    try:
+        d = br.load()
+    finally:
+        br.CSV = real_csv
+    imp0 = d.Consumption.values.astype(float)
+    gen0 = d.Generation.values.astype(float)
+    baseline_gross_kwh = float(imp0.sum())
+
+    ev, sessions = br.detect_sessions(d)
+    sop_idx, sop_ts = br.build_sop_index(d)
+    imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
+    low_gross_kwh = float(imp_sh.sum())
+    if abs(low_gross_kwh - baseline_gross_kwh) > EPS:
+        raise SystemExit(
+            "compute_package_gross_imports: LOW's 100%-EV-shift gross imports "
+            f"({low_gross_kwh:.3f} kWh) differ from the baseline "
+            f"({baseline_gross_kwh:.3f} kWh) by more than floating-point "
+            "rounding -- behavior_rebuild.shift_ev() is supposed to only move "
+            "WHEN energy is drawn, never the annual total; refusing to "
+            "publish a package-specific figure built on a pipeline that no "
+            "longer matches its own documented invariant")
+
+    mid_imp, _, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5, "greedy")
+    mid_gross_kwh = float(mid_imp.sum())
+
+    high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0, "greedy")
+    high_gross_kwh = float(high_imp.sum())
+
+    return {
+        "baseline_gross_kwh": round(baseline_gross_kwh, 1),
+        "LOW": {"gross_kwh": round(low_gross_kwh, 1)},
+        "MID": {"gross_kwh": round(mid_gross_kwh, 1), "kwh_served": round(mid_served, 1)},
+        "HIGH": {"gross_kwh": round(high_gross_kwh, 1), "kwh_served": round(high_served, 1)},
+        "kwh_moved_ev_shift": round(moved, 1),
+        "method": (
+            "behavior_rebuild.load() on the raw Green Button interval export "
+            "(private/1-raw-data/" + RAW_INTERVAL_GLOB + "), behavior_rebuild."
+            "shift_ev() for the 100%-compliance EV-shift scenario every "
+            "package sits on top of, then battery_dispatch_policies.run_batt("
+            "..., 'greedy') at 13.5 kWh (MID) and 27.0 kWh (HIGH) usable -- "
+            "the same calls and package definitions battery_dispatch_policies."
+            "json's own committed post_behavior block already uses."),
+    }
+
+
+def _sanity_check_gross_imports(gross, floor):
+    """Refuse to use compute_package_gross_imports()'s output if the
+    baseline it computed does not resemble the household's actual historical
+    gross-import total (data/bill_periods_electric.csv, the same 12-month
+    window build_floor() sums) -- these are two different data sources (a
+    365-day interval export vs a 12-month bill-statement window) so they are
+    not expected to match exactly, only to agree in magnitude."""
+    hist = floor["historical_gross_kwh_window"]
+    baseline = gross["baseline_gross_kwh"]
+    if hist <= 0:
+        raise SystemExit("historical_gross_kwh_window is non-positive -- cannot sanity-check")
+    rel_diff = abs(baseline - hist) / hist
+    if rel_diff > GROSS_IMPORT_SANITY_FRACTION:
+        raise SystemExit(
+            f"compute_package_gross_imports: baseline gross imports "
+            f"({baseline} kWh, interval export) differ from the historical "
+            f"12-month bill total ({hist} kWh) by {rel_diff*100:.1f}%, more "
+            f"than the {GROSS_IMPORT_SANITY_FRACTION*100:.0f}% sanity margin "
+            "-- refusing to publish a package-specific NBC recomputation "
+            "built on a figure this far from what the bills actually show")
+
+
+def build_package_floor_fractions(floor, gross):
     """What fraction of each LOW/MID/HIGH package's projected annual bill
     (data/package_results.json, current-rate model) is this floor -- i.e. how
     much of the package's headline saving is even reachable, since a package
     cannot save money on a charge it cannot touch.
 
-    METHOD: the floor is held CONSTANT at its historical 12-month dollar
-    figure for every package, not recomputed from a package-specific gross-
-    import kWh, for two reasons, both checked against the committed
-    generators before choosing this:
-      1. fixed_daily is a per-day charge unrelated to consumption -- it is
-         exactly the same dollar amount under every package by definition,
-         no approximation involved.
-      2. non_bypassable_gross depends on GROSS imported kWh, which COULD
-         change under a package. data/battery_dispatch_policies.json reports
-         each dispatch policy's kwh_served (energy the battery moved from
-         grid timing to load), not a resulting annual gross-import kWh --
-         and data/behavior_rebuild.json's EV-shift scenarios likewise report
-         kwh_moved, not a post-shift gross-import total. Neither artifact
-         gives a package-specific annual gross-import figure to recompute
-         NBC from, so it cannot be sharpened further without a new run of
-         the dispatch/behavior pipeline, which is outside this issue.
-      Directionally: EV-shift (LOW) moves WHEN energy is drawn, not the
-      annual total, so gross imports -- and NBC -- are essentially
-      unaffected. A grid-charged battery (MID/HIGH) can only shift timing
-      further, and the dispatch engine's own notes record round-trip
-      efficiency at 0.9 (analysis/battery_dispatch_policies.json's
-      "notes.rte") -- serving a kWh of load from a battery that was charged
-      from the grid requires importing MORE raw kWh than serving that load
-      directly, not less. Holding the floor constant is therefore likely a
-      slight UNDERSTATEMENT of the true floor for MID/HIGH, not an
-      overstatement -- the reported fractions below are, if anything,
-      conservative floors on the true package-floor fractions."""
+    METHOD (Finding 1, issue #7 adversarial review -- see
+    compute_package_gross_imports()'s docstring for what changed and why):
+      1. fixed_daily is held at its historical 12-month dollar total, the
+         SAME figure for every package -- this part of the floor really is
+         invariant: a per-day charge does not depend on how much energy is
+         imported or when, so no package-specific recomputation is possible
+         or needed for it.
+      2. non_bypassable_gross is now RECOMPUTED per package from
+         compute_package_gross_imports()'s actual modeled gross-import kWh
+         for that package, multiplied by rates.NBC (the current-vintage
+         combined non-bypassable-charge + Wildfire Fund Charge rate,
+         $/kWh, the same constant analysis/rates.py already uses inside
+         bill_nem_monthly() to build every package's own
+         projected_bill_current_rates_yr). This is a LABELED VINTAGE MIX,
+         not a mistake papered over: fixed_daily is the household's actual
+         historical (partly pre-2025-10-01, partly post) dollar total, while
+         non_bypassable_gross is a forward, CURRENT-rate-vintage estimate --
+         there is no bill for a future package scenario to read a per-
+         package NBC dollar figure off of, so this is the same "at current
+         rates" assumption package_results.json's own
+         projected_bill_current_rates_yr already makes and labels.
+    The result: no single "held constant" dollar figure is shared across
+    packages any more, and the direction is whatever the reused dispatch/
+    behavior pipeline actually computes for each package -- which, on this
+    corpus, does NOT match the retired docstring's one-directional
+    "conservative understatement" claim (see the module docstring)."""
+    _sanity_check_gross_imports(gross, floor)
+    fixed_daily_usd = floor["fixed_daily_usd_historical"]
     packages = json.loads(PACKAGE_JSON.read_text())["packages"]
     out = {}
     for name, pkg in packages.items():
         bill = pkg["projected_bill_current_rates_yr"]
         if bill <= 0:
             raise SystemExit(f"package {name}: non-positive projected bill {bill}")
+        pkg_gross_kwh = gross[name]["gross_kwh"]
+        non_bypassable_gross_usd = _c(pkg_gross_kwh * R.NBC)
+        floor_usd = _c(fixed_daily_usd + non_bypassable_gross_usd)
         out[name] = {
             "projected_bill_current_rates_yr": bill,
-            "floor_usd_held_constant": floor["floor_usd"],
-            "floor_fraction_of_projected_bill": round(floor["floor_usd"] / bill, 4),
-            "method": "constant (see build_package_floor_fractions docstring)",
+            "fixed_daily_usd_historical": fixed_daily_usd,
+            "gross_import_kwh": pkg_gross_kwh,
+            "gross_import_kwh_vs_baseline": _c(pkg_gross_kwh - gross["baseline_gross_kwh"]),
+            "non_bypassable_gross_usd": non_bypassable_gross_usd,
+            "floor_usd": floor_usd,
+            "floor_fraction_of_projected_bill": round(floor_usd / bill, 4),
+            "method": ("fixed_daily_usd_historical held at the household's actual "
+                      "historical 12-month total (invariant across packages); "
+                      "non_bypassable_gross_usd = this package's own modeled "
+                      "gross-import kWh (compute_package_gross_imports()) x "
+                      "rates.NBC (current-vintage combined NBC + Wildfire Fund "
+                      "Charge rate, $/kWh) -- a labeled current-rate-vintage "
+                      "estimate, not a historical bill figure"),
         }
     return out
 
@@ -660,37 +833,89 @@ def build_nbc_gross_check(rows):
 
 
 CAVEAT = (
-    "This floor is a LOWER BOUND on what a purchase can save, not a forecast of the "
-    "household's future bill: it names two charge components (a per-day fixed charge, "
-    "and non-bypassable charges billed on gross imported kWh) that are billed "
-    "regardless of net usage, and sums their ACTUAL historical dollar figures over the "
-    "most recent 12 months of statements. It does not prove any package will actually "
-    "reach this floor -- a package's projected bill can sit well above it. The package "
-    "floor fractions hold the floor's dollar figure CONSTANT across LOW/MID/HIGH "
-    "because no committed artifact reports a package-specific annual gross-import kWh "
-    "to recompute the non-bypassable component from (see "
-    "build_package_floor_fractions()'s docstring); this is likely conservative "
-    "(understates the true floor) for a grid-charged battery, given round-trip "
-    "losses, never the reverse. The minimum-bill-provision test is against the NEM "
-    "true-up 'Minimum Charge Adjustment' concept printed on this household's own "
-    "pre-2025-10-01 statements, not against a dollar figure specific to EV-TOU-5 -- "
-    "none was found. Every dollar figure here is read from the PDFs this repository "
-    "already has committed derivatives of (data/bill_periods_electric.csv, "
-    "data/bill_tou_detail.csv) or re-derived directly from statement text; nothing "
-    "here is modeled or projected forward at a different rate vintage."
+    "The twelve_month_floor above is a LOWER BOUND on what a purchase can save, not a "
+    "forecast of the household's future bill: it names two charge components (a "
+    "per-day fixed charge, and non-bypassable charges billed on gross imported kWh) "
+    "that are billed regardless of net usage, and sums their ACTUAL historical dollar "
+    "figures over the most recent 12 months of statements -- every dollar figure in "
+    "THAT section is read from the PDFs this repository already has committed "
+    "derivatives of (data/bill_periods_electric.csv, data/bill_tou_detail.csv) or "
+    "re-derived directly from statement text; nothing in it is modeled or projected "
+    "forward at a different rate vintage. It does not prove any package will actually "
+    "reach this floor -- a package's projected bill can sit well above it. "
+    "package_floor_fractions is DIFFERENT: its non_bypassable_gross_usd is a "
+    "per-package RECOMPUTATION (see build_package_floor_fractions()'s and "
+    "compute_package_gross_imports()'s docstrings) built by re-running "
+    "behavior_rebuild.py's and battery_dispatch_policies.py's own committed package "
+    "definitions against the raw interval export, then pricing the result at "
+    "rates.NBC -- the CURRENT rate vintage, since no bill exists for a future package "
+    "scenario. Its fixed_daily_usd_historical component is still the actual "
+    "historical 12-month total, so each package's floor_usd deliberately mixes one "
+    "historical-vintage figure with one current-vintage figure; that mix is labeled "
+    "in each package's own 'method' string rather than hidden. An earlier version of "
+    "this script asserted the constant-floor approximation was a one-directional "
+    "'conservative understatement' for MID/HIGH; that claim was not computed and, on "
+    "this corpus, is not what the recomputation actually shows (see the module "
+    "docstring). The minimum-bill-provision test is against the NEM true-up 'Minimum "
+    "Charge Adjustment' concept printed on this household's own pre-2025-10-01 "
+    "statements, not against a dollar figure specific to EV-TOU-5 -- none was found."
 )
+
+
+def _assert_periods_reconcile(rows):
+    """Finding 2 (issue #7 adversarial review): classify_periods() computes
+    netted_energy_cross_check_pass and four_bucket_check_pass per period but,
+    before this fix, nothing ever CHECKED them before build() returned --
+    main() would write whatever came back, failed reconciliation or not. A
+    parser regression, a corrupted CSV row, or a future statement with
+    unexpected formatting could produce a period that fails its own
+    reconciliation, and the artifact would still be generated and atomically
+    replace the committed one, with the failed boolean sitting quietly
+    inside it. Called from build(), before anything downstream is computed
+    or returned, so it cannot be bypassed by calling build() directly."""
+    bad = [r for r in rows
+          if not r["netted_energy_cross_check_pass"] or not r["four_bucket_check_pass"]]
+    if bad:
+        detail = "; ".join(
+            f"{r['statement_date']}/{r['period']} "
+            f"(cross_check_diff=${r['netted_energy_cross_check_diff_usd']:+.2f}, "
+            f"four_bucket_diff=${r['four_bucket_diff_usd']:+.2f})"
+            for r in bad)
+        raise SystemExit(
+            f"{len(bad)} period(s) failed their own reconciliation and cannot be "
+            f"published: {detail}")
+
+
+def _assert_nbc_gross_check_confirmed(nbc_check):
+    """Finding 2's second half (Codex's addition, confirmed worth doing): the
+    NBC-on-gross re-verification exists to PROVE the documented NBC-on-gross
+    treatment is real, re-derived from statement text rather than cited from
+    rates.py's docstring. A run where it silently fails to confirm (a bill
+    template change, a corrupted statement, a regex that stopped matching)
+    must not publish either -- the artifact would otherwise carry an
+    unconfirmed claim that reads exactly like a confirmed one everywhere else
+    it is used."""
+    if not nbc_check["confirmation"].startswith("CONFIRMED"):
+        raise SystemExit(
+            "NBC-on-gross re-verification did not confirm the documented "
+            f"treatment: {nbc_check['confirmation']} (statement "
+            f"{nbc_check['statement']}/{nbc_check['period']}) -- refusing to "
+            "publish an artifact whose NBC-on-gross proof did not check out")
 
 
 def build():
     periods = load_periods()
     rows = classify_periods(periods)
     rows.sort(key=lambda r: (r["statement_date"], r["period"]))
+    _assert_periods_reconcile(rows)
     worst = worst_residual(rows)
     floor = build_floor(rows)
-    package_fractions = build_package_floor_fractions(floor)
+    gross = compute_package_gross_imports()
+    package_fractions = build_package_floor_fractions(floor, gross)
     all_statements = sorted({r["statement_date"] for r in rows})
     min_bill = build_minimum_bill_provision(rows, all_statements)
     nbc_check = build_nbc_gross_check(rows)
+    _assert_nbc_gross_check_confirmed(nbc_check)
 
     tou_row_count = sum(1 for _ in csv.DictReader(TOU_CSV.open()))
 

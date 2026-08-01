@@ -29,6 +29,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bill_decomposition as bd    # noqa: E402
+import behavior_rebuild as br      # noqa: E402
 import irreducible_bill as irr     # noqa: E402
 
 ROOT = irr.ROOT
@@ -318,25 +319,250 @@ def case_floor_recomputed_independently_from_the_artifact_rows():
 
 @case
 def case_package_floor_fractions_are_consistent():
+    """Post-Finding-1 shape: fixed_daily_usd_historical IS still constant
+    across packages (a per-day charge cannot be package-specific), but
+    floor_usd and non_bypassable_gross_usd are NOT any more -- each package
+    gets its own recomputation from compute_package_gross_imports()."""
     _require_corpus()
     result = irr.build()
-    floor_usd = result["twelve_month_floor"]["floor_usd"]
+    floor = result["twelve_month_floor"]
     pf = result["package_floor_fractions"]
     assert set(pf) == {"LOW", "MID", "HIGH"}, sorted(pf)
     for name, row in pf.items():
-        assert row["floor_usd_held_constant"] == floor_usd
-        expected = round(floor_usd / row["projected_bill_current_rates_yr"], 4)
-        assert _close(row["floor_fraction_of_projected_bill"], expected, eps=1e-6)
-    # HIGH has the smallest projected bill of the three -> the floor is the
-    # LARGEST fraction of it (same numerator, smallest denominator).
+        assert row["fixed_daily_usd_historical"] == floor["fixed_daily_usd_historical"]
+        expected_floor = round(row["fixed_daily_usd_historical"]
+                               + row["non_bypassable_gross_usd"], 2)
+        assert _close(row["floor_usd"], expected_floor, eps=0.01), (name, row)
+        expected_frac = round(row["floor_usd"] / row["projected_bill_current_rates_yr"], 4)
+        assert _close(row["floor_fraction_of_projected_bill"], expected_frac, eps=1e-6)
+    # The three floor_usd values are NOT required to be equal any more --
+    # that was exactly the bug (Finding 1). Assert they actually differ, so a
+    # regression back to "held constant" would be caught here.
+    floors = {pf[n]["floor_usd"] for n in ("LOW", "MID", "HIGH")}
+    assert len(floors) > 1, \
+        f"all three packages report the same floor_usd {floors} -- looks like " \
+        "the constant-floor bug is back"
+    # On this real corpus HIGH has the smallest projected bill of the three,
+    # and its floor_usd is close to LOW/MID's, so it comes out with the
+    # largest fraction -- observed on this data, not guaranteed by
+    # construction now that the numerators differ too.
     assert pf["HIGH"]["floor_fraction_of_projected_bill"] >= \
         pf["MID"]["floor_fraction_of_projected_bill"] >= \
         pf["LOW"]["floor_fraction_of_projected_bill"]
     return (f"LOW {pf['LOW']['floor_fraction_of_projected_bill']*100:.1f}% / "
            f"MID {pf['MID']['floor_fraction_of_projected_bill']*100:.1f}% / "
            f"HIGH {pf['HIGH']['floor_fraction_of_projected_bill']*100:.1f}% "
-           "of each package's projected bill, ordered as the smaller "
-           "denominators require")
+           "of each package's projected bill, each package's own floor_usd "
+           "now recomputed rather than a single shared figure")
+
+
+@case
+def case_low_package_gross_imports_equal_baseline_exactly():
+    """Finding 1's directional proof #1: the EV-shift-only package (LOW) can
+    only move WHEN energy is drawn, never the annual total -- gross imports
+    must come back EXACTLY equal to the baseline (not merely close), since
+    behavior_rebuild's own _conserve() guard already refuses a shift that
+    drops or invents energy."""
+    _require_corpus()
+    gross = irr.compute_package_gross_imports()
+    assert gross["LOW"]["gross_kwh"] == gross["baseline_gross_kwh"], gross
+    return (f"LOW gross imports ({gross['LOW']['gross_kwh']} kWh) exactly equal "
+           f"the baseline ({gross['baseline_gross_kwh']} kWh) -- the EV shift "
+           "moves timing only")
+
+
+@case
+def case_mid_and_high_package_gross_imports_are_not_held_constant():
+    """Finding 1's directional proof #2: MID and HIGH (grid-charged battery
+    packages) must NOT come back equal to the baseline -- the retired
+    docstring asserted they could only be equal or higher (round-trip loss);
+    prove here that they actually differ from the baseline (in EITHER
+    direction -- the point of this fix is that the direction is computed,
+    not assumed) and that MID and HIGH differ from each other (13.5 kWh vs
+    27 kWh usable capacity must dispatch differently)."""
+    _require_corpus()
+    gross = irr.compute_package_gross_imports()
+    base = gross["baseline_gross_kwh"]
+    mid, high = gross["MID"]["gross_kwh"], gross["HIGH"]["gross_kwh"]
+    assert mid != base, f"MID gross imports ({mid}) exactly equal the baseline " \
+        f"({base}) -- expected the battery dispatch to change the annual total"
+    assert high != base, f"HIGH gross imports ({high}) exactly equal the baseline"
+    assert mid != high, "MID and HIGH came back identical despite different capacity"
+    assert gross["MID"]["kwh_served"] > 0 and gross["HIGH"]["kwh_served"] > 0
+    return (f"MID {mid} kWh, HIGH {high} kWh, both != baseline {base} kWh and != "
+           "each other -- the direction is computed, not asserted")
+
+
+@case
+def case_package_gross_imports_sanity_check_against_historical_bills():
+    """Verification the issue asked for explicitly: the computed baseline
+    (package-free) gross-import total, from the raw interval export, must
+    resemble the household's actual historical gross-import total from the
+    bills (data/bill_periods_electric.csv, the same 12-month window
+    build_floor() sums) -- different data sources, same household, same
+    rough magnitude."""
+    _require_corpus()
+    result = irr.build()
+    gross = irr.compute_package_gross_imports()
+    hist = result["twelve_month_floor"]["historical_gross_kwh_window"]
+    rel_diff = abs(gross["baseline_gross_kwh"] - hist) / hist
+    assert rel_diff <= irr.GROSS_IMPORT_SANITY_FRACTION, (gross["baseline_gross_kwh"], hist)
+    return (f"interval-export baseline {gross['baseline_gross_kwh']} kWh vs "
+           f"historical bill total {hist} kWh: {rel_diff*100:.1f}% apart, within "
+           f"the {irr.GROSS_IMPORT_SANITY_FRACTION*100:.0f}% sanity margin")
+
+
+@case
+def case_package_gross_imports_consistent_with_committed_dispatch_artifact():
+    """Cross-check against data/battery_dispatch_policies.json: that artifact's
+    top-level pw3/pw3x greedy policies report kwh_served for the BASELINE
+    (no EV shift) import series, a different scenario than this script's
+    post-EV-shift MID/HIGH -- but the same household, same battery hardware,
+    same dispatch rule, so the two kwh_served figures must sit in the same
+    ballpark, not differ by an order of magnitude (which would mean the
+    reused pipeline calls are wrong, not just differently scoped)."""
+    _require_corpus()
+    gross = irr.compute_package_gross_imports()
+    committed = json.loads((irr.ROOT / "data" / "battery_dispatch_policies.json").read_text())
+    pw3_served = committed["pw3"]["greedy"]["kwh_served"]
+    pw3x_served = committed["pw3x"]["greedy"]["kwh_served"]
+    mid_served = gross["MID"]["kwh_served"]
+    high_served = gross["HIGH"]["kwh_served"]
+    assert abs(mid_served - pw3_served) / pw3_served <= 0.15, (mid_served, pw3_served)
+    assert abs(high_served - pw3x_served) / pw3x_served <= 0.15, (high_served, pw3x_served)
+    return (f"post-EV-shift kwh_served MID {mid_served} vs committed baseline "
+           f"pw3 {pw3_served}, HIGH {high_served} vs pw3x {pw3x_served} -- "
+           "same ballpark")
+
+
+@case
+def case_build_package_floor_fractions_direction_matches_a_synthetic_case():
+    """A pure, corpus-free proof of the ARITHMETIC (not the real household's
+    data): feed build_package_floor_fractions() a synthetic gross-import dict
+    where MID/HIGH are known to sit below and above the baseline
+    respectively, and assert the resulting non_bypassable_gross_usd and
+    floor_usd move in the SAME direction as the synthetic input -- i.e. the
+    function actually computes the direction from its argument rather than
+    asserting one."""
+    floor = {
+        "floor_usd": 700.0,
+        "fixed_daily_usd_historical": 260.0,
+        "non_bypassable_gross_usd_historical": 440.0,
+        "historical_gross_kwh_window": 20000.0,
+    }
+    packages_json = {"packages": {
+        "LOW": {"projected_bill_current_rates_yr": 3000.0},
+        "MID": {"projected_bill_current_rates_yr": 1400.0},
+        "HIGH": {"projected_bill_current_rates_yr": 1200.0},
+    }}
+    gross = {
+        "baseline_gross_kwh": 20000.0,
+        "LOW": {"gross_kwh": 20000.0},
+        "MID": {"gross_kwh": 19000.0, "kwh_served": 100.0},   # DOWN vs baseline
+        "HIGH": {"gross_kwh": 21000.0, "kwh_served": 100.0},  # UP vs baseline
+    }
+
+    class _FakePackageJson:
+        def read_text(self):
+            return json.dumps(packages_json)
+
+    real_package_json = irr.PACKAGE_JSON
+    irr.PACKAGE_JSON = _FakePackageJson()
+    try:
+        pf = irr.build_package_floor_fractions(floor, gross)
+    finally:
+        irr.PACKAGE_JSON = real_package_json
+    assert pf["LOW"]["non_bypassable_gross_usd"] == round(20000.0 * irr.R.NBC, 2), pf
+    assert pf["MID"]["non_bypassable_gross_usd"] < pf["LOW"]["non_bypassable_gross_usd"], pf
+    assert pf["HIGH"]["non_bypassable_gross_usd"] > pf["LOW"]["non_bypassable_gross_usd"], pf
+    assert pf["MID"]["floor_usd"] < pf["LOW"]["floor_usd"] < pf["HIGH"]["floor_usd"], pf
+    assert irr.PACKAGE_JSON is real_package_json  # restored, real path untouched
+    return ("a synthetic gross-import dict with MID below and HIGH above the "
+           "baseline produces non_bypassable_gross_usd/floor_usd that move in "
+           "the SAME direction -- proves the direction is computed from the "
+           "argument, not hardcoded")
+
+
+@case
+def case_gross_import_sanity_check_rejects_a_wild_mismatch():
+    """_sanity_check_gross_imports() must refuse (not silently publish) a
+    baseline gross-import figure that does not resemble the historical bill
+    total -- pure-function test, no corpus needed."""
+    floor = {"historical_gross_kwh_window": 20000.0}
+    gross_ok = {"baseline_gross_kwh": 21000.0}          # 5% apart: fine
+    gross_bad = {"baseline_gross_kwh": 30000.0}         # 50% apart: refuse
+    irr._sanity_check_gross_imports(gross_ok, floor)    # must not raise
+    try:
+        irr._sanity_check_gross_imports(gross_bad, floor)
+    except SystemExit as e:
+        assert "%" in str(e)
+    else:
+        raise AssertionError("expected SystemExit on a wildly mismatched baseline")
+    return "a >15% mismatch between the interval baseline and the historical " \
+        "bill total is refused; a <=15% mismatch is accepted"
+
+
+@case
+def case_low_conservation_guard_fires_on_a_poisoned_shift():
+    """compute_package_gross_imports() must refuse to publish if
+    behavior_rebuild.shift_ev() ever comes back with a gross-import total
+    that differs from the baseline -- LOW is supposed to be an exact
+    conservation (timing-only shift). Poison shift_ev() to return a series
+    missing 100 kWh and prove the guard fires rather than silently
+    publishing a wrong LOW figure."""
+    _require_corpus()
+    real_shift_ev = br.shift_ev
+
+    def poisoned(d, ev, sessions, mask, sop_idx, sop_ts):
+        imp, moved = real_shift_ev(d, ev, sessions, mask, sop_idx, sop_ts)
+        imp = imp.copy()
+        imp[0] -= 100.0  # silently drop 100 kWh -- must be caught
+        return imp, moved
+
+    irr.br.shift_ev = poisoned
+    try:
+        try:
+            irr.compute_package_gross_imports()
+        except SystemExit as e:
+            assert "shift_ev" in str(e) or "differ from the baseline" in str(e)
+        else:
+            raise AssertionError("expected SystemExit on a broken LOW conservation")
+    finally:
+        irr.br.shift_ev = real_shift_ev
+    return "a poisoned shift_ev() that drops 100 kWh is caught by the LOW " \
+        "conservation guard, not silently published"
+
+
+@case
+def case_raw_interval_csv_is_fail_closed_on_wrong_match_count():
+    """_raw_interval_csv() must refuse anything but exactly one match under
+    private/1-raw-data/ -- zero (missing export) or two-or-more (a stale
+    leftover copy from a previous refresh) must both stop the run rather
+    than silently pick one."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        (tmp / "private" / "1-raw-data").mkdir(parents=True)
+        real_root = irr.ROOT
+        irr.ROOT = tmp
+        try:
+            try:
+                irr._raw_interval_csv()
+            except SystemExit as e:
+                assert "found 0" in str(e)
+            else:
+                raise AssertionError("expected SystemExit with zero matches")
+            (tmp / "private" / "1-raw-data" / "Electric_15_Minute_a.csv").write_text("x")
+            (tmp / "private" / "1-raw-data" / "Electric_15_Minute_b.csv").write_text("x")
+            try:
+                irr._raw_interval_csv()
+            except SystemExit as e:
+                assert "found 2" in str(e)
+            else:
+                raise AssertionError("expected SystemExit with two matches")
+        finally:
+            irr.ROOT = real_root
+    return "zero or two-or-more raw interval CSVs under private/1-raw-data/ both " \
+        "refuse, rather than picking one silently"
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +701,110 @@ def case_missing_required_charge_line_stops_the_run():
     else:
         raise AssertionError("expected SystemExit on a missing wildfire_fund_charge line")
     return "text missing a required charge line stops with SystemExit, not a silent zero"
+
+
+@case
+def case_build_stops_on_a_period_that_fails_its_own_reconciliation():
+    """Finding 2 (issue #7 adversarial review): classify_periods() computes
+    netted_energy_cross_check_pass / four_bucket_check_pass per period, but
+    nothing used to check them before build() returned -- main() would write
+    whatever came back. Poison one real period's cross-check flag to False
+    and prove build() (and therefore main(), which never gets that far)
+    refuses, naming the failing period, and that the committed artifact is
+    left untouched."""
+    _require_corpus()
+    real_classify_periods = irr.classify_periods
+    label_holder = {}
+
+    def poisoned(periods):
+        rows = real_classify_periods(periods)
+        target = dict(rows[0])
+        target["netted_energy_cross_check_pass"] = False
+        target["netted_energy_cross_check_diff_usd"] = 999.99
+        rows[0] = target
+        label_holder["label"] = f"{target['statement_date']}/{target['period']}"
+        return rows
+
+    irr.classify_periods = poisoned
+    before = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    try:
+        try:
+            irr.main()
+        except SystemExit as e:
+            assert label_holder["label"] in str(e), str(e)
+        else:
+            raise AssertionError("expected SystemExit on a failed reconciliation")
+    finally:
+        irr.classify_periods = real_classify_periods
+    after = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    assert after == before, "the artifact changed despite build() raising"
+    return (f"a poisoned netted_energy_cross_check_pass=False on "
+           f"{label_holder['label']} stops main() with SystemExit naming that "
+           "period, and the committed artifact is untouched")
+
+
+@case
+def case_build_stops_on_a_period_that_fails_the_four_bucket_check():
+    """Same guard, the other flag: four_bucket_check_pass=False must also
+    stop the run, not just netted_energy_cross_check_pass."""
+    _require_corpus()
+    real_classify_periods = irr.classify_periods
+    label_holder = {}
+
+    def poisoned(periods):
+        rows = real_classify_periods(periods)
+        target = dict(rows[-1])
+        target["four_bucket_check_pass"] = False
+        target["four_bucket_diff_usd"] = -12.34
+        rows[-1] = target
+        label_holder["label"] = f"{target['statement_date']}/{target['period']}"
+        return rows
+
+    irr.classify_periods = poisoned
+    before = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    try:
+        try:
+            irr.main()
+        except SystemExit as e:
+            assert label_holder["label"] in str(e), str(e)
+        else:
+            raise AssertionError("expected SystemExit on a failed four-bucket check")
+    finally:
+        irr.classify_periods = real_classify_periods
+    after = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    assert after == before, "the artifact changed despite build() raising"
+    return (f"a poisoned four_bucket_check_pass=False on {label_holder['label']} "
+           "stops main() with SystemExit naming that period")
+
+
+@case
+def case_build_stops_on_an_unconfirmed_nbc_gross_check():
+    """Finding 2's second half (Codex's addition): if build_nbc_gross_check()
+    ever comes back NOT CONFIRMED, build()/main() must refuse rather than
+    publish an artifact whose NBC-on-gross proof did not check out."""
+    _require_corpus()
+    real_nbc_check = irr.build_nbc_gross_check
+
+    def poisoned(rows):
+        chk = dict(real_nbc_check(rows))
+        chk["confirmation"] = "NOT CONFIRMED -- synthetic test poison"
+        return chk
+
+    irr.build_nbc_gross_check = poisoned
+    before = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    try:
+        try:
+            irr.main()
+        except SystemExit as e:
+            assert "NOT CONFIRMED" in str(e) or "did not confirm" in str(e).lower()
+        else:
+            raise AssertionError("expected SystemExit on an unconfirmed NBC-gross check")
+    finally:
+        irr.build_nbc_gross_check = real_nbc_check
+    after = irr.OUT.read_bytes() if irr.OUT.exists() else None
+    assert after == before, "the artifact changed despite the unconfirmed NBC-gross check"
+    return "a NOT-CONFIRMED nbc_gross_reverification stops main() with SystemExit " \
+        "before anything is written"
 
 
 # ---------------------------------------------------------------------------
