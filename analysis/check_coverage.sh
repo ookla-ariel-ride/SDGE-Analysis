@@ -25,7 +25,7 @@ rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
 for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_carbon_fullyear test_household test_publish test_service_headroom \
          test_irreducible_bill test_privacy_tiers test_bill_decomposition \
-         test_rates_history test_tou_spread; do
+         test_rates_history test_tou_spread test_scripts_runnable; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null
   echo "suite  $t"
 done
