@@ -260,8 +260,12 @@ def case_committed_json_digest_matches_the_committed_csv():
     doesn't, the committed JSON was computed from a different (older or newer)
     rate table than what's currently committed, exactly the staleness a Codex
     review finding identified (--build-rates and the normal run are separate
-    invocations with no cross-check)."""
-    _require_archive()
+    invocations with no cross-check).
+
+    Deliberately NO _require_archive() call (a second Codex review finding,
+    corrected): both files this case reads are committed and public -- gating
+    this check behind the private archive requirement silently skipped it in
+    CI, the one place a staleness regression would actually need to be caught."""
     result = json.loads(NG.RESULTS_JSON.read_text())
     stored = result["rate_table_provenance"]["sha256"]
     actual = hashlib.sha256(NG.RATE_CSV.read_bytes()).hexdigest()
