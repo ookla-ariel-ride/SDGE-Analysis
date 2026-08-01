@@ -1056,6 +1056,75 @@ Button 15-min data via `behavior_rebuild.load()`. Run from `private/verify` with
 `behavior_rebuild.py`, `battery_dispatch_policies.py`, `carbon_fullyear.py` and `rates.py`
 beside it; writes `data/carbon_dispatch_tradeoff.json`.
 
+### 3.18 `analysis/nem3_grandfathering.py` — NEM 2.0 grandfathering value + battery-marginal reconciliation (`data/nem3_grandfathering.json`)
+
+**Purpose.** Two related questions, both re-billed on the same measured 15-minute year:
+what is this household's NEM 2.0 grandfathering actually worth against SDG&E's real Net
+Billing Tariff (NBT, "Solar Billing Plan") export pricing (rather than the flat 3–8¢/kWh
+assumption used elsewhere), and — added in a later phase — how does the price-aware
+battery's own marginal value under that same real hourly schedule compare with
+`extended_findings.py`'s existing flat-credit `nbt_2039` figures.
+
+**Rate table (`data/nbt_export_rates_2026.csv`, public).** Built from SDG&E's own published
+MIDAS export-pricing files (`--build-rates`, needs the private raw archive at
+`private/1-raw-data/sdge_nbt_export_rates/`; the normal run needs only the committed CSV).
+Two vintages are priced — NBT26 (9-year lock from PTO) and NBT00 (no-lock, current-year-only)
+— both drawn from the same calendar-year-2026 Avoided Cost Calculator table and found to be
+byte-identical this tariff year (see the script's own "GENUINE FINDING" docstring note); they
+diverge only in which *future* years each vintage's schedule is contractually guaranteed, not
+in this year's price level, so the grandfathering-value band this script publishes has zero
+width for now.
+
+**Export credit = SDG&E Delivery + Generation + a flat $0.01/kWh CEA "Solar Impact" bonus**
+(this household is on a CCA, so SDG&E's own Generation rate doesn't directly apply, but CEA's
+own program page states it uses "the same export credit pricing paid by SDG&E" plus the
+$0.01/kWh adder). Import side stays gross-billed at `rates.allin()` (no monthly netting) —
+the same assumption `extended_findings.py`'s own `bill_flat_export()` already uses for its
+flat-credit NBT proxy.
+
+**Grandfathering result.** NEM 2.0 modeled bill $4,904.13/yr vs NBT counterfactual
+$7,007.70/yr (both vintages) → **$2,103.58/yr** grandfathering value, kWh-weighted realized
+export credit ~4.7¢/kWh (this household's exports concentrate at midday, exactly where the
+real hourly schedule is cheapest). Same order of magnitude as the retired flat-cent bracket
+in `data/extra_results.json → nbt.gf_value` ($1,772–2,268/yr, issue #34, not touched by this
+script), now a single computed, traceable figure instead of an assumed sensitivity range.
+
+**Battery-marginal reconciliation vs `extended_findings.py`'s `nbt_2039` (issue #9 AC6).**
+`extended_findings.py`'s `nbt_2039` block prices the price-aware battery's marginal bill
+savings (no-battery bill minus with-battery bill, `bp.run_batt(d, imp0, gen0, 13.5,
+"greedy")`) under three FLAT export-credit assumptions: $2,540/yr at 3¢, $2,527/yr at 5¢,
+$2,506/yr at 8¢, against $2,329/yr under NEM 2.0 today. This script adds the same marginal
+priced against the REAL hourly NBT schedule instead of a flat assumption, reusing the
+identical `bp.run_batt` dispatch (so only the export-pricing assumption differs, never the
+physical battery behavior) and billing both the no-battery and with-battery series through
+its own `bill_nbt()`. Result: **$2,521.55/yr** for both vintages (NBT26/NBT00 again coincide
+this year) — **+$192.55** above the NEM 2.0 figure (confirming the existing nbt_2039 finding
+that the battery is worth more once exports price at NBT rather than near-retail), and
+**inside** the existing flat 3–8¢ bracket ($2,506–2,540/yr), landing within $5.45 of the 5¢
+figure specifically (vs −$18.45 from the 3¢ figure and +$15.55 from the 8¢ figure). The
+disagreement is stated explicitly for each reference point in the artifact
+(`battery_marginal_reconciliation_2039 → disagreement_vs_reference`), not averaged or hidden:
+for this household's measured export shape, the real hourly schedule happens to land close to
+the middle of the flat-cent bracket that was always meant as a placeholder for it, so the two
+methods corroborate rather than contradict each other. `extended_findings.py` and its
+`nbt_2039` figures are read-only from this script's perspective (`json.load`, never
+recomputed) — issue #34 owns any future change to that generator.
+
+**Fail-closed design.** `load_rate_table()` and `bill_nbt()` abort (`SystemExit`) on any
+(month, day-type, hour) bucket the household's data touches that the committed rate table
+does not cover, never interpolating or zero-filling. `load_nbt_2039_reference()` similarly
+aborts if `data/extended_results.json` or its `nbt_2039` section (or one of its 3c/5c/8c
+buckets) is missing — a stale or absent reference must not be silently treated as "nothing to
+reconcile against." The CSV and JSON outputs are both written to temp files and `os.replace`d,
+so a partial/failed run changes neither.
+
+**Inputs and provenance.** `usage.csv` (Green Button) via `behavior_rebuild.load()`, the
+committed `data/nbt_export_rates_2026.csv`, `data/electric_bill_summary.csv` (actual-billed
+anchor, context only), `data/extended_results.json` (the `nbt_2039` reference, read-only),
+and the imported `battery_dispatch_policies` module (`bp.run_batt`, not re-implemented). Run
+from `private/verify` with `usage.csv`, `behavior_rebuild.py`, `battery_dispatch_policies.py`
+and `rates.py` beside it; writes `data/nem3_grandfathering.json`.
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py` (REMOVED — superseded by the integrated pipeline),

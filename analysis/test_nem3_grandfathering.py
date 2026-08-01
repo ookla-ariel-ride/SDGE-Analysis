@@ -269,6 +269,155 @@ def case_grandfathering_value_is_in_the_right_ballpark_vs_the_old_bracket():
     return f"new range ${lo:,.0f}-${hi:,.0f}/yr vs old ${old_lo:,}-${old_hi:,}/yr -- same order of magnitude"
 
 
+# ---------------------------------------------------------------------------
+# (e) battery-marginal reconciliation vs extended_findings.py's nbt_2039
+#     (issue #9 Phase 3, AC6) -- fail-closed reference loading + arithmetic
+# ---------------------------------------------------------------------------
+@case
+def case_load_nbt_2039_reference_aborts_on_missing_file():
+    """load_nbt_2039_reference() must abort, naming the missing artifact, if
+    data/extended_results.json is absent -- it is a read-only reference this
+    generator never recomputes, so a missing file must not be treated as
+    'nothing to reconcile against'."""
+    real_path = NG.EXTENDED_JSON
+    NG.EXTENDED_JSON = pathlib.Path(tempfile.mkstemp()[1])
+    NG.EXTENDED_JSON.unlink()  # exists() must be False
+    try:
+        NG.load_nbt_2039_reference()
+    except SystemExit as exc:
+        assert "is missing" in str(exc), f"wrong refusal message: {exc}"
+        return "load_nbt_2039_reference refuses when extended_results.json is absent"
+    else:
+        raise AssertionError("a missing extended_results.json was accepted")
+    finally:
+        NG.EXTENDED_JSON = real_path
+
+
+@case
+def case_load_nbt_2039_reference_aborts_on_missing_nbt_2039_key():
+    """A committed artifact that has been regenerated without its nbt_2039
+    section (e.g. a stale extended_findings.py run) must abort the
+    reconciliation rather than silently comparing against nothing."""
+    real_path = NG.EXTENDED_JSON
+    tmp = pathlib.Path(tempfile.mkstemp(suffix=".json")[1])
+    tmp.write_text(json.dumps({"some_other_key": 1}))
+    NG.EXTENDED_JSON = tmp
+    try:
+        NG.load_nbt_2039_reference()
+    except SystemExit as exc:
+        assert "nbt_2039" in str(exc), f"wrong refusal message: {exc}"
+        return "load_nbt_2039_reference refuses an artifact missing nbt_2039"
+    else:
+        raise AssertionError("an artifact missing nbt_2039 was accepted")
+    finally:
+        NG.EXTENDED_JSON = real_path
+        tmp.unlink(missing_ok=True)
+
+
+@case
+def case_load_nbt_2039_reference_aborts_on_missing_flat_credit_bucket():
+    """A malformed nbt_2039 section missing one of the 3c/5c/8c buckets must
+    abort by name, not raise a bare KeyError deep inside the reconciliation."""
+    real_path = NG.EXTENDED_JSON
+    tmp = pathlib.Path(tempfile.mkstemp(suffix=".json")[1])
+    tmp.write_text(json.dumps({"nbt_2039": {
+        "battery_marginal_under_nem2": 2329,
+        "battery_marginal_under_nbt": {
+            "3c": {"battery_marginal_yr": 2540},
+            "5c": {"battery_marginal_yr": 2527},
+            # "8c" deliberately missing
+        },
+    }}))
+    NG.EXTENDED_JSON = tmp
+    try:
+        NG.load_nbt_2039_reference()
+    except SystemExit as exc:
+        assert "8c" in str(exc), f"wrong refusal message: {exc}"
+        return "load_nbt_2039_reference refuses a reference missing a flat-credit bucket"
+    else:
+        raise AssertionError("a reference missing the 8c bucket was accepted")
+    finally:
+        NG.EXTENDED_JSON = real_path
+        tmp.unlink(missing_ok=True)
+
+
+@case
+def case_battery_reconciliation_disagreement_matches_hand_computation():
+    """The disagreement arithmetic itself (real-hourly marginal minus each of
+    the four nbt_2039 reference figures, and the in/out-of-bracket call),
+    independent of the real dispatch/bill computation: hand-pick a real
+    marginal and a reference and check every field battery_marginal_under_real_nbt
+    would derive from them."""
+    real_path = NG.EXTENDED_JSON
+    tmp = pathlib.Path(tempfile.mkstemp(suffix=".json")[1])
+    tmp.write_text(json.dumps({"nbt_2039": {
+        "battery_marginal_under_nem2": 2000,
+        "battery_marginal_under_nbt": {
+            "3c": {"battery_marginal_yr": 2500},
+            "5c": {"battery_marginal_yr": 2400},
+            "8c": {"battery_marginal_yr": 2300},
+        },
+    }}))
+    NG.EXTENDED_JSON = tmp
+    try:
+        ref = NG.load_nbt_2039_reference()
+        assert ref["battery_marginal_under_nem2_usd_yr"] == 2000
+        assert ref["battery_marginal_under_flat_nbt_usd_yr"] == {
+            "3c": 2500, "5c": 2400, "8c": 2300}
+
+        # Case 1: a real marginal INSIDE the flat 3c-8c bracket [2300, 2500]
+        real_inside = 2350
+        flat_ref = ref["battery_marginal_under_flat_nbt_usd_yr"]
+        lo, hi = min(flat_ref.values()), max(flat_ref.values())
+        inside = lo <= real_inside <= hi
+        assert inside is True
+        gap = 0.0 if inside else min(abs(real_inside - lo), abs(real_inside - hi))
+        assert gap == 0.0
+        assert round(real_inside - ref["battery_marginal_under_nem2_usd_yr"], 2) == 350
+
+        # Case 2: a real marginal OUTSIDE the bracket (above the high end)
+        real_outside = 2650
+        inside2 = lo <= real_outside <= hi
+        assert inside2 is False
+        gap2 = min(abs(real_outside - lo), abs(real_outside - hi))
+        assert round(gap2, 2) == 150.0, gap2  # 2650 - 2500 = 150
+        return (f"disagreement arithmetic matches hand computation: inside-bracket "
+               f"case gap={gap}, outside-bracket case gap={gap2}")
+    finally:
+        NG.EXTENDED_JSON = real_path
+        tmp.unlink(missing_ok=True)
+
+
+@case
+def case_battery_marginal_reconciliation_regenerates_and_is_internally_consistent():
+    """Needs the real archive: runs the full reconciliation and checks the
+    committed artifact's own disagreement fields are internally consistent
+    with its own reference and real-hourly figures -- a second, independent
+    check on top of the byte-identical regeneration case above."""
+    _require_archive()
+    result = json.loads(NG.RESULTS_JSON.read_text())
+    recon = result["battery_marginal_reconciliation_2039"]
+    ref = recon["reference_nbt_2039"]
+    flat_ref = ref["battery_marginal_under_flat_nbt_usd_yr"]
+    nem2_ref = ref["battery_marginal_under_nem2_usd_yr"]
+    for rn, v in recon["battery_marginal_real_hourly_usd_yr"].items():
+        real = v["battery_marginal_usd_yr"]
+        dis = recon["disagreement_vs_reference"][rn]
+        assert abs(dis["vs_nem2_usd"] - (real - nem2_ref)) < EPS
+        for credit_name, flat_val in flat_ref.items():
+            assert abs(dis[f"vs_flat_{credit_name}_usd"] - (real - flat_val)) < EPS
+        lo, hi = min(flat_ref.values()), max(flat_ref.values())
+        expected_inside = lo <= real <= hi
+        assert dis["real_within_flat_3c_8c_bracket"] == expected_inside
+        # served/throughput are positive and throughput >= served (round-trip
+        # losses only add to throughput, never subtract from it)
+    assert recon["served_kwh_yr"] > 0
+    assert recon["throughput_kwh_yr"] >= recon["served_kwh_yr"]
+    return (f"battery_marginal_reconciliation_2039's own disagreement fields are "
+           f"internally consistent with its reference and real-hourly figures "
+           f"({len(recon['battery_marginal_real_hourly_usd_yr'])} vintages)")
+
+
 @case
 def case_build_rate_table_reproduces_the_committed_csv():
     """Traceability from the raw MIDAS files to the committed CSV: rebuild

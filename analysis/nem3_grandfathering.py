@@ -100,6 +100,24 @@ Fail-closed + atomic (CLAUDE.md 9): the export-rate lookup ABORTS (SystemExit) o
 silently interpolated or zero-filled. The committed CSV and JSON are both written to
 temp files and os.replace'd; a failed/partial run changes neither.
 
+PHASE 3 ADDITION -- battery value under the REAL hourly NBT schedule, reconciled
+with extended_findings.py's nbt_2039 (issue #9 AC6):
+  extended_findings.py's own nbt_2039 block prices the price-aware battery's
+  MARGINAL bill savings (no-battery bill minus with-battery bill) under three
+  FLAT export-credit assumptions (3c/5c/8c: $2,540/$2,527/$2,506/yr) and, for
+  comparison, under NEM 2.0 today ($2,329/yr) -- see data/extended_results.json
+  -> nbt_2039, NOT reimplemented here, only read as a committed reference. This
+  script adds the analogous figure priced against the REAL hourly NBT export
+  schedule this file already builds (data/nbt_export_rates_2026.csv), reusing
+  the SAME battery dispatch (battery_dispatch_policies.run_batt(d, imp0, gen0,
+  13.5, "greedy")) so the physical battery behavior is identical across both
+  figures -- only the export-pricing assumption differs. Both the no-battery
+  and with-battery physical series are billed through THIS script's own
+  bill_nbt(), for both NBT26 and NBT00 vintages, and the marginal (no-battery
+  minus with-battery) is compared explicitly against each of the four nbt_2039
+  reference figures (3c, 5c, 8c, NEM 2.0) -- the disagreement is stated in
+  dollars, never averaged or hidden, per the issue's AC6.
+
 Run from private/verify with usage.csv, behavior_rebuild.py and rates.py beside it
 (repo paths resolve automatically, same convention as this repo's other generators):
   ../../.venv/bin/python nem3_grandfathering.py             # the Phase-1 comparison
@@ -117,6 +135,7 @@ import sys
 import numpy as np
 import pandas as pd
 
+import battery_dispatch_policies as bp  # reuse run_batt() -- same dispatch nbt_2039 uses
 import behavior_rebuild as br     # reuse load() -- the measured 15-min year
 import rates as R                 # canonical rate constants + NEM 2.0 billing engine
 
@@ -144,6 +163,7 @@ RAW_DIR = ROOT / "private" / "1-raw-data" / "sdge_nbt_export_rates"
 RATE_CSV = DATA / "nbt_export_rates_2026.csv"          # committed, PUBLIC rate table
 RESULTS_JSON = DATA / "nem3_grandfathering.json"        # committed results artifact
 BILL_SUMMARY_CSV = DATA / "electric_bill_summary.csv"  # actual-billed anchor (context only)
+EXTENDED_JSON = DATA / "extended_results.json"          # nbt_2039 reference (read-only)
 
 # The MIDAS export-pricing vintages needed for AC3's uncertainty band: the 9-year
 # lock-in vintage a hypothetical 2026 enrollment would receive (NBT26), and the
@@ -390,6 +410,106 @@ def actual_billed_anchor():
             "source": str(BILL_SUMMARY_CSV.relative_to(ROOT))}
 
 
+def load_nbt_2039_reference():
+    """Read-only load of extended_findings.py's committed nbt_2039 battery-marginal
+    figures (data/extended_results.json) -- NEVER recomputed here (issue #34 owns
+    that generator). Fails closed if the artifact or the expected keys are
+    missing: a stale/absent reference must abort the reconciliation, not silently
+    compare against nothing."""
+    if not EXTENDED_JSON.exists():
+        raise SystemExit(
+            f"load_nbt_2039_reference: {EXTENDED_JSON} is missing -- run "
+            "extended_findings.py first (or restore the committed artifact); "
+            "the battery reconciliation needs its nbt_2039 figures as a reference.")
+    ext = json.loads(EXTENDED_JSON.read_text())
+    if "nbt_2039" not in ext:
+        raise SystemExit(f"{EXTENDED_JSON} has no nbt_2039 key -- cannot reconcile.")
+    nbt2039 = ext["nbt_2039"]
+    nem2_marginal = nbt2039.get("battery_marginal_under_nem2")
+    flat = nbt2039.get("battery_marginal_under_nbt", {})
+    if nem2_marginal is None or not flat:
+        raise SystemExit(
+            f"{EXTENDED_JSON}: nbt_2039 is missing battery_marginal_under_nem2 "
+            "or battery_marginal_under_nbt -- cannot reconcile.")
+    missing_credits = {"3c", "5c", "8c"} - set(flat)
+    if missing_credits:
+        raise SystemExit(
+            f"{EXTENDED_JSON}: nbt_2039.battery_marginal_under_nbt is missing "
+            f"credit bucket(s) {sorted(missing_credits)} -- cannot reconcile.")
+    return {
+        "battery_marginal_under_nem2_usd_yr": nem2_marginal,
+        "battery_marginal_under_flat_nbt_usd_yr": {
+            k: flat[k]["battery_marginal_yr"] for k in ("3c", "5c", "8c")},
+        "source": "data/extended_results.json -> nbt_2039 (extended_findings.py; "
+                  "read-only, not recomputed here)",
+    }
+
+
+def battery_marginal_under_real_nbt(d, credit_lookups):
+    """The price-aware battery's marginal bill savings priced against the REAL
+    hourly NBT export schedule, for each vintage -- reusing the SAME dispatch
+    (bp.run_batt) extended_findings.py's nbt_2039 already runs, so only the
+    export-PRICING assumption differs between this figure and nbt_2039's flat
+    3c/5c/8c figures, never the physical battery behavior.
+
+    Bills both the no-battery series (imp0/gen0) and the with-battery series
+    (i2/e2) through THIS script's own bill_nbt(), for every vintage in
+    RAW_FILES, then reconciles the resulting marginal explicitly against
+    extended_findings.py's committed nbt_2039 reference (both the NEM 2.0 and
+    the 3c/5c/8c flat-credit figures) -- the numeric disagreement is stated in
+    dollars for each, never averaged or hidden (issue #9 AC6).
+    """
+    imp0 = d["imp"].values.astype(float)
+    gen0 = d["exp"].values.astype(float)
+    i2, e2, served_kwh, thru_kwh = bp.run_batt(d, imp0, gen0, 13.5, "greedy")
+
+    d_batt = d.copy()
+    d_batt["imp"] = i2
+    d_batt["exp"] = e2
+
+    per_vintage = {}
+    for rate_name in sorted(RAW_FILES):
+        credit_lookup = credit_lookups[rate_name]
+        bill_no_batt, _, _ = bill_nbt(d, credit_lookup)
+        bill_with_batt, _, _ = bill_nbt(d_batt, credit_lookup)
+        per_vintage[rate_name] = {
+            "annual_bill_no_battery_usd": round(bill_no_batt, 2),
+            "annual_bill_with_battery_usd": round(bill_with_batt, 2),
+            "battery_marginal_usd_yr": round(bill_no_batt - bill_with_batt, 2),
+        }
+
+    reference = load_nbt_2039_reference()
+    nem2_ref = reference["battery_marginal_under_nem2_usd_yr"]
+    flat_ref = reference["battery_marginal_under_flat_nbt_usd_yr"]
+    flat_lo, flat_hi = min(flat_ref.values()), max(flat_ref.values())
+
+    disagreement = {}
+    for rate_name, v in per_vintage.items():
+        real = v["battery_marginal_usd_yr"]
+        vs = {"vs_nem2_usd": round(real - nem2_ref, 2)}
+        for credit_name, flat_val in flat_ref.items():
+            vs[f"vs_flat_{credit_name}_usd"] = round(real - flat_val, 2)
+        inside_bracket = flat_lo <= real <= flat_hi
+        vs["real_within_flat_3c_8c_bracket"] = bool(inside_bracket)
+        vs["gap_from_flat_bracket_usd"] = (
+            0.0 if inside_bracket else
+            round(min(abs(real - flat_lo), abs(real - flat_hi)), 2))
+        disagreement[rate_name] = vs
+
+    return {
+        "method": ("Same battery physical dispatch as nbt_2039 "
+                  "(bp.run_batt(d, imp0, gen0, 13.5, 'greedy')); both the "
+                  "no-battery and with-battery series billed through this "
+                  "script's own bill_nbt() (real hourly NBT export schedule) "
+                  "per vintage, marginal = no-battery bill - with-battery bill."),
+        "served_kwh_yr": round(float(served_kwh), 1),
+        "throughput_kwh_yr": round(float(thru_kwh), 1),
+        "battery_marginal_real_hourly_usd_yr": per_vintage,
+        "reference_nbt_2039": reference,
+        "disagreement_vs_reference": disagreement,
+    }
+
+
 # ------------------------------------------------------------------------ main
 def main():
     d = br.load()
@@ -487,14 +607,23 @@ def main():
             "peak) -- so pricing the REAL export shape against the REAL "
             "hourly schedule yields a single computed figure, traceable to a "
             "committed public rate table, rather than an assumed range."),
+        "battery_marginal_reconciliation_2039": battery_marginal_under_real_nbt(
+            d, credit_lookups),
     }
 
     assert results["nem2"]["annual_bill_usd_modeled"] > 0
     for rn, v in nbt_bills.items():
         assert v["annual_bill_usd"] > 0, rn
     for k in ("window", "nem2", "nbt_counterfactual",
-              "grandfathering_value_range_usd_per_yr", "export_credit_shape"):
+              "grandfathering_value_range_usd_per_yr", "export_credit_shape",
+              "battery_marginal_reconciliation_2039"):
         assert k in results, f"results section missing: {k}"
+    for rn, v in results["battery_marginal_reconciliation_2039"][
+            "battery_marginal_real_hourly_usd_yr"].items():
+        assert v["battery_marginal_usd_yr"] > 0, (
+            f"{rn}: battery marginal under the real hourly NBT schedule is not "
+            "positive -- a battery that costs the household money to run makes "
+            "no economic sense and would indicate a units/sign bug")
 
     tmp = f"{RESULTS_JSON}.tmp"
     with open(tmp, "w") as fh:
@@ -511,6 +640,20 @@ def main():
     print(f"grandfathering value range: ${min(gf_values):,.2f}-${max(gf_values):,.2f}/yr "
           f"(old bracket for context: ${old_bracket['low_usd_yr']:,}-"
           f"${old_bracket['high_usd_yr']:,}/yr)")
+
+    recon = results["battery_marginal_reconciliation_2039"]
+    ref = recon["reference_nbt_2039"]
+    print(f"\nbattery marginal reconciliation (2039 NBT transition):")
+    print(f"  nbt_2039 reference: NEM 2.0 ${ref['battery_marginal_under_nem2_usd_yr']:,}/yr, "
+          f"flat-credit {ref['battery_marginal_under_flat_nbt_usd_yr']}")
+    for rn, v in recon["battery_marginal_real_hourly_usd_yr"].items():
+        dis = recon["disagreement_vs_reference"][rn]
+        print(f"  {rn} real-hourly marginal: ${v['battery_marginal_usd_yr']:,.2f}/yr "
+              f"(vs NEM2 {dis['vs_nem2_usd']:+.2f}, vs flat 3c/5c/8c "
+              f"{dis['vs_flat_3c_usd']:+.2f}/{dis['vs_flat_5c_usd']:+.2f}/"
+              f"{dis['vs_flat_8c_usd']:+.2f}; within flat bracket: "
+              f"{dis['real_within_flat_3c_8c_bracket']}, gap "
+              f"${dis['gap_from_flat_bracket_usd']:,.2f})")
 
 
 if __name__ == "__main__":
