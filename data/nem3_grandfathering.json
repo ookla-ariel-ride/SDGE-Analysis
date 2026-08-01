@@ -1,0 +1,60 @@
+{
+ "window": {
+  "start": "2025-07-24 00:00:00",
+  "end": "2026-07-23 23:45:00",
+  "days": 365
+ },
+ "household": {
+  "cca": "Clean Energy Alliance -- Clean Impact Plus",
+  "nem_version": "NEM 2.0 (grandfathered, PTO 2019-12-27)",
+  "plan": "EV-TOU-5"
+ },
+ "actual_billed_anchor": {
+  "total_usd": 3282.22,
+  "window": "6/27/25 - 7/28/25 .. 5/29/26 - 6/26/26",
+  "n_bill_periods": 13,
+  "source": "data/electric_bill_summary.csv"
+ },
+ "nem2": {
+  "annual_bill_usd_modeled": 4904.13,
+  "label": "modeled (rates.bill_nem, the canonical NEM 2.0 engine; see actual_billed_anchor for the audited total over the same window -- the model runs high, use the DELTA below)"
+ },
+ "nbt_counterfactual": {
+  "NBT00": {
+   "annual_bill_usd": 7007.7,
+   "export_credit_total_usd": 470.75,
+   "export_credit_weighted_avg_usd_per_kwh": 0.04725,
+   "grandfathering_value_usd": 2103.58
+  },
+  "NBT26": {
+   "annual_bill_usd": 7007.7,
+   "export_credit_total_usd": 470.75,
+   "export_credit_weighted_avg_usd_per_kwh": 0.04725,
+   "grandfathering_value_usd": 2103.58
+  }
+ },
+ "grandfathering_value_range_usd_per_yr": {
+  "low": 2103.58,
+  "high": 2103.58,
+  "vintages_priced": [
+   "NBT00",
+   "NBT26"
+  ],
+  "band_has_zero_width": true
+ },
+ "why_the_band_has_zero_width": "SDG&E's NBT26 and NBT00 calendar-year-2026 rate tables are byte-identical (max|NBT00-NBT26| = 0.0 across all 1,152 rate cells in data/nbt_export_rates_2026.csv) -- both vintages price this household's measured export shape at the same dollar figure this year. The vintages differ in which FUTURE years are contractually guaranteed (NBT26 locks this table for 9 years from PTO; NBT00 guarantees only the current year and resets annually to a table not yet published), not in this year's price level -- widening this into a real multi-year band is out of this phase's one-year snapshot scope.",
+ "export_credit_shape": {
+  "cea_bonus_usd_per_kwh": 0.01,
+  "cea_bonus_source": "https://thecleanenergyalliance.org/solar-impact/, fetched 2026-08-01: \"The energy values are based on the same export credit pricing paid by San Diego Gas & Electric (SDG&E)\" + \"Solar Impact customers earn an additional $0.01 per kWh for energy they export to the grid.\"",
+  "hour_equal_weighted_mean_usd_per_kwh": 0.09834,
+  "hour_equal_weighted_min_usd_per_kwh": 0.01,
+  "hour_equal_weighted_max_usd_per_kwh": 1.07977,
+  "note": "the equal-weighted range spans ~1c/kWh (spring midday oversupply hours) to ~$1.08/kWh (August evening post-solar ramp); this household's exports concentrate at midday, so its OWN kWh-weighted realized credit (export_credit_weighted_avg_usd_per_kwh, per vintage above) sits well below the simple hour-equal-weighted mean."
+ },
+ "old_bracket_for_context": {
+  "low_usd_yr": 1772,
+  "high_usd_yr": 2268,
+  "source": "data/extra_results.json nbt.gf_value (flat 3c/5c/8c export credit; NOT modified by this script, see issue #34)"
+ },
+ "mechanism_of_change_from_old_bracket": "The old bracket applied ONE flat export credit (3c/5c/8c, an assumed sensitivity range) to every export kWh all year. The real SDG&E-published hourly schedule varies far more (see export_credit_shape) and is lowest exactly when this household's solar produces (midday) and highest when it does not (evening peak) -- so pricing the REAL export shape against the REAL hourly schedule yields a single computed figure, traceable to a committed public rate table, rather than an assumed range."
+}
