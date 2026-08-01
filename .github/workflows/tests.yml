@@ -24,6 +24,8 @@ jobs:
         run: python analysis/test_rates_history.py
       - name: bill decomposition guard tests
         run: python analysis/test_bill_decomposition.py
+      - name: irreducible-bill guard tests
+        run: python analysis/test_irreducible_bill.py
 
   tou-audit:
     # The TOU audit reconciles billed kWh against the raw interval export, which is
