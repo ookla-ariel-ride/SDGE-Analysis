@@ -20,17 +20,19 @@
  },
  "threshold": {
   "kg_per_mwh": 185.0,
+  "discharge_kg_per_mwh": 205.56,
   "target_clean_frac": 0.4674,
   "target_dirty_frac": 0.5326,
   "achieved_clean_frac": 0.4675,
   "achieved_dirty_frac": 0.5325,
+  "achieved_discharge_eligible_frac": 0.4598,
   "tou_interval_counts": {
    "sop": 16376,
    "off": 11364,
    "on": 7300,
    "total": 35040
   },
-  "method": "threshold = intensity value at the np.quantile(inten, sop_frac) of the year's per-interval intensity array, where sop_frac is measured from this household's own rates.period_at TOU assignment (behavior_rebuild.load()), not hardcoded"
+  "method": "charge threshold = intensity value at the np.quantile(inten, sop_frac) of the year's per-interval intensity array, where sop_frac is measured from this household's own rates.period_at TOU assignment (behavior_rebuild.load()), not hardcoded. discharge threshold = charge threshold / ETA**2 (the round-trip efficiency margin -- see this function's docstring)."
  },
  "policies": {
   "A_cost_min": {
@@ -46,35 +48,35 @@
    "co2_avoided_per_kwh_cycled_kg": -0.0833
   },
   "B_carbon_min": {
-   "bill_usd": 4813.06,
-   "savings_vs_baseline_usd": 91.07,
-   "import_co2_kg": 5041.5,
-   "export_co2_avoided_kg": 778.0,
-   "net_co2_kg": 4263.5,
-   "co2_avoided_vs_baseline_kg": 223.7,
-   "kwh_served": 2583.4,
-   "kwh_cycled_thru": 2729.9,
-   "usd_saved_per_kwh_cycled": 0.0334,
-   "co2_avoided_per_kwh_cycled_kg": 0.082
+   "bill_usd": 4869.94,
+   "savings_vs_baseline_usd": 34.19,
+   "import_co2_kg": 5054.6,
+   "export_co2_avoided_kg": 788.4,
+   "net_co2_kg": 4266.2,
+   "co2_avoided_vs_baseline_kg": 221.0,
+   "kwh_served": 2294.1,
+   "kwh_cycled_thru": 2424.9,
+   "usd_saved_per_kwh_cycled": 0.0141,
+   "co2_avoided_per_kwh_cycled_kg": 0.0911
   },
   "C_union": {
-   "bill_usd": 3065.71,
-   "savings_vs_baseline_usd": 1838.42,
-   "import_co2_kg": 4959.5,
-   "export_co2_avoided_kg": 622.4,
-   "net_co2_kg": 4337.2,
-   "co2_avoided_vs_baseline_kg": 150.1,
-   "kwh_served": 3950.2,
-   "kwh_cycled_thru": 4157.1,
-   "usd_saved_per_kwh_cycled": 0.4422,
-   "co2_avoided_per_kwh_cycled_kg": 0.0361
+   "bill_usd": 3061.47,
+   "savings_vs_baseline_usd": 1842.66,
+   "import_co2_kg": 4965.5,
+   "export_co2_avoided_kg": 623.7,
+   "net_co2_kg": 4341.8,
+   "co2_avoided_vs_baseline_kg": 145.4,
+   "kwh_served": 3885.7,
+   "kwh_cycled_thru": 4089.2,
+   "usd_saved_per_kwh_cycled": 0.4506,
+   "co2_avoided_per_kwh_cycled_kg": 0.0356
   }
  },
  "tradeoff": {
-  "cost_penalty_of_clean_policy_usd": 2237.59,
-  "cost_penalty_of_clean_policy_usd_per_kwh_cycled": 0.5813,
-  "co2_penalty_of_cheap_policy_kg": 637.6,
-  "co2_penalty_of_cheap_policy_kg_per_kwh_cycled": 0.1657,
+  "cost_penalty_of_clean_policy_usd": 2294.47,
+  "cost_penalty_of_clean_policy_usd_per_kwh_cycled": 0.6207,
+  "co2_penalty_of_cheap_policy_kg": 634.9,
+  "co2_penalty_of_cheap_policy_kg_per_kwh_cycled": 0.1718,
   "normalization_note": "both penalty figures are normalized by the MEAN kWh cycled of runs A and B: they are two different dispatch schedules with different total throughput, so there is no single denominator that is 'the' right one; the mean is used and stated explicitly here rather than silently picking one run's throughput. CO2 figures are NET (import minus this policy's own export-avoided), not gross import -- see policies.*.net_co2_kg.",
   "cost_penalty_meaning": "Run B's $ cost minus Run A's $ cost -- how much MORE it costs to dispatch for carbon than to dispatch for money",
   "co2_penalty_meaning": "Run A's NET CO2 minus Run B's NET CO2 -- how much MORE carbon (imports less the export each policy's own solar-charging displaced) the money-optimal dispatch emits than the carbon-optimal one"
@@ -82,10 +84,10 @@
  "run_c_analysis": {
   "meaningfully_differs_from_a_and_b": true,
   "meaningful_threshold_pct": 0.02,
-  "pct_diff_bill_vs_a": 0.1903,
-  "pct_diff_co2_vs_a": 0.1151,
-  "pct_diff_bill_vs_b": 0.363,
-  "pct_diff_co2_vs_b": 0.0173,
+  "pct_diff_bill_vs_a": 0.1887,
+  "pct_diff_co2_vs_a": 0.1141,
+  "pct_diff_bill_vs_b": 0.3714,
+  "pct_diff_co2_vs_b": 0.0177,
   "note": "Run C is judged to NOT meaningfully differ from A (or B) when BOTH its $ and its CO2 are within 2% of that policy's own figures; otherwise it is reported as a genuinely distinct outcome."
  },
  "average_vs_marginal_basis": "All CO2 figures value energy at grid-AVERAGE intensity (kg CO2/MWh delivered, all sources incl. imports, per CAISO's public 'Today's Outlook' history endpoints), never a marginal emissions rate. CAISO's public history endpoints do not publish a marginal rate or per-hour marginal-fuel identification -- a different, more complex data product this repo does not fetch. Direction (not quantified): marginal generation is disproportionately gas overnight (average intensity there is already gas-heavy, so the gap may be small) and increasingly displaces cleaner marginal resources at solar-heavy midday (so a marginal accounting would likely show an even LARGER clean-midday-vs-dirty-overnight gap than these average-based figures already show) -- consistent with carbon_fullyear.py's own stated caveat, not a contradiction of it. Exports (including the export reduction each policy's own solar-charging causes) are valued at the SAME average intensity at the export hour -- the identical 'avoided emissions' convention carbon_fullyear.py uses for its own export-avoided figure -- so a marginal-based export credit would likely differ in the same direction.",
@@ -93,7 +95,7 @@
   "Grid-AVERAGE intensity, not marginal (see average_vs_marginal_basis).",
   "Run B's threshold is sized to match Run A's measured non-sop TOU fraction of the year, not an invented kg/MWh cutoff; ties at 0.1 kg/MWh resolution mean the achieved split is close to, not exactly, that target (see threshold.achieved_* vs target_*).",
   "Run B deliberately drops run_batt's on-peak-unconditional discharge carve-out (there is no third, always-serve tier in a binary intensity split); see the module docstring for why.",
-  "Run A and Run B are NOT throughput-matched: Run A cycles 4,968 kWh/yr, Run B only 2,730 kWh/yr (Run C 4,157) -- Run B's own design (the missing on-peak carve-out above, plus a different discharge window) serves less load, not just a different schedule of the SAME load. The $/kWh-cycled and kg/kWh-cycled figures normalize for this, but the absolute $/kg penalty figures reflect these SPECIFIC heuristic policies as implemented, not a bound on what a jointly re-optimized, throughput-matched carbon-vs-cost tradeoff would show -- issue #8 asked for a second policy and a union of the two, not a joint re-optimization, and this script does not claim to be one.",
+  "Run A and Run B are NOT throughput-matched: Run A cycles 4,968 kWh/yr, Run B only 2,425 kWh/yr (Run C 4,089) -- Run B's own design (the missing on-peak carve-out above, plus a different discharge window) serves less load, not just a different schedule of the SAME load. The $/kWh-cycled and kg/kWh-cycled figures normalize for this, but the absolute $/kg penalty figures reflect these SPECIFIC heuristic policies as implemented, not a bound on what a jointly re-optimized, throughput-matched carbon-vs-cost tradeoff would show -- issue #8 asked for a second policy and a union of the two, not a joint re-optimization, and this script does not claim to be one.",
   "Intensity measured on 364/365 real CAISO days; 1 day(s) (2026-03-08) use the month-hour mean of covered days in the same calendar month, identical to carbon_fullyear.py's own treatment.",
   "All three runs share one battery model (13.5 kWh usable, 11.5 kW, 90% round-trip efficiency) and one billing engine (rates.bill_nem); the discharge/charge DECISION differs between them by design, but (see the throughput caveat above) that decision difference also changes how much load each policy serves, so this does not isolate a pure objective effect at matched utilization."
  ],

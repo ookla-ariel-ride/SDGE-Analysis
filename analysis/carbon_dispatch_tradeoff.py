@@ -44,14 +44,18 @@ re-declared:
     threshold). This isolates the genuinely conflicting hours (cheap-but-dirty,
     clean-but-expensive) from the win-win hours served either way.
 
-THRESHOLD DERIVATION (not an invented kg/MWh cutoff): Run B's discharge window
+THRESHOLD DERIVATION (not an invented kg/MWh cutoff): Run B's CHARGE window
 must be sized to the SAME fraction of the year as Run A's non-sop discharge
 window, so the comparison isolates WHICH hours get served rather than how MANY
 hours get served. The non-sop fraction is measured directly from this
 household's own TOU assignment (rates.period_at via behavior_rebuild.load()),
-not hardcoded: threshold = the intensity value at the sop-fraction quantile of
-the year's per-interval intensity array. Ties at 0.1 kg/MWh resolution mean the
-achieved split is close to, not exactly, the target; both are reported.
+not hardcoded: charge threshold = the intensity value at the sop-fraction
+quantile of the year's per-interval intensity array. Ties at 0.1 kg/MWh
+resolution mean the achieved split is close to, not exactly, the target; both
+are reported. DISCHARGE uses a separate, higher threshold (charge threshold /
+ETA**2, the round-trip-efficiency margin) so no allowed charge/discharge
+combination can be net carbon-negative -- see carbon_threshold()'s docstring
+for the arithmetic an adversarial review's finding required.
 
 INTENSITY SOURCE: the committed, already-verified data/caiso_hourly_intensity.csv
 (364/365 real CAISO days) is read directly via carbon_fullyear.build_covered_from_
@@ -212,33 +216,56 @@ def household_intensity(d, inten_map):
 
 # --------------------------------------------------------------- threshold
 def carbon_threshold(d, inten):
-    """The Run-B discharge/charge threshold, sized to match Run A's non-sop
-    discharge-window FRACTION of the year exactly (not an invented kg/MWh
-    cutoff) -- see the module docstring for why. Returns (info dict, threshold
-    float, dirty bool array)."""
+    """The Run-B charge threshold, sized to match Run A's non-sop discharge-
+    window FRACTION of the year exactly (not an invented kg/MWh cutoff) -- see
+    the module docstring for why. Returns (info dict, charge threshold float,
+    dirty-for-charge-exclusion bool array).
+
+    Also derives the DISCHARGE threshold, a separate (higher) cutoff: charging
+    c kWh at intensity I_c and later discharging it delivers only c*ETA**2
+    (round-trip efficiency ~0.9, not 1), so a charge/discharge pair is net-
+    carbon-negative unless I_discharge > I_charge / ETA**2. Using ONE threshold
+    for both directions (an adversarial review finding) lets a near-threshold
+    pair straddle that inequality -- e.g. charging at 184 kg/MWh and
+    discharging at 186 with a 185 threshold and 0.9 RTE (186 < 184/0.9=204.4)
+    increases net emissions even though each side individually passed its own
+    "dirty"/"clean" test. The discharge threshold (charge threshold / ETA**2)
+    guarantees the opposite: any charge (<=threshold) paired with any allowed
+    discharge (>=discharge threshold) satisfies I_discharge >= threshold/ETA**2
+    >= I_charge/ETA**2, so no allowed pair can be net-negative, regardless of
+    which specific charged kWh a pooled, non-FIFO state of charge later
+    delivers at which specific discharge.
+    """
     counts = d.p.value_counts()
     total = len(d)
     sop_frac = float(counts.get("sop", 0)) / total
     nonsop_frac = 1.0 - sop_frac
     threshold = float(np.quantile(inten, sop_frac))
+    discharge_threshold = threshold / (ETA ** 2)
     dirty = inten > threshold
     achieved_dirty_frac = float(dirty.mean())
+    achieved_discharge_frac = float((inten > discharge_threshold).mean())
     info = {
         "kg_per_mwh": round(threshold, 2),
+        "discharge_kg_per_mwh": round(discharge_threshold, 2),
         "target_clean_frac": round(sop_frac, 4),
         "target_dirty_frac": round(nonsop_frac, 4),
         "achieved_clean_frac": round(1.0 - achieved_dirty_frac, 4),
         "achieved_dirty_frac": round(achieved_dirty_frac, 4),
+        "achieved_discharge_eligible_frac": round(achieved_discharge_frac, 4),
         "tou_interval_counts": {
             "sop": int(counts.get("sop", 0)),
             "off": int(counts.get("off", 0)),
             "on": int(counts.get("on", 0)),
             "total": int(total),
         },
-        "method": ("threshold = intensity value at the np.quantile(inten, sop_frac) "
-                   "of the year's per-interval intensity array, where sop_frac is "
-                   "measured from this household's own rates.period_at TOU "
-                   "assignment (behavior_rebuild.load()), not hardcoded"),
+        "method": ("charge threshold = intensity value at the "
+                   "np.quantile(inten, sop_frac) of the year's per-interval "
+                   "intensity array, where sop_frac is measured from this "
+                   "household's own rates.period_at TOU assignment "
+                   "(behavior_rebuild.load()), not hardcoded. discharge "
+                   "threshold = charge threshold / ETA**2 (the round-trip "
+                   "efficiency margin -- see this function's docstring)."),
     }
     return info, threshold, dirty
 
@@ -259,15 +286,24 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     immediately credits the FULL, high dirty-hour intensity; storing it instead
     forgoes that credit and, after round-trip losses (ETA**2 ~= 0.9 delivered
     per kWh charged), only avoids an import later at whatever that later hour's
-    intensity happens to be -- which is not guaranteed to exceed the forgone
-    credit even though that later hour is ALSO classified dirty (dirty is a
-    binary threshold test, not a magnitude comparison). Measured directly on
-    the real committed year: 14.6% of solar-surplus intervals are themselves
-    dirty, so this is not a rare edge case. Gating the surplus-charge on
-    `not dirty` lets that surplus export at its full (large) credit instead;
-    the battery still charges to capacity during clean hours via the branch
-    below, so this does not starve the battery of charge.
+    intensity happens to be. Measured directly on the real committed year:
+    14.6% of solar-surplus intervals are themselves above the charge
+    threshold, so this is not a rare edge case. Gating the surplus-charge on
+    `not dirty` (the charge threshold) lets that surplus export at its full
+    (large) credit instead; the battery still charges to capacity during
+    clean hours via the branch below, so this does not starve the battery of
+    charge.
+
+    DISCHARGE uses a SEPARATE, higher threshold (carbon_threshold()'s
+    discharge_threshold = charge threshold / ETA**2), not the charge
+    threshold -- see that function's docstring for the round-trip-efficiency
+    reasoning an adversarial review's finding required. Charge only happens
+    at intensity <= threshold; discharge only at intensity > threshold/ETA**2;
+    that gap guarantees every allowed charge/discharge combination is net
+    carbon-non-negative, regardless of which specific charged kWh a pooled
+    (non-FIFO) state of charge later delivers at which specific discharge.
     """
+    disch_threshold = threshold / (ETA ** 2)
     imp = imp0.copy()
     exp = gen0.copy()
     soc = cap / 2
@@ -275,20 +311,16 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     thru = 0.0
     kw = imp0 * 4
     for i in range(len(d)):
-        dirty = inten[i] > threshold
-        disch_win = dirty and kw[i] < 2.5
-        # disch_win implies dirty, so "not dirty" alone already covers the
-        # "not (disch_win and imp[i] > 0)" exception run_batt/run_batt_union
-        # need; spelled out once here since it is not obvious from the
-        # simplified form alone.
-        if exp[i] > 0 and not dirty:
+        chargeable = inten[i] <= threshold
+        disch_win = (inten[i] > disch_threshold) and kw[i] < 2.5
+        if exp[i] > 0 and chargeable:
             c = min(exp[i], (cap - soc) / ETA, PWRQ)
             if c > 0:
                 soc += c * ETA
                 exp[i] -= c
                 thru += c * ETA
             continue
-        if not dirty:
+        if chargeable:
             take = min(max((cap - soc) / ETA, 0), PWRQ)
             if take > 0:
                 soc += take * ETA
@@ -318,7 +350,13 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
     also be true for a NON-dirty reason (cond_a, Run A's price-based window),
     so this gate is a genuinely separate condition here, not implied by
     disch_win the way it is in run_batt_carbon.
+
+    cond_b (the carbon-driven discharge trigger, as opposed to cond_a's
+    price-driven one) uses the SAME higher discharge threshold as Run B
+    (charge threshold / ETA**2), for the identical round-trip-efficiency
+    reason -- see carbon_threshold()'s and run_batt_carbon's docstrings.
     """
+    disch_threshold = threshold / (ETA ** 2)
     imp = imp0.copy()
     exp = gen0.copy()
     soc = cap / 2
@@ -328,12 +366,12 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
     h = d.hour.values
     kw = imp0 * 4
     for i in range(len(d)):
-        dirty = inten[i] > threshold
+        chargeable = inten[i] <= threshold
         cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
-        cond_b = dirty and (kw[i] < 2.5)
+        cond_b = (inten[i] > disch_threshold) and (kw[i] < 2.5)
         disch_win = cond_a or cond_b
-        cheap_clean = (p[i] == "sop") and (inten[i] <= threshold)
-        if exp[i] > 0 and not dirty and not (disch_win and imp[i] > 0):
+        cheap_clean = (p[i] == "sop") and chargeable
+        if exp[i] > 0 and chargeable and not (disch_win and imp[i] > 0):
             c = min(exp[i], (cap - soc) / ETA, PWRQ)
             if c > 0:
                 soc += c * ETA

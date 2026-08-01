@@ -954,7 +954,7 @@ policies.py` already uses (13.5 kWh usable, 11.5 kW, 90% round-trip efficiency),
 rather than re-declared, and the same billing engine (`rates.bill_nem` via `battery_
 dispatch_policies.billed()`); the charge/discharge decision differs between them by design,
 but that decision difference also changes how much load each policy serves (Run A cycles
-4,968 kWh/yr against Run B's 2,730), so this does not isolate a pure objective effect at
+4,968 kWh/yr against Run B's 2,425), so this does not isolate a pure objective effect at
 matched utilization — see the throughput caveat below.
 
 - **Run A (cost-minimizing).** Calls `battery_dispatch_policies.run_batt(..., "greedy")`
@@ -973,24 +973,37 @@ matched utilization — see the throughput caveat below.
   hour's own (large, dirty-hour) export credit for an uncertain future discharge credit, and
   after round-trip losses that trade is not guaranteed to pay off even though the later
   discharge is also, separately, classified dirty — measured directly on the real committed
-  year, 14.6% of solar-surplus intervals are themselves dirty, not a rare edge case. Run A has
-  no analogue to this risk (price has no equivalent "forgone credit" failure mode).
+  year, 14.6% of solar-surplus intervals are themselves above the charge threshold, not a rare
+  edge case. Run A has no analogue to this risk (price has no equivalent "forgone credit"
+  failure mode). Run B also uses a SEPARATE, higher threshold for discharge than for charge
+  (a second adversarial review finding, the same underlying issue in a different guise):
+  charging c kWh delivers only c·ETA² (~0.9, the round-trip efficiency) on later discharge, so
+  a single shared threshold lets a near-threshold pair straddle the break-even line — e.g.
+  charging at 184 kg/MWh and discharging at 186 with a 185 threshold nets MORE emissions
+  (186 < 184/0.9 = 204.4), even though each side individually passed its own dirty/clean test.
+  The discharge threshold (charge threshold ÷ ETA² = 185.0 ÷ 0.9 = 205.6 kg/MWh here)
+  guarantees every allowed charge/discharge combination is net non-negative for carbon,
+  regardless of which specific charged kWh a pooled (non-FIFO) state of charge later delivers
+  at which specific discharge — proved directly from the arithmetic in
+  `test_carbon_dispatch_tradeoff.py`, not merely asserted.
 - **Run C (union/efficient, new).** Discharges whenever either Run A's or Run B's condition
   holds; grid-charges only when both cheap AND clean hold. This isolates the genuinely
   conflicting hours (cheap-but-dirty, clean-but-expensive) from the hours both objectives
   would serve anyway.
 
-**Run B's threshold is derived, not invented.** Its discharge window is sized to the same
+**Run B's charge threshold is derived, not invented.** Its charge window is sized to the same
 fraction of the year as Run A's non-super-off-peak discharge window, measured directly from
 this household's own TOU assignment (`rates.period_at` via `behavior_rebuild.load()`) rather
-than hardcoded — so the comparison isolates *which* hours get served, not how many. Threshold
-= the intensity value at that fraction's quantile of the year's per-interval intensity array.
-Target clean/dirty split 46.74%/53.26%; achieved 46.75%/53.25% (ties at the underlying data's
-0.1 kg/MWh resolution keep the achieved split close to, not exactly on, the target).
+than hardcoded — so the comparison isolates *which* hours get served, not how many. Charge
+threshold = the intensity value at that fraction's quantile of the year's per-interval
+intensity array: 185.0 kg/MWh. Target clean/dirty split 46.74%/53.26%; achieved 46.75%/53.25%
+(ties at the underlying data's 0.1 kg/MWh resolution keep the achieved split close to, not
+exactly on, the target). The discharge threshold (185.0 ÷ 0.9 = 205.6 kg/MWh) is derived from
+that charge threshold, not independently fit, so it carries no separate free parameter.
 
 **Net, not gross, CO₂.** The three policies consume different amounts of exportable solar via
 battery charging (Run A's own solar-charging displaces 829.4 kg/yr of exports, Run C's only
-622.4), so ranking policies on gross import CO₂ alone silently drops that difference and can
+623.7), so ranking policies on gross import CO₂ alone silently drops that difference and can
 invert which policy is actually cleaner for the atmosphere — an adversarial review caught
 exactly this: the gross-import figures published in an earlier draft ranked Run C as cleaner
 than Run B (4,826.4 vs 4,917.9 kg), but net accounting (import minus that policy's own
@@ -1001,18 +1014,18 @@ breakdown, never discarded.
 **Results** (all figures against the no-battery baseline: $4,904.13/yr, 4,487.2 kg net
 CO₂/yr): Run A saves $2,328.66/yr but *raises* net CO₂ by 413.9 kg/yr above the baseline —
 grid-charging during super-off-peak means charging during the year's dirtiest hours (270.1
-kg/MWh overnight vs. 158.4 on-peak, §3.15's own window means). Run B avoids 223.7 kg/yr net
-but keeps only $91.07 of the saving. Run C recovers $1,838.42/yr (79% of Run A's saving)
-while still avoiding 150.1 kg/yr net — 73.6 kg/yr less than Run B, a real but small carbon
-cost for capturing about twenty times more of the dollar saving. Run C is still judged a
+kg/MWh overnight vs. 158.4 on-peak, §3.15's own window means). Run B avoids 221.0 kg/yr net
+but keeps only $34.19 of the saving. Run C recovers $1,842.66/yr (79% of Run A's saving)
+while still avoiding 145.4 kg/yr net — 75.6 kg/yr less than Run B, a real but small carbon
+cost for capturing roughly 54 times more of the dollar saving. Run C is still judged a
 genuinely distinct third outcome (not merely a blend reducible to A or B) by requiring BOTH
 its $ and its CO₂ to be within 2% of a policy's own figures to count as "not meaningfully
-different": its bill sits 36.3% from Run B's, so the test fails against B even though its net
-CO₂ now sits within 1.7% of Run B's own.
+different": its bill sits 37.1% from Run B's, so the test fails against B even though its net
+CO₂ now sits within 1.8% of Run B's own.
 
 **Tradeoff figures.** Cost penalty of the clean policy (Run B's bill minus Run A's bill):
-$2,237.59/yr. CO₂ penalty of the cheap policy (Run A's net CO₂ minus Run B's net CO₂): 637.6
-kg/yr. Both are also expressed per kWh cycled (58.1¢/kWh and 0.166 kg/kWh respectively),
+$2,294.47/yr. CO₂ penalty of the cheap policy (Run A's net CO₂ minus Run B's net CO₂): 634.9
+kg/yr. Both are also expressed per kWh cycled (62.1¢/kWh and 0.172 kg/kWh respectively),
 normalized by the **mean** of Run A's and Run B's own kWh cycled-through figures — the two
 runs are different dispatch schedules with different total throughput, so no single run's
 throughput is uniquely "the" right denominator; the mean is used and stated explicitly rather

@@ -166,6 +166,52 @@ def case_run_a_matches_committed_battery_dispatch_policies_json():
            f"within ${cc['tolerance_usd']}")
 
 
+@case
+def case_discharge_threshold_guarantees_no_net_negative_cycle():
+    """An adversarial review finding: using ONE threshold for both charge and
+    discharge lets a near-threshold pair straddle the round-trip-efficiency
+    line (e.g. charge at 184, discharge at 186 with a 185 threshold and 0.9
+    RTE -- 186 < 184/0.9=204.4 -- increases net emissions). The fix is a
+    SEPARATE, higher discharge threshold (charge threshold / ETA**2). Prove
+    the invariant this guarantees directly from the arithmetic, not just by
+    trusting the code: for ANY charge at intensity <= threshold and ANY
+    discharge at intensity > discharge_threshold, I_discharge is always
+    > I_charge / ETA**2, so no allowed combination can be net-negative --
+    without needing to track which specific charged kWh a pooled (non-FIFO)
+    battery later delivers at which specific discharge. No real archive
+    needed: this is a property of carbon_threshold()'s own output plus exact
+    arithmetic, checked on a hand-built intensity array with values crossing
+    both thresholds."""
+    d = pd.DataFrame({"p": ["sop"] * 8})
+    inten = np.array([50.0, 100.0, 150.0, 184.0, 185.0, 186.0, 250.0, 300.0])
+    th, threshold, _dirty = CDT.carbon_threshold(d, inten)
+    disch_threshold = th["discharge_kg_per_mwh"]
+    eta = CDT.ETA
+    # th's fields are rounded to 2 decimals for the artifact; threshold (the
+    # function's second return value) is not, so allow for that rounding.
+    assert abs(disch_threshold - threshold / (eta ** 2)) < 0.01, (
+        disch_threshold, threshold, eta)
+    assert disch_threshold > threshold, (
+        "discharge threshold must sit strictly above the charge threshold")
+    # worst-case charge (right at the threshold) vs worst-case discharge
+    # (right above the discharge threshold): the round-trip-adjusted benefit
+    # must still be non-negative
+    # Use the UNROUNDED threshold on both sides (th's fields are rounded to 2
+    # decimals for the artifact, which would otherwise leak a false positive
+    # residual into this exact-arithmetic check).
+    worst_charge_intensity = threshold
+    worst_discharge_intensity = threshold / (eta ** 2)  # allowed discharge is > this
+    net_kg_per_kwh_charged = (
+        worst_charge_intensity - (eta ** 2) * worst_discharge_intensity)
+    assert net_kg_per_kwh_charged <= 1e-9, (
+        "even the worst allowed charge/discharge pairing is net-positive "
+        f"for emissions: {net_kg_per_kwh_charged} kg/kWh charged")
+    return (f"charge threshold {threshold:.1f}, discharge threshold "
+           f"{disch_threshold:.1f} kg/MWh (= charge / ETA**2): worst-case "
+           f"paired cycle nets {net_kg_per_kwh_charged:.4f} kg/kWh charged "
+           "(<=0, i.e. never carbon-negative)")
+
+
 # ---------------------------------------------------------------------------
 # Dispatch-logic cases: small synthetic frames, exact expected outcomes.
 # ---------------------------------------------------------------------------
