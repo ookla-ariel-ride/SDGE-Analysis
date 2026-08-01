@@ -528,7 +528,21 @@ def build_floor(rows):
     fixed_daily_usd is that period's OWN ACTUALLY BILLED fixed charge --
     $16.00/month before 2025-10-01, $0.79343/day after -- never today's rate
     applied backward. The transition falls inside this window: of the 13
-    periods, the ones below list which used which."""
+    periods, the ones below list which used which.
+
+    SANITY-CHECKED, NOT bounded by, the window total (issue #7 THIRD
+    adversarial review). combined_usd_historical (fixed_daily +
+    non_bypassable_gross) is NOT guaranteed to sit below
+    total_current_charges_usd in general -- that would require netted_energy
+    (the signed NEM settlement bucket) to always be non-negative, which is
+    only true for a net-IMPORTING household. In a net-EXPORTING window,
+    export credits can legitimately push netted_energy negative enough that
+    current_charges falls below fixed_daily + non_bypassable_gross alone.
+    What this function DOES verify is the aggregate four-bucket identity --
+    fixed_daily + non_bypassable_gross + taxes_and_fees + netted_energy ==
+    total_current_charges_usd, the window-summed version of the same
+    per-period check classify_periods() already performs -- which holds
+    regardless of netted_energy's sign."""
     window_stmts = set(SUMMARY_STATEMENTS_ELEC)
     window_rows = [r for r in rows if r["statement_date"] in window_stmts]
     if not window_rows:
@@ -543,9 +557,44 @@ def build_floor(rows):
         sum(r["non_bypassable_gross_usd"] for r in window_rows))
     combined_usd_historical = _c(strictly_irreducible_usd + non_bypassable_usd_historical)
     total_current_charges_usd = _c(sum(r["current_charges_usd"] for r in window_rows))
-    if combined_usd_historical > total_current_charges_usd + EPS:
-        raise SystemExit("the combined fixed+NBC total exceeds the window's total "
-                         "current_charges -- that cannot be right")
+
+    # Sanity check on the AGGREGATE four-bucket identity (issue #7 THIRD
+    # adversarial review; this replaces a PRIOR guard here that asserted
+    # combined_usd_historical -- fixed_daily + non_bypassable_gross ALONE,
+    # omitting netted_energy -- could never exceed total_current_charges_usd.
+    # That was false in general: netted_energy (bucket 4) is a signed NEM
+    # settlement term, and in a window where the household is a net EXPORTER
+    # its export credits can make netted_energy negative enough that
+    # current_charges legitimately falls BELOW fixed_daily +
+    # non_bypassable_gross alone -- even though every period reconciles
+    # exactly and nothing is wrong. This household is a net importer in
+    # every period of the current corpus (net_kwh > 0 throughout), so the
+    # old guard never fired here, but it would have wrongly refused to
+    # regenerate the artifact the moment a net-export window appeared. The
+    # actual invariant -- true regardless of netted_energy's sign -- is the
+    # same four-bucket identity classify_periods() already checks per period
+    # (four_bucket_check_pass), summed over the window: fixed_daily +
+    # non_bypassable_gross + taxes_and_fees + netted_energy must equal
+    # total_current_charges_usd. Computed here only to gate on, not stored
+    # in the returned dict -- the window total is already fully described by
+    # the fields below.
+    taxes_and_fees_usd_historical = _c(
+        sum(r["taxes_and_fees_usd"] for r in window_rows))
+    netted_energy_usd_historical = _c(
+        sum(r["netted_energy_usd"] for r in window_rows))
+    four_bucket_sum_historical = _c(
+        strictly_irreducible_usd + non_bypassable_usd_historical
+        + taxes_and_fees_usd_historical + netted_energy_usd_historical)
+    four_bucket_diff_historical = _c(four_bucket_sum_historical - total_current_charges_usd)
+    if abs(four_bucket_diff_historical) > RECON_TOLERANCE_USD:
+        raise SystemExit(
+            "the aggregated four-bucket identity (fixed_daily + "
+            "non_bypassable_gross + taxes_and_fees + netted_energy) does not "
+            f"match the window's total current_charges: sum="
+            f"${four_bucket_sum_historical} total=${total_current_charges_usd} "
+            f"diff=${four_bucket_diff_historical} (tolerance "
+            f"${RECON_TOLERANCE_USD}) -- that cannot be right")
+
     strict_pct = round(100.0 * strictly_irreducible_usd / total_current_charges_usd, 2)
     non_bypassable_pct = round(
         100.0 * non_bypassable_usd_historical / total_current_charges_usd, 2)

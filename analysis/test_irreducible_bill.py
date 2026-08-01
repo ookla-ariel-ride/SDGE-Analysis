@@ -343,6 +343,77 @@ def case_floor_recomputed_independently_from_the_artifact_rows():
 
 
 @case
+def case_build_floor_accepts_a_net_export_window():
+    """THIRD adversarial review, issue #7. build_floor() used to raise
+    SystemExit if combined_usd_historical (fixed_daily + non_bypassable_gross
+    alone) exceeded total_current_charges_usd, treating that as impossible.
+    It is not impossible: netted_energy is a signed NEM settlement bucket,
+    and a window where the household is a net EXPORTER can legitimately
+    price netted_energy negative enough that current_charges falls BELOW
+    fixed_daily + non_bypassable_gross alone, even though every period still
+    reconciles exactly (fixed_daily + non_bypassable_gross + taxes_and_fees +
+    netted_energy == current_charges). This household's real corpus is a
+    net importer throughout (net_kwh > 0 in every period), so this state
+    can't be driven from real data -- construct it synthetically instead,
+    and prove build_floor() now handles it: no SystemExit, and a
+    combined_pct_of_total_historical over 100%, the correct (if unusual)
+    reflection of a net-export window's economics."""
+    real_window = irr.SUMMARY_STATEMENTS_ELEC
+    synthetic_rows = [
+        {
+            # An ordinary net-import period -- included so the window isn't
+            # a single degenerate row.
+            "statement_date": "2099-01-31",
+            "period": "2099-01-31",
+            "fixed_daily_usd": 20.00,
+            "non_bypassable_gross_usd": 15.00,
+            "taxes_and_fees_usd": 5.00,
+            "netted_energy_usd": 10.00,
+            "current_charges_usd": 50.00,   # 20 + 15 + 5 + 10 = 50
+            "gross_kwh": 300.0,
+            "fixed_charge_kind": "base_services_charge",
+        },
+        {
+            # The net-EXPORT period: export credits make netted_energy
+            # negative enough that current_charges (15.00) falls below
+            # fixed_daily + non_bypassable_gross alone (20 + 30 = 50) --
+            # exactly the condition the old guard refused.
+            "statement_date": "2099-02-28",
+            "period": "2099-02-28",
+            "fixed_daily_usd": 20.00,
+            "non_bypassable_gross_usd": 30.00,
+            "taxes_and_fees_usd": 5.00,
+            "netted_energy_usd": -40.00,
+            "current_charges_usd": 15.00,   # 20 + 30 + 5 - 40 = 15
+            "gross_kwh": 50.0,
+            "fixed_charge_kind": "base_services_charge",
+        },
+    ]
+    irr.SUMMARY_STATEMENTS_ELEC = ["2099-01-31", "2099-02-28"]
+    try:
+        floor = irr.build_floor(synthetic_rows)
+    finally:
+        irr.SUMMARY_STATEMENTS_ELEC = real_window
+    assert floor["window_period_count"] == 2, floor["window_period_count"]
+    total = floor["total_current_charges_usd"]
+    combined = floor["combined_usd_historical"]
+    assert _close(total, 65.00, eps=0.01), total
+    assert _close(combined, 85.00, eps=0.01), combined
+    # THE POINT: combined legitimately exceeds total -- the exact condition
+    # the removed guard treated as an error -- and build_floor() must not
+    # raise on it.
+    assert combined > total, \
+        "test fixture doesn't actually exceed the total -- fix the fixture"
+    assert floor["combined_pct_of_total_historical"] > 100.0, \
+        floor["combined_pct_of_total_historical"]
+    assert _close(floor["strictly_irreducible_usd"], 40.00, eps=0.01)
+    return (f"build_floor() accepts a net-export window where combined "
+           f"${combined} exceeds total ${total} "
+           f"({floor['combined_pct_of_total_historical']}%) instead of "
+           "raising the old (mathematically false) guard")
+
+
+@case
 def case_package_floor_fractions_are_consistent():
     """Post-third-review shape: strictly_irreducible_usd IS constant across
     packages (a per-day charge cannot be package-specific), priced at the
