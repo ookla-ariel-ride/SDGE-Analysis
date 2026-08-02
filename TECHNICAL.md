@@ -2608,19 +2608,27 @@ artifact rather than hand arithmetic — CONFIRMED, not merely asserted. The tig
 estimate ~0.5-1.0%/yr" verdict in that same paragraph is a different matter: it is a
 qualitative downward adjustment (reasoning: the naive metric isn't weather-normalized, so true
 degradation is probably lower), and no committed artifact in this repo independently derives
-that narrower range. Rather than assert agreement or silently republish a number nothing here
-computes, this script cites its own bound: `soiling_results.json`'s validated 2024-08-12
-cleaning event (`sanity_check_2024_cleaning`, reused read-only, never recomputed) shows an
-11.8% production gain after ~134 dry days (~4.4 months) with no rain — a SINGLE validated
-event whose swing exceeds the ENTIRE naive 4-year change (-5.22%, 2021 to 2025) by more than
-double. Since this repo has no daily weather or production record before 2025-07-24, it cannot
-separate how much of the 2021-2025 swing is soiling/weather-timing noise versus true panel
-aging. The defensible statement is therefore a bracket — true degradation sits somewhere
-between ~0%/yr (if the swing is entirely soiling/weather timing) and the naive ~1.3-1.8%/yr
-(if none of it is) — with index.html's 0.5-1.0%/yr point falling inside that bracket but NOT
-INDEPENDENTLY CONFIRMED as more correct than any other point inside it. index.html's
-degradation subsection (sec9) now cites both this script's naive-range confirmation and this
-honest gap, rather than leaving the original hand-computed claim unaudited.
+that narrower range. `soiling_results.json`'s validated 2024-08-12 cleaning event
+(`sanity_check_2024_cleaning`, reused read-only, never recomputed) shows an 11.8% production
+gain after ~134 dry days (~4.4 months) with no rain — a SINGLE validated event whose swing
+exceeds the ENTIRE naive 4-year change (-5.22%, 2021 to 2025) by more than double.
+
+**Codex review pass 3, finding 2 — a claimed "bracket" overstated what this evidence
+establishes.** An earlier draft used the cleaning event to argue a bound: true degradation
+sits between ~0%/yr (if the observed swing is entirely soiling/weather timing) and the naive
+rate (if none of it is). Codex correctly identified that this reasoning only rules out ONE
+direction of confounding — it assumes soiling/weather can only make the naive trend look
+WORSE than true degradation, when it could just as easily MASK a true degradation rate WORSE
+than the naive trend shows, if later years in the 2021-2025 span happened to be sunnier or
+had less soiling accumulation. A single confounding event large enough to explain the ENTIRE
+naive 4-year change on its own is evidence that soiling/weather can move the annual total by
+more than the naive trend itself, in EITHER direction — not evidence that the true rate is
+bounded to only push one way. With no daily weather or production record before 2025-07-24 to
+separate soiling/weather timing from true panel aging across 2021-2025, the honest statement
+is that true degradation is NOT DETERMINED from data in this repo, not merely uncertain within
+a stated bracket. index.html's degradation subsection (sec9) now cites this script's
+naive-range confirmation and this honest non-determination, rather than a bound the evidence
+doesn't actually support.
 
 **Gross household load, not net import (AC3).** The Green Button `Consumption`/`Generation`
 columns are net IMPORT/EXPORT, never gross load (self-consumed solar never crosses that
@@ -2742,17 +2750,34 @@ own bill), `consumption_term_kwh` = +491.0 kWh; `production_term_kwh` = +5.0 kWh
 endpoints matching their bills exactly by construction, decomposed sum equal to the observed
 496 kWh change to the same precision (0.0% error), and the AC4 load-bearing test in
 `test_gross_import_decomposition.py` asserts this precisely rather than merely under a
-tolerance. The back-solved production ratio (`production_scale_2024_over_2026` = 1.024, i.e.
-2024 produced ~2.4% more than 2026 relative to the template) lands within 5.9% of the
-independent weather/seasonal-rate estimate (`production_scale_estimated_from_weather` = 1.088)
-— not a precise match, but the same order of magnitude and the same qualitative conclusion
-(little year-over-year production change), meaningful given how sensitive a two-year,
-no-daily-data transfer estimate necessarily is (demonstrated directly by the failed
-intermediate fixes in steps 1 and 6 above, whose estimates swung by many percentage points
-just from which specific days or which construction were used). This reframes what AC1's
-normalization is FOR here: not to drive the headline split (an exact accounting identity does
-that, once one parameter is pinned per year), but to independently sanity-check whether the
-pinned values are physically plausible.
+tolerance.
+
+**Codex review pass 3, finding 1 — the back-solved production RATIO is not a valid rate
+comparison, even though the DECOMPOSITION it feeds is fine.** An earlier draft reported
+`production_scale_2024_over_2026` (1.024) as "2024 produced ~2.4% more than 2026" and compared
+it numerically against the independent weather/seasonal-rate estimate
+(`production_scale_estimated_from_weather` = 1.088, a 5.9% gap, framed as rough agreement).
+Codex correctly identified that this comparison conflates a real day-count-fitting artifact
+with genuine signal: `production_scale_2026` is fit so a NONLINEAR gross-import equation
+matches 2026's 29-day bill using the 32-day template's SHAPE, while `production_scale_2024` is
+fit against 2024's own 32-day bill using the SAME template — since 2024's target already
+matches the template's length exactly and 2026's doesn't, fitting a 32-day-shaped simulation
+to a 29-day target mechanically pulls `production_scale_2026` toward roughly 29/32 ≈ 0.906
+independent of any genuine production change (confirmed: `production_scale_2026_vs_template`
+= 0.917, suspiciously close to that ratio). Applying Codex's own suggested day-count
+correction (`1.024 × 29/32 ≈ 0.928`) does not merely shrink the disagreement — it FLIPS the
+direction relative to the weather-based estimate (0.928 vs 1.088), and since that correction
+is itself only an approximation for a nonlinear fit, presenting its specific value as
+authoritative would trade one questionable precision claim for another. The fix taken:
+`production_scale_2024_over_2026`/`production_scale_backsolved_from_bill` remain in the
+artifact for full transparency and reproducibility, but are now explicitly labeled as NOT a
+day-count-clean rate comparison (`production_scale_backsolved_not_a_clean_rate_comparison`),
+and the numeric "cross-check" against the weather-based estimate has been removed from both
+the artifact's interpretive framing and the report prose. **Critically, the Shapley
+DECOMPOSITION itself — `consumption_term_kwh`, `production_term_kwh`, and the observed-change
+match — is unaffected by this finding**: it is computed directly from the four well-defined
+corners, each exact by construction against its own bill, and never depended on the scale
+ratio being independently interpretable as a rate.
 
 Under the EV-concentrated alternative shape, the split is +469.7 kWh consumption against
 +26.3 kWh production — its own terms summing to the observed 496 kWh change exactly, just like
