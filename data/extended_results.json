@@ -111,7 +111,8 @@
      5.6,
      6.2
     ],
-    "swing_yr": 0.6
+    "swing_yr": 0.6,
+    "note": "The $187.56/$270.36 DSGS figures behind this lever are a PARTIAL-SEASON observation (2025-07-24..2025-10-30 only, not the full May-October season) and an inclusive upper-bound SCENARIO (the union of ~14 aggregation schedules, not any single real household's own) -- see data/dsgs_vpp_backtest.json's partial_season_caveat and per_aggregation_sensitivity fields. Not a fully-annualized, single-household measurement."
    },
    "escalation_5yr_avg": {
     "payback_range_yr": [

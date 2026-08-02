@@ -225,6 +225,62 @@ def case_soc_never_leaves_the_physical_bounds():
     return "SOC stays within [0, cap] across all-day event forcing at 5 reserve levels"
 
 
+@case
+def case_reserve_floor_holds_against_combined_ordinary_and_event_discharge():
+    """Regression for the "reserve honored only in isolation" defect: the fixtures
+    above all use consumption_kw=0.0, so imp[i] is always 0 and the ordinary
+    (BAU-equivalent) disch_win branch never actually discharges anything during an
+    event hour -- the bug (the ordinary branch drawing against the FULL soc, with no
+    reserve floor, even inside a declared event hour) was invisible to them.
+
+    This case uses REAL non-zero house load (3 kW, like the existing evening-load
+    fixture) with a single declared event hour (HE20, floor_hour 19) that falls AFTER
+    three PRIOR, non-event evening hours (16, 17, 18) of ordinary discharge have
+    already drawn SOC down from full to just above the 20% reserve floor (verified
+    below: SOC enters the event hour at ~4.01 kWh, above the 2.70 kWh floor). Without
+    the fix, the event hour's own ordinary discharge keeps draining unconstrained and
+    SOC ends the hour at ~1.12 kWh -- well below the floor (confirmed against a
+    pre-fix copy of this function during development: it drains to ~0.33 kWh by the
+    start of the following hour). With the fix, SOC is clipped at exactly the 2.70 kWh
+    floor for the rest of that hour and the interval immediately after it.
+
+    Deliberately NOT asserted for hours beyond the one immediately following the
+    event hour: per the issue's own framing ("a backup reserve reduces dispatchable
+    capacity during events"), the reserve protects capacity FOR declared event hours,
+    not a standing floor on ordinary day-to-day arbitrage outside them -- a
+    later, non-event hour is free to draw SOC below the floor, and does (by design,
+    not a bug)."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=3.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    reserve_frac = 0.20
+    event_set = {(date, 19)}   # HE20 (19:00-19:59), the 3rd of 5 evening discharge
+                               # hours (16-21) -- late enough that prior non-event
+                               # hours have already drawn SOC down near the floor,
+                               # early enough that SOC enters the hour above it.
+    imp, exp, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, reserve_frac)
+    reserve_kwh = reserve_frac * vb.CAP
+    h = np.floor(d.hour.values).astype(int)
+    idxs = np.where(h == 19)[0]
+
+    soc_entering = soc_start[idxs[0]]
+    assert soc_entering > reserve_kwh, (
+        f"fixture precondition failed: SOC must enter the event hour ({soc_entering}) "
+        f"ABOVE the reserve floor ({reserve_kwh}) for this to be a meaningful "
+        "regression case")
+    assert bau_kwh[idxs].sum() > 0, (
+        "fixture must actually exercise the ordinary/BAU discharge branch during the "
+        "event hour, or this case can't catch the bug it targets")
+
+    during_and_just_after = np.append(soc_start[idxs], soc_start[idxs[-1] + 1])
+    assert (during_and_just_after >= reserve_kwh - EPS).all(), (
+        f"SOC dropped below the {reserve_kwh} kWh reserve floor during the event "
+        f"hour: {during_and_just_after}")
+    return (f"SOC enters the event hour at {soc_entering:.4f} kWh (above the "
+            f"{reserve_kwh:.2f} kWh floor) and is held at exactly the floor for the "
+            "rest of the hour, with real house load driving ordinary discharge")
+
+
 # ---------------------------------------------------------------------------
 # (b) build_calendar() fail-closed / correctness -- synthetic xlsx, no private
 #     archive needed (openpyxl fixtures built in a tempdir)
@@ -442,8 +498,13 @@ def case_committed_results_json_has_expected_sections():
               "finding_2026_enrollment_eligibility", "grandfathering_interaction_finding",
               "backup_reserve_caveat", "payment_rate_source", "events_outside_window",
               "events_in_window", "miss_rate", "revenue", "opportunity_cost_note",
-              "second_program_year_event_list_2024", "total_discharge_kwh_note"):
+              "second_program_year_event_list_2024", "total_discharge_kwh_note",
+              "partial_season_caveat", "per_aggregation_sensitivity"):
         assert k in result, f"results section missing: {k}"
+    caveat = result["partial_season_caveat"]
+    assert "NOT DETERMINED" in caveat and "PARTIAL-SEASON" in caveat, (
+        "Defect-#3 fix: the partial-season caveat must say plainly that a "
+        "full-season/annual figure is not determined, not just imply it")
     assert "VNEM" in result["grandfathering_interaction_finding"], (
         "AC6's grandfathering-interaction check must cite what was actually searched")
     assert result["hypothetical"] is True
@@ -525,14 +586,62 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
 
 @case
 def case_artifact_regenerates_byte_identically():
+    """main() now embeds per_aggregation_sensitivity (Defect-#2 fix), which needs the
+    private raw CEC archive to compute -- so full byte-identical regeneration needs
+    it too, not just the Green Button archive and the committed calendar."""
     _require_archive()
     _require_calendar()
+    _require_raw_xlsx()
     path = vb.RESULTS_JSON
     before = path.read_bytes()
     vb.main()
     after = path.read_bytes()
     assert after == before, "data/dsgs_vpp_backtest.json is not reproducible"
     return "data/dsgs_vpp_backtest.json regenerates byte-identically"
+
+
+@case
+def case_per_aggregation_sensitivity_reports_a_real_range_not_the_union():
+    """Defect-#2 fix: the committed artifact's headline gross/net/kWh/miss-rate
+    figures come from the UNION of ~14 aggregations' event calendars -- a deliberate
+    upper-bound-on-event-FREQUENCY scenario, not any single real household's actual
+    schedule (a household on a single aggregation's calendar can have a HIGHER net
+    revenue than the union: fewer, better-timed events can cost less in opportunity
+    cost than the union's larger and less selectively-timed event set costs in
+    return, so the union figure is not guaranteed to bound the per-aggregation range
+    from above). This case checks that the artifact reports the per-individual-
+    aggregation spread too (all ~14 isolated, independently backtested against their
+    own calendar), with a sane internal shape (min <= every row <= max)."""
+    _require_archive()
+    _require_raw_xlsx()
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    pas = result["per_aggregation_sensitivity"]
+    assert isinstance(pas, dict), (
+        "per_aggregation_sensitivity must be a computed dict when the raw archive "
+        "is present, not the 'NOT COMPUTED' placeholder string")
+    assert pas["n_aggregations"] >= 10, (
+        f"expected ~14 isolatable aggregations, got {pas['n_aggregations']}")
+    assert len(pas["per_aggregation"]) == pas["n_aggregations"]
+    assert pas["net_usd_min"] <= pas["net_usd_max"]
+    assert 0 <= pas["miss_rate_min"] <= pas["miss_rate_max"] <= 1
+    for agg_id, row in pas["per_aggregation"].items():
+        assert row["n_event_hours_in_window"] >= 0
+        assert pas["net_usd_min"] - 1e-6 <= row["net_usd"] <= pas["net_usd_max"] + 1e-6, (
+            agg_id, row["net_usd"])
+
+    # cross-check via a fresh direct call (not just re-reading the committed JSON)
+    d = br.load()
+    fresh = vb.per_aggregation_sensitivity(d)
+    assert fresh["n_aggregations"] == pas["n_aggregations"]
+    assert abs(fresh["net_usd_min"] - pas["net_usd_min"]) < 0.01
+    assert abs(fresh["net_usd_max"] - pas["net_usd_max"]) < 0.01
+
+    union_net = result["revenue"]["reserve_20pct"]["net_usd"]
+    return (f"{pas['n_aggregations']} aggregations isolated; net revenue "
+            f"${pas['net_usd_min']:.2f}-${pas['net_usd_max']:.2f} vs. the "
+            f"union-based headline ${union_net:.2f}")
 
 
 @case

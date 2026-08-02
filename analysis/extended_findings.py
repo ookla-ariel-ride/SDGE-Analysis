@@ -22,12 +22,18 @@ Cited constants (sources in research notes / report prose):
   gasoline $4.65/gal (EIA CA regular, Jun 2025-May 2026 trailing 12-mo published);
   fleet 23.4 mpg (FHWA VM-1 2024 on-road light-duty);
   supercharging $0.45/kWh (estimate, typical CA range $0.40-0.50);
-  DSGS VPP net revenue: $259.09/yr (20% backup reserve, primary) / $270.36/yr
-  (0%-reserve sensitivity) -- empirically backtested against the real 2025 DSGS
-  event calendar and this household's own measured load (data/dsgs_vpp_
-  backtest.json, analysis/dsgs_vpp_backtest.py, issue #10); read from that
-  committed artifact at runtime below, not hardcoded here. Retired: the earlier
-  $150-350/season Tesla program-terms extrapolation, kept only as an
+  DSGS VPP net revenue: $187.56/yr (20% backup reserve, primary) / $270.36/yr
+  (0%-reserve sensitivity) -- empirically backtested against the UNION of ~14
+  aggregations' real 2025 DSGS event calendars and this household's own measured
+  load (data/dsgs_vpp_backtest.json, analysis/dsgs_vpp_backtest.py, issue #10);
+  read from that committed artifact at runtime below, not hardcoded here. This is
+  a PARTIAL-SEASON figure (2025-07-24..2025-10-30 only, not the full May-October
+  season) and an upper-bound SCENARIO (the union of aggregations, not any single
+  real household's own schedule -- see the artifact's per_aggregation_sensitivity
+  field for the $108-249/yr range across the 14 individual aggregation schedules
+  a real household might actually belong to); NOT a fully-annualized, single-
+  household measurement, and this tornado lever's own label says so. Retired: the
+  earlier $150-350/season Tesla program-terms extrapolation, kept only as an
   order-of-magnitude sanity check inside dsgs_vpp_backtest.py itself.
 
 Writes data/extended_results.json. Requires usage.csv (Green Button) beside it,
@@ -196,10 +202,16 @@ def _load_dsgs_backtest():
     return float(net_20pct), float(net_0pct_sens)
 
 DSGS_NET_20PCT_USD, DSGS_NET_0PCT_SENS_USD = _load_dsgs_backtest()
-                        # $259.09 / $270.36 as of the committed backtest —
+                        # $187.56 / $270.36 as of the committed backtest —
                         # read at runtime, not pinned, so a future rerun of
                         # dsgs_vpp_backtest.py (e.g. a later CEC filing year)
-                        # flows through here automatically.
+                        # flows through here automatically. Both figures are a
+                        # PARTIAL-SEASON (2025-07-24..2025-10-30, not the full
+                        # May-Oct season) upper-bound-scenario observation, not
+                        # a fully-annualized single-household measurement --
+                        # see dsgs_vpp_backtest.json's partial_season_caveat and
+                        # per_aggregation_sensitivity fields, and the
+                        # "dsgs_revenue" tornado lever's own label below.
 
 # Section -> governing intake flag. Mapping rationale (what each CONSUMES):
 #   electrification_dividend (B): EV charging kWh detected in usage.csv,
@@ -521,6 +533,14 @@ for k, vals in levers.items():
     pays = [round(v[1], 1) for v in vals]
     tor[k] = {"payback_range_yr": [min(pays), max(pays)],
               "swing_yr": round(max(pays) - min(pays), 1)}
+tor["dsgs_revenue"]["note"] = (
+    "The $187.56/$270.36 DSGS figures behind this lever are a PARTIAL-SEASON "
+    "observation (2025-07-24..2025-10-30 only, not the full May-October season) "
+    "and an inclusive upper-bound SCENARIO (the union of ~14 aggregation "
+    "schedules, not any single real household's own) -- see "
+    "data/dsgs_vpp_backtest.json's partial_season_caveat and "
+    "per_aggregation_sensitivity fields. Not a fully-annualized, single-household "
+    "measurement.")
 out["tornado_battery"] = {
     "base_payback_yr": round(BATT_COST / G, 1),
     "levers": tor,

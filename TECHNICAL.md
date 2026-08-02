@@ -855,9 +855,13 @@ HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HD
 therms/yr), `nbt_2039` (price-aware battery marginal $2,506–2,540/yr under 3–8¢ flat
 exports vs $2,329 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.2 yr >
 install quote 2.1 > escalation 0.9 > DSGS 0.6 > EV-fix interaction 0.3 around the 6.2-yr
-base — the DSGS swing shrank from an earlier 0.8 yr once its lever switched from the
-$150–350/season program-terms guess to the $259.09/$270.36 backtested net-revenue figures,
-§3.19). Figures derived purely from external estimates (outage-hour exposure) carry
+base — the DSGS lever's envelope is unchanged at 5.6–6.2 yr, but which scenario sits at
+which end moved: the PRIMARY 20%-reserve case now rounds to **5.8 yr** (up from an earlier
+5.6 yr, once the reserve-floor defect above was fixed and the union-based net revenue
+dropped from $259.09 to $187.56/yr), and it is the 0%-reserve sensitivity ($270.36/yr net,
+unaffected by that fix) that now anchors the 5.6-yr end of the range instead. The lever's
+own `note` field states both figures are a partial-season, upper-bound-scenario input —
+see §3.19). Figures derived purely from external estimates (outage-hour exposure) carry
 **estimated** pills in the report; artifact-derived ones, including DSGS VPP revenue since
 issue #10, carry **modeled**/**measured** per source. The report's "What to do Monday"
 appendix is **content-only** — it cites §5/§6/§9/§13 figures and introduces no new
@@ -1189,14 +1193,19 @@ text.
   smaller territory) and cross-checked against TN 266629's 2024 analysis, which uses real
   utility names and shows the same relative ordering (PG&E > SCE > SDG&E > LADWP) one year
   earlier. Corroborating, not proof — anonymization is anonymization.
-- **Aggregation union, an upper bound on event frequency.** Restricted to
+- **Aggregation union, an upper-bound SCENARIO, not the headline.** Restricted to
   UDC2 × Residential × Stationary × 2-hour resource duration (the category matching a
   residential Powerwall-class battery), ~14 distinct anonymized aggregations each run their
   own monthly test on their own schedule; a real household sees only ONE aggregation's
-  hours, not all of them. This backtest uses the UNION of all distinct (date, hour) event
-  slots across that category (68 slots; 16 with aggregations disagreeing on event type,
-  resolved by majority vote, ties toward "Test Capacity") — deliberately inclusive, so it
-  overstates event frequency rather than guessing at one arbitrary aggregation's schedule.
+  hours, not all of them. The committed calendar uses the UNION of all distinct (date,
+  hour) event slots across that category (68 slots; 16 with aggregations disagreeing on
+  event type, resolved by majority vote, ties toward "Test Capacity") — deliberately
+  inclusive, so it overstates event frequency rather than guessing at one arbitrary
+  aggregation's schedule. Because a real household belongs to exactly one aggregation,
+  `per_aggregation_sensitivity()` independently re-runs the SAME backtest against each of
+  the 14 individual aggregations' own calendars and reports the resulting range (see
+  "Revenue, net" below) — the union-based gross/net/kWh/miss-rate figures are relabeled as
+  that range's inclusive upper-bound scenario, not an unqualified point estimate.
 - **Payment-rate source.** Primary: EMPIRICAL — each month's "Monthly Capacity Payment ($)"
   ÷ "Demonstrated Capacity (MW)" across UDC2/Residential/2-hr rows with positive
   demonstrated capacity, essentially constant within a month (<0.03% relative spread).
@@ -1235,39 +1244,73 @@ inside this household's measured window, forces discharge up to the greater of t
 household's own load and its remaining headroom above the reserve floor and the 11.5 kW
 power cap — the behavior a revenue-maximizing VPP aggregator actually commands. An event
 hour where SOC is already at or below the reserve floor is a MISS (SOC-constrained,
-counted, not hidden).
+counted, not hidden). The reserve floor binds on the WHOLE event hour, not just the
+event-forced increment: the ordinary/BAU-equivalent greedy discharge is ALSO capped at the
+reserve floor during a declared event hour (an earlier version capped only the
+event-forced portion, letting the ordinary branch draw straight through the floor —
+confirmed against the real dataset to breach the floor in 38 of 46 in-window event hours,
+worst case draining to 0 kWh; fixed and covered by a regression test with real,
+non-zero house load, since the zero-load fixtures used elsewhere never exercised the
+ordinary branch during an event hour at all).
 
-**Revenue, net.** GROSS = the empirical $/kW-month rate × this household's monthly
-LMP-weighted demonstrated capacity (Test Capacity hours only, per the Data Dictionary's
-own rule; demonstrated capacity nets a prescriptive baseline derived the same empirical
-way, ~10.8% of nameplate), summed over the participation months inside the measured
-window: **$242.89/yr**. OPPORTUNITY COST is COMPUTED, not assumed — `rates.bill_nem`
-re-billed for the full measured window with vs without the VPP dispatch modification (the
-same "re-bill the modified year" technique the rest of this repo's battery/behavior work
-uses, CLAUDE.md §1b) — and came out small and slightly NEGATIVE (**−$16.20/yr**): DSGS
-event hours fall inside 4–9pm on-peak, already this household's highest-value discharge
-window under ordinary price-aware dispatch, so the extra forced export there mostly draws
-down SOC that would otherwise have been used in cheaper off-peak/super-off-peak hours
-(refilled overnight anyway) rather than costing expensive on-peak service later — a real,
-computed NEM-netting effect specific to this household's usage pattern, not an assumption.
-NET = **$259.09/yr** at the 20% reserve (primary); a 0%-reserve sensitivity gives $255.02
-gross, −$15.34 opportunity cost, **$270.36/yr** net. AC4's kWh figure: **238.39 kWh**
-delivered across the 46 in-window event hours at 20% reserve (245.90 kWh at 0% reserve) —
+**Revenue, net — union-calendar scenario (upper bound, not the headline).** GROSS = the
+empirical $/kW-month rate × this household's monthly LMP-weighted demonstrated capacity
+(Test Capacity hours only, per the Data Dictionary's own rule; demonstrated capacity nets
+a prescriptive baseline derived the same empirical way, ~10.8% of nameplate), summed over
+the participation months inside the measured window: **$173.85/yr**. OPPORTUNITY COST is
+COMPUTED, not assumed — `rates.bill_nem` re-billed for the full measured window with vs
+without the VPP dispatch modification (the same "re-bill the modified year" technique the
+rest of this repo's battery/behavior work uses, CLAUDE.md §1b) — and came out small and
+slightly NEGATIVE (**−$13.71/yr**): DSGS event hours fall inside 4–9pm on-peak, already
+this household's highest-value discharge window under ordinary price-aware dispatch, so
+the extra forced export there mostly draws down SOC that would otherwise have been used in
+cheaper off-peak/super-off-peak hours (refilled overnight anyway) rather than costing
+expensive on-peak service later — a real, computed NEM-netting effect specific to this
+household's usage pattern, not an assumption. NET = **$187.56/yr** at the 20% reserve
+(primary); a 0%-reserve sensitivity gives $255.02 gross, −$15.34 opportunity cost,
+**$270.36/yr** net (unaffected by the reserve-floor fix above, since a 0% reserve has no
+floor to enforce). AC4's kWh figure: **186.98 kWh** delivered across the 46 in-window
+event hours at 20% reserve (245.90 kWh at 0% reserve) —
 `revenue.<scenario>.total_discharge_kwh` in the artifact, event-forced discharge (which
 `run_batt_vpp` routes entirely to export) plus any concurrent ordinary/BAU discharge that
 hour, matching the CEC's own Net Discharge crediting basis rather than a narrower
-grid-export-only figure (see the artifact's `total_discharge_kwh_note`). Miss rate: 7 of 46 in-window event
-hours (15.2%) at 20% reserve vs 17 of 46 (37.0%) at 0% reserve — counterintuitively HIGHER
-at the more aggressive setting, traced hour-by-hour to consecutive-event-hour days where a
-larger first-hour draw leaves nothing for the second hour (a real tradeoff between total
-throughput and miss count, not an inversion bug; documented with a specific example date in
-the artifact's `miss_rate.note`).
+grid-export-only figure (see the artifact's `total_discharge_kwh_note`). Miss rate: 23 of
+46 in-window event hours (50.0%) at 20% reserve vs 17 of 46 (37.0%) at 0% reserve — now the
+expected direction (the tighter reserve leaves less headroom for both ordinary and
+event-forced discharge, so more hours fall short of the 1 kWh miss threshold), reversed
+from an earlier, pre-fix run whose inverted relationship was itself a symptom of the
+reserve-floor defect above, not a genuine tradeoff; see the artifact's `miss_rate.note`.
 
-**Coverage gaps, disclosed rather than filled.** This household's measured window starts
-2025-07-24, so 22 May–July 2025 event hours are outside it and get zero revenue attributed
-— a data-availability gap, not extrapolated. The 2026 DSGS season's tail overlaps the
-window, but the CEC had not published 2026 performance data as of this run (2025's data
-itself was not filed until March 2026) — also zero revenue attributed, for the same reason.
+**Revenue, net — per-individual-aggregation range (the real range a household could see).**
+`per_aggregation_sensitivity()` isolates each of the 14 individual aggregations in the
+UDC2/Residential/Stationary/2-hour category (grouping the same Hourly Discharge Dataset
+rows by "Aggregation Identifier (anonymized)" instead of unioning them) and re-runs the
+identical `backtest()` pipeline against each one's own calendar, at the same 20% reserve.
+Across all 14: **net revenue $108.45–$249.47/yr**, **miss rate 43.75%–50.0%** — this is
+the range a real single-aggregation household could actually have earned, not the union
+figure above, which sits inside this range rather than bounding it from above (a household
+on a smaller, better-timed aggregation calendar can net MORE than the union: fewer event
+hours can mean less opportunity cost without proportionally less demonstrated capacity).
+Committed in the artifact's `per_aggregation_sensitivity` field (`net_usd_min/max`,
+`miss_rate_min/max`, and the full 14-row `per_aggregation` breakdown), computed fresh from
+the private raw archive on every regeneration — not scaled from the union figure by a
+fraction.
+
+**Coverage gaps, disclosed rather than filled — this is a PARTIAL SEASON, not a complete
+one.** This household's measured window starts 2025-07-24, so 22 May–July 2025 event
+hours are outside it and get zero revenue attributed — a data-availability gap, not
+extrapolated. Every gross/net/kWh/miss-rate figure above therefore covers only
+2025-07-24 through 2025-10-30, roughly the back two-thirds of the May–October 2025 season,
+NOT a complete season and NOT an annualized figure — stated explicitly in the artifact's
+`partial_season_caveat` field. A full season would very likely earn MORE (it only adds
+event hours relative to the partial figure here), but a full-season or annual revenue
+figure is **NOT DETERMINED** — it is not extrapolated from the partial figure, because no
+measured load exists for the missing May–July hours in any year this household has been
+metered. Any downstream use of these figures as an annual input (the `dsgs_revenue`
+tornado lever in `extended_findings.py`, §3.14) carries the same caveat rather than
+presenting a complete season's revenue. The 2026 DSGS season's tail overlaps the window,
+but the CEC had not published 2026 performance data as of this run (2025's data itself was
+not filed until March 2026) — also zero revenue attributed, for the same reason.
 The 2024 event list from TN 266629 (three statewide 2-hour events on 2024-07-10,
 2024-09-04, 2024-09-05, plus an aggregate 26 event-hours/16 days) satisfies the
 second-program-year requirement but contributes no revenue either way: it predates this
@@ -1277,12 +1320,19 @@ month" without printing the figures) — disclosed as **not determined** for 202
 specifically, never guessed from 2025's empirical rate.
 
 **Reconciliation with §6.** The retired estimate's $150–350/season range and this
-backtest's $242.89 gross for the ~4 in-window participation months are the same order of
+backtest's $173.85 gross for the ~4 in-window participation months are the same order of
 magnitude (a partial season at the program-terms rate) — the sanity check the module's
 own docstring sets out to perform. `extended_findings.py`'s `tornado_battery.dsgs_revenue`
-lever reads this artifact's two net-revenue figures read-only (§3.14) rather than the
-retired $250/$350 program-terms guesses, shrinking that lever's payback swing from 0.8 yr
-to 0.6 yr around the same 6.2-yr base.
+lever reads this artifact's two union-scenario net-revenue figures read-only (§3.14)
+rather than the retired $250/$350 program-terms guesses. The lever's three tested points
+are $0 (no DSGS, 6.2-yr baseline), $187.56 (20%-reserve primary, 5.8 yr), and $270.36
+(0%-reserve sensitivity, 5.6 yr); `payback_range_yr` reports the min/max ACROSS ALL THREE
+— **[5.6, 6.2] yr, swing 0.6 yr** — so the 20%-reserve primary case's own 5.8-yr payback is
+an interior point of that bracket, not one of its two edges. Across the 14 individual
+aggregation schedules (`per_aggregation_sensitivity`), the same battery's DSGS-adjusted
+payback ranges roughly 5.6–5.9 yr — the lever's own note field states this range is a
+partial-season, upper-bound-scenario input, not a fully-annualized single-household
+figure.
 
 **Fail-closed design.** Every ambiguity above is checked and asserted in
 `test_dsgs_vpp_backtest.py`, not just narrated. The event calendar and results JSON are
