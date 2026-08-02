@@ -444,13 +444,29 @@ def build_calendar(xlsx_path=RAW_XLSX):
           f"{cal['date'].nunique()} distinct dates)")
     print(f"derived monthly rates ($/kW-month): {derived_rates}")
     print(f"hardcoded MONTHLY_RATE_USD_PER_KW:   {MONTHLY_RATE_USD_PER_KW}")
-    for mo, v in derived_rates.items():
-        hard = MONTHLY_RATE_USD_PER_KW.get(mo)
-        if hard is None or abs(hard - v) > 0.01:
-            print(f"  NOTICE: month {mo} derived rate {v} disagrees with hardcoded "
-                  f"{hard} by more than 1 cent/kW -- consider updating the constant.")
     print(f"derived baseline ratio: {derived_baseline_ratio} "
           f"(hardcoded BASELINE_RATIO: {BASELINE_RATIO})")
+    # FAIL CLOSED on drift (issue #10 third Codex review round): this used to be a
+    # printed NOTICE only, so a --build-calendar run against an updated raw workbook
+    # could publish a new calendar while every subsequent normal run kept using the
+    # now-stale hardcoded MONTHLY_RATE_USD_PER_KW/BASELINE_RATIO constants, silently
+    # combining a new event calendar with old settlement inputs. The calendar CSV
+    # (event dates/hours/LMP) is independent of these Python constants and has
+    # already been written above; this check exists to force a maintainer to update
+    # the constants before the tool is considered done, not to protect the CSV write.
+    drift = [f"month {mo}: derived {v} vs hardcoded {MONTHLY_RATE_USD_PER_KW.get(mo)}"
+             for mo, v in derived_rates.items()
+             if MONTHLY_RATE_USD_PER_KW.get(mo) is None
+             or abs(MONTHLY_RATE_USD_PER_KW[mo] - v) > 0.01]
+    if abs(derived_baseline_ratio - BASELINE_RATIO) > 0.001:
+        drift.append(f"baseline ratio: derived {derived_baseline_ratio} vs "
+                     f"hardcoded {BASELINE_RATIO}")
+    if drift:
+        raise SystemExit(
+            "build_calendar: the calendar CSV was written, but these hardcoded "
+            "constants have drifted from what the raw archive now derives -- "
+            "update MONTHLY_RATE_USD_PER_KW/BASELINE_RATIO in this script before "
+            "any normal run uses them: " + "; ".join(drift))
     return cal, derived_rates, derived_baseline_ratio
 
 
@@ -1069,26 +1085,43 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     return result
 
 
+def per_aggregation_sensitivity_or_preserved(d):
+    """The per_aggregation_sensitivity field's value for the artifact: freshly
+    computed if the private raw CEC archive is present, otherwise preserved from
+    whatever is already committed at RESULTS_JSON (issue #10 third Codex review
+    round). This script is CI_RUNNABLE (the normal run needs no archive), so a
+    CI/archive-less run MUST NOT overwrite the committed evidence this field
+    carries with a placeholder -- an earlier version of this code did exactly
+    that on every archive-less run, silently destroying the real 14-aggregation
+    breakdown backing the report's own published $97-$213 range, every time the
+    archive-less path executed (which is the NORMAL case for CI and any fresh
+    clone). Only falls back to a placeholder string if there is truly nothing
+    committed yet (e.g. a from-scratch bootstrap with no archive ever available,
+    which should not happen in practice but must not crash)."""
+    if RAW_XLSX.exists():
+        return per_aggregation_sensitivity(d)
+    if RESULTS_JSON.exists():
+        existing = json.loads(RESULTS_JSON.read_text())
+        return existing.get(
+            "per_aggregation_sensitivity",
+            "NOT COMPUTED: needs the private raw CEC archive, which this checkout "
+            "does not have, and the previously committed artifact never computed "
+            "this field either.")
+    return (
+        "NOT COMPUTED: needs the private raw CEC archive "
+        f"({RAW_XLSX}), which this checkout does not have, and there is no "
+        "previously committed artifact to preserve this field from. See "
+        "per_aggregation_sensitivity() and the event_hour_union_caveat note "
+        "above -- the union-calendar figures elsewhere in this artifact are an "
+        "inclusive upper bound, not this household's actual single-aggregation "
+        "revenue.")
+
+
 def main():
     cal = load_calendar()
     d = br.load()
     result = backtest(d, cal)
-
-    # Defect-#2 fix: the union-calendar figures above are an inclusive upper-bound
-    # scenario, not a real household's actual schedule (see event_hour_union_caveat).
-    # Needs the private raw CEC archive (per-aggregation identity isn't in the
-    # committed calendar CSV); if this checkout doesn't have it, say so plainly in
-    # the artifact rather than silently omitting the field.
-    if RAW_XLSX.exists():
-        result["per_aggregation_sensitivity"] = per_aggregation_sensitivity(d)
-    else:
-        result["per_aggregation_sensitivity"] = (
-            "NOT COMPUTED: needs the private raw CEC archive "
-            f"({RAW_XLSX}), which this checkout does not have. See "
-            "per_aggregation_sensitivity() and the event_hour_union_caveat note "
-            "above -- the union-calendar figures elsewhere in this artifact are an "
-            "inclusive upper bound, not this household's actual single-aggregation "
-            "revenue.")
+    result["per_aggregation_sensitivity"] = per_aggregation_sensitivity_or_preserved(d)
 
     DATA.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(DATA), suffix=".tmp")

@@ -533,6 +533,77 @@ def case_build_calendar_writes_a_valid_csv_with_the_udc_caveat_comment():
         tmp_dir.cleanup()
 
 
+@case
+def case_build_calendar_fails_closed_on_rate_drift():
+    """Regression for a third Codex review round: an updated raw workbook whose
+    derived $/kW-month rate no longer matches the hardcoded MONTHLY_RATE_USD_PER_KW
+    used to be only a printed NOTICE -- the CSV would still be published successfully,
+    and every subsequent normal run would silently combine a fresh event calendar
+    with a now-stale hardcoded rate. build_calendar() must now raise SystemExit
+    instead, so a maintainer is forced to update the constant before the tool
+    considers itself done."""
+    real_calendar = vb.CALENDAR_CSV
+    tmp_dir = tempfile.TemporaryDirectory()
+    vb.CALENDAR_CSV = pathlib.Path(tmp_dir.name) / "dsgs_event_calendar_2025.csv"
+    tmp_xlsx = pathlib.Path(tempfile.mkstemp(suffix=".xlsx")[1])
+    try:
+        hourly = [_hourly_row(date="2025-07-15", hour_end=20)]
+        # payment=999 with power_mw=0.01 derives a rate wildly different from the
+        # hardcoded MONTHLY_RATE_USD_PER_KW[7] = 16.38 -- the drift this case exists
+        # to catch.
+        monthly = [_monthly_row(payment=999.0)]
+        _write_fixture_xlsx(tmp_xlsx, hourly, monthly)
+        try:
+            vb.build_calendar(xlsx_path=tmp_xlsx)
+            raise AssertionError("expected build_calendar to raise SystemExit on rate drift")
+        except SystemExit as e:
+            assert "drift" in str(e).lower() or "hardcoded" in str(e).lower(), str(e)
+        # The CSV must still have been written (it's independent of the Python rate
+        # constants) -- only the constant-drift check fails, not the calendar build.
+        assert vb.CALENDAR_CSV.exists(), (
+            "the calendar CSV write must not be blocked by a rate-drift failure -- "
+            "they're independent artifacts")
+        return "build_calendar raises SystemExit on rate drift, after still writing the CSV"
+    finally:
+        vb.CALENDAR_CSV = real_calendar
+        tmp_xlsx.unlink(missing_ok=True)
+        tmp_dir.cleanup()
+
+
+@case
+def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archive():
+    """Regression for a third Codex review round: on a checkout without the private
+    raw CEC archive (the NORMAL case for CI and any fresh clone, since this script
+    is CI_RUNNABLE), an earlier version of main() overwrote the committed
+    per_aggregation_sensitivity field with a "NOT COMPUTED" placeholder string on
+    every run -- destroying the real 14-aggregation breakdown that backs the
+    report's own published range, every time the archive-less path executed. Fixed:
+    when the archive is absent but a committed artifact already exists, main()
+    preserves that artifact's existing per_aggregation_sensitivity value instead of
+    overwriting it with a placeholder."""
+    real_raw_xlsx = vb.RAW_XLSX
+    real_results_json = vb.RESULTS_JSON
+    tmp_dir = tempfile.TemporaryDirectory()
+    vb.RAW_XLSX = pathlib.Path(tmp_dir.name) / "does_not_exist.xlsx"
+    vb.RESULTS_JSON = pathlib.Path(tmp_dir.name) / "dsgs_vpp_backtest.json"
+    try:
+        assert not vb.RAW_XLSX.exists()
+        preserved_marker = {"net_usd_min": 12.34, "net_usd_max": 56.78,
+                            "note": "a real, previously-committed breakdown"}
+        vb.RESULTS_JSON.write_text(json.dumps({"per_aggregation_sensitivity": preserved_marker}))
+        # Calls the REAL function main() uses, not a reimplementation of its logic --
+        # `d` is unused on this branch (RAW_XLSX absent) so None is fine here.
+        value = vb.per_aggregation_sensitivity_or_preserved(None)
+        assert value == preserved_marker, (
+            "the committed per_aggregation_sensitivity must be preserved, not "
+            f"overwritten with a placeholder -- got {value}")
+        return "an archive-less run preserves the existing committed per_aggregation_sensitivity"
+    finally:
+        vb.RAW_XLSX = real_raw_xlsx
+        vb.RESULTS_JSON = real_results_json
+        tmp_dir.cleanup()
+
+
 # ---------------------------------------------------------------------------
 # (c) committed-artifact shape/content checks -- public, no private archive
 #     needed (deliberately NOT gated behind _require_archive, matching
