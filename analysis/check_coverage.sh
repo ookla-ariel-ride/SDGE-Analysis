@@ -26,7 +26,8 @@ for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_carbon_fullyear test_carbon_dispatch_tradeoff test_household test_publish \
          test_service_headroom test_irreducible_bill test_privacy_tiers test_bill_decomposition \
          test_rates_history test_tou_spread test_scripts_runnable test_nem3_grandfathering \
-         test_dsgs_vpp_backtest test_cca_rate_extraction test_cca_bundled_counterfactual; do
+         test_dsgs_vpp_backtest test_cca_rate_extraction test_cca_bundled_counterfactual \
+         test_battery_sizing_curve; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null
   echo "suite  $t"
 done
@@ -41,7 +42,7 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
          carbon_dispatch_tradeoff tou_audit lifetime_payback soiling_analysis \
          parse_bills billing_model_nem service_headroom rates_history tou_spread \
          bill_decomposition irreducible_bill nem3_grandfathering dsgs_vpp_backtest \
-         cca_rate_extraction cca_bundled_counterfactual; do
+         cca_rate_extraction cca_bundled_counterfactual battery_sizing_curve; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "$g.py" >/dev/null 2>&1 \
     && echo "gen    $g" || { echo "gen    $g FAILED"; exit 1; }
 done

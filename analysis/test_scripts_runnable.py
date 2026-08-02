@@ -55,6 +55,7 @@ MANIFEST = {
     "behavior_rebuild.py": "generator",
     "battery_dispatch_policies.py": "generator",
     "battery_plan_matrix.py": "generator",
+    "battery_sizing_curve.py": "generator",
     "package_results.py": "generator",
     "extended_findings.py": "generator",
     "report_data.py": "generator",
@@ -92,6 +93,7 @@ OWNS = {
     "behavior_rebuild.py":          [("cwd", "behavior_rebuild.json")],
     "battery_dispatch_policies.py": [("cwd", "battery_dispatch_policies.json")],
     "battery_plan_matrix.py":       [("data", "battery_plan_matrix.json")],
+    "battery_sizing_curve.py":      [("data", "battery_sizing_curve.json")],
     "package_results.py":           [("data", "package_results.json")],
     "extended_findings.py":         [("data", "extended_results.json")],
     "report_data.py":               [("data", "report_data.json")],
@@ -283,6 +285,10 @@ CI_RUNNABLE = {
     # -- no raw CEC xlsx needed for the normal run (only --build-calendar needs
     # that, and CI never passes that flag)
     "dsgs_vpp_backtest.py",
+    # needs only usage.csv (via behavior_rebuild.load()) and household.yaml, same
+    # shape as battery_dispatch_policies.py above; no tie-out assertion against
+    # archive-derived data inside the generator itself (unlike battery_plan_matrix.py)
+    "battery_sizing_curve.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run

@@ -104,6 +104,8 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **ELRP (Emergency Load Reduction Program)** — A CPUC demand-response pilot paying roughly $2/kWh for load reduction or battery export during called grid-emergency events. The Tesla–SDG&E ELRP virtual power plant closed to new enrollment in 2024, so it counts $0 in this report's battery revenue survey. [CPUC: ELRP](https://www.cpuc.ca.gov/elrp)
 
+**Knee (sizing curve)** — The smallest battery capacity whose own next kWh of storage no longer pays back its marginal cost within the Powerwall 3's 10-year warranty term — the point where adding more storage stops being economically justified on its own, as opposed to buying it for resilience. Found by sweeping capacity from 5 to 40 kWh and pricing each increment against a cost model fit to the two same-power Tesla configs; lands at 20 kWh here in both the current and post-EV-fix scenarios, with no shipping product sitting exactly there (13.5 kWh undershoots it, 27 kWh overshoots it).
+
 **Powerwall 3 (PW3)** — Tesla's current home battery (13.5 kWh storage, 11.5 kW output, expandable), used as the reference hardware in this report's simulations. Enphase's IQ Battery line is the modeled alternative. [Tesla Powerwall](https://www.tesla.com/powerwall)
 
 **Round-trip efficiency** — The fraction of energy put into a battery that comes back out, after charging and inverter losses; modeled here at 90% (store 10 kWh, get back 9).
