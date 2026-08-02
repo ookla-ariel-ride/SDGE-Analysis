@@ -81,6 +81,7 @@ MANIFEST = {
     "dsgs_vpp_backtest.py": "generator",
     "cca_rate_extraction.py": "generator",
     "cca_bundled_counterfactual.py": "generator",
+    "gross_import_decomposition.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -126,6 +127,7 @@ OWNS = {
     "dsgs_vpp_backtest.py":         [("data", "dsgs_vpp_backtest.json")],
     "cca_rate_extraction.py":       [("data", "cca_generation_rates.csv")],
     "cca_bundled_counterfactual.py": [("data", "cca_bundled_counterfactual.json")],
+    "gross_import_decomposition.py": [("cwd", "gross_import_decomposition.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -349,6 +351,11 @@ NEEDS_PRIVATE_ARCHIVE = {
                                    "monte_carlo block exactly -- same tie-out shape as "
                                    "battery_plan_matrix.py, so synthetic inputs must diverge "
                                    "and trip it"),
+    "gross_import_decomposition.py": ("both SAM 8760 exports (samA.csv/samB.csv, the only "
+                                      "independent gross-load instrument -- same dependency "
+                                      "as service_headroom.py) and the raw Green Button "
+                                      "export, none of which has a stand-in carrying a real "
+                                      "two-year-apart pair of billing periods"),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
