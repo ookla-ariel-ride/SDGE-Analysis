@@ -1650,19 +1650,35 @@ so `g0` does not exist for them; their 6 (of 50) Direction-A rows still count fu
 Direction A's headline (which needs no `g0`) and are simply excluded from, and disclosed
 as excluded from, the provider/vintage split.
 
-**The two directions disagree by 174.4%, and the reason is named, not averaged away.**
-Direction A ($49.46/yr) and Direction B ($135.70/yr) are not two readings of the same
-question. Direction A prices CEA against the same-date bundled rate, so the vintage drift
-above nets out of it by construction. Direction B has no 2024 CCA rate to anchor to, so it
-necessarily compares 2024's cheaper bundled rate against CEA's rate as observed in
-2025–2026 — exactly the "one rate vintage per projection" trap CLAUDE.md §9 names
-elsewhere in this repo, folded into what looks like a provider effect. Direction B's larger
-figure is not wrong; it answers a different, harder, vintage-mixed question ("what would
-2024 usage have cost a CCA customer, priced at the only CCA rate ever observed") and is
-reported because AC2 (issue #11) asks for the bidirectional counterfactual, labeled
-modeled, and reconciled here rather than averaged with Direction A. **Direction A is the
-recommendation basis** (modeled · same-date bill rates, 547 days spanning two summers and
-two winters, vs Direction B's 216 days of one summer and a partial winter).
+**The two directions disagree by 174.4%; rate vintage is a real, large, likely major
+contributor, but the gap is not proven to be fully attributable to vintage alone (Codex
+review, issue #11, defect 1 — an earlier version of this text overclaimed the causal
+attribution as a flat, unqualified fact).** Direction A ($49.46/yr) and Direction B
+($135.70/yr) are not two readings of the same question. Direction A prices CEA against the
+same-date bundled rate, so the vintage drift above nets out of it by construction. Direction
+B has no 2024 CCA rate to anchor to, so it necessarily compares 2024's cheaper bundled rate
+against CEA's rate as observed in 2025–2026 — exactly the "one rate vintage per projection"
+trap CLAUDE.md §9 names elsewhere in this repo. **What IS known, verified**: the
+provider/vintage split above measures the vintage effect at $177.09 over the Direction-A
+sample, more than double the $74.05–74.07 provider effect over the same sample, and CEA's
+own charged rate never moved once across the whole corpus while SDG&E's bundled comparison
+rate rose substantially — real, bill-printed facts, and the most plausible dominant driver
+of the 174.4% gap. **What is NOT known**: the $177.09 figure is computed entirely from
+Direction A's own 547-day sample, its own weights, and its own set of priced cells — there
+is no mathematical identity tying it to Direction B's independently-computed $135.70 result.
+Direction A and Direction B also differ in period count (19 vs 7), seasonal composition (two
+summers and two winters vs one summer and a partial winter missing Jan–Apr), usage weights,
+and a partly different set of included cells — none of this has been separately decomposed
+from the vintage effect, so it is not ruled out as an additional contributor to the 174.4%
+gap. A rigorous common-weight, common-cell decomposition across Direction A and Direction B
+has not been performed; this reconciliation names the vintage effect as verified and large,
+not as a complete accounting of the gap. This does not weaken the recommendation: **Direction
+A is the recommendation basis** (modeled · same-date bill rates, 547 days spanning two
+summers and two winters, vs Direction B's 216 days of one summer and a partial winter) on
+its own terms — its same-date comparison avoids vintage drift by construction, while
+Direction B has no 2024 CCA rate to anchor to and necessarily mixes multiple effects — and
+that reasoning holds whether or not the full 174.4% gap is ever decomposed. Direction B's
+larger figure is not averaged with Direction A's.
 
 **Reconciliation with the existing single-statement figures (`bill_decomposition.py`,
 §10).** That script's `provider_effect_whole_period()` runs exactly this same comparison

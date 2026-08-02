@@ -183,6 +183,40 @@ def case_reconciliation_disagrees_by_well_over_20pct_and_does_not_average():
 
 
 @case
+def case_reconciliation_does_not_overclaim_full_vintage_attribution():
+    """Codex review (issue #11), defect 1: an earlier version of this text asserted, as a
+    flat unqualified fact, "The gap is a rate-vintage effect, not a disagreement about the
+    provider comparison." That overclaimed a causal attribution the script never actually
+    proved -- the $177.09 vintage-effect figure is computed exclusively from Direction A's
+    own sample/weights, and Direction A and Direction B also differ in period count, season
+    composition, usage weights, and included cells, none of which has been separately
+    decomposed from the vintage effect. This asserts the CURRENT text: (a) never states the
+    unqualified old claim, (b) explicitly names that sample composition differs and has not
+    been separately decomposed, and (c) still says plainly that the vintage effect itself is
+    real/verified and the likely major driver -- hedged, not hand-waved."""
+    a = CX.direction_a(CX.cca_period_cells())
+    b = CX.direction_b(CX.cca_flat_rate())
+    pv = CX.provider_vs_vintage(a)
+    recon = CX.reconciliation(a, b, pv)
+    text = recon["explanation_if_disagreeing"]
+    assert text is not None
+    assert "The gap is a rate-vintage effect, not a disagreement" not in text, (
+        "the old unqualified causal claim must not reappear")
+    assert "NOT RULED OUT" in text or "not ruled out" in text.lower()
+    assert "none of this has been separately decomposed" in text.lower(), (
+        "the text must acknowledge the A-vs-B sample-composition differences have not been "
+        "separately decomposed from the vintage effect")
+    assert "has not been performed" in text.lower(), (
+        "the text must state plainly that a rigorous A-vs-B decomposition has not been done")
+    assert "different periods" in text.lower() and "different seasonal composition" in text.lower()
+    assert "NOT PROVEN to be fully attributable" in text or \
+        "not proven to be fully attributable" in text.lower()
+    # Still says plainly what IS known -- this is a hedge, not a retraction.
+    assert "REAL" in text and "LARGE" in text and "LIKELY MAJOR" in text
+    return "reconciliation text hedges full vintage attribution while still naming it as verified and likely dominant"
+
+
+@case
 def case_both_directions_agree_on_sign_cca_costs_more():
     """A weaker but real corroboration: whatever the disagreement in magnitude, both
     directions land on the SAME side (CCA costing more than bundled would have) -- if they
@@ -394,6 +428,149 @@ def case_segment_level_pricing_fixes_the_real_mid_period_rate_change_period():
     return (f"{period} {season}/{tou}: naive representative-date pricing = ${naive_usd}, "
            f"segment-level pricing = ${fixed_usd} (${round(fixed_usd - naive_usd, 2)} "
            "different) on a real, on-file mid-period rate change")
+
+
+# ---------------------------------------------------------------------------
+# (a3) Codex review (issue #11) regression cases -- defect 2 (a period or cell silently
+# missing from the CCA/bundled cell mapping must fail closed, never price as zero rows)
+# ---------------------------------------------------------------------------
+@case
+def case_direction_a_refuses_a_period_missing_entirely_from_cca_cells():
+    """Defect 2: if data/cca_generation_rates.csv were ever partially regenerated and
+    silently dropped an entire CCA period, direction_a's own cca_cells.get(key, {}) used to
+    swallow it as zero rows with no error, while n_periods/days (read from
+    bill_periods_electric.csv, untouched here) would still report full coverage. Deletes one
+    real period's entry from the live cca_cells mapping and confirms direction_a() now
+    refuses, naming the missing period."""
+    cca_cells = CX.cca_period_cells()
+    missing_key = next(iter(cca_cells))
+    del cca_cells[missing_key]
+    try:
+        CX.direction_a(cca_cells)
+    except SystemExit as e:
+        msg = str(e)
+        assert "no rows at all" in msg, msg
+        assert missing_key[1] in msg, (missing_key, msg)
+        return (f"direction_a refuses a wholly missing CCA period ({missing_key[1]!r}), "
+               "named in the error")
+    else:
+        raise AssertionError("direction_a silently priced a period missing from cca_cells")
+
+
+@case
+def case_direction_a_refuses_a_period_missing_one_expected_cell():
+    """Defect 2, the narrower case: a period IS present in cca_cells but is missing one of
+    its structurally-expected (season, TOU) cells (a hand-edited or corrupted CSV row
+    dropped). Removes exactly one cell from one real period's entry and confirms
+    direction_a() names that specific missing cell rather than silently pricing the rest."""
+    cca_cells = CX.cca_period_cells()
+    key = next(k for k, cells in cca_cells.items() if len(cells) >= 3)
+    modified = dict(cca_cells)
+    inner = dict(cca_cells[key])
+    removed_cell = next(iter(inner))
+    del inner[removed_cell]
+    modified[key] = inner
+    try:
+        CX.direction_a(modified)
+    except SystemExit as e:
+        msg = str(e)
+        assert "missing" in msg.lower(), msg
+        assert str(removed_cell) in msg, (removed_cell, msg)
+        return f"direction_a refuses a period missing {removed_cell}, named in the error"
+    else:
+        raise AssertionError("direction_a silently priced a period missing one expected cell")
+
+
+@case
+def case_direction_a_real_corpus_passes_the_coverage_gate_cleanly():
+    """No false positives: the real, complete data/cca_generation_rates.csv must pass the
+    new coverage gate without raising, and must still price the full 19-period, 66-cell
+    corpus exactly as before the gate was added."""
+    a = CX.direction_a(CX.cca_period_cells())
+    assert a["n_periods"] == 19, a["n_periods"]
+    total = a["priced_cells"] + a["excluded_absent_cells"] + a["excluded_carried_export_cells"]
+    assert total == 66, total
+    return f"real corpus passes the coverage gate cleanly: {a['n_periods']} periods, {total} cells"
+
+
+@case
+def case_bundled_generation_cells_refuses_a_period_missing_entirely():
+    """Defect 2 sweep -- Direction B's analogous check: a bundled period
+    bill_periods_electric.csv defines, but with zero generation-section rows in
+    bill_tou_detail.csv, must refuse rather than silently contribute zero dollars while its
+    days still count toward full coverage."""
+    tmp = tempfile.mkdtemp()
+    try:
+        pdir = pathlib.Path(tmp)
+        with open(pdir / "bill_periods_electric.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["statement_date", "period", "days", "generation_provider", "net_kwh",
+                       "gross_kwh", "sdge_delivery", "cca_generation", "current_charges",
+                       "base_services_charge", "monthly_service_fee", "fixed_charge_total"])
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "31", "bundled", "10", "10",
+                       "5.00", "0.0", "5.00", "", "16.0", "16.0"])
+            w.writerow(["2099-03-01", "2/1/99 - 2/28/99", "28", "CCA", "10", "10",
+                       "5.00", "3.00", "8.00", "16.0", "", "16.0"])
+        with open(pdir / "bill_tou_detail.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["statement_date", "period", "section", "season", "segment",
+                       "segment_days", "tou_period", "kwh", "rate_per_kwh"])
+            # No generation-section rows at all for the bundled period above.
+        orig = CX.DATA
+        CX.DATA = pdir
+        try:
+            CX.bundled_generation_cells()
+        except SystemExit as e:
+            assert "no rows at all" in str(e), e
+            assert "1/1/99 - 1/31/99" in str(e), e
+            return "bundled_generation_cells refuses a bundled period with no generation rows at all"
+        else:
+            raise AssertionError("bundled_generation_cells silently accepted a wholly missing period")
+        finally:
+            CX.DATA = orig
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@case
+def case_bundled_generation_cells_refuses_a_period_missing_one_cell():
+    """Defect 2 sweep, narrower case: the bundled period has SOME generation rows but is
+    missing one of its three expected TOU cells for the season it spans."""
+    tmp = tempfile.mkdtemp()
+    try:
+        pdir = pathlib.Path(tmp)
+        with open(pdir / "bill_periods_electric.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["statement_date", "period", "days", "generation_provider", "net_kwh",
+                       "gross_kwh", "sdge_delivery", "cca_generation", "current_charges",
+                       "base_services_charge", "monthly_service_fee", "fixed_charge_total"])
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "31", "bundled", "10", "10",
+                       "5.00", "0.0", "5.00", "", "16.0", "16.0"])
+            w.writerow(["2099-03-01", "2/1/99 - 2/28/99", "28", "CCA", "10", "10",
+                       "5.00", "3.00", "8.00", "16.0", "", "16.0"])
+        with open(pdir / "bill_tou_detail.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["statement_date", "period", "section", "season", "segment",
+                       "segment_days", "tou_period", "kwh", "rate_per_kwh"])
+            # winter/on_peak and winter/off_peak present, winter/super_off_peak missing.
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "generation", "winter", "0",
+                       "31", "on_peak", "5.0", "0.30000"])
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "generation", "winter", "0",
+                       "31", "off_peak", "5.0", "0.20000"])
+        orig = CX.DATA
+        CX.DATA = pdir
+        try:
+            CX.bundled_generation_cells()
+        except SystemExit as e:
+            assert "missing" in str(e).lower(), e
+            assert "super_off_peak" in str(e), e
+            return "bundled_generation_cells refuses a period missing one expected TOU cell"
+        else:
+            raise AssertionError("bundled_generation_cells silently accepted a partial cell set")
+        finally:
+            CX.DATA = orig
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

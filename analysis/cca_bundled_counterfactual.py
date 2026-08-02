@@ -351,6 +351,53 @@ def _rep_date(season, start, end):
     return end if _season_of(end) == season else start
 
 
+def _season_span(p):
+    """The season(s) a period dict's own [start, end] range spans -- one season for a
+    period wholly within it, two when it straddles the boundary (the same
+    _season_blocks invariant _rep_date relies on)."""
+    return {_season_of(p["start"]), _season_of(p["end"])}
+
+
+def _expected_cells(p):
+    """Every (season, TOU) cell a period is structurally expected to carry data for: all
+    three TOU periods, for each season the period's own date range spans. Verified against
+    the real corpus (both CCA and bundled eras) rather than assumed: every period on file,
+    straddling a season boundary or not, carries all three TOU cells for every season it
+    spans in both data/cca_generation_rates.csv and data/bill_tou_detail.csv, regardless of
+    whether a given cell ever billed as a net import or a net export -- presence is
+    unconditional; only PRICING (the kWh > 0 split) depends on the sign."""
+    return {(season, tou) for season in _season_span(p) for tou in TOU}
+
+
+def _require_full_period_coverage(periods, cells_by_period, source_csv, era_label):
+    """Fail closed (Codex review, issue #11, defect 2) if `source_csv` is silently missing
+    a whole period, or missing one of the (season, TOU) cells a period is structurally
+    expected to carry (see _expected_cells). Both Direction A (cca_cells.get(key, {})) and
+    Direction B (an implicit filter-join against bill_tou_detail.csv) read a per-period cell
+    mapping built from a committed CSV; without this check, a partially regenerated,
+    corrupted, or hand-edited CSV that silently dropped a period or cell would make either
+    direction quietly price it as zero rows, while n_periods/days (read from
+    bill_periods_electric.csv, not from what was actually priced) would still report full
+    corpus coverage -- understating the headline dollar figure with no signal anything went
+    wrong. `cells_by_period` is {period_key: set_of_(season, tou)_present}, keyed however the
+    caller's own period dicts are keyed (Direction A: (statement_date, period); Direction B:
+    period alone) -- the caller supplies a matching key alongside each period dict."""
+    for key, p in periods:
+        present = cells_by_period.get(key)
+        if not present:
+            raise SystemExit(
+                f"{source_csv} carries no rows at all for {era_label} period "
+                f"{p['period']} (key {key}) -- bill_periods_electric.csv expects this "
+                "period to be priced; refusing to silently price it as zero rows")
+        missing = sorted(_expected_cells(p) - set(present))
+        if missing:
+            raise SystemExit(
+                f"{source_csv} is missing {missing} for {era_label} period {p['period']} "
+                f"(key {key}) -- this period spans {sorted(_season_span(p))}, so all three "
+                "TOU cells are expected for each season spanned; refusing to price a "
+                "partial cell set")
+
+
 def _generation_comparison_segments():
     """{(period, season, tou_period): [(kwh, rate), ...]} -- every printed generation-
     section row of data/bill_tou_detail.csv, segment-level, for EVERY period on file
@@ -378,9 +425,15 @@ def _generation_comparison_segments():
 # (MODELED -- same-date bill rates; see the module docstring's CONFIDENCE LABEL section)
 # ---------------------------------------------------------------------------
 def direction_a(cca_cells):
+    cca_periods = periods_by_provider()["CCA"]
+    _require_full_period_coverage(
+        [((p["statement_date"], p["period"]), p) for p in cca_periods],
+        {key: set(cells) for key, cells in cca_cells.items()},
+        "data/cca_generation_rates.csv", "CCA")
+
     gen_segments = _generation_comparison_segments()
     priced, absent, carried_export = [], [], []
-    for p in periods_by_provider()["CCA"]:
+    for p in cca_periods:
         key = (p["statement_date"], p["period"])
         for (season, tou), c in cca_cells.get(key, {}).items():
             d = _rep_date(season, p["start"], p["end"])
@@ -561,6 +614,18 @@ def bundled_generation_cells():
         a = agg.setdefault(key, {"kwh": 0.0, "actual_usd": 0.0})
         a["kwh"] += kwh
         a["actual_usd"] += kwh * rate
+
+    # Codex review (issue #11), defect 2 sweep: direction_b() has no per-period existence
+    # check of its own on this mapping (unlike Direction A's cca_cells.get(key, {}), this is
+    # an implicit filter-join against bill_tou_detail.csv above) -- the same silent-swallow
+    # risk applies if a whole bundled period, or one of its expected cells, ever dropped out
+    # of that CSV. Grouped here by period so the check reads like Direction A's.
+    present_by_period = {}
+    for (period, season, tou) in agg:
+        present_by_period.setdefault(period, set()).add((season, tou))
+    _require_full_period_coverage(
+        [(p["period"], p) for p in periods_by_provider()["bundled"]],
+        present_by_period, "data/bill_tou_detail.csv", "bundled")
     return agg
 
 
@@ -753,22 +818,38 @@ def reconciliation(a, b, pv):
             f"Direction A (modeled -- same-date bill rates, {a['days']} days spanning two "
             f"summers and two winters) finds ${ann_a}/yr; Direction B (modeled, {b['days']} days, "
             "May-Dec 2024 only -- one summer, a partial winter, no Jan-Apr) finds "
-            f"${ann_b}/yr, {pct_diff:+.1f}% different. The gap is a rate-vintage effect, "
-            "not a disagreement about the provider comparison: SDG&E's own bundled "
-            "generation rate rose substantially across the observed span (see "
-            "data/rate_vintages.csv's generation_printed_comparison rows -- summer "
-            "on-peak alone moved 0.38826 -> 0.40592 -> 0.47019) while CEA's charged rate "
-            "never moved (Phase 1's flat-rate finding). Direction A nets this out because "
-            "it always compares CEA against the BUNDLED RATE ON THE SAME DATE. Direction B "
-            "cannot: there is no 2024 CCA rate to anchor to, so it necessarily compares "
-            "2024's cheaper bundled rate against CEA's rate as observed in 2025-2026 -- "
-            f"exactly the vintage effect this script's own provider_vs_vintage split "
-            f"measures at ${pv['vintage_effect_usd']} over the Direction-A sample "
-            "(against a provider effect of only "
-            f"${pv['provider_effect_usd']} over the same sample). Direction B's larger "
-            "figure is not averaged with Direction A's: it answers a structurally "
-            "different, vintage-mixed question, and Direction A is the like-for-like "
-            "reading.")
+            f"${ann_b}/yr, {pct_diff:+.1f}% different. Rate vintage is a REAL, LARGE, and "
+            "LIKELY MAJOR contributor to this gap: SDG&E's own bundled generation rate rose "
+            "substantially across the observed span (see data/rate_vintages.csv's "
+            "generation_printed_comparison rows -- summer on-peak alone moved 0.38826 -> "
+            "0.40592 -> 0.47019) while CEA's charged rate never moved (Phase 1's flat-rate "
+            "finding), and this script's own provider_vs_vintage split measures that vintage "
+            f"effect at ${pv['vintage_effect_usd']} over the Direction-A sample -- more than "
+            f"double the ${pv['provider_effect_usd']} provider effect over the same sample. "
+            "Direction A nets this vintage drift out by construction, because it always "
+            "compares CEA against the bundled rate ON THE SAME DATE; Direction B cannot, "
+            "because there is no 2024 CCA rate to anchor to, so it necessarily compares "
+            "2024's cheaper bundled rate against CEA's rate as observed in 2025-2026. "
+            "WHAT THIS DOES NOT ESTABLISH: the "
+            f"${pv['vintage_effect_usd']} vintage-effect figure is computed entirely from "
+            f"Direction A's own {a['n_periods']}-period, {a['days']}-day sample and its own "
+            "priced cells -- there is no mathematical identity tying it to Direction B's "
+            "own result, because Direction A and Direction B differ in more than rate "
+            f"vintage alone: different periods ({a['n_periods']} vs {b['n_periods']}), "
+            "different seasonal composition (two summers and two winters vs one summer and "
+            "a partial winter missing Jan-Apr), different usage weights, and a partly "
+            "different set of included cells -- none of this has been separately "
+            "decomposed, so it is NOT RULED OUT as a contributor to the "
+            f"{pct_diff:+.1f}% gap. So: the vintage effect is verified, real, and large "
+            "enough relative to the provider effect to be the most plausible dominant "
+            "driver of the gap -- but the gap is NOT PROVEN to be fully attributable to "
+            "rate vintage alone; a rigorous common-weight, common-cell decomposition across "
+            "Direction A and Direction B has not been performed. This does not change the "
+            "recommendation basis: Direction A's same-date comparison avoids vintage drift "
+            "by construction, while Direction B has no 2024 CCA rate to anchor to and "
+            "necessarily mixes multiple effects, and that reasoning holds on its own terms "
+            "whether or not the full gap is ever decomposed. Direction B's larger figure is "
+            "not averaged with Direction A's.")
     return {
         "direction_a_annualized_usd": ann_a,
         "direction_b_annualized_usd": ann_b,
