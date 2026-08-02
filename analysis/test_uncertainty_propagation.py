@@ -13,7 +13,6 @@ for real, not just import-clean.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_uncertainty_propagation.py
 """
-import copy
 import glob
 import json
 import pathlib
