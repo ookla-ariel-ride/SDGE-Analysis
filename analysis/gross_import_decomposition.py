@@ -570,7 +570,6 @@ def _solve_year_scales(ct_template, prod_template, correction, net_exact, gross_
 
 
 def decomposition_block(bill, prod, cons, hourly):
-    consumption_scale_estimated = cons["period_2024_estimated_kwh"] / cons["period_2026_ct_measured_kwh"]
     production_scale_estimated = (prod["period_2024_estimated_kwh_empirical_basis"]
                                   / prod["period_2026_measured_pvoutput_kwh"])
 
