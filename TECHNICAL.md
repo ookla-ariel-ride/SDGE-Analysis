@@ -2395,7 +2395,7 @@ byte-identical — this script never imports `deep_analyses.py`).
 | Degradation (battery capacity fade) | Uniform(0.5%, 2.5%)/yr | Manufacturer (Powerwall 3) warranty degradation curve — unchanged from the old Monte Carlo. Not solar panel degradation (a separate, already-published ~0.5-1.0%/yr figure, index.html §9), which answers a different question. |
 | Install cost | Uniform($12,500, $17,000) | Quoted installer cost bound — unchanged from the old Monte Carlo. |
 | EV-behavior persistence | Beta(4,1) compliance fraction *c*, mean 0.8 | **Estimated** — blends `battery_dispatch_policies.json`'s pre-behavior marginal (`pw3.greedy.save`, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. Left-skewed toward full persistence because the EV-shift behavior is already an OBSERVED, completed behavior in this household's own Green Button history, not a hypothetical future one. |
-| Soiling / production loss | Triangular(lossA, lossA, lossB) | `data/soiling_results.json`'s two named, genuinely different scenarios: `scenario_A_this_years_evidence` (mode, the more recent evidence window) to `scenario_B_2024_cleaning_evidence` (upper tail). Converted into a battery-saving derate via a REAL, calibrated sensitivity (below), not an assumed proportionality. |
+| Soiling / production loss | Triangular(0, 0, lossB) | `data/soiling_results.json`'s two named, genuinely different scenarios, reframed relative to the OBSERVED baseline (Codex review pass 2): the Green Button `Generation` column is this year's actual, already-soiled production, and scenario A **is** "this year's evidence" — so the observed data already embeds roughly scenario A's own loss, and scaling it down by scenario A's raw loss fraction would double-subtract that loss. `lossB` = the INCREMENTAL further loss (as a fraction of measured annual generation) to reach `scenario_B_2024_cleaning_evidence`'s worse, dirtier rate, relative to that same observed baseline — not scenario B's raw loss applied on top of an already-reduced series. Converted into a battery-saving derate via a REAL, calibrated sensitivity (below), not an assumed proportionality. |
 | Round-trip efficiency (RTE) | Uniform(85%, 95%) | **Engineering estimate** around the Powerwall 3 nameplate 90% round-trip spec (`battery_dispatch_policies.py`'s `ETA = sqrt(0.90)`); no independent RTE measurement exists in this repo for this household. |
 | Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical** — `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the ANNUAL relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the MEAN daily gap rather than shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap) rather than each day being an independent noisy draw that would average out. Routed through the SAME calibrated generation-sensitivity (`soil_slope`, below) as soiling rather than applied as a direct 1:1 multiplier on the dollar saving — a production-measurement discrepancy and a soiling-driven generation loss are uncertainty about the identical physical quantity, so an equal-fraction change from either source must move the saving identically (adversarial review pass 2, finding 2: an earlier draft assumed a 1:1 response, overstating this lever's swing roughly 1/`soil_slope`-fold). |
 
@@ -2414,7 +2414,7 @@ an unscaled-generation baseline, which folded the direct cost of lost solar into
 supposed to be an isolated battery effect and pulled the soiling slope sharply, spuriously
 negative). A linear factor(x) = 1 + slope·(x - nominal) is fit by least squares to each
 lever's points. The pre- and post-behavior calibration runs land on nearly identical
-fractional slopes (RTE: +0.552 vs +0.591 per unit RTE; soiling: +0.0568 vs +0.0569 per unit
+fractional slopes (RTE: +0.552 vs +0.592 per unit RTE; soiling: +0.0565 vs +0.0568 per unit
 loss fraction, both small and positive once correctly isolated — soiling's realistic
 1.3-6.6% loss range moves the battery marginal by well under 1%) — evidence that averaging
 the two into a single slope, applied to whichever pre/post-behavior blend a given Monte
@@ -2518,8 +2518,8 @@ uncertainty in whether those distributions or their independence assumption are 
 correct, several of which are labeled "estimated" rather than "measured" above; the artifact
 records this distinction explicitly in a dedicated `epistemic_caveat` field, separate from
 the sampling-only `finite_sample_caveat`, and the report states the result as conditional on
-the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,405 at
-a 4% discount rate ($4,254 at 7%); 15-yr median $18,753 at 4% ($12,059 at 7%) — reported per
+the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,389 at
+a 4% discount rate ($4,240 at 7%); 15-yr median $18,729 at 4% ($12,039 at 7%) — reported per
 draw as the standard `-price + PV(savings)`, unlike the old artifact's own
 `npv10_at_4pct_median` (a `median(npv) - median(price)` convention, reproduced exactly but
 only inside `legacy_reproduction()` for special-case matching, not used for this

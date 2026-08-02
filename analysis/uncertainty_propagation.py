@@ -60,17 +60,24 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    scenario a), so full persistence is the modal outcome, but the distribution
    leaves real mass on partial reversion. ESTIMATED — no repeated-year
    compliance measurement exists to calibrate the shape itself.
-5. soiling / production loss   Triangular(low=lossA, mode=lossA, high=lossB),
-   lossA = annual_lost_kwh / annual_generation_kwh under
-   data/soiling_results.json's scenario_A_this_years_evidence (the MORE
-   RECENT, current-window evidence), lossB = the same ratio under
-   scenario_B_2024_cleaning_evidence. The report itself calls these two
-   evidence windows "split evidence" — genuinely different measured rates, not
-   noise around one number. Weighted toward A (mode = A) because it is the
-   current-window measurement; B remains reachable as the upper tail. This
-   fractional generation loss is converted into a battery-marginal-saving
-   derate via `soiling_factor()`, calibrated from REAL dispatch reruns (see
-   CALIBRATION below), not an assumed proportionality.
+5. soiling / production loss   Triangular(low=0, mode=0, high=lossB), where
+   lossB = (annual_lost_kwh under data/soiling_results.json's scenario_B_
+   2024_cleaning_evidence MINUS annual_lost_kwh under scenario_A_this_years_
+   evidence) / annual_generation_kwh -- an INCREMENTAL fraction, not scenario
+   B's raw loss. gen0 (the Green Button Generation column) is THIS YEAR'S
+   actual, already-soiled measured production; scenario A IS "this year's
+   evidence", so gen0 already reflects roughly scenario A's own loss. An
+   earlier draft scaled gen0 by scenario A's or B's RAW loss fraction, which
+   subtracted scenario A's already-embedded loss a second time (Codex review
+   pass 2 finding). The distribution's low/mode of 0 represents "soiling
+   holds at roughly its current (scenario A) rate" (the observed baseline
+   itself); its upper tail represents "soiling worsens further, to scenario
+   B's dirtier rate" -- the report's own "split evidence" characterization,
+   reframed as a distance FROM the observed state rather than two competing
+   absolute loss levels applied to the same series. This fractional
+   generation loss is converted into a battery-marginal-saving derate via
+   `soiling_factor()`, calibrated from REAL dispatch reruns (see CALIBRATION
+   below), not an assumed proportionality.
 6. round-trip efficiency (RTE)   Uniform(0.85, 0.95). No independent RTE
    measurement exists in this repo for this household's Powerwall 3;
    battery_dispatch_policies.py hardcodes the nameplate ETA = sqrt(0.90) (90%
@@ -332,8 +339,20 @@ def dispatch_calibration():
 
     soiling = _committed("soiling_results.json")["annual_economics"]
     gen_kwh = soiling["annual_generation_kwh"]
-    lossA = soiling["scenario_A_this_years_evidence"]["annual_lost_kwh"] / gen_kwh
-    lossB = soiling["scenario_B_2024_cleaning_evidence"]["annual_lost_kwh"] / gen_kwh
+    lost_A = soiling["scenario_A_this_years_evidence"]["annual_lost_kwh"]
+    lost_B = soiling["scenario_B_2024_cleaning_evidence"]["annual_lost_kwh"]
+    # gen0 (the Green Button Generation column) is THIS YEAR'S actual, already-
+    # soiled measured production -- scenario A IS "this year's evidence", so
+    # gen0 already reflects roughly scenario A's own loss, not a hypothetical
+    # clean baseline. Scaling gen0 by (1 - lost_A/gen_kwh) as an earlier draft
+    # did would subtract scenario A's loss a SECOND time on top of production
+    # that already embeds it (Codex review pass 2 finding). lossA is therefore
+    # 0 by construction (the observed baseline already IS the scenario-A
+    # state); lossB is the INCREMENTAL further loss to reach scenario B's
+    # worse, dirtier state RELATIVE TO that same observed baseline, not
+    # scenario B's loss applied on top of an already-scenario-A-reduced series.
+    lossA = 0.0
+    lossB = (lost_B - lost_A) / gen_kwh
 
     rte_points_mid = {RTE_LO: marginal(imp_sh, rte=RTE_LO),
                       RTE_NOM: mid_nominal,
@@ -341,11 +360,12 @@ def dispatch_calibration():
     rte_points_pre = {RTE_LO: marginal(imp0, rte=RTE_LO),
                       RTE_NOM: pre_nominal,
                       RTE_HI: marginal(imp0, rte=RTE_HI)}
+    # Only two DISTINCT points: lossA == 0.0 is the same state as the nominal
+    # (0.0) point by construction above, so including it a second time would
+    # be a duplicate dict key, not a third calibration point.
     soil_points_mid = {0.0: mid_nominal,
-                       lossA: marginal(imp_sh, gen_scale=1 - lossA),
                        lossB: marginal(imp_sh, gen_scale=1 - lossB)}
     soil_points_pre = {0.0: pre_nominal,
-                       lossA: marginal(imp0, gen_scale=1 - lossA),
                        lossB: marginal(imp0, gen_scale=1 - lossB)}
 
     def slope_of(points, nominal_x, nominal_y):
@@ -792,9 +812,12 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                                         "two compliance points the pipeline computes"},
             "soiling_loss_fraction": {"dist": "Triangular", "low": lossA, "mode": lossA,
                                       "high": lossB, "evidential_basis":
-                                      "data/soiling_results.json's split evidence: "
-                                      "scenario_A_this_years_evidence (mode, more recent) "
-                                      "to scenario_B_2024_cleaning_evidence (upper tail)"},
+                                      "data/soiling_results.json's split evidence, reframed "
+                                      "relative to the observed baseline (Codex review pass "
+                                      "2): 0 = holds at scenario_A_this_years_evidence's rate "
+                                      "(already embedded in the measured Generation column), "
+                                      "lossB = the INCREMENTAL loss to reach scenario_B_2024_"
+                                      "cleaning_evidence's worse rate"},
             "round_trip_efficiency": {"dist": "Uniform", "low": RTE_LO, "high": RTE_HI,
                                       "evidential_basis": "engineering estimate around "
                                       "the Powerwall 3 nameplate 90% round-trip spec "
