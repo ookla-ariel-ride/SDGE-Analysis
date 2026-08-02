@@ -33,11 +33,15 @@ LP formulation, per 15-minute interval i (n = 35,040 intervals/year):
   exp_i := gen0_i - solar_absorbed_i                  )  variables -- see below
 
 Constraints:
-  charge power cap: grid_topup_i + solar_absorbed_i <= power_kw/4
-              (the battery's power cap limits TOTAL charge rate regardless
-              of source; discharge_i's own upper bound, min(imp0_i,
-              power_kw/4), already combines its power cap with the
-              no-manufactured-export rule above)
+  combined power cap: grid_topup_i + solar_absorbed_i + discharge_i
+              <= power_kw/4
+              (ONE physical inverter serves both directions, so charging
+              and discharging share the same power budget in a single
+              interval -- charging at full power while also discharging
+              at full power would demand 2x the rated throughput, which no
+              single-inverter battery can deliver; discharge_i's own upper
+              bound, min(imp0_i, power_kw/4), separately combines its
+              per-source cap with the no-manufactured-export rule above)
   continuity: soc_i = soc_{i-1} + (grid_topup_i+solar_absorbed_i)*ETA
                        - discharge_i/ETA
               (soc_{-1} := soc_init)
@@ -254,14 +258,27 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
         shape=(n + n_row2 + n_b, n_vars)).tocsr()
     b_eq = np.concatenate([b1, b2, b3])
 
-    # (4) combined charging power cap: grid_topup_i + solar_absorbed_i <= P
-    # (a genuine inequality -- the battery's power cap limits the TOTAL
-    # charge rate regardless of source, not each source independently)
-    rows4 = np.repeat(np.arange(n), 2)
-    cols4 = np.empty(2 * n, dtype=np.int64)
-    cols4[0::2] = GT + np.arange(n)
-    cols4[1::2] = SA + np.arange(n)
-    data4 = np.tile([1.0, 1.0], n)
+    # (4) combined bidirectional power cap: grid_topup_i + solar_absorbed_i
+    # + discharge_i <= P (the battery has ONE physical inverter rated at
+    # power_kw; charging and discharging share that same hardware, so the
+    # cap applies to their COMBINED throughput in a single interval, not to
+    # charge and discharge independently -- charging at P while
+    # simultaneously discharging at P would demand 2*P through an inverter
+    # rated for P, which no single-inverter battery can do (Codex
+    # adversarial review, fourth pass). On this house's real data the LP
+    # never actually wanted combined throughput above P even before this
+    # constraint existed -- simultaneous full charge+discharge always wastes
+    # round-trip efficiency for no bill benefit, so the cost-minimizing
+    # solution already avoided it -- but the constraint was missing from the
+    # model itself, so nothing guaranteed that for a different household or
+    # year. discharge_i's own bound (min(imp0_i, P)) is left in place as a
+    # tighter per-source cap; this row is the genuinely binding physical one.
+    rows4 = np.repeat(np.arange(n), 3)
+    cols4 = np.empty(3 * n, dtype=np.int64)
+    cols4[0::3] = GT + np.arange(n)
+    cols4[1::3] = SA + np.arange(n)
+    cols4[2::3] = DC + np.arange(n)
+    data4 = np.tile([1.0, 1.0, 1.0], n)
     A_ub = sp.coo_matrix((data4, (rows4, cols4)), shape=(n, n_vars)).tocsr()
     b_ub = np.full(n, P)
 
@@ -475,7 +492,8 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     }
 
 
-def _check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, cap):
+def _check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, cap,
+                         power_kw=POWER_KW):
     """Exact algebraic identities, not a heuristic decomposition, checked
     against the gross-flow-preserving formulation (Codex adversarial review,
     third pass): imp/exp are DERIVED from imp0/gen0 plus explicit, capped
@@ -537,6 +555,25 @@ def _check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, 
             f"charge AND discharge simultaneously with only ONE real flow "
             f"present (max {both_batt[wasteful].max():.4f} kWh) -- pure "
             "round-trip loss with no independent justification")
+    # The battery has ONE physical inverter rated at power_kw: charging and
+    # discharging share that same hardware, so their COMBINED throughput in
+    # a single interval must never exceed the interval power budget --
+    # charging at full power while simultaneously discharging at full power
+    # would demand 2x the rated throughput (Codex adversarial review, fourth
+    # pass). This is distinct from the "wasteful simultaneous action" check
+    # above, which is about economic rationality; this one is a hard
+    # physical limit that applies even when both actions are independently
+    # justified by real simultaneous flows.
+    P = power_kw / 4.0
+    combined = charge + discharge
+    over_combined = combined - P
+    if over_combined.max() > 1e-3:
+        raise SystemExit(
+            f"perfect_foresight_dispatch: {int((over_combined > 1e-3).sum())} "
+            f"interval(s) combine charge+discharge above the battery's "
+            f"{power_kw} kW power rating (max excess "
+            f"{over_combined.max():.4f} kWh) -- physically impossible "
+            "throughput through a single inverter")
     soc_prev = np.concatenate([[soc_init], soc[:-1]])
     expected = soc_prev + charge * eta - discharge / eta
     if not np.allclose(soc, expected, atol=1e-4):
@@ -640,7 +677,13 @@ def main():
     expected_soc = soc_prev + da_charge * ETA - da_discharge / ETA
     soc_trace_ok = np.allclose(da_soc_trace, expected_soc, atol=1e-4)
     soc_end_ok = abs(da_soc_trace[-1] - da_info["soc_end_kwh"]) < 1e-3
-    da_conservation_ok = da_conservation_ok and soc_trace_ok and soc_end_ok
+    # same combined-throughput physical limit as _check_conservation's annual
+    # check -- execution can only clip DOWN from the planned charge/discharge
+    # (each min()'d against real SOC/power feasibility independently), so it
+    # inherits the planning LP's combined <= P guarantee, but this is checked
+    # directly rather than assumed (Codex adversarial review, fourth pass).
+    da_power_ok = (da_charge + da_discharge).max() <= POWER_KW / 4.0 + 1e-3
+    da_conservation_ok = da_conservation_ok and soc_trace_ok and soc_end_ok and da_power_ok
 
     out["day_ahead_forecast"] = {
         **da_info,
@@ -652,7 +695,7 @@ def main():
         raise SystemExit(
             "perfect_foresight_dispatch: day-ahead energy conservation check failed "
             f"(net-flow identity {lhs:.4f} vs {rhs:.4f}, soc trace ok={soc_trace_ok}, "
-            f"soc end ok={soc_end_ok})")
+            f"soc end ok={soc_end_ok}, combined power cap ok={da_power_ok})")
 
     out["purchasing_statement"] = {
         "greedy_save_usd": canon["pw3"]["greedy"]["save"] if canon else None,

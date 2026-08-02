@@ -2059,6 +2059,31 @@ directly: on the real data, all 311 such simultaneous-action intervals are simul
 intervals, none are single-flow — confirmed empirically before writing this check, not
 assumed).
 
+**Do not ship: combined bidirectional power cap (Codex adversarial review, fourth pass).**
+The gross-flow-preserving fix above capped `discharge_i` at `min(imp0_i, power_kw/4)` and
+capped `grid_topup_i + solar_absorbed_i` (combined charging) at `power_kw/4`, but nothing
+tied those two caps together: an interval could charge at the full power rating AND
+discharge at the full power rating simultaneously, demanding 2x the battery's rated
+throughput through what is physically ONE bidirectional inverter — no single-inverter
+battery can do that. Fixed by adding `grid_topup_i + solar_absorbed_i + discharge_i ≤
+power_kw/4` as a genuine combined inequality (not two independent ones) to `_solve_lp`'s
+constraint set, the identical combined-cap logic to `rolling_day_ahead`'s execution-time
+re-clip (inherited automatically there, since execution only clips DOWN from a plan that
+now itself respects the combined cap), and a matching hard check to `_check_conservation`
+and the day-ahead's own inline conservation check. On this house's real data, the annual LP
+never actually wanted combined throughput above the cap even before this fix existed —
+simultaneous full charge and full discharge always wastes round-trip efficiency for no bill
+benefit, so the cost-minimizing solution already avoided it on its own — so the annual
+headline figures ($2,546.24/yr perfect-foresight save, $217.24/yr gap) are UNCHANGED. The
+day-ahead case DID move slightly: a single day's local LP, optimizing over a much shorter
+horizon with a fixed starting SOC, found the combined cap genuinely binding on some days,
+moving day-ahead's save from $1,711.13/yr to **$1,711.28/yr** (a $0.15/yr correction) and the
+purchasing-statement's "day-ahead worse than greedy" gap from $617.87 to $617.72. Confirmed
+by direct instrumentation before writing the fix that the combined throughput on the real
+data topped out at exactly the power cap (2.875 kWh/interval = 11.5 kW ÷ 4), never above it,
+in both the annual and day-ahead traces — the constraint was a genuine modeling gap, not one
+that was silently inflating the published figures by any material amount.
+
 **The true optimum barely cycles more than greedy.** With the gross-flow fix, the LP's own
 cycling (1.065 cycles/day, 4,978.68 kWh discharged) is now close to greedy's own 1.01
 cycles/day, 4,720 kWh — a modest, not dramatic, difference. The earlier (incorrect) figure
@@ -2078,7 +2103,7 @@ roughly half of this house's true EV-spillover intervals cannot be reliably anti
 this way). The REAL EV-exclusion rule and REAL SOC/power feasibility are both still
 enforced at EXECUTION regardless of what the plan assumed. Forecast error: MAE 0.6695 kWh,
 RMSE 1.1779 kWh per 15-minute interval (a real, sizable per-interval error). **Result:
-$1,711.13/yr saved — WORSE than the shipping greedy policy's $2,329/yr, not better.**
+$1,711.28/yr saved — WORSE than the shipping greedy policy's $2,329/yr, not better.**
 Mechanism: pre-committing to a schedule the day before hard-caps how much the battery can
 discharge at each interval to whatever the forecast anticipated (`discharge_i ≤
 forecast_imp0_i` during planning); when reality diverges — which it does, substantially,
@@ -2111,7 +2136,7 @@ maximum** at this hardware — a $217.24/yr optimality gap is small next to the 
 already saves, so there is not much room for ANY controller, however smart, to add. A naive
 day-ahead pre-committed schedule based on simple persistence forecasting is NOT a reliable
 way to capture more of that gap and can genuinely do WORSE than the shipping policy
-($617.87/yr worse, in this case) — no shipping product changes the controller, only the
+($617.72/yr worse, in this case) — no shipping product changes the controller, only the
 hardware, so closing the small remaining gap is a firmware/software question, but this data
 does not show that "add a day-ahead forecast" is the answer; the shipping policy's simpler
 real-time reactivity is, on this evidence, the safer choice.

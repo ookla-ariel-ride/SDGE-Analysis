@@ -38,16 +38,16 @@
   "n_days_with_dst_length_mismatch": 4,
   "soc_start_kwh": -0.0,
   "soc_end_kwh": 5.4918,
-  "bill_usd": 3193.0,
-  "save_usd": 1711.13,
+  "bill_usd": 3192.84,
+  "save_usd": 1711.28,
   "energy_conservation_check_passed": true
  },
  "purchasing_statement": {
   "greedy_save_usd": 2329,
-  "day_ahead_save_usd": 1711.13,
+  "day_ahead_save_usd": 1711.28,
   "perfect_foresight_save_usd": 2546.24,
-  "day_ahead_value_over_greedy_usd": -617.87,
-  "remaining_gap_day_ahead_to_perfect_usd": 835.11,
+  "day_ahead_value_over_greedy_usd": -617.72,
+  "remaining_gap_day_ahead_to_perfect_usd": 834.96,
   "note": "the shipping greedy policy already captures the large majority of the theoretical maximum at this hardware (the optimality gap above is the full remaining upside from ANY controller, however smart); a naive day-ahead schedule pre-committed from a persistence forecast is NOT a reliable way to capture more of it and can underperform the simpler real-time greedy policy, since pre-commitment hard-caps what the battery can do at each interval to whatever the forecast anticipated -- no shipping product changes the controller, only the hardware, so closing the remaining gap is a software/firmware question, not a purchasing one, and this data does not show day-ahead forecasting alone is the answer"
  }
 }

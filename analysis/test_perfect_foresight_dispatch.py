@@ -184,6 +184,77 @@ def case_solve_lp_respects_ev_exclusion():
 
 
 @case
+def case_solve_lp_combined_power_cap_row_includes_discharge():
+    """Codex adversarial review, fourth pass ("do not ship"): a single
+    physical inverter serves both directions, so the combined-throughput
+    inequality must bound grid_topup + solar_absorbed + discharge TOGETHER,
+    not grid_topup + solar_absorbed alone with discharge left on an
+    independent bound -- the latter would let one interval charge at full
+    power AND discharge at full power simultaneously, demanding 2x the
+    rated throughput through hardware that can only deliver it once. This
+    fixture's own economics never actually push combined use above the cap
+    (round-tripping through the battery for no net bucket benefit is a
+    strict loss -- confirmed empirically on the real annual and day-ahead
+    solves too, where combined throughput tops out exactly at the cap and
+    never exceeds it), so a purely behavioral assertion on the LP's OUTPUT
+    would pass even with the discharge column silently dropped from this
+    row. This test instead captures the actual A_ub matrix
+    scipy.optimize.linprog is called with and checks its structure
+    directly, so it fails if that column is ever dropped again."""
+    captured = {}
+    real_linprog = pfd.linprog
+
+    def spy(c, A_ub=None, **kwargs):
+        captured["A_ub"] = A_ub
+        return real_linprog(c, A_ub=A_ub, **kwargs)
+
+    imp0 = np.array([5.0])
+    gen0 = np.array([5.0])
+    ev_spillover = np.array([False])
+    bucket_idx = np.array([0])
+    bucket_rates = [(0.5, 0.2)]
+    pfd.linprog = spy
+    try:
+        pfd._solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
+                      cap=10.0, power_kw=4.0, soc_boundary=("fixed", 1.0))
+    finally:
+        pfd.linprog = real_linprog
+    A_ub = captured["A_ub"].toarray()
+    n = 1
+    GT, SA, DC = 0, n, 2 * n
+    row = A_ub[0]
+    assert row[GT] == 1.0 and row[SA] == 1.0 and row[DC] == 1.0, (
+        "combined power-cap row must bound grid_topup+solar_absorbed+discharge "
+        f"together, got coefficients GT={row[GT]}, SA={row[SA]}, DC={row[DC]}")
+    return "the combined power-cap row binds grid_topup, solar_absorbed, AND discharge together"
+
+
+@case
+def case_check_conservation_detects_combined_power_cap_violation():
+    """The hard physical check _check_conservation adds alongside the LP's
+    own constraint (Codex adversarial review, fourth pass): a synthetic
+    charge/discharge pair that together exceed the interval power rating
+    must be caught even if every OTHER invariant (aggregate identity,
+    no-manufactured-export, no-over-discharge, SOC continuity) happens to
+    hold. cap/power_kw chosen so combined=1.5 exceeds power_kw/4=1.0."""
+    imp0 = np.array([1.0])
+    gen0 = np.array([1.0])
+    charge = np.array([0.75])
+    discharge = np.array([0.75])
+    soc_init = 1.0
+    soc = np.array([soc_init + 0.75 * pfd.ETA - 0.75 / pfd.ETA])
+    imp = imp0 - discharge + charge  # grid_topup=charge here (solar_absorbed=0)
+    exp = gen0  # solar_absorbed=0, so exp = gen0 exactly
+    try:
+        pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc,
+                                soc_init, cap=5.0, power_kw=4.0)
+    except SystemExit as e:
+        assert "power rating" in str(e)
+        return "combined charge+discharge above the battery's power rating is caught"
+    raise AssertionError("a combined-throughput power-cap violation slipped past the conservation check")
+
+
+@case
 def case_cyclic_boundary_forces_soc_init_equal_soc_final():
     imp0 = np.array([2.0, 0.0, 2.0, 0.0])
     gen0 = np.array([0.0, 2.0, 0.0, 2.0])
