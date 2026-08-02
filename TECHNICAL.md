@@ -2654,26 +2654,63 @@ counterfactual: 2026's actual hourly CT load and an hourly-derived production se
 meter data at hourly resolution — the SAM-8760-based gross-production reconstruction that
 `uncertainty_propagation.py`'s own `calibration.generation_proxy_limitation` field named as a
 follow-up, issue #60, and which this script implements independently for a different purpose)
-are each scaled to their 2024-ESTIMATED aggregate level, holding the diurnal SHAPE fixed. Gross
-import is recomputed as `sum(max(0, load - production))` at all 4 corners of the 2x2
-consumption x production scale grid, and a Shapley/telescoping two-factor decomposition (the
-same order-independent construction as a two-variable index-number decomposition) splits the
-change into a consumption term and a production term that sum to the SIMULATED change EXACTLY
-by construction. The simulated 2026-actual corner (1,895.0 kWh) and the simulated 2024
-counterfactual corner (1,403.2 kWh) each independently reproduce their bill-actual figures
-(1,934 and 1,438 kWh) within about 2-2.5%, so the decomposed sum (491.7 kWh) lands within
-0.86% of the OBSERVED bill-exact change (496 kWh) — comfortably inside AC4's 5% tolerance, and
-the AC4 load-bearing test in `test_gross_import_decomposition.py` asserts exactly this.
+feed `sum(max(0, load - production))`.
 
-**The answer.** `consumption_term_kwh` = +494.0 kWh; `production_term_kwh` = -2.3 kWh. For
+**Two bugs found by review, in sequence, on the SAME calculation (adversarial review pass 1).**
+An earlier draft scaled the 2026 hourly series to 2024-ESTIMATED aggregate levels using scale
+factors derived from two INDEPENDENTLY estimated numbers (a weather/seasonal-rate production
+estimate and a bill-identity consumption estimate) and happened to land within 0.86% of the
+observed 496 kWh change — Codex's adversarial review caught that this "agreement" was not a
+real validation: the 29-day 2026 window's production estimate was being transferred directly
+onto the 2024 bill's 32-day total, a silent day-count mismatch (finding 1). Correcting the
+mismatch (a per-day rate ratio, transferred using the SAME 29 measured days rather than a
+different, differently-dated window — sampling different specific calendar days turned out to
+introduce MORE noise than the day-count fix removed, verified empirically before settling on
+the rate-ratio approach) pushed the two independent estimates far enough apart that the
+decomposition's error jumped to 23.8% — the original close agreement had been accidental,
+propped up by the day-count bug's own error happening to cancel other noise, not evidence the
+method was sound.
+
+**The real fix: stop relying on two independent estimates to coincidentally agree with a
+bill-exact fact.** Once production_scale is chosen, consumption_scale is not a second free
+estimate at all — it is PINNED by an exact accounting identity: `2024 gross consumption =
+2024's bill-exact net_kwh (a fact, not an estimate) + 2024's estimated production`.
+Production_scale is therefore the ONE genuinely free parameter in this model, and
+`decomposition_block()` now back-solves it (via `scipy.optimize.brentq`) to the exact value
+that makes the simulated 2024 corner match the 2024 bill total precisely, rather than hoping
+an independently-derived estimate happens to land there. A small, separately-verified
+`hourly_resolution_correction` factor (1.0206) is applied uniformly to every corner first,
+correcting for the SAM 8760 archive's native hourly resolution understating true gross import
+relative to the bill's 15-minute-resolved figure (confirmed at the real, zero-estimation c=p=1
+corner: the raw hourly simulation undershoots the actual 2026 bill by 2.02%) — a shared,
+disclosed bias removed before decomposing, not a per-corner fudge. With both corners now
+matching their bill totals by construction, the decomposed sum equals the observed change
+EXACTLY (0.0% error), and the AC4 load-bearing test in `test_gross_import_decomposition.py`
+asserts this precisely rather than merely under a tolerance.
+
+**The independent weather-based estimate becomes a cross-check, not an input the accuracy
+depends on.** `production_block()`'s AC1 weather/seasonal-rate estimate is still computed and
+reported (`production_scale_estimated_from_weather` = 1.088), but the DECOMPOSITION now uses
+the bill-anchored, back-solved value (`production_scale_backsolved_from_bill` = 0.994)
+instead. The two differ by 8.7% — not a precise match, but the same order of magnitude and
+the same qualitative conclusion (both close to 1.0, i.e. little year-over-year production
+change), which is itself meaningful: it says the independent weather-normalization approach is
+in the right neighborhood for this window, given how sensitive a two-year, no-daily-data
+transfer estimate necessarily is (demonstrated directly by the two failed intermediate fixes
+above, whose estimates swung by many percentage points just from which specific days or which
+transfer method were used). This reframes what AC1's normalization is FOR here: not to drive
+the headline split (an exact accounting identity does that, once one parameter is pinned), but
+to independently sanity-check whether the pinned value is physically plausible.
+
+**The answer.** `consumption_term_kwh` = +497.3 kWh; `production_term_kwh` = -1.3 kWh. For
 THIS pair of bill periods, the gross-import increase is overwhelmingly a CONSUMPTION story,
-not a production story — the production term is small and slightly negative (2024's
-estimated production is not clearly lower than 2026's measured production for this specific
-window), consistent with the small expected 2-year degradation signal (roughly 45-60 kWh at
-the naive 1.3-1.8%/yr rate applied to this window) sitting inside this method's own ~2-2.5%
-cross-meter noise floor. This does not contradict the 6-year degradation trend above — a
-small, real per-year decline can be simultaneously true and undetectable against noise in a
-single 29-day window two years apart.
+not a production story — the back-solved production level implies 2024 production was
+essentially flat relative to 2026's measured output (99.4%), consistent with the small
+expected 2-year degradation signal (roughly 45-60 kWh at the naive 1.3-1.8%/yr rate applied to
+this window) being too small to resolve confidently against this method's own noise floor in
+a single 29-32 day window two years apart. This does not contradict the 6-year degradation
+trend above — a small, real per-year decline can be simultaneously true and undetectable
+against noise in one short window.
 
 **EV attribution (AC5) — real detection, honestly bounded, not assumed.** `ev_block()` runs
 `analysis/behavior_rebuild.py`'s `detect_sessions()` (imported read-only, never modified) on

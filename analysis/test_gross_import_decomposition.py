@@ -190,9 +190,12 @@ def case_temperature_sensitivity_is_negative_and_statistically_meaningful():
 @case
 def case_production_block_seasonal_fraction_and_estimate_are_physically_sane():
     prod = gi.production_block()
-    # a ~29-day window should be roughly 1/12.6 of a year, not some wildly
-    # different share
-    assert 0.05 < prod["seasonal_fraction_empirical"] < 0.20, prod["seasonal_fraction_empirical"]
+    # seasonal_fraction_empirical is a PER-DAY rate ratio (this window's own
+    # average daily output over the trailing year's average daily output),
+    # not a period-total fraction -- a late-May/June window in a solar array
+    # should run comfortably above the annual daily average (long days,
+    # near-peak sun angle), but not by some absurd multiple.
+    assert 0.8 < prod["seasonal_fraction_empirical"] < 2.0, prod["seasonal_fraction_empirical"]
     assert 800 < prod["period_2024_estimated_kwh_empirical_basis"] < 3000, prod
     assert abs(prod["period_2026_pvoutput_vs_enphase_pct_diff"]) < 5.0, (
         "PVOutput vs Enphase cross-check should agree within a few percent, consistent "
