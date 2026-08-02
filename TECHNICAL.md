@@ -2075,16 +2075,23 @@ under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
 read-only and skipped gracefully if absent, not a hard tie-out assertion, so synthetic CI
 inputs run it cleanly).
 
-**Tests** `analysis/test_perfect_foresight_dispatch.py`, 18 cases: synthetic-frame unit
+**Tests** `analysis/test_perfect_foresight_dispatch.py`, 19 cases: synthetic-frame unit
 tests of the bucket assignment (matches `bill_nem_monthly`'s own grouping), the core LP
-solver (a hand-verifiable two-interval case, EV-exclusion enforcement, both SOC boundary
-modes, the bucket-offset mechanism reaching the objective by the expected amount), both
-fail-closed conservation checks (corrupted aggregate, simultaneous import/export,
-simultaneous charge/discharge), and the day-ahead forecast machinery (cyclic persistence
-for day 0, energy conservation, SOC bounds under heavy load, a nonzero real prior-day
-contribution to a bucket the next day also touches) need no private archive at all; cases
-requiring the $1 agreement with `rates.bill_nem`, the real annual solve's conservation and
-cyclic closure, the greedy ≤ day-ahead ≤ perfect-foresight ordering, and byte-identical
+solver (a same-bucket case where netting alone correctly leaves the battery idle, a
+TWO-bucket case that forces genuine physical battery use since netting cannot substitute
+for it across buckets — added after a second adversarial review found the original
+same-bucket case's docstring wrongly claimed the battery was exercised there, and that
+NO case in the file asserted nonzero charge/discharge at all, so a regression that
+disabled the battery entirely would have passed all 18 prior cases — confirmed by
+monkeypatching the bounds to (0,0) and rerunning: 17 of 18 still passed — EV-exclusion
+enforcement, both SOC boundary modes, the bucket-offset mechanism reaching the objective
+by the expected amount), both fail-closed conservation checks (corrupted aggregate,
+simultaneous import/export, simultaneous charge/discharge), and the day-ahead forecast
+machinery (cyclic persistence for day 0, energy conservation, SOC bounds under heavy
+load, a nonzero real prior-day contribution to a bucket the next day also touches) need
+no private archive at all; cases requiring the $1 agreement with `rates.bill_nem`, the
+real annual solve's conservation and cyclic closure, the greedy ≤ day-ahead ≤
+perfect-foresight ordering, and byte-identical
 regeneration gate on `_require_archive()` and SKIP with the reason named when this
 checkout lacks `private/`.
 

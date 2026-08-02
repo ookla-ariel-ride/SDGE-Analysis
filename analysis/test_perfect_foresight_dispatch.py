@@ -102,13 +102,17 @@ def case_bucket_assignment_matches_bill_nem_monthlys_own_grouping():
 
 @case
 def case_solve_lp_matches_hand_solved_two_interval_problem():
-    """A minimal, hand-solvable case: 2 intervals, no EV exclusion, one
-    bucket. With house_net = [+1, -1] kWh and cap=1, power=4 (no power
-    binding), the optimal cyclic dispatch should shift the entire +1 kWh
-    import to be served for free by charging from the -1 kWh export --
-    i.e. after round-trip loss, imp~=0, exp~=0 is NOT achievable (round-trip
-    loss > 0), but the LP must at least find the cost-minimizing schedule,
-    which this case checks against a hand-computed bound."""
+    """A minimal, hand-solvable case: 2 intervals, no EV exclusion, ONE
+    bucket. With house_net = [+1, -1] kWh in the SAME bucket, bucket-level
+    netting alone already zeroes the energy cost for free (net = 0) --
+    verified directly: the LP correctly finds charge and discharge are BOTH
+    exactly zero here, since physically moving energy through the battery
+    would only add round-trip loss with no netting benefit netting doesn't
+    already provide. An earlier version of this case's docstring wrongly
+    claimed the battery gets used in this fixture (second adversarial
+    review, issue #13) -- it doesn't, and correctly shouldn't; the case
+    that actually forces battery use is the next one, with two buckets
+    that cannot net against each other."""
     house_net = np.array([1.0, -1.0])
     ev_spillover = np.array([False, False])
     bucket_idx = np.array([0, 0])
@@ -117,14 +121,47 @@ def case_solve_lp_matches_hand_solved_two_interval_problem():
         house_net, ev_spillover, bucket_idx, bucket_rates,
         cap=1.0, power_kw=16.0, soc_boundary=("cyclic",))
     assert res.success
-    # charging from the export at interval 1 to discharge at interval 0 is
-    # profitable (0.50 saved per kWh served vs a small round-trip loss), so
-    # the LP should serve SOME of the import via the battery rather than
-    # paying the full energy rate on all of it
-    net_before = house_net[0] * bucket_rates[0][0] + house_net[1] * bucket_rates[0][1]
-    assert res.fun < net_before - 1e-6, (
-        f"LP objective {res.fun} should improve on the no-battery cost {net_before}")
-    return f"LP finds a cheaper-than-no-battery schedule ({res.fun:.4f} < {net_before:.4f})"
+    assert charge.sum() < 1e-9 and discharge.sum() < 1e-9, (
+        "expected the battery to sit idle when netting alone already zeroes "
+        "the bucket -- using it here would only add round-trip loss")
+    # the ENERGY portion of the bill is exactly zero (net=0), but NBC still
+    # applies to the 1 kWh of GROSS import regardless of netting -- the
+    # objective is NOT simply zero, it is exactly that NBC charge
+    expected = house_net[0] * pfd.NBC
+    assert abs(res.fun - expected) < 1e-9, (
+        f"expected the objective to equal NBC on the 1 kWh gross import "
+        f"(${expected}), got ${res.fun}")
+    return "bucket-level netting zeroes the energy charge; only NBC on gross import remains"
+
+
+@case
+def case_solve_lp_forces_real_battery_use_across_two_buckets():
+    """Regression guard (second adversarial review, issue #13): a synthetic
+    check that pinned charge/discharge bounds to (0, 0) everywhere -- i.e.
+    a fully disabled battery -- still passed all of this file's OTHER cases,
+    because none of them asserted the battery is actually USED. This case
+    closes that gap with a fixture where netting CANNOT substitute for
+    physical battery use: import in one bucket, export in a DIFFERENT
+    bucket (different TOU period), so only shifting energy through the
+    battery captures the rate spread. Hand-verified once outside the test
+    (charge.sum()=5.556, discharge.sum()=5.0) before asserting the general
+    property here."""
+    house_net = np.array([5.0, -5.0])
+    ev_spillover = np.array([False, False])
+    bucket_idx = np.array([0, 1])
+    bucket_rates = [(0.8, 0.1), (0.3, 0.05)]
+    imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
+        house_net, ev_spillover, bucket_idx, bucket_rates,
+        cap=10.0, power_kw=40.0, soc_boundary=("cyclic",))
+    assert res.success
+    no_battery_cost = house_net[0] * bucket_rates[0][0] + house_net[1] * bucket_rates[1][1]
+    assert charge.sum() > 1e-6, "expected the battery to charge from the cheaper bucket's surplus"
+    assert discharge.sum() > 1e-6, "expected the battery to discharge to serve the pricier bucket's import"
+    assert res.fun < no_battery_cost - 1e-6, (
+        f"LP objective {res.fun} should beat the no-battery cost {no_battery_cost} "
+        "by physically shifting energy across the two buckets")
+    return (f"the LP genuinely uses the battery (charge={charge.sum():.3f}, "
+            f"discharge={discharge.sum():.3f}) when netting alone cannot substitute for it")
 
 
 @case
