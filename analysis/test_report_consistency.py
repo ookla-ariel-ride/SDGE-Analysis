@@ -398,10 +398,13 @@ def case_optimality_gap_table_matches_the_artifact():
 
     assert gc["perfect_foresight_save_usd"] >= gc["greedy_save_usd"], (
         "the true optimum must never save less than the greedy policy")
-    assert da["save_usd"] >= gc["greedy_save_usd"], (
-        "the day-ahead case must never save less than the greedy policy")
     assert da["save_usd"] <= gc["perfect_foresight_save_usd"], (
         "the day-ahead case must never beat the true optimum")
+    # day-ahead vs greedy is deliberately NOT constrained either way -- a
+    # pre-committed schedule based on an imperfect forecast can genuinely
+    # underperform a simpler real-time reactive heuristic (a real, disclosed
+    # finding on this house's data: day-ahead $1,711.13 < greedy $2,329),
+    # so asserting an ordering here would encode a false assumption.
     assert abs(pfd["verification"]["agreement_usd"]) < 1.0, (
         "the LP's own required $1 agreement with rates.bill_nem is not met")
     return "the §6 controller-quality table matches the live perfect-foresight artifact"

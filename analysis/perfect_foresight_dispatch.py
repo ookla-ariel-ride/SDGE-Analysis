@@ -21,15 +21,25 @@ because it doesn't account for which side of zero a bucket's net position ends
 up on, or that NBC keeps accruing even when energy is "free" to net out.
 
 LP formulation, per 15-minute interval i (n = 35,040 intervals/year):
-  charge_i, discharge_i        >= 0, each <= power_kw/4 (kWh this interval)
-  imp_i, exp_i                 >= 0 (post-battery grid import/export)
-  soc_i                        in [0, cap]  (state of charge after interval i)
-  soc_init                     in [0, cap]  (state of charge before interval 0)
+  grid_topup_i      >= 0                      (extra grid import to charge)
+  solar_absorbed_i  in [0, gen0_i]             (solar surplus retained to
+                                               charge instead of exported)
+  discharge_i       in [0, imp0_i]             (serves import; can reduce it
+                                               to zero but never manufactures
+                                               NEW export beyond gen0_i)
+  soc_i             in [0, cap]  (state of charge after interval i)
+  soc_init          in [0, cap]  (state of charge before interval 0)
+  imp_i := imp0_i - discharge_i + grid_topup_i        )  DERIVED, not free
+  exp_i := gen0_i - solar_absorbed_i                  )  variables -- see below
 
 Constraints:
-  net-flow:   imp_i - exp_i - charge_i + discharge_i = house_net_i
-              (house_net_i = Consumption_i - Generation_i, fixed data)
-  continuity: soc_i = soc_{i-1} + charge_i*ETA - discharge_i/ETA
+  charge power cap: grid_topup_i + solar_absorbed_i <= power_kw/4
+              (the battery's power cap limits TOTAL charge rate regardless
+              of source; discharge_i's own upper bound, min(imp0_i,
+              power_kw/4), already combines its power cap with the
+              no-manufactured-export rule above)
+  continuity: soc_i = soc_{i-1} + (grid_topup_i+solar_absorbed_i)*ETA
+                       - discharge_i/ETA
               (soc_{-1} := soc_init)
   cyclic:     soc_init = soc_{n-1}
               -- a steady annual cycle, not a one-time year-1 boundary
@@ -39,11 +49,29 @@ Constraints:
   EV exclusion: discharge_i forced to 0 wherever kW_i >= 2.5 outside on-peak
               (the same rule battery_dispatch_policies.run_batt applies)
 
+Deriving imp_i/exp_i from imp0_i/gen0_i plus explicit, capped battery
+actions (rather than as free variables tied only to the signed net
+imp0_i-gen0_i) is deliberate, matching run_batt's own convention exactly:
+an earlier version used free imp_i/exp_i variables, which silently
+discarded the ~6.3% of real intervals that carry BOTH gross import and
+gross export simultaneously (collapsing them to a signed net erases that
+gross import for free, understating the NBC genuinely owed on it with no
+battery action required), and let the optimizer manufacture brand-new
+export beyond what the house ever generated -- a capability the shipping
+greedy policy's own discharge cap never uses, undermining the "same
+hardware, same envelope" comparison this whole bound depends on (Codex
+adversarial review, third pass). Both are now fixed by construction: an
+interval with no battery action reproduces imp0_i/gen0_i exactly, gross
+flows included, and discharge/solar-absorption are capped so the battery
+can never move imp_i or exp_i outside [0, imp0_i] / [0, gen0_i].
+
 Objective (minimize; BSC is dispatch-invariant, excluded):
-  For each of the ~36 (month, season, period) buckets b with net_b = x_b - y_b
-  (x_b, y_b >= 0, the standard convex-piecewise-linear-as-LP split):
+  NBC*sum(imp0_i) [a constant, added back after solving]
+  + sum_i [ NBC*grid_topup_i - NBC*discharge_i ]
+  + for each of the ~36-39 (month, season, period) buckets b with
+    net_b = x_b - y_b (x_b, y_b >= 0, the standard convex-piecewise-
+    linear-as-LP split):
       sum_b [ energy_rate_b * x_b  -  credit_rate_b * y_b ]
-    + NBC * sum_i(imp_i)
   This is the EXACT structure of rates.bill_nem_monthly, not an approximation
   of it -- verified directly by re-billing the LP's own resulting imp/exp
   series through rates.bill_nem and asserting the two agree to within $1.
@@ -113,7 +141,7 @@ def _bucket_assignment(d):
     return bucket_idx, rates
 
 
-def _solve_lp(house_net, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
+def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
               soc_boundary, bucket_offsets=None):
     """Core LP builder/solver, shared by the annual perfect-foresight run and
     the day-ahead rolling-horizon run. `soc_boundary` is either
@@ -126,98 +154,140 @@ def _solve_lp(house_net, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     forecast) net position already accrued this month before this slice --
     a day-ahead controller genuinely knows this (it is the past), so it is
     added into each bucket's net-position constraint rather than starting
-    every day's local LP as if the bucket were fresh (adversarial review,
-    issue #13: an earlier version reset every bucket to zero each day,
-    conflating real forecast error with an avoidable loss of already-known
-    information). Defaults to all zeros, which is exactly correct for the
-    annual solve, where every bucket genuinely starts the frame at zero.
+    every day's local LP as if the bucket were fresh. Defaults to all zeros,
+    exactly correct for the annual solve, where every bucket genuinely
+    starts the frame at zero.
+
+    Decision variables are `grid_topup` (extra grid import to charge, >=0),
+    `solar_absorbed` (solar surplus retained to charge instead of exported,
+    in [0, gen0_i]), and `discharge` (in [0, imp0_i] -- capped at the
+    interval's OWN gross import, so the battery can reduce import to zero
+    but can never manufacture NEW export beyond the baseline gen0_i).
+    `imp`/`exp` are DERIVED, not free variables: imp_i = imp0_i - discharge_i
+    + grid_topup_i, exp_i = gen0_i - solar_absorbed_i. This is deliberate,
+    matching battery_dispatch_policies.run_batt's own convention exactly
+    (Codex adversarial review, third pass): an earlier version instead used
+    free imp_i/exp_i variables tied only to the SIGNED net (imp0_i-gen0_i),
+    which (a) silently discarded the ~6.3% of real intervals that carry
+    BOTH gross import and gross export simultaneously -- collapsing them to
+    a signed net erases that gross import for free, understating the NBC
+    genuinely owed on it, with no battery action required to "earn" that
+    saving -- and (b) let the optimizer manufacture brand-new export beyond
+    what the house ever actually generated, a capability the shipping
+    greedy policy's own discharge cap (`min(imp[i], soc*ETA, pwrq)`) never
+    uses, undermining the "same hardware, same envelope" comparison this
+    whole bound depends on. Both are fixed by construction here, not by a
+    runtime check: discharge_i's own upper bound is `min(imp0_i, power_kw/4)`
+    and solar_absorbed_i's is `min(gen0_i, power_kw/4)`, so imp_i and exp_i
+    can never move outside [0, imp0_i] / [0, gen0_i] respectively, and an
+    interval with no battery action at all reproduces imp0_i/gen0_i exactly,
+    gross flows included.
     Returns (imp, exp, charge, discharge, soc, soc_init, lp_result)."""
-    n = len(house_net)
+    n = len(imp0)
     P = power_kw / 4.0
     n_b = len(bucket_rates)
+    house_net = imp0 - gen0
 
-    CH, DC, IMP, EXP, SOC = 0, n, 2 * n, 3 * n, 4 * n
-    SOC_INIT = 5 * n
+    GT, SA, DC, SOC = 0, n, 2 * n, 3 * n
+    SOC_INIT = 4 * n
     X, Y = SOC_INIT + 1, SOC_INIT + 1 + n_b
     n_vars = SOC_INIT + 1 + 2 * n_b
 
+    # NBC applies to the DERIVED imp_i = imp0_i - discharge_i + grid_topup_i.
+    # The imp0_i term is a constant (added back to the objective after
+    # solving, since linprog's c@x has no constant term); grid_topup_i and
+    # -discharge_i are the decision-variable coefficients.
+    imp0_nbc_constant = float(NBC * imp0.sum())
     c = np.zeros(n_vars)
-    c[IMP:IMP + n] = NBC
+    c[GT:GT + n] = NBC
+    c[DC:DC + n] = -NBC
     for b, (er, cr) in enumerate(bucket_rates):
         c[X + b] = er
         c[Y + b] = -cr
 
-    # (1) net-flow: imp_i - exp_i - charge_i + discharge_i = house_net_i
+    # (1) continuity: soc_i - soc_{i-1} - (grid_topup_i+solar_absorbed_i)*ETA
+    #                 + discharge_i/ETA = 0
     rows1 = np.repeat(np.arange(n), 4)
     cols1 = np.empty(4 * n, dtype=np.int64)
-    cols1[0::4] = IMP + np.arange(n)
-    cols1[1::4] = EXP + np.arange(n)
-    cols1[2::4] = CH + np.arange(n)
-    cols1[3::4] = DC + np.arange(n)
-    data1 = np.tile([1.0, -1.0, -1.0, 1.0], n)
-    b1 = house_net
-
-    # (2) continuity: soc_i - soc_{i-1} - charge_i*ETA + discharge_i/ETA = 0
-    rows2 = np.repeat(np.arange(n), 4)
-    cols2 = np.empty(4 * n, dtype=np.int64)
-    cols2[0::4] = SOC + np.arange(n)
+    cols1[0::4] = SOC + np.arange(n)
     prev = np.where(np.arange(n) == 0, SOC_INIT, SOC + np.arange(n) - 1)
-    cols2[1::4] = prev
-    cols2[2::4] = CH + np.arange(n)
-    cols2[3::4] = DC + np.arange(n)
-    data2 = np.tile([1.0, -1.0, -ETA, 1.0 / ETA], n)
-    b2 = np.zeros(n)
+    cols1[1::4] = prev
+    cols1[2::4] = GT + np.arange(n)  # grid_topup contributes with SA below
+    cols1[3::4] = DC + np.arange(n)
+    data1 = np.tile([1.0, -1.0, -ETA, 1.0 / ETA], n)
+    b1 = np.zeros(n)
+    # solar_absorbed's own contribution to continuity (same -ETA coefficient
+    # as grid_topup, added as a second block reusing the same n rows)
+    rows1b = np.arange(n)
+    cols1b = SA + np.arange(n)
+    data1b = np.full(n, -ETA)
 
-    # (3) SOC boundary: cyclic (soc_init = soc_{n-1}) or fixed (soc_init = value)
-    rows3 = np.array([0, 0]) if soc_boundary[0] == "cyclic" else np.array([0])
+    # (2) SOC boundary: cyclic (soc_init = soc_{n-1}) or fixed (soc_init = value)
+    rows2 = np.array([0, 0]) if soc_boundary[0] == "cyclic" else np.array([0])
     if soc_boundary[0] == "cyclic":
-        cols3 = np.array([SOC_INIT, SOC + n - 1])
-        data3 = np.array([1.0, -1.0])
-        b3 = np.array([0.0])
+        cols2 = np.array([SOC_INIT, SOC + n - 1])
+        data2 = np.array([1.0, -1.0])
+        b2 = np.array([0.0])
     else:
-        cols3 = np.array([SOC_INIT])
-        data3 = np.array([1.0])
-        b3 = np.array([float(soc_boundary[1])])
+        cols2 = np.array([SOC_INIT])
+        data2 = np.array([1.0])
+        b2 = np.array([float(soc_boundary[1])])
 
-    # (4) bucket net split: offset_b + sum(imp_i) - sum(exp_i) - x_b + y_b = 0
-    # per bucket (offset_b is the real, already-realized net position accrued
-    # earlier this month -- zero for the annual solve, where every bucket
-    # genuinely starts the frame empty)
-    rows4 = np.concatenate([bucket_idx, bucket_idx, np.arange(n_b), np.arange(n_b)])
-    cols4 = np.concatenate([IMP + np.arange(n), EXP + np.arange(n),
+    # (3) bucket net split: house_net_baseline_b - sum(discharge_i)
+    #     + sum(grid_topup_i) + sum(solar_absorbed_i) - x_b + y_b = -offset_b
+    # (house_net_baseline_b is a CONSTANT per bucket, precomputed from the
+    # real imp0/gen0 -- the gross decomposition this whole fix preserves)
+    house_net_baseline = np.zeros(n_b)
+    np.add.at(house_net_baseline, bucket_idx, house_net)
+    offsets = np.asarray(bucket_offsets, dtype=float) if bucket_offsets is not None else np.zeros(n_b)
+    rows3 = np.concatenate([bucket_idx, bucket_idx, bucket_idx, np.arange(n_b), np.arange(n_b)])
+    cols3 = np.concatenate([DC + np.arange(n), GT + np.arange(n), SA + np.arange(n),
                             X + np.arange(n_b), Y + np.arange(n_b)])
-    data4 = np.concatenate([np.ones(n), -np.ones(n), -np.ones(n_b), np.ones(n_b)])
-    b4 = -np.asarray(bucket_offsets, dtype=float) if bucket_offsets is not None else np.zeros(n_b)
+    data3 = np.concatenate([-np.ones(n), np.ones(n), np.ones(n), -np.ones(n_b), np.ones(n_b)])
+    b3 = -offsets - house_net_baseline
 
-    n_row3 = len(b3)
+    n_row2 = len(b2)
     A_eq = sp.coo_matrix(
-        (np.concatenate([data1, data2, data3, data4]),
-         (np.concatenate([rows1, rows2 + n, rows3 + 2 * n,
-                          rows4 + 2 * n + n_row3]),
-          np.concatenate([cols1, cols2, cols3, cols4]))),
-        shape=(2 * n + n_row3 + n_b, n_vars)).tocsr()
-    b_eq = np.concatenate([b1, b2, b3, b4])
+        (np.concatenate([data1, data1b, data2, data3]),
+         (np.concatenate([rows1, rows1b, rows2 + n, rows3 + n + n_row2]),
+          np.concatenate([cols1, cols1b, cols2, cols3]))),
+        shape=(n + n_row2 + n_b, n_vars)).tocsr()
+    b_eq = np.concatenate([b1, b2, b3])
 
-    bounds = [(0, P)] * n
-    bounds += [(0, 0) if ev_spillover[i] else (0, P) for i in range(n)]
-    bounds += [(0, None)] * n
-    bounds += [(0, None)] * n
-    bounds += [(0, cap)] * n
-    bounds += [(0, cap)]
-    bounds += [(0, None)] * n_b
-    bounds += [(0, None)] * n_b
+    # (4) combined charging power cap: grid_topup_i + solar_absorbed_i <= P
+    # (a genuine inequality -- the battery's power cap limits the TOTAL
+    # charge rate regardless of source, not each source independently)
+    rows4 = np.repeat(np.arange(n), 2)
+    cols4 = np.empty(2 * n, dtype=np.int64)
+    cols4[0::2] = GT + np.arange(n)
+    cols4[1::2] = SA + np.arange(n)
+    data4 = np.tile([1.0, 1.0], n)
+    A_ub = sp.coo_matrix((data4, (rows4, cols4)), shape=(n, n_vars)).tocsr()
+    b_ub = np.full(n, P)
 
-    res = linprog(c, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+    bounds = [(0, P)] * n                                              # grid_topup
+    bounds += [(0, min(float(gen0[i]), P)) for i in range(n)]          # solar_absorbed
+    bounds += [(0, 0) if ev_spillover[i] else (0, min(float(imp0[i]), P))
+              for i in range(n)]                                       # discharge
+    bounds += [(0, cap)] * n                                           # soc
+    bounds += [(0, cap)]                                                # soc_init
+    bounds += [(0, None)] * n_b                                        # x
+    bounds += [(0, None)] * n_b                                        # y
+
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
     if not res.success:
         raise SystemExit(f"perfect_foresight_dispatch: LP did not solve: {res.message}")
+    res.fun = res.fun + imp0_nbc_constant  # restore the constant NBC-on-imp0 term
 
     x = res.x
-    imp = x[IMP:IMP + n]
-    exp = x[EXP:EXP + n]
-    charge = x[CH:CH + n]
+    grid_topup = x[GT:GT + n]
+    solar_absorbed = x[SA:SA + n]
     discharge = x[DC:DC + n]
     soc = x[SOC:SOC + n]
     soc_init = x[SOC_INIT]
+    imp = imp0 - discharge + grid_topup
+    exp = gen0 - solar_absorbed
+    charge = grid_topup + solar_absorbed
     return imp, exp, charge, discharge, soc, soc_init, res
 
 
@@ -225,14 +295,13 @@ def solve(d, imp0, gen0, cap=CAP_KWH, power_kw=POWER_KW):
     """Whole-year perfect-foresight LP (cyclic SOC boundary). Returns
     (imp, exp, result_dict, charge, discharge, soc, soc_init)."""
     n = len(d)
-    house_net = imp0 - gen0
     kw = imp0 * 4.0
     p = d.p.values
     ev_spillover = (kw >= 2.5) & (p != "on")
     bucket_idx, bucket_rates = _bucket_assignment(d)
 
     imp, exp, charge, discharge, soc, soc_init, res = _solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates, cap, power_kw, ("cyclic",))
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw, ("cyclic",))
 
     return imp, exp, {
         "lp_status": res.message,
@@ -269,7 +338,7 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     principled level rather than an arbitrary new assumption."""
     n = len(d)
     P = power_kw / 4.0
-    house_net = imp0 - gen0
+    house_net = imp0 - gen0  # only for the forecast-error stats below
     p = d.p.values
     # The REAL EV-exclusion mask -- known only in hindsight. A day-ahead
     # controller does not get to see this in advance any more than it sees
@@ -289,7 +358,14 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     day_idx = [np.where(dates == dt)[0] for dt in uniq_dates]
     n_days = len(day_idx)
 
-    forecast_house_net = house_net.copy()
+    # Forecast imp0/gen0 SEPARATELY (not just their signed difference) -- the
+    # same gross-flow-preserving fix as the annual solve applies here too:
+    # a day-ahead controller's forecast is of the two real, separate meters,
+    # not of a pre-netted quantity, and _solve_lp needs the separate series
+    # to preserve simultaneous-flow intervals and cap discharge at the
+    # (forecast) gross import correctly.
+    forecast_imp0 = imp0.copy()
+    forecast_gen0 = gen0.copy()
     # The EV-exclusion mask used for PLANNING is forecast the same way as the
     # load itself (yesterday's actual mask, time-of-day aligned) -- not the
     # real future mask. This is what makes the day-ahead case genuinely
@@ -302,7 +378,8 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
         idx = day_idx[i]
         prev_idx = day_idx[i - 1]  # i=0 wraps to the LAST day (cyclic persistence source)
         if len(prev_idx) == len(idx):
-            forecast_house_net[idx] = house_net[prev_idx]
+            forecast_imp0[idx] = imp0[prev_idx]
+            forecast_gen0[idx] = gen0[prev_idx]
             forecast_ev_spillover[idx] = real_ev_spillover[prev_idx]
             persisted[idx] = True
         else:
@@ -312,6 +389,7 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
             # only; excluded from the error stats below, not silently blended in)
             n_dst_mismatch_days += 1
 
+    forecast_house_net = forecast_imp0 - forecast_gen0
     err = forecast_house_net[persisted] - house_net[persisted]
     forecast_mae = float(np.abs(err).mean())
     forecast_rmse = float(np.sqrt((err ** 2).mean()))
@@ -340,28 +418,39 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
         local_offsets = [bucket_cumulative.get(orig, 0.0) for orig in local_present]
 
         _, _, planned_charge, planned_discharge, _, _, _ = _solve_lp(
-            forecast_house_net[idx], forecast_ev_spillover[idx], local_bucket_idx,
-            local_bucket_rates, cap, power_kw, ("fixed", soc_now),
+            forecast_imp0[idx], forecast_gen0[idx], forecast_ev_spillover[idx],
+            local_bucket_idx, local_bucket_rates, cap, power_kw, ("fixed", soc_now),
             bucket_offsets=local_offsets)
 
         day_real_imp = np.zeros(len(idx))
         day_real_exp = np.zeros(len(idx))
         for k in range(len(idx)):
+            gi = idx[k]
             # the REAL EV-exclusion rule is still enforced at execution,
             # regardless of what the forecast-based plan called for -- the
-            # same hard-feasibility spirit as the SOC/power clip just below
-            planned_d = 0.0 if real_ev_spillover[idx[k]] else planned_discharge[k]
-            d_actual = min(planned_d, soc_now * ETA, P)
+            # same hard-feasibility spirit as the SOC/power clip just below.
+            # discharge is ALSO capped at the REAL gross import (never the
+            # forecast's), so execution can never manufacture new export
+            # beyond the real gen0 even if the plan (built on an imperfect
+            # forecast) implied it could (Codex adversarial review, third
+            # pass -- the same gross-flow-preserving fix as the LP itself:
+            # imp/exp are derived from the real imp0/gen0 plus explicit,
+            # correctly-capped battery actions, never from a collapsed
+            # signed net, so a no-action interval reproduces imp0/gen0
+            # exactly, simultaneous flows included).
+            planned_d = 0.0 if real_ev_spillover[gi] else planned_discharge[k]
+            d_actual = min(planned_d, imp0[gi], soc_now * ETA, P)
             c_actual = min(planned_charge[k], (cap - soc_now) / ETA, P)
+            solar_used = min(c_actual, gen0[gi])   # solar-first priority
+            grid_extra = c_actual - solar_used
             soc_now = soc_now + c_actual * ETA - d_actual / ETA
-            real_net = house_net[idx[k]] - d_actual + c_actual
-            day_real_imp[k] = max(0.0, real_net)
-            day_real_exp[k] = max(0.0, -real_net)
-            real_imp[idx[k]] = day_real_imp[k]
-            real_exp[idx[k]] = day_real_exp[k]
-            real_charge[idx[k]] = c_actual
-            real_discharge[idx[k]] = d_actual
-            real_soc_trace[idx[k]] = soc_now
+            day_real_imp[k] = imp0[gi] - d_actual + grid_extra
+            day_real_exp[k] = gen0[gi] - solar_used
+            real_imp[gi] = day_real_imp[k]
+            real_exp[gi] = day_real_exp[k]
+            real_charge[gi] = c_actual
+            real_discharge[gi] = d_actual
+            real_soc_trace[gi] = soc_now
 
         # carry the REAL (post-battery) net position forward into each
         # touched bucket's running total, using genuinely-realized data --
@@ -387,16 +476,18 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
 
 
 def _check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, cap):
-    """Exact algebraic identities, not a heuristic decomposition. An earlier
-    version tried to split discharge into "import relief" vs "solar absorbed"
-    using per-interval clip(min=0) sums -- that silently assumed discharge only
-    ever REDUCES import, never CREATES new export beyond gen0. A true optimum
-    legitimately does the latter too (discharging into an interval that is
-    already net-exporting, to capture a bucket's credit rate), which the
-    heuristic mis-flagged as a conservation failure. The checks below instead
-    verify the net-flow equation's own aggregate consequence directly -- true
-    by construction if and only if the LP's constraints were built correctly,
-    with no assumption about which direction any individual interval moves."""
+    """Exact algebraic identities, not a heuristic decomposition, checked
+    against the gross-flow-preserving formulation (Codex adversarial review,
+    third pass): imp/exp are DERIVED from imp0/gen0 plus explicit, capped
+    battery actions (never a collapsed signed net), so simultaneous gross
+    import AND export in the SAME interval is now EXPECTED and CORRECT
+    whenever the real data itself has it (~6.3% of intervals, per
+    battery_dispatch_policies.py's own count) -- an earlier version's "no
+    simultaneous import/export" check would have fired on exactly the
+    intervals this fix exists to preserve, so it is replaced below with
+    checks against the actual invariants the new formulation guarantees:
+    exp never exceeds gen0 (no manufactured export) and discharge never
+    exceeds imp0 (never reduces import below zero on its own)."""
     eta = ETA
     # aggregate net-flow identity: sum(imp-exp) - sum(house_net) = charge_sum - discharge_sum
     house_net = imp0 - gen0
@@ -407,23 +498,45 @@ def _check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, 
             f"perfect_foresight_dispatch: aggregate net-flow identity failed "
             f"({lhs:.4f} != {rhs:.4f}) -- the LP's own constraints are "
             "inconsistent with its solution")
-    # no interval should show BOTH import and export simultaneously by more
-    # than a solver rounding tolerance (wasteful, never optimal, and not
-    # something the LP's constraints forbid directly -- worth confirming
-    # empirically rather than assuming)
-    both = np.minimum(imp, exp)
-    if both.max() > 1e-3:
+    # export must never exceed the real gross generation -- the battery may
+    # only ever absorb solar that would have been exported, never manufacture
+    # NEW export beyond what the house actually generated
+    over_export = exp - gen0
+    if over_export.max() > 1e-3:
         raise SystemExit(
-            f"perfect_foresight_dispatch: {int((both > 1e-3).sum())} interval(s) "
-            f"show simultaneous import AND export (max {both.max():.4f} kWh)")
-    # no interval should charge AND discharge simultaneously (pure round-trip
-    # loss with no benefit; never optimal, worth confirming empirically)
+            f"perfect_foresight_dispatch: {int((over_export > 1e-3).sum())} "
+            f"interval(s) export more than gen0 (max excess "
+            f"{over_export.max():.4f} kWh) -- the battery manufactured export")
+    # discharge must never exceed the real gross import -- the battery may
+    # only ever reduce import down to zero, never flip an interval to export
+    over_discharge = discharge - imp0
+    if over_discharge.max() > 1e-3:
+        raise SystemExit(
+            f"perfect_foresight_dispatch: {int((over_discharge > 1e-3).sum())} "
+            f"interval(s) discharge more than imp0 (max excess "
+            f"{over_discharge.max():.4f} kWh) -- discharge exceeded the "
+            "gross import it is capped at")
+    # Charging AND discharging in the SAME interval is only wasteful (pure
+    # round-trip loss, no benefit) when that interval has just ONE real flow
+    # to work with -- if imp0 and gen0 are BOTH genuinely nonzero at once (a
+    # real simultaneous-flow interval, ~6.3% of them per battery_dispatch_
+    # policies.py's own count), discharging to serve the real import while
+    # separately storing the real solar surplus are two independent,
+    # individually rational actions, not one wasted round trip. Confirmed
+    # directly: every interval with both nonzero on the real data has real
+    # simultaneous imp0>0 and gen0>0 to justify it (verified while building
+    # this check; an earlier, stricter version of this check was itself
+    # wrong -- it assumed "both nonzero" always meant waste, true only in
+    # the retired collapsed-net formulation, not in this gross-preserving one).
     both_batt = np.minimum(charge, discharge)
-    if both_batt.max() > 1e-3:
+    single_flow = ~((imp0 > 1e-6) & (gen0 > 1e-6))
+    wasteful = (both_batt > 1e-3) & single_flow
+    if wasteful.any():
         raise SystemExit(
-            f"perfect_foresight_dispatch: {int((both_batt > 1e-3).sum())} "
-            f"interval(s) charge AND discharge simultaneously "
-            f"(max {both_batt.max():.4f} kWh)")
+            f"perfect_foresight_dispatch: {int(wasteful.sum())} interval(s) "
+            f"charge AND discharge simultaneously with only ONE real flow "
+            f"present (max {both_batt[wasteful].max():.4f} kWh) -- pure "
+            "round-trip loss with no independent justification")
     soc_prev = np.concatenate([[soc_init], soc[:-1]])
     expected = soc_prev + charge * eta - discharge / eta
     if not np.allclose(soc, expected, atol=1e-4):
@@ -548,11 +661,18 @@ def main():
         "day_ahead_value_over_greedy_usd": (
             round(da_save - canon["pw3"]["greedy"]["save"], 2) if canon else None),
         "remaining_gap_day_ahead_to_perfect_usd": round(save - da_save, 2),
-        "note": ("what a smarter (day-ahead-forecast) controller is worth over "
-                 "the shipping greedy policy, and what is still left even after "
-                 "that upgrade, at the same 13.5 kWh / 11.5 kW hardware -- "
-                 "no shipping product changes the CONTROLLER, only the hardware, "
-                 "so this gap is a software/firmware question, not a purchasing one"),
+        "note": ("the shipping greedy policy already captures the large majority "
+                 "of the theoretical maximum at this hardware (the optimality gap "
+                 "above is the full remaining upside from ANY controller, however "
+                 "smart); a naive day-ahead schedule pre-committed from a "
+                 "persistence forecast is NOT a reliable way to capture more of "
+                 "it and can underperform the simpler real-time greedy policy, "
+                 "since pre-commitment hard-caps what the battery can do at each "
+                 "interval to whatever the forecast anticipated -- no shipping "
+                 "product changes the controller, only the hardware, so closing "
+                 "the remaining gap is a software/firmware question, not a "
+                 "purchasing one, and this data does not show day-ahead "
+                 "forecasting alone is the answer"),
     }
 
     root = repo_root()

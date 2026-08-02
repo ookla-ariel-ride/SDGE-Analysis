@@ -113,12 +113,13 @@ def case_solve_lp_matches_hand_solved_two_interval_problem():
     review, issue #13) -- it doesn't, and correctly shouldn't; the case
     that actually forces battery use is the next one, with two buckets
     that cannot net against each other."""
-    house_net = np.array([1.0, -1.0])
+    imp0 = np.array([1.0, 0.0])
+    gen0 = np.array([0.0, 1.0])
     ev_spillover = np.array([False, False])
     bucket_idx = np.array([0, 0])
     bucket_rates = [(0.50, 0.20)]  # energy_rate, credit_rate
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=1.0, power_kw=16.0, soc_boundary=("cyclic",))
     assert res.success
     assert charge.sum() < 1e-9 and discharge.sum() < 1e-9, (
@@ -127,7 +128,7 @@ def case_solve_lp_matches_hand_solved_two_interval_problem():
     # the ENERGY portion of the bill is exactly zero (net=0), but NBC still
     # applies to the 1 kWh of GROSS import regardless of netting -- the
     # objective is NOT simply zero, it is exactly that NBC charge
-    expected = house_net[0] * pfd.NBC
+    expected = imp0[0] * pfd.NBC
     assert abs(res.fun - expected) < 1e-9, (
         f"expected the objective to equal NBC on the 1 kWh gross import "
         f"(${expected}), got ${res.fun}")
@@ -146,15 +147,16 @@ def case_solve_lp_forces_real_battery_use_across_two_buckets():
     battery captures the rate spread. Hand-verified once outside the test
     (charge.sum()=5.556, discharge.sum()=5.0) before asserting the general
     property here."""
-    house_net = np.array([5.0, -5.0])
+    imp0 = np.array([5.0, 0.0])
+    gen0 = np.array([0.0, 5.0])
     ev_spillover = np.array([False, False])
     bucket_idx = np.array([0, 1])
     bucket_rates = [(0.8, 0.1), (0.3, 0.05)]
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=10.0, power_kw=40.0, soc_boundary=("cyclic",))
     assert res.success
-    no_battery_cost = house_net[0] * bucket_rates[0][0] + house_net[1] * bucket_rates[1][1]
+    no_battery_cost = imp0[0] * bucket_rates[0][0] - gen0[1] * bucket_rates[1][1]
     assert charge.sum() > 1e-6, "expected the battery to charge from the cheaper bucket's surplus"
     assert discharge.sum() > 1e-6, "expected the battery to discharge to serve the pricier bucket's import"
     assert res.fun < no_battery_cost - 1e-6, (
@@ -168,12 +170,13 @@ def case_solve_lp_forces_real_battery_use_across_two_buckets():
 def case_solve_lp_respects_ev_exclusion():
     """A single interval flagged as EV-spillover must have discharge forced
     to exactly 0, regardless of how profitable discharging would be."""
-    house_net = np.array([5.0])
+    imp0 = np.array([5.0])
+    gen0 = np.array([0.0])
     ev_spillover = np.array([True])
     bucket_idx = np.array([0])
     bucket_rates = [(0.80, 0.10)]
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=10.0, power_kw=40.0, soc_boundary=("fixed", 5.0))
     assert res.success
     assert discharge[0] < 1e-9, f"EV-spillover interval discharged {discharge[0]} kWh, expected 0"
@@ -182,12 +185,13 @@ def case_solve_lp_respects_ev_exclusion():
 
 @case
 def case_cyclic_boundary_forces_soc_init_equal_soc_final():
-    house_net = np.array([2.0, -2.0, 2.0, -2.0])
+    imp0 = np.array([2.0, 0.0, 2.0, 0.0])
+    gen0 = np.array([0.0, 2.0, 0.0, 2.0])
     ev_spillover = np.zeros(4, dtype=bool)
     bucket_idx = np.zeros(4, dtype=int)
     bucket_rates = [(0.5, 0.2)]
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=5.0, power_kw=20.0, soc_boundary=("cyclic",))
     assert res.success
     assert abs(soc_init - soc[-1]) < 1e-6, (
@@ -197,12 +201,13 @@ def case_cyclic_boundary_forces_soc_init_equal_soc_final():
 
 @case
 def case_fixed_boundary_pins_soc_init_to_the_given_value():
-    house_net = np.array([1.0, 1.0])
+    imp0 = np.array([1.0, 1.0])
+    gen0 = np.array([0.0, 0.0])
     ev_spillover = np.zeros(2, dtype=bool)
     bucket_idx = np.zeros(2, dtype=int)
     bucket_rates = [(0.5, 0.2)]
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=5.0, power_kw=20.0, soc_boundary=("fixed", 3.0))
     assert res.success
     assert abs(soc_init - 3.0) < 1e-6, f"expected soc_init pinned to 3.0, got {soc_init}"
@@ -217,15 +222,16 @@ def case_bucket_offset_shifts_the_marginal_incentive_correctly():
     slice is now valued at the energy rate regardless of this slice's own
     local sign -- confirming the offset genuinely reaches the objective
     rather than being silently dropped."""
-    house_net = np.array([5.0, -5.0])
+    imp0 = np.array([5.0, 0.0])
+    gen0 = np.array([0.0, 5.0])
     ev_spillover = np.zeros(2, dtype=bool)
     bucket_idx = np.zeros(2, dtype=int)
     bucket_rates = [(0.5, 0.1)]
     _, _, _, _, _, _, res_no_offset = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=5.0, power_kw=20.0, soc_boundary=("fixed", 2.5))
     _, _, _, _, _, _, res_with_offset = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=5.0, power_kw=20.0, soc_boundary=("fixed", 2.5), bucket_offsets=[100.0])
     delta = res_with_offset.fun - res_no_offset.fun
     assert 40.0 < delta < 60.0, (
@@ -269,30 +275,28 @@ def case_rolling_day_ahead_bucket_offsets_are_real_not_forecast():
 
 @case
 def case_check_conservation_passes_on_a_real_lp_solution():
-    house_net = np.array([2.0, -1.0, 3.0, -2.0])
+    imp0 = np.array([2.0, 0.0, 3.0, 0.0])
+    gen0 = np.array([0.0, 1.0, 0.0, 2.0])
     ev_spillover = np.zeros(4, dtype=bool)
     bucket_idx = np.zeros(4, dtype=int)
     bucket_rates = [(0.6, 0.15)]
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=5.0, power_kw=20.0, soc_boundary=("cyclic",))
-    imp0 = np.clip(house_net, 0, None)
-    gen0 = np.clip(-house_net, 0, None)
     pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, 5.0)
     return "a real LP solution passes the conservation check"
 
 
 @case
 def case_check_conservation_detects_a_corrupted_aggregate():
-    house_net = np.array([2.0, -1.0])
+    imp0 = np.array([2.0, 0.0])
+    gen0 = np.array([0.0, 1.0])
     ev_spillover = np.zeros(2, dtype=bool)
     bucket_idx = np.zeros(2, dtype=int)
     bucket_rates = [(0.6, 0.15)]
     imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
-        house_net, ev_spillover, bucket_idx, bucket_rates,
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=5.0, power_kw=20.0, soc_boundary=("cyclic",))
-    imp0 = np.clip(house_net, 0, None)
-    gen0 = np.clip(-house_net, 0, None)
     try:
         pfd._check_conservation(imp0, gen0, imp + 1.0, exp, charge, discharge,
                                 soc, soc_init, 5.0)
@@ -303,19 +307,67 @@ def case_check_conservation_detects_a_corrupted_aggregate():
 
 
 @case
-def case_check_conservation_detects_simultaneous_import_and_export():
+def case_check_conservation_allows_real_simultaneous_import_and_export():
+    """Codex adversarial review (third pass): simultaneous gross import AND
+    export in the SAME interval is EXPECTED and CORRECT when the real data
+    itself has both (~6.3% of real intervals) -- an earlier, stricter check
+    would have wrongly rejected exactly the intervals this fix exists to
+    preserve. Confirms the conservation check no longer flags this."""
     imp0 = np.array([1.0])
     gen0 = np.array([1.0])
     charge = np.array([0.0])
     discharge = np.array([0.0])
     soc = np.array([0.0])
+    pfd._check_conservation(imp0, gen0, np.array([1.0]), np.array([1.0]),
+                            charge, discharge, soc, 0.0, 5.0)
+    return "simultaneous real gross import and export in one interval passes cleanly"
+
+
+@case
+def case_check_conservation_detects_manufactured_export():
+    """exp must never exceed the real gen0 -- the battery may only ever
+    absorb solar that would have been exported, never manufacture NEW
+    export beyond what the house actually generated (Codex adversarial
+    review, third pass). The fixture must still satisfy the aggregate
+    net-flow identity (charge=1, imp=exp=2) so THAT check doesn't fire
+    first and mask the one under test."""
+    imp0 = np.array([0.0])
+    gen0 = np.array([1.0])
+    charge = np.array([1.0])
+    discharge = np.array([0.0])
+    soc = np.array([0.0])
     try:
-        pfd._check_conservation(imp0, gen0, np.array([1.0]), np.array([1.0]),
+        pfd._check_conservation(imp0, gen0, np.array([2.0]), np.array([2.0]),
                                 charge, discharge, soc, 0.0, 5.0)
     except SystemExit as e:
-        assert "simultaneous import AND export" in str(e)
-        return "simultaneous import and export in the same interval is caught"
-    raise AssertionError("simultaneous import/export slipped past the conservation check")
+        assert "manufactured export" in str(e)
+        return "export exceeding gen0 (manufactured export) is caught"
+    raise AssertionError("manufactured export slipped past the conservation check")
+
+
+@case
+def case_check_conservation_detects_over_discharge_beyond_gross_import():
+    """discharge must never exceed the real imp0 -- the battery may only
+    ever reduce import down to zero, never flip an interval to export
+    (Codex adversarial review, third pass). The fixture must still satisfy
+    the aggregate net-flow identity (imp=-1 is not a physically valid
+    value on its own, but this hand-crafted case exists purely to isolate
+    the over-discharge check from the aggregate and over-export checks
+    that run before it) and must not also trip the export check (exp=0,
+    gen0=0 keeps that one clean)."""
+    imp0 = np.array([1.0])
+    gen0 = np.array([0.0])
+    imp = np.array([-1.0])
+    exp = np.array([0.0])
+    charge = np.array([0.0])
+    discharge = np.array([2.0])  # exceeds imp0
+    soc = np.array([0.0])
+    try:
+        pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, 0.0, 5.0)
+    except SystemExit as e:
+        assert "discharge more than imp0" in str(e)
+        return "discharge exceeding imp0 is caught"
+    raise AssertionError("over-discharge slipped past the conservation check")
 
 
 @case
@@ -456,27 +508,25 @@ def case_conservation_holds_on_the_real_annual_solve():
 
 
 @case
-def case_optimality_ordering_greedy_le_day_ahead_le_perfect_foresight():
-    """A realistic controller with imperfect forecast can never beat a true
-    optimum, and a naive heuristic should not beat a controller doing genuine
-    SOC-aware, netting-aware day-ahead optimization -- verify this ordering
-    holds on the real data, against the committed canonical dispatch artifact."""
+def case_day_ahead_never_beats_the_true_optimum():
+    """A realistic controller solving the SAME problem as the perfect-
+    foresight LP, just with a worse (feasible, non-optimal) plan, can never
+    beat the true optimum -- this ordering is a mathematical certainty and
+    must always hold. Greedy vs day-ahead, by contrast, is NOT guaranteed
+    either way: a day-ahead schedule that pre-commits to a plan based on an
+    imperfect forecast can genuinely underperform a simple real-time
+    reactive heuristic when forecast error hard-caps how much the plan
+    allows the battery to do -- confirmed on this house's real data (day-
+    ahead $1,711.13/yr vs greedy $2,329/yr), a real, disclosed finding, not
+    an assumption to enforce in a test."""
     if not ARTIFACT.exists():
         raise SkipCase("data/perfect_foresight_dispatch.json not present")
     art = json.loads(ARTIFACT.read_text())
-    canon_path = ROOT / "data" / "battery_dispatch_policies.json"
-    if not canon_path.exists():
-        raise SkipCase("data/battery_dispatch_policies.json not present")
-    canon = json.loads(canon_path.read_text())
-    greedy_save = canon["pw3"]["greedy"]["save"]
     day_ahead_save = art["day_ahead_forecast"]["save_usd"]
     perfect_save = art["perfect_foresight_save_usd"]
-    assert greedy_save <= day_ahead_save + 1.0, (
-        f"day-ahead (${day_ahead_save}) should not underperform greedy (${greedy_save})")
     assert day_ahead_save <= perfect_save + 1.0, (
         f"day-ahead (${day_ahead_save}) should not beat the true optimum (${perfect_save})")
-    return (f"ordering holds: greedy ${greedy_save} <= day-ahead ${day_ahead_save} "
-            f"<= perfect-foresight ${perfect_save}")
+    return f"day-ahead (${day_ahead_save}) never beats the true optimum (${perfect_save})"
 
 
 @case
