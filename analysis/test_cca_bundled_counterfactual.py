@@ -218,10 +218,56 @@ def case_not_determined_is_populated_and_committed_json_agrees():
 def case_recommendation_headline_is_direction_a_not_an_average():
     out = json.loads((CX.DATA / "cca_bundled_counterfactual.json").read_text())
     rec = out["recommendation"]
-    assert rec["headline_basis"] == "direction_a (measured)"
-    assert rec["confidence"] == "measured"
+    assert rec["headline_basis"] == "direction_a (modeled -- same-date bill rates)"
+    assert rec["confidence"] == "modeled"
     assert rec["annual_dollar_result_usd"] == out["direction_a_cca_repriced_at_bundled"]["delta_usd_per_year"]
     return f"headline ${rec['annual_dollar_result_usd']}/yr, confidence={rec['confidence']}"
+
+
+@case
+def case_direction_a_confidence_is_modeled_not_measured():
+    """Regression guard (issue #11, second Codex review, confirmed). Direction A combines
+    this household's own MEASURED per-cell kWh with SDG&E's own real, same-date PRINTED
+    bundled-generation comparison rate -- both inputs are genuine bill-sourced figures -- but
+    multiplying them produces a COMPUTED dollar total for a bundled arrangement the household
+    never actually had here. Nobody ever billed this household this number; it is this
+    script's own reconstruction. CLAUDE.md's `measured` tier means an observed fact (a meter
+    reading, an actual bill line), not a computed counterfactual built from real inputs, so
+    this must be labeled `modeled` -- never the literal string `measured` -- no matter how
+    strong the inputs are (an earlier version of this script mislabeled it `measured`; this
+    case, and the byte-identity gate on the committed JSON, are what would catch that
+    regression recurring). Checked positively (matches the specific new label) rather than
+    only negatively (isn't the old one), and checked against BOTH the live function output
+    and the committed artifact, plus the recommendation that inherits the same basis, so a
+    future edit that fixes one and not the others still fails this case."""
+    a = CX.direction_a(CX.cca_period_cells())
+    assert a["confidence"] == "modeled", a["confidence"]
+    assert a["confidence"] != "measured"
+    assert "confidence_detail" in a and a["confidence_detail"], \
+        "expected a confidence_detail explaining the measured-inputs vs modeled-output nuance"
+    detail_upper = a["confidence_detail"].upper()
+    assert "MEASURED" in detail_upper and "MODELED" in detail_upper, (
+        "the detail should explain the measured-INPUTS vs modeled-OUTPUT distinction, not "
+        "just assert a bare label")
+    # Direction B is untouched by this fix -- still modeled, for its own, different reason
+    # (CEA never served this household in 2024 at all).
+    b = CX.direction_b(CX.cca_flat_rate())
+    assert b["confidence"] == "modeled"
+
+    out = json.loads((CX.DATA / "cca_bundled_counterfactual.json").read_text())
+    da = out["direction_a_cca_repriced_at_bundled"]
+    rec = out["recommendation"]
+    assert da["confidence"] == "modeled"
+    assert out["direction_b_bundled_repriced_at_cca"]["confidence"] == "modeled"
+    assert rec["confidence"] == "modeled"
+    assert rec["headline_basis"] != "direction_a (measured)"
+    assert "modeled" in rec["headline_basis"].lower()
+    # The dollar figures themselves must be untouched by a labeling fix.
+    assert da["delta_usd"] == 74.07, da["delta_usd"]
+    assert da["delta_usd_per_year"] == 49.46, da["delta_usd_per_year"]
+    return (f"direction_a confidence={a['confidence']!r} (was 'measured'), "
+           f"recommendation confidence={rec['confidence']!r}, headline_basis="
+           f"{rec['headline_basis']!r}, dollar figures unchanged")
 
 
 # ---------------------------------------------------------------------------

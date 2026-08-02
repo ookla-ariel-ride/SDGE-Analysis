@@ -1550,15 +1550,30 @@ citations — the bundled statement's own PCIA sentence and each era's franchise
 read off the same two anchor statements `bill_decomposition.py` already uses, because no
 committed artifact carries either fact.
 
-**Direction A — the 19 CCA periods repriced at bundled rates (MEASURED).** For each CCA
-period's actual per-(season, TOU) kWh, this asks what SDG&E's own bundled-generation
-comparison table printed for that exact date — the same same-statement diagnostic
-`bill_decomposition.py`'s module docstring documents at length: on a CCA date this is
-SDG&E's bundled-generation (EECC) comparison, printed for reference rather than charged,
-and it is the only place a same-date bundled rate exists for a CCA-billed date. This is
-measured, not modeled — SDG&E prints the comparison figure on the household's own bill, for
-the household's own usage, on the household's own date. Bundled comparison dollars are
-priced at SEGMENT level (`data/bill_tou_detail.csv`'s own segment/segment_days columns),
+**Direction A — the 19 CCA periods repriced at bundled rates (MODELED · same-date bill
+rates).** For each CCA period's actual per-(season, TOU) kWh, this asks what SDG&E's own
+bundled-generation comparison table printed for that exact date — the same same-statement
+diagnostic `bill_decomposition.py`'s module docstring documents at length: on a CCA date this
+is SDG&E's bundled-generation (EECC) comparison, printed for reference rather than charged,
+and it is the only place a same-date bundled rate exists for a CCA-billed date.
+
+**Relabeled from an earlier MEASURED (second Codex review, issue #11, confirmed).** Both
+multiplicands here are real, bill-printed figures — the household's own measured kWh, and
+SDG&E's own real, same-date printed bundled-generation comparison rate — but the dollar TOTAL
+this calculation produces was never actually billed to anyone: it is this script's own
+reconstruction of a bundled arrangement the household never had on this date, for a period it
+was actually billed by CEA. CLAUDE.md §9's confidence tiers distinguish an observed fact (a
+meter reading, an actual bill line — MEASURED) from a validated computation on real,
+current-for-that-date inputs (MODELED); this is the latter. The qualifier "same-date bill
+rates" travels with the label everywhere it is reported (this script's own
+`confidence_detail` field, `index.html`'s pills, this section) because it is a materially
+stronger MODELED figure than one built from a rate table with no date-specific verification
+(contrast `index.html`'s whole-year, one-current-rate reading, labeled plain "modeled ·
+current rates, whole year") — every input here is the real bill-printed number for the
+actual date being priced. The dollar figures themselves ($74.07 total, $49.46/yr) are
+unchanged by this correction; only the label and the surrounding prose describing what kind
+of evidence they represent changed. Bundled comparison dollars are priced at SEGMENT level
+(`data/bill_tou_detail.csv`'s own segment/segment_days columns),
 never at one representative date's rate applied to the whole period's kWh: a period whose
 printed comparison table itself changed mid-cycle (a rate revision landed inside a billing
 cycle — e.g. 1/28/25–2/26/25, four days at the old winter rate and 26 at the new one) prints
@@ -1646,8 +1661,8 @@ figure is not wrong; it answers a different, harder, vintage-mixed question ("wh
 2024 usage have cost a CCA customer, priced at the only CCA rate ever observed") and is
 reported because AC2 (issue #11) asks for the bidirectional counterfactual, labeled
 modeled, and reconciled here rather than averaged with Direction A. **Direction A is the
-recommendation basis** (measured, 547 days spanning two summers and two winters, vs
-Direction B's 216 days of one summer and a partial winter).
+recommendation basis** (modeled · same-date bill rates, 547 days spanning two summers and
+two winters, vs Direction B's 216 days of one summer and a partial winter).
 
 **Reconciliation with the existing single-statement figures (`bill_decomposition.py`,
 §10).** That script's `provider_effect_whole_period()` runs exactly this same comparison
@@ -1713,7 +1728,7 @@ under `NEEDS_PRIVATE_ARCHIVE` (the same dependency shape as `irreducible_bill.py
 `data/cca_generation_rates.csv` and `data/bill_tou_detail.csv`, which themselves derive
 from the bill PDF corpus), so the §9 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_cca_bundled_counterfactual.py`, 21 cases, split the same way:
+**Tests** `analysis/test_cca_bundled_counterfactual.py`, 27 cases, split the same way:
 cases exercising the numeric core (the classification rules, the provider/vintage
 identity, the reconciliation arithmetic) run unconditionally against committed CSV/engine
 data; the cases needing the two real anchor PDFs (the PCIA and franchise-fee citations)

@@ -18,16 +18,33 @@ data/cca_generation_rates.csv). Its only new extraction is two direct bill-line 
 off the same two anchor statements bill_decomposition.py already uses (BASE=2024-06-27,
 CURRENT=2026-07-02), because no committed artifact carries either fact.
 
-DIRECTION A -- the 19 CCA periods repriced at bundled rates (MEASURED).
+DIRECTION A -- the 19 CCA periods repriced at bundled rates (MODELED -- SAME-DATE BILL RATES).
 For each CCA period's actual per-(season, TOU) kWh (data/cca_generation_rates.csv, already
 bill-reconciled to the cent), this asks what SDG&E's OWN bundled-generation comparison table
 printed for that exact date (RateSet.generation_comparison_table -- the same-statement
 diagnostic bill_decomposition.py's module docstring documents at length: on a CCA date this
 is SDG&E's bundled-generation (EECC) comparison, printed for reference, not a tariff charged,
-and it is the only place a same-date bundled rate exists for a CCA-billed date). This is
-MEASURED, not modeled: SDG&E prints this exact comparison figure on the household's own bill,
-for the household's own usage, on the household's own date -- nothing here is projected. A
-priced cell is repriced at SEGMENT level (data/bill_tou_detail.csv's own segment/segment_days
+and it is the only place a same-date bundled rate exists for a CCA-billed date).
+
+CONFIDENCE LABEL, AND WHY IT CHANGED (second Codex review, issue #11). An earlier version of
+this script labeled Direction A MEASURED. That overstated it: both multiplicands here are
+real, bill-printed figures -- the household's own MEASURED kWh, and SDG&E's own real,
+same-date PRINTED bundled-generation comparison rate -- but the dollar TOTAL this function
+produces by multiplying them was never actually billed to anyone. It is this script's own
+reconstruction of a bundled arrangement the household never had on this date, for a period it
+was actually billed by CEA. CLAUDE.md section 9's confidence tiers distinguish an observed
+fact (a meter reading, an actual bill line -- the MEASURED tier) from a validated computation
+on real, current-for-that-date inputs (the MODELED tier); this is the latter, not the former,
+however real its inputs are. The label is now MODELED, carrying the qualifier "same-date bill
+rates" everywhere it is reported (this module's own confidence_detail field, index.html's
+pills, TECHNICAL.md), because it is a materially stronger MODELED figure than one built from a
+rate table with no date-specific verification (contrast index.html's whole-year,
+one-current-rate reading, labeled plain "modeled -- current rates, whole year"): every input
+here is the real bill-printed number for the actual date being priced, nothing is scaled or
+extrapolated across dates. What did NOT change: the dollar figures themselves ($74.07 total,
+$49.46/yr) -- this is a labeling correction, not a computation change.
+
+A priced cell is repriced at SEGMENT level (data/bill_tou_detail.csv's own segment/segment_days
 columns), never at one representative date's rate applied to the whole period: a period whose
 printed bundled comparison table itself changed mid-cycle (a rate revision landed inside a
 billing cycle -- e.g. 1/28/25-2/26/25, four days at the old winter rate and 26 at the new one)
@@ -121,7 +138,8 @@ headline (which needs no g0), they are simply excluded from the vintage/provider
 disclosed as such.
 
 AC6 -- THE TWO DIRECTIONS DISAGREE BY WELL OVER 20%, AND THE REASON IS NAMED, NOT AVERAGED
-AWAY. Direction A (measured, 547 days, spans two summers and two winters) finds the CCA
+AWAY. Direction A (modeled -- same-date bill rates, 547 days, spans two summers and two
+winters) finds the CCA
 premium at about $49/yr on the net-import cells it can price. Direction B (modeled, 216 days,
 May-Dec 2024 only -- one summer and one partial winter, no Jan-Apr) finds about $136/yr,
 roughly 2.7x larger. The provider/vintage split above supplies the mechanism: SDG&E's own
@@ -356,7 +374,8 @@ def _generation_comparison_segments():
 
 
 # ---------------------------------------------------------------------------
-# Direction A -- 19 CCA periods repriced at SDG&E's same-date bundled comparison (MEASURED)
+# Direction A -- 19 CCA periods repriced at SDG&E's same-date bundled comparison
+# (MODELED -- same-date bill rates; see the module docstring's CONFIDENCE LABEL section)
 # ---------------------------------------------------------------------------
 def direction_a(cca_cells):
     gen_segments = _generation_comparison_segments()
@@ -470,11 +489,28 @@ def direction_a(cca_cells):
         "answer for the subset of energy this analysis CAN price; see recommendation.text.")
 
     return {
-        "confidence": "measured",
+        "confidence": "modeled",
+        "confidence_detail": (
+            "MODELED -- same-date bill rates, not measured, despite both multiplicands "
+            "being real, bill-printed figures: the per-cell kWh is this household's own "
+            "MEASURED CCA-era usage (already bill-reconciled, data/cca_generation_rates.csv), "
+            "and the per-cell rate is SDG&E's own real, same-date PRINTED bundled-generation "
+            "comparison (its bill's own reference figure, not invented or scaled from a rate "
+            "table) -- but the dollar total produced by multiplying them is this script's own "
+            "reconstruction of a bundled arrangement the household never actually had on this "
+            "date. Nobody ever billed this household this number; CLAUDE.md's measured tier "
+            "means an observed fact (a meter reading, an actual bill line), not a computed "
+            "counterfactual built from real inputs, however strong those inputs are. It is a "
+            "materially stronger MODELED figure than one built from a generic rate table with "
+            "no date-specific verification -- every input here is the actual bill-printed "
+            "number for the actual date being priced -- which is why it carries the qualifier "
+            "'same-date bill rates' rather than a bare 'modeled' label."),
         "what": ("the household's actual per-(season, TOU) CCA-era kWh, priced once at "
                  "what CEA actually charged and once at SDG&E's own same-date printed "
-                 "bundled-generation comparison -- both numbers are printed on the "
-                 "household's real bills; nothing here is projected"),
+                 "bundled-generation comparison -- both inputs are real numbers printed on "
+                 "the household's own bills, but the dollar total produced by multiplying "
+                 "them is this script's own computed reconstruction of a bundled "
+                 "arrangement never actually billed here; see confidence_detail"),
         "n_periods": len(periods_by_provider()["CCA"]),
         "n_statements": len({p["statement_date"] for p in periods_by_provider()["CCA"]}),
         "days": days,
@@ -714,8 +750,8 @@ def reconciliation(a, b, pv):
     explanation = None
     if not agree:
         explanation = (
-            f"Direction A (measured, {a['days']} days spanning two summers and two "
-            f"winters) finds ${ann_a}/yr; Direction B (modeled, {b['days']} days, "
+            f"Direction A (modeled -- same-date bill rates, {a['days']} days spanning two "
+            f"summers and two winters) finds ${ann_a}/yr; Direction B (modeled, {b['days']} days, "
             "May-Dec 2024 only -- one summer, a partial winter, no Jan-Apr) finds "
             f"${ann_b}/yr, {pct_diff:+.1f}% different. The gap is a rate-vintage effect, "
             "not a disagreement about the provider comparison: SDG&E's own bundled "
@@ -868,14 +904,21 @@ def recommendation(a, b, recon):
     excl_usd = a["excluded_net_export_cca_credit_usd"]
     excl_n = a["excluded_net_export_cells"]
     return {
-        "headline_basis": "direction_a (measured)",
+        "headline_basis": "direction_a (modeled -- same-date bill rates)",
         "why_not_direction_b": (
             "Direction B mixes two years of bundled-side rate inflation into what looks "
             "like a provider effect (see reconciliation.explanation_if_disagreeing); "
             "Direction A's same-date comparison does not, and covers a much longer, more "
             "representative sample (547 days vs 216)"),
         "annual_dollar_result_usd": ann_a,
-        "confidence": "measured",
+        "confidence": "modeled",
+        "confidence_detail": (
+            "same tier and reasoning as direction_a_cca_repriced_at_bundled."
+            "confidence_detail: this figure is computed by multiplying this household's own "
+            "measured billed kWh by SDG&E's own real, same-date printed bundled-generation "
+            "comparison rate, so both inputs are genuine bill figures, but the annual dollar "
+            "result is this analysis's own reconstruction, not an amount anyone was ever "
+            "actually billed -- MODELED, qualified 'same-date bill rates', not MEASURED"),
         "scope_caveat": (
             "this figure prices ONLY the net-import cells (the ones where both a CEA "
             "charge and a same-date SDG&E bundled comparison exist); it excludes "
@@ -887,13 +930,14 @@ def recommendation(a, b, recon):
             "'was switching to the CCA a win' is therefore NOT FULLY DETERMINED by this "
             "analysis."),
         "text": (
-            f"On the measured, same-date, energy-only comparison (Direction A), staying "
-            f"on CEA's CCA has cost this household about ${ann_a}/yr more than bundled "
-            "SDG&E generation would have -- but ONLY on the net-import cells this "
-            "analysis can price. That priced-cell answer is real and it is small "
-            "(individual periods in this sample range from a net CCA saving of roughly "
-            "$14 to a net CCA cost of roughly $27 -- see direction_a.priced_detail for "
-            "the per-period provider_delta_usd figures). It is NOT the full answer to "
+            "On the same-date, energy-only comparison (Direction A, modeled from this "
+            "household's own billed kWh and SDG&E's own same-date printed bundled "
+            f"comparison rate), staying on CEA's CCA would have cost this household about "
+            f"${ann_a}/yr more than bundled SDG&E generation -- but ONLY on the net-import "
+            "cells this analysis can price. That priced-cell answer is well-evidenced and "
+            "it is small (individual periods in this sample range from a net CCA saving of "
+            "roughly $14 to a net CCA cost of roughly $27 -- see direction_a.priced_detail "
+            "for the per-period provider_delta_usd figures). It is NOT the full answer to "
             f"whether switching to the CCA was a win for this household: {excl_n} cells "
             f"were billed as net exports and carry a real CEA credit of {_money(excl_usd)} -- "
             "several times the size of the priced-cell delta -- and SDG&E's bill prints "
@@ -903,7 +947,8 @@ def recommendation(a, b, recon):
             "Reconstructing what the bundled side would have credited for that exported "
             "energy would mean rebuilding the whole NEM annual true-up, which is out of "
             f"scope here. So: the priced-cell answer (${ann_a}/yr, CCA costs slightly "
-            "more) is real, but the LARGER, unresolved net-export effect means the true "
+            "more) is a modeled, same-date-bill-rate figure with strong evidentiary "
+            "backing, but the LARGER, unresolved net-export effect means the true "
             "whole-household comparison is NOT FULLY DETERMINED by this analysis -- "
             f"stated honestly rather than letting the ${ann_a}/yr figure stand in for a "
             "conclusion it does not support. Two smaller facts bear on the PRICED "
@@ -1021,7 +1066,8 @@ def main():
     b = out["direction_b_bundled_repriced_at_cca"]
     recon = out["reconciliation"]
     print(f"wrote {path}")
-    print(f"Direction A (measured): ${a['delta_usd_per_year']}/yr over {a['days']} days")
+    print(f"Direction A (modeled -- same-date bill rates): "
+          f"${a['delta_usd_per_year']}/yr over {a['days']} days")
     print(f"Direction B (modeled):  ${b['delta_usd_per_year']}/yr over {b['days']} days")
     print(f"agree within 20%: {recon['agree_within_20pct']} "
           f"({recon['pct_difference_b_vs_a']}% difference)")
