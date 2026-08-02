@@ -644,6 +644,7 @@
   "event_hour_union_caveat": "The committed calendar -- and every gross/net/kWh/miss-rate figure in this artifact computed from it -- is the UNION of distinct (date, hour) event slots across ~14 aggregations in this category, since a single real household sees only ONE aggregation's own schedule and anonymization prevents identifying which. Treat these figures as an INCLUSIVE UPPER-BOUND SCENARIO, not a headline point estimate: see per_aggregation_sensitivity for the range across the individual aggregation schedules a real household might actually have belonged to."
  },
  "opportunity_cost_note": "Computed here, not assumed, and it came out small and slightly NEGATIVE (the re-billed VPP-dispatch year costs marginally LESS than the no-VPP/BAU year, before counting the DSGS payment at all). Traced to the monthly per-TOU-period NEM netting engine (rates.bill_nem): DSGS event hours fall inside the 4-9pm on-peak window, already this household's highest-value discharge time under ordinary price-aware dispatch, so forcing extra export there and drawing the battery down a bit further mostly reduces future SOC availability during CHEAPER off-peak/super-off-peak hours (which the overnight SOP grid top-up refills anyway) rather than costing expensive on-peak service later. This is a real, computed NEM-netting effect specific to this household's TOU schedule and usage pattern, not an assumption.",
+ "partial_months_note": "Month(s) [7] have event hours on BOTH sides of the measured-window boundary (issue #10 Codex review Finding 2): DSGS's own Monthly DC is an LMP-weighted average over ALL of a month's event hours, and this household's pre-window hours in that same month cannot be replayed (no measured load exists for them). Pricing only the in-window subset at the month's full published $/kW rate would misrepresent a partial month as a complete settlement, so these month(s) are EXCLUDED from monthly_gross_usd/net revenue entirely -- their dispatch/miss-rate outcomes for the in-window hours that DO exist are still reported in hour_detail (that simulation is valid; only the monthly CAPACITY PAYMENT computation is not), but they contribute $0 to gross/net revenue.",
  "partial_season_caveat": "This backtest's revenue/kWh/miss-rate figures cover ONLY 2025-07-24 through 2025-10-30 -- the portion of the household's measured window that overlaps the 2025 DSGS season (which runs May-October), NOT the whole season. 22 union event hours before 2025-07-24 are excluded (unreplayable -- no measured load exists for them in any year), so this is a PARTIAL-SEASON observation, not a complete season and not an annualized figure. A full season would very likely earn MORE (it only adds event hours relative to this partial figure), but a full-season/annual revenue figure is NOT DETERMINED here -- it is not extrapolated from the partial figure, because no measured load exists for the missing May-July hours in any year. Any downstream use of this figure as an annual input (e.g. extended_findings.py's payback tornado lever) must carry this same caveat, not present it as a complete season's revenue.",
  "payment_rate_source": "EMPIRICAL: Monthly Capacity Payment ($) / Demonstrated Capacity (MW) from the Monthly Aggregation Dataset, UDC2/Residential/2-hr rows with positive demonstrated capacity (essentially constant within each month). Tesla's $150-350/season program-terms figure (already cited in \u00a76) is used only as an order-of-magnitude sanity check, not as the payment source.",
  "per_aggregation_sensitivity": {
@@ -652,8 +653,8 @@
   "n_aggregations": 14,
   "net_usd_max": 213.19,
   "net_usd_max_aggregation": "Aggregation-034",
-  "net_usd_min": 108.45,
-  "net_usd_min_aggregation": "Aggregation-053",
+  "net_usd_min": 96.02,
+  "net_usd_min_aggregation": "Aggregation-009",
   "note": "A real household belongs to exactly ONE of these aggregations' actual dispatch schedules, not the union the rest of this artifact's headline figures use. The union-based figures are an inclusive upper bound on event FREQUENCY (see build_calendar()'s docstring), not a point estimate of what this household would actually have earned -- this range is what a real single-aggregation household could have earned instead, at the same 20% reserve.",
   "per_aggregation": {
    "Aggregation-002": {
@@ -665,10 +666,10 @@
     "total_discharge_kwh": 28.23
    },
    "Aggregation-009": {
-    "gross_usd": 116.4,
+    "gross_usd": 93.06,
     "miss_rate": 0.5,
     "n_event_hours_in_window": 14,
-    "net_usd": 119.36,
+    "net_usd": 96.02,
     "opportunity_cost_usd": -2.96,
     "total_discharge_kwh": 50.41
    },
@@ -772,32 +773,29 @@
  },
  "revenue": {
   "reserve_0pct_sensitivity": {
-   "gross_usd": 245.92,
+   "gross_usd": 187.78,
    "monthly_gross_usd": {
     "10": 45.01,
-    "7": 58.14,
     "8": 73.92,
     "9": 68.85
    },
-   "net_usd": 261.71,
+   "net_usd": 203.57,
    "opportunity_cost_usd": -15.79,
    "total_discharge_kwh": 241.11
   },
   "reserve_20pct": {
-   "gross_usd": 165.34,
+   "gross_usd": 128.47,
    "monthly_demonstrated_capacity_kw": {
     "10": 3.0992,
-    "7": 2.251,
     "8": 2.9555,
     "9": 2.3957
    },
    "monthly_gross_usd": {
     "10": 31.75,
-    "7": 36.87,
     "8": 51.87,
     "9": 44.85
    },
-   "net_usd": 179.5,
+   "net_usd": 142.63,
    "opportunity_cost_usd": -14.16,
    "total_discharge_kwh": 182.19
   }
@@ -816,7 +814,7 @@
   ],
   "statewide_2hr_event_dates_note": "The three statewide 2-hour VPP events (page 23's chart title and page 20's 'three statewide 2-hour events' annotation agree), each a 2-hour block within hour-ending 19-21. These are the only 2024 dates legible unambiguously in the source's charts; the remaining PG&E-only/SCE-SDG&E-only event dates are stated in the source but not transcribed here to avoid misreading a chart axis."
  },
- "tesla_sanity_check_note": "\u00a76's existing program-terms estimate cites $150-$350/season; this backtest's empirically-rated gross revenue for the 4 in-window participation month(s) is $165.34 -- same order of magnitude as a partial (not full 6-month) season at the program-terms rate.",
+ "tesla_sanity_check_note": "\u00a76's existing program-terms estimate cites $150-$350/season; this backtest's empirically-rated gross revenue for the 4 in-window participation month(s) is $128.47 -- same order of magnitude as a partial (not full 6-month) season at the program-terms rate.",
  "total_discharge_kwh_note": "AC4's 'kWh exported' figure: total battery discharge across the in-window event hours (event-forced discharge -- which this dispatch model routes entirely to export, see run_batt_vpp -- plus any concurrent ordinary/BAU discharge that hour). This matches the CEC's own Net Discharge crediting basis (both avoided import and true export reduce net metered demand identically for DSGS purposes), not a narrower grid-export-only figure.",
  "udc_identity_caveat": "UDC 2 in the CEC anonymized file is an INFERENCE (candidate SDG&E) by 2025 enrollment scale, cross-checked against the 2024 CEC analysis's real utility names showing the same relative ordering one year earlier -- not a confirmed identity. See this script's module docstring for the full site-month and nameplate-MW figures."
 }

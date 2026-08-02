@@ -555,17 +555,17 @@ out["tornado_battery"] = {
     "ranked_by_swing": sorted(tor, key=lambda k: -tor[k]["swing_yr"]),
     "dsgs_excluded_note": (
         f"DSGS VPP revenue is NOT one of the levers above (issue #10 Finding 1): "
-        f"the backtested ${DSGS_NET_20PCT_USD:.2f}/yr (20% reserve, primary) / "
-        f"${DSGS_NET_0PCT_SENS_USD:.2f}/yr (0%-reserve sensitivity) union-scenario "
-        "figures are a PARTIAL-SEASON observation (2025-07-24..2025-10-30 only), "
-        "not a full-year recurring figure, so folding them into BATT_COST / "
-        "(G + dsgs_dollars) would misrepresent a partial season as an annual "
-        "payback input. DSGS would ADD this much per year on top of the "
-        "arbitrage savings the base_payback_yr above is computed from, once a "
-        "full season is measured (see data/dsgs_vpp_backtest.json's "
-        "per_aggregation_sensitivity field for the range across individual "
-        "aggregation schedules a real household might belong to) -- an "
-        "additive dollar statement, not a payback-year claim."),
+        f"the backtested ${DSGS_NET_20PCT_USD:.2f} (20% reserve, primary) / "
+        f"${DSGS_NET_0PCT_SENS_USD:.2f} (0%-reserve sensitivity) union-scenario "
+        "figures cover only the observed 2025-07-24..2025-10-30 window, not a "
+        "full year, so folding them into BATT_COST / (G + dsgs_dollars) would "
+        "misrepresent a partial season as an annual payback input. DSGS would "
+        "ADD this much on top of the arbitrage savings the base_payback_yr above "
+        "is computed from, once a full season is measured (see "
+        "data/dsgs_vpp_backtest.json's per_aggregation_sensitivity field for the "
+        "range across individual aggregation schedules a real household might "
+        "belong to) -- an additive dollar statement over the observed window, "
+        "not a payback-year claim and not an annual figure."),
 }
 
 # ---- publication gate: validate everything, then write ATOMICALLY ----------

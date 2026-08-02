@@ -571,7 +571,8 @@ def case_committed_results_json_has_expected_sections():
               "backup_reserve_caveat", "payment_rate_source", "events_outside_window",
               "events_in_window", "miss_rate", "revenue", "opportunity_cost_note",
               "second_program_year_event_list_2024", "total_discharge_kwh_note",
-              "partial_season_caveat", "per_aggregation_sensitivity"):
+              "partial_season_caveat", "per_aggregation_sensitivity",
+              "partial_months_note"):
         assert k in result, f"results section missing: {k}"
     caveat = result["partial_season_caveat"]
     assert "NOT DETERMINED" in caveat and "PARTIAL-SEASON" in caveat, (
@@ -594,6 +595,35 @@ def case_committed_results_json_has_expected_sections():
     miss = result["miss_rate"]["reserve_20pct"]
     assert 0 <= miss["misses"] <= miss["total"]
     return f"gross=${rev['gross_usd']:.2f} net=${rev['net_usd']:.2f} miss={miss}"
+
+
+@case
+def case_partial_calendar_month_contributes_zero_revenue():
+    """Regression for issue #10's Codex review Finding 2: July 2025 has event hours on
+    BOTH sides of the measured-window boundary (2025-07-22 pre-window, 2025-07-29..31
+    in-window) -- confirmed directly against the committed calendar. DSGS's own Monthly
+    DC is an LMP-weighted average over ALL of a month's event hours; pricing only the
+    in-window subset at July's full published $/kW rate would misrepresent a partial
+    month as a complete settlement. July must therefore contribute $0 to gross/net
+    revenue in both reserve scenarios, while its in-window hours still appear in
+    hour_detail (the dispatch/miss-rate simulation for the days that DO exist is valid,
+    only the monthly capacity PAYMENT is not)."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    note = result["partial_months_note"]
+    assert "[7]" in note, f"expected July (month 7) to be the partial month, got: {note}"
+    for scenario in ("reserve_20pct", "reserve_0pct_sensitivity"):
+        monthly = result["revenue"][scenario]["monthly_gross_usd"]
+        assert "7" not in monthly, (
+            f"{scenario}: July must be excluded from monthly_gross_usd entirely, "
+            f"not priced from its incomplete in-window subset -- got {monthly}")
+    july_hours = [r for r in result["hour_detail"] if r["month"] == 7]
+    assert len(july_hours) == 6, (
+        "July's 6 in-window event hours (07-29, 07-30, 07-31, 2 hours each) must "
+        "still appear in hour_detail even though they earn no monthly capacity "
+        f"payment -- got {len(july_hours)}")
+    return f"July excluded from revenue ({note[:60]}...), still present in hour_detail ({len(july_hours)} hours)"
 
 
 @case

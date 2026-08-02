@@ -758,6 +758,18 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     n_misses = sum(1 for r in hour_rows if r["miss"])
     miss_rate = round(n_misses / n_hours_in_window, 4) if n_hours_in_window else None
 
+    # ---- which months are PARTIALLY observed (issue #10 Codex review Finding 2) ----
+    # DSGS's own "Monthly DC" is an LMP-weighted average over ALL of that aggregation's
+    # event hours in the month (see the CEC's own definition, module docstring). If this
+    # household's measured window starts mid-month, some of that month's real event hours
+    # fall BEFORE the window and cannot be replayed (no measured load exists for them) --
+    # pricing the remaining, INCOMPLETE subset at the month's full published $/kW rate
+    # would misrepresent a partial-month settlement as a complete one. Any month with
+    # event hours on BOTH sides of the window boundary is excluded from revenue entirely,
+    # not silently priced from a subset.
+    partial_months = sorted(set(r.date.month for r in outwin.itertuples())
+                             & set(r["month"] for r in hour_rows))
+
     # ---- monthly LMP-weighted demonstrated capacity -> gross revenue (Test Capacity only) ----
     monthly_gross = {}
     demonstrated_capacity_by_month = {}
@@ -766,6 +778,8 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     for r in cap_rows:
         by_month.setdefault(r["month"], []).append(r)
     for mo, rows in sorted(by_month.items()):
+        if mo in partial_months:
+            continue  # cannot validly price a partial month -- see partial_months_note
         num = sum(r["demonstrated_net_discharge_kw"] * r["caiso_lmp_usd_per_mwh"] for r in rows)
         den = sum(r["caiso_lmp_usd_per_mwh"] for r in rows)
         dc_kw = num / den if den else 0.0
@@ -786,6 +800,8 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     opp_cost0 = round(bill_vpp0 - bill_bau, 2)
     monthly_gross0 = {}
     for mo, rows in sorted(by_month.items()):
+        if mo in partial_months:
+            continue  # cannot validly price a partial month -- see partial_months_note
         total0 = {}
         for r in rows:
             key = (dt.date.fromisoformat(r["date"]), r["hour_end"] - 1)
@@ -908,6 +924,22 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
                 "March 2026) -- a data-availability gap, not an extrapolatable one. "
                 "0 events counted, 0 revenue attributed."),
         },
+        "partial_months_note": (
+            f"Month(s) {partial_months} have event hours on BOTH sides of the "
+            "measured-window boundary (issue #10 Codex review Finding 2): DSGS's own "
+            "Monthly DC is an LMP-weighted average over ALL of a month's event hours, "
+            "and this household's pre-window hours in that same month cannot be "
+            "replayed (no measured load exists for them). Pricing only the in-window "
+            "subset at the month's full published $/kW rate would misrepresent a "
+            "partial month as a complete settlement, so these month(s) are EXCLUDED "
+            "from monthly_gross_usd/net revenue entirely -- their dispatch/miss-rate "
+            "outcomes for the in-window hours that DO exist are still reported in "
+            "hour_detail (that simulation is valid; only the monthly CAPACITY PAYMENT "
+            "computation is not), but they contribute $0 to gross/net revenue."
+            if partial_months else
+            "No month has event hours on both sides of the measured-window boundary "
+            "this run -- every priced month's Monthly DC is computed from its "
+            "complete in-window event set."),
         "partial_season_caveat": (
             f"This backtest's revenue/kWh/miss-rate figures cover ONLY "
             f"{window_start.isoformat()} through "
