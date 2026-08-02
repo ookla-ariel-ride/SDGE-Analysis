@@ -866,8 +866,9 @@ figure — the exact payback-arithmetic problem CLAUDE.md §2 exists to catch, n
 a caveat fixes after the fact. An earlier version of this script computed a `dsgs_revenue`
 lever this way (payback envelope 5.6–6.2 yr); it has been removed rather than re-labeled,
 per CLAUDE.md's own guidance to lean toward removing a shaky calculation over defending
-it. `tornado_battery.dsgs_excluded_note` reports the backtested dollars ($179.50/yr at
-20% reserve, primary; $261.71/yr at 0%-reserve sensitivity — both read from
+it. `tornado_battery.dsgs_excluded_note` reports the backtested dollars ($179.50 at 20%
+reserve, primary; $261.71 at 0%-reserve sensitivity, both over the observed
+2025-07-24..2025-10-30 window, not an annual figure — both read from
 `data/dsgs_vpp_backtest.json` at runtime, never hardcoded) as an ADDITIVE amount on top of
 the arbitrage payback above, once a full season is measured, and points to
 `per_aggregation_sensitivity` for the range across individual aggregation schedules — never
@@ -1241,13 +1242,22 @@ text.
   on the household's own everyday no-VPP arbitrage. Every mention of this parameter — in
   the artifact's `backup_reserve_caveat`/`miss_rate.note` fields, this document, and
   `index.html` — is labeled "event-hour-only" for this reason.
-- **2026-season enrollment eligibility.** Per Olivine's DSGS Option 3 FAQ, storage
-  participation in the 2026 season is limited to aggregators that already participated in
-  October 2025. This household owns no battery today, so a new storage enrollment (buying a
-  Powerwall 3 now) cannot join DSGS for the 2026 season at all — only a later season. These
-  figures are a backtest of what 2025 participation would have earned, not a currently
-  obtainable revenue stream for a not-yet-purchased battery. Stated plainly in the artifact
-  and in §6, not buried.
+- **2026-season enrollment eligibility, corrected (issue #10 third adversarial review).**
+  An earlier version of this finding read Olivine's FAQ paraphrase — "participation in the
+  2026 season is limited to storage VPP aggregators that participated in October 2025" — as
+  a HOUSEHOLD-level bar, concluding a new storage enrollment "could not join at all." Checked
+  against the authoritative source directly (CEC DSGS Program Guidelines, Fifth Edition, TN
+  269649, Section II.C.1 + Appendix A) and found that reading UNSUPPORTED: the restriction
+  freezes which AGGREGATORS may receive 2026 funding at all, not whether a new household's
+  battery can join an aggregator that already qualifies. What the Guidelines DO additionally
+  establish (Appendix A): each qualifying aggregator's total 2026 compensation is CAPPED at
+  its own October-2025 pro-rata share of program funds, so enrolling new sites doesn't
+  increase what the aggregator gets paid — a real economic disincentive, not a rule against
+  it. Whether a specific aggregator (Tesla is a listed Option 3 provider generally) both
+  participated in October 2025 and would accept a new residential site under that funding
+  cap is NOT DETERMINED from the public, anonymized CEC data — this dataset cannot identify
+  which real aggregator this household's utility corresponds to. The earlier "could not join"
+  claim is retracted, not softened, in the artifact, §6, and GLOSSARY.md.
 - **Grandfathering interaction, searched and nothing found.** The issue asks separately
   whether DSGS ENROLLMENT (distinct from mere battery ownership) affects NEM 2.0
   grandfathering. Searched the authoritative source directly: the CEC's DSGS Program
@@ -1302,18 +1312,19 @@ exactly the condition that triggered the bug.
 empirical $/kW-month rate × this household's monthly LMP-weighted demonstrated capacity
 (Test Capacity hours only, per the Data Dictionary's own rule; demonstrated capacity nets
 a prescriptive baseline derived the same empirical way, ~10.8% of nameplate), summed over
-the participation months inside the measured window: **$165.34/yr**. OPPORTUNITY COST is
+the participation months inside the measured window, over the observed
+2025-07-24..2025-10-30 window (not an annual figure): **$165.34**. OPPORTUNITY COST is
 COMPUTED, not assumed — `rates.bill_nem` re-billed for the full measured window with vs
 without the VPP dispatch modification (the same "re-bill the modified year" technique the
 rest of this repo's battery/behavior work uses, CLAUDE.md §1b) — and came out small and
-slightly NEGATIVE (**−$14.16/yr**): DSGS event hours fall inside 4–9pm on-peak, already
+slightly NEGATIVE (**−$14.16**): DSGS event hours fall inside 4–9pm on-peak, already
 this household's highest-value discharge window under ordinary price-aware dispatch, so
 the extra forced export there mostly draws down SOC that would otherwise have been used in
 cheaper off-peak/super-off-peak hours (refilled overnight anyway) rather than costing
 expensive on-peak service later — a real, computed NEM-netting effect specific to this
-household's usage pattern, not an assumption. NET = **$179.50/yr** at the 20% reserve
+household's usage pattern, not an assumption. NET = **$179.50** at the 20% reserve
 (primary); a 0%-reserve sensitivity gives $245.92 gross, −$15.79 opportunity cost,
-**$261.71/yr** net. AC4's kWh figure: **182.19 kWh** delivered across the 46 in-window
+**$261.71** net. AC4's kWh figure: **182.19 kWh** delivered across the 46 in-window
 event hours at 20% reserve (241.11 kWh at 0% reserve) —
 `revenue.<scenario>.total_discharge_kwh` in the artifact, event-forced discharge (which
 `run_batt_vpp` routes entirely to export) plus any concurrent ordinary/BAU discharge that
@@ -1332,7 +1343,8 @@ discharge, so more hours fall short of the 1 kWh miss threshold; see the artifac
 UDC2/Residential/Stationary/2-hour category (grouping the same Hourly Discharge Dataset
 rows by "Aggregation Identifier (anonymized)" instead of unioning them) and re-runs the
 identical `backtest()` pipeline against each one's own calendar, at the same 20% reserve.
-Across all 14: **net revenue $108.45–$213.19/yr**, **miss rate 50.0%–60.0%** — this is
+Across all 14, over the same observed 2025-07-24..2025-10-30 window: **net revenue
+$108.45–$213.19**, **miss rate 50.0%–60.0%** — this is
 the range a real single-aggregation household could actually have earned, not the union
 figure above, which sits inside this range rather than bounding it from above (a household
 on a smaller, better-timed aggregation calendar can net MORE than the union: fewer event
@@ -1373,14 +1385,16 @@ magnitude (a partial season at the program-terms rate) — the sanity check the 
 own docstring sets out to perform. `extended_findings.py`'s `tornado_battery` no longer
 turns this into a payback-year figure at all (issue #10 Finding 1, §3.14):
 `dsgs_excluded_note` reads this artifact's two union-scenario net-revenue figures
-read-only ($179.50/yr primary, $261.71/yr 0%-reserve sensitivity) and reports them as an
+read-only ($179.50 primary, $261.71 0%-reserve sensitivity, both over the observed
+2025-07-24..2025-10-30 window) and reports them as an
 ADDITIVE dollar amount on top of the arbitrage-only `base_payback_yr` (6.2 yr), never
 combined into a blended payback year — an earlier version computed `BATT_COST / (G +
 dsgs_dollars)`-style payback points from this same partial-season input (envelope 5.6–6.2
 yr), which silently treated four months of measured VPP revenue as if it recurred all
 year; removed rather than re-labeled, per CLAUDE.md's own guidance to lean toward removing
 a shaky calculation over defending it. Across the 14 individual aggregation schedules
-(`per_aggregation_sensitivity`), the additive DSGS dollars run $108.45–$213.19/yr — the
+(`per_aggregation_sensitivity`), the additive DSGS dollars run $108.45–$213.19 over that
+same window — the
 range a real single-aggregation household could see on top of its own arbitrage payback,
 not a payback-year figure in its own right.
 

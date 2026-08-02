@@ -619,13 +619,23 @@ def case_events_outside_window_carry_zero_attributed_revenue():
 
 @case
 def case_2026_enrollment_eligibility_finding_is_stated_plainly():
+    """Regression for issue #10's third adversarial review: an earlier version of
+    this finding wrongly concluded the household "could not join at all" by
+    conflating the CEC's AGGREGATOR-level 2026 restriction with a household-level
+    one. The corrected finding must describe the restriction accurately (aggregator
+    eligibility + the Appendix A funding cap) and land on NOT DETERMINED for the
+    household's own prospects, not a false certainty in either direction."""
     if not vb.RESULTS_JSON.exists():
         raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
     result = json.loads(vb.RESULTS_JSON.read_text())
     finding = result["finding_2026_enrollment_eligibility"]
-    assert "October 2025" in finding and "2026 season" in finding
-    assert "could not" in finding.lower()
-    return "the 2026-enrollment-closure finding is present and states the household could not join"
+    assert "October 2025" in finding and "2026" in finding
+    assert "AGGREGATOR" in finding.upper()
+    assert "NOT DETERMINED" in finding
+    assert "retracted" in finding.lower(), (
+        "the corrected finding must explicitly retract the earlier household-level "
+        "misreading, not just quietly replace it")
+    return "the 2026-eligibility finding correctly scopes the restriction to aggregators and lands on not-determined"
 
 
 # ---------------------------------------------------------------------------

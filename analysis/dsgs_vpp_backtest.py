@@ -182,15 +182,31 @@ independently re-fetched this run): equipment eligibility requires "an operation
 stationary battery system... capable of discharging at least 1 kW for at least two hours
 during a program event," a 2,000 kW/hour discharge cap (irrelevant at residential scale),
 and utility permission to parallel the grid (e.g. a Rule 21 tariff) -- no NEM-version
-exclusion was found, so this household's NEM 2.0 status is not itself a bar. BUT: "Except
-for VPP aggregators of bi-directional EVSEs, participation in the 2026 season is limited
-to storage VPP aggregators that participated in October 2025." This household owns no
-battery today and so could not have participated in October 2025 -- meaning a NEW storage
-enrollment (buying a Powerwall 3 now) could NOT join DSGS Option 3 for the 2026 season at
-all under this rule; the earliest a new storage enrollee could plausibly join is a LATER
-season. The revenue figures in this artifact are therefore a backtest of what WOULD have
-been earned had the household been enrolled during 2025 -- not a currently obtainable
-revenue stream for a not-yet-purchased battery. Stated plainly, not buried.
+exclusion was found, so this household's NEM 2.0 status is not itself a bar.
+
+CORRECTED (issue #10 third adversarial review) -- the 2026 restriction is on
+AGGREGATORS, not households. The CEC's own Program Guidelines (TN 269649, Section
+II.C.1, Appendix A -- the authoritative source, checked directly, not just the FAQ
+paraphrase) say: "Except for VPP aggregators of bi-directional EVSEs, participation
+in the 2026 program season is limited to storage VPP aggregators that participated
+in October 2025." This freezes WHICH AGGREGATORS (e.g. Tesla's own VPP program) may
+receive 2026 funding at all -- it does NOT say a new household's battery is barred
+from joining an aggregator that itself already qualifies. An earlier version of this
+script concluded the household "could not join at all," conflating the
+aggregator-level restriction with a household-level one; that conclusion is
+retracted here as unsupported by the source. What the Guidelines DO additionally
+establish (Appendix A): each qualifying aggregator's total 2026 compensation is
+CAPPED at its own October 2025 pro-rata share of available program funds, so
+enrolling new sites in 2026 does not increase what the CEC pays that aggregator --
+a real economic disincentive, not a rule against it. Whether a specific aggregator
+(Tesla is a listed Option 3 provider generally) both participated in October 2025
+specifically and would accept a new residential site under that funding cap is NOT
+DETERMINED from the public, anonymized CEC data (the anonymization means this
+household's actual aggregator cannot be identified -- see the UDC-identity
+ambiguity above); confirm directly with the battery manufacturer's VPP program.
+The revenue figures in this artifact are a backtest of what WOULD have been earned
+had the household been enrolled during 2025 -- not a claim about what a
+not-yet-purchased battery could earn starting immediately, in either direction.
 
 GRANDFATHERING INTERACTION -- SEARCHED, NOTHING FOUND. The issue asks separately whether
 DSGS ENROLLMENT (as opposed to mere battery ownership) affects NEM 2.0 grandfathering in
@@ -820,15 +836,32 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
             "'Test Capacity' or 'Test Non-Capacity' -- a mandatory monthly test "
             "dispatch, not a real grid emergency."),
         "finding_2026_enrollment_eligibility": (
-            "Per Olivine's DSGS Option 3 FAQ (https://dsgs.olivineinc.com/faq/): "
-            "'Except for VPP aggregators of bi-directional EVSEs, participation in "
-            "the 2026 season is limited to storage VPP aggregators that participated "
-            "in October 2025.' This household owns no battery today and could not "
-            "have participated in October 2025, so a NEW storage enrollment (buying "
-            "a Powerwall 3 now) could not join DSGS Option 3 for the 2026 season at "
-            "all -- only a later season. These backtested figures are retrospective "
-            "(what 2025 participation would have earned), not a currently obtainable "
-            "revenue stream for a not-yet-purchased battery."),
+            "CORRECTED (issue #10 third adversarial review): the restriction is on "
+            "AGGREGATORS, not individual households. The CEC's own DSGS Program "
+            "Guidelines, Fifth Edition (TN 269649, Section II.C.1 and Appendix A, "
+            "the authoritative source, not just Olivine's FAQ paraphrase) state: "
+            "'participation in the 2026 program season is limited to storage VPP "
+            "aggregators that participated in October 2025, except for VPP "
+            "aggregators of bi-directional EVSEs.' This freezes WHICH AGGREGATORS "
+            "(e.g. Tesla's VPP program) may participate at all in 2026 -- it does "
+            "NOT say a new household's battery cannot join an aggregator that "
+            "itself already qualifies. An earlier version of this artifact wrongly "
+            "concluded the household 'could not join at all' by conflating the "
+            "aggregator-level restriction with a household-level one -- that claim "
+            "is retracted as unsupported by the source. What the source DOES "
+            "additionally establish: each qualifying aggregator's total 2026 "
+            "compensation is CAPPED at its own October 2025 pro-rata share of "
+            "available program funds (Appendix A) -- so adding new participant "
+            "sites in 2026 does not increase what the CEC pays that aggregator, "
+            "creating a real economic disincentive to enroll new customers even if "
+            "not a rule against it. Whether a specific aggregator (e.g. Tesla, "
+            "which the CEC lists as an approved Option 3 provider generally) both "
+            "(a) actually participated in October 2025 specifically and (b) would "
+            "accept a new residential site in 2026 given the funding cap is NOT "
+            "DETERMINED from public CEC data -- this anonymized dataset cannot "
+            "identify which real aggregator this household's utility corresponds "
+            "to (see udc_identity_caveat), so confirm directly with the battery "
+            "manufacturer's VPP program before assuming either way."),
         "grandfathering_interaction_finding": (
             "SEARCHED, NOTHING FOUND: whether DSGS ENROLLMENT (distinct from mere "
             "battery ownership) affects NEM 2.0 grandfathering. The CEC's DSGS "
