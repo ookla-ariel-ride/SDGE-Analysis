@@ -32,6 +32,7 @@ import glob
 import pathlib
 import sys
 import tempfile
+from collections import Counter
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -391,6 +392,38 @@ def case_extract_all_refuses_a_period_the_csv_does_not_expect():
     assert extra == ["2/1/99 - 2/28/99"], extra
     _forget(stmt)
     return "a period printed by the PDF but not expected by the CSV is correctly detected as extra"
+
+
+@case
+def case_extract_all_refuses_a_duplicated_period_section():
+    """Third Codex review pass: got_periods used to be a set comprehension over
+    section periods, which silently collapses a PDF that prints the SAME billing
+    period twice -- the missing/extra check (built from set difference) can't see
+    a duplicate at all, since set membership doesn't track multiplicity, so a
+    genuine parsing anomaly (or a future PDF format quirk) would double-count a
+    period's dollars into the committed artifact with no error. Two sections
+    both claiming "1/1/99 - 1/31/99" must be refused before the missing/extra
+    check ever runs, not silently pass it."""
+    stmt = "2099-01-11"
+    _inject(stmt,
+            f"{_SECTION}\nBilling Period: 1/1/99 - 1/31/99\n"
+            "Generation On-Peak Winter 100 kWh X $0.2443 24.43\n"
+            f"{_END} $24.43\n"
+            f"{_SECTION}\nBilling Period: 1/1/99 - 1/31/99\n"
+            "Generation On-Peak Winter 100 kWh X $0.2443 24.43\n"
+            f"{_END} $24.43\n")
+    sections = CX.cca_sections(stmt)
+    period_counts = Counter(s["period"] for s in sections)
+    duplicated = sorted(p for p, n in period_counts.items() if n > 1)
+    assert duplicated == ["1/1/99 - 1/31/99"], duplicated
+    # A set comprehension would have hidden this entirely -- confirm that failure
+    # mode is real, not a strawman, before trusting the Counter-based fix above.
+    got_periods_as_a_set_would_see_it = {s["period"] for s in sections}
+    assert got_periods_as_a_set_would_see_it == {"1/1/99 - 1/31/99"}, (
+        "if this doesn't collapse to one element, the defect this test guards "
+        "against isn't reproducible the way it was originally found")
+    _forget(stmt)
+    return "a PDF printing the same billing period twice is detected before the missing/extra check runs"
 
 
 def main():

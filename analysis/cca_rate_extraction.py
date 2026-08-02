@@ -84,6 +84,7 @@ import pathlib
 import re
 import sys
 import tempfile
+from collections import Counter
 
 import pdfplumber
 
@@ -305,7 +306,15 @@ def extract_all():
     for stmt in sorted(expected):
         want_periods = {p["period"]: p for p in expected[stmt]}
         sections = cca_sections(stmt)
-        got_periods = {s["period"] for s in sections}
+        period_counts = Counter(s["period"] for s in sections)
+        duplicated = sorted(p for p, n in period_counts.items() if n > 1)
+        if duplicated:
+            raise SystemExit(
+                f"{stmt}: the PDF prints the same CCA billing-period section "
+                f"more than once for {duplicated} -- a set-based missing/extra "
+                "check would silently collapse this and double-count the "
+                "period; refusing rather than guessing which copy is correct")
+        got_periods = set(period_counts)
         missing = sorted(set(want_periods) - got_periods)
         extra = sorted(got_periods - set(want_periods))
         if missing or extra:
