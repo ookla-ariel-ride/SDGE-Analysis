@@ -43,7 +43,12 @@ ungrounded scenario hypothetical:
   "on-peak shifted later" tests a further, smaller move in the SAME direction
   the 2019 transition already moved (16-21 -> 17-22) -- a real, precedented
   lever, not an invented one, even though the specific magnitude modeled here
-  is a bounding choice, not a re-enactment of the 2019 change itself.
+  is a bounding choice, not a re-enactment of the 2019 change itself. Labeled
+  "historically motivated" rather than "measured" for exactly that reason
+  (Codex adversarial review, second pass): the DIRECTION and mechanism trace
+  to real history, but neither exact scenario was itself ever observed, so
+  claiming "measured" would overstate the evidentiary basis of the dollar
+  figures that follow from it.
 
   summer season extended -- NO precedent was found: SDG&E's summer (Jun-Oct,
   5 months) is already longer than PG&E's or SCE's (Jun-Sep, 4 months each),
@@ -152,13 +157,18 @@ SCENARIOS = {
                     weekday_sop_windows=CURRENT["weekday_sop_windows"],
                     weekend_sop_end=CURRENT["weekend_sop_end"],
                     summer_months=CURRENT["summer_months"]),
-        precedent="measured",
+        precedent="historically motivated",
         precedent_note=(
             "SDG&E's own on-peak window was 11am-6pm (7 hours) for roughly 30 "
             "years before the CPUC's March 2019 mandated default-TOU transition "
             "moved it to today's 4-9pm (5 hours). Widening today's window to "
-            "7 hours (14-21) matches that historical WIDTH, though not its "
-            "exact clock hours. Sources: KPBS \"SDG&E's New Time-Of-Use Plan "
+            "7 hours (14-21) matches that historical WIDTH, not its exact "
+            "clock hours (11-18) -- the DIRECTION and rough magnitude are real "
+            "precedent, but this specific scenario was never itself observed, "
+            "so it is labeled 'historically motivated', not 'measured' (Codex "
+            "adversarial review: an earlier version labeled this 'measured', "
+            "overstating how directly this exact scenario traces to the cited "
+            "history). Sources: KPBS \"SDG&E's New Time-Of-Use Plan "
             "Explained\" (Jul 2019), Utility Dive \"California utilities prep "
             "nation's biggest time-of-use rate roll-out\"."),
     ),
@@ -168,15 +178,19 @@ SCENARIOS = {
                     weekday_sop_windows=CURRENT["weekday_sop_windows"],
                     weekend_sop_end=CURRENT["weekend_sop_end"],
                     summer_months=CURRENT["summer_months"]),
-        precedent="measured",
+        precedent="historically motivated",
         precedent_note=(
             "The same March 2019 CPUC-mandated transition moved the on-peak "
             "window LATER (11am-6pm -> 4pm-9pm) by regulatory design, "
             "explicitly to track the evening 'duck curve' net-demand peak as "
             "rooftop solar grew. A further 1-hour later shift (17-22) tests "
             "continuation of that same, real regulatory trend -- a real "
-            "lever, not an invented one, though this exact magnitude is a "
-            "bounding choice, not a re-enactment of the 2019 change."),
+            "lever, not an invented one -- but this exact magnitude (17-22) "
+            "was never itself observed (the 2019 transition landed at 16-21 "
+            "and stopped there), so it is labeled 'historically motivated', "
+            "not 'measured' (Codex adversarial review: an earlier version "
+            "labeled this 'measured', overstating how directly this exact "
+            "scenario traces to the cited history)."),
     ),
     "midday_sop_narrowed": dict(
         label="Midday super-off-peak narrowed (weekday 10-14 reverts to off-peak)",

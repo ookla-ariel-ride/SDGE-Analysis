@@ -2243,9 +2243,14 @@ ungrounded scenario hypothetical:
   curve" net-demand peak as rooftop solar grew (KPBS "SDG&E's New Time-Of-Use Plan
   Explained", Jul 2019; Utility Dive "California utilities prep nation's biggest
   time-of-use rate roll-out"). Widening tests a partial reversion toward that historical
-  WIDTH (7h, though not the historical clock hours); shifting later tests a further, smaller
-  move in the SAME direction the 2019 transition already moved — a real, precedented lever,
-  though the specific magnitude modeled is a bounding choice, not a re-enactment.
+  WIDTH (7h, though not the historical clock hours, 11-18); shifting later tests a further,
+  smaller move in the SAME direction the 2019 transition already moved (16-21 → 17-22, not
+  the transition's own endpoint) — a real, precedented DIRECTION, though the specific
+  magnitude modeled in each case is a bounding choice, not a re-enactment. Labeled
+  **historically motivated**, not **measured** (Codex adversarial review, second pass: an
+  earlier version labeled both "measured," which overstated how directly this exact
+  scenario traces to the cited history — the direction and mechanism are real precedent,
+  but neither scenario's own clock hours were ever themselves observed).
 - **Summer season extended** one month (Jun-Oct → Jun-Nov) has **no precedent**: SDG&E's
   summer is already longer than PG&E's or SCE's (5 months vs 4 each), and no CPUC proceeding
   defining a longer season turned up in a direct check. Labeled **hypothetical** in both the
@@ -2317,8 +2322,12 @@ rather than the hardcoded clock hours an earlier version tested (adversarial rev
 first pass — a synthetic fixture places a single >=2.5 kW spike at a slot that changes
 on/off status between structures, isolating the discriminating case so an unfixed bug
 would fail rather than pass vacuously); every scenario's precedent label is one of
-measured/measured-in-corpus/hypothetical, and the summer-extension scenario specifically
-must be hypothetical; the midday-narrowed precedent note cites `tou_audit.MIDDAY_SOP_START`
+measured-in-corpus/historically-motivated/hypothetical (Codex adversarial review, second
+pass added the "historically motivated" tier, distinct from "measured," for a scenario
+whose direction is real precedent but whose exact magnitude was never itself observed),
+the summer-extension scenario specifically must be hypothetical, and the midday-narrowed
+scenario specifically must be measured, in-corpus; the midday-narrowed precedent note cites
+`tou_audit.MIDDAY_SOP_START`
 live rather than a hand-copied date; `total_package_impact_usd` is the exact hand-derived
 combination of the three deltas; every scenario's EV shift conserves energy; the
 current-structure recomputation matches the committed sibling artifacts; the committed

@@ -444,7 +444,7 @@ def case_tou_structure_stress_table_matches_the_artifact():
     # nothing here is fabricated as a fake precedent
     assert "hypothetical" in HTML, "the ungrounded scenario must be labeled hypothetical in prose"
     for key, spec in tss["scenarios"].items():
-        assert spec["precedent"] in {"measured", "measured, in-corpus", "hypothetical"}
+        assert spec["precedent"] in {"measured, in-corpus", "historically motivated", "hypothetical"}
     return "the §7 tariff-structure-risk table matches the live tou_structure_stress artifact"
 
 

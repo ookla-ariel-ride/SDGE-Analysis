@@ -220,11 +220,25 @@ def case_battery_discharge_window_actually_tracks_the_scenario_on_peak_window():
 
 @case
 def case_precedent_labels_are_measured_or_hypothetical_only():
-    allowed = {"measured", "measured, in-corpus", "hypothetical"}
+    """Codex adversarial review, second pass: 'measured' must be reserved for
+    a scenario that exactly replays an actually-observed structure (in-corpus
+    or otherwise); a scenario whose DIRECTION is precedented but whose exact
+    magnitude is a bounding choice is 'historically motivated', not
+    'measured' -- an earlier version conflated the two, overstating how
+    directly onpeak_widened/onpeak_shifted_later trace to the cited history."""
+    allowed = {"measured, in-corpus", "historically motivated", "hypothetical"}
     for key, spec in tss.SCENARIOS.items():
         assert spec["precedent"] in allowed, f"{key} has an unrecognized precedent label"
     assert tss.SCENARIOS["summer_extended"]["precedent"] == "hypothetical", (
         "the summer-extension scenario has no found precedent and must be labeled hypothetical")
+    assert tss.SCENARIOS["midday_sop_narrowed"]["precedent"] == "measured, in-corpus", (
+        "the midday-narrowed scenario exactly replays a real in-corpus structural "
+        "change and must be labeled measured, in-corpus")
+    for key in ("onpeak_widened", "onpeak_shifted_later"):
+        assert tss.SCENARIOS[key]["precedent"] == "historically motivated", (
+            f"{key}'s exact parameters were never themselves observed -- its direction "
+            "is precedented but its magnitude is a bounding choice, not a replay, so it "
+            "must be labeled historically motivated, not measured")
     return "every scenario's precedent label is measured, measured-in-corpus, or hypothetical"
 
 
