@@ -715,16 +715,41 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
 
+    # ---- which months are PARTIALLY observed (issue #10 Codex review Finding 2) ----
+    # DSGS's own "Monthly DC" is an LMP-weighted average over ALL of that aggregation's
+    # event hours in the month (see the CEC's own definition, module docstring). If this
+    # household's measured window starts mid-month, some of that month's real event hours
+    # fall BEFORE the window and cannot be replayed (no measured load exists for them) --
+    # pricing the remaining, INCOMPLETE subset at the month's full published $/kW rate
+    # would misrepresent a partial-month settlement as a complete one. Computed here,
+    # before dispatch, so both the revenue AND the opportunity-cost calculations below can
+    # consistently exclude these months (a second Codex review pass found the opportunity
+    # cost was still being computed from the FULL event set including partial months, so
+    # net_revenue mixed a bill effect from a month whose gross revenue was zeroed out).
+    partial_months = sorted(set(r.date.month for r in outwin.itertuples())
+                             & set(r.date.month for r in inwin.itertuples()))
+    event_set_priced = {(dt_, h) for (dt_, h) in event_set if dt_.month not in partial_months}
+
     # BAU (no VPP participation) -- must match battery_dispatch_policies.py's own
     # "greedy" pw3 figures exactly (cross-checked in the test suite).
     imp_bau, exp_bau, _served_bau, _thru_bau = bp.run_batt(d, imp0, gen0, CAP, "greedy")
     bill_bau = bp.billed(d, imp_bau, exp_bau)
 
-    # With VPP event dispatch.
+    # With VPP event dispatch -- the FULL in-window event set, including partial months.
+    # AC2 requires every in-window event to be replayed through the dispatch engine, so
+    # partial months' hours still appear in hour_detail/miss_rate below (that simulation
+    # is valid regardless of whether the month can be priced).
     imp_vpp, exp_vpp, soc_start, event_kwh, bau_kwh = run_batt_vpp(
         d, imp0, gen0, CAP, event_set, reserve_frac)
-    bill_vpp = bp.billed(d, imp_vpp, exp_vpp)
-    opportunity_cost = round(bill_vpp - bill_bau, 2)
+
+    # A SEPARATE dispatch run, event-forcing ONLY the priced months, used exclusively for
+    # the opportunity-cost feeding into net_revenue -- so a partial month's bill impact
+    # (from event-forcing hours whose revenue was zeroed out) never gets netted against
+    # revenue from a different set of months.
+    imp_vpp_priced, exp_vpp_priced, _, _, _ = run_batt_vpp(
+        d, imp0, gen0, CAP, event_set_priced, reserve_frac)
+    bill_vpp_priced = bp.billed(d, imp_vpp_priced, exp_vpp_priced)
+    opportunity_cost = round(bill_vpp_priced - bill_bau, 2)
 
     # ---- per-event-hour totals (for revenue + miss-rate) ----
     dates = d.dt.dt.date.values
@@ -758,18 +783,6 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     n_misses = sum(1 for r in hour_rows if r["miss"])
     miss_rate = round(n_misses / n_hours_in_window, 4) if n_hours_in_window else None
 
-    # ---- which months are PARTIALLY observed (issue #10 Codex review Finding 2) ----
-    # DSGS's own "Monthly DC" is an LMP-weighted average over ALL of that aggregation's
-    # event hours in the month (see the CEC's own definition, module docstring). If this
-    # household's measured window starts mid-month, some of that month's real event hours
-    # fall BEFORE the window and cannot be replayed (no measured load exists for them) --
-    # pricing the remaining, INCOMPLETE subset at the month's full published $/kW rate
-    # would misrepresent a partial-month settlement as a complete one. Any month with
-    # event hours on BOTH sides of the window boundary is excluded from revenue entirely,
-    # not silently priced from a subset.
-    partial_months = sorted(set(r.date.month for r in outwin.itertuples())
-                             & set(r["month"] for r in hour_rows))
-
     # ---- monthly LMP-weighted demonstrated capacity -> gross revenue (Test Capacity only) ----
     monthly_gross = {}
     demonstrated_capacity_by_month = {}
@@ -796,8 +809,13 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     # ---- sensitivity: 0% reserve (no reserve held) ----
     imp_vpp0, exp_vpp0, soc_start0, event_kwh0, bau_kwh0 = run_batt_vpp(
         d, imp0, gen0, CAP, event_set, 0.0)
-    bill_vpp0 = bp.billed(d, imp_vpp0, exp_vpp0)
-    opp_cost0 = round(bill_vpp0 - bill_bau, 2)
+    # Same priced-months-only split as the 20%-reserve case above, for the same reason:
+    # the opportunity cost feeding net_revenue0 must not include a partial month's bill
+    # effect when that month's gross revenue is zeroed out.
+    imp_vpp0_priced, exp_vpp0_priced, _, _, _ = run_batt_vpp(
+        d, imp0, gen0, CAP, event_set_priced, 0.0)
+    bill_vpp0_priced = bp.billed(d, imp_vpp0_priced, exp_vpp0_priced)
+    opp_cost0 = round(bill_vpp0_priced - bill_bau, 2)
     monthly_gross0 = {}
     for mo, rows in sorted(by_month.items()):
         if mo in partial_months:
@@ -934,8 +952,16 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
             "partial month as a complete settlement, so these month(s) are EXCLUDED "
             "from monthly_gross_usd/net revenue entirely -- their dispatch/miss-rate "
             "outcomes for the in-window hours that DO exist are still reported in "
-            "hour_detail (that simulation is valid; only the monthly CAPACITY PAYMENT "
-            "computation is not), but they contribute $0 to gross/net revenue."
+            "hour_detail (AC2 requires every in-window event to be replayed, and that "
+            "simulation is valid; only the monthly CAPACITY PAYMENT computation is not), "
+            "but they contribute $0 to gross/net revenue. The opportunity-cost figure "
+            "feeding net revenue is computed from a SEPARATE dispatch run that excludes "
+            "these month(s)' event-forcing entirely (a third adversarial/Codex review "
+            "pass found the opportunity cost was still drawing on the full event set, "
+            "netting a partial month's bill effect against zero revenue for it) -- so "
+            "hour_detail's per-hour figures for an excluded month reflect the FULL "
+            "event-forced dispatch (for AC2), while gross/net revenue reflect the "
+            "PRICED-months-only dispatch (for consistency)."
             if partial_months else
             "No month has event hours on both sides of the measured-window boundary "
             "this run -- every priced month's Monthly DC is computed from its "

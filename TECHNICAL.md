@@ -866,8 +866,8 @@ figure — the exact payback-arithmetic problem CLAUDE.md §2 exists to catch, n
 a caveat fixes after the fact. An earlier version of this script computed a `dsgs_revenue`
 lever this way (payback envelope 5.6–6.2 yr); it has been removed rather than re-labeled,
 per CLAUDE.md's own guidance to lean toward removing a shaky calculation over defending
-it. `tornado_battery.dsgs_excluded_note` reports the backtested dollars ($142.63 at 20%
-reserve, primary; $203.57 at 0%-reserve sensitivity, both over the observed
+it. `tornado_battery.dsgs_excluded_note` reports the backtested dollars ($139.95 at 20%
+reserve, primary; $199.14 at 0%-reserve sensitivity, both over the observed
 2025-07-24..2025-10-30 window, not an annual figure — both read from
 `data/dsgs_vpp_backtest.json` at runtime, never hardcoded) as an ADDITIVE amount on top of
 the arbitrage payback above, once a full season is measured, and points to
@@ -1317,25 +1317,31 @@ the participation months inside the measured window that are NOT excluded as par
 **$128.47**. OPPORTUNITY COST is COMPUTED, not assumed — `rates.bill_nem` re-billed for
 the full measured window with vs without the VPP dispatch modification (the same
 "re-bill the modified year" technique the rest of this repo's battery/behavior work uses,
-CLAUDE.md §1b) — and came out small and slightly NEGATIVE (**−$14.16**): DSGS event hours
-fall inside 4–9pm on-peak, already this household's highest-value discharge window under
-ordinary price-aware dispatch, so the extra forced export there mostly draws down SOC that
-would otherwise have been used in cheaper off-peak/super-off-peak hours (refilled
-overnight anyway) rather than costing expensive on-peak service later — a real, computed
-NEM-netting effect specific to this household's usage pattern, not an assumption. NET =
-**$142.63** at the 20% reserve (primary); a 0%-reserve sensitivity gives $187.78 gross,
-−$15.79 opportunity cost, **$203.57** net. AC4's kWh figure: **182.19 kWh** delivered
-across the 46 in-window event hours at 20% reserve (241.11 kWh at 0% reserve) —
-`revenue.<scenario>.total_discharge_kwh` in the artifact, event-forced discharge (which
-`run_batt_vpp` routes entirely to export) plus any concurrent ordinary/BAU discharge that
-hour, matching the CEC's own Net Discharge crediting basis rather than a narrower
-grid-export-only figure (see the artifact's `total_discharge_kwh_note`). These figures
-reflect the Finding-2 fix above (no charging from solar surplus during a declared event
-hour) on top of the reserve-floor fix: total discharge at 20% reserve fell from 186.98 kWh
-to 182.19 kWh once the round-tripped solar was removed, and gross/net revenue fell further
-(from $165.34/$179.50 to $128.47/$142.63) once July -- a month with event hours on both
-sides of the measured-window boundary -- was excluded from monthly_gross_usd entirely
-(Codex review Finding 2, see "Partial calendar months" below). Miss rate: 24 of 46
+CLAUDE.md §1b), computed from a dispatch run that excludes any partial month's
+event-forcing (see "Partial calendar months" below, and its own note on why) — and came
+out small and slightly NEGATIVE (**−$11.48**): DSGS event hours fall inside 4–9pm on-peak,
+already this household's highest-value discharge window under ordinary price-aware
+dispatch, so the extra forced export there mostly draws down SOC that would otherwise have
+been used in cheaper off-peak/super-off-peak hours (refilled overnight anyway) rather than
+costing expensive on-peak service later — a real, computed NEM-netting effect specific to
+this household's usage pattern, not an assumption. NET = **$139.95** at the 20% reserve
+(primary); a 0%-reserve sensitivity gives $187.78 gross, −$11.36 opportunity cost,
+**$199.14** net. AC4's kWh figure: **182.19 kWh** delivered across the 46 in-window event
+hours at 20% reserve (241.11 kWh at 0% reserve) — `revenue.<scenario>.total_discharge_kwh`
+in the artifact (from the FULL event set, including any partial month, since AC2 requires
+every in-window event replayed), event-forced discharge (which `run_batt_vpp` routes
+entirely to export) plus any concurrent ordinary/BAU discharge that hour, matching the
+CEC's own Net Discharge crediting basis rather than a narrower grid-export-only figure (see
+the artifact's `total_discharge_kwh_note`). These figures reflect the Finding-2 fix above
+(no charging from solar surplus during a declared event hour) on top of the reserve-floor
+fix: total discharge at 20% reserve fell from 186.98 kWh to 182.19 kWh once the
+round-tripped solar was removed, gross/net revenue fell further (to $128.47 gross) once
+July -- a month with event hours on both sides of the measured-window boundary -- was
+excluded from monthly_gross_usd entirely (Codex review Finding 2, see "Partial calendar
+months" below), and opportunity cost changed again (from -$14.16 to -$11.48 at 20%
+reserve) once a THIRD review round found it was still drawing on July's dispatch effect
+even after July's revenue was zeroed (fixed by computing it from a priced-months-only
+dispatch run instead). Miss rate: 24 of 46
 in-window event hours (52.2%) at 20% reserve vs 17 of 46 (37.0%) at 0% reserve — the
 expected direction (the tighter reserve leaves less headroom for both ordinary and
 event-forced discharge, so more hours fall short of the 1 kWh miss threshold; see the
@@ -1362,13 +1368,25 @@ still appear in `hour_detail` and count toward the miss rate — that dispatch s
 unaffected, only the monthly capacity PAYMENT is invalid for the incomplete month. Which
 month(s) were excluded, and why, is disclosed in the artifact's `partial_months_note`.
 
+A follow-up review round found this fix was incomplete: `run_batt_vpp()`'s event-forced
+dispatch for July still ran against the FULL event set, so July's own bill effect was
+still baked into the single `opportunity_cost` figure netted against gross revenue — even
+though July's gross revenue was now $0, its bill impact was NOT, silently overstating net
+revenue (confirmed directly: -$14.16 full-event-set opportunity cost vs -$11.48 once
+July's dispatch effect is excluded, at 20% reserve). Fixed with a SECOND dispatch run
+(`event_set_priced`, excluding any partial month) used exclusively for the opportunity
+cost feeding `net_revenue`/`net_revenue0`, while the FULL event set (including July) is
+still used for `hour_detail`/`miss_rate`/`total_discharge_kwh` — AC2 requires every
+in-window event to be replayed, and that requirement and the revenue-consistency
+requirement pull in different directions unless the two are computed separately, as here.
+
 **Revenue, net — per-individual-aggregation range (the real range a household could see).**
 `per_aggregation_sensitivity()` isolates each of the 14 individual aggregations in the
 UDC2/Residential/Stationary/2-hour category (grouping the same Hourly Discharge Dataset
 rows by "Aggregation Identifier (anonymized)" instead of unioning them) and re-runs the
 identical `backtest()` pipeline against each one's own calendar, at the same 20% reserve.
 Across all 14, over the same observed 2025-07-24..2025-10-30 window: **net revenue
-$96.02–$213.19**, **miss rate 50.0%–60.0%** — this is
+$96.99–$213.19**, **miss rate 50.0%–60.0%** — this is
 the range a real single-aggregation household could actually have earned, not the union
 figure above, which sits inside this range rather than bounding it from above (a household
 on a smaller, better-timed aggregation calendar can net MORE than the union: fewer event
@@ -1410,7 +1428,7 @@ magnitude (a partial season at the program-terms rate) — the sanity check the 
 own docstring sets out to perform. `extended_findings.py`'s `tornado_battery` no longer
 turns this into a payback-year figure at all (issue #10 Finding 1, §3.14):
 `dsgs_excluded_note` reads this artifact's two union-scenario net-revenue figures
-read-only ($142.63 primary, $203.57 0%-reserve sensitivity, both over the observed
+read-only ($139.95 primary, $199.14 0%-reserve sensitivity, both over the observed
 2025-07-24..2025-10-30 window) and reports them as an
 ADDITIVE dollar amount on top of the arbitrage-only `base_payback_yr` (6.2 yr), never
 combined into a blended payback year — an earlier version computed `BATT_COST / (G +
@@ -1418,7 +1436,7 @@ dsgs_dollars)`-style payback points from this same partial-season input (envelop
 yr), which silently treated four months of measured VPP revenue as if it recurred all
 year; removed rather than re-labeled, per CLAUDE.md's own guidance to lean toward removing
 a shaky calculation over defending it. Across the 14 individual aggregation schedules
-(`per_aggregation_sensitivity`), the additive DSGS dollars run $96.02–$213.19 over that
+(`per_aggregation_sensitivity`), the additive DSGS dollars run $96.99–$213.19 over that
 same window — the
 range a real single-aggregation household could see on top of its own arbitrage payback,
 not a payback-year figure in its own right.

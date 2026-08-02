@@ -627,6 +627,53 @@ def case_partial_calendar_month_contributes_zero_revenue():
 
 
 @case
+def case_opportunity_cost_excludes_partial_month_dispatch_effect():
+    """Regression for a third adversarial-review round's finding: net_revenue must not
+    net a partial month's (July's) event-forced dispatch bill effect against zero
+    revenue for that month. Reproduced directly against the real archive: the full
+    event set's opportunity cost (-$14.16 at 20% reserve) differs measurably from the
+    priced-months-only opportunity cost (-$11.48) -- the committed artifact's
+    opportunity_cost_usd must be the LATTER, not the former, even though hour_detail
+    still reports July's dispatch outcomes (AC2 compliance)."""
+    _require_archive()
+    _require_calendar()
+    d = br.load()
+    cal = vb.load_calendar()
+    result = vb.backtest(d, cal)
+    committed_opp_cost = result["revenue"]["reserve_20pct"]["opportunity_cost_usd"]
+
+    window_start = d.dt.min().date()
+    window_end = d.dt.max().date()
+    event_set, inwin, outwin = vb._event_set_and_hours(cal, window_start, window_end)
+    partial_months = sorted(set(r.date.month for r in outwin.itertuples())
+                             & set(r.date.month for r in inwin.itertuples()))
+    assert partial_months, "this fixture is expected to have a partial month (July)"
+
+    imp0 = d.Consumption.values.astype(float)
+    gen0 = d.Generation.values.astype(float)
+    imp_bau, exp_bau, _, _ = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    bill_bau = bp.billed(d, imp_bau, exp_bau)
+
+    imp_full, exp_full, _, _, _ = vb.run_batt_vpp(d, imp0, gen0, vb.CAP, event_set, 0.20)
+    opp_cost_full_event_set = round(bp.billed(d, imp_full, exp_full) - bill_bau, 2)
+
+    event_set_priced = {(dt_, h) for (dt_, h) in event_set if dt_.month not in partial_months}
+    imp_priced, exp_priced, _, _, _ = vb.run_batt_vpp(d, imp0, gen0, vb.CAP, event_set_priced, 0.20)
+    opp_cost_priced_only = round(bp.billed(d, imp_priced, exp_priced) - bill_bau, 2)
+
+    assert abs(opp_cost_full_event_set - opp_cost_priced_only) > 0.5, (
+        "this fixture's partial month must have a non-trivial dispatch effect, or this "
+        "test isn't exercising the bug it's meant to catch")
+    assert committed_opp_cost == opp_cost_priced_only, (
+        f"backtest()'s reported opportunity_cost_usd ({committed_opp_cost}) must match "
+        f"the priced-months-only dispatch ({opp_cost_priced_only}), not the full "
+        f"event set including the partial month ({opp_cost_full_event_set})")
+    return (f"opportunity cost ${committed_opp_cost} correctly excludes the partial "
+            f"month's dispatch effect (full-event-set would have given "
+            f"${opp_cost_full_event_set})")
+
+
+@case
 def case_events_outside_window_carry_zero_attributed_revenue():
     """The issue's core no-extrapolation requirement: events outside the measured
     window (pre-window 2025 events, and the entirely-unpublished 2026 season) must be
