@@ -48,6 +48,16 @@ Objective (minimize; BSC is dispatch-invariant, excluded):
   of it -- verified directly by re-billing the LP's own resulting imp/exp
   series through rates.bill_nem and asserting the two agree to within $1.
 
+Day-ahead rolling-horizon variant: each day's local LP is solved against a
+persistence forecast, but its bucket-net constraint is offset by the REAL
+(already-realized, never forecast) net position accrued earlier that same
+month in that bucket -- a day-ahead controller genuinely knows this, since
+it is the past. On this house's own data this made no numeric difference to
+the committed artifact (every month here already nets solidly positive well
+before any single day's own choice could flip a bucket's sign), but the
+mechanism is real and tested directly, not assumed correct because it
+happened not to move this year's numbers.
+
 Output: perfect_foresight_dispatch.json. This script fully regenerates the
 committed artifact.
 """
@@ -92,7 +102,7 @@ def _bucket_assignment(d):
 
 
 def _solve_lp(house_net, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
-              soc_boundary):
+              soc_boundary, bucket_offsets=None):
     """Core LP builder/solver, shared by the annual perfect-foresight run and
     the day-ahead rolling-horizon run. `soc_boundary` is either
     ("cyclic",) -- soc_init is free but must equal the final soc (a steady
@@ -100,6 +110,15 @@ def _solve_lp(house_net, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     `value` (the real carried-over SOC) and the final soc is left free,
     bounded only by [0, cap] (the day-ahead case: the controller inherits a
     real starting charge and is not required to return to it by day's end).
+    `bucket_offsets`, if given, is a per-bucket REAL (already-realized, not
+    forecast) net position already accrued this month before this slice --
+    a day-ahead controller genuinely knows this (it is the past), so it is
+    added into each bucket's net-position constraint rather than starting
+    every day's local LP as if the bucket were fresh (adversarial review,
+    issue #13: an earlier version reset every bucket to zero each day,
+    conflating real forecast error with an avoidable loss of already-known
+    information). Defaults to all zeros, which is exactly correct for the
+    annual solve, where every bucket genuinely starts the frame at zero.
     Returns (imp, exp, charge, discharge, soc, soc_init, lp_result)."""
     n = len(house_net)
     P = power_kw / 4.0
@@ -148,12 +167,15 @@ def _solve_lp(house_net, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
         data3 = np.array([1.0])
         b3 = np.array([float(soc_boundary[1])])
 
-    # (4) bucket net split: sum(imp_i) - sum(exp_i) - x_b + y_b = 0 per bucket
+    # (4) bucket net split: offset_b + sum(imp_i) - sum(exp_i) - x_b + y_b = 0
+    # per bucket (offset_b is the real, already-realized net position accrued
+    # earlier this month -- zero for the annual solve, where every bucket
+    # genuinely starts the frame empty)
     rows4 = np.concatenate([bucket_idx, bucket_idx, np.arange(n_b), np.arange(n_b)])
     cols4 = np.concatenate([IMP + np.arange(n), EXP + np.arange(n),
                             X + np.arange(n_b), Y + np.arange(n_b)])
     data4 = np.concatenate([np.ones(n), -np.ones(n), -np.ones(n_b), np.ones(n_b)])
-    b4 = np.zeros(n_b)
+    b4 = -np.asarray(bucket_offsets, dtype=float) if bucket_offsets is not None else np.zeros(n_b)
 
     n_row3 = len(b3)
     A_eq = sp.coo_matrix(
@@ -272,27 +294,51 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     real_discharge = np.zeros(n)
     real_soc_trace = np.zeros(n)
     soc_now = float(soc_start)
+    # Real (already-realized, never forecast) net position accrued so far in
+    # each bucket -- a day-ahead controller genuinely knows this, since it is
+    # the past. Keyed by the GLOBAL bucket id, which already encodes the
+    # month, so no separate month-boundary reset is needed: a bucket for a
+    # later month is a different key, starting at 0.0 the first time it's
+    # touched (adversarial review, issue #13: an earlier version reset every
+    # bucket to zero EVERY DAY, discarding this known information and
+    # conflating genuine forecast error with an avoidable loss of it).
+    bucket_cumulative = {}
     for i in range(n_days):
         idx = day_idx[i]
         local_present = sorted(set(bucket_idx_full[idx].tolist()))
         remap = {orig: local for local, orig in enumerate(local_present)}
         local_bucket_idx = np.array([remap[b] for b in bucket_idx_full[idx]])
         local_bucket_rates = [bucket_rates[b] for b in local_present]
+        local_offsets = [bucket_cumulative.get(orig, 0.0) for orig in local_present]
 
         _, _, planned_charge, planned_discharge, _, _, _ = _solve_lp(
             forecast_house_net[idx], ev_spillover[idx], local_bucket_idx,
-            local_bucket_rates, cap, power_kw, ("fixed", soc_now))
+            local_bucket_rates, cap, power_kw, ("fixed", soc_now),
+            bucket_offsets=local_offsets)
 
+        day_real_imp = np.zeros(len(idx))
+        day_real_exp = np.zeros(len(idx))
         for k in range(len(idx)):
             d_actual = min(planned_discharge[k], soc_now * ETA, P)
             c_actual = min(planned_charge[k], (cap - soc_now) / ETA, P)
             soc_now = soc_now + c_actual * ETA - d_actual / ETA
             real_net = house_net[idx[k]] - d_actual + c_actual
-            real_imp[idx[k]] = max(0.0, real_net)
-            real_exp[idx[k]] = max(0.0, -real_net)
+            day_real_imp[k] = max(0.0, real_net)
+            day_real_exp[k] = max(0.0, -real_net)
+            real_imp[idx[k]] = day_real_imp[k]
+            real_exp[idx[k]] = day_real_exp[k]
             real_charge[idx[k]] = c_actual
             real_discharge[idx[k]] = d_actual
             real_soc_trace[idx[k]] = soc_now
+
+        # carry the REAL (post-battery) net position forward into each
+        # touched bucket's running total, using genuinely-realized data --
+        # never the forecast, which is only used to plan today's schedule
+        day_buckets = bucket_idx_full[idx]
+        for orig in local_present:
+            mask = day_buckets == orig
+            bucket_cumulative[orig] = (bucket_cumulative.get(orig, 0.0)
+                                       + float(day_real_imp[mask].sum() - day_real_exp[mask].sum()))
 
     return real_imp, real_exp, real_charge, real_discharge, real_soc_trace, {
         "forecast_method": ("persistence: yesterday's actual house-net profile "
