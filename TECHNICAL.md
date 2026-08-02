@@ -1690,15 +1690,16 @@ arrangement including riders and adders (CEA's side $197.97 vs the same $180.46,
 sampled periods: summing its own five priced cells in `direction_a.priced_detail` gives
 exactly −$9.87, matching `bill_decomposition.py`'s independently computed figure for the
 same statement to the cent — the two scripts agree completely on this one data point; it
-is not a second, disagreeing estimate. It is the one period in the 19-period sample that
-reads CCA-cheaper, and the vintage-effect finding above explains why: it is the most
-recent statement in the corpus, sampled after the bundled comparison rate had risen
-furthest (summer on-peak's comparison rate held at 0.40592 through 2025 before moving to
-0.47019 by mid-2026; summer super-off-peak's from 0.07035 to 0.08147) while CEA's rate held
-flat throughout, so this is the date where the provider-effect term had shrunk furthest
-toward (and past, on some cells) zero. Averaged across the other 18 periods, most billed
-earlier in the sample before the bundled rate had risen this far, CEA cost more than
-bundled would have — the full 547-day average is the $49.46/yr priced-cell headline above.
+is not a second, disagreeing estimate, which is why it's used here as a cross-check
+reference. It is NOT the one period in the 19-period sample that reads CCA-cheaper, nor
+even the most extreme one: grouping `direction_a.priced_detail` by period, 7 of the 19
+priced periods have a net-negative provider delta (CEA cheaper), ranging from −$1.36 to
+−$14.31 (2026-03-04's statement, period 1/28/26-2/26/26 — more extreme than the
+2026-07-02 statement's −$9.87). All 7 fall among the later, more-recent statements in the
+corpus, consistent with the vintage-effect finding above (the bundled comparison rate has
+risen over the span while CEA's rate held flat) but not confined to a single outlier date.
+Averaged across all 19 periods, including these 7, CEA cost more than bundled would have —
+the full 547-day average is the $49.46/yr priced-cell headline above.
 The two single-statement figures in `bill_decomposition.py`/§10 remain correct for that one
 statement; they are not superseded, only placed in the context of the fuller sample.
 
