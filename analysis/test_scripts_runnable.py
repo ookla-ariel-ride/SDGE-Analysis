@@ -62,6 +62,7 @@ MANIFEST = {
     "extended_findings.py": "generator",
     "report_data.py": "generator",
     "deep_analyses.py": "generator",
+    "uncertainty_propagation.py": "generator",
     "battery_backup_sims.py": "generator",
     "billing_model_nem.py": "library",
     "lifetime_payback.py": "generator",
@@ -102,6 +103,7 @@ OWNS = {
     "extended_findings.py":         [("data", "extended_results.json")],
     "report_data.py":               [("data", "report_data.json")],
     "deep_analyses.py":             [("cwd", "deep_results.json")],
+    "uncertainty_propagation.py":   [("cwd", "uncertainty_results.json")],
     "battery_backup_sims.py":       [("cwd", "battery_sim.json"),
                                      ("cwd", "backup_endurance.json")],
     "analyze_norelief.py":          [("data", "plan_results.csv"),
@@ -339,6 +341,14 @@ NEEDS_PRIVATE_ARCHIVE = {
     "cca_bundled_counterfactual.py": ("the bill PDF corpus (via data/cca_generation_rates.csv "
                                       "and data/bill_tou_detail.csv, which themselves derive "
                                       "from it) -- same dependency shape as irreducible_bill.py"),
+    "uncertainty_propagation.py": ("its hard tie-out recomputes the real dispatch engine's "
+                                   "pre-/post-behavior battery marginals and compares them "
+                                   "against the committed battery_dispatch_policies.json "
+                                   "(built from the real year) within a $1 tolerance, and "
+                                   "separately reproduces data/deep_results.json's "
+                                   "monte_carlo block exactly -- same tie-out shape as "
+                                   "battery_plan_matrix.py, so synthetic inputs must diverge "
+                                   "and trip it"),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
