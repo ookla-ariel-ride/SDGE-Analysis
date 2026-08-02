@@ -75,6 +75,8 @@ MANIFEST = {
     "irreducible_bill.py": "generator",
     "nem3_grandfathering.py": "generator",
     "dsgs_vpp_backtest.py": "generator",
+    "cca_rate_extraction.py": "generator",
+    "cca_bundled_counterfactual.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -114,6 +116,8 @@ OWNS = {
     # gated behind --build-calendar (never passed by this generic runner) -- same
     # shape as nem3_grandfathering.py's RATE_CSV/--build-rates, above.
     "dsgs_vpp_backtest.py":         [("data", "dsgs_vpp_backtest.json")],
+    "cca_rate_extraction.py":       [("data", "cca_generation_rates.csv")],
+    "cca_bundled_counterfactual.py": [("data", "cca_bundled_counterfactual.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -310,6 +314,12 @@ NEEDS_PRIVATE_ARCHIVE = {
                                     "(built from the real year) within a $5 tolerance -- "
                                     "the same tie-out shape as battery_plan_matrix.py, "
                                     "so synthetic inputs must diverge and trip it"),
+    "cca_rate_extraction.py": ("the bill PDF corpus (every CCA-era statement's own "
+                               "per-TOU generation-charge lines are printed nowhere "
+                               "else)"),
+    "cca_bundled_counterfactual.py": ("the bill PDF corpus (via data/cca_generation_rates.csv "
+                                      "and data/bill_tou_detail.csv, which themselves derive "
+                                      "from it) -- same dependency shape as irreducible_bill.py"),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing

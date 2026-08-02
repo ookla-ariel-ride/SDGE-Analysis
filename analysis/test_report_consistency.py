@@ -224,6 +224,51 @@ def case_report_totals_match_the_artifact():
     return "the report's annual import total matches report_data.json"
 
 
+def case_cca_cheaper_period_count_matches_the_artifact():
+    """A Codex review pass caught the report claiming the 2026-07-02 statement was
+    "the one period in the sample" where CEA read cheaper than bundled -- directly
+    falsifiable: the committed artifact has 7 such periods, not 1, and one of the
+    other 6 (-$14.31) is MORE extreme than the -$9.87 the report was built around.
+    This locks the corrected count against the live artifact so a future
+    regeneration can't silently drift back to an unverified claim."""
+    ccj_path = ROOT / "data" / "cca_bundled_counterfactual.json"
+    assert ccj_path.exists(), f"{ccj_path} is committed public data and must exist"
+    ccj = json.loads(ccj_path.read_text())
+    from collections import defaultdict
+    by_period = defaultdict(float)
+    for r in ccj["direction_a_cca_repriced_at_bundled"]["priced_detail"]:
+        by_period[(r["statement_date"], r["period"])] += r["provider_delta_usd"]
+    n_cheaper = sum(1 for v in by_period.values() if v < 0)
+    assert f"{n_cheaper} of the 19 priced periods" in HTML or f"{n_cheaper} of 19" in HTML, (
+        f"the artifact shows {n_cheaper} CEA-cheaper periods, but the report's own "
+        "count phrase doesn't match it")
+    assert "the one period in the sample" not in HTML, (
+        "the retracted false-uniqueness claim has resurfaced in the report")
+    return f"the report's CEA-cheaper period count ({n_cheaper}) matches the live artifact"
+
+
+def case_cca_verdict_annualized_figure_matches_the_artifact():
+    """A third Codex review pass caught the section-10 .verdict teaser stating
+    "about $49/yr" after a later fix moved the artifact's own annualized delta to
+    $50.10/yr -- the exact-figure grep sweep that updated every other occurrence
+    missed this one because it was written as a rounded whole dollar, not the
+    literal old figure being searched for. Checked directly against the live
+    artifact and rounded the same way, so a future regeneration can't silently
+    leave a rounded verdict figure one fix behind the exact one."""
+    ccj_path = ROOT / "data" / "cca_bundled_counterfactual.json"
+    assert ccj_path.exists(), f"{ccj_path} is committed public data and must exist"
+    ccj = json.loads(ccj_path.read_text())
+    per_year = ccj["direction_a_cca_repriced_at_bundled"]["delta_usd_per_year"]
+    rounded = round(per_year)
+    verdict_match = re.search(
+        r'class="verdict">.*?staying on the CCA.*?about \$(\d+)/yr more', HTML)
+    assert verdict_match, "section-10 verdict sentence not found in the expected shape"
+    assert int(verdict_match.group(1)) == rounded, (
+        f"verdict says about ${verdict_match.group(1)}/yr, but the artifact's "
+        f"delta_usd_per_year ({per_year}) rounds to ${rounded}/yr")
+    return f"the §10 verdict's rounded ${rounded}/yr matches the live artifact's {per_year}/yr"
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -235,6 +280,8 @@ CASES = [
     case_chart_and_dispatch_agree_on_non_super_off_peak,
     case_no_retired_holiday_discrepancy_note,
     case_report_totals_match_the_artifact,
+    case_cca_cheaper_period_count_matches_the_artifact,
+    case_cca_verdict_annualized_figure_matches_the_artifact,
 ]
 
 

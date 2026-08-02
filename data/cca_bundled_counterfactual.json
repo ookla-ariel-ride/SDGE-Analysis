@@ -1,0 +1,1304 @@
+{
+ "generated_by": "analysis/cca_bundled_counterfactual.py",
+ "question": "was switching from bundled SDG&E generation to the CCA (Clean Energy Alliance) a win, priced both directions on this household's own actual usage",
+ "phase_1_inputs": {
+  "data/cca_generation_rates.csv": "CEA's own per-period per-cell charges (issue #11 Phase 1)",
+  "data/bill_periods_electric.csv": "the period universe, days, generation_provider",
+  "data/bill_tou_detail.csv": "bundled-era per-cell kWh for Direction B",
+  "analysis/rates_history.py": "RateSet.generation() / generation_comparison_table(), read-only"
+ },
+ "direction_a_cca_repriced_at_bundled": {
+  "confidence": "modeled",
+  "confidence_detail": "MODELED -- same-date bill rates, not measured, despite both multiplicands being real, bill-printed figures: the per-cell kWh is this household's own MEASURED CCA-era usage (already bill-reconciled, data/cca_generation_rates.csv), and the per-cell rate is SDG&E's own real, same-date PRINTED bundled-generation comparison (its bill's own reference figure, not invented or scaled from a rate table) -- but the dollar total produced by multiplying them is this script's own reconstruction of a bundled arrangement the household never actually had on this date. Nobody ever billed this household this number; CLAUDE.md's measured tier means an observed fact (a meter reading, an actual bill line), not a computed counterfactual built from real inputs, however strong those inputs are. It is a materially stronger MODELED figure than one built from a generic rate table with no date-specific verification -- every input here is the actual bill-printed number for the actual date being priced -- which is why it carries the qualifier 'same-date bill rates' rather than a bare 'modeled' label.",
+  "what": "the household's actual per-(season, TOU) CCA-era kWh, priced once at what CEA actually charged and once at SDG&E's own same-date printed bundled-generation comparison -- both inputs are real numbers printed on the household's own bills, but the dollar total produced by multiplying them is this script's own computed reconstruction of a bundled arrangement never actually billed here; see confidence_detail",
+  "n_periods": 19,
+  "n_statements": 18,
+  "days": 547,
+  "scope": "energy-only, the net-import cells this analysis CAN price -- no product adders, no riders, and excluding both a materially larger net-export effect (see excluded_net_export_cca_credit_usd / excluded_net_export_note) and a small number of mixed-sign cells that cannot be priced as one blended figure (see excluded_mixed_sign_cca_usd / excluded_mixed_sign_note)",
+  "priced_cells": 49,
+  "excluded_absent_cells": 11,
+  "excluded_carried_export_cells": 3,
+  "excluded_mixed_sign_cells": 3,
+  "cca_charged_usd": 2450.78,
+  "bundled_comparison_usd": 2375.75,
+  "delta_usd": 75.03,
+  "delta_positive_means": "the CCA arrangement cost MORE than bundled would have, same dates, same usage",
+  "delta_usd_per_year": 50.1,
+  "excluded_net_export_cells": 14,
+  "excluded_net_export_cca_credit_usd": -338.87,
+  "excluded_net_export_note": "these 14 (11 excluded-absent + 3 excluded-carried-export) cells were billed as NET EXPORTS in their CCA period, so CEA's own bill shows a real credit here -- -$338.87 total, 4.5x the size of the $75.03 priced-cell delta above. But there is no same-date SDG&E bundled counterfactual to compare it against: under NEM 2.0 a net-export bucket's dollar value is deferred to the annual true-up, so SDG&E's bill prints no bundled comparison rate for these cells at all (not a zero -- see bill_decomposition.py's Settlement type for the same distinction on the bundled side). WHAT THE BUNDLED-SIDE COUNTERFACTUAL VALUE OF THIS EXPORTED ENERGY WOULD HAVE BEEN IS NOT DETERMINED here -- reconstructing it would mean reconstructing the whole NEM annual true-up (which nets exports against imports across the compensation year at rates this repo has not extracted for the export side), a materially larger undertaking properly scoped as its own follow-up, not estimated here. Because of this, the priced-cell delta above is NOT the full answer to whether switching to the CCA was a win for this household -- it is the answer for the subset of energy this analysis CAN price; see recommendation.text.",
+  "excluded_mixed_sign_cca_usd": -36.28,
+  "excluded_mixed_sign_note": "these 3 (period, season, TOU) cells carry BOTH a net-import and a net-export sub-segment within the SAME billing period (see each row's own segments/import_segment_kwh/export_segment_kwh) -- a materially different, narrower phenomenon than the whole-cell net-export exclusion above. Pricing them as one blended cell would average a real, same-date SDG&E printed comparison rate (for the import sub-segment) together with a genuine non-price (SDG&E's $0.00000/deferred-to-the-annual-true-up sentinel for the export sub-segment) into an effective rate no tariff ever printed -- so they are excluded from the priced total entirely, not partially. CEA's own real, whole-cell charge for these cells is -$36.28 total; it is NOT split or prorated across the two segments (no bill line prices either segment on its own, so any such split would be an invented figure, not a bill-reconciled one) -- see each row's own why_excluded for the specific segments and kWh involved.",
+  "excluded_absent_detail": [
+   {
+    "statement_date": "2025-03-04",
+    "period": "1/28/25 - 2/26/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -215.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -33.98,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-04-02",
+    "period": "2/27/25 - 3/27/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -47.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -7.44,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -165.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -26.32,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-08-01",
+    "period": "6/27/25 - 7/28/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -329.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -52.51,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-09-02",
+    "period": "7/29/25 - 8/26/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -165.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -26.43,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-10-01",
+    "period": "8/27/25 - 9/25/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -82.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -13.1,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-10-31",
+    "period": "9/26/25 - 9/30/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -3.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -0.49,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-10-31",
+    "period": "10/1/25 - 10/27/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -140.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -22.43,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2025-12-03",
+    "period": "10/28/25 - 11/25/25",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -43.0,
+    "cca_rate": 0.15975,
+    "cca_usd": -6.95,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2026-03-04",
+    "period": "1/28/26 - 2/26/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -293.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -46.18,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -14.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -2.25,
+    "why_excluded": "billed as a net export in this period, and SDG&E's printed bundled comparison table carries no rate for this cell on this date either (a genuine data absence, not a parser gap)"
+   }
+  ],
+  "excluded_carried_export_detail": [
+   {
+    "statement_date": "2025-06-03",
+    "period": "4/29/25 - 5/28/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -289.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -45.62,
+    "bundled_comparison_rate": 0.12379,
+    "why_excluded": "billed as a net export in this period, so no monthly bundled dollar would have been charged under NEM 2.0 (it defers to the annual true-up) even though SDG&E's vintage rate for this cell on this date is independently knowable (carried across the corpus)"
+   },
+   {
+    "statement_date": "2025-12-03",
+    "period": "10/28/25 - 11/25/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -180.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -28.47,
+    "bundled_comparison_rate": 0.12379,
+    "why_excluded": "billed as a net export in this period, so no monthly bundled dollar would have been charged under NEM 2.0 (it defers to the annual true-up) even though SDG&E's vintage rate for this cell on this date is independently knowable (carried across the corpus)"
+   },
+   {
+    "statement_date": "2026-01-06",
+    "period": "11/26/25 - 12/26/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -169.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -26.7,
+    "bundled_comparison_rate": 0.12379,
+    "why_excluded": "billed as a net export in this period, so no monthly bundled dollar would have been charged under NEM 2.0 (it defers to the annual true-up) even though SDG&E's vintage rate for this cell on this date is independently knowable (carried across the corpus)"
+   }
+  ],
+  "excluded_mixed_sign_detail": [
+   {
+    "statement_date": "2025-01-31",
+    "period": "12/27/24 - 1/27/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -219.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -34.63,
+    "segments": [
+     {
+      "kwh": 34.0,
+      "rate": 0.1185
+     },
+     {
+      "kwh": -253.0,
+      "rate": 0.0
+     }
+    ],
+    "import_segment_kwh": 34.0,
+    "export_segment_kwh": -253.0,
+    "why_excluded": "this cell's printed generation-comparison segments carry BOTH signs within the same billing period (34.0 kWh net-imported at a real printed rate, -253.0 kWh net-exported at SDG&E's $0.00000/deferred-to-the-annual-true-up sentinel) even though the period's own net kWh for this cell nets those two sub-stretches down to -219.0. Pricing the whole cell as one blended figure would average a real per-kWh rate together with a genuine non-price into an effective rate no tariff ever printed. Excluded from the priced total; CEA's own real, whole-cell charge for this cell is disclosed as-is (never split or prorated across the two segments -- no bill line prices either segment on its own) in excluded_mixed_sign_cca_usd / excluded_mixed_sign_note"
+   },
+   {
+    "statement_date": "2026-02-02",
+    "period": "12/27/25 - 1/27/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -29.0,
+    "cca_rate": 0.15782,
+    "cca_usd": -4.56,
+    "segments": [
+     {
+      "kwh": 64.0,
+      "rate": 0.12379
+     },
+     {
+      "kwh": -93.0,
+      "rate": 0.0
+     }
+    ],
+    "import_segment_kwh": 64.0,
+    "export_segment_kwh": -93.0,
+    "why_excluded": "this cell's printed generation-comparison segments carry BOTH signs within the same billing period (64.0 kWh net-imported at a real printed rate, -93.0 kWh net-exported at SDG&E's $0.00000/deferred-to-the-annual-true-up sentinel) even though the period's own net kWh for this cell nets those two sub-stretches down to -29.0. Pricing the whole cell as one blended figure would average a real per-kWh rate together with a genuine non-price into an effective rate no tariff ever printed. Excluded from the priced total; CEA's own real, whole-cell charge for this cell is disclosed as-is (never split or prorated across the two segments -- no bill line prices either segment on its own) in excluded_mixed_sign_cca_usd / excluded_mixed_sign_note"
+   },
+   {
+    "statement_date": "2026-05-04",
+    "period": "3/28/26 - 4/28/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 18.0,
+    "cca_rate": 0.15782,
+    "cca_usd": 2.91,
+    "segments": [
+     {
+      "kwh": -9.0,
+      "rate": 0.0
+     },
+     {
+      "kwh": 27.0,
+      "rate": 0.14337
+     }
+    ],
+    "import_segment_kwh": 27.0,
+    "export_segment_kwh": -9.0,
+    "why_excluded": "this cell's printed generation-comparison segments carry BOTH signs within the same billing period (27.0 kWh net-imported at a real printed rate, -9.0 kWh net-exported at SDG&E's $0.00000/deferred-to-the-annual-true-up sentinel) even though the period's own net kWh for this cell nets those two sub-stretches down to 18.0. Pricing the whole cell as one blended figure would average a real per-kWh rate together with a genuine non-price into an effective rate no tariff ever printed. Excluded from the priced total; CEA's own real, whole-cell charge for this cell is disclosed as-is (never split or prorated across the two segments -- no bill line prices either segment on its own) in excluded_mixed_sign_cca_usd / excluded_mixed_sign_note"
+   }
+  ],
+  "priced_detail": [
+   {
+    "statement_date": "2025-01-31",
+    "period": "12/27/24 - 1/27/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 255.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 62.3,
+    "bundled_comparison_usd": 42.12,
+    "bundled_comparison_rate": 0.16516,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": 20.18
+   },
+   {
+    "statement_date": "2025-01-31",
+    "period": "12/27/24 - 1/27/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 910.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 47.19,
+    "bundled_comparison_usd": 55.81,
+    "bundled_comparison_rate": 0.06133,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": -8.62
+   },
+   {
+    "statement_date": "2025-03-04",
+    "period": "1/28/25 - 2/26/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 207.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 50.5,
+    "bundled_comparison_usd": 35.44,
+    "bundled_comparison_rate": 0.17122,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": 15.06
+   },
+   {
+    "statement_date": "2025-03-04",
+    "period": "1/28/25 - 2/26/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 781.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 40.54,
+    "bundled_comparison_usd": 49.58,
+    "bundled_comparison_rate": 0.06349,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": -9.04
+   },
+   {
+    "statement_date": "2025-04-02",
+    "period": "2/27/25 - 3/27/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 134.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 32.85,
+    "bundled_comparison_usd": 23.13,
+    "bundled_comparison_rate": 0.17258,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 9.72
+   },
+   {
+    "statement_date": "2025-04-02",
+    "period": "2/27/25 - 3/27/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 371.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 19.26,
+    "bundled_comparison_usd": 23.74,
+    "bundled_comparison_rate": 0.06399,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -4.48
+   },
+   {
+    "statement_date": "2025-05-02",
+    "period": "3/28/25 - 4/28/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 61.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 15.01,
+    "bundled_comparison_usd": 10.53,
+    "bundled_comparison_rate": 0.17258,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 4.48
+   },
+   {
+    "statement_date": "2025-05-02",
+    "period": "3/28/25 - 4/28/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 28.0,
+    "cca_rate": 0.15782,
+    "cca_usd": 4.5,
+    "bundled_comparison_usd": 3.47,
+    "bundled_comparison_rate": 0.12379,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 1.03
+   },
+   {
+    "statement_date": "2025-05-02",
+    "period": "3/28/25 - 4/28/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 328.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 17.01,
+    "bundled_comparison_usd": 20.99,
+    "bundled_comparison_rate": 0.06399,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -3.98
+   },
+   {
+    "statement_date": "2025-06-03",
+    "period": "4/29/25 - 5/28/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 152.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 37.21,
+    "bundled_comparison_usd": 26.23,
+    "bundled_comparison_rate": 0.17258,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 10.98
+   },
+   {
+    "statement_date": "2025-06-03",
+    "period": "4/29/25 - 5/28/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 1029.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 53.35,
+    "bundled_comparison_usd": 65.85,
+    "bundled_comparison_rate": 0.06399,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -12.5
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 22.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 5.28,
+    "bundled_comparison_usd": 3.8,
+    "bundled_comparison_rate": 0.17258,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 1.48
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 13.0,
+    "cca_rate": 0.15782,
+    "cca_usd": 1.98,
+    "bundled_comparison_usd": 1.61,
+    "bundled_comparison_rate": 0.12379,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 0.37
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 136.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 7.07,
+    "bundled_comparison_usd": 8.7,
+    "bundled_comparison_rate": 0.06399,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -1.63
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 187.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 96.86,
+    "bundled_comparison_usd": 75.91,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 20.95
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 925.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 45.88,
+    "bundled_comparison_usd": 65.07,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -19.19
+   },
+   {
+    "statement_date": "2025-08-01",
+    "period": "6/27/25 - 7/28/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 272.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 140.6,
+    "bundled_comparison_usd": 110.41,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 30.19
+   },
+   {
+    "statement_date": "2025-08-01",
+    "period": "6/27/25 - 7/28/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 863.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 42.83,
+    "bundled_comparison_usd": 60.71,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -17.88
+   },
+   {
+    "statement_date": "2025-09-02",
+    "period": "7/29/25 - 8/26/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 371.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 191.69,
+    "bundled_comparison_usd": 150.6,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 41.09
+   },
+   {
+    "statement_date": "2025-09-02",
+    "period": "7/29/25 - 8/26/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 1129.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 56.03,
+    "bundled_comparison_usd": 79.43,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -23.4
+   },
+   {
+    "statement_date": "2025-10-01",
+    "period": "8/27/25 - 9/25/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 500.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 258.3,
+    "bundled_comparison_usd": 202.96,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 55.34
+   },
+   {
+    "statement_date": "2025-10-01",
+    "period": "8/27/25 - 9/25/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 1379.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 68.43,
+    "bundled_comparison_usd": 97.01,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -28.58
+   },
+   {
+    "statement_date": "2025-10-31",
+    "period": "9/26/25 - 9/30/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 56.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 29.01,
+    "bundled_comparison_usd": 22.73,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 6.28
+   },
+   {
+    "statement_date": "2025-10-31",
+    "period": "9/26/25 - 9/30/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 171.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 8.47,
+    "bundled_comparison_usd": 12.03,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -3.56
+   },
+   {
+    "statement_date": "2025-10-31",
+    "period": "10/1/25 - 10/27/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 318.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 164.59,
+    "bundled_comparison_usd": 129.08,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 35.51
+   },
+   {
+    "statement_date": "2025-10-31",
+    "period": "10/1/25 - 10/27/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 1026.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 50.92,
+    "bundled_comparison_usd": 72.18,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -21.26
+   },
+   {
+    "statement_date": "2025-12-03",
+    "period": "10/28/25 - 11/25/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 260.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 63.51,
+    "bundled_comparison_usd": 44.87,
+    "bundled_comparison_rate": 0.17258,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 18.64
+   },
+   {
+    "statement_date": "2025-12-03",
+    "period": "10/28/25 - 11/25/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 752.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 38.99,
+    "bundled_comparison_usd": 48.12,
+    "bundled_comparison_rate": 0.06399,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -9.13
+   },
+   {
+    "statement_date": "2025-12-03",
+    "period": "10/28/25 - 11/25/25",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 62.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 32.18,
+    "bundled_comparison_usd": 25.17,
+    "bundled_comparison_rate": 0.40592,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 7.01
+   },
+   {
+    "statement_date": "2025-12-03",
+    "period": "10/28/25 - 11/25/25",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 151.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 7.47,
+    "bundled_comparison_usd": 10.62,
+    "bundled_comparison_rate": 0.07035,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -3.15
+   },
+   {
+    "statement_date": "2026-01-06",
+    "period": "11/26/25 - 12/26/25",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 210.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 51.34,
+    "bundled_comparison_usd": 36.24,
+    "bundled_comparison_rate": 0.17258,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 15.1
+   },
+   {
+    "statement_date": "2026-01-06",
+    "period": "11/26/25 - 12/26/25",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 1111.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 57.6,
+    "bundled_comparison_usd": 71.09,
+    "bundled_comparison_rate": 0.06399,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -13.49
+   },
+   {
+    "statement_date": "2026-02-02",
+    "period": "12/27/25 - 1/27/26",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 283.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 69.07,
+    "bundled_comparison_usd": 55.76,
+    "bundled_comparison_rate": 0.19701,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": 13.31
+   },
+   {
+    "statement_date": "2026-02-02",
+    "period": "12/27/25 - 1/27/26",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 929.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 48.19,
+    "bundled_comparison_usd": 67.54,
+    "bundled_comparison_rate": 0.0727,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": -19.35
+   },
+   {
+    "statement_date": "2026-03-04",
+    "period": "1/28/26 - 2/26/26",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 199.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 48.49,
+    "bundled_comparison_usd": 39.83,
+    "bundled_comparison_rate": 0.20013,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 8.66
+   },
+   {
+    "statement_date": "2026-03-04",
+    "period": "1/28/26 - 2/26/26",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 1028.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 53.3,
+    "bundled_comparison_usd": 76.27,
+    "bundled_comparison_rate": 0.07419,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -22.97
+   },
+   {
+    "statement_date": "2026-04-02",
+    "period": "2/27/26 - 3/27/26",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 198.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 48.4,
+    "bundled_comparison_usd": 39.63,
+    "bundled_comparison_rate": 0.20013,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 8.77
+   },
+   {
+    "statement_date": "2026-04-02",
+    "period": "2/27/26 - 3/27/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 85.0,
+    "cca_rate": 0.15782,
+    "cca_usd": 13.44,
+    "bundled_comparison_usd": 12.2,
+    "bundled_comparison_rate": 0.14354,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 1.24
+   },
+   {
+    "statement_date": "2026-04-02",
+    "period": "2/27/26 - 3/27/26",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 534.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 27.69,
+    "bundled_comparison_usd": 39.62,
+    "bundled_comparison_rate": 0.07419,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -11.93
+   },
+   {
+    "statement_date": "2026-05-04",
+    "period": "3/28/26 - 4/28/26",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 209.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 51.01,
+    "bundled_comparison_usd": 41.79,
+    "bundled_comparison_rate": 0.19993,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": 9.22
+   },
+   {
+    "statement_date": "2026-05-04",
+    "period": "3/28/26 - 4/28/26",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 638.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 33.08,
+    "bundled_comparison_usd": 47.29,
+    "bundled_comparison_rate": 0.07412,
+    "bundled_comparison_n_segments": 2,
+    "provider_delta_usd": -14.21
+   },
+   {
+    "statement_date": "2026-06-03",
+    "period": "4/29/26 - 5/28/26",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 236.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 57.55,
+    "bundled_comparison_usd": 47.18,
+    "bundled_comparison_rate": 0.1999,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 10.37
+   },
+   {
+    "statement_date": "2026-06-03",
+    "period": "4/29/26 - 5/28/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 21.0,
+    "cca_rate": 0.15782,
+    "cca_usd": 3.27,
+    "bundled_comparison_usd": 3.01,
+    "bundled_comparison_rate": 0.14337,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 0.26
+   },
+   {
+    "statement_date": "2026-06-03",
+    "period": "4/29/26 - 5/28/26",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 539.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 27.95,
+    "bundled_comparison_usd": 39.94,
+    "bundled_comparison_rate": 0.0741,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -11.99
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 31.0,
+    "cca_rate": 0.2443,
+    "cca_usd": 7.68,
+    "bundled_comparison_usd": 6.2,
+    "bundled_comparison_rate": 0.1999,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 1.48
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 28.0,
+    "cca_rate": 0.05187,
+    "cca_usd": 1.46,
+    "bundled_comparison_usd": 2.07,
+    "bundled_comparison_rate": 0.0741,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -0.61
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 205.0,
+    "cca_rate": 0.51684,
+    "cca_usd": 106.02,
+    "bundled_comparison_usd": 96.39,
+    "bundled_comparison_rate": 0.47019,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": 9.63
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": 172.0,
+    "cca_rate": 0.15975,
+    "cca_usd": 27.42,
+    "bundled_comparison_usd": 29.77,
+    "bundled_comparison_rate": 0.17311,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -2.35
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 565.0,
+    "cca_rate": 0.04961,
+    "cca_usd": 28.01,
+    "bundled_comparison_usd": 46.03,
+    "bundled_comparison_rate": 0.08147,
+    "bundled_comparison_n_segments": 1,
+    "provider_delta_usd": -18.02
+   }
+  ]
+ },
+ "direction_b_bundled_repriced_at_cca": {
+  "confidence": "modeled",
+  "what": "the household's actual per-(season, TOU) bundled-era (2024) kWh, priced once at what SDG&E actually charged and once at CEA's own flat charged rate (Phase 1's finding, applied here as an explicit assumption: CEA did not serve this household in 2024, so this is a hypothetical, not an observation)",
+  "n_periods": 7,
+  "days": 216,
+  "scope": "energy-only, the net-import cells this analysis can price -- no product adders, no riders (see excluded_net_export_note for the excluded net-export scope)",
+  "why_no_whole_period_scope": "a whole-period-arrangement figure (matching bill_decomposition.py's second scope) would need CEA's 2024 product adders and CCA-only unbundling riders (PCIA-equivalent, ICA, EDP credit); CEA charged none of these in 2024 because it did not serve this household then, and no committed artifact or bill carries a value to assume in their place -- not determined, not invented",
+  "priced_cells": 17,
+  "excluded_net_export_cells": 10,
+  "excluded_net_export_hypothetical_cca_credit_usd": -472.8,
+  "excluded_net_export_note": "these 10 cells were billed as net exports in their bundled-era period, so SDG&E's actual charge for them is a genuine $0 (deferred to the annual true-up under NEM 2.0, not a comparison this analysis chose to omit). What CEA's flat charged rate would have credited this same exported energy, had CEA served this household in 2024, is a MODELED figure -- -$472.80 total, larger than the $80.25 priced-cell delta above -- but it is a hypothetical on top of a hypothetical (CEA never charged anything in 2024) and is not compared against a real bundled-side price, because none exists for a deferred export bucket. Not folded into the priced total; see direction_a's analogous, measured disclosure for the same scope caveat on the recommendation basis.",
+  "actual_bundled_usd": 934.19,
+  "hypothetical_cca_usd": 1014.44,
+  "delta_usd": 80.25,
+  "delta_positive_means": "the CCA arrangement would have cost MORE than bundled did, same dates, same usage",
+  "delta_usd_per_year": 135.7,
+  "excluded_detail": [
+   {
+    "period": "5/25/24 - 6/25/24",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": -4.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -0.98,
+    "cca_flat_rate": 0.2443,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "5/25/24 - 6/25/24",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -138.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -21.78,
+    "cca_flat_rate": 0.15782,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "5/25/24 - 6/25/24",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -464.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -74.12,
+    "cca_flat_rate": 0.15975,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "6/26/24 - 7/25/24",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -442.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -70.61,
+    "cca_flat_rate": 0.15975,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "7/26/24 - 8/26/24",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -409.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -65.34,
+    "cca_flat_rate": 0.15975,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "8/27/24 - 9/25/24",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -410.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -65.5,
+    "cca_flat_rate": 0.15975,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "9/26/24 - 10/25/24",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -555.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -88.66,
+    "cca_flat_rate": 0.15975,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "10/26/24 - 11/25/24",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": -59.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -9.43,
+    "cca_flat_rate": 0.15975,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "10/26/24 - 11/25/24",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -347.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -54.76,
+    "cca_flat_rate": 0.15782,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   },
+   {
+    "period": "11/26/24 - 12/26/24",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": -137.0,
+    "actual_bundled_usd": 0.0,
+    "hypothetical_cca_usd": -21.62,
+    "cca_flat_rate": 0.15782,
+    "why_excluded": "billed as a net export in this bundled-era period, so SDG&E's actual charge for it is a deferred $0 under NEM 2.0 (not a real monthly price to compare against a modeled CCA credit)"
+   }
+  ],
+  "priced_detail": [
+   {
+    "period": "5/25/24 - 6/25/24",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 204.0,
+    "actual_bundled_usd": 12.51,
+    "hypothetical_cca_usd": 10.58,
+    "cca_flat_rate": 0.05187,
+    "delta_usd": -1.93
+   },
+   {
+    "period": "5/25/24 - 6/25/24",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 50.0,
+    "actual_bundled_usd": 19.41,
+    "hypothetical_cca_usd": 25.84,
+    "cca_flat_rate": 0.51684,
+    "delta_usd": 6.43
+   },
+   {
+    "period": "5/25/24 - 6/25/24",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 698.0,
+    "actual_bundled_usd": 47.05,
+    "hypothetical_cca_usd": 34.63,
+    "cca_flat_rate": 0.04961,
+    "delta_usd": -12.42
+   },
+   {
+    "period": "6/26/24 - 7/25/24",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 216.0,
+    "actual_bundled_usd": 83.86,
+    "hypothetical_cca_usd": 111.64,
+    "cca_flat_rate": 0.51684,
+    "delta_usd": 27.78
+   },
+   {
+    "period": "6/26/24 - 7/25/24",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 936.0,
+    "actual_bundled_usd": 63.1,
+    "hypothetical_cca_usd": 46.43,
+    "cca_flat_rate": 0.04961,
+    "delta_usd": -16.67
+   },
+   {
+    "period": "7/26/24 - 8/26/24",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 281.0,
+    "actual_bundled_usd": 109.1,
+    "hypothetical_cca_usd": 145.23,
+    "cca_flat_rate": 0.51684,
+    "delta_usd": 36.13
+   },
+   {
+    "period": "7/26/24 - 8/26/24",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 980.0,
+    "actual_bundled_usd": 66.06,
+    "hypothetical_cca_usd": 48.62,
+    "cca_flat_rate": 0.04961,
+    "delta_usd": -17.44
+   },
+   {
+    "period": "8/27/24 - 9/25/24",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 308.0,
+    "actual_bundled_usd": 119.58,
+    "hypothetical_cca_usd": 159.19,
+    "cca_flat_rate": 0.51684,
+    "delta_usd": 39.61
+   },
+   {
+    "period": "8/27/24 - 9/25/24",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 904.0,
+    "actual_bundled_usd": 60.94,
+    "hypothetical_cca_usd": 44.85,
+    "cca_flat_rate": 0.04961,
+    "delta_usd": -16.09
+   },
+   {
+    "period": "9/26/24 - 10/25/24",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 215.0,
+    "actual_bundled_usd": 83.48,
+    "hypothetical_cca_usd": 111.12,
+    "cca_flat_rate": 0.51684,
+    "delta_usd": 27.64
+   },
+   {
+    "period": "9/26/24 - 10/25/24",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 986.0,
+    "actual_bundled_usd": 66.47,
+    "hypothetical_cca_usd": 48.92,
+    "cca_flat_rate": 0.04961,
+    "delta_usd": -17.55
+   },
+   {
+    "period": "10/26/24 - 11/25/24",
+    "season": "summer",
+    "tou_period": "on_peak",
+    "kwh": 60.0,
+    "actual_bundled_usd": 23.3,
+    "hypothetical_cca_usd": 31.01,
+    "cca_flat_rate": 0.51684,
+    "delta_usd": 7.71
+   },
+   {
+    "period": "10/26/24 - 11/25/24",
+    "season": "summer",
+    "tou_period": "super_off_peak",
+    "kwh": 94.0,
+    "actual_bundled_usd": 6.34,
+    "hypothetical_cca_usd": 4.66,
+    "cca_flat_rate": 0.04961,
+    "delta_usd": -1.68
+   },
+   {
+    "period": "10/26/24 - 11/25/24",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 185.0,
+    "actual_bundled_usd": 30.55,
+    "hypothetical_cca_usd": 45.2,
+    "cca_flat_rate": 0.2443,
+    "delta_usd": 14.65
+   },
+   {
+    "period": "10/26/24 - 11/25/24",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 578.0,
+    "actual_bundled_usd": 35.45,
+    "hypothetical_cca_usd": 29.98,
+    "cca_flat_rate": 0.05187,
+    "delta_usd": -5.47
+   },
+   {
+    "period": "11/26/24 - 12/26/24",
+    "season": "winter",
+    "tou_period": "on_peak",
+    "kwh": 249.0,
+    "actual_bundled_usd": 41.12,
+    "hypothetical_cca_usd": 60.83,
+    "cca_flat_rate": 0.2443,
+    "delta_usd": 19.71
+   },
+   {
+    "period": "11/26/24 - 12/26/24",
+    "season": "winter",
+    "tou_period": "super_off_peak",
+    "kwh": 1074.0,
+    "actual_bundled_usd": 65.87,
+    "hypothetical_cca_usd": 55.71,
+    "cca_flat_rate": 0.05187,
+    "delta_usd": -10.16
+   }
+  ]
+ },
+ "provider_vs_vintage_split": {
+  "g0_bundled_charged_rate": {
+   "winter/on_peak": 0.16516,
+   "winter/off_peak": null,
+   "winter/super_off_peak": 0.06133,
+   "summer/on_peak": 0.38826,
+   "summer/off_peak": null,
+   "summer/super_off_peak": 0.06741
+  },
+  "g0_query_dates": {
+   "summer": "2024-10-25",
+   "winter": "2024-12-20"
+  },
+  "g0_note": "the last BUNDLED-charged rate observed before the 12/27/24 CCA switch, per season x TOU cell (RateSet.generation() at a date late in the bundled era). summer/off_peak and winter/off_peak have NO bundled-charged observation anywhere in the whole bundled era -- genuinely absent (this household's off-peak buckets were net-export whenever billed as bundled), not a parser gap",
+  "provider_effect_usd": 75.03,
+  "provider_effect_note": "CEA vs SDG&E's bundled rate, SAME date -- exactly Direction A's headline delta, since Direction A already prices at the same-date comparison",
+  "vintage_effect_usd": 177.09,
+  "vintage_effect_note": "how much SDG&E's OWN bundled generation rate moved between the pre-switch baseline and each later CCA-era date, holding the household's real usage fixed -- attributable to tariff vintage, not to the provider switch",
+  "cells_with_no_vintage_baseline": [
+   {
+    "statement_date": "2025-05-02",
+    "period": "3/28/25 - 4/28/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 28.0
+   },
+   {
+    "statement_date": "2025-07-02",
+    "period": "5/29/25 - 6/26/25",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 13.0
+   },
+   {
+    "statement_date": "2026-04-02",
+    "period": "2/27/26 - 3/27/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 85.0
+   },
+   {
+    "statement_date": "2026-06-03",
+    "period": "4/29/26 - 5/28/26",
+    "season": "winter",
+    "tou_period": "off_peak",
+    "kwh": 21.0
+   },
+   {
+    "statement_date": "2026-07-02",
+    "period": "5/29/26 - 6/26/26",
+    "season": "summer",
+    "tou_period": "off_peak",
+    "kwh": 172.0
+   }
+  ],
+  "cca_side_vintage_effect_usd": 0.0,
+  "cca_side_vintage_effect_note": "exactly zero, by construction: Phase 1 found CEA's own charged rate never moved once across all 18 statements on file, so none of the observed drift in what CEA-vs-bundled costs over time comes from the CCA side",
+  "identity_check": {
+   "shared_subset_provider_usd": 74.05,
+   "shared_subset_vintage_usd": 177.09,
+   "shared_subset_total_change_usd": 251.14,
+   "residual_usd": 0.0,
+   "note": "provider_usd + vintage_usd == total change (g1 - g0), to the cent, over the subset of priced cells where a vintage baseline exists"
+  }
+ },
+ "reconciliation": {
+  "direction_a_annualized_usd": 50.1,
+  "direction_b_annualized_usd": 135.7,
+  "pct_difference_b_vs_a": 170.9,
+  "agree_within_20pct": false,
+  "explanation_if_disagreeing": "Direction A (modeled -- same-date bill rates, 547 days spanning two summers and two winters) finds $50.1/yr; Direction B (modeled, 216 days, May-Dec 2024 only -- one summer, a partial winter, no Jan-Apr) finds $135.7/yr, +170.9% different. Rate vintage is a REAL, LARGE, and LIKELY MAJOR contributor to this gap: SDG&E's own bundled generation rate rose substantially across the observed span (see data/rate_vintages.csv's generation_printed_comparison rows -- summer on-peak alone moved 0.38826 -> 0.40592 -> 0.47019) while CEA's charged rate never moved (Phase 1's flat-rate finding), and this script's own provider_vs_vintage split measures that vintage effect at $177.09 over the Direction-A sample -- more than double the $75.03 provider effect over the same sample. Direction A nets this vintage drift out by construction, because it always compares CEA against the bundled rate ON THE SAME DATE; Direction B cannot, because there is no 2024 CCA rate to anchor to, so it necessarily compares 2024's cheaper bundled rate against CEA's rate as observed in 2025-2026. WHAT THIS DOES NOT ESTABLISH: the $177.09 vintage-effect figure is computed entirely from Direction A's own 19-period, 547-day sample and its own priced cells -- there is no mathematical identity tying it to Direction B's own result, because Direction A and Direction B differ in more than rate vintage alone: different periods (19 vs 7), different seasonal composition (two summers and two winters vs one summer and a partial winter missing Jan-Apr), different usage weights, and a partly different set of included cells -- none of this has been separately decomposed, so it is NOT RULED OUT as a contributor to the +170.9% gap. So: the vintage effect is verified, real, and large enough relative to the provider effect to be the most plausible dominant driver of the gap -- but the gap is NOT PROVEN to be fully attributable to rate vintage alone; a rigorous common-weight, common-cell decomposition across Direction A and Direction B has not been performed. This does not change the recommendation basis: Direction A's same-date comparison avoids vintage drift by construction, while Direction B has no 2024 CCA rate to anchor to and necessarily mixes multiple effects, and that reasoning holds on its own terms whether or not the full gap is ever decomposed. Direction B's larger figure is not averaged with Direction A's."
+ },
+ "pcia_and_franchise_fee": {
+  "pcia": {
+   "what_pcia_is": "Power Charge Indifference Adjustment -- a per-kWh CCA-only rider, $0.02828/kWh on NET kWh per analysis/rates.py, charged as its own line item by SDG&E during CCA service (not by CEA -- PCIA appears on the SDG&E side of the bill even in a CCA period, e.g. \"PCIA 2023 1,001 kWh x $.02828 28.31\" on the 2026-07-02 statement)",
+   "bundled_pcia_statement": "2024-06-27",
+   "bundled_pcia_sentence_quoted": "$1.97 of your Electricity Generation Charge is your bundled PCIA charge",
+   "bundled_pcia_usd_this_statement": 1.97,
+   "finding": "bundled customers do not see a separate PCIA line, but the base statement says on its own face that PCIA is baked into the bundled generation charge -- confirming provider_effect_whole_period()'s own why_the_riders_belong_on_this_side note, independently re-verified here against the raw PDF rather than assumed from that module's prior finding",
+   "does_this_resolve_rates_pys_net_negative_ambiguity": "NO -- rates.py documents PCIA-on-net-kWh as untested for a net-negative period because no bundled statement in this household's own bundled-era corpus (2024-06-27 .. 2024-12-30) ever went net-negative for the WHOLE period; this statement's sentence establishes only THAT bundled service carries a PCIA-equivalent component inside its generation rate, not HOW that component behaves in a net-negative month, because the bundled generation charge is not itemized per-kWh anywhere on the bill (it is a single dollar figure, \"$1.97 of your Electricity Generation Charge\", not a rate applied to a kWh quantity) -- not determined; the bundled side is genuinely more opaque than the CCA side here, not merely unobserved"
+  },
+  "franchise_fee": {
+   "bundled": {
+    "statement": "2024-06-27",
+    "label": "Franchise Fees on Electric Energy Supplied by",
+    "base_usd": 8.07,
+    "pct": 1.1,
+    "result_usd": 0.09,
+    "quoted": "Franchise Fees on Electric Energy Supplied by 8.07 x 1.10% Others .09"
+   },
+   "cca": {
+    "statement": "2026-07-02",
+    "label": "Franchise Fee Equivalent Surcharge",
+    "base_usd": 189.93,
+    "pct": 1.1,
+    "result_usd": 2.09,
+    "quoted": "Franchise Fee Equivalent Surcharge 189.93 x 1.10% 2.09"
+   },
+   "finding": "the franchise-fee LINE ITEM survives the provider switch under both names, but its BASE changed: on the bundled statement the fee is 1.10% of the Wildfire Fund Charge alone ($8.07 on 2024-06-27, a small non-bypassable per-kWh charge on gross imports), while on the CCA statement it is 1.10% of a much larger figure ($189.93 on 2026-07-02) under the renamed line \"Franchise Fee Equivalent Surcharge\" -- consistent with California CCAs collecting a franchise-fee-equivalent surcharge on generation revenue specifically because that revenue no longer flows through the utility once a customer enrolls in a CCA, so cities would otherwise lose the franchise fee on it",
+   "what_the_189_93_base_is": "not determined from the bill text alone: it is neither the CCA Electric Generation Charges total, nor Total Electric Charges, nor any single printed subtotal on this statement that this script could reconcile to the cent -- disclosed as not-determined rather than guessed",
+   "does_franchise_fee_need_its_own_provider_term": "the dollar difference is small on these two anchor statements ($0.09 bundled vs $2.09 CCA, $+2.00) but the underlying BASE is not proportional to the same quantity in both eras, so the CLAUDE.md-suggested shortcut (franchise fee tracks whatever moves gross imports, so it needs no separate term) does not hold as stated: it is real, provider-attributable, and not captured by Direction A/B's per-TOU-cell repricing (which prices generation energy only). No committed artifact extracts this line for all 26 periods, so its systematic dollar contribution across the whole corpus is not determined here; on these two anchor statements it is a few dollars per period, far smaller than the generation-rate terms above"
+  }
+ },
+ "cca_product_adders_over_the_whole_corpus": {
+  "clean_impact_plus_usd": 17.7,
+  "state_surcharge_tax_usd": 5.33,
+  "note": "CEA's own period-level product adders, actual and already-reconciled (Phase 1), summed over all 19 CCA periods -- small next to the generation-rate terms above and not part of either direction's energy-only headline; no bundled-side equivalent exists because Clean Impact Plus is CEA's own optional product tier"
+ },
+ "recommendation": {
+  "headline_basis": "direction_a (modeled -- same-date bill rates)",
+  "why_not_direction_b": "Direction B mixes two years of bundled-side rate inflation into what looks like a provider effect (see reconciliation.explanation_if_disagreeing); Direction A's same-date comparison does not, and covers a much longer, more representative sample (547 days vs 216)",
+  "annual_dollar_result_usd": 50.1,
+  "confidence": "modeled",
+  "confidence_detail": "same tier and reasoning as direction_a_cca_repriced_at_bundled.confidence_detail: this figure is computed by multiplying this household's own measured billed kWh by SDG&E's own real, same-date printed bundled-generation comparison rate, so both inputs are genuine bill figures, but the annual dollar result is this analysis's own reconstruction, not an amount anyone was ever actually billed -- MODELED, qualified 'same-date bill rates', not MEASURED",
+  "scope_caveat": "this figure prices ONLY the net-import cells (the ones where both a CEA charge and a same-date SDG&E bundled comparison exist and agree in sign); it excludes 14 net-export cells worth -$338.87 in actual CEA export credits that this analysis cannot price on the bundled side at all (NEM 2.0 defers a net-export bucket's dollar value to the annual true-up, so SDG&E prints no same-date bundled comparison to compare against -- see direction_a.excluded_net_export_note), plus 3 further cells worth -$36.28 whose printed comparison segments carry BOTH signs within the same billing period and so cannot be priced as one blended figure (direction_a.excluded_mixed_sign_note). The whole-household answer to 'was switching to the CCA a win' is therefore NOT FULLY DETERMINED by this analysis.",
+  "text": "On the same-date, energy-only comparison (Direction A, modeled from this household's own billed kWh and SDG&E's own same-date printed bundled comparison rate), staying on CEA's CCA would have cost this household about $50.1/yr more than bundled SDG&E generation -- but ONLY on the net-import cells this analysis can price. That priced-cell answer is well-evidenced and it is small (individual periods in this sample range from a net CCA saving of roughly $14 to a net CCA cost of roughly $27 -- see direction_a.priced_detail for the per-period provider_delta_usd figures). It is NOT the full answer to whether switching to the CCA was a win for this household: 14 cells were billed as net exports and carry a real CEA credit of -$338.87 -- several times the size of the priced-cell delta -- and SDG&E's bill prints no same-date bundled comparison for those cells at all, because a net-export bucket's dollar value defers to the annual true-up under NEM 2.0 rather than pricing monthly (direction_a.excluded_net_export_note). Reconstructing what the bundled side would have credited for that exported energy would mean rebuilding the whole NEM annual true-up, which is out of scope here. A further 3 cells, worth -$36.28 in real CEA charges, are excluded for a different reason: their printed comparison segments carry BOTH signs within the same billing period (part of the period net-exported, part net-imported), so pricing the whole cell as one blended figure would average a real per-kWh rate together with a genuine non-price into an effective rate no tariff ever printed -- see direction_a.excluded_mixed_sign_note. So: the priced-cell answer ($50.1/yr, CCA costs slightly more) is a modeled, same-date-bill-rate figure with strong evidentiary backing, but the LARGER, unresolved net-export effect (and the smaller, unpriceable mixed-sign one) means the true whole-household comparison is NOT FULLY DETERMINED by this analysis -- stated honestly rather than letting the $50.1/yr figure stand in for a conclusion it does not support. Two smaller facts bear on the PRICED portion of the decision, neither of which changes that number: (1) CEA's own charged rate has not moved once in 18 months on file, while SDG&E's bundled generation rate has moved up substantially over the same span (provider_vs_vintage_split.vintage_effect_usd) -- if that pattern continues, the small current CCA premium on the priced cells would likely shrink or reverse, but this is a directional observation about the past, not a projection; (2) the franchise-fee base changed with the provider switch in a way this script cannot fully price (see pcia_and_franchise_fee.franchise_fee), so the priced-cell gap could be marginally larger than stated, by an amount too small on the evidence available to change this reading."
+ },
+ "not_determined": [
+  "a whole-period-arrangement figure for Direction B (CEA's 2024 product adders and CCA-only unbundling riders on 2024 usage) -- CEA did not serve this household in 2024, so no rider value exists to apply",
+  "PCIA / Incremental Procurement Cost Adjustment / Economic Development Program credit values for all 19 CCA periods (only the one hardcoded CURRENT statement in bill_decomposition.py has these extracted) -- so a full whole-period-arrangement scope, matching provider_effect_whole_period()'s second figure, cannot be computed systematically here",
+  "whether rates.py's PCIA-on-net-kWh-in-a-net-negative-period ambiguity is resolved by the bundled side -- it is not; see pcia_and_franchise_fee.pcia.does_this_resolve_rates_pys_net_negative_ambiguity",
+  "the exact dollar base of the CCA-era franchise-fee-equivalent surcharge ($189.93 on the 2026-07-02 statement) -- could not be reconciled to any single printed subtotal on the statement",
+  "the provider/vintage split for summer/off_peak and winter/off_peak (5 of the 49 Direction-A-priced rows) -- no bundled-charged rate exists anywhere in the bundled era for these two cells to serve as a vintage baseline",
+  "the bundled-side counterfactual dollar value of the 14 net-export cells excluded from Direction A (-$338.87 in actual CEA export credits) and of Direction B's analogous excluded cells -- NEM 2.0 defers a net-export bucket's dollar value to the annual true-up, so no same-date bundled comparison is printed to price it against; reconstructing it would mean rebuilding the whole NEM annual true-up, out of scope here (see direction_a.excluded_net_export_note, direction_b.excluded_net_export_note). Because of this, the whole-household answer to whether switching to the CCA was a win is NOT FULLY DETERMINED by this analysis -- only the priced net-import subset is (see recommendation.text)",
+  "the bundled-side counterfactual dollar value of the 3 cells excluded from Direction A because their printed comparison segments carry both signs within the same billing period (-$36.28 in actual CEA charges) -- the real-priced sub-segment's own value is not separately determined here either, since no bill line prices it apart from the export sub-segment it shares a cell with (see direction_a.excluded_mixed_sign_note)"
+ ]
+}
