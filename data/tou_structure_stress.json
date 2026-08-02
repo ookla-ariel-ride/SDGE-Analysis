@@ -1,0 +1,171 @@
+{
+ "method": "holds today's $/kWh rates fixed and varies the TOU WINDOW SHAPES instead (on-peak start/end, weekday midday super-off-peak window, summer-season months), re-running the same EV-shift (behavior_rebuild.shift_ev, 100% compliance) and price-aware battery dispatch (battery_dispatch_policies.run_batt, greedy policy) pipelines against each scenario's own p/seas assignment -- both already read p/hour/seas off the frame they are given, so no changes to either module were needed.",
+ "current_structure": {
+  "on_start": 16,
+  "on_end": 21,
+  "weekday_sop_windows": [
+   [
+    0,
+    6
+   ],
+   [
+    10,
+    14
+   ]
+  ],
+  "weekend_sop_end": 14,
+  "summer_months": [
+   6,
+   7,
+   8,
+   9,
+   10
+  ]
+ },
+ "current_figures_usd": {
+  "baseline_bill": 4904.13,
+  "behavior_save": 1220.85,
+  "battery_marginal_save": 2239.16
+ },
+ "scenarios": {
+  "onpeak_widened": {
+   "label": "On-peak widened (16-21 -> 14-21, 5h -> 7h)",
+   "precedent": "historically motivated",
+   "precedent_note": "SDG&E's own on-peak window was 11am-6pm (7 hours) for roughly 30 years before the CPUC's March 2019 mandated default-TOU transition moved it to today's 4-9pm (5 hours). Widening today's window to 7 hours (14-21) matches that historical WIDTH, not its exact clock hours (11-18) -- the DIRECTION and rough magnitude are real precedent, but this specific scenario was never itself observed, so it is labeled 'historically motivated', not 'measured' (Codex adversarial review: an earlier version labeled this 'measured', overstating how directly this exact scenario traces to the cited history). Sources: KPBS \"SDG&E's New Time-Of-Use Plan Explained\" (Jul 2019), Utility Dive \"California utilities prep nation's biggest time-of-use rate roll-out\".",
+   "structure": {
+    "on_start": 14,
+    "on_end": 21,
+    "weekday_sop_windows": [
+     [
+      0,
+      6
+     ],
+     [
+      10,
+      14
+     ]
+    ],
+    "weekend_sop_end": 14,
+    "summer_months": [
+     6,
+     7,
+     8,
+     9,
+     10
+    ]
+   },
+   "baseline_bill_usd": 4403.65,
+   "behavior_save_usd": 1242.69,
+   "battery_marginal_save_usd": 2232.19,
+   "baseline_delta_usd": -500.48,
+   "behavior_save_delta_usd": 21.84,
+   "battery_marginal_delta_usd": -6.96,
+   "total_package_impact_usd": -515.35
+  },
+  "onpeak_shifted_later": {
+   "label": "On-peak shifted later (16-21 -> 17-22)",
+   "precedent": "historically motivated",
+   "precedent_note": "The same March 2019 CPUC-mandated transition moved the on-peak window LATER (11am-6pm -> 4pm-9pm) by regulatory design, explicitly to track the evening 'duck curve' net-demand peak as rooftop solar grew. A further 1-hour later shift (17-22) tests continuation of that same, real regulatory trend -- a real lever, not an invented one -- but this exact magnitude (17-22) was never itself observed (the 2019 transition landed at 16-21 and stopped there), so it is labeled 'historically motivated', not 'measured' (Codex adversarial review: an earlier version labeled this 'measured', overstating how directly this exact scenario traces to the cited history).",
+   "structure": {
+    "on_start": 17,
+    "on_end": 22,
+    "weekday_sop_windows": [
+     [
+      0,
+      6
+     ],
+     [
+      10,
+      14
+     ]
+    ],
+    "weekend_sop_end": 14,
+    "summer_months": [
+     6,
+     7,
+     8,
+     9,
+     10
+    ]
+   },
+   "baseline_bill_usd": 5112.68,
+   "behavior_save_usd": 1213.88,
+   "battery_marginal_save_usd": 2321.87,
+   "baseline_delta_usd": 208.55,
+   "behavior_save_delta_usd": -6.97,
+   "battery_marginal_delta_usd": 82.71,
+   "total_package_impact_usd": 132.81
+  },
+  "midday_sop_narrowed": {
+   "label": "Midday super-off-peak narrowed (weekday 10-14 reverts to off-peak)",
+   "precedent": "measured, in-corpus",
+   "precedent_note": "Reverts the weekday 10am-2pm super-off-peak window (added 2026-03-01, per tou_audit.py's own changeover-day fit against statement residuals: 35.4 kWh unexplained with no changeover, 0.5 kWh with one) back to its pre-change state (off-peak) -- an actual structural change already observed in this household's own bill corpus, not a hypothetical one.",
+   "structure": {
+    "on_start": 16,
+    "on_end": 21,
+    "weekday_sop_windows": [
+     [
+      0,
+      6
+     ]
+    ],
+    "weekend_sop_end": 14,
+    "summer_months": [
+     6,
+     7,
+     8,
+     9,
+     10
+    ]
+   },
+   "baseline_bill_usd": 3300.9,
+   "behavior_save_usd": 1240.0,
+   "battery_marginal_save_usd": 2053.89,
+   "baseline_delta_usd": -1603.23,
+   "behavior_save_delta_usd": 19.15,
+   "battery_marginal_delta_usd": -185.27,
+   "total_package_impact_usd": -1437.11
+  },
+  "summer_extended": {
+   "label": "Summer season extended one month (Jun-Oct -> Jun-Nov)",
+   "precedent": "hypothetical",
+   "precedent_note": "No precedent found: SDG&E's summer (Jun-Oct, 5 months) is already longer than PG&E's or SCE's (Jun-Sep, 4 months each), and no CPUC proceeding defining a longer season was found. Modeled as a bounding hypothetical, motivated by real (if not yet regulatorily acted-on) evidence that California's fire/heat season is measurably lengthening into the traditionally cooler months (NOAA/Yale Climate Connections coverage of the Jan 2025 LA fires; Scripps Institution of Oceanography Santa Ana wind-timing research). Labeled hypothetical, not measured.",
+   "structure": {
+    "on_start": 16,
+    "on_end": 21,
+    "weekday_sop_windows": [
+     [
+      0,
+      6
+     ],
+     [
+      10,
+      14
+     ]
+    ],
+    "weekend_sop_end": 14,
+    "summer_months": [
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   },
+   "baseline_bill_usd": 4980.11,
+   "behavior_save_usd": 1237.34,
+   "battery_marginal_save_usd": 2299.7,
+   "baseline_delta_usd": 75.99,
+   "behavior_save_delta_usd": 16.49,
+   "battery_marginal_delta_usd": 60.54,
+   "total_package_impact_usd": -1.04
+  }
+ },
+ "worst_scenario": {
+  "key": "onpeak_shifted_later",
+  "label": "On-peak shifted later (16-21 -> 17-22)",
+  "total_package_impact_usd": 132.81,
+  "sentence": "On-peak shifted later (16-21 -> 17-22) hurts most: it would cost this household an extra $132.81/yr even after the EV shift and the price-aware battery, holding physical usage fixed at the measured year."
+ }
+}

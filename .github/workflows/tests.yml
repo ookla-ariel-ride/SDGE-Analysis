@@ -71,6 +71,8 @@ jobs:
         run: python analysis/test_battery_sizing_curve.py
       - name: perfect-foresight dispatch guard tests
         run: python analysis/test_perfect_foresight_dispatch.py
+      - name: TOU structure stress-test guard tests
+        run: python analysis/test_tou_structure_stress.py
       - name: analysis scripts runnable or explicitly retired
         run: python analysis/test_scripts_runnable.py
       - name: carbon raw-cache and fail-closed branches
