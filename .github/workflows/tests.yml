@@ -26,6 +26,10 @@ jobs:
         run: python analysis/test_bill_decomposition.py
       - name: irreducible-bill guard tests
         run: python analysis/test_irreducible_bill.py
+      - name: CCA rate extraction guard tests
+        run: python analysis/test_cca_rate_extraction.py
+      - name: CCA bundled counterfactual guard tests
+        run: python analysis/test_cca_bundled_counterfactual.py
 
   tou-audit:
     # The TOU audit reconciles billed kWh against the raw interval export, which is

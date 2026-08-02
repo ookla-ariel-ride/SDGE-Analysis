@@ -1457,6 +1457,240 @@ present, `data/dsgs_event_calendar_2025.csv`).
 
 ---
 
+### 3.20 `analysis/cca_rate_extraction.py` — CEA's own charged per-TOU generation rates, extracted from every CCA-era bill (`data/cca_generation_rates.csv`)
+
+**Purpose (issue #11, Phase 1).** `rates_history.py`'s `RateSet.cca_generation()` fails
+closed by design on every CCA-era date, because CEA's own per-(season, TOU) rates are
+printed only on the CCA bill pages, which `parse_bills.py` does not extract — only the
+period total (`bill_periods_electric.cca_generation`) is committed. Until now the only
+place those per-TOU CCA rates had ever been parsed was `bill_decomposition.py`'s private
+`cca_block()`, used for exactly one hardcoded statement (2026-07-02, its CURRENT
+comparison date, §10 below). This script generalizes that same parsing approach — the same
+section anchors, the same per-line regex, the same kWh-rounding tolerance, the same
+"named lines must sum to the printed total" gate — across all 18 CCA-era statement PDFs,
+so later phases (§3.21) have a real per-TOU CCA rate to reprice against instead of a
+period total.
+
+**The 18 statements, the 19 periods.** `data/bill_periods_electric.csv` carries 19 rows
+with `generation_provider == "CCA"`, spanning 18 distinct statement dates — one statement
+(2025-10-31) bills two periods (a stub cycle straddling SDG&E's move from the flat Monthly
+Service Fee to the per-day Base Services Charge, issue #7), printing two separate CCA
+generation-charge sections, each with its own "Billing Period" line. The script does not
+assume one section per PDF: it finds every section a statement's PDF actually contains,
+matches each section to the right row of `bill_periods_electric.csv` by its own printed
+billing-period line, and fails closed if the section count or the billing periods found do
+not exactly match what that CSV says the statement should contain.
+
+**Genuine finding: CEA's own charged rate did not move once in 18 months.** Extracted
+across all 18 statements (Jan 2025 – Jul 2026), CEA's per-(season, TOU) generation rate is
+identical on every statement that prints that cell (winter 0.2443 / 0.15782 / 0.05187
+on-peak/off-peak/super-off-peak; summer 0.51684 / 0.15975 / 0.04961), and its Clean Impact
+Plus product-adder rate is 0.001/kWh on every one of the 18 statements. Checked, not
+assumed going in — `test_cca_rate_extraction.py`'s
+`case_cca_rate_is_flat_across_the_whole_corpus` asserts it against the extracted rows. This
+contrasts sharply with `data/rate_vintages.csv`'s `generation_printed_comparison` rows,
+which show SDG&E's printed bundled-generation (EECC) comparison table moving repeatedly
+over the same 18 months (e.g. summer on-peak 0.38826 → 0.40592 → 0.47019): the bundled
+comparison table moved with the tariff vintage while the CCA's own charged rate this
+household actually paid did not move once. This is reported as what the 18 statements on
+file show, not asserted as a property of the CCA tariff going forward — a later statement
+could break the pattern, and nothing here assumes it won't.
+
+**Format variation found, and why it needed no special-casing.** 2025-10-01's statement
+interleaves a right-hand "Breakdown of Current Charges" column into the same extracted
+text lines as the CCA section (the same interleaving `bill_decomposition.py`'s
+`printed_tou_blocks()` documents for the 2026 SDG&E delivery/generation tables). It does
+not break this parser: every per-line regex anchors on a complete printed phrase that
+stays contiguous on one extracted line even when other columns are interleaved elsewhere,
+and the section boundary is an exact string search that the interleaving does not touch.
+
+**Disclosed ambiguity: the Clean Impact Plus line's own kWh base.** CEA prints, e.g.,
+"Clean Impact Plus 945 kWh X $0.001 .95" alongside a period whose `net_kwh` (per
+`bill_periods_electric.csv`) is 946.0 — close but not identical, and the same one-or-two-kWh
+gap recurs on other statements. The statements do not say what quantity Clean Impact Plus
+is levied on; it is not simply `net_kwh`. The script records exactly what is printed (kwh,
+rate, usd) and does not assert what the kWh base represents — disclosed in the
+`clean_impact_plus` rows' own `note` field, not silently reconciled.
+
+**Fail-closed design.** Each statement's section(s) must sum to the printed "Total CCA
+Electric Generation Charges" line within the corpus's standard rounding tolerance, and the
+set of (statement, period) rows the PDFs actually produce must exactly match
+`bill_periods_electric.csv`'s expected 19-row CCA universe — a missing PDF, an extra
+section, or a mismatched billing-period line stops the run rather than silently
+under- or over-counting. `data/cca_generation_rates.csv` is written atomically; run twice →
+byte-identical.
+
+**Output** `data/cca_generation_rates.csv`. Registered in `test_scripts_runnable.py` under
+`NEEDS_PRIVATE_ARCHIVE` (the per-TOU CCA charges are printed nowhere else), so the §9
+byte-for-byte gate covers it locally.
+
+**Tests** `analysis/test_cca_rate_extraction.py`, 16 cases, split the same way as this
+repo's other bill-PDF-dependent suites: cases that need no private archive (parsing logic
+against synthetic statement text, the corpus-shape assertions) run unconditionally; the
+cases needing the real PDFs gate on `_require_archive()` and SKIP with the reason named
+when this checkout lacks `private/`.
+
+---
+
+### 3.21 `analysis/cca_bundled_counterfactual.py` — was switching to the CCA a win? (`data/cca_bundled_counterfactual.json`)
+
+**Purpose (issue #11, Phase 2/3).** §3.20 established what CEA itself charged, per
+(period, season, TOU) cell, on every one of the 19 CCA-era billing periods, and found the
+charged rate never moved. This script pairs that with what SDG&E's own bundled generation
+would have cost on the SAME dates and the SAME usage, in BOTH directions, so the answer is
+not anchored to one hand-picked pair of statements the way
+`bill_decomposition.py`'s `provider_effect_whole_period()` is (that function answers
+exactly this trade-off for exactly one CCA statement, 2026-07-02, against exactly one
+bundled statement, 2024-06-27 — read here as a methodology reference and a reconciliation
+target, never reimplemented). It re-derives nothing already committed: bundled-side rates
+come from `rates_history.RateSet.generation()` / `generation_comparison_table()`
+(imported, read-only), and CEA's per-TOU rates come from the committed
+`data/cca_generation_rates.csv` (§3.20). Its only new extraction is two direct bill-line
+citations — the bundled statement's own PCIA sentence and each era's franchise-fee line —
+read off the same two anchor statements `bill_decomposition.py` already uses, because no
+committed artifact carries either fact.
+
+**Direction A — the 19 CCA periods repriced at bundled rates (MEASURED).** For each CCA
+period's actual per-(season, TOU) kWh, this asks what SDG&E's own bundled-generation
+comparison table printed for that exact date — the same same-statement diagnostic
+`bill_decomposition.py`'s module docstring documents at length: on a CCA date this is
+SDG&E's bundled-generation (EECC) comparison, printed for reference rather than charged,
+and it is the only place a same-date bundled rate exists for a CCA-billed date. This is
+measured, not modeled — SDG&E prints the comparison figure on the household's own bill, for
+the household's own usage, on the household's own date. Each (period, season, TOU) cell is
+classified PRICED (billed as a net import, comparison present — 50 of 63 cells, the only
+ones the energy-only total sums), ABSENT (billed as a net export, no comparison printed —
+13 cells; SDG&E prints nothing because a net-export bucket settles at the annual true-up
+under NEM 2.0, not because its bundled rate is zero), or CARRIED-EXPORT (billed as a net
+export in that specific period, yet a same-date bundled rate is still knowable because it
+was carried across the gap from flanking direct observations elsewhere in the corpus —
+`rates_history`'s "carried" tier — 3 cells, excluded from the priced total for the same
+NEM-2.0-defers-the-dollar reason as ABSENT, reported separately rather than folded in).
+**Result: CEA charged $2,453.69 against $2,381.25 of same-date bundled comparison over the
+547 days on file — $72.44 more, $48.37/yr.**
+
+**Direction B — the 7 bundled periods repriced at CCA rates (MODELED).** For each
+bundled-era period's actual generation kWh (summed from `data/bill_tou_detail.csv`'s
+`section='generation'` rows), this asks what CEA's own flat charged rate (§3.20's finding:
+one value per season × TOU cell across the whole observed CCA era) would have billed. This
+is modeled, never measured — CEA did not serve this household in 2024, so applying its
+2025–2026 rate to 2024 usage is an explicit, labeled assumption. The same net-import/
+net-export split applies (10 of 17 cells excluded as net exports, for the same NEM 2.0
+reason). Direction B publishes an energy-only figure only: a "whole period arrangement"
+figure matching `provider_effect_whole_period()`'s second scope would need CEA's 2024
+product adders and CCA-only unbundling riders (PCIA-equivalent, ICA, EDP credit) that no
+committed artifact carries and that CEA never actually charged in 2024 — inventing one
+would be exactly the guess CLAUDE.md §0 forbids, so it is reported as not determined
+instead. **Result: SDG&E actually charged $934.19 against $1,014.44 CEA's flat rate would
+have billed over the 216 days on file — $80.25 more, $135.70/yr.**
+
+**Provider effect vs vintage effect, generalizing `bill_decomposition.py`'s two-statement
+identity (`g1 − g0 = (s1 − g0) + (g1 − s1)`) across every Direction-A-priced cell.** `g0` is
+the last bundled rate SDG&E actually charged before the 12/27/24 CCA switch (directly
+evidenced, late in the bundled era per season); `s1` is Direction A's same-date bundled
+comparison; `g1` is CEA's own charged rate (§3.20's flat finding). `vintage_usd = kWh ×
+(s1 − g0)`: how much SDG&E's own bundled rate moved from the pre-switch baseline to this
+later date, holding usage fixed — attributable to tariff vintage, not the provider switch.
+`provider_usd = kWh × (g1 − s1)`: CEA vs SDG&E's bundled rate on the SAME later date —
+attributable to the switch, not vintage. Over the subset of Direction-A-priced cells with a
+vintage baseline, `provider_usd + vintage_usd` sums to the total change to the cent
+(`identity_check.residual_usd == 0.0`, asserted in `test_cca_bundled_counterfactual.py`):
+**provider effect $71.13, vintage effect $180.01**. The CCA side of this split is exactly
+zero by construction — §3.20 found CEA's charged rate never moved, so 100% of the drift in
+"what CEA would charge now vs then" is a bundled-side vintage phenomenon. Two cells
+(summer/off_peak, winter/off_peak) have no bundled-charged observation anywhere in the
+bundled era (this household's off-peak buckets were net-export whenever billed bundled),
+so `g0` does not exist for them; their 6 (of 50) Direction-A rows still count fully toward
+Direction A's headline (which needs no `g0`) and are simply excluded from, and disclosed
+as excluded from, the provider/vintage split.
+
+**The two directions disagree by 180.5%, and the reason is named, not averaged away.**
+Direction A ($48.37/yr) and Direction B ($135.70/yr) are not two readings of the same
+question. Direction A prices CEA against the same-date bundled rate, so the vintage drift
+above nets out of it by construction. Direction B has no 2024 CCA rate to anchor to, so it
+necessarily compares 2024's cheaper bundled rate against CEA's rate as observed in
+2025–2026 — exactly the "one rate vintage per projection" trap CLAUDE.md §9 names
+elsewhere in this repo, folded into what looks like a provider effect. Direction B's larger
+figure is not wrong; it answers a different, harder, vintage-mixed question ("what would
+2024 usage have cost a CCA customer, priced at the only CCA rate ever observed") and is
+reported because AC2 (issue #11) asks for the bidirectional counterfactual, labeled
+modeled, and reconciled here rather than averaged with Direction A. **Direction A is the
+recommendation basis** (measured, 547 days spanning two summers and two winters, vs
+Direction B's 216 days of one summer and a partial winter).
+
+**Reconciliation with the existing single-statement figures (`bill_decomposition.py`,
+§10).** That script's `provider_effect_whole_period()` runs exactly this same comparison
+for exactly one CCA statement (2026-07-02) against exactly one bundled statement
+(2024-06-27), publishing two scopes: energy-only over the five cells the bundled table
+prices (CEA $170.59 vs $180.46 bundled, **−$9.87**, CEA cheaper) and the whole-period
+arrangement including riders and adders (CEA's side $197.97 vs the same $180.46,
+**+$17.51**, CEA costlier). The 2026-07-02 statement is itself one of Direction A's 19
+sampled periods: summing its own five priced cells in `direction_a.priced_detail` gives
+exactly −$9.87, matching `bill_decomposition.py`'s independently computed figure for the
+same statement to the cent — the two scripts agree completely on this one data point; it
+is not a second, disagreeing estimate. It is the one period in the 19-period sample that
+reads CCA-cheaper, and the vintage-effect finding above explains why: it is the most
+recent statement in the corpus, sampled after the bundled comparison rate had risen
+furthest (summer on-peak's comparison rate held at 0.40592 through 2025 before moving to
+0.47019 by mid-2026; summer super-off-peak's from 0.07035 to 0.08147) while CEA's rate held
+flat throughout, so this is the date where the provider-effect term had shrunk furthest
+toward (and past, on some cells) zero. Averaged across the other 18 periods, most billed
+earlier in the sample before the bundled rate had risen this far, CEA cost more than
+bundled would have — the full 547-day average is the $48.37/yr headline above. The two
+single-statement figures in `bill_decomposition.py`/§10 remain correct for that one
+statement; they are not superseded, only placed in the context of the fuller sample.
+
+**PCIA, read directly off the bundled statement.** The 2024-06-27 (bundled) statement's own
+generation-charge line states "$1.97 of your Electricity Generation Charge is your bundled
+PCIA charge" — confirming, by direct re-citation of the raw PDF rather than by assumption,
+that bundled service carries a PCIA-equivalent component baked into its generation charge
+even though bundled customers see no separate PCIA line item (unlike CCA customers, who see
+"PCIA 2023 1,001 kWh x $.02828 28.31" as its own line). This does NOT resolve `rates.py`'s
+documented ambiguity about how PCIA behaves on net kWh in a net-negative period: no bundled
+statement in this household's own bundled-era corpus (2024-06-27 – 2024-12-30) ever went
+net-negative for the whole period, and the bundled generation charge is not itemized
+per-kWh anywhere on the bill (a single dollar figure, not a rate applied to a kWh
+quantity) — the bundled side is genuinely more opaque here, not merely unobserved.
+
+**Franchise fee, a genuine finding not previously in this repo.** The franchise-fee line
+item survives the provider switch under both names — "Franchise Fees on Electric Energy
+Supplied by" (bundled, 2024-06-27: $8.07 × 1.10% = $0.09) and "Franchise Fee Equivalent
+Surcharge" (CCA, 2026-07-02: $189.93 × 1.10% = $2.09) — but its BASE changes: on the
+bundled statement it is 1.10% of the Wildfire Fund Charge alone (a small non-bypassable
+per-kWh charge on gross imports); on the CCA statement it is 1.10% of a much larger figure
+under the renamed line, consistent with California CCAs collecting a franchise-fee-
+equivalent surcharge on generation revenue specifically because that revenue no longer
+flows through the utility once a customer enrolls in a CCA (cities would otherwise lose the
+franchise fee on it). The dollar difference is small on these two anchor statements (+$2.00)
+but the base is not proportional to the same quantity in both eras, so it is real and
+provider-attributable, and not captured by either direction's per-TOU-cell energy-only
+repricing. What the CCA-era statement's $189.93 base actually IS could not be reconciled to
+any single printed subtotal on the statement — reported as **not determined**, not guessed.
+No committed artifact extracts this line for all 26 periods, so its systematic dollar
+contribution across the whole corpus is likewise not determined here.
+
+**Fail-closed design.** `data/cca_bundled_counterfactual.json` is written atomically; the
+two directions' NUMERIC results depend only on committed CSV/engine data and regenerate
+identically with or without the private PDF archive present — only the PCIA and
+franchise-fee bill-line citations need the two anchor PDFs directly. A net-import cell
+lacking a same-date bundled comparison raises rather than silently pricing at zero (it has
+never happened, but the guard is unconditional); the provider/vintage identity check
+(`residual_usd == 0.0`) is asserted, not merely computed and trusted.
+
+**Output** `data/cca_bundled_counterfactual.json`. Registered in `test_scripts_runnable.py`
+under `NEEDS_PRIVATE_ARCHIVE` (the same dependency shape as `irreducible_bill.py`: it needs
+`data/cca_generation_rates.csv` and `data/bill_tou_detail.csv`, which themselves derive
+from the bill PDF corpus), so the §9 byte-for-byte gate covers it locally.
+
+**Tests** `analysis/test_cca_bundled_counterfactual.py`, 21 cases, split the same way:
+cases exercising the numeric core (the classification rules, the provider/vintage
+identity, the reconciliation arithmetic) run unconditionally against committed CSV/engine
+data; the cases needing the two real anchor PDFs (the PCIA and franchise-fee citations)
+gate on `_require_archive()` and SKIP with the reason named when this checkout lacks
+`private/`.
+
+---
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py` (REMOVED — superseded by the integrated pipeline),
