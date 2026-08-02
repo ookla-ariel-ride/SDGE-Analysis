@@ -770,7 +770,6 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     # ---- per-event-hour totals (for revenue + miss-rate) ----
     dates = d.dt.dt.date.values
     floor_h = np.floor(d.hour.values).astype(int)
-    months = d.dt.dt.month.values
     idx_by_hour = {}
     for i in range(len(d)):
         idx_by_hour.setdefault((dates[i], floor_h[i]), []).append(i)
