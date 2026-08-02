@@ -392,6 +392,8 @@ def case_optimality_gap_table_matches_the_artifact():
         f"{gc['optimality_gap_pct_of_greedy']:.1f}%",
         f"${da['save_usd']:,.2f}",
         f"${ps['remaining_gap_day_ahead_to_perfect_usd']:,.2f}",
+        f"${ps['gap_attributed_to_forecast_error_usd']:,.2f}",
+        f"${ps['gap_attributed_to_myopic_horizon_usd']:,.2f}",
     ]
     for value in checks:
         assert value in HTML, f"§6 controller-quality table: {value!r} not found in the report"
@@ -400,10 +402,13 @@ def case_optimality_gap_table_matches_the_artifact():
         "the true optimum must never save less than the greedy policy")
     assert da["save_usd"] <= gc["perfect_foresight_save_usd"], (
         "the day-ahead case must never beat the true optimum")
+    ph = pfd["day_ahead_perfect_horizon"]
+    assert ph["save_usd"] <= gc["perfect_foresight_save_usd"], (
+        "the perfect-horizon day-ahead case must never beat the true optimum")
     # day-ahead vs greedy is deliberately NOT constrained either way -- a
     # pre-committed schedule based on an imperfect forecast can genuinely
     # underperform a simpler real-time reactive heuristic (a real, disclosed
-    # finding on this house's data: day-ahead $1,711.13 < greedy $2,329),
+    # finding on this house's data: day-ahead $1,711.28 < greedy $2,329),
     # so asserting an ordering here would encode a false assumption.
     assert abs(pfd["verification"]["agreement_usd"]) < 1.0, (
         "the LP's own required $1 agreement with rates.bill_nem is not met")

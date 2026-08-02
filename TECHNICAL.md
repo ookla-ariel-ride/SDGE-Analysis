@@ -2094,28 +2094,53 @@ move through the battery at all.
 **Day-ahead forecast (the realistic middle case) — a genuine, disclosed underperformance,
 not a bug.** This case commits to a full day's charge/discharge SCHEDULE in advance, planned
 against only a persistence forecast: yesterday's actual house-net profile, time-of-day
-aligned, stands in for tomorrow's forecast (the first day of the year persists from the last
-day — the same cyclic convention as the annual boundary), including a forecast of which
-future intervals will see EV-spillover (also persisted from yesterday's real mask — an
-earlier version handed the planning LP the REAL future EV mask directly, giving it perfect
-advance knowledge and undercutting the "forecast quality, not perfect knowledge" premise;
-roughly half of this house's true EV-spillover intervals cannot be reliably anticipated
-this way). The REAL EV-exclusion rule and REAL SOC/power feasibility are both still
-enforced at EXECUTION regardless of what the plan assumed. Forecast error: MAE 0.6695 kWh,
-RMSE 1.1779 kWh per 15-minute interval (a real, sizable per-interval error). **Result:
-$1,711.28/yr saved — WORSE than the shipping greedy policy's $2,329/yr, not better.**
-Mechanism: pre-committing to a schedule the day before hard-caps how much the battery can
+aligned, stands in for tomorrow's forecast, including a forecast of which future intervals
+will see EV-spillover (also persisted from yesterday's real mask — an earlier version handed
+the planning LP the REAL future EV mask directly, giving it perfect advance knowledge and
+undercutting the "forecast quality, not perfect knowledge" premise; roughly half of this
+house's true EV-spillover intervals cannot be reliably anticipated this way). The REAL
+EV-exclusion rule and REAL SOC/power feasibility are both still enforced at EXECUTION
+regardless of what the plan assumed. Forecast error: MAE 0.6695 kWh, RMSE 1.1779 kWh per
+15-minute interval (a real, sizable per-interval error). **Result: $1,711.28/yr saved —
+WORSE than the shipping greedy policy's $2,329/yr, not better.**
+
+**Isolating forecast error from the myopic planning horizon (Codex adversarial review, fourth
+pass — the second "do not ship" finding of this issue).** Each day's local LP fixes SOC at
+the real start-of-day level but leaves it FREE at day's end — unlike the annual solve's
+cyclic boundary, no value is placed on SOC held past midnight. Codex correctly flagged that
+an earlier version attributed day-ahead's ENTIRE shortfall versus the true optimum to
+forecast pre-commitment without first ruling out this second, independent cause: a
+day-ahead controller could underperform even with a PERFECT forecast, simply because its
+planning horizon never sees past midnight. This is checked directly, not argued away:
+`rolling_day_ahead(..., perfect=True)` runs the IDENTICAL day-by-day architecture (same SOC
+handling, same real bucket-offset carry-forward) but plans against the REAL same-day data
+instead of a persistence forecast. Result: **$2,537.90/yr saved — within $8.35 of the true
+annual optimum ($2,546.24/yr)**. That $8.35/yr is the myopic-horizon effect on its own,
+holding forecast quality at perfect; the remaining $826.61/yr (of the persistence run's
+total $834.96/yr shortfall) is attributable to imperfect forecasting, holding the horizon
+fixed at one day. The horizon confound was real to check and worth ruling out, but turned
+out small in practice on this house's data — the day-ahead case's underperformance is
+almost entirely a forecasting problem, not a horizon problem. Mechanism for the forecast
+cost: pre-committing to a schedule the day before hard-caps how much the battery can
 discharge at each interval to whatever the forecast anticipated (`discharge_i ≤
 forecast_imp0_i` during planning); when reality diverges — which it does, substantially,
 every day — that cap forecloses value the shipping policy's simpler real-time reactivity
 (react to whatever import is ACTUALLY happening right now, no schedule to be wrong about)
 does not give up. The day-ahead run also ends the year holding 5.49 kWh of un-cashed-out
-SOC (vs starting near 0), a real, if secondary, symptom of the same pre-commitment
-limitation: 365 independent daily plans have no mechanism analogous to the annual solve's
-cyclic constraint to ensure stored value gets spent by year's end. 4 of 365 days have no
-same-length day to persist from (DST transitions) and fall back to their own actual data
-for that day only, excluded from the reported forecast-error statistics rather than
-silently blended in.
+SOC (vs starting near 0), a real, if secondary, symptom of the same limitation.
+
+**Disclosed leakage: day 0 and DST-mismatched days.** 4 of 365 days have no same-length day
+to persist from (DST transitions) and fall back to their own actual data for that day only.
+Day 0 has the same problem for a different reason: its "prior day" (day 364 of the SAME
+year, via the wraparound convention) is, chronologically, 364 days in the future relative to
+day 0's own true position — a single year of data has no real prior year to draw a genuine
+persistence source from. An earlier version counted day 0 as ordinary persistence anyway;
+it is now tracked separately (`n_days_with_leaked_future_information` = 5) and excluded from
+BOTH the forecast-error statistics AND disclosed with a quantified bound
+(`leak_sensitivity_usd`): re-billing with those 5 days' dispatch replaced by no battery
+action at all changes the reported day-ahead save by **$28.23/yr** — small next to the
+$834.96/yr gap it sits inside, bounding rather than merely asserting that the leak does not
+materially affect the headline figure.
 
 **Bucket netting carries the REAL (not forecast) month-to-date position forward (Codex
 adversarial review, second pass).** Each day's bucket-net constraint is offset by the
@@ -2136,10 +2161,13 @@ maximum** at this hardware — a $217.24/yr optimality gap is small next to the 
 already saves, so there is not much room for ANY controller, however smart, to add. A naive
 day-ahead pre-committed schedule based on simple persistence forecasting is NOT a reliable
 way to capture more of that gap and can genuinely do WORSE than the shipping policy
-($617.72/yr worse, in this case) — no shipping product changes the controller, only the
-hardware, so closing the small remaining gap is a firmware/software question, but this data
-does not show that "add a day-ahead forecast" is the answer; the shipping policy's simpler
-real-time reactivity is, on this evidence, the safer choice.
+($617.72/yr worse, in this case) — and that shortfall is almost entirely a forecasting
+problem ($826.61/yr), not a planning-horizon problem ($8.35/yr, checked directly rather than
+assumed), so a longer planning horizon alone would not fix it either. No shipping product
+changes the controller, only the hardware, so closing the small remaining gap is a
+firmware/software question, but this data does not show that "add a day-ahead forecast" is
+the answer; the shipping policy's simpler real-time reactivity is, on this evidence, the
+safer choice.
 
 **Output** `data/perfect_foresight_dispatch.json`. Registered in `test_scripts_runnable.py`
 under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
@@ -2147,7 +2175,7 @@ under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
 read-only and skipped gracefully if absent, not a hard tie-out assertion, so synthetic CI
 inputs run it cleanly).
 
-**Tests** `analysis/test_perfect_foresight_dispatch.py`, 22 cases: synthetic-frame unit
+**Tests** `analysis/test_perfect_foresight_dispatch.py`, 28 cases: synthetic-frame unit
 tests of the bucket assignment (matches `bill_nem_monthly`'s own grouping), the core LP
 solver (a same-bucket case where netting alone correctly leaves the battery idle, a
 TWO-bucket case that forces genuine physical battery use since netting cannot substitute
@@ -2157,19 +2185,27 @@ NO case in the file asserted nonzero charge/discharge at all, so a regression th
 disabled the battery entirely would have passed all 18 prior cases — confirmed by
 monkeypatching the bounds to (0,0) and rerunning: 17 of 18 still passed — EV-exclusion
 enforcement, both SOC boundary modes, the bucket-offset mechanism reaching the objective
-by the expected amount), the gross-flow-preserving conservation checks (simultaneous
+by the expected amount, and — fourth adversarial review — that the combined-throughput
+power-cap row in `A_ub` binds `grid_topup`, `solar_absorbed`, AND `discharge` together, a
+structural check on the constraint matrix itself since the real data's own economics
+never push combined use above the cap, so a purely behavioral assertion would pass even
+with the fix reverted), the gross-flow-preserving conservation checks (simultaneous
 real import/export now correctly ALLOWED, manufactured export and over-discharge both
-caught, wasteful single-flow simultaneous charge/discharge still caught), and the
+caught, wasteful single-flow simultaneous charge/discharge still caught, and the same
+combined-power-cap violation caught by `_check_conservation` directly), and the
 day-ahead forecast machinery (cyclic persistence for day 0, energy conservation, SOC
 bounds under heavy load, a nonzero real prior-day contribution to a bucket the next day
-also touches, and — third adversarial review — that the REAL EV-exclusion rule is
-enforced at execution even when a forecast-based plan, blind to a real future spillover
-spike, would otherwise have discharged into it) need no private archive at all; cases
-requiring the $1 agreement with `rates.bill_nem`, the real annual solve's conservation
-and cyclic closure, the day-ahead-never-beats-perfect-foresight bound (day-ahead vs
-greedy is deliberately NOT asserted either way — a real, disclosed finding, not a test
-assumption), and byte-identical regeneration gate on `_require_archive()` and SKIP with
-the reason named when this checkout lacks `private/`.
+also touches, `perfect=True` reporting exactly zero forecast error and reacting to a
+same-day spike a persistence forecast would have missed, and — third adversarial
+review — that the REAL EV-exclusion rule is enforced at execution even when a
+forecast-based plan, blind to a real future spillover spike, would otherwise have
+discharged into it) need no private archive at all; cases requiring the $1 agreement
+with `rates.bill_nem`, the real annual solve's conservation and cyclic closure, the
+day-ahead-never-beats-perfect-foresight bound (day-ahead vs greedy is deliberately NOT
+asserted either way — a real, disclosed finding, not a test assumption), the
+perfect-horizon variant never beating the true optimum, the leak-sensitivity bound
+staying small on the real measured year, and byte-identical regeneration gate on
+`_require_archive()` and SKIP with the reason named when this checkout lacks `private/`.
 
 ---
 

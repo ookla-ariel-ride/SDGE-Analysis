@@ -102,6 +102,29 @@ guess alone). The REAL mask is still enforced as a hard rule at EXECUTION
 time regardless of what the plan called for, the same hard-feasibility
 spirit as the SOC/power re-clip.
 
+Isolating forecast error from the myopic single-day horizon: each day's
+local LP is solved independently, with SOC fixed at the real start-of-day
+level but left FREE at day's end -- unlike the annual solve's cyclic
+boundary, no value is placed on SOC held past midnight. This means the
+day-ahead run's shortfall versus the true annual optimum has two possible
+causes -- imperfect (persistence) forecasting, and the myopic horizon
+itself -- and an earlier version of this report attributed the ENTIRE
+shortfall to forecast pre-commitment without ruling out the horizon
+confound first (Codex adversarial review, fourth pass). `rolling_day_ahead`
+therefore also runs with `perfect=True` (plans against REAL same-day data
+instead of a persistence forecast, everything else about the day-by-day
+architecture unchanged), isolating the horizon effect on its own: on this
+house's data it is $8.35/yr, versus $826.61/yr from forecast error --
+the horizon confound turned out real to check but small in practice.
+
+Day 0 and any DST-length-mismatched days have no genuine prior day to
+persist from within a single year of data, so their "forecast" falls back
+to their own real same-day values -- not an out-of-sample forecast. This
+is disclosed as a leak (`n_days_with_leaked_future_information`, 5 of 365
+days here) rather than silently counted as ordinary persistence, and its
+dollar impact is bounded directly (`leak_sensitivity_usd`) by re-billing
+with those specific days' dispatch replaced by no battery action at all.
+
 Output: perfect_foresight_dispatch.json. This script fully regenerates the
 committed artifact.
 """
@@ -333,7 +356,7 @@ def solve(d, imp0, gen0, cap=CAP_KWH, power_kw=POWER_KW):
     }, charge, discharge, soc, soc_init
 
 
-def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
+def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW, perfect=False):
     """Realistic middle case: day-ahead PERSISTENCE forecast (yesterday's
     actual house-net profile, time-of-day aligned, stands in for tomorrow's
     forecast -- the day boundaries are set by calendar date, so DST-length
@@ -349,10 +372,25 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     applied to the REAL data to get the day's true realized import/export --
     a walk-forward backtest, not a hypothetical.
 
-    Returns (imp, exp, info_dict). `soc_start` should be the whole-year
-    optimizer's own converged soc_init/soc_final (the steady operating level
-    for this exact hardware on this house), so the rolling run starts from a
-    principled level rather than an arbitrary new assumption."""
+    `perfect=True` swaps the persistence forecast for the REAL same-day
+    imp0/gen0/EV-mask, holding every other piece of the architecture fixed
+    (day-by-day solve, SOC fixed at the real start-of-day level and left
+    free at day's end, real bucket offsets carried forward). This isolates
+    the "myopic single-day horizon" effect (each day's LP places NO value on
+    SOC held past midnight, so it has no incentive to preserve charge for
+    tomorrow morning) from forecast quality: comparing this run against the
+    persistence run (perfect=False) attributes their gap to forecast error
+    alone, and comparing THIS run against the full annual cyclic optimum
+    attributes the remaining gap to the horizon effect alone (Codex
+    adversarial review, fourth pass -- an earlier version's report language
+    attributed the day-ahead persistence run's ENTIRE shortfall vs greedy to
+    forecast pre-commitment, without isolating this confound first).
+
+    Returns (imp, exp, charge, discharge, soc_trace, info_dict). `soc_start`
+    should be the whole-year optimizer's own converged soc_init/soc_final
+    (the steady operating level for this exact hardware on this house), so
+    the rolling run starts from a principled level rather than an arbitrary
+    new assumption."""
     n = len(d)
     P = power_kw / 4.0
     house_net = imp0 - gen0  # only for the forecast-error stats below
@@ -390,26 +428,57 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     # real EV spillover, only what happened at the same time yesterday.
     forecast_ev_spillover = real_ev_spillover.copy()
     persisted = np.zeros(n, dtype=bool)
+    leaked = np.zeros(n, dtype=bool)
     n_dst_mismatch_days = 0
-    for i in range(n_days):
-        idx = day_idx[i]
-        prev_idx = day_idx[i - 1]  # i=0 wraps to the LAST day (cyclic persistence source)
-        if len(prev_idx) == len(idx):
-            forecast_imp0[idx] = imp0[prev_idx]
-            forecast_gen0[idx] = gen0[prev_idx]
-            forecast_ev_spillover[idx] = real_ev_spillover[prev_idx]
-            persisted[idx] = True
-        else:
-            # a DST-length mismatch with its persistence source -- no
-            # same-length profile to persist from, so this day's forecast
-            # falls back to its own actual data (perfect for that one day
-            # only; excluded from the error stats below, not silently blended in)
-            n_dst_mismatch_days += 1
+    if perfect:
+        # perfect=True: no persistence forecast at all -- see the docstring.
+        # forecast_imp0/gen0/ev_spillover already equal the real arrays
+        # (copied above), so nothing else in this block runs.
+        pass
+    else:
+        for i in range(n_days):
+            idx = day_idx[i]
+            prev_idx = day_idx[i - 1]  # i=0 wraps to the LAST day of the SAME year
+            if len(prev_idx) == len(idx):
+                forecast_imp0[idx] = imp0[prev_idx]
+                forecast_gen0[idx] = gen0[prev_idx]
+                forecast_ev_spillover[idx] = real_ev_spillover[prev_idx]
+                if i == 0:
+                    # Day 0's "prior day" is day 364 of this SAME year -- real
+                    # data that, in a genuine walk-forward deployment, would
+                    # not exist yet on day 0 (it is the far future relative to
+                    # day 0's true chronological position, not a real
+                    # yesterday). This is a modeling convenience (a single
+                    # year has no real prior year to draw from), not a
+                    # genuine out-of-sample persistence source, so it is
+                    # excluded from BOTH the forecast-error stats below AND
+                    # counted separately in the disclosed leak total (Codex
+                    # adversarial review, fourth pass: an earlier version
+                    # counted this day as ordinary "persisted", silently
+                    # including one day of unusually accurate -- because
+                    # same-year, same-season -- forecast in both the error
+                    # stats and the billed result without disclosure).
+                    leaked[idx] = True
+                else:
+                    persisted[idx] = True
+            else:
+                # a DST-length mismatch with its persistence source -- no
+                # same-length profile to persist from, so this day's forecast
+                # falls back to its own actual data (perfect for that one day
+                # only; excluded from the error stats below AND counted in
+                # the disclosed leak total, not silently blended into either)
+                n_dst_mismatch_days += 1
+                leaked[idx] = True
 
     forecast_house_net = forecast_imp0 - forecast_gen0
     err = forecast_house_net[persisted] - house_net[persisted]
-    forecast_mae = float(np.abs(err).mean())
-    forecast_rmse = float(np.sqrt((err ** 2).mean()))
+    forecast_mae = float(np.abs(err).mean()) if persisted.any() else 0.0
+    forecast_rmse = float(np.sqrt((err ** 2).mean())) if persisted.any() else 0.0
+    # n_leaked_days is only a meaningful "accidental leak" concept for the
+    # persistence forecast; the perfect=True run is INTENTIONALLY full
+    # information every day, so it reports 0 here (the "perfect" flag above
+    # already communicates that plainly).
+    n_leaked_days = 0 if perfect else int(leaked[[idx[0] for idx in day_idx]].sum())
 
     real_imp = np.zeros(n)
     real_exp = np.zeros(n)
@@ -478,15 +547,23 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
             bucket_cumulative[orig] = (bucket_cumulative.get(orig, 0.0)
                                        + float(day_real_imp[mask].sum() - day_real_exp[mask].sum()))
 
-    return real_imp, real_exp, real_charge, real_discharge, real_soc_trace, {
-        "forecast_method": ("persistence: yesterday's actual house-net profile "
-                            "(Consumption - Generation), time-of-day aligned, "
-                            "used as tomorrow's forecast; the first day of the "
-                            "year persists from the last day (cyclic)"),
+    return real_imp, real_exp, real_charge, real_discharge, real_soc_trace, leaked, {
+        "perfect": perfect,
+        "forecast_method": (
+            "none -- perfect same-day information, single-day horizon "
+            "(isolates the myopic-horizon effect from forecast quality)"
+            if perfect else
+            "persistence: yesterday's actual house-net profile "
+            "(Consumption - Generation), time-of-day aligned, "
+            "used as tomorrow's forecast; day 0 (no real prior day exists "
+            "within a single year) and DST-length-mismatched days fall back "
+            "to their own actual data and are disclosed separately as "
+            "leaked, not counted as genuine persistence"),
         "forecast_mae_kw_equivalent_kwh_per_interval": round(forecast_mae, 4),
         "forecast_rmse_kwh_per_interval": round(forecast_rmse, 4),
         "n_days": n_days,
         "n_days_with_dst_length_mismatch": n_dst_mismatch_days,
+        "n_days_with_leaked_future_information": n_leaked_days,
         "soc_start_kwh": round(float(soc_start), 4),
         "soc_end_kwh": round(float(soc_now), 4),
     }
@@ -586,6 +663,38 @@ def _check_conservation(imp0, gen0, imp, exp, charge, discharge, soc, soc_init, 
         raise SystemExit("perfect_foresight_dispatch: SOC bound violated")
 
 
+def _rolling_conservation_check(imp0, gen0, imp, exp, charge, discharge, soc_trace,
+                                soc_init, soc_end_reported, power_kw):
+    """Shared conservation check for both rolling_day_ahead variants
+    (persistence forecast and perfect-same-day-information): the exact
+    aggregate net-flow identity (same form as _check_conservation's annual
+    check), the SOC trace's internal consistency, and the same combined
+    bidirectional power cap _check_conservation enforces (Codex adversarial
+    review, fourth pass). A rolling run is NOT a closed cycle (soc_end
+    generally != soc_start, since each day only targets a fixed START, not
+    a round trip), so this is checked directly from the actual
+    charge/discharge trace, not inferred from a soc-drift shortcut. Returns
+    (ok: bool, diagnostic_str: str)."""
+    house_net = imp0 - gen0
+    lhs = float((imp - exp).sum() - house_net.sum())
+    rhs = float(charge.sum() - discharge.sum())
+    identity_ok = abs(lhs - rhs) < 1e-3
+    soc_prev = np.concatenate([[soc_init], soc_trace[:-1]])
+    expected_soc = soc_prev + charge * ETA - discharge / ETA
+    soc_trace_ok = np.allclose(soc_trace, expected_soc, atol=1e-4)
+    soc_end_ok = abs(soc_trace[-1] - soc_end_reported) < 1e-3
+    # combined-throughput physical limit: execution can only clip DOWN from
+    # the planned charge/discharge (each min()'d against real SOC/power
+    # feasibility independently), so it inherits the planning LP's combined
+    # <= P guarantee, but this is checked directly rather than assumed.
+    power_ok = (charge + discharge).max() <= power_kw / 4.0 + 1e-3
+    ok = identity_ok and soc_trace_ok and soc_end_ok and power_ok
+    diag = (f"net-flow identity {lhs:.4f} vs {rhs:.4f} (ok={identity_ok}), "
+            f"soc trace ok={soc_trace_ok}, soc end ok={soc_end_ok}, "
+            f"combined power cap ok={power_ok}")
+    return ok, diag
+
+
 def main():
     d = br.load()
     imp0 = d.Consumption.values.astype(float)
@@ -653,69 +762,112 @@ def main():
         }
 
     # -- day-ahead forecast (realistic middle case) --
-    da_imp, da_exp, da_charge, da_discharge, da_soc_trace, da_info = rolling_day_ahead(
+    da_imp, da_exp, da_charge, da_discharge, da_soc_trace, da_leaked, da_info = rolling_day_ahead(
         d, imp0, gen0, soc_init)
     fd = d.copy()
     fd["I"], fd["E"] = da_imp, da_exp
     da_bill = R.bill_nem(fd, "I", "E")
     da_save = base_bill - da_bill
 
-    # Exact aggregate net-flow identity (same form as _check_conservation's
-    # annual-run check): sum(imp-exp) - sum(house_net) = charge_sum - discharge_sum.
-    # Day-ahead is NOT a closed cycle (soc_end generally != soc_start, since
-    # each day only targets a fixed START, not a round trip), so this is
-    # checked directly from the actual charge/discharge trace, not inferred
-    # from a soc-drift shortcut.
-    house_net = imp0 - gen0
-    lhs = float((da_imp - da_exp).sum() - house_net.sum())
-    rhs = float(da_charge.sum() - da_discharge.sum())
-    da_conservation_ok = abs(lhs - rhs) < 1e-3
-    # the accumulated SOC trace must also match the charge/discharge history
-    # exactly, and the last traced value must equal the info dict's own
-    # reported ending SOC
-    soc_prev = np.concatenate([[soc_init], da_soc_trace[:-1]])
-    expected_soc = soc_prev + da_charge * ETA - da_discharge / ETA
-    soc_trace_ok = np.allclose(da_soc_trace, expected_soc, atol=1e-4)
-    soc_end_ok = abs(da_soc_trace[-1] - da_info["soc_end_kwh"]) < 1e-3
-    # same combined-throughput physical limit as _check_conservation's annual
-    # check -- execution can only clip DOWN from the planned charge/discharge
-    # (each min()'d against real SOC/power feasibility independently), so it
-    # inherits the planning LP's combined <= P guarantee, but this is checked
-    # directly rather than assumed (Codex adversarial review, fourth pass).
-    da_power_ok = (da_charge + da_discharge).max() <= POWER_KW / 4.0 + 1e-3
-    da_conservation_ok = da_conservation_ok and soc_trace_ok and soc_end_ok and da_power_ok
-
+    da_ok, da_diag = _rolling_conservation_check(
+        imp0, gen0, da_imp, da_exp, da_charge, da_discharge, da_soc_trace, soc_init,
+        da_info["soc_end_kwh"], POWER_KW)
     out["day_ahead_forecast"] = {
         **da_info,
         "bill_usd": round(da_bill, 2),
         "save_usd": round(da_save, 2),
-        "energy_conservation_check_passed": bool(da_conservation_ok),
+        "energy_conservation_check_passed": bool(da_ok),
     }
-    if not da_conservation_ok:
+    if not da_ok:
         raise SystemExit(
             "perfect_foresight_dispatch: day-ahead energy conservation check failed "
-            f"(net-flow identity {lhs:.4f} vs {rhs:.4f}, soc trace ok={soc_trace_ok}, "
-            f"soc end ok={soc_end_ok}, combined power cap ok={da_power_ok})")
+            f"({da_diag})")
+
+    # Sensitivity of the persistence day-ahead save to the days whose
+    # "forecast" leaked real future information (day 0 -- no genuine prior
+    # day exists within a single year -- and any DST-length-mismatched
+    # days): re-bill with those specific days' battery action replaced by
+    # NO action at all (imp=imp0, exp=gen0), isolating exactly what those
+    # days' (unrealistically well-informed) dispatch is worth in dollars,
+    # rather than leaving the leak's scale undisclosed (Codex adversarial
+    # review, fourth pass).
+    da_imp_delaked = np.where(da_leaked, imp0, da_imp)
+    da_exp_delaked = np.where(da_leaked, gen0, da_exp)
+    fd_delaked = d.copy()
+    fd_delaked["I"], fd_delaked["E"] = da_imp_delaked, da_exp_delaked
+    da_save_delaked = base_bill - R.bill_nem(fd_delaked, "I", "E")
+    leak_sensitivity_usd = round(da_save - da_save_delaked, 2)
+    out["day_ahead_forecast"]["leak_sensitivity_usd"] = leak_sensitivity_usd
+    out["day_ahead_forecast"]["leak_sensitivity_note"] = (
+        f"{da_info['n_days_with_leaked_future_information']} of "
+        f"{da_info['n_days']} days ({100 * da_info['n_days_with_leaked_future_information'] / da_info['n_days']:.1f}%) "
+        "used real (not forecast) same-day data because no genuine prior day "
+        "exists for them within a single year; replacing just those days' "
+        "dispatch with no battery action at all changes the reported "
+        f"day-ahead save by ${leak_sensitivity_usd:.2f} -- the maximum this "
+        "leak could plausibly be inflating the headline figure by.")
+
+    # -- day-ahead, PERFECT same-day information, same myopic single-day
+    # horizon: isolates the "no value placed on SOC held past midnight"
+    # effect from forecast quality (Codex adversarial review, fourth pass:
+    # an earlier version attributed day-ahead's ENTIRE shortfall vs greedy
+    # to forecast pre-commitment without ruling out this confound first). --
+    ph_imp, ph_exp, ph_charge, ph_discharge, ph_soc_trace, _, ph_info = rolling_day_ahead(
+        d, imp0, gen0, soc_init, perfect=True)
+    fph = d.copy()
+    fph["I"], fph["E"] = ph_imp, ph_exp
+    ph_bill = R.bill_nem(fph, "I", "E")
+    ph_save = base_bill - ph_bill
+    ph_ok, ph_diag = _rolling_conservation_check(
+        imp0, gen0, ph_imp, ph_exp, ph_charge, ph_discharge, ph_soc_trace, soc_init,
+        ph_info["soc_end_kwh"], POWER_KW)
+    if not ph_ok:
+        raise SystemExit(
+            "perfect_foresight_dispatch: perfect-horizon energy conservation "
+            f"check failed ({ph_diag})")
+
+    forecast_cost_usd = round(ph_save - da_save, 2)
+    horizon_cost_usd = round(save - ph_save, 2)
+    out["day_ahead_perfect_horizon"] = {
+        **ph_info,
+        "bill_usd": round(ph_bill, 2),
+        "save_usd": round(ph_save, 2),
+        "energy_conservation_check_passed": bool(ph_ok),
+        "note": ("same day-by-day architecture as day_ahead_forecast (SOC fixed "
+                 "at the real start-of-day level, free at day's end, real "
+                 "bucket offsets carried forward) but with PERFECT same-day "
+                 "information instead of a persistence forecast -- isolates "
+                 "the myopic single-day horizon effect (no value placed on "
+                 "SOC held past midnight) from forecast quality"),
+    }
 
     out["purchasing_statement"] = {
         "greedy_save_usd": canon["pw3"]["greedy"]["save"] if canon else None,
         "day_ahead_save_usd": round(da_save, 2),
+        "day_ahead_perfect_horizon_save_usd": round(ph_save, 2),
         "perfect_foresight_save_usd": round(save, 2),
         "day_ahead_value_over_greedy_usd": (
             round(da_save - canon["pw3"]["greedy"]["save"], 2) if canon else None),
         "remaining_gap_day_ahead_to_perfect_usd": round(save - da_save, 2),
+        "gap_attributed_to_forecast_error_usd": forecast_cost_usd,
+        "gap_attributed_to_myopic_horizon_usd": horizon_cost_usd,
         "note": ("the shipping greedy policy already captures the large majority "
                  "of the theoretical maximum at this hardware (the optimality gap "
                  "above is the full remaining upside from ANY controller, however "
-                 "smart); a naive day-ahead schedule pre-committed from a "
-                 "persistence forecast is NOT a reliable way to capture more of "
-                 "it and can underperform the simpler real-time greedy policy, "
-                 "since pre-commitment hard-caps what the battery can do at each "
-                 "interval to whatever the forecast anticipated -- no shipping "
-                 "product changes the controller, only the hardware, so closing "
-                 "the remaining gap is a software/firmware question, not a "
-                 "purchasing one, and this data does not show day-ahead "
-                 "forecasting alone is the answer"),
+                 "smart). Day-ahead's shortfall versus the true optimum splits "
+                 f"into two isolated effects: ${forecast_cost_usd:.2f}/yr from "
+                 "imperfect (persistence) forecasting, holding the single-day "
+                 f"planning horizon fixed, and ${horizon_cost_usd:.2f}/yr from "
+                 "that single-day horizon itself (each day's local plan places "
+                 "no value on SOC held past midnight, so it has no incentive to "
+                 "preserve charge for tomorrow morning), holding forecast "
+                 "quality fixed at perfect -- neither a better forecast alone "
+                 "nor a longer planning horizon alone would close the whole "
+                 "gap to the true optimum; no shipping product changes the "
+                 "controller, only the hardware, so closing the remaining gap "
+                 "is a software/firmware question, not a purchasing one, and "
+                 "this data does not show day-ahead forecasting alone is the "
+                 "answer"),
     }
 
     root = repo_root()

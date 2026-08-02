@@ -326,7 +326,7 @@ def case_rolling_day_ahead_bucket_offsets_are_real_not_forecast():
     gen0 = d3.Generation.values.astype(float)
     bucket_idx_full, bucket_rates = pfd._bucket_assignment(d3)
 
-    _, _, real_charge, real_discharge, _, _ = pfd.rolling_day_ahead(
+    _, _, real_charge, real_discharge, _, _, _ = pfd.rolling_day_ahead(
         d3, imp0, gen0, soc_start=2.5, cap=5.0, power_kw=20.0)
 
     # Recompute the real post-battery net directly and hand-accumulate it
@@ -468,14 +468,119 @@ def case_rolling_day_ahead_first_day_persists_from_the_last_day():
     d.loc[last_day_start:, "Consumption"] = 9.0 / 4.0
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
-    _, _, _, _, _, info = pfd.rolling_day_ahead(d, imp0, gen0, soc_start=0.0,
-                                                cap=5.0, power_kw=20.0)
+    _, _, _, _, _, _, info = pfd.rolling_day_ahead(d, imp0, gen0, soc_start=0.0,
+                                                   cap=5.0, power_kw=20.0)
     # day 0 should show a forecast MAE reflecting the mismatch against the
     # (different) last day, not zero
     assert info["forecast_mae_kw_equivalent_kwh_per_interval"] > 0.1, (
         "expected a nonzero forecast error from persisting day 0's forecast "
         "from a deliberately different last day")
     return "day 0 persists its forecast from the last day of the frame, not a perfect guess"
+
+
+@case
+def case_rolling_day_ahead_perfect_mode_has_zero_forecast_error():
+    """Codex adversarial review, fourth pass: perfect=True must skip the
+    persistence forecast entirely (planning against the REAL same-day data
+    directly), so its own reported forecast error is exactly zero and it
+    reports zero leaked days (the "leak" concept only applies to the
+    persistence forecast; perfect=True is intentionally full information
+    every day, not an accidental leak)."""
+    d = _synthetic_frame(n_days=3, kwh_per_interval=2.0)
+    last_day_start = 2 * 96
+    d.loc[last_day_start:, "Consumption"] = 9.0 / 4.0
+    imp0 = d.Consumption.values.astype(float)
+    gen0 = d.Generation.values.astype(float)
+    _, _, _, _, _, leaked, info = pfd.rolling_day_ahead(
+        d, imp0, gen0, soc_start=0.0, cap=5.0, power_kw=20.0, perfect=True)
+    assert info["forecast_mae_kw_equivalent_kwh_per_interval"] == 0.0
+    assert info["forecast_rmse_kwh_per_interval"] == 0.0
+    assert info["n_days_with_leaked_future_information"] == 0
+    assert not leaked.any(), "perfect=True should not mark any interval as an accidental leak"
+    return "perfect=True reports exactly zero forecast error and zero leaked days"
+
+
+@case
+def case_rolling_day_ahead_perfect_mode_plans_against_real_same_day_data():
+    """perfect=True's plan for a given day must be computed from that day's
+    OWN real imp0/gen0 -- not yesterday's, as the persistence forecast
+    would use. Constructs a day 2 with a sharp, atypical spike that day 1
+    (the persistence source) does NOT have; a persistence-forecast plan
+    would miss it, but perfect=True must react to it."""
+    d2 = _synthetic_frame(n_days=2, kwh_per_interval=1.0)
+    imp0 = d2.Consumption.values.astype(float)
+    gen0 = d2.Generation.values.astype(float)
+    p = d2.p.values
+    on_slots_day2 = [i for i in range(96, 192) if p[i] == "on"]
+    assert on_slots_day2, "fixture needs at least one on-peak slot on day 2"
+    spike_slot = on_slots_day2[0]
+    imp0[spike_slot] = 20.0 / 4.0  # day 2 only: a large spike absent from day 1
+
+    _, _, _, real_discharge_perfect, _, _, _ = pfd.rolling_day_ahead(
+        d2, imp0, gen0, soc_start=5.0, cap=10.0, power_kw=20.0, perfect=True)
+    _, _, _, real_discharge_forecast, _, _, _ = pfd.rolling_day_ahead(
+        d2, imp0, gen0, soc_start=5.0, cap=10.0, power_kw=20.0, perfect=False)
+    assert real_discharge_perfect[spike_slot] > real_discharge_forecast[spike_slot] + 1e-6, (
+        "perfect=True should discharge more into a spike its own day's real "
+        "data shows but yesterday's persistence forecast could not have anticipated")
+    return "perfect=True's plan reacts to a same-day spike a persistence forecast would have missed"
+
+
+@case
+def case_day_ahead_perfect_horizon_never_beats_the_true_optimum():
+    """The perfect-same-day-information, myopic-single-day-horizon variant
+    is a real controller architecture (day-by-day, no cross-day SOC value),
+    so it cannot beat the whole-year cyclic optimum which has strictly more
+    freedom (the same actions available to it, plus the ability to value
+    SOC held past any day boundary) -- a mathematical certainty, not an
+    empirical coincidence, checked here on the real measured year."""
+    files = _require_archive()
+    br.CSV = files
+    d = br.load()
+    imp0 = d.Consumption.values.astype(float)
+    gen0 = d.Generation.values.astype(float)
+    base_bill = pfd.billed(d, imp0, gen0)
+    imp, exp, info, charge, discharge, soc, soc_init = pfd.solve(d, imp0, gen0)
+    f = d.copy(); f["I"], f["E"] = imp, exp
+    true_save = base_bill - R.bill_nem(f, "I", "E")
+    ph_imp, ph_exp, _, _, _, _, _ = pfd.rolling_day_ahead(d, imp0, gen0, soc_init, perfect=True)
+    fph = d.copy(); fph["I"], fph["E"] = ph_imp, ph_exp
+    ph_save = base_bill - R.bill_nem(fph, "I", "E")
+    assert ph_save <= true_save + 1.0, (
+        f"perfect-horizon day-ahead save (${ph_save:.2f}) should never exceed "
+        f"the true annual optimum (${true_save:.2f})")
+    return (f"perfect-horizon day-ahead (${ph_save:.2f}) never beats the true "
+            f"optimum (${true_save:.2f})")
+
+
+@case
+def case_day_ahead_leak_sensitivity_is_small_relative_to_the_full_gap():
+    """The disclosed leak-sensitivity figure (Codex adversarial review,
+    fourth pass: day 0 and DST-mismatched days use real, not forecast,
+    same-day data) should be a small fraction of the persistence run's
+    total shortfall versus greedy on the real measured year -- confirms the
+    disclosed bound is actually small, not just present, on real data."""
+    files = _require_archive()
+    br.CSV = files
+    d = br.load()
+    imp0 = d.Consumption.values.astype(float)
+    gen0 = d.Generation.values.astype(float)
+    base_bill = pfd.billed(d, imp0, gen0)
+    imp, exp, info, charge, discharge, soc, soc_init = pfd.solve(d, imp0, gen0)
+    da_imp, da_exp, da_charge, da_discharge, da_soc, da_leaked, da_info = pfd.rolling_day_ahead(
+        d, imp0, gen0, soc_init)
+    fd = d.copy(); fd["I"], fd["E"] = da_imp, da_exp
+    da_save = base_bill - R.bill_nem(fd, "I", "E")
+    da_imp_delaked = np.where(da_leaked, imp0, da_imp)
+    da_exp_delaked = np.where(da_leaked, gen0, da_exp)
+    fd2 = d.copy(); fd2["I"], fd2["E"] = da_imp_delaked, da_exp_delaked
+    da_save_delaked = base_bill - R.bill_nem(fd2, "I", "E")
+    leak_usd = abs(da_save - da_save_delaked)
+    n_leaked_days = da_info["n_days_with_leaked_future_information"]
+    assert leak_usd < 100.0, (
+        f"leak sensitivity (${leak_usd:.2f}) over {n_leaked_days} leaked days "
+        "is larger than expected -- re-examine before disclosing it as small")
+    return f"the leak-sensitivity bound (${leak_usd:.2f}/yr over {n_leaked_days} days) is small relative to the reported gaps"
 
 
 @case
@@ -504,7 +609,7 @@ def case_rolling_day_ahead_enforces_the_real_ev_exclusion_at_execution():
     imp0[day1_slot] = 2.4 / 4.0   # day 1 (forecast source): just under threshold
     imp0[test_slot] = 20.0 / 4.0  # day 2 (real): well over threshold -- real spillover
 
-    _, _, real_charge, real_discharge, _, info = pfd.rolling_day_ahead(
+    _, _, real_charge, real_discharge, _, _, info = pfd.rolling_day_ahead(
         d2, imp0, gen0, soc_start=2.5, cap=5.0, power_kw=20.0)
     assert real_discharge[test_slot] < 1e-9, (
         f"expected zero discharge at a real EV-spillover slot regardless of "
@@ -517,7 +622,7 @@ def case_rolling_day_ahead_energy_conservation_holds():
     d = _synthetic_frame(n_days=5, kwh_per_interval=3.0, gen_kwh_per_interval=1.0)
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
-    da_imp, da_exp, da_charge, da_discharge, da_soc, info = pfd.rolling_day_ahead(
+    da_imp, da_exp, da_charge, da_discharge, da_soc, _, info = pfd.rolling_day_ahead(
         d, imp0, gen0, soc_start=2.5, cap=5.0, power_kw=20.0)
     house_net = imp0 - gen0
     lhs = float((da_imp - da_exp).sum() - house_net.sum())
@@ -534,7 +639,7 @@ def case_rolling_day_ahead_never_violates_soc_bounds():
     d = _synthetic_frame(n_days=5, kwh_per_interval=20.0, gen_kwh_per_interval=0.5)
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
-    _, _, _, _, da_soc, _ = pfd.rolling_day_ahead(
+    _, _, _, _, da_soc, _, _ = pfd.rolling_day_ahead(
         d, imp0, gen0, soc_start=2.5, cap=5.0, power_kw=11.5)
     assert da_soc.min() >= -1e-6 and da_soc.max() <= 5.0 + 1e-6, (
         f"SOC left [0, cap]: min={da_soc.min()}, max={da_soc.max()}")
