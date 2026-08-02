@@ -33,10 +33,10 @@
   },
   "ev_behavior_persistence": {
    "dist": "Beta",
-   "a": 4.0,
+   "a": 2.0,
    "b": 1.0,
-   "mean": 0.8,
-   "evidential_basis": "estimated blend between battery_dispatch_policies.json's pw3.greedy.save (no behavior, c=0) and post_behavior.mid.battery_marginal (full behavior, c=1) -- the only two compliance points the pipeline computes"
+   "mean": 0.6666666666666666,
+   "evidential_basis": "estimated blend between battery_dispatch_policies.json's pw3.greedy.save (no behavior, c=0) and post_behavior.mid.battery_marginal (full behavior, c=1) -- the only two compliance points the pipeline computes. This is a MODELED, not-yet-implemented change (the report recommends it as pending, not observed as sustained); the mild skew toward c=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (Codex review pass 3 finding: an earlier draft wrongly called this an already-observed, completed behavior to justify a more confident prior)"
   },
   "soiling_loss_fraction": {
    "dist": "Triangular",
@@ -107,7 +107,7 @@
  "battery_marginal_only_full_model": {
   "N": 5000,
   "seed": 43,
-  "payback_median": 5.9,
+  "payback_median": 5.8,
   "payback_p10": 5.1,
   "payback_p90": 6.9,
   "prob_within_warranty_10yr": 1.0,
@@ -124,39 +124,39 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7389,
-     "p10": 2911,
-     "p90": 12671
+     "median": 7477,
+     "p10": 2975,
+     "p90": 12830
     },
     "15yr": {
-     "median": 18729,
-     "p10": 9611,
-     "p90": 31988
+     "median": 18880,
+     "p10": 9691,
+     "p90": 32200
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4240,
-     "p10": 420,
-     "p90": 8624
+     "median": 4320,
+     "p10": 488,
+     "p90": 8762
     },
     "15yr": {
-     "median": 12039,
-     "p10": 5158,
-     "p90": 21821
+     "median": 12219,
+     "p10": 5247,
+     "p90": 22005
     }
    }
   },
-  "save1_median": 2258,
-  "save1_p10": 2205,
-  "save1_p90": 2311
+  "save1_median": 2270,
+  "save1_p10": 2212,
+  "save1_p90": 2327
  },
  "tornado": {
-  "nominal_payback_yr": 5.9,
+  "nominal_payback_yr": 5.8,
   "levers": {
    "install_cost": {
     "payback_range_yr": [
-     5.1,
+     5.0,
      6.6
     ],
     "swing_yr": 1.6
@@ -184,8 +184,8 @@
    },
    "soiling": {
     "payback_range_yr": [
-     5.9,
-     5.9
+     5.8,
+     5.8
     ],
     "swing_yr": 0.0
    },
@@ -198,8 +198,8 @@
    },
    "production_measurement_spread": {
     "payback_range_yr": [
-     5.9,
-     5.9
+     5.8,
+     5.8
     ],
     "swing_yr": 0.0
    }
@@ -230,7 +230,7 @@
     "production_measurement_spread"
    ],
    "notes": [
-    "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.1, 6.6]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
+    "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.0, 6.6]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
     "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.6 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
     "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.3 yr, G vs G_POST) into a continuous Beta(4,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
     "dispatch_policy (old model's largest lever, swing 2.2 yr) has no counterpart here: it is a discrete DESIGN CHOICE the household makes (evening/twowin/greedy dispatch), not an uncertain physical input to propagate, so this Monte Carlo holds it fixed at greedy (the recommended policy) throughout, matching the old model's own base case.",

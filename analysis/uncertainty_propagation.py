@@ -48,18 +48,30 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    is deliberately NOT one of the seven inputs here).
 3. install cost         Uniform(12500, 17000) — carried forward UNCHANGED.
    Evidential basis: quoted installer cost bound; no better evidence exists.
-4. EV behavior persistence   Beta(4, 1) compliance fraction c in [0, 1],
+4. EV behavior persistence   Beta(2, 1) compliance fraction c in [0, 1],
    blending the battery_dispatch_policies.json PRE-behavior marginal saving
    (pw3.greedy.save, the battery serving the UNSHIFTED load, c=0) and the
    POST-behavior marginal saving (post_behavior.mid.battery_marginal, the
    battery serving the load AFTER the EV-shift behavior holds, c=1) — the
    ONLY two compliance points the pipeline actually computes; no continuum of
-   partial compliance is measured. Beta(4,1) has mean 0.8 and mode 1.0
-   (left-skewed): the EV-shift behavior is already an OBSERVED, completed
-   behavior in this household's own Green Button history (behavior_rebuild.py
-   scenario a), so full persistence is the modal outcome, but the distribution
-   leaves real mass on partial reversion. ESTIMATED — no repeated-year
-   compliance measurement exists to calibrate the shape itself.
+   partial compliance is measured. This is a MODELED, not-yet-implemented
+   change: §7 of the report recommends the EV-charging fix as a still-pending
+   action ("do it this week"), not something this household has actually
+   sustained -- an earlier draft of this docstring wrongly called it "already
+   an OBSERVED, completed behavior" to justify a more confident Beta(4,1)
+   prior (mean 0.8), which overstated what evidence actually supports (Codex
+   review pass 3 finding). What IS real, if indirect, evidence: this
+   household's OWN baseline (unshifted) Green Button record already shows
+   most EV charging lands in favorable windows without any intervention --
+   only 2,618 of ~13,100 kWh/yr of EV charging is currently mis-timed
+   (on-peak or daytime off-peak; see behavior_rebuild.py's own session
+   detection, reported in index.html §7), i.e. ~80% is already fine, so only
+   a MINORITY of sessions need to change. That weakly supports expecting
+   better-than-a-coin-flip compliance for a low-effort, largely-already-
+   adopted pattern, but is not proof the specific remaining shift will be
+   sustained. Beta(2,1) (mean 0.667, mode 1.0) is a milder skew than the
+   retired Beta(4,1), reflecting that weaker, indirect basis. ESTIMATED — no
+   repeated-year compliance measurement exists to calibrate the shape itself.
 5. soiling / production loss   Triangular(low=0, mode=0, high=lossB), where
    lossB = (annual_lost_kwh under data/soiling_results.json's scenario_B_
    2024_cleaning_evidence MINUS annual_lost_kwh under scenario_A_this_years_
@@ -219,7 +231,7 @@ ESC_LO, ESC_HI = 0.00, 0.12
 FADE_LO, FADE_HI = 0.005, 0.025
 PRICE_LO, PRICE_HI = 12500.0, 17000.0
 RTE_LO, RTE_NOM, RTE_HI = 0.85, 0.90, 0.95
-EV_PERSIST_A, EV_PERSIST_B = 4.0, 1.0     # Beta(4,1) shape params
+EV_PERSIST_A, EV_PERSIST_B = 2.0, 1.0     # Beta(2,1) shape params
 CAP_KWH = 13.5
 STEADY_STATE_TOL_KWH = 0.01
 STEADY_STATE_MAX_ITERS = 8
@@ -809,7 +821,15 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                                         "battery_dispatch_policies.json's pw3.greedy.save "
                                         "(no behavior, c=0) and post_behavior.mid."
                                         "battery_marginal (full behavior, c=1) -- the only "
-                                        "two compliance points the pipeline computes"},
+                                        "two compliance points the pipeline computes. This is "
+                                        "a MODELED, not-yet-implemented change (the report "
+                                        "recommends it as pending, not observed as sustained); "
+                                        "the mild skew toward c=1 reflects only the indirect "
+                                        "evidence that ~80% of this household's EV charging "
+                                        "already lands in favorable windows unshifted (Codex "
+                                        "review pass 3 finding: an earlier draft wrongly "
+                                        "called this an already-observed, completed behavior "
+                                        "to justify a more confident prior)"},
             "soiling_loss_fraction": {"dist": "Triangular", "low": lossA, "mode": lossA,
                                       "high": lossB, "evidential_basis":
                                       "data/soiling_results.json's split evidence, reframed "
