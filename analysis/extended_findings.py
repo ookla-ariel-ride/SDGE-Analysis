@@ -22,19 +22,25 @@ Cited constants (sources in research notes / report prose):
   gasoline $4.65/gal (EIA CA regular, Jun 2025-May 2026 trailing 12-mo published);
   fleet 23.4 mpg (FHWA VM-1 2024 on-road light-duty);
   supercharging $0.45/kWh (estimate, typical CA range $0.40-0.50);
-  DSGS VPP net revenue: $187.56/yr (20% backup reserve, primary) / $270.36/yr
-  (0%-reserve sensitivity) -- empirically backtested against the UNION of ~14
-  aggregations' real 2025 DSGS event calendars and this household's own measured
-  load (data/dsgs_vpp_backtest.json, analysis/dsgs_vpp_backtest.py, issue #10);
-  read from that committed artifact at runtime below, not hardcoded here. This is
-  a PARTIAL-SEASON figure (2025-07-24..2025-10-30 only, not the full May-October
-  season) and an upper-bound SCENARIO (the union of aggregations, not any single
-  real household's own schedule -- see the artifact's per_aggregation_sensitivity
-  field for the $108-249/yr range across the 14 individual aggregation schedules
-  a real household might actually belong to); NOT a fully-annualized, single-
-  household measurement, and this tornado lever's own label says so. Retired: the
-  earlier $150-350/season Tesla program-terms extrapolation, kept only as an
-  order-of-magnitude sanity check inside dsgs_vpp_backtest.py itself.
+  DSGS VPP net revenue: read from data/dsgs_vpp_backtest.json at runtime below (via
+  _load_dsgs_backtest(), never hardcoded here) -- empirically backtested against
+  the UNION of ~14 aggregations' real 2025 DSGS event calendars and this
+  household's own measured load (analysis/dsgs_vpp_backtest.py, issue #10). This
+  is a PARTIAL-SEASON figure (2025-07-24..2025-10-30 only, not the full
+  May-October season) and an upper-bound SCENARIO (the union of aggregations, not
+  any single real household's own schedule -- see the artifact's
+  per_aggregation_sensitivity field for the range across the 14 individual
+  aggregation schedules a real household might actually belong to); NOT a
+  fully-annualized, single-household measurement. Per CLAUDE.md 2's payback-
+  honesty standard, this figure is deliberately NOT folded into the battery
+  payback tornado below (issue #10 second adversarial review, Finding 1) --
+  adding a partial-season dollar amount to a full year of arbitrage savings and
+  recomputing a payback year would misrepresent four months of VPP revenue as an
+  annual recurring figure. It is reported only as an ADDITIVE dollar amount on
+  top of the arbitrage payback (see tornado_battery.dsgs_excluded_note), never as
+  its own payback-year lever. Retired: the earlier $150-350/season Tesla
+  program-terms extrapolation, kept only as an order-of-magnitude sanity check
+  inside dsgs_vpp_backtest.py itself.
 
 Writes data/extended_results.json. Requires usage.csv (Green Button) beside it,
 plus data/weather_daily_tmean.csv and the two SAM-8760 files in
@@ -190,28 +196,29 @@ def _load_dsgs_backtest():
     if not p.exists():
         raise SystemExit(
             f"_load_dsgs_backtest: {p} is missing — run dsgs_vpp_backtest.py "
-            "first (or restore the committed artifact); the DSGS tornado "
-            "lever needs its backtested net-revenue figures.")
+            "first (or restore the committed artifact); the DSGS additive-"
+            "revenue note needs its backtested net-revenue figures.")
     j = json.loads(p.read_text())
     try:
         net_20pct = j["revenue"]["reserve_20pct"]["net_usd"]
         net_0pct_sens = j["revenue"]["reserve_0pct_sensitivity"]["net_usd"]
     except KeyError as e:
         raise SystemExit(f"{p}: missing expected revenue key {e} — cannot "
-                          "use as a DSGS tornado-lever input")
+                          "use as a DSGS additive-revenue input")
     return float(net_20pct), float(net_0pct_sens)
 
 DSGS_NET_20PCT_USD, DSGS_NET_0PCT_SENS_USD = _load_dsgs_backtest()
-                        # $187.56 / $270.36 as of the committed backtest —
-                        # read at runtime, not pinned, so a future rerun of
+                        # Read at runtime, not pinned, so a future rerun of
                         # dsgs_vpp_backtest.py (e.g. a later CEC filing year)
                         # flows through here automatically. Both figures are a
                         # PARTIAL-SEASON (2025-07-24..2025-10-30, not the full
                         # May-Oct season) upper-bound-scenario observation, not
                         # a fully-annualized single-household measurement --
                         # see dsgs_vpp_backtest.json's partial_season_caveat and
-                        # per_aggregation_sensitivity fields, and the
-                        # "dsgs_revenue" tornado lever's own label below.
+                        # per_aggregation_sensitivity fields. NOT a tornado
+                        # lever (issue #10 Finding 1) -- reported only as an
+                        # additive dollar amount, see tornado_battery's
+                        # dsgs_excluded_note below.
 
 # Section -> governing intake flag. Mapping rationale (what each CONSUMES):
 #   electrification_dividend (B): EV charging kWh detected in usage.csv,
@@ -514,17 +521,26 @@ out["nbt_2039"] = {
 # ---------- I. Tornado sensitivity on battery payback ------------------------
 # All savings figures below are the COMPUTED dispatch results from the top of
 # this script (POL_SAVE / G / G_POST) — never literals.
+#
+# DSGS is deliberately NOT a lever here (issue #10 second adversarial review,
+# Finding 1). Every OTHER lever varies a genuinely ANNUAL input (a full year of
+# measured/dispatched savings); DSGS_NET_20PCT_USD/DSGS_NET_0PCT_SENS_USD are
+# PARTIAL-SEASON observations (2025-07-24..2025-10-30 only -- see
+# data/dsgs_vpp_backtest.json's partial_season_caveat), so adding one to G and
+# recomputing BATT_COST / (G + partial_season_dollars) silently treats four
+# months of VPP revenue as if it recurred all year -- exactly the payback-
+# arithmetic problem CLAUDE.md 2 exists to catch, not something a caveat text
+# fixes after the fact. Removed rather than rationalized, per CLAUDE.md's own
+# guidance to lean toward removing a shaky calculation over defending it. The
+# backtested dollars are still reported below as an ADDITIVE amount on top of
+# arbitrage savings once a full season is measured -- never folded into a
+# payback-year figure.
 levers = {
     "install_cost": [(12000, 12000 / G), (BATT_COST, BATT_COST / G), (17000, 17000 / G)],
     "dispatch_policy": [(round(POL_SAVE["evening"]), BATT_COST / POL_SAVE["evening"]),
                         (round(POL_SAVE["twowin"]), BATT_COST / POL_SAVE["twowin"]),
                         (round(G), BATT_COST / G)],
     "post_behavior": [(round(G_POST), BATT_COST / G_POST), (round(G), BATT_COST / G)],
-    "dsgs_revenue": [(0, BATT_COST / G),
-                     (round(DSGS_NET_20PCT_USD, 2),
-                      BATT_COST / (G + DSGS_NET_20PCT_USD)),
-                     (round(DSGS_NET_0PCT_SENS_USD, 2),
-                      BATT_COST / (G + DSGS_NET_0PCT_SENS_USD))],
     "escalation_5yr_avg": [(0.0, BATT_COST / G), (0.05, BATT_COST / (G * 1.104)),
                            (0.08, BATT_COST / (G * 1.17))],  # avg uplift over payback horizon
 }
@@ -533,18 +549,23 @@ for k, vals in levers.items():
     pays = [round(v[1], 1) for v in vals]
     tor[k] = {"payback_range_yr": [min(pays), max(pays)],
               "swing_yr": round(max(pays) - min(pays), 1)}
-tor["dsgs_revenue"]["note"] = (
-    "The $187.56/$270.36 DSGS figures behind this lever are a PARTIAL-SEASON "
-    "observation (2025-07-24..2025-10-30 only, not the full May-October season) "
-    "and an inclusive upper-bound SCENARIO (the union of ~14 aggregation "
-    "schedules, not any single real household's own) -- see "
-    "data/dsgs_vpp_backtest.json's partial_season_caveat and "
-    "per_aggregation_sensitivity fields. Not a fully-annualized, single-household "
-    "measurement.")
 out["tornado_battery"] = {
     "base_payback_yr": round(BATT_COST / G, 1),
     "levers": tor,
     "ranked_by_swing": sorted(tor, key=lambda k: -tor[k]["swing_yr"]),
+    "dsgs_excluded_note": (
+        f"DSGS VPP revenue is NOT one of the levers above (issue #10 Finding 1): "
+        f"the backtested ${DSGS_NET_20PCT_USD:.2f}/yr (20% reserve, primary) / "
+        f"${DSGS_NET_0PCT_SENS_USD:.2f}/yr (0%-reserve sensitivity) union-scenario "
+        "figures are a PARTIAL-SEASON observation (2025-07-24..2025-10-30 only), "
+        "not a full-year recurring figure, so folding them into BATT_COST / "
+        "(G + dsgs_dollars) would misrepresent a partial season as an annual "
+        "payback input. DSGS would ADD this much per year on top of the "
+        "arbitrage savings the base_payback_yr above is computed from, once a "
+        "full season is measured (see data/dsgs_vpp_backtest.json's "
+        "per_aggregation_sensitivity field for the range across individual "
+        "aggregation schedules a real household might belong to) -- an "
+        "additive dollar statement, not a payback-year claim."),
 }
 
 # ---- publication gate: validate everything, then write ATOMICALLY ----------

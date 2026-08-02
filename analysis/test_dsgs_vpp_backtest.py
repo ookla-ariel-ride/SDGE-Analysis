@@ -281,6 +281,78 @@ def case_reserve_floor_holds_against_combined_ordinary_and_event_discharge():
             "rest of the hour, with real house load driving ordinary discharge")
 
 
+@case
+def case_solar_surplus_during_an_event_hour_does_not_round_trip_through_the_battery():
+    """Regression for Finding 2 (issue #10 second adversarial review): within a SINGLE
+    interval, the pre-fix code could charge the battery from solar surplus (the
+    export-charging branch fires whenever exp[i] > 0 and imp[i] == 0, even inside a
+    declared event hour) and then IMMEDIATELY discharge that same energy again via the
+    event-forcing block a few lines below, counting the full amount as new
+    "event_discharge" -- round-tripping energy that would have been exported directly
+    anyway (at an ETA round-trip loss) while inflating demonstrated capacity/revenue as
+    if it were genuinely new battery output. Confirmed against the real 2025 backtest
+    before this fix: 12 intervals showed a charge-from-solar and an event-forced
+    discharge in the same interval, totaling 5.32 kWh charged and 25.52 kWh
+    event-discharged in those intervals alone.
+
+    Fixture: the same three ordinary evening discharge hours (16, 17, 18 -- 3 kW load,
+    identical to case_reserve_floor_holds_against_combined_ordinary_and_event_discharge)
+    drain SOC from full down to the same ~4.01 kWh, then a declared event hour (HE20,
+    floor_hour 19) carries a 2 kW solar surplus with ZERO concurrent consumption --
+    exactly the (exp[i] > 0, imp[i] == 0, disch_win and is_event both True) condition
+    that triggered the pre-fix bug.
+
+    With the fix, solar surplus during the event hour must pass straight through to
+    export (exp[i] == gen0[i] plus only the additional event-forced discharge the
+    formula below predicts from PRIOR soc, i.e. from the value soc already held before
+    this interval's solar arrived) -- never a smaller pass-through topped up by a
+    different, round-tripped total. The two formulas differ measurably: computed by
+    hand for this fixture, the pre-fix code would land the first event interval's
+    export at ~1.696 kWh; the fix lands it at ~1.746 kWh (bigger, because none of the
+    0.5 kWh solar was detoured through the battery's round-trip loss first)."""
+    d, _imp0, _gen0 = _synthetic_day(consumption_kw=0.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    h = d.hour.values
+    imp0 = np.where((h >= 16) & (h < 19), 3.0, 0.0) * 0.25
+    gen0 = np.where((h >= 19) & (h < 20), 2.0, 0.0) * 0.25
+    reserve_frac = 0.20
+    reserve_kwh = reserve_frac * vb.CAP
+    event_set = {(date, 19)}   # HE20 (19:00-19:59)
+    imp, exp, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, reserve_frac)
+
+    idxs = np.where((h >= 19) & (h < 20))[0]
+    assert (gen0[idxs] > 0).all(), "fixture precondition: solar surplus during the event hour"
+    assert (imp0[idxs] == 0).all(), "fixture precondition: zero concurrent consumption"
+    soc_entering = soc_start[idxs[0]]
+    assert soc_entering > reserve_kwh, (
+        f"fixture precondition failed: SOC must enter the event hour ({soc_entering}) "
+        f"above the reserve floor ({reserve_kwh}) for this to exercise the bug")
+
+    any_event_discharge = False
+    for j in idxs:
+        expected_extra = min(vb.PWRQ, max(soc_start[j] - reserve_kwh, 0.0) * vb.ETA)
+        assert bau_kwh[j] == 0.0, (
+            f"interval {j}: imp0 is zero here, so the ordinary/BAU discharge branch "
+            f"must deliver nothing (got {bau_kwh[j]})")
+        assert abs(exp[j] - (gen0[j] + expected_extra)) < 1e-6, (
+            f"interval {j}: exp={exp[j]} does not equal raw solar ({gen0[j]}) plus the "
+            f"event-forced increment computed from PRIOR soc ({expected_extra}) -- "
+            "solar surplus was charged into the battery and partially round-tripped "
+            "instead of passing straight through")
+        assert abs(event_kwh[j] - expected_extra) < 1e-6, (
+            f"interval {j}: event_discharge={event_kwh[j]} != {expected_extra}")
+        if expected_extra > 1e-9:
+            any_event_discharge = True
+    assert any_event_discharge, (
+        "fixture must still exercise genuine event-forced discharge from prior SOC, "
+        "or this case can't distinguish a fix from simply disabling event dispatch")
+    return (f"solar surplus ({gen0[idxs].sum():.2f} kWh) passes straight through to "
+            f"export during the event hour ({event_kwh[idxs].sum():.4f} kWh of "
+            "event-forced discharge from prior SOC layered on top, none of it a "
+            "charge-then-discharge round trip)")
+
+
 # ---------------------------------------------------------------------------
 # (b) build_calendar() fail-closed / correctness -- synthetic xlsx, no private
 #     archive needed (openpyxl fixtures built in a tempdir)

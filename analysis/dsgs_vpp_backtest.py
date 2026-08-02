@@ -95,19 +95,35 @@ VPP payment rate:
 Source (1) is used for the headline number because it is a MEASUREMENT of what real
 aggregations in this UDC/category were actually paid, not an extrapolation.
 
-BACKUP RESERVE -- NOT ESTABLISHED ELSEWHERE IN THIS REPO, FLAGGED FOR THE PARENT. The
-issue text asserts "§6's outage work establishes what reserve the household would
-plausibly hold." This was checked against analysis/battery_backup_sims.py and
-analysis/extended_findings.py and found NOT TRUE as stated: no numeric backup-reserve
-fraction exists anywhere in this repository. battery_backup_sims.py's own outage
-endurance sims explicitly "assume a full battery at outage start" (see index.html's
-existing prose, unchanged here) -- i.e. the OPPOSITE convention, no reserve held back in
-advance. BACKUP_RESERVE_FRAC below (20%) is therefore an UNCITED, ASSUMED operating
-parameter chosen here, not derived from this repo's existing analysis or from a fetched
-Tesla source (Tesla's backup-reserve support pages returned HTTP 403 to this run's
-fetch). A 0% (no reserve) sensitivity is computed alongside the primary 20% case so the
-report can see how much the assumption matters; both are in the committed artifact. This
-is flagged for a parent-level decision, not silently resolved.
+EVENT-HOUR-ONLY RESERVE FLOOR -- NOT A STANDING BACKUP-RESERVE SETTING, DECIDED (issue
+#10 second adversarial review, Finding 3). The issue text asserts "§6's outage work
+establishes what reserve the household would plausibly hold." This was checked against
+analysis/battery_backup_sims.py and analysis/extended_findings.py and found NOT TRUE as
+stated: no numeric backup-reserve fraction exists anywhere in this repository.
+battery_backup_sims.py's own outage endurance sims explicitly "assume a full battery at
+outage start" (see index.html's existing prose, unchanged here) -- i.e. the OPPOSITE
+convention, no reserve held back in advance. BACKUP_RESERVE_FRAC below (20%) is
+therefore an UNCITED, ASSUMED operating parameter chosen here, not derived from this
+repo's existing analysis or from a fetched Tesla source (Tesla's backup-reserve support
+pages returned HTTP 403 to this run's fetch). A 0% (no reserve) sensitivity is computed
+alongside the primary 20% case so the report can see how much the assumption matters;
+both are in the committed artifact.
+
+BACKUP_RESERVE_FRAC is enforced ONLY during a declared DSGS event hour (run_batt_vpp()'s
+disch_win branch and its event-forcing block both cap against it when is_event[i] is
+true; see DISPATCH MODEL below) -- it does NOT reduce SOC available to ordinary, non-VPP
+arbitrage in the hours before an event, so this is an EVENT-HOUR-ONLY dispatch floor, not
+a model of a continuously-held Powerwall backup-reserve setting (which, on a real
+Powerwall, would apply at all times, including in the hours leading up to an event, and
+so would leave LESS reserve actually available by the time a declared event starts than
+this event-hour-only floor implies). This is a deliberate scoping decision, not an
+oversight: it matches the issue's own framing ("a backup reserve reduces dispatchable
+capacity DURING events") and keeps the tested empty-event_set byte-identity guarantee to
+battery_dispatch_policies.run_batt intact (a standing floor would also constrain the
+household's own everyday no-VPP arbitrage, which needs its own separate justification and
+is out of scope here). Every mention of this parameter in this artifact, the report, and
+TECHNICAL.md is labeled "event-hour-only" for this reason -- it is NOT the same claim as
+"this household holds a 20% reserve on its Powerwall at all times."
 
 DISPATCH MODEL. battery_dispatch_policies.run_batt()'s "greedy" policy (imported, not
 reimplemented) gives the business-as-usual (BAU) hypothetical-battery bill: normal
@@ -257,8 +273,9 @@ BATT_KW = 11.5             # nameplate discharge power (same source)
 ETA = bp.ETA               # sqrt(0.90), one-way efficiency -- imported, not re-declared
 PWRQ = bp.PWRQ             # 11.5/4 kWh per 15-min interval -- imported, not re-declared
 
-# Assumed, uncited operating parameter -- see the module docstring's BACKUP RESERVE note.
-# Flagged for a parent-level decision; a 0% sensitivity is computed alongside it.
+# Assumed, uncited operating parameter -- see the module docstring's EVENT-HOUR-ONLY
+# RESERVE FLOOR note. Enforced only during a declared event hour, not a continuously-held
+# standing reserve; a 0% sensitivity is computed alongside it.
 BACKUP_RESERVE_FRAC = 0.20
 
 # Empirically derived from the Monthly Aggregation Dataset (UDC2, Residential, Stationary,
@@ -576,6 +593,26 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac):
     hour this cap is a no-op (soc_cap == soc), which is what keeps the empty-event_set
     byte-identity guarantee to run_batt intact.
 
+    NO CHARGING FROM SOLAR SURPLUS DURING A DECLARED EVENT HOUR (issue #10 second
+    adversarial review, Finding 2). The export-charging branch is skipped whenever
+    is_event[i] is true, regardless of disch_win/imp[i]: a rational VPP-optimizing
+    battery would not spend round-trip efficiency charging solar surplus only to
+    immediately discharge that same energy again a few lines below for the SAME
+    event's credit. Without this guard, a solar-surplus interval with no concurrent
+    house import (exp[i] > 0, imp[i] == 0) would take the export-charging branch
+    (charging into the battery) and then the event-forcing block below would
+    discharge that just-added energy back out in the SAME interval, counting the
+    full amount as new "event_discharge" -- round-tripping energy that would have
+    been exported directly anyway (at an ETA*ETA loss) while inflating demonstrated
+    capacity/revenue as if it were genuinely new battery output. Confirmed against
+    the real 2025 backtest before this fix: 12 intervals showed both a charge-from-
+    solar and an event-forced discharge in the same interval, totaling 5.32 kWh
+    charged and 25.52 kWh event-discharged in those intervals alone. With the guard,
+    solar surplus during an event hour passes straight through to export (exp[i]
+    stays at gen0[i] until the event-forcing block below adds any additional
+    event-forced discharge from whatever SOC already exists), and the event-forcing
+    block still maximizes discharge from existing SOC exactly as before.
+
     Returns (imp, exp, soc_start, event_discharge_kwh, bau_discharge_kwh):
       soc_start          -- SOC at the START of each interval (before this step's action)
       event_discharge_kwh -- the INCREMENTAL discharge forced by event participation
@@ -599,7 +636,13 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac):
         soc_start[i] = soc
         disch_win = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
         disch_used = 0.0
-        if exp[i] > 0 and not (disch_win and imp[i] > 0):
+        # Never charge from solar surplus during a declared event hour (Finding 2,
+        # issue #10 second adversarial review) -- let the surplus pass straight
+        # through to export instead of round-tripping it for the event-forcing
+        # block below to discharge again in this same interval. Outside an event
+        # hour (is_event[i] is False) this clause is a no-op, preserving the
+        # empty-event_set byte-identity guarantee to run_batt.
+        if exp[i] > 0 and not (disch_win and imp[i] > 0) and not is_event[i]:
             c = min(exp[i], (cap - soc) / ETA, PWRQ)
             if c > 0:
                 soc += c * ETA; exp[i] -= c
@@ -806,8 +849,15 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
             "no reserve figure is established elsewhere in this repository (checked "
             "against battery_backup_sims.py and extended_findings.py; the existing "
             "outage-endurance sims assume a FULLY charged battery at outage start, "
-            "the opposite convention). A 0% (no reserve) sensitivity is included "
-            "for comparison."),
+            "the opposite convention). It is an EVENT-HOUR-ONLY dispatch floor: "
+            "enforced only during a declared DSGS event hour (both the ordinary and "
+            "the event-forced discharge are capped against it then), NOT a "
+            "continuously-held standing backup-reserve setting -- ordinary, non-VPP "
+            "arbitrage in the hours before an event is unaffected, so a real "
+            "Powerwall's own continuously-enforced reserve setting would leave LESS "
+            "reserve actually available by the time a declared event starts than "
+            "this figure implies. A 0% (no reserve) sensitivity is included for "
+            "comparison."),
         "payment_rate_source": (
             "EMPIRICAL: Monthly Capacity Payment ($) / Demonstrated Capacity (MW) "
             "from the Monthly Aggregation Dataset, UDC2/Residential/2-hr rows with "
@@ -854,12 +904,13 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
             "note": (
                 "The 20% reserve case has a HIGHER miss count than the 0% reserve "
                 "sensitivity, and a lower total delivered kWh -- the expected direction: "
-                "holding back a standing floor leaves less headroom for BOTH the "
-                "ordinary/BAU-equivalent discharge and the event-forced increment "
-                "during an event hour (this floor is enforced jointly across both, not "
-                "just the incremental event-forced portion -- see run_batt_vpp()), so "
-                "more event hours end with too little SOC above the floor to clear the "
-                "1 kWh miss threshold."),
+                "holding back an event-hour-only floor (see backup_reserve_caveat -- "
+                "enforced only during a declared event hour, not continuously) leaves "
+                "less headroom for BOTH the ordinary/BAU-equivalent discharge and the "
+                "event-forced increment during that hour (the floor is enforced jointly "
+                "across both, not just the incremental event-forced portion -- see "
+                "run_batt_vpp()), so more event hours end with too little SOC above the "
+                "floor to clear the 1 kWh miss threshold."),
         },
         "revenue": {
             "reserve_20pct": {

@@ -805,18 +805,21 @@ failed run changes nothing on disk.
 and the gas Green Button CSV under `private/1-raw-data/`, `data/weather_daily_tmean.csv`
 (HDD base 65°F), the committed `data/battery_dispatch_policies.json` (as the
 cross-artifact assertion target), the committed `data/dsgs_vpp_backtest.json` (read-only —
-the DSGS tornado lever's two revenue points, §3.19), and the imported modules
-`behavior_rebuild.py`, `battery_dispatch_policies.py`, and `rates.py` — plus **cited
-external constants** recorded with sources in `research/extended-research-notes.md`: EIA
-California gasoline 12-month mean $4.65/gal, FHWA Highway Statistics VM-1 on-road fleet
-economy 23.4 mpg, supercharger price estimate $0.45/kWh (labeled estimate), SDG&E 2024
-reliability report SAIDI figures, CPUC D.24-05-028 / Resolution E-5355 (BSC $24.15/mo =
-$0.79343/day, matching `rates.py` exactly). The DSGS/Tesla VPP program-terms figure
-($150–350/season) that used to seed the tornado's `dsgs_revenue` lever directly is
-retired from this script (issue #10): the lever now reads its two revenue points from
-`dsgs_vpp_backtest.py`'s committed backtest instead (`_load_dsgs_backtest()`, fail-closed
-if the artifact or its expected keys are missing — the same read-only convention
-`nem3_grandfathering.py`'s `load_nbt_2039_reference()` uses for its own sibling artifact).
+its two union-scenario net-revenue points feed `tornado_battery.dsgs_excluded_note`'s
+additive-dollar report, §3.19; NOT a tornado lever input, see §3.14/§3.19 below), and the
+imported modules `behavior_rebuild.py`, `battery_dispatch_policies.py`, and `rates.py` —
+plus **cited external constants** recorded with sources in
+`research/extended-research-notes.md`: EIA California gasoline 12-month mean $4.65/gal,
+FHWA Highway Statistics VM-1 on-road fleet economy 23.4 mpg, supercharger price estimate
+$0.45/kWh (labeled estimate), SDG&E 2024 reliability report SAIDI figures, CPUC
+D.24-05-028 / Resolution E-5355 (BSC $24.15/mo = $0.79343/day, matching `rates.py`
+exactly). The DSGS/Tesla VPP program-terms figure ($150–350/season) that used to seed an
+earlier `dsgs_revenue` lever directly is retired from this script (issue #10): that
+lever's revenue points came from `dsgs_vpp_backtest.py`'s committed backtest instead
+(`_load_dsgs_backtest()`, fail-closed if the artifact or its expected keys are missing —
+the same read-only convention `nem3_grandfathering.py`'s `load_nbt_2039_reference()` uses
+for its own sibling artifact), and the lever itself has since been removed in favor of an
+additive-dollar note (issue #10 second adversarial review, Finding 1 — see §3.14 below).
 All repo paths (`data/`, `private/1-raw-data/`) resolve against the repo root, found by
 walking up from the CWD (then from the script's location), so the documented
 `private/verify` copy-and-run sandbox needs no path edits.
@@ -854,14 +857,21 @@ spread uniformly, and both the baseline and the shifted year are re-billed with
 HDD regression: floor 0.376 therms/day → 137 therms/yr; slope 0.1812 therms/HDD → 206
 therms/yr), `nbt_2039` (price-aware battery marginal $2,506–2,540/yr under 3–8¢ flat
 exports vs $2,329 under NEM 2.0), and `tornado_battery` (payback swings: dispatch 2.2 yr >
-install quote 2.1 > escalation 0.9 > DSGS 0.6 > EV-fix interaction 0.3 around the 6.2-yr
-base — the DSGS lever's envelope is unchanged at 5.6–6.2 yr, but which scenario sits at
-which end moved: the PRIMARY 20%-reserve case now rounds to **5.8 yr** (up from an earlier
-5.6 yr, once the reserve-floor defect above was fixed and the union-based net revenue
-dropped from $259.09 to $187.56/yr), and it is the 0%-reserve sensitivity ($270.36/yr net,
-unaffected by that fix) that now anchors the 5.6-yr end of the range instead. The lever's
-own `note` field states both figures are a partial-season, upper-bound-scenario input —
-see §3.19). Figures derived purely from external estimates (outage-hour exposure) carry
+install quote 2.1 > escalation 0.9 > EV-fix interaction 0.3 around the 6.2-yr base).
+**DSGS is deliberately NOT one of these levers** (issue #10 second adversarial review,
+Finding 1): every other lever varies a genuinely annual input, but the DSGS backtest is a
+PARTIAL-SEASON observation (2025-07-24..2025-10-30 only), so `BATT_COST / (G +
+dsgs_dollars)` would misrepresent four months of VPP revenue as a full year's recurring
+figure — the exact payback-arithmetic problem CLAUDE.md §2 exists to catch, not something
+a caveat fixes after the fact. An earlier version of this script computed a `dsgs_revenue`
+lever this way (payback envelope 5.6–6.2 yr); it has been removed rather than re-labeled,
+per CLAUDE.md's own guidance to lean toward removing a shaky calculation over defending
+it. `tornado_battery.dsgs_excluded_note` reports the backtested dollars ($179.50/yr at
+20% reserve, primary; $261.71/yr at 0%-reserve sensitivity — both read from
+`data/dsgs_vpp_backtest.json` at runtime, never hardcoded) as an ADDITIVE amount on top of
+the arbitrage payback above, once a full season is measured, and points to
+`per_aggregation_sensitivity` for the range across individual aggregation schedules — never
+as its own payback-year lever (see §3.19). Figures derived purely from external estimates (outage-hour exposure) carry
 **estimated** pills in the report; artifact-derived ones, including DSGS VPP revenue since
 issue #10, carry **modeled**/**measured** per source. The report's "What to do Monday"
 appendix is **content-only** — it cites §5/§6/§9/§13 figures and introduces no new
@@ -1211,13 +1221,26 @@ text.
   demonstrated capacity, essentially constant within a month (<0.03% relative spread).
   Tesla's $150–350/season program-terms figure is kept only as an order-of-magnitude sanity
   check (same commit as §6's retired framing), not the rate source.
-- **Backup reserve, flagged for a parent decision.** The issue text asserted that "§6's
-  outage work establishes what reserve the household would plausibly hold" — checked against
-  `battery_backup_sims.py` and `extended_findings.py` and found NOT TRUE: no numeric reserve
-  fraction exists anywhere in this repo, and the outage-endurance sims assume the OPPOSITE
-  convention (a full battery at outage start, no reserve withheld). `BACKUP_RESERVE_FRAC =
-  0.20` here is therefore an assumed, uncited operating parameter, with a 0%-reserve
-  sensitivity computed alongside it so the report can see how much the assumption matters.
+- **Event-hour-only reserve floor, decided (issue #10 second adversarial review, Finding
+  3).** The issue text asserted that "§6's outage work establishes what reserve the
+  household would plausibly hold" — checked against `battery_backup_sims.py` and
+  `extended_findings.py` and found NOT TRUE: no numeric reserve fraction exists anywhere in
+  this repo, and the outage-endurance sims assume the OPPOSITE convention (a full battery
+  at outage start, no reserve withheld). `BACKUP_RESERVE_FRAC = 0.20` here is therefore an
+  assumed, uncited operating parameter, with a 0%-reserve sensitivity computed alongside it
+  so the report can see how much the assumption matters. It is enforced ONLY during a
+  declared DSGS event hour (both the ordinary and event-forced discharge are capped against
+  it then; see Dispatch model below) — NOT a continuously-held standing backup-reserve
+  setting: ordinary, non-VPP arbitrage in the hours before an event is unaffected, so a real
+  Powerwall's own always-on reserve setting would leave LESS charge actually available by
+  the time a declared event starts than this event-hour-only figure implies. Decided in
+  favor of this event-only scoping rather than a standing floor: it matches the issue's own
+  framing ("a backup reserve reduces dispatchable capacity DURING events"), keeps the tested
+  empty-event-set byte-identity guarantee to `battery_dispatch_policies.run_batt` intact
+  (which a standing floor would break), and avoids introducing an unjustified new constraint
+  on the household's own everyday no-VPP arbitrage. Every mention of this parameter — in
+  the artifact's `backup_reserve_caveat`/`miss_rate.note` fields, this document, and
+  `index.html` — is labeled "event-hour-only" for this reason.
 - **2026-season enrollment eligibility.** Per Olivine's DSGS Option 3 FAQ, storage
   participation in the 2026 season is limited to aggregators that already participated in
   October 2025. This household owns no battery today, so a new storage enrollment (buying a
@@ -1253,40 +1276,63 @@ worst case draining to 0 kWh; fixed and covered by a regression test with real,
 non-zero house load, since the zero-load fixtures used elsewhere never exercised the
 ordinary branch during an event hour at all).
 
+**No charging from solar surplus during a declared event hour (issue #10 second
+adversarial review, Finding 2).** The export-charging branch is now skipped whenever
+`is_event[i]` is true, regardless of `disch_win`/`imp[i]`. Without this guard, an earlier
+version could charge the battery from solar surplus (the branch fires whenever
+`exp[i] > 0` and `imp[i] == 0`, which the reserve-floor fix above didn't touch) and then
+IMMEDIATELY discharge that same energy again via the event-forcing block a few lines
+below, in the SAME interval — round-tripping solar that would have exported directly
+anyway (at an `ETA` round-trip loss) while crediting the full amount as new
+"event_discharge" as if it were genuinely new battery output. Confirmed against the real
+2025 backtest before the fix: 12 intervals showed both a charge-from-solar and an
+event-forced discharge in the same interval, totaling 5.32 kWh charged and 25.52 kWh
+event-discharged in those intervals alone (union-scenario total event discharge fell from
+144.67 kWh to 139.88 kWh once the round-trip was removed, before the reserve-scenario
+totals below also shifted from the resulting change in dispatch order). Fixed by adding
+`and not is_event[i]` to the export-charging branch's condition; solar surplus during an
+event hour now passes straight through to export, and the event-forcing block still
+maximizes discharge from whatever SOC already exists. Covered by a regression test
+(`case_solar_surplus_during_an_event_hour_does_not_round_trip_through_the_battery`) built
+on the same three-prior-hours-of-real-load fixture as the reserve-floor regression above,
+with a solar surplus and zero concurrent consumption declared during the event hour —
+exactly the condition that triggered the bug.
+
 **Revenue, net — union-calendar scenario (upper bound, not the headline).** GROSS = the
 empirical $/kW-month rate × this household's monthly LMP-weighted demonstrated capacity
 (Test Capacity hours only, per the Data Dictionary's own rule; demonstrated capacity nets
 a prescriptive baseline derived the same empirical way, ~10.8% of nameplate), summed over
-the participation months inside the measured window: **$173.85/yr**. OPPORTUNITY COST is
+the participation months inside the measured window: **$165.34/yr**. OPPORTUNITY COST is
 COMPUTED, not assumed — `rates.bill_nem` re-billed for the full measured window with vs
 without the VPP dispatch modification (the same "re-bill the modified year" technique the
 rest of this repo's battery/behavior work uses, CLAUDE.md §1b) — and came out small and
-slightly NEGATIVE (**−$13.71/yr**): DSGS event hours fall inside 4–9pm on-peak, already
+slightly NEGATIVE (**−$14.16/yr**): DSGS event hours fall inside 4–9pm on-peak, already
 this household's highest-value discharge window under ordinary price-aware dispatch, so
 the extra forced export there mostly draws down SOC that would otherwise have been used in
 cheaper off-peak/super-off-peak hours (refilled overnight anyway) rather than costing
 expensive on-peak service later — a real, computed NEM-netting effect specific to this
-household's usage pattern, not an assumption. NET = **$187.56/yr** at the 20% reserve
-(primary); a 0%-reserve sensitivity gives $255.02 gross, −$15.34 opportunity cost,
-**$270.36/yr** net (unaffected by the reserve-floor fix above, since a 0% reserve has no
-floor to enforce). AC4's kWh figure: **186.98 kWh** delivered across the 46 in-window
-event hours at 20% reserve (245.90 kWh at 0% reserve) —
+household's usage pattern, not an assumption. NET = **$179.50/yr** at the 20% reserve
+(primary); a 0%-reserve sensitivity gives $245.92 gross, −$15.79 opportunity cost,
+**$261.71/yr** net. AC4's kWh figure: **182.19 kWh** delivered across the 46 in-window
+event hours at 20% reserve (241.11 kWh at 0% reserve) —
 `revenue.<scenario>.total_discharge_kwh` in the artifact, event-forced discharge (which
 `run_batt_vpp` routes entirely to export) plus any concurrent ordinary/BAU discharge that
 hour, matching the CEC's own Net Discharge crediting basis rather than a narrower
-grid-export-only figure (see the artifact's `total_discharge_kwh_note`). Miss rate: 23 of
-46 in-window event hours (50.0%) at 20% reserve vs 17 of 46 (37.0%) at 0% reserve — now the
-expected direction (the tighter reserve leaves less headroom for both ordinary and
-event-forced discharge, so more hours fall short of the 1 kWh miss threshold), reversed
-from an earlier, pre-fix run whose inverted relationship was itself a symptom of the
-reserve-floor defect above, not a genuine tradeoff; see the artifact's `miss_rate.note`.
+grid-export-only figure (see the artifact's `total_discharge_kwh_note`). These figures
+reflect the Finding-2 fix above (no charging from solar surplus during a declared event
+hour) on top of the reserve-floor fix: total discharge at 20% reserve fell from 186.98 kWh
+to 182.19 kWh once the round-tripped solar was removed. Miss rate: 24 of 46 in-window
+event hours (52.2%) at 20% reserve vs 17 of 46 (37.0%) at 0% reserve — the expected
+direction (the tighter reserve leaves less headroom for both ordinary and event-forced
+discharge, so more hours fall short of the 1 kWh miss threshold; see the artifact's
+`miss_rate.note`).
 
 **Revenue, net — per-individual-aggregation range (the real range a household could see).**
 `per_aggregation_sensitivity()` isolates each of the 14 individual aggregations in the
 UDC2/Residential/Stationary/2-hour category (grouping the same Hourly Discharge Dataset
 rows by "Aggregation Identifier (anonymized)" instead of unioning them) and re-runs the
 identical `backtest()` pipeline against each one's own calendar, at the same 20% reserve.
-Across all 14: **net revenue $108.45–$249.47/yr**, **miss rate 43.75%–50.0%** — this is
+Across all 14: **net revenue $108.45–$213.19/yr**, **miss rate 50.0%–60.0%** — this is
 the range a real single-aggregation household could actually have earned, not the union
 figure above, which sits inside this range rather than bounding it from above (a household
 on a smaller, better-timed aggregation calendar can net MORE than the union: fewer event
@@ -1306,9 +1352,11 @@ NOT a complete season and NOT an annualized figure — stated explicitly in the 
 event hours relative to the partial figure here), but a full-season or annual revenue
 figure is **NOT DETERMINED** — it is not extrapolated from the partial figure, because no
 measured load exists for the missing May–July hours in any year this household has been
-metered. Any downstream use of these figures as an annual input (the `dsgs_revenue`
-tornado lever in `extended_findings.py`, §3.14) carries the same caveat rather than
-presenting a complete season's revenue. The 2026 DSGS season's tail overlaps the window,
+metered. Per CLAUDE.md §2's payback-honesty standard, this figure is therefore never
+combined with a full year of arbitrage savings to produce a payback-year claim —
+`extended_findings.py`'s `tornado_battery.dsgs_excluded_note` (§3.14) reports it only as
+an additive dollar amount on top of the arbitrage payback, once a full season is measured.
+The 2026 DSGS season's tail overlaps the window,
 but the CEC had not published 2026 performance data as of this run (2025's data itself was
 not filed until March 2026) — also zero revenue attributed, for the same reason.
 The 2024 event list from TN 266629 (three statewide 2-hour events on 2024-07-10,
@@ -1320,19 +1368,21 @@ month" without printing the figures) — disclosed as **not determined** for 202
 specifically, never guessed from 2025's empirical rate.
 
 **Reconciliation with §6.** The retired estimate's $150–350/season range and this
-backtest's $173.85 gross for the ~4 in-window participation months are the same order of
+backtest's $165.34 gross for the ~4 in-window participation months are the same order of
 magnitude (a partial season at the program-terms rate) — the sanity check the module's
-own docstring sets out to perform. `extended_findings.py`'s `tornado_battery.dsgs_revenue`
-lever reads this artifact's two union-scenario net-revenue figures read-only (§3.14)
-rather than the retired $250/$350 program-terms guesses. The lever's three tested points
-are $0 (no DSGS, 6.2-yr baseline), $187.56 (20%-reserve primary, 5.8 yr), and $270.36
-(0%-reserve sensitivity, 5.6 yr); `payback_range_yr` reports the min/max ACROSS ALL THREE
-— **[5.6, 6.2] yr, swing 0.6 yr** — so the 20%-reserve primary case's own 5.8-yr payback is
-an interior point of that bracket, not one of its two edges. Across the 14 individual
-aggregation schedules (`per_aggregation_sensitivity`), the same battery's DSGS-adjusted
-payback ranges roughly 5.6–5.9 yr — the lever's own note field states this range is a
-partial-season, upper-bound-scenario input, not a fully-annualized single-household
-figure.
+own docstring sets out to perform. `extended_findings.py`'s `tornado_battery` no longer
+turns this into a payback-year figure at all (issue #10 Finding 1, §3.14):
+`dsgs_excluded_note` reads this artifact's two union-scenario net-revenue figures
+read-only ($179.50/yr primary, $261.71/yr 0%-reserve sensitivity) and reports them as an
+ADDITIVE dollar amount on top of the arbitrage-only `base_payback_yr` (6.2 yr), never
+combined into a blended payback year — an earlier version computed `BATT_COST / (G +
+dsgs_dollars)`-style payback points from this same partial-season input (envelope 5.6–6.2
+yr), which silently treated four months of measured VPP revenue as if it recurred all
+year; removed rather than re-labeled, per CLAUDE.md's own guidance to lean toward removing
+a shaky calculation over defending it. Across the 14 individual aggregation schedules
+(`per_aggregation_sensitivity`), the additive DSGS dollars run $108.45–$213.19/yr — the
+range a real single-aggregation household could see on top of its own arbitrage payback,
+not a payback-year figure in its own right.
 
 **Fail-closed design.** Every ambiguity above is checked and asserted in
 `test_dsgs_vpp_backtest.py`, not just narrated. The event calendar and results JSON are
