@@ -58,6 +58,18 @@ before any single day's own choice could flip a bucket's sign), but the
 mechanism is real and tested directly, not assumed correct because it
 happened not to move this year's numbers.
 
+The EV-spillover exclusion mask used to PLAN each day is also forecast (a
+persistence guess from yesterday's real mask, time-of-day aligned), not the
+real future mask -- an earlier version handed the planning LP the real
+future EV mask directly, giving it perfect advance knowledge of exactly
+which intervals would be off-limits, contradicting the "day-ahead forecast
+quality, not perfect knowledge" premise the whole variant exists to test
+(Codex adversarial review, third pass; roughly half of this house's true
+EV-spillover intervals cannot be reliably anticipated from a persistence
+guess alone). The REAL mask is still enforced as a hard rule at EXECUTION
+time regardless of what the plan called for, the same hard-feasibility
+spirit as the SOC/power re-clip.
+
 Output: perfect_foresight_dispatch.json. This script fully regenerates the
 committed artifact.
 """
@@ -258,9 +270,18 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     n = len(d)
     P = power_kw / 4.0
     house_net = imp0 - gen0
-    kw = imp0 * 4.0
     p = d.p.values
-    ev_spillover = (kw >= 2.5) & (p != "on")
+    # The REAL EV-exclusion mask -- known only in hindsight. A day-ahead
+    # controller does not get to see this in advance any more than it sees
+    # the real house_net; using it directly to plan (as an earlier version
+    # did) hands the LP perfect future knowledge of exactly which intervals
+    # are off-limits, undercutting the "day-ahead forecast quality rather
+    # than perfect knowledge" premise (Codex adversarial review, third
+    # pass). It IS still enforced as a hard rule at EXECUTION time below --
+    # a real controller would never actually discharge into real EV
+    # spillover even if its plan (based on an imperfect forecast) called for
+    # it, exactly as the SOC/power re-clip already enforces real feasibility.
+    real_ev_spillover = (imp0 * 4.0 >= 2.5) & (p != "on")
     bucket_idx_full, bucket_rates = _bucket_assignment(d)
 
     dates = d.dt.dt.date.values
@@ -269,6 +290,12 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
     n_days = len(day_idx)
 
     forecast_house_net = house_net.copy()
+    # The EV-exclusion mask used for PLANNING is forecast the same way as the
+    # load itself (yesterday's actual mask, time-of-day aligned) -- not the
+    # real future mask. This is what makes the day-ahead case genuinely
+    # day-ahead: it does not know in advance which future intervals will see
+    # real EV spillover, only what happened at the same time yesterday.
+    forecast_ev_spillover = real_ev_spillover.copy()
     persisted = np.zeros(n, dtype=bool)
     n_dst_mismatch_days = 0
     for i in range(n_days):
@@ -276,6 +303,7 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
         prev_idx = day_idx[i - 1]  # i=0 wraps to the LAST day (cyclic persistence source)
         if len(prev_idx) == len(idx):
             forecast_house_net[idx] = house_net[prev_idx]
+            forecast_ev_spillover[idx] = real_ev_spillover[prev_idx]
             persisted[idx] = True
         else:
             # a DST-length mismatch with its persistence source -- no
@@ -312,14 +340,18 @@ def rolling_day_ahead(d, imp0, gen0, soc_start, cap=CAP_KWH, power_kw=POWER_KW):
         local_offsets = [bucket_cumulative.get(orig, 0.0) for orig in local_present]
 
         _, _, planned_charge, planned_discharge, _, _, _ = _solve_lp(
-            forecast_house_net[idx], ev_spillover[idx], local_bucket_idx,
+            forecast_house_net[idx], forecast_ev_spillover[idx], local_bucket_idx,
             local_bucket_rates, cap, power_kw, ("fixed", soc_now),
             bucket_offsets=local_offsets)
 
         day_real_imp = np.zeros(len(idx))
         day_real_exp = np.zeros(len(idx))
         for k in range(len(idx)):
-            d_actual = min(planned_discharge[k], soc_now * ETA, P)
+            # the REAL EV-exclusion rule is still enforced at execution,
+            # regardless of what the forecast-based plan called for -- the
+            # same hard-feasibility spirit as the SOC/power clip just below
+            planned_d = 0.0 if real_ev_spillover[idx[k]] else planned_discharge[k]
+            d_actual = min(planned_d, soc_now * ETA, P)
             c_actual = min(planned_charge[k], (cap - soc_now) / ETA, P)
             soc_now = soc_now + c_actual * ETA - d_actual / ETA
             real_net = house_net[idx[k]] - d_actual + c_actual

@@ -2034,40 +2034,61 @@ at the real carried-over starting level — not required to return to it, since 
 is a slice of a longer sequence, not a closed loop), then the resulting plan is re-clipped
 against REAL feasibility (SOC/power bounds) and applied to the REAL data — a walk-forward
 backtest, not a hypothetical. Forecast error: MAE 0.6695 kWh, RMSE 1.1779 kWh per 15-minute
-interval (a real, sizable per-interval error). Result: **$3,789.16/yr saved — 98.9% of the
-theoretical maximum**, using a forecast method (next-day persistence) any existing
-smart-battery product could implement today. This says the shipping policy's shortfall is a
+interval (a real, sizable per-interval error). Result: **$3,526.95/yr saved — 92.1% of the
+theoretical maximum**, using forecast methods (next-day persistence) any existing
+smart-battery product could implement today. Most of the shipping policy's shortfall is a
 DECISION-RULE problem, not a forecasting one: monthly netting means a single day's forecast
 error mostly shifts WHICH day within the month serves a given kWh, not WHETHER it gets
-served at all, as long as the controller reasons about the netting structure correctly. 4 of
-365 days have no same-length day to persist from (DST transitions) and fall back to their
-own actual data for that day only, excluded from the reported forecast-error statistics
-rather than silently blended in.
+served at all, as long as the controller reasons about the netting structure correctly —
+but forecast error does account for a real, non-trivial share of what remains (see the
+EV-mask finding below). 4 of 365 days have no same-length day to persist from (DST
+transitions) and fall back to their own actual data for that day only, excluded from the
+reported forecast-error statistics rather than silently blended in.
 
 **Bucket netting carries the REAL (not forecast) month-to-date position forward (Codex
-adversarial review).** Each day's bucket-net constraint is offset by the ALREADY-REALIZED
-(never forecast — it is the past) net position accrued earlier the same month in that
-bucket, via `_solve_lp`'s optional `bucket_offsets` parameter (default zero, exactly
-correct for the annual solve, where every bucket genuinely starts empty). A day-ahead
-controller genuinely has this information: it is not a forecast quantity. An earlier
-version reset every bucket to zero at the start of every day's local LP, discarding it and
-conflating genuine forecast error with an avoidable loss of already-known information —
-confirmed to reach the LP objective directly (a synthetic +100 kWh offset shifts a test
-LP's objective by the expected ~$50, `analysis/test_perfect_foresight_dispatch.py`). On
-this house's own real data, correcting it left the committed artifact **byte-identical**:
-every month here already nets solidly positive well before any single day's own marginal
-choice could ever flip a bucket's sign, so the reset-to-zero simplification and the
-correctly-offset version reach the same optimal decision at every grid point in practice —
-the defect was real and worth fixing (a result should not depend on discarding available
-information, whether or not doing so happens to change the answer on this dataset), but its
-numeric impact here was null, the same lesson issue #12's steady-state fix carried.
+adversarial review, second pass).** Each day's bucket-net constraint is offset by the
+ALREADY-REALIZED (never forecast — it is the past) net position accrued earlier the same
+month in that bucket, via `_solve_lp`'s optional `bucket_offsets` parameter (default zero,
+exactly correct for the annual solve, where every bucket genuinely starts empty). A
+day-ahead controller genuinely has this information: it is not a forecast quantity. An
+earlier version reset every bucket to zero at the start of every day's local LP, discarding
+it and conflating genuine forecast error with an avoidable loss of already-known
+information — confirmed to reach the LP objective directly (a synthetic +100 kWh offset
+shifts a test LP's objective by the expected ~$50, `analysis/test_perfect_foresight_
+dispatch.py`). On this house's own real data, correcting it left the committed artifact
+**byte-identical**: every month here already nets solidly positive well before any single
+day's own marginal choice could ever flip a bucket's sign, so the reset-to-zero
+simplification and the correctly-offset version reach the same optimal decision at every
+grid point in practice — the defect was real and worth fixing (a result should not depend
+on discarding available information, whether or not doing so happens to change the answer
+on this dataset), but its numeric impact here was null, the same lesson issue #12's
+steady-state fix carried.
 
-**Purchasing statement.** A smarter (day-ahead-forecast) controller is worth ~$1,460/yr
+**The EV-exclusion mask used to PLAN each day is also forecast, not the real future mask
+(Codex adversarial review, third pass).** An earlier version handed the day's planning LP
+the REAL future EV-spillover mask directly (`kw = imp0*4 >= 2.5 & p != "on"`, computed from
+the actual full-year data) — giving it perfect advance knowledge of exactly which future
+intervals would be off-limits, even though the load MAGNITUDE was genuinely forecast. This
+contradicted the whole point of the day-ahead case ("forecast quality, not perfect
+knowledge"): roughly half of this house's true EV-spillover intervals (3,153 of 6,162)
+cannot be reliably anticipated from a persistence guess of the load profile alone. Fixed:
+the mask used for PLANNING is now also a persistence forecast (yesterday's real mask,
+time-of-day aligned); the REAL mask is still enforced as a hard rule at EXECUTION time
+regardless of what the plan assumed, the same hard-feasibility spirit as the SOC/power
+re-clip. This was NOT numerically inert like the bucket-offset fix above: day-ahead saving
+dropped from $3,789.16/yr (98.9% of the theoretical maximum, when the planner illegitimately
+saw the future EV mask) to **$3,526.95/yr (92.1%)** — a genuine, material correction, not a
+rounding change. The remaining ~8% gap to perfect foresight is real forecast cost: some
+intervals the plan expected to be EV-clear turn out not to be (blocked at execution, losing
+planned value), and some the plan wrongly avoided turn out to have been usable.
+
+**Purchasing statement.** A smarter (day-ahead-forecast) controller is worth ~$1,198/yr
 over the shipping greedy policy, at the SAME hardware — no shipping product changes the
 controller, only the hardware, so this gap is a firmware/software question, not a
 purchasing one. The remaining gap after a day-ahead upgrade (perfect foresight vs day-ahead)
-is $40.45/yr — small enough that further forecast-quality investment past next-day
-persistence is not obviously worth it on this house's own numbers.
+is $302.67/yr (7.9% of the theoretical maximum) — real forecast cost, not free to close
+without either a genuine EV-session forecast (e.g. a known charging schedule) or accepting
+some of the risk the exclusion rule exists to avoid.
 
 **Output** `data/perfect_foresight_dispatch.json`. Registered in `test_scripts_runnable.py`
 under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
@@ -2075,7 +2096,7 @@ under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
 read-only and skipped gracefully if absent, not a hard tie-out assertion, so synthetic CI
 inputs run it cleanly).
 
-**Tests** `analysis/test_perfect_foresight_dispatch.py`, 19 cases: synthetic-frame unit
+**Tests** `analysis/test_perfect_foresight_dispatch.py`, 20 cases: synthetic-frame unit
 tests of the bucket assignment (matches `bill_nem_monthly`'s own grouping), the core LP
 solver (a same-bucket case where netting alone correctly leaves the battery idle, a
 TWO-bucket case that forces genuine physical battery use since netting cannot substitute
@@ -2088,8 +2109,11 @@ enforcement, both SOC boundary modes, the bucket-offset mechanism reaching the o
 by the expected amount), both fail-closed conservation checks (corrupted aggregate,
 simultaneous import/export, simultaneous charge/discharge), and the day-ahead forecast
 machinery (cyclic persistence for day 0, energy conservation, SOC bounds under heavy
-load, a nonzero real prior-day contribution to a bucket the next day also touches) need
-no private archive at all; cases requiring the $1 agreement with `rates.bill_nem`, the
+load, a nonzero real prior-day contribution to a bucket the next day also touches, and —
+third adversarial review — that the REAL EV-exclusion rule is enforced at execution even
+when a forecast-based plan, blind to a real future spillover spike, would otherwise have
+discharged into it) need no private archive at all; cases requiring the $1 agreement
+with `rates.bill_nem`, the
 real annual solve's conservation and cyclic closure, the greedy ≤ day-ahead ≤
 perfect-foresight ordering, and byte-identical
 regeneration gate on `_require_archive()` and SKIP with the reason named when this

@@ -356,6 +356,40 @@ def case_rolling_day_ahead_first_day_persists_from_the_last_day():
 
 
 @case
+def case_rolling_day_ahead_enforces_the_real_ev_exclusion_at_execution():
+    """Codex adversarial review (third pass): an earlier version handed the
+    PLANNING LP the real future EV-spillover mask directly, giving it perfect
+    advance knowledge of which intervals would be off-limits -- contradicting
+    the whole point of a day-ahead (forecast-only) case. Fixed by forecasting
+    the mask too (from yesterday's real mask) for planning, while still
+    enforcing the REAL mask as a hard rule at execution. This constructs a
+    case where day 1 (the forecast source) shows a moderate, NOT-spillover
+    need at a given off-peak slot (just under the 2.5 kW threshold), so the
+    plan has real economic reason to want to discharge there, while day 2's
+    REAL data at the identical time-of-day slot is a genuine EV-spillover
+    spike (well over threshold) -- and confirms real_discharge is exactly
+    zero there regardless of what the forecast-based plan wanted."""
+    d2 = _synthetic_frame(n_days=2, kwh_per_interval=1.0)
+    imp0 = d2.Consumption.values.astype(float)
+    gen0 = d2.Generation.values.astype(float)
+    p = d2.p.values
+    off_slots_day2 = [i for i in range(96, 192) if p[i] == "off"]
+    assert off_slots_day2, "fixture needs at least one off-peak slot on day 2"
+    test_slot = off_slots_day2[0]
+    day1_slot = test_slot - 96
+
+    imp0[day1_slot] = 2.4 / 4.0   # day 1 (forecast source): just under threshold
+    imp0[test_slot] = 20.0 / 4.0  # day 2 (real): well over threshold -- real spillover
+
+    _, _, real_charge, real_discharge, _, info = pfd.rolling_day_ahead(
+        d2, imp0, gen0, soc_start=2.5, cap=5.0, power_kw=20.0)
+    assert real_discharge[test_slot] < 1e-9, (
+        f"expected zero discharge at a real EV-spillover slot regardless of "
+        f"the forecast-based plan, got {real_discharge[test_slot]}")
+    return "the real EV-exclusion rule is enforced at execution even when the forecast missed it"
+
+
+@case
 def case_rolling_day_ahead_energy_conservation_holds():
     d = _synthetic_frame(n_days=5, kwh_per_interval=3.0, gen_kwh_per_interval=1.0)
     imp0 = d.Consumption.values.astype(float)

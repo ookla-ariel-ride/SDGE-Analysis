@@ -38,16 +38,16 @@
   "n_days_with_dst_length_mismatch": 4,
   "soc_start_kwh": -0.0,
   "soc_end_kwh": 0.0,
-  "bill_usd": 1114.97,
-  "save_usd": 3789.16,
+  "bill_usd": 1377.18,
+  "save_usd": 3526.95,
   "energy_conservation_check_passed": true
  },
  "purchasing_statement": {
   "greedy_save_usd": 2329,
-  "day_ahead_save_usd": 3789.16,
+  "day_ahead_save_usd": 3526.95,
   "perfect_foresight_save_usd": 3829.61,
-  "day_ahead_value_over_greedy_usd": 1460.16,
-  "remaining_gap_day_ahead_to_perfect_usd": 40.45,
+  "day_ahead_value_over_greedy_usd": 1197.95,
+  "remaining_gap_day_ahead_to_perfect_usd": 302.67,
   "note": "what a smarter (day-ahead-forecast) controller is worth over the shipping greedy policy, and what is still left even after that upgrade, at the same 13.5 kWh / 11.5 kW hardware -- no shipping product changes the CONTROLLER, only the hardware, so this gap is a software/firmware question, not a purchasing one"
  }
 }
