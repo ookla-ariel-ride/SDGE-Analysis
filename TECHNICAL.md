@@ -1967,6 +1967,246 @@ cross-checking the 13.5 kWh point and the steady-state shipping saves' bounded g
 byte-identical regeneration gate on `_require_archive()` and SKIP with the reason named
 when this checkout lacks `private/`.
 
+### 3.23 `analysis/perfect_foresight_dispatch.py` — how much is a smarter controller worth? (`data/perfect_foresight_dispatch.json`)
+
+**Purpose (issue #13).** The "greedy" price-aware policy (§3.13) is a threshold heuristic:
+serve every import priced above the battery's stored-energy cost. Nobody had checked how
+close that gets to the best ANY controller could do on this house's own measured year, at
+identical hardware (13.5 kWh, 11.5 kW, 90% round-trip) and the identical EV-spillover
+exclusion (≥2.5 kW outside on-peak never battery-served). This script computes the TRUE
+annual-bill-minimizing dispatch directly, as a linear program — not a heuristic and not
+naive price arbitrage. The distinction is real: `rates.bill_nem_monthly` nets import
+against export per (month, season, TOU-period) bucket, charging the bucket's net position
+at the higher "energy" rate if positive or crediting it at the lower "credit" rate if
+negative, and separately charges non-bypassable costs (NBC) on GROSS monthly imports
+regardless of netting. An optimizer that just chases the biggest per-interval price spread
+can genuinely bill WORSE, because it ignores which side of zero a bucket's net position
+lands on, or that NBC keeps accruing on gross imports even when energy nets to zero.
+
+**LP formulation.** Per 15-minute interval (n = 35,040/year): `grid_topup_i` ≥ 0 (extra
+grid import to charge), `solar_absorbed_i` ∈ [0, gen0_i] (solar surplus retained to charge
+instead of exported), `discharge_i` ∈ [0, imp0_i] (serves import, capped at the interval's
+OWN gross import so the battery can reduce it to zero but never manufacture NEW export
+beyond gen0_i), `soc_i` ∈ [0, cap]. `imp_i` and `exp_i` are **derived, not free variables**:
+`imp_i := imp0_i - discharge_i + grid_topup_i`, `exp_i := gen0_i - solar_absorbed_i`. This
+is deliberate and matches `battery_dispatch_policies.run_batt`'s own convention exactly
+(Codex adversarial review, third pass — see "Do not ship" finding below): an interval with
+no battery action reproduces `imp0_i`/`gen0_i` exactly, gross flows included. Constraints:
+combined charge-power cap (`grid_topup_i + solar_absorbed_i ≤ power_kw/4`), SOC continuity
+(`soc_i = soc_{i-1} + (grid_topup_i+solar_absorbed_i)·ETA - discharge_i/ETA`), a **cyclic
+SOC boundary** (`soc_init = soc_{n-1}` — a steady annual cycle, not a one-time year-1
+starting-charge windfall or ending stranded-charge deficit; issue #12's Codex review caught
+exactly this class of bug in the heuristic dispatch script, built in here from the start
+rather than fixed after the fact), and EV exclusion (`discharge_i` forced to 0 wherever
+kW ≥ 2.5 outside on-peak). Objective (minimize; BSC excluded as dispatch-invariant):
+`NBC·sum(imp0_i)` (a constant, added back after solving) `+ sum_i[NBC·grid_topup_i -
+NBC·discharge_i]` + for each of the ~36-39 (month, season, period) buckets with
+`net_b = x_b - y_b` (the standard convex-piecewise-linear-as-LP split, `x_b, y_b ≥ 0`),
+`sum_b[energy_rate_b·x_b - credit_rate_b·y_b]` — the EXACT structure of
+`rates.bill_nem_monthly`, not an approximation. Solved via `scipy.optimize.linprog` (HiGHS)
+— a new dependency (`requirements.txt`), solving in ~1-3 seconds for the full year.
+
+**Do not ship: gross-flow preservation (Codex adversarial review, third pass — the most
+consequential finding across all three review passes).** An earlier version used FREE
+`imp_i`/`exp_i` variables tied only to the signed net `imp0_i - gen0_i`, with `discharge_i`
+bounded only by power/SOC (no cap tied to `imp0_i`). Codex correctly flagged this as "do not
+ship" for two compounding reasons: (1) it silently discarded the ~6.3% of real intervals
+that carry BOTH gross import and gross export simultaneously (per
+`battery_dispatch_policies.py`'s own count) — collapsing them to a signed net erases that
+gross import for free, understating the NBC genuinely owed on it, with NO battery action
+required to "earn" that saving; (2) it let the optimizer manufacture brand-new export
+beyond what the house ever generated, a capability the shipping greedy policy's own
+discharge cap (`min(imp[i], soc·ETA, pwrq)`) never uses, breaking the "same hardware, same
+envelope" comparison this whole bound depends on. Both are now fixed by construction:
+`discharge_i ≤ imp0_i` and `solar_absorbed_i ≤ gen0_i` mean the battery can never move
+`imp_i` or `exp_i` outside `[0, imp0_i]` / `[0, gen0_i]`. The SAME bug existed a second time
+in `rolling_day_ahead`'s execution loop (re-collapsing to a signed net when applying the
+plan to real data) and was fixed identically there, with discharge additionally capped at
+the REAL `imp0_i` (never the forecast's) so execution can never manufacture export beyond
+what the house actually generated even if the plan implied it could.
+
+**Impact: this was not a rounding-level bug.** Before this fix, the (incorrect) headline
+was a 64.4% optimality gap ($3,829.61/yr theoretical maximum vs $2,329/yr greedy). After
+the fix, perfect foresight saves **$2,546.24/yr — a $217.24/yr gap, 9.3% of greedy's own
+saving**. Over $1,283/yr of the originally-reported "optimum" was non-physical: free NBC
+relief from collapsed simultaneous flows, and export the battery never actually had
+anything to back. This is the single largest correction across all of issue #13's review
+rounds, and the reason the whole headline finding inverted from "the shipping policy
+leaves most of the value on the table" to "the shipping policy is already close to the
+ceiling for this hardware."
+
+**Verification (the AC's own explicit requirement).** The LP's objective, plus the BSC it
+deliberately excludes, is re-billed through `rates.bill_nem` directly and must agree to
+within $1 — enforced with a `SystemExit` inside the generator itself (not only a separate
+test), since the whole point of "verified" is a property the artifact-producing script
+checks every run. Observed agreement: **$0.0039**. An early version of this check compared
+the LP objective directly against `rates.bill_nem`'s output (which includes BSC) and found
+a spurious $289.60 discrepancy — exactly `365 × $0.79343` (BSC), not a modeling bug at all;
+fixed by adding BSC back to the LP objective before comparing.
+
+**Energy conservation.** Checked via exact algebraic identities derived directly from the
+net-flow relationship (`sum(imp-exp) - sum(house_net) = charge_sum - discharge_sum`), plus
+two invariants the gross-flow-preserving fix specifically guarantees: `exp` never exceeds
+`gen0` (no manufactured export) and `discharge` never exceeds `imp0` (never flips an
+interval to export). Simultaneous gross import AND export in the SAME interval is EXPECTED
+and CORRECT whenever the real data has it (~6.3% of intervals) — an earlier, stricter check
+would have wrongly rejected exactly the intervals this fix exists to preserve, so it was
+replaced with the two invariants above. Charging AND discharging in the SAME interval is
+only flagged as wasteful when that interval has just ONE real flow to work with; at a
+genuine simultaneous-flow interval, discharging to serve the real import while separately
+storing the real solar surplus are two independent, individually rational actions (verified
+directly: on the real data, all 311 such simultaneous-action intervals are simultaneous-flow
+intervals, none are single-flow — confirmed empirically before writing this check, not
+assumed).
+
+**Do not ship: combined bidirectional power cap (Codex adversarial review, fourth pass).**
+The gross-flow-preserving fix above capped `discharge_i` at `min(imp0_i, power_kw/4)` and
+capped `grid_topup_i + solar_absorbed_i` (combined charging) at `power_kw/4`, but nothing
+tied those two caps together: an interval could charge at the full power rating AND
+discharge at the full power rating simultaneously, demanding 2x the battery's rated
+throughput through what is physically ONE bidirectional inverter — no single-inverter
+battery can do that. Fixed by adding `grid_topup_i + solar_absorbed_i + discharge_i ≤
+power_kw/4` as a genuine combined inequality (not two independent ones) to `_solve_lp`'s
+constraint set, the identical combined-cap logic to `rolling_day_ahead`'s execution-time
+re-clip (inherited automatically there, since execution only clips DOWN from a plan that
+now itself respects the combined cap), and a matching hard check to `_check_conservation`
+and the day-ahead's own inline conservation check. On this house's real data, the annual LP
+never actually wanted combined throughput above the cap even before this fix existed —
+simultaneous full charge and full discharge always wastes round-trip efficiency for no bill
+benefit, so the cost-minimizing solution already avoided it on its own — so the annual
+headline figures ($2,546.24/yr perfect-foresight save, $217.24/yr gap) are UNCHANGED. The
+day-ahead case DID move slightly: a single day's local LP, optimizing over a much shorter
+horizon with a fixed starting SOC, found the combined cap genuinely binding on some days,
+moving day-ahead's save from $1,711.13/yr to **$1,711.28/yr** (a $0.15/yr correction) and the
+purchasing-statement's "day-ahead worse than greedy" gap from $617.87 to $617.72. Confirmed
+by direct instrumentation before writing the fix that the combined throughput on the real
+data topped out at exactly the power cap (2.875 kWh/interval = 11.5 kW ÷ 4), never above it,
+in both the annual and day-ahead traces — the constraint was a genuine modeling gap, not one
+that was silently inflating the published figures by any material amount.
+
+**The true optimum barely cycles more than greedy.** With the gross-flow fix, the LP's own
+cycling (1.065 cycles/day, 4,978.68 kWh discharged) is now close to greedy's own 1.01
+cycles/day, 4,720 kWh — a modest, not dramatic, difference. The earlier (incorrect) figure
+of 1.69 cycles/day, 7,922 kWh discharged was itself a symptom of the same bug: much of that
+"extra" cycling was manufactured export and free-netted import that never had to physically
+move through the battery at all.
+
+**Day-ahead forecast (the realistic middle case) — a genuine, disclosed underperformance,
+not a bug.** This case commits to a full day's charge/discharge SCHEDULE in advance, planned
+against only a persistence forecast: yesterday's actual house-net profile, time-of-day
+aligned, stands in for tomorrow's forecast, including a forecast of which future intervals
+will see EV-spillover (also persisted from yesterday's real mask — an earlier version handed
+the planning LP the REAL future EV mask directly, giving it perfect advance knowledge and
+undercutting the "forecast quality, not perfect knowledge" premise; roughly half of this
+house's true EV-spillover intervals cannot be reliably anticipated this way). The REAL
+EV-exclusion rule and REAL SOC/power feasibility are both still enforced at EXECUTION
+regardless of what the plan assumed. Forecast error: MAE 0.6695 kWh, RMSE 1.1779 kWh per
+15-minute interval (a real, sizable per-interval error). **Result: $1,711.28/yr saved —
+WORSE than the shipping greedy policy's $2,329/yr, not better.**
+
+**Isolating forecast error from the myopic planning horizon (Codex adversarial review, fourth
+pass — the second "do not ship" finding of this issue).** Each day's local LP fixes SOC at
+the real start-of-day level but leaves it FREE at day's end — unlike the annual solve's
+cyclic boundary, no value is placed on SOC held past midnight. Codex correctly flagged that
+an earlier version attributed day-ahead's ENTIRE shortfall versus the true optimum to
+forecast pre-commitment without first ruling out this second, independent cause: a
+day-ahead controller could underperform even with a PERFECT forecast, simply because its
+planning horizon never sees past midnight. This is checked directly, not argued away:
+`rolling_day_ahead(..., perfect=True)` runs the IDENTICAL day-by-day architecture (same SOC
+handling, same real bucket-offset carry-forward) but plans against the REAL same-day data
+instead of a persistence forecast. Result: **$2,537.90/yr saved — within $8.35 of the true
+annual optimum ($2,546.24/yr)**. That $8.35/yr is the myopic-horizon effect on its own,
+holding forecast quality at perfect; the remaining $826.61/yr (of the persistence run's
+total $834.96/yr shortfall) is attributable to imperfect forecasting, holding the horizon
+fixed at one day. The horizon confound was real to check and worth ruling out, but turned
+out small in practice on this house's data — the day-ahead case's underperformance is
+almost entirely a forecasting problem, not a horizon problem. Mechanism for the forecast
+cost: pre-committing to a schedule the day before hard-caps how much the battery can
+discharge at each interval to whatever the forecast anticipated (`discharge_i ≤
+forecast_imp0_i` during planning); when reality diverges — which it does, substantially,
+every day — that cap forecloses value the shipping policy's simpler real-time reactivity
+(react to whatever import is ACTUALLY happening right now, no schedule to be wrong about)
+does not give up. The day-ahead run also ends the year holding 5.49 kWh of un-cashed-out
+SOC (vs starting near 0), a real, if secondary, symptom of the same limitation.
+
+**Disclosed leakage: day 0 and DST-mismatched days.** 4 of 365 days have no same-length day
+to persist from (DST transitions) and fall back to their own actual data for that day only.
+Day 0 has the same problem for a different reason: its "prior day" (day 364 of the SAME
+year, via the wraparound convention) is, chronologically, 364 days in the future relative to
+day 0's own true position — a single year of data has no real prior year to draw a genuine
+persistence source from. An earlier version counted day 0 as ordinary persistence anyway;
+it is now tracked separately (`n_days_with_leaked_future_information` = 5) and excluded from
+BOTH the forecast-error statistics AND disclosed with a quantified bound
+(`leak_sensitivity_usd`): re-billing with those 5 days' dispatch replaced by no battery
+action at all changes the reported day-ahead save by **$28.23/yr** — small next to the
+$834.96/yr gap it sits inside, bounding rather than merely asserting that the leak does not
+materially affect the headline figure.
+
+**Bucket netting carries the REAL (not forecast) month-to-date position forward (Codex
+adversarial review, second pass).** Each day's bucket-net constraint is offset by the
+ALREADY-REALIZED (never forecast — it is the past) net position accrued earlier the same
+month in that bucket, via `_solve_lp`'s optional `bucket_offsets` parameter (default zero,
+exactly correct for the annual solve, where every bucket genuinely starts empty). A
+day-ahead controller genuinely has this information: it is not a forecast quantity. An
+earlier version reset every bucket to zero at the start of every day's local LP, discarding
+it and conflating genuine forecast error with an avoidable loss of already-known
+information — confirmed to reach the LP objective directly (a synthetic +100 kWh offset
+shifts a test LP's objective by the expected ~$50, `analysis/test_perfect_foresight_
+dispatch.py`). This mechanism did not change the eventual headline day-ahead figure's
+correction from the gross-flow fix above, but remains a real, independently tested
+correctness property of the day-ahead planning LP.
+
+**Purchasing statement.** The shipping policy already captures **91.5% of the theoretical
+maximum** at this hardware — a $217.24/yr optimality gap is small next to the $2,329/yr it
+already saves, so there is not much room for ANY controller, however smart, to add. A naive
+day-ahead pre-committed schedule based on simple persistence forecasting is NOT a reliable
+way to capture more of that gap and can genuinely do WORSE than the shipping policy
+($617.72/yr worse, in this case) — and that shortfall is almost entirely a forecasting
+problem ($826.61/yr), not a planning-horizon problem ($8.35/yr, checked directly rather than
+assumed), so a longer planning horizon alone would not fix it either. No shipping product
+changes the controller, only the hardware, so closing the small remaining gap is a
+firmware/software question, but this data does not show that "add a day-ahead forecast" is
+the answer; the shipping policy's simpler real-time reactivity is, on this evidence, the
+safer choice.
+
+**Output** `data/perfect_foresight_dispatch.json`. Registered in `test_scripts_runnable.py`
+under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
+`household.yaml`; its optional cross-check against `battery_dispatch_policies.json` is
+read-only and skipped gracefully if absent, not a hard tie-out assertion, so synthetic CI
+inputs run it cleanly).
+
+**Tests** `analysis/test_perfect_foresight_dispatch.py`, 28 cases: synthetic-frame unit
+tests of the bucket assignment (matches `bill_nem_monthly`'s own grouping), the core LP
+solver (a same-bucket case where netting alone correctly leaves the battery idle, a
+TWO-bucket case that forces genuine physical battery use since netting cannot substitute
+for it across buckets — added after a second adversarial review found the original
+same-bucket case's docstring wrongly claimed the battery was exercised there, and that
+NO case in the file asserted nonzero charge/discharge at all, so a regression that
+disabled the battery entirely would have passed all 18 prior cases — confirmed by
+monkeypatching the bounds to (0,0) and rerunning: 17 of 18 still passed — EV-exclusion
+enforcement, both SOC boundary modes, the bucket-offset mechanism reaching the objective
+by the expected amount, and — fourth adversarial review — that the combined-throughput
+power-cap row in `A_ub` binds `grid_topup`, `solar_absorbed`, AND `discharge` together, a
+structural check on the constraint matrix itself since the real data's own economics
+never push combined use above the cap, so a purely behavioral assertion would pass even
+with the fix reverted), the gross-flow-preserving conservation checks (simultaneous
+real import/export now correctly ALLOWED, manufactured export and over-discharge both
+caught, wasteful single-flow simultaneous charge/discharge still caught, and the same
+combined-power-cap violation caught by `_check_conservation` directly), and the
+day-ahead forecast machinery (cyclic persistence for day 0, energy conservation, SOC
+bounds under heavy load, a nonzero real prior-day contribution to a bucket the next day
+also touches, `perfect=True` reporting exactly zero forecast error and reacting to a
+same-day spike a persistence forecast would have missed, and — third adversarial
+review — that the REAL EV-exclusion rule is enforced at execution even when a
+forecast-based plan, blind to a real future spillover spike, would otherwise have
+discharged into it) need no private archive at all; cases requiring the $1 agreement
+with `rates.bill_nem`, the real annual solve's conservation and cyclic closure, the
+day-ahead-never-beats-perfect-foresight bound (day-ahead vs greedy is deliberately NOT
+asserted either way — a real, disclosed finding, not a test assumption), the
+perfect-horizon variant never beating the true optimum, the leak-sensitivity bound
+staying small on the real measured year, and byte-identical regeneration gate on
+`_require_archive()` and SKIP with the reason named when this checkout lacks `private/`.
+
 ---
 
 ## 4. Battery simulation methodology

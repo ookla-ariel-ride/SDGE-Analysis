@@ -1,0 +1,75 @@
+{
+ "method": "linear program minimizing the exact rates.bill_nem_monthly objective (36 month/season/period netting buckets + NBC on gross imports), solved via scipy.optimize.linprog (HiGHS), at identical capacity/power/efficiency/EV-exclusion constraints as battery_dispatch_policies.run_batt's greedy policy, with a cyclic (steady-state) SOC boundary",
+ "cap_kwh": 13.5,
+ "power_kw": 11.5,
+ "eta": 0.9486832980505138,
+ "baseline_bill_current_rates": 4904,
+ "perfect_foresight_bill": 2357.89,
+ "perfect_foresight_save_usd": 2546.24,
+ "lp_info": {
+  "lp_status": "Optimization terminated successfully. (HiGHS Status 7: Optimal)",
+  "lp_objective_usd": 2068.28,
+  "n_intervals": 35040,
+  "n_buckets": 39,
+  "charge_kwh_total": 5531.86,
+  "discharge_kwh_total": 4978.68,
+  "soc_init_kwh": -0.0,
+  "soc_final_kwh": -0.0,
+  "cycles_per_day": 1.065
+ },
+ "verification": {
+  "lp_objective_usd_excl_bsc": 2068.28,
+  "n_days": 365,
+  "lp_objective_plus_bsc_usd": 2357.88,
+  "rebilled_via_rates_bill_nem_usd": 2357.89,
+  "agreement_usd": 0.0039
+ },
+ "greedy_comparison": {
+  "greedy_save_usd": 2329,
+  "perfect_foresight_save_usd": 2546.24,
+  "optimality_gap_usd": 217.24,
+  "optimality_gap_pct_of_greedy": 9.33
+ },
+ "day_ahead_forecast": {
+  "perfect": false,
+  "forecast_method": "persistence: yesterday's actual house-net profile (Consumption - Generation), time-of-day aligned, used as tomorrow's forecast; day 0 (no real prior day exists within a single year) and DST-length-mismatched days fall back to their own actual data and are disclosed separately as leaked, not counted as genuine persistence",
+  "forecast_mae_kw_equivalent_kwh_per_interval": 0.6682,
+  "forecast_rmse_kwh_per_interval": 1.1766,
+  "n_days": 365,
+  "n_days_with_dst_length_mismatch": 4,
+  "n_days_with_leaked_future_information": 5,
+  "soc_start_kwh": -0.0,
+  "soc_end_kwh": 5.4918,
+  "bill_usd": 3192.84,
+  "save_usd": 1711.28,
+  "energy_conservation_check_passed": true,
+  "leak_sensitivity_usd": 28.23,
+  "leak_sensitivity_note": "5 of 365 days (1.4%) used real (not forecast) same-day data because no genuine prior day exists for them within a single year; replacing just those days' dispatch with no battery action at all changes the reported day-ahead save by $28.23 -- the maximum this leak could plausibly be inflating the headline figure by."
+ },
+ "day_ahead_perfect_horizon": {
+  "perfect": true,
+  "forecast_method": "none -- perfect same-day information, single-day horizon (isolates the myopic-horizon effect from forecast quality)",
+  "forecast_mae_kw_equivalent_kwh_per_interval": 0.0,
+  "forecast_rmse_kwh_per_interval": 0.0,
+  "n_days": 365,
+  "n_days_with_dst_length_mismatch": 0,
+  "n_days_with_leaked_future_information": 0,
+  "soc_start_kwh": -0.0,
+  "soc_end_kwh": 0.0,
+  "bill_usd": 2366.23,
+  "save_usd": 2537.9,
+  "energy_conservation_check_passed": true,
+  "note": "same day-by-day architecture as day_ahead_forecast (SOC fixed at the real start-of-day level, free at day's end, real bucket offsets carried forward) but with PERFECT same-day information instead of a persistence forecast -- isolates the myopic single-day horizon effect (no value placed on SOC held past midnight) from forecast quality"
+ },
+ "purchasing_statement": {
+  "greedy_save_usd": 2329,
+  "day_ahead_save_usd": 1711.28,
+  "day_ahead_perfect_horizon_save_usd": 2537.9,
+  "perfect_foresight_save_usd": 2546.24,
+  "day_ahead_value_over_greedy_usd": -617.72,
+  "remaining_gap_day_ahead_to_perfect_usd": 834.96,
+  "gap_attributed_to_forecast_error_usd": 826.61,
+  "gap_attributed_to_myopic_horizon_usd": 8.35,
+  "note": "the shipping greedy policy already captures the large majority of the theoretical maximum at this hardware (the optimality gap above is the full remaining upside from ANY controller, however smart). Day-ahead's shortfall versus the true optimum splits into two isolated effects: $826.61/yr from imperfect (persistence) forecasting, holding the single-day planning horizon fixed, and $8.35/yr from that single-day horizon itself (each day's local plan places no value on SOC held past midnight, so it has no incentive to preserve charge for tomorrow morning), holding forecast quality fixed at perfect -- neither a better forecast alone nor a longer planning horizon alone would close the whole gap to the true optimum; no shipping product changes the controller, only the hardware, so closing the remaining gap is a software/firmware question, not a purchasing one, and this data does not show day-ahead forecasting alone is the answer"
+ }
+}
