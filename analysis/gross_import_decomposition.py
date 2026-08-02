@@ -134,7 +134,24 @@ P26_END = dt.date(2026, 6, 26)
 # earlier draft reused the 2026 window's own PERIOD-TOTAL fraction directly
 # against the 2024 bill's 32-day total, silently comparing mismatched day
 # counts). See production_block() for how the day-count difference is
-# corrected via a per-day rate ratio rather than a differently-dated window.
+# corrected via a per-day rate ratio rather than a differently-dated window
+# (that fix covers the WEATHER-BASED production estimate only).
+
+# The decomposition's own hourly counterfactual (decomposition_block) needs a
+# SECOND, independent fix for the identical day-count issue at the SIMULATION
+# level (Codex review pass 2, finding 1): scaling the real 29-day P26_START..
+# P26_END hourly vector to hit a 32-day bill total compresses 3 missing days'
+# worth of energy into 29 real hours, distorting the nonlinear
+# max(0, load-production) overlap the whole method depends on -- a real,
+# 29-hour-count vector simply cannot represent a 32-day period without that
+# distortion, no matter how it is scaled. TEMPLATE_START/END is a REAL 32-day
+# 2026 window -- May 25-June 25, matching PERIOD_2024's own day count AND
+# calendar span exactly (this range falls entirely inside TRAILING_START..
+# TRAILING_END below, so the archive covers it) -- used as the shared base
+# vector for BOTH years in decomposition_block, so no vector is ever
+# stretched or compressed to a day count it wasn't measured at.
+TEMPLATE_START = dt.date(2026, 5, 25)
+TEMPLATE_END = dt.date(2026, 6, 25)
 
 # The trailing-year window analysis/soiling_analysis.py itself uses for its
 # daily production/weather record -- reused here for consistency, not
@@ -450,6 +467,28 @@ def hourly_reconstruction(bill):
     }
 
 
+def template_hourly_vectors():
+    """Real 2026 hourly CT load and meter-derived production for
+    TEMPLATE_START..TEMPLATE_END (May 25-June 25, 2026 -- 32 real days,
+    matching PERIOD_2024's own day count and calendar span exactly). This is
+    the shared REAL base both years' back-solves in decomposition_block
+    scale from (Codex review pass 2, finding 1) -- unlike
+    hourly_reconstruction()'s 29-day P26_START..P26_END window (kept
+    unchanged, still used for its own independent cross-meter validation),
+    no vector here is ever asked to represent a day count it wasn't actually
+    measured at."""
+    ct = load_ct_hourly()
+    ct_period = ct[str(TEMPLATE_START):f"{TEMPLATE_END} 23:00"]
+
+    gb = load_green_button_period(pd.Timestamp(TEMPLATE_START), pd.Timestamp(TEMPLATE_END) + pd.Timedelta(days=1))
+    gb["hourfloor"] = gb["dt"].dt.floor("h")
+    imp_h = gb.groupby("hourfloor")["Consumption"].sum().reindex(ct_period.index, fill_value=0.0)
+    exp_h = gb.groupby("hourfloor")["Generation"].sum().reindex(ct_period.index, fill_value=0.0)
+    prod_h_raw = ct_period.values - imp_h.values + exp_h.values
+    prod_h = np.clip(prod_h_raw, 0.0, None)
+    return ct_period.values, prod_h, ct_period.index
+
+
 def _shapley_two_factor_vectors(ct_2026, prod_2026, ct_2024, prod_2024, correction=1.0):
     """g(load, prod) = correction * sum(max(0, load - prod)) over the hourly
     series, evaluated at all 4 corners of {ct_2026, ct_2024} x {prod_2026,
@@ -493,63 +532,41 @@ def _shapley_two_factor_vectors(ct_2026, prod_2026, ct_2024, prod_2024, correcti
     }
 
 
-def _shapley_two_factor(ct_values, prod_values, c_scale, p_scale, correction=1.0):
-    """Uniform-multiplicative-scaling special case of
-    _shapley_two_factor_vectors: ct_2024 = c_scale*ct_values, prod_2024 =
-    p_scale*prod_values."""
-    return _shapley_two_factor_vectors(
-        ct_values, prod_values, c_scale * ct_values, p_scale * prod_values, correction)
+def _solve_year_scales(ct_template, prod_template, correction, net_exact, gross_exact):
+    """Back-solve (consumption_scale, production_scale) for ONE year,
+    relative to the shared REAL 32-day template (TEMPLATE_START..
+    TEMPLATE_END -- template_hourly_vectors()), rather than assuming either
+    year simply equals the template. consumption_scale is PINNED by an exact
+    accounting identity once production_scale is chosen (year's gross
+    consumption = year's bill-exact net_kwh + production_scale * the
+    template's own total production -- net_exact is a bill fact, not an
+    estimate), so production_scale is the ONE free parameter, back-solved to
+    the value that makes the simulated corner match THIS year's bill
+    exactly.
 
-
-def _backsolve_production_scale(ct_values, prod_values, correction, net_2024_exact,
-                                cons_2026_measured, target_gross_2024):
-    """The independent weather-based production_scale (seasonal-rate
-    transfer) and the bill-exact consumption identity together do not, in
-    general, make the simulated 2024 corner hit the actual 2024 bill total
-    exactly -- two independently-estimated numbers landing on a third
-    bill-exact number by coincidence is not something to expect or rely on.
-    Given the consumption side is PINNED by an exact accounting identity
-    once production_scale is chosen (cons_2024 = net_2024_exact +
-    production_scale * prod_2026_actual_used_in_sim -- net_2024_exact is a
-    bill-exact fact, not an estimate), production_scale is the ONE genuinely
-    free parameter here. Back-solving for the value that makes the
-    simulated 2024 corner match the ACTUAL 2024 bill total exactly turns an
-    over-constrained, noisy problem (independent estimate vs bill fact,
-    hoping they roughly agree) into a well-posed one (bill fact pins the
-    parameter; the independent weather-based estimate becomes a genuine,
-    separate PLAUSIBILITY cross-check on the solved value, not something the
-    decomposition's accuracy depends on). See decomposition_block's own
-    docstring for why an earlier draft's independent-estimate-only approach
-    could not reliably satisfy AC4 once the day-count bug (adversarial
-    review pass 1, finding 1) was corrected.
-
-    `prod_2026_actual_used_in_sim` MUST be sum(prod_values) -- the SAME
-    meter-derived hourly production series `residual` actually scales and
-    sums -- not the separately-measured PVOutput figure (Codex review pass
-    1, finding 1): the two disagree by ~1.7% (a real, already-documented
-    cross-meter gap), and using PVOutput's total in the identity while the
-    simulation scales the meter-derived series makes the accounting
-    identity internally inconsistent with what is actually being solved --
-    the modeled 2024 corner would match gross import while implying a net
-    import different from the bill-exact net_2024_exact it was supposed to
-    be pinned to. PVOutput's own measured total remains the basis for the
-    SEPARATE, independent weather/seasonal-rate cross-check elsewhere
-    (production_scale_estimated_from_weather) -- it is deliberately not
-    used here."""
+    Codex review pass 2, finding 1: an earlier draft treated 2026 as
+    automatically "the template, scale=1" and only back-solved 2024,
+    implicitly assuming the real 29-day 2026 billed window and a 32-day
+    period were the SAME shape -- exactly the compression artifact this
+    symmetric construction avoids. BOTH years are now solved the same way,
+    relative to the SAME neutral, correctly-sized 32-day real reference, so
+    no vector is ever asked to represent a day count it wasn't measured at,
+    and neither year gets special-cased as "the exact one."""
     from scipy.optimize import brentq
 
-    prod_2026_actual_used_in_sim = float(prod_values.sum())
+    template_cons_total = float(ct_template.sum())
+    template_prod_total = float(prod_template.sum())
 
     def c_of_p(p):
-        return (net_2024_exact + p * prod_2026_actual_used_in_sim) / cons_2026_measured
+        return (net_exact + p * template_prod_total) / template_cons_total
 
     def residual(p):
         c = c_of_p(p)
-        sim = correction * float(np.maximum(0.0, c * ct_values - p * prod_values).sum())
-        return sim - target_gross_2024
+        sim = correction * float(np.maximum(0.0, c * ct_template - p * prod_template).sum())
+        return sim - gross_exact
 
     p_star = brentq(residual, 0.2, 3.0, xtol=1e-10)
-    return p_star, c_of_p(p_star)
+    return c_of_p(p_star), p_star
 
 
 def decomposition_block(bill, prod, cons, hourly):
@@ -561,31 +578,41 @@ def decomposition_block(bill, prod, cons, hourly):
     gross_2026 = bill["period_2026"]["gross_kwh"]
     observed_delta = gross_2026 - gross_2024
 
+    # hourly (the 29-day P26 reconstruction) is kept ONLY for its own
+    # independent cross-meter validation (hourly_reconstruction's own
+    # docstring) and to calibrate hourly_resolution_correction below -- a
+    # meter-RESOLUTION artifact, not day-count-dependent, so calibrating it
+    # from the real, zero-estimation 29-day corner remains valid. The
+    # decomposition itself uses the REAL 32-day TEMPLATE (Codex review pass
+    # 2, finding 1), never a vector scaled to represent a day count it
+    # wasn't measured at.
     ct_values = hourly["ct_values"]
     prod_values = hourly["production_hourly_derived"]
-
-    # The hourly CT/production reconstruction runs at the SAM 8760 archive's
-    # native hourly resolution (the finest available for whole-home load),
-    # coarser than the 15-minute resolution the Green Button meter and the
-    # bill's own gross_kwh figure resolve at. Averaging sub-hourly import/
-    # export crossovers before taking max(0, load-production) understates
-    # true gross import by a small, systematic amount: at the real 2026
-    # corner (c=p=1, no estimation involved at all), the raw hourly
-    # simulation undershoots the bill's own 2026 gross-import figure by
-    # ~2%, a resolution artifact, not an estimation error. This SAME
-    # correction is applied to every corner uniformly (bias, not signal).
     f11_raw = float(np.maximum(0.0, 1.0 * ct_values - 1.0 * prod_values).sum())
     hourly_resolution_correction = gross_2026 / f11_raw
 
-    production_scale_backsolved, consumption_scale_backsolved = _backsolve_production_scale(
-        ct_values, prod_values, hourly_resolution_correction,
-        bill["period_2024"]["net_kwh"], cons["period_2026_ct_measured_kwh"], gross_2024)
+    ct_template, prod_template, _template_index = template_hourly_vectors()
 
-    sh = _shapley_two_factor(ct_values, prod_values, consumption_scale_backsolved,
-                             production_scale_backsolved, correction=hourly_resolution_correction)
+    consumption_scale_2026, production_scale_2026 = _solve_year_scales(
+        ct_template, prod_template, hourly_resolution_correction,
+        bill["period_2026"]["net_kwh"], gross_2026)
+    consumption_scale_2024, production_scale_2024 = _solve_year_scales(
+        ct_template, prod_template, hourly_resolution_correction,
+        bill["period_2024"]["net_kwh"], gross_2024)
+
+    sh = _shapley_two_factor_vectors(
+        consumption_scale_2026 * ct_template, production_scale_2026 * prod_template,
+        consumption_scale_2024 * ct_template, production_scale_2024 * prod_template,
+        correction=hourly_resolution_correction)
 
     decomposed_sum = sh["consumption_term_kwh"] + sh["production_term_kwh"]
     pct_error = abs(decomposed_sum - observed_delta) / abs(observed_delta) * 100
+
+    # The 2024-relative-to-2026 RATIOS, for continuity with the report's
+    # existing field names and the independent weather-based cross-check
+    # below (also a 2024-over-2026 ratio).
+    production_scale_backsolved = production_scale_2024 / production_scale_2026
+    consumption_scale_backsolved = consumption_scale_2024 / consumption_scale_2026
 
     # Cross-check: does the back-solved production level (pinned by bill-exact
     # accounting) agree with the INDEPENDENT weather/seasonal-rate-based
@@ -602,20 +629,30 @@ def decomposition_block(bill, prod, cons, hourly):
 
     return {
         "method": (
-            "Hourly counterfactual: 2026's actual hourly whole-home load (CT) "
-            "and hourly-derived production feed sum(max(0, load-production)), "
-            "corrected by a small factor for the CT archive's hourly (not "
-            "15-minute) resolution (hourly_resolution_correction, calibrated "
-            "so the c=p=1 corner -- REAL 2026 data, no estimation -- "
-            "reproduces the 2026 bill exactly). Because the consumption side "
-            "is PINNED by an exact accounting identity (2024 gross "
-            "consumption = 2024's bill-exact net_kwh + 2024's estimated "
-            "production), production_scale is the one genuinely free "
-            "parameter; it is back-solved (not assumed) to the value that "
-            "makes the simulated 2024 corner match the 2024 bill exactly. "
-            "The INDEPENDENT weather/seasonal-rate-based production estimate "
+            "Hourly counterfactual against a SHARED REAL 32-day template "
+            "(TEMPLATE_START..TEMPLATE_END, May 25-June 25 2026 -- matching "
+            "PERIOD_2024's own day count and calendar span exactly; Codex "
+            "review pass 2, finding 1: an earlier draft scaled the ACTUAL "
+            "29-day 2026 billed window's hourly vector to represent a 32-day "
+            "total, compressing 3 missing days into 29 real hours and "
+            "distorting the nonlinear max(0, load-production) overlap the "
+            "whole method depends on). BOTH years -- not just 2024 -- are "
+            "now back-solved relative to this SAME neutral template: for "
+            "each year, consumption is PINNED by an exact accounting "
+            "identity (year's gross consumption = year's bill-exact net_kwh "
+            "+ production_scale * the template's own total production), so "
+            "production_scale is the one free parameter per year, solved so "
+            "the simulated corner matches THAT year's bill exactly. Neither "
+            "year is special-cased as 'the exact one' -- the 2024-relative-"
+            "to-2026 ratio is what the report calls production_scale_2024_"
+            "over_2026. The whole simulation is corrected by a small factor "
+            "for the CT archive's hourly (not 15-minute) resolution "
+            "(hourly_resolution_correction, calibrated from the REAL, "
+            "zero-estimation 29-day 2026 corner, a meter-resolution "
+            "artifact independent of which specific days are used). The "
+            "INDEPENDENT weather/seasonal-rate-based production estimate "
             "(AC1, production_block) is reported as a separate plausibility "
-            "cross-check on that solved value, not as an input the "
+            "cross-check on the solved ratio, not as an input the "
             "decomposition's accuracy depends on. A Shapley/telescoping "
             "two-factor decomposition then splits the corrected 2026-to-2024 "
             "change into a consumption term and a production term that sum "
@@ -657,6 +694,10 @@ def decomposition_block(bill, prod, cons, hourly):
             "accounting, not a guess), but this gap means the independent "
             "seasonal-transfer estimate should not be read as a confirmed, "
             "precise production figure on its own for this specific window."),
+        "consumption_scale_2026_vs_template": round(consumption_scale_2026, 5),
+        "production_scale_2026_vs_template": round(production_scale_2026, 5),
+        "consumption_scale_2024_vs_template": round(consumption_scale_2024, 5),
+        "production_scale_2024_vs_template": round(production_scale_2024, 5),
         "consumption_scale_2024_over_2026": round(consumption_scale_backsolved, 5),
         "production_scale_2024_over_2026": round(production_scale_backsolved, 5),
         "import_2026_actual_sim_kwh": round(sh["import_2026_actual_sim_kwh"], 1),
@@ -688,100 +729,125 @@ def decomposition_block(bill, prod, cons, hourly):
     }
 
 
-def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
-    """Adversarial review pass 2, finding 1: back-solving production_scale to
-    hit the 2024 bill exactly makes the endpoint agreement TAUTOLOGICAL, not
-    a validation -- with no 2024 hourly load/production shape available, the
-    single accounting constraint (net_kwh + production = consumption) pins
-    production_scale UNIQUELY only under decomposition_block's own modeling
-    choice (2024 = 2026's diurnal SHAPE, scaled uniformly). A DIFFERENT,
-    equally defensible shape assumption for how 2024-to-2026 consumption grew
-    could back-solve to a materially different production_scale, changing the
-    reported split, while still satisfying the exact same two bill totals.
-
-    This function re-runs the identical back-solve under ONE genuinely
-    different, data-grounded shape assumption -- ALL of the consumption
-    reduction concentrated in EV-charging hours specifically (detect_sessions
-    already isolates which hours those are; EV charging is independently
-    documented, in this repo, as having grown as a load category) -- rather
-    than decomposition_block's own uniform-proportional-growth assumption.
-    If the two assumptions' back-solved production_scale (and hence the
-    production/consumption split) agree closely, the "consumption story"
-    conclusion is robust to this particular identifiability concern, not
-    merely an artifact of one modeling choice; if they diverge sharply, that
-    is reported plainly rather than hidden behind the headline split."""
-    import behavior_rebuild as br
+def _solve_year_scales_ev_shape(ct_template, prod_template, ev_template, correction,
+                                net_exact, gross_exact):
+    """Same well-posed, one-free-parameter construction as
+    _solve_year_scales, but concentrating the required consumption
+    adjustment (from the template's own total) in EV-charging hours
+    specifically, rather than scaling every hour uniformly. Returns
+    (reduction_frac, production_scale) for the year; reduction_frac can be
+    negative (this year needed slightly MORE EV energy than the template's
+    own level, not less) -- physically sensible near zero, only actually
+    "not realizable" if its magnitude exceeds 100% of the template's own EV
+    total (checked by the caller before trusting the root)."""
     from scipy.optimize import brentq
 
-    gb = load_green_button_period(pd.Timestamp(P26_START), pd.Timestamp(P26_END) + pd.Timedelta(days=1))
-    ev_kwh_15min, _sessions = br.detect_sessions(gb)
-    ev_series = pd.Series(ev_kwh_15min, index=gb["dt"])
-    ct_index = hourly["ct_index"]
-    ev_hourly = ev_series.groupby(ev_series.index.floor("h")).sum().reindex(ct_index, fill_value=0.0).values
-    ev_hourly_total = float(ev_hourly.sum())
+    template_cons_total = float(ct_template.sum())
+    template_prod_total = float(prod_template.sum())
+    ev_template_total = float(ev_template.sum())
 
-    ct_values = hourly["ct_values"]
-    prod_values = hourly["production_hourly_derived"]
-    correction = decomposition["hourly_resolution_correction_factor"]
-    net_2024 = bill["period_2024"]["net_kwh"]
-    # Codex review pass 1, finding 1 (same bug, same fix, as
-    # _backsolve_production_scale): the identity must use the SAME
-    # meter-derived production total the simulation actually scales
-    # (sum(prod_values)), not the separately-measured PVOutput figure --
-    # the two differ by ~1.7%, and mixing them would make this scenario's
-    # own accounting identity internally inconsistent with what residual()
-    # actually solves.
-    prod_2026_actual_used_in_sim = float(prod_values.sum())
-    cons_2026 = cons["period_2026_ct_measured_kwh"]
-    gross_2024 = bill["period_2024"]["gross_kwh"]
-
-    def ev_reduction_fraction(p):
-        cons_2024 = net_2024 + p * prod_2026_actual_used_in_sim
-        total_reduction = cons_2026 - cons_2024
-        return total_reduction / ev_hourly_total
+    def reduction_frac(p):
+        cons_y = net_exact + p * template_prod_total
+        total_reduction = template_cons_total - cons_y
+        return total_reduction / ev_template_total
 
     def residual(p):
-        frac = ev_reduction_fraction(p)
-        ct_shape = ct_values - ev_hourly * frac
-        sim = correction * float(np.maximum(0.0, ct_shape - p * prod_values).sum())
-        return sim - gross_2024
+        frac = reduction_frac(p)
+        ct_shape = ct_template - ev_template * frac
+        sim = correction * float(np.maximum(0.0, ct_shape - p * prod_template).sum())
+        return sim - gross_exact
+
+    p_star = brentq(residual, 0.2, 3.0, xtol=1e-10)
+    return reduction_frac(p_star), p_star
+
+
+def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
+    """Adversarial review pass 2, finding 1: back-solving production_scale to
+    hit each year's bill exactly makes the endpoint agreement TAUTOLOGICAL,
+    not a validation -- with no 2024 hourly load/production shape available,
+    the accounting identity (net_kwh + production = consumption) pins
+    production_scale UNIQUELY only under decomposition_block's own modeling
+    choice (each year's consumption shares the shared 32-day TEMPLATE's
+    diurnal SHAPE, scaled uniformly). A DIFFERENT, equally defensible shape
+    assumption for how consumption differed from the template could
+    back-solve to a materially different production_scale, changing the
+    reported split, while still satisfying the exact same bill totals.
+
+    This function re-solves BOTH years (the same symmetric construction as
+    decomposition_block's own _solve_year_scales, Codex review pass 2,
+    finding 1) under ONE genuinely different, data-grounded shape
+    assumption -- ALL of a year's consumption difference from the template
+    concentrated in EV-charging hours specifically (detect_sessions already
+    isolates which hours those are, over the SAME 32-day template window) --
+    rather than decomposition_block's own uniform-proportional scaling. If
+    the two assumptions' resulting production/consumption split agree
+    closely, the "consumption story" conclusion is robust to this
+    particular identifiability concern, not merely an artifact of one
+    modeling choice; if they diverge sharply, that is reported plainly
+    rather than hidden behind the headline split."""
+    import behavior_rebuild as br
+
+    ct_template, prod_template, template_index = template_hourly_vectors()
+    gb = load_green_button_period(pd.Timestamp(TEMPLATE_START), pd.Timestamp(TEMPLATE_END) + pd.Timedelta(days=1))
+    ev_kwh_15min, _sessions = br.detect_sessions(gb)
+    ev_series = pd.Series(ev_kwh_15min, index=gb["dt"])
+    ev_template = ev_series.groupby(ev_series.index.floor("h")).sum().reindex(template_index, fill_value=0.0).values
+    ev_template_total = float(ev_template.sum())
+
+    correction = decomposition["hourly_resolution_correction_factor"]
+    net_2026, gross_2026 = bill["period_2026"]["net_kwh"], bill["period_2026"]["gross_kwh"]
+    net_2024, gross_2024 = bill["period_2024"]["net_kwh"], bill["period_2024"]["gross_kwh"]
 
     # Confirm the EV-concentrated assumption is even physically realizable
-    # (the required reduction must fit within the measured EV energy itself)
-    # before trusting a root the solver might otherwise find outside [0,1].
-    frac_at_uniform_p = ev_reduction_fraction(decomposition["production_scale_2024_over_2026"])
-    assumption_realizable = 0.0 <= frac_at_uniform_p <= 1.0
+    # for BOTH years (the required reduction must fit within the measured EV
+    # energy itself) before trusting either root the solver might otherwise
+    # find outside a sane range.
+    template_cons_total = float(ct_template.sum())
+    template_prod_total = float(prod_template.sum())
 
-    if not assumption_realizable:
+    def _frac_at(net_exact, p):
+        cons_y = net_exact + p * template_prod_total
+        return (template_cons_total - cons_y) / ev_template_total
+
+    frac_2026_check = _frac_at(net_2026, decomposition["production_scale_2026_vs_template"])
+    frac_2024_check = _frac_at(net_2024, decomposition["production_scale_2024_vs_template"])
+    realizable = all(-1.0 <= f <= 1.0 for f in (frac_2026_check, frac_2024_check))
+
+    if not realizable:
         return {
             "scenario": "EV-charging-concentrated consumption decline",
             "realizable": False,
             "note": (
-                f"At the baseline scenario's own production_scale, the "
-                f"EV-concentrated assumption would require reducing EV "
-                f"charging by {frac_at_uniform_p * 100:.0f}% of its measured "
-                "2026 total, outside the physically meaningful [0%, 100%] "
-                "range -- this alternative shape cannot explain the observed "
-                "change on its own and is not evaluated further."),
+                f"At the baseline scenario's own solved production scales, "
+                f"the EV-concentrated assumption would require adjusting EV "
+                f"charging by {frac_2026_check * 100:.0f}% (2026) / "
+                f"{frac_2024_check * 100:.0f}% (2024) of the template's own "
+                "EV total, outside the physically meaningful +/-100% range -- "
+                "this alternative shape cannot explain the observed change "
+                "on its own and is not evaluated further."),
         }
 
-    p_star_ev = brentq(residual, 0.2, 3.0, xtol=1e-10)
-    ev_reduction_pct = ev_reduction_fraction(p_star_ev) * 100
+    frac_2026, p_2026_ev = _solve_year_scales_ev_shape(
+        ct_template, prod_template, ev_template, correction, net_2026, gross_2026)
+    frac_2024, p_2024_ev = _solve_year_scales_ev_shape(
+        ct_template, prod_template, ev_template, correction, net_2024, gross_2024)
 
     # Run the SAME 4-corner Shapley decomposition the baseline scenario uses
     # (adversarial review pass 3, finding 1: an earlier draft compared this
-    # scenario's raw production-ENERGY delta, prod_2026*(1-p), against the
-    # baseline's Shapley gross-IMPORT contribution -- different quantities,
-    # since most of a production change is absorbed by export/self-
-    # consumption rather than changing gross import 1:1. Both scenarios now
-    # go through _shapley_two_factor_vectors so their terms are directly
-    # comparable, in the same units, always.)
-    ct_shape_ev = ct_values - ev_hourly * ev_reduction_fraction(p_star_ev)
+    # scenario's raw production-ENERGY delta against the baseline's Shapley
+    # gross-IMPORT contribution -- different quantities, since most of a
+    # production change is absorbed by export/self-consumption rather than
+    # changing gross import 1:1. Both scenarios now go through
+    # _shapley_two_factor_vectors so their terms are directly comparable, in
+    # the same units, always.)
     sh_ev = _shapley_two_factor_vectors(
-        ct_values, prod_values, ct_shape_ev, p_star_ev * prod_values, correction)
+        ct_template - ev_template * frac_2026, p_2026_ev * prod_template,
+        ct_template - ev_template * frac_2024, p_2024_ev * prod_template,
+        correction)
     consumption_term_ev = round(sh_ev["consumption_term_kwh"], 1)
     production_term_ev = round(sh_ev["production_term_kwh"], 1)
     decomposed_sum_ev = round(consumption_term_ev + production_term_ev, 1)
+    production_scale_ratio_ev = p_2024_ev / p_2026_ev
 
     baseline_production_term = decomposition["production_term_kwh"]
     baseline_consumption_term = decomposition["consumption_term_kwh"]
@@ -793,18 +859,22 @@ def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
         "realizable": True,
         "assumption": (
             "Instead of decomposition_block's uniform-proportional scaling "
-            "of every hour, ALL of the 2024-to-2026 consumption growth is "
-            "assumed concentrated in EV-charging hours specifically (per-hour "
-            "EV kWh from behavior_rebuild.detect_sessions, reused read-only), "
-            "with every non-EV hour held at its exact 2026 level. The SAME "
+            "of every hour, each year's consumption difference from the "
+            "shared 32-day template is assumed concentrated in EV-charging "
+            "hours specifically (per-hour EV kWh from behavior_rebuild."
+            "detect_sessions, reused read-only, over the SAME template "
+            "window), with every non-EV hour held at the template's own "
+            "level. Both years are solved symmetrically, the same way "
+            "decomposition_block's own baseline scenario is. The SAME "
             "4-corner Shapley decomposition as the baseline scenario "
             "(_shapley_two_factor_vectors) is run against this alternative "
             "consumption shape, so both scenarios' terms are directly "
             "comparable gross-import contributions, not a production-energy "
             "delta compared against a gross-import contribution."),
-        "ev_hourly_total_2026_kwh": round(ev_hourly_total, 1),
-        "implied_ev_reduction_pct_of_2026_ev_kwh": round(ev_reduction_pct, 1),
-        "production_scale_backsolved_this_scenario": round(p_star_ev, 5),
+        "ev_template_total_kwh": round(ev_template_total, 1),
+        "implied_ev_reduction_pct_2026_vs_template": round(frac_2026 * 100, 1),
+        "implied_ev_reduction_pct_2024_vs_template": round(frac_2024 * 100, 1),
+        "production_scale_backsolved_this_scenario": round(production_scale_ratio_ev, 5),
         "production_scale_backsolved_baseline_scenario": decomposition["production_scale_2024_over_2026"],
         "consumption_term_kwh_this_scenario": consumption_term_ev,
         "production_term_kwh_this_scenario": production_term_ev,
@@ -980,7 +1050,7 @@ def degradation_block():
                 "vs true panel aging. The defensible statement is a bracket: "
                 "true degradation is somewhere between ~0%/yr (if the "
                 "observed swing is entirely soiling/weather-timing noise) "
-                f"and the naive ~{max(ols_pct_per_yr, cagr_pct_per_yr):.1f}"
+                f"and the naive ~{max(abs(ols_pct_per_yr), abs(cagr_pct_per_yr)):.1f}"
                 "%/yr (if none of it is). The existing report's 0.5-1.0%/yr "
                 "point falls inside that bracket but is NOT DETERMINED to be "
                 "more correct than any other point inside it from data in "

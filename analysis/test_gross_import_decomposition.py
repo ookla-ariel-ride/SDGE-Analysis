@@ -310,8 +310,9 @@ def case_identifiability_robustness_check_reports_an_alternative_shape_honestly(
         "this household (measured EV kWh comfortably exceeds the required "
         "consumption reduction) -- if this ever flips, the note explaining "
         "why must still be present")
-    assert robust["ev_hourly_total_2026_kwh"] > 0
-    assert 0.0 <= robust["implied_ev_reduction_pct_of_2026_ev_kwh"] <= 100.0
+    assert robust["ev_template_total_kwh"] > 0
+    assert -100.0 <= robust["implied_ev_reduction_pct_2026_vs_template"] <= 100.0
+    assert -100.0 <= robust["implied_ev_reduction_pct_2024_vs_template"] <= 100.0
     # This alternative scenario's own terms must sum to the SAME observed
     # gross-import change the baseline scenario does -- the back-solve
     # guarantees this by construction, and it is the property that makes

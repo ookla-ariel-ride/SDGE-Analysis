@@ -2656,109 +2656,123 @@ meter data at hourly resolution — the SAM-8760-based gross-production reconstr
 follow-up, issue #60, and which this script implements independently for a different purpose)
 feed `sum(max(0, load - production))`.
 
-**Two bugs found by review, in sequence, on the SAME calculation (adversarial review pass 1).**
-An earlier draft scaled the 2026 hourly series to 2024-ESTIMATED aggregate levels using scale
-factors derived from two INDEPENDENTLY estimated numbers (a weather/seasonal-rate production
-estimate and a bill-identity consumption estimate) and happened to land within 0.86% of the
-observed 496 kWh change — Codex's adversarial review caught that this "agreement" was not a
-real validation: the 29-day 2026 window's production estimate was being transferred directly
-onto the 2024 bill's 32-day total, a silent day-count mismatch (finding 1). Correcting the
-mismatch (a per-day rate ratio, transferred using the SAME 29 measured days rather than a
-different, differently-dated window — sampling different specific calendar days turned out to
-introduce MORE noise than the day-count fix removed, verified empirically before settling on
-the rate-ratio approach) pushed the two independent estimates far enough apart that the
-decomposition's error jumped to 23.8% — the original close agreement had been accidental,
-propped up by the day-count bug's own error happening to cancel other noise, not evidence the
-method was sound.
+**Four bugs, found by three separate review passes, on the SAME calculation.** This
+decomposition went through more review-driven correction than any other artifact this
+generator produces, worth tracing in full because each fix changed the METHOD, not just a
+number.
 
-**The real fix: stop relying on two independent estimates to coincidentally agree with a
-bill-exact fact.** Once production_scale is chosen, consumption_scale is not a second free
-estimate at all — it is PINNED by an exact accounting identity: `2024 gross consumption =
-2024's bill-exact net_kwh (a fact, not an estimate) + 2024's estimated production`.
-Production_scale is therefore the ONE genuinely free parameter in this model, and
-`decomposition_block()` now back-solves it (via `scipy.optimize.brentq`) to the exact value
-that makes the simulated 2024 corner match the 2024 bill total precisely, rather than hoping
-an independently-derived estimate happens to land there. A small, separately-verified
-`hourly_resolution_correction` factor (1.0206) is applied uniformly to every corner first,
-correcting for the SAM 8760 archive's native hourly resolution understating true gross import
-relative to the bill's 15-minute-resolved figure (confirmed at the real, zero-estimation c=p=1
-corner: the raw hourly simulation undershoots the actual 2026 bill by 2.02%) — a shared,
-disclosed bias removed before decomposing, not a per-corner fudge. With both corners now
-matching their bill totals by construction, the decomposed sum equals the observed change
-EXACTLY (0.0% error), and the AC4 load-bearing test in `test_gross_import_decomposition.py`
-asserts this precisely rather than merely under a tolerance.
+1. *Adversarial pass 1, finding 1 — day-count mismatch in the production estimate.* An
+   earlier draft scaled the 2026 hourly series to 2024-ESTIMATED aggregate levels using scale
+   factors derived from two INDEPENDENTLY estimated numbers (a weather/seasonal-rate
+   production estimate and a bill-identity consumption estimate) and happened to land within
+   0.86% of the observed 496 kWh change. Codex's adversarial review caught that this
+   "agreement" was not a real validation: the 29-day 2026 window's production estimate was
+   being transferred directly onto the 2024 bill's 32-day total, a silent day-count
+   mismatch. Correcting it (a per-day rate ratio, transferred using the SAME 29 measured
+   days rather than a different, differently-dated window — sampling different specific
+   calendar days turned out to introduce MORE noise than the day-count fix removed, verified
+   empirically before settling on the rate-ratio approach) pushed the two independent
+   estimates far enough apart that the decomposition's error jumped to 23.8% — the original
+   close agreement had been accidental, propped up by the bug's own error cancelling other
+   noise, not evidence the method was sound.
+2. *The resulting redesign — stop relying on two independent estimates to coincidentally
+   agree with a bill-exact fact.* Once production_scale is chosen, consumption_scale is not
+   a second free estimate at all — it is PINNED by an exact accounting identity: gross
+   consumption = bill-exact net_kwh (a fact, not an estimate) + estimated production.
+   Production_scale is therefore the ONE genuinely free parameter, back-solved (via
+   `scipy.optimize.brentq`) to the value that makes a simulated corner match its bill total
+   precisely, rather than hoping an independently-derived estimate happens to land there. A
+   small, separately-verified `hourly_resolution_correction` factor corrects for the SAM 8760
+   archive's native hourly resolution understating true gross import relative to the bill's
+   15-minute-resolved figure (confirmed at a real, zero-estimation corner) — a shared,
+   disclosed bias removed before decomposing, not a per-corner fudge.
+3. *Adversarial pass 2, finding 1 — the "0% error" this redesign produced was tautological,
+   not a validation.* With no 2024 hourly shape available, the accounting identity pins
+   production_scale UNIQUELY only under a CHOSEN shape assumption (2024 shares 2026's diurnal
+   shape, scaled uniformly) — a different, equally defensible assumption could back-solve to
+   a materially different split while satisfying the identical bill totals.
+   `identifiability_robustness_check()` tests this directly: it re-solves under ONE
+   materially different, still data-grounded shape assumption (consumption decline
+   concentrated in EV-charging hours, per `detect_sessions()`, rather than spread uniformly)
+   and compares the resulting split.
+4. *Adversarial pass 3, finding 1 — comparing incomparable units in that comparison.* An
+   earlier draft compared the EV-concentrated scenario's raw production-ENERGY delta against
+   the default scenario's Shapley gross-import CONTRIBUTION — different physical quantities,
+   since most of a production change is absorbed by export/self-consumption rather than
+   changing gross import 1:1. Fixed by generalizing `_shapley_two_factor` into
+   `_shapley_two_factor_vectors` (accepts full alternative hourly vectors, not just scalar
+   scale factors) so both scenarios go through the identical decomposition.
+5. *Codex review pass 1, finding 1 — the back-solve's own identity used the wrong production
+   total.* The accounting identity is only internally consistent if the production figure it
+   uses is the SAME series the hourly simulation actually scales (the meter-derived
+   `CT_load - GreenButton_import + GreenButton_export` series) — an earlier draft used the
+   SEPARATELY-measured PVOutput total instead, which differs by ~1.7% (a real,
+   already-documented cross-meter gap). Mixing the two meant the "exact" identity matched
+   gross import while implying a net import different from the bill-exact fact it was
+   supposed to be pinned to. Fixed by deriving the identity from the meter-derived series'
+   own sum; the PVOutput figure remains the separate, clearly-labeled weather/seasonal-rate
+   cross-check only. The identical bug existed in `identifiability_robustness_check()`'s own
+   accounting and was fixed the same way.
+6. *Codex review pass 2, finding 1 — the compression artifact was never actually removed, only
+   moved.* Fix 1 above corrected the WEATHER-BASED production ESTIMATE's day-count, but the
+   DECOMPOSITION's own hourly simulation still scaled the real 29-day 2026 vector to
+   represent a 32-day 2024 total — compressing 3 missing days' worth of energy into 29 real
+   hours, distorting the nonlinear `max(0, load - production)` overlap the whole method
+   depends on. No amount of scaling a 29-hour-count vector can correctly represent a 32-day
+   period; the vector is simply the wrong length. Fixed with a genuinely different
+   construction: `template_hourly_vectors()` builds a REAL 32-day 2026 window
+   (`TEMPLATE_START`..`TEMPLATE_END`, May 25-June 25 — matching `PERIOD_2024`'s own day count
+   and calendar span exactly, and falling entirely inside the archive's coverage), and
+   `_solve_year_scales()` now back-solves BOTH years symmetrically against this ONE shared,
+   correctly-sized template — 2026 is no longer special-cased as "the exact corner, scale
+   fixed at 1"; it gets its own back-solved production_scale relative to the template, just
+   like 2024 does. Every vector in every corner of the Shapley decomposition is now the SAME
+   768-hour (32-day) length, so no vector is ever asked to represent a day count it wasn't
+   measured at. `identifiability_robustness_check()`'s own EV-concentrated scenario was
+   rebuilt the same way (`_solve_year_scales_ev_shape()`, symmetric, template-based).
+7. *Codex review pass 2, finding 2 — a sign error in the degradation bracket.* `degradation_
+   block()`'s reconciliation bracket used `max(ols_pct_per_yr, cagr_pct_per_yr)` on two
+   NEGATIVE decline rates, silently reporting a "bracket" that ran from 0%/yr to a MORE
+   negative number and mathematically excluded the positive 0.5-1.0%/yr figure it claimed to
+   bound. Fixed by taking `max(abs(...), abs(...))` — the intended magnitude.
 
-**The independent weather-based estimate becomes a cross-check, not an input the accuracy
-depends on.** `production_block()`'s AC1 weather/seasonal-rate estimate is still computed and
-reported (`production_scale_estimated_from_weather` = 1.088), but the DECOMPOSITION now uses
-the bill-anchored, back-solved value (`production_scale_backsolved_from_bill` = 1.014)
-instead. The two differ by 6.8% — not a precise match, but the same order of magnitude and
-the same qualitative conclusion (both close to 1.0, i.e. little year-over-year production
-change), which is itself meaningful: it says the independent weather-normalization approach is
-in the right neighborhood for this window, given how sensitive a two-year, no-daily-data
-transfer estimate necessarily is (demonstrated directly by the two failed intermediate fixes
-above, whose estimates swung by many percentage points just from which specific days or which
-transfer method were used). This reframes what AC1's normalization is FOR here: not to drive
-the headline split (an exact accounting identity does that, once one parameter is pinned), but
-to independently sanity-check whether the pinned value is physically plausible.
+**The answer, on genuinely comparable, dimensionally consistent grounds.** Under the DEFAULT
+scenario (both years share the 32-day template's diurnal shape, each scaled uniformly to its
+own bill), `consumption_term_kwh` = +491.0 kWh; `production_term_kwh` = +5.0 kWh — both
+endpoints matching their bills exactly by construction, decomposed sum equal to the observed
+496 kWh change to the same precision (0.0% error), and the AC4 load-bearing test in
+`test_gross_import_decomposition.py` asserts this precisely rather than merely under a
+tolerance. The back-solved production ratio (`production_scale_2024_over_2026` = 1.024, i.e.
+2024 produced ~2.4% more than 2026 relative to the template) lands within 5.9% of the
+independent weather/seasonal-rate estimate (`production_scale_estimated_from_weather` = 1.088)
+— not a precise match, but the same order of magnitude and the same qualitative conclusion
+(little year-over-year production change), meaningful given how sensitive a two-year,
+no-daily-data transfer estimate necessarily is (demonstrated directly by the failed
+intermediate fixes in steps 1 and 6 above, whose estimates swung by many percentage points
+just from which specific days or which construction were used). This reframes what AC1's
+normalization is FOR here: not to drive the headline split (an exact accounting identity does
+that, once one parameter is pinned per year), but to independently sanity-check whether the
+pinned values are physically plausible.
 
-**A third bug, found by Codex review pass 1: the back-solve's own accounting identity used the
-wrong production total.** `_backsolve_production_scale()`'s identity (`cons_2024 = net_2024_
-exact + production_scale * prod_2026`) is only internally consistent if `prod_2026` is the SAME
-production quantity the hourly simulation actually scales (`prod_values`, the meter-derived
-`CT_load - GreenButton_import + GreenButton_export` series) — an earlier draft used the
-SEPARATELY-measured PVOutput total instead (`prod["period_2026_measured_pvoutput_kwh"]`), which
-differs from the meter-derived total by ~1.7% (a real, already-documented cross-meter gap, not
-noise). Mixing the two meant the "exact" 2024 identity matched gross import while implying a net
-import different from the bill-exact `net_2024_exact` it was supposed to be pinned to. Fixed by
-deriving the identity from `sum(prod_values)` — the same series `residual()` actually scales and
-sums — reserving the PVOutput figure for the separate, clearly-labeled weather/seasonal-rate
-cross-check only. The SAME bug existed in `identifiability_robustness_check()`'s own
-`ev_reduction_fraction()` and was fixed identically.
-
-**The answer, checked against a second, independent shape assumption (AC4, adversarial review
-passes 2 and 3).** Under the DEFAULT scenario (2024 shares 2026's diurnal shape exactly, scaled
-uniformly), `consumption_term_kwh` = +492.9 kWh; `production_term_kwh` = +3.1 kWh. Codex's
-adversarial review pass 2 correctly identified that this endpoint agreement is EXACT BY
-CONSTRUCTION (the back-solve guarantees it), not an independent validation, and that with no
-2024 hourly shape available, a DIFFERENT, equally defensible shape assumption could back-solve
-to a materially different split while satisfying the identical two bill totals — the model
-does not uniquely identify the physical split from the data available, only from the data
-PLUS a chosen shape assumption.
-
-`identifiability_robustness_check()` tests this directly: it re-solves under ONE materially
-different, still data-grounded shape assumption — ALL of the 2024-to-2026 consumption decline
-concentrated in EV-charging hours specifically (per-hour EV kWh from `detect_sessions()`,
-reused read-only, rather than spread uniformly across every hour) — and runs the SAME 4-corner
-Shapley decomposition (`_shapley_two_factor_vectors`, generalized from `_shapley_two_factor` to
-accept full alternative hourly vectors, not just scalar scale factors, so both scenarios are
-computed in identical units) against that alternative shape. **Pass 3 caught a second, distinct
-bug in this comparison**: an earlier draft compared the EV-concentrated scenario's raw
-production-ENERGY delta (`prod_2026 * (1 - p)`) against the default scenario's Shapley
-gross-import CONTRIBUTION — different physical quantities entirely, since most of a production
-change is absorbed by export/self-consumption rather than changing gross import 1:1. That bug
-manufactured a spurious "-135 kWh, ~14x divergence" that evaporates once both scenarios go
-through the same decomposition: recomputed correctly, the EV-concentrated scenario gives
-+472.9 kWh consumption against +23.1 kWh production — its own terms summing to the observed
-496 kWh change exactly, just like the default scenario's (a property
-`test_gross_import_decomposition.py`'s own test now asserts explicitly, per Codex's own
-recommendation, rather than only asserting the default scenario's sum).
-
-With both scenarios computed in the same units, the finding is reassuring rather than alarming:
-+3.1 kWh (uniform scaling) and +23.1 kWh (EV-concentrated) are both small relative to the
-~480-490 kWh consumption term either scenario reports, and the "consumption story, not a
-production story" conclusion is genuinely robust to this identifiability concern, not merely an
-artifact of one modeling choice. `test_gross_import_decomposition.py`'s
+Under the EV-concentrated alternative shape, the split is +469.7 kWh consumption against
++26.3 kWh production — its own terms summing to the observed 496 kWh change exactly, just like
+the default scenario's (a property `test_gross_import_decomposition.py`'s own test asserts
+explicitly, per Codex's own recommendation, rather than only asserting the default scenario's
+sum). With both scenarios computed in the same units and against the same correctly-sized
+template, the finding is reassuring: +5.0 kWh (uniform scaling) and +26.3 kWh (EV-concentrated)
+are both small relative to the ~470-490 kWh consumption term either scenario reports, and the
+"consumption story, not a production story" conclusion is genuinely robust to this
+identifiability concern, not merely an artifact of one modeling choice.
 `case_identifiability_robustness_check_reports_an_alternative_shape_honestly` pins this exact
-agreement (`conclusion_robust_to_this_alternative_shape` = `True`) so a future regeneration that
-silently reintroduces the units-mismatch bug — which would look like a dramatic, attention-
-grabbing "divergence" rather than the quieter, correct agreement — would be caught rather than
-mistaken for a more interesting finding.
+agreement (`conclusion_robust_to_this_alternative_shape` = `True`) so a future regeneration
+that silently reintroduces either the units-mismatch bug or the compression artifact — both of
+which produced dramatic, attention-grabbing "divergences" rather than this quieter, correct
+agreement — would be caught rather than mistaken for a more interesting finding.
 
 This does not contradict the 6-year degradation trend above — both scenarios' production terms
-sit comfortably inside (indeed below) the ~45-60 kWh expected from the naive 1.3-1.8%/yr
-degradation rate applied to this window, so a small, real per-year decline remains entirely
-consistent with what this short, two-years-apart, no-2024-daily-data comparison can resolve.
+sit comfortably inside the ~45-60 kWh expected from the naive 1.3-1.8%/yr degradation rate
+applied to this window, so a small, real per-year decline remains entirely consistent with
+what this short, two-years-apart, no-2024-daily-data comparison can resolve.
 
 **EV attribution (AC5) — real detection, honestly bounded, not assumed.** `ev_block()` runs
 `analysis/behavior_rebuild.py`'s `detect_sessions()` (imported read-only, never modified) on
