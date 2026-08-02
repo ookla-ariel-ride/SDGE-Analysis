@@ -2418,12 +2418,37 @@ fractional slopes (RTE: +0.552 vs +0.591 per unit RTE; soiling: +0.0568 vs +0.05
 loss fraction, both small and positive once correctly isolated — soiling's realistic
 1.3-6.6% loss range moves the battery marginal by well under 1%) — evidence that averaging
 the two into a single slope, applied to whichever pre/post-behavior blend a given Monte
-Carlo draw lands on, is a reasonable simplification rather than a fabricated shortcut. The
-nominal recomputation (`pre_nominal` $2,328.66, `mid_nominal` $2,238.36) is cross-checked
-against the committed `battery_dispatch_policies.json` (`pw3.greedy.save` $2,329,
-`post_behavior.mid.battery_marginal` $2,238) at build time — a disagreement over $1 raises
-`SystemExit`, the same fail-loud convention `deep_analyses.py`'s own `_base_save()` uses for
-a stale sibling artifact.
+Carlo draw lands on, is a reasonable simplification rather than a fabricated shortcut.
+Every calibration point runs `run_batt` to a converged, steady-annual-cycle SOC boundary
+(iterating with each pass's ending SOC fed forward as the next pass's starting SOC until
+they agree within 0.01 kWh) rather than the single one-time pass from a fixed `cap/2` start
+— the identical boundary-condition fix `tou_structure_stress.py`'s own `_steady_state_
+battery` applied for issue #14, reimplemented locally here (Codex review pass 1, finding 2).
+This nominal recomputation (`pre_nominal` $2,327.77, `mid_nominal` $2,239.16) legitimately
+differs from `battery_dispatch_policies.json`'s own committed figures (`pw3.greedy.save`
+$2,329, `post_behavior.mid.battery_marginal` $2,238) by ~$1-2 — the known, expected size of
+the steady-state-vs-single-pass difference, not a stale artifact — so the build-time
+cross-check instead recomputes a SEPARATE single-pass figure (`pre_nominal_single_pass`/
+`mid_nominal_single_pass`, using `battery_dispatch_policies.py`'s own uncorrected method
+exactly, which that module is out of this issue's scope to change) and compares THAT against
+the committed artifact within $1, raising `SystemExit` on disagreement — the same fail-loud
+convention `deep_analyses.py`'s own `_base_save()` uses for a stale sibling artifact. Both
+figures and the reasoning are recorded in the artifact's own `calibration.steady_state_vs_
+single_pass_note` field.
+
+**A known, documented limitation: calibrating against net export, not gross production
+(Codex review pass 1, finding 1).** The Green Button `Generation` column used above is net
+grid EXPORT, not gross PV production — self-consumed solar never crosses the meter and is
+invisible in this dataset. Scaling it directly by a loss/noise fraction (rather than
+reconstructing true gross production from an independent load source, reallocating the
+shortfall against export first and spilling into import only once exhausted) likely
+UNDERSTATES both the soiling and production-measurement-spread slopes somewhat, since true
+production during an exporting interval equals export plus whatever load was simultaneously
+self-consumed. Both slopes are already small (`soil_slope_used` ≈ +0.057 per unit loss
+fraction); a full fix needs the SAM 8760 gross-load series (`samA.csv`/`samB.csv`) to
+reconstruct production, resampled to the Green Button's 15-minute cadence, and is filed as a
+follow-up (issue #60) rather than attempted inside this issue's review-response loop. The
+artifact records this explicitly in `calibration.generation_proxy_limitation`.
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this
@@ -2493,8 +2518,8 @@ uncertainty in whether those distributions or their independence assumption are 
 correct, several of which are labeled "estimated" rather than "measured" above; the artifact
 records this distinction explicitly in a dedicated `epistemic_caveat` field, separate from
 the sampling-only `finite_sample_caveat`, and the report states the result as conditional on
-the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,399 at
-a 4% discount rate ($4,254 at 7%); 15-yr median $18,749 at 4% ($12,057 at 7%) — reported per
+the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,405 at
+a 4% discount rate ($4,254 at 7%); 15-yr median $18,753 at 4% ($12,059 at 7%) — reported per
 draw as the standard `-price + PV(savings)`, unlike the old artifact's own
 `npv10_at_4pct_median` (a `median(npv) - median(price)` convention, reproduced exactly but
 only inside `legacy_reproduction()` for special-case matching, not used for this

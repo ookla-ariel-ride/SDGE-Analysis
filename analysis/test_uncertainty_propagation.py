@@ -278,12 +278,28 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     dispatch = _committed("battery_dispatch_policies.json")
     committed_pre = float(dispatch["pw3"]["greedy"]["save"])
     committed_mid = float(dispatch["post_behavior"]["mid"]["battery_marginal"])
-    assert abs(calib["pre_nominal"] - committed_pre) < 1.0, (
-        f"recomputed pre-behavior marginal {calib['pre_nominal']:.2f} disagrees "
-        f"with committed pw3.greedy.save {committed_pre} by >$1")
-    assert abs(calib["mid_nominal"] - committed_mid) < 1.0, (
-        f"recomputed post-behavior marginal {calib['mid_nominal']:.2f} disagrees "
-        f"with committed post_behavior.mid.battery_marginal {committed_mid} by >$1")
+    # The tie-out against the committed artifact compares the SINGLE-PASS
+    # recomputation (matching battery_dispatch_policies.py's own method
+    # exactly), not the steady-state pre_nominal/mid_nominal used for
+    # calibration -- Codex review pass 1, finding 2 fixed the calibration to
+    # use a converged SOC boundary, which legitimately differs from the
+    # committed artifact's single-pass figure by ~$1-2 (see dispatch_
+    # calibration()'s _single_pass_marginal docstring).
+    assert abs(calib["pre_nominal_single_pass"] - committed_pre) < 1.0, (
+        f"recomputed pre-behavior marginal {calib['pre_nominal_single_pass']:.2f} "
+        f"disagrees with committed pw3.greedy.save {committed_pre} by >$1")
+    assert abs(calib["mid_nominal_single_pass"] - committed_mid) < 1.0, (
+        f"recomputed post-behavior marginal {calib['mid_nominal_single_pass']:.2f} "
+        f"disagrees with committed post_behavior.mid.battery_marginal {committed_mid} by >$1")
+    # The steady-state figures (used for calibration everywhere else) must
+    # stay close to the single-pass ones -- a boundary-condition fix should
+    # be a small correction, not a wholesale change to the marginal.
+    assert abs(calib["pre_nominal"] - calib["pre_nominal_single_pass"]) < 5.0, (
+        "steady-state pre_nominal diverges implausibly far from the single-pass "
+        "figure -- investigate before trusting the convergence")
+    assert abs(calib["mid_nominal"] - calib["mid_nominal_single_pass"]) < 5.0, (
+        "steady-state mid_nominal diverges implausibly far from the single-pass "
+        "figure -- investigate before trusting the convergence")
     # Higher round-trip efficiency must raise the marginal saving -- unambiguous:
     # less energy is lost per cycle, full stop.
     assert calib["rte_slope_mid"] > 0, "higher RTE must raise the battery marginal saving"
@@ -310,8 +326,9 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
         f"pre- ({calib['soil_slope_pre']}) and post-behavior "
         f"({calib['soil_slope_mid']}) soiling slopes disagree in sign -- not "
         "internally consistent enough to average into one slope")
-    return (f"real dispatch calibration matches the committed artifact within $1 "
-            f"(pre={calib['pre_nominal']:.2f}, mid={calib['mid_nominal']:.2f}) "
+    return (f"real dispatch calibration's single-pass figures match the committed "
+            f"artifact within $1 (steady-state pre={calib['pre_nominal']:.2f}, "
+            f"mid={calib['mid_nominal']:.2f}) "
             "with a correctly-signed RTE sensitivity and an internally-"
             f"consistent, small soiling sensitivity ({calib['soil_slope_mid']:+.4f})")
 

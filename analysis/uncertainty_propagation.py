@@ -213,6 +213,9 @@ FADE_LO, FADE_HI = 0.005, 0.025
 PRICE_LO, PRICE_HI = 12500.0, 17000.0
 RTE_LO, RTE_NOM, RTE_HI = 0.85, 0.90, 0.95
 EV_PERSIST_A, EV_PERSIST_B = 4.0, 1.0     # Beta(4,1) shape params
+CAP_KWH = 13.5
+STEADY_STATE_TOL_KWH = 0.01
+STEADY_STATE_MAX_ITERS = 8
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +265,29 @@ def dispatch_calibration():
     imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
     b_sh = bp.billed(d, imp_sh, gen0)
 
+    def _steady_state_run(imp_base, gen, eta):
+        """run_batt always starts at soc0=cap/2 and runs the year once -- a
+        one-time year-1 boundary condition, not a steady annual cycle, whose
+        drift can differ across calibration points (Codex review pass 1,
+        finding 2 -- the identical class of boundary-condition issue
+        tou_structure_stress.py's own `_steady_state_battery` fixed for issue
+        #14, reimplemented locally here rather than importing that module's
+        internal helper across a script boundary, matching this repo's own
+        established convention for this exact fix). Iterates run_batt,
+        feeding each pass's ending SOC forward as the next pass's starting
+        SOC, until they converge to within STEADY_STATE_TOL_KWH kWh."""
+        soc0 = CAP_KWH / 2
+        for _ in range(STEADY_STATE_MAX_ITERS):
+            i2, e2, served, thru = bp.run_batt(d, imp_base, gen, CAP_KWH, "greedy", soc0=soc0)
+            soc_final = soc0 + thru - served / eta
+            if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
+                return i2, e2
+            soc0 = soc_final
+        raise SystemExit(
+            "uncertainty_propagation: calibration SOC did not converge to a "
+            f"steady annual cycle within {STEADY_STATE_MAX_ITERS} iterations "
+            f"-- last diff {soc_final - soc0:.4f} kWh")
+
     def marginal(imp_base, rte=RTE_NOM, gen_scale=1.0):
         """Battery-alone marginal saving at a given RTE and generation scale.
         The no-battery baseline is recomputed AT THE SAME gen_scale (adversarial
@@ -272,15 +298,35 @@ def dispatch_calibration():
         must see the identical generation input."""
         gen = gen0 * gen_scale
         bill_base = bp.billed(d, imp_base, gen)
+        eta = np.sqrt(rte)
         orig_eta = bp.ETA
-        bp.ETA = np.sqrt(rte)
+        bp.ETA = eta
         try:
-            i2, e2, _, _ = bp.run_batt(d, imp_base, gen, 13.5, "greedy")
+            i2, e2 = _steady_state_run(imp_base, gen, eta)
             b2 = bp.billed(d, i2, e2)
         finally:
             bp.ETA = orig_eta
         return float(bill_base - b2)
 
+    def _single_pass_marginal(imp_base):
+        """The EXACT method battery_dispatch_policies.py's own top-level driver
+        uses for the committed pw3.greedy.save/post_behavior.mid.battery_
+        marginal figures (run_batt called with no soc0 -- a single pass from
+        cap/2, never converged to a steady annual cycle). Used ONLY for the
+        tie-out check below: comparing a steady-state-converged recomputation
+        against a single-pass committed figure would show a spurious ~$1
+        drift that is really just the two methods' known, small SOC-boundary
+        difference, not a stale artifact. battery_dispatch_policies.py itself
+        is out of this issue's scope to change, so the committed figures stay
+        single-pass; this script's OWN calibration (pre_nominal/mid_nominal
+        below) uses the steady-state method throughout for internal
+        consistency across every calibration point, matching Codex review
+        pass 1 finding 2's fix."""
+        i2, e2, _, _ = bp.run_batt(d, imp_base, gen0, CAP_KWH, "greedy")
+        return float(bp.billed(d, imp_base, gen0) - bp.billed(d, i2, e2))
+
+    pre_nominal_single_pass = _single_pass_marginal(imp0)
+    mid_nominal_single_pass = _single_pass_marginal(imp_sh)
     pre_nominal = marginal(imp0)
     mid_nominal = marginal(imp_sh)
 
@@ -319,6 +365,8 @@ def dispatch_calibration():
     return {
         "pre_nominal": pre_nominal,
         "mid_nominal": mid_nominal,
+        "pre_nominal_single_pass": pre_nominal_single_pass,
+        "mid_nominal_single_pass": mid_nominal_single_pass,
         "behavior_save": float(base - b_sh),
         "lossA": lossA,
         "lossB": lossB,
@@ -651,15 +699,23 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
 
     # cross-check against the committed dispatch artifact (same fail-loud
     # convention as deep_analyses.py's _base_save; this is a regression pin
-    # against a REGENERABLE committed artifact, not an invented value)
+    # against a REGENERABLE committed artifact, not an invented value). Uses
+    # the SINGLE-PASS recomputation, matching battery_dispatch_policies.py's
+    # own (out-of-scope-to-change) method exactly -- comparing the STEADY-
+    # STATE pre/mid (used everywhere else in this module, Codex review pass 1
+    # finding 2) against a single-pass committed figure would show a
+    # spurious ~$1 gap that is really just the two methods' known SOC-
+    # boundary difference, not a stale artifact.
     committed_dispatch = _committed("battery_dispatch_policies.json")
     committed_pre = float(committed_dispatch["pw3"]["greedy"]["save"])
     committed_mid = float(committed_dispatch["post_behavior"]["mid"]["battery_marginal"])
-    if abs(pre - committed_pre) > 1.0 or abs(mid - committed_mid) > 1.0:
+    pre_sp = calib["pre_nominal_single_pass"]
+    mid_sp = calib["mid_nominal_single_pass"]
+    if abs(pre_sp - committed_pre) > 1.0 or abs(mid_sp - committed_mid) > 1.0:
         raise SystemExit(
             "uncertainty_propagation: this run's recomputed pre/mid battery "
-            f"marginals (${pre:,.2f}/${mid:,.2f}) disagree with the committed "
-            f"battery_dispatch_policies.json (${committed_pre:,.2f}/"
+            f"marginals (${pre_sp:,.2f}/${mid_sp:,.2f}) disagree with the "
+            f"committed battery_dispatch_policies.json (${committed_pre:,.2f}/"
             f"${committed_mid:,.2f}) by more than $1 -- the committed dispatch "
             "artifact is stale relative to this run's usage.csv/household.yaml, "
             "or the calibration re-simulation has drifted from run_batt's own "
@@ -770,8 +826,37 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
         "calibration": {
             "pre_nominal": round(pre, 2),
             "mid_nominal": round(mid, 2),
+            "pre_nominal_single_pass": round(pre_sp, 2),
+            "mid_nominal_single_pass": round(mid_sp, 2),
+            "steady_state_vs_single_pass_note": (
+                "pre_nominal/mid_nominal use a steady-state-converged SOC "
+                "boundary (Codex review pass 1, finding 2); pre_nominal_"
+                "single_pass/mid_nominal_single_pass use the same single-pass "
+                "method as the committed battery_dispatch_policies.json (which "
+                "this issue does not modify) and are what the $1 tie-out below "
+                "checks against -- the ~$1-2 gap between the two conventions "
+                "is the known, expected size of this SOC-boundary effect, not "
+                "a discrepancy to resolve further."),
             "committed_pre": committed_pre,
             "committed_mid": committed_mid,
+            "generation_proxy_limitation": (
+                "The soiling and production-measurement-spread calibrations "
+                "scale the Green Button 'Generation' column (net grid EXPORT, "
+                "not gross PV production -- self-consumed solar never crosses "
+                "the meter and is invisible in this dataset) directly by the "
+                "loss/noise fraction, rather than reconstructing true gross "
+                "production from an independent load source and reallocating "
+                "the shortfall against export before spilling into import "
+                "(Codex review pass 1, finding 1). Because true production "
+                "during an exporting interval equals export plus whatever "
+                "load was simultaneously self-consumed, this likely "
+                "UNDERSTATES the magnitude of both slopes somewhat (a given "
+                "fractional production loss removes more energy than a "
+                "same-fraction cut to export alone would). The calibrated "
+                "slopes are already small (see soil_slope below); a full fix "
+                "needs the household's independent gross-load series (samA/"
+                "samB) to reconstruct production and is filed as a follow-up "
+                "rather than attempted here (issue #60)."),
             "rte_slope_mid": calib["rte_slope_mid"],
             "rte_slope_pre": calib["rte_slope_pre"],
             "rte_slope_used": rte_slope,
