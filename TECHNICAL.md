@@ -1570,9 +1570,10 @@ rates" travels with the label everywhere it is reported (this script's own
 stronger MODELED figure than one built from a rate table with no date-specific verification
 (contrast `index.html`'s whole-year, one-current-rate reading, labeled plain "modeled ·
 current rates, whole year") — every input here is the real bill-printed number for the
-actual date being priced. The dollar figures themselves ($74.07 total, $49.46/yr) are
-unchanged by this correction; only the label and the surrounding prose describing what kind
-of evidence they represent changed. Bundled comparison dollars are priced at SEGMENT level
+actual date being priced. The dollar figures themselves were unchanged by this labeling
+correction; only the label and the surrounding prose describing what kind of evidence they
+represent changed (a later, separate fix DID change the dollar figures — see MIXED-SIGN
+CELLS below). Bundled comparison dollars are priced at SEGMENT level
 (`data/bill_tou_detail.csv`'s own segment/segment_days columns),
 never at one representative date's rate applied to the whole period's kWh: a period whose
 printed comparison table itself changed mid-cycle (a rate revision landed inside a billing
@@ -1581,39 +1582,86 @@ two segments at two different $/kWh, and both are priced at their own rate. An e
 version of this script priced such periods at one representative date's rate for the whole
 period, overstating the bundled comparison by $1.63 across the four affected periods (Codex
 review, issue #11); segment-level pricing is numerically identical to the old approach for
-every period whose comparison table did not change mid-cycle (41 of the 50 priced rows).
-Each (period, season, TOU) cell is classified PRICED (billed as a net import, comparison
-present — 50 of 66 cells, the only ones the energy-only total sums), ABSENT (billed as a net
-export, no comparison printed — 13 cells; SDG&E prints nothing because a net-export bucket
-settles at the annual true-up under NEM 2.0, not because its bundled rate is zero), or
-CARRIED-EXPORT (billed as a net export in that specific period, yet a same-date bundled rate
-is still knowable because it was carried across the gap from flanking direct observations
-elsewhere in the corpus — `rates_history`'s "carried" tier — 3 cells, excluded from the
-priced total for the same NEM-2.0-defers-the-dollar reason as ABSENT, reported separately
-rather than folded in). **Result: CEA charged $2,453.69 against $2,379.62 of same-date
-bundled comparison over the 547 days on file — $74.07 more, $49.46/yr.**
+every period whose comparison table did not change mid-cycle (41 of the 49 priced rows).
+Each (period, season, TOU) cell is classified MIXED-SIGN first (see below), then, for the
+remaining cells, PRICED (billed as a net import, comparison present — 49 of 66 cells, the
+only ones the energy-only total sums), ABSENT (billed as a net export, no comparison
+printed — 11 cells; SDG&E prints nothing because a net-export bucket settles at the annual
+true-up under NEM 2.0, not because its bundled rate is zero), or CARRIED-EXPORT (billed as a
+net export in that specific period, yet a same-date bundled rate is still knowable because it
+was carried across the gap from flanking direct observations elsewhere in the corpus —
+`rates_history`'s "carried" tier — 3 cells, excluded from the priced total for the same
+NEM-2.0-defers-the-dollar reason as ABSENT, reported separately rather than folded in).
+**Result: CEA charged $2,450.78 against $2,375.75 of same-date bundled comparison over the
+547 days on file — $75.03 more, $50.10/yr.**
+
+**MIXED-SIGN CELLS (second Codex review, issue #11, confirmed broader than the single cell
+first flagged).** A (period, season, TOU) cell's kWh in `data/cca_generation_rates.csv` is
+a PERIOD-TOTAL net figure, but the underlying printed generation-comparison segments in
+`data/bill_tou_detail.csv` can carry BOTH signs within that same period — part net-exported
+(SDG&E prints its $0.00000/deferred-to-the-true-up sentinel), part net-imported (a real
+per-kWh comparison rate) — even though the two sub-stretches net down to one signed total.
+An earlier version of the segment-level pricing above summed a cell's segments' kWh and
+dollars together whenever the PERIOD-TOTAL happened to be positive, without checking whether
+the segments themselves agreed in sign. Where they did not, the resulting per-cell
+"effective rate" (`bundled_comparison_usd` / summed kWh) blended a real, same-date printed
+rate together with a $0 sentinel for energy no bundled comparison exists for at all — a rate
+no tariff SDG&E ever printed. Checked directly against every generation-section row in
+`data/bill_tou_detail.csv` (not special-cased to the one cell a review first flagged):
+exactly **3** (period, season, TOU) cells in the whole 66-cell CCA corpus carry mixed-sign
+segments — only one of which (the smallest kWh swing) had actually been reaching the old
+priced branch; the other two were already excluded, but mislabeled ("genuine data absence")
+when a real comparison rate in fact exists for part of their period. All 3 are now caught up
+front, before any disposition decision, regardless of which way the period's own net kWh
+falls (the corpus already has one of each: 2 net-export aggregates and 1 net-import
+aggregate). **Resolution chosen: exclude the whole mixed-sign cell**, never split or prorate
+its real CCA-side dollar between the two segments. The alternative — price only the
+net-import segment(s) and treat the export segment(s) like a whole-cell export — was
+considered and rejected: CEA's own bill only prices the WHOLE cell's net kWh (no bill line
+prices one sub-segment on its own), so recovering a segment-level CCA dollar would require
+assuming the flat charged rate applies exactly per sub-segment kWh, which does not reconcile
+to the cent the way every other figure in this script does (CEA's own per-period dollar
+already carries a documented half-kWh unrounding tolerance that a synthetic split would
+inherit and compound). Excluding the whole cell keeps every priced dollar exactly
+bill-reconciled on both sides, at the cost of some information (each excluded row still
+discloses its own segments/import_segment_kwh/export_segment_kwh for transparency, just not
+summed into any headline). **Result: 3 cells excluded, CEA's own real whole-cell charge for
+them totals −$36.28** (`direction_a.excluded_mixed_sign_cca_usd` /
+`.excluded_mixed_sign_note`, `.excluded_mixed_sign_detail`) — a separate disposition from the
+net-export bucket below, since a mixed-sign cell is not necessarily billed as a net export
+overall (one of the 3 nets to a net IMPORT for its period). Direction B
+(`bundled_generation_cells()`) is checked for the same theoretical risk and found
+structurally immune today: it never derives an effective rate by dividing a summed dollar by
+a summed kWh, so a mixed-sign bundled cell would not reproduce this defect — but it still
+fails closed if one is ever found (0 of the 7 bundled-era periods' cells mix signs today),
+rather than assuming that reasoning holds forever.
 
 **This figure is narrower than "was switching to the CCA a win" — it prices only the
-net-import cells.** The 16 excluded (13 ABSENT + 3 CARRIED-EXPORT) cells carry a real CEA
-credit of −$378.06 on the household's own bills — over 5× the size of the $74.07 priced-cell
-delta — but there is no same-date SDG&E bundled counterfactual to compare it against: NEM 2.0
-defers a net-export bucket's dollar value to the annual true-up, so SDG&E's bill prints no
-bundled comparison for these cells at all (a genuine absence, not a bundled rate of zero —
-the same Settlement-is-not-a-price distinction `bill_decomposition.py`'s `Settlement` type
-enforces). What the bundled side would have credited for that exported energy is **not
-determined** here: reconstructing it would mean rebuilding the whole NEM annual true-up (which
-nets exports against imports across the compensation year at rates this repo has not
-extracted for the export side), a materially larger undertaking, properly scoped as its own
-follow-up rather than estimated. `data/cca_bundled_counterfactual.json` carries this live —
-`direction_a.excluded_net_export_cca_credit_usd` and `.excluded_net_export_note`, computed
-from the same committed CSV as every other Direction-A figure, never hardcoded. Direction B
-carries the analogous, MODELED disclosure for its own excluded net-export cells (10 cells, a
-hypothetical −$472.80 CEA-side credit, smaller in evidentiary weight since CEA never served
-this household in 2024) in `direction_b.excluded_net_export_hypothetical_cca_credit_usd`. The
-practical consequence: the whole-household answer to whether switching to the CCA was a win
-is **not fully determined** by this analysis — the $49.46/yr figure is the real, small answer
-for the net-import cells, and `recommendation.text` states this scope explicitly rather than
-letting the priced-cell figure stand in for a conclusion it does not, on its own, support.
+net-import, single-sign cells.** The 14 excluded (11 ABSENT + 3 CARRIED-EXPORT) cells carry
+a real CEA credit of −$338.87 on the household's own bills — over 4.5× the size of the
+$75.03 priced-cell delta — but there is no same-date SDG&E bundled counterfactual to compare
+it against: NEM 2.0 defers a net-export bucket's dollar value to the annual true-up, so
+SDG&E's bill prints no bundled comparison for these cells at all (a genuine absence, not a
+bundled rate of zero — the same Settlement-is-not-a-price distinction
+`bill_decomposition.py`'s `Settlement` type enforces). A further 3 MIXED-SIGN cells (−$36.28)
+are excluded for the different reason described above. What the bundled side would have
+credited for either excluded category is **not determined** here: reconstructing the
+net-export side would mean rebuilding the whole NEM annual true-up (which nets exports
+against imports across the compensation year at rates this repo has not extracted for the
+export side), and the mixed-sign side is not knowable from any single bill line at all — both
+are a materially larger undertaking, properly scoped as their own follow-up rather than
+estimated. `data/cca_bundled_counterfactual.json` carries both live —
+`direction_a.excluded_net_export_cca_credit_usd` / `.excluded_net_export_note` and
+`.excluded_mixed_sign_cca_usd` / `.excluded_mixed_sign_note`, computed from the same
+committed CSV as every other Direction-A figure, never hardcoded. Direction B carries the
+analogous, MODELED disclosure for its own excluded net-export cells (10 cells, a hypothetical
+−$472.80 CEA-side credit, smaller in evidentiary weight since CEA never served this household
+in 2024) in `direction_b.excluded_net_export_hypothetical_cca_credit_usd`. The practical
+consequence: the whole-household answer to whether switching to the CCA was a win is **not
+fully determined** by this analysis — the $50.10/yr figure is the real, small answer for the
+net-import, single-sign cells, and `recommendation.text` states this scope explicitly rather
+than letting the priced-cell figure stand in for a conclusion it does not, on its own,
+support.
 
 **Direction B — the 7 bundled periods repriced at CCA rates (MODELED).** For each
 bundled-era period's actual generation kWh (summed from `data/bill_tou_detail.csv`'s
@@ -1646,30 +1694,34 @@ zero by construction — §3.20 found CEA's charged rate never moved, so 100% of
 "what CEA would charge now vs then" is a bundled-side vintage phenomenon. Two cells
 (summer/off_peak, winter/off_peak) have no bundled-charged observation anywhere in the
 bundled era (this household's off-peak buckets were net-export whenever billed bundled),
-so `g0` does not exist for them; their 6 (of 50) Direction-A rows still count fully toward
+so `g0` does not exist for them; their 5 (of 49) Direction-A rows still count fully toward
 Direction A's headline (which needs no `g0`) and are simply excluded from, and disclosed
-as excluded from, the provider/vintage split.
+as excluded from, the provider/vintage split. (One of those two cells, winter/off_peak, is
+also where all 3 of the MIXED-SIGN cells above live — the mixed-sign one that used to reach
+the priced branch was ALREADY one of these no-`g0` rows before this fix, so removing it from
+`priced_detail` shrinks this count from 6 (of 50) to 5 (of 49) without changing
+`vintage_effect_usd` at all.)
 
-**The two directions disagree by 174.4%; rate vintage is a real, large, likely major
+**The two directions disagree by 170.9%; rate vintage is a real, large, likely major
 contributor, but the gap is not proven to be fully attributable to vintage alone (Codex
 review, issue #11, defect 1 — an earlier version of this text overclaimed the causal
-attribution as a flat, unqualified fact).** Direction A ($49.46/yr) and Direction B
+attribution as a flat, unqualified fact).** Direction A ($50.10/yr) and Direction B
 ($135.70/yr) are not two readings of the same question. Direction A prices CEA against the
 same-date bundled rate, so the vintage drift above nets out of it by construction. Direction
 B has no 2024 CCA rate to anchor to, so it necessarily compares 2024's cheaper bundled rate
 against CEA's rate as observed in 2025–2026 — exactly the "one rate vintage per projection"
 trap CLAUDE.md §9 names elsewhere in this repo. **What IS known, verified**: the
 provider/vintage split above measures the vintage effect at $177.09 over the Direction-A
-sample, more than double the $74.05–74.07 provider effect over the same sample, and CEA's
+sample, more than double the $74.05–75.03 provider effect over the same sample, and CEA's
 own charged rate never moved once across the whole corpus while SDG&E's bundled comparison
 rate rose substantially — real, bill-printed facts, and the most plausible dominant driver
-of the 174.4% gap. **What is NOT known**: the $177.09 figure is computed entirely from
+of the 170.9% gap. **What is NOT known**: the $177.09 figure is computed entirely from
 Direction A's own 547-day sample, its own weights, and its own set of priced cells — there
 is no mathematical identity tying it to Direction B's independently-computed $135.70 result.
 Direction A and Direction B also differ in period count (19 vs 7), seasonal composition (two
 summers and two winters vs one summer and a partial winter missing Jan–Apr), usage weights,
 and a partly different set of included cells — none of this has been separately decomposed
-from the vintage effect, so it is not ruled out as an additional contributor to the 174.4%
+from the vintage effect, so it is not ruled out as an additional contributor to the 170.9%
 gap. A rigorous common-weight, common-cell decomposition across Direction A and Direction B
 has not been performed; this reconciliation names the vintage effect as verified and large,
 not as a complete accounting of the gap. This does not weaken the recommendation: **Direction
@@ -1677,7 +1729,7 @@ A is the recommendation basis** (modeled · same-date bill rates, 547 days spann
 summers and two winters, vs Direction B's 216 days of one summer and a partial winter) on
 its own terms — its same-date comparison avoids vintage drift by construction, while
 Direction B has no 2024 CCA rate to anchor to and necessarily mixes multiple effects — and
-that reasoning holds whether or not the full 174.4% gap is ever decomposed. Direction B's
+that reasoning holds whether or not the full 170.9% gap is ever decomposed. Direction B's
 larger figure is not averaged with Direction A's.
 
 **Reconciliation with the existing single-statement figures (`bill_decomposition.py`,
@@ -1699,7 +1751,7 @@ priced periods have a net-negative provider delta (CEA cheaper), ranging from �
 corpus, consistent with the vintage-effect finding above (the bundled comparison rate has
 risen over the span while CEA's rate held flat) but not confined to a single outlier date.
 Averaged across all 19 periods, including these 7, CEA cost more than bundled would have —
-the full 547-day average is the $49.46/yr priced-cell headline above.
+the full 547-day average is the $50.10/yr priced-cell headline above.
 The two single-statement figures in `bill_decomposition.py`/§10 remain correct for that one
 statement; they are not superseded, only placed in the context of the fuller sample.
 
@@ -1745,12 +1797,12 @@ under `NEEDS_PRIVATE_ARCHIVE` (the same dependency shape as `irreducible_bill.py
 `data/cca_generation_rates.csv` and `data/bill_tou_detail.csv`, which themselves derive
 from the bill PDF corpus), so the §9 byte-for-byte gate covers it locally.
 
-**Tests** `analysis/test_cca_bundled_counterfactual.py`, 27 cases, split the same way:
-cases exercising the numeric core (the classification rules, the provider/vintage
-identity, the reconciliation arithmetic) run unconditionally against committed CSV/engine
-data; the cases needing the two real anchor PDFs (the PCIA and franchise-fee citations)
-gate on `_require_archive()` and SKIP with the reason named when this checkout lacks
-`private/`.
+**Tests** `analysis/test_cca_bundled_counterfactual.py`, 39 cases, split the same way:
+cases exercising the numeric core (the classification rules, the mixed-sign-cell
+regressions, the provider/vintage identity, the reconciliation arithmetic) run
+unconditionally against committed CSV/engine data; the cases needing the two real anchor
+PDFs (the PCIA and franchise-fee citations) gate on `_require_archive()` and SKIP with the
+reason named when this checkout lacks `private/`.
 
 ---
 

@@ -41,8 +41,9 @@ pills, TECHNICAL.md), because it is a materially stronger MODELED figure than on
 rate table with no date-specific verification (contrast index.html's whole-year,
 one-current-rate reading, labeled plain "modeled -- current rates, whole year"): every input
 here is the real bill-printed number for the actual date being priced, nothing is scaled or
-extrapolated across dates. What did NOT change: the dollar figures themselves ($74.07 total,
-$49.46/yr) -- this is a labeling correction, not a computation change.
+extrapolated across dates. This was purely a labeling correction, not a computation change --
+the dollar figures at the time were untouched by it (a separate, later fix DID change the
+computation; see MIXED-SIGN CELLS below).
 
 A priced cell is repriced at SEGMENT level (data/bill_tou_detail.csv's own segment/segment_days
 columns), never at one representative date's rate applied to the whole period: a period whose
@@ -54,23 +55,78 @@ overstated the bundled comparison by $1.63 across four affected periods).
 
 THIS FIGURE'S SCOPE IS NARROWER THAN "was switching to the CCA a win" -- it is the answer for
 the net-import cells only. A materially larger, genuinely unpriceable net-export effect sits
-outside it: 16 (period, cell) rows are billed as net exports and carry a real CEA credit of
--$378.06 (over 5x the priced-cell delta), but SDG&E's bill prints no same-date bundled
-comparison for a net-export bucket at all -- not a zero, a genuine absence, because NEM 2.0
-defers that dollar to the annual true-up (see direction_a's own excluded_net_export_cca_credit_usd
-/ excluded_net_export_note in the committed artifact, and recommendation.text). Reconstructing
-the bundled-side counterfactual for that exported energy would mean rebuilding the whole NEM
-annual true-up -- a materially larger undertaking, properly scoped as its own follow-up, not
-attempted here (CLAUDE.md section 0: not determined, not guessed).
+outside it: 14 (period, cell) rows are billed as net exports and carry a real CEA credit of
+several hundred dollars (over 4.5x the priced-cell delta), but SDG&E's bill prints no same-date
+bundled comparison for a net-export bucket at all -- not a zero, a genuine absence, because
+NEM 2.0 defers that dollar to the annual true-up (see direction_a's own
+excluded_net_export_cca_credit_usd / excluded_net_export_note in the committed artifact, and
+recommendation.text -- read the committed JSON or index.html for the current dollar figure
+rather than this docstring, so a future regeneration cannot leave a stale number here).
+Reconstructing the bundled-side counterfactual for that exported energy would mean rebuilding
+the whole NEM annual true-up -- a materially larger undertaking, properly scoped as its own
+follow-up, not attempted here (CLAUDE.md section 0: not determined, not guessed).
 
-Three-way disposition of each (period, season, TOU) cell, decided ONLY by whether it was
-billed as a net import (kWh > 0) and whether a same-date bundled figure exists, exactly
-mirroring provider_effect_whole_period()'s own net-import/net-export split (adapted here
-across all 19 periods rather than one):
-  PRICED (kWh > 0, comparison present)   the only cells "energy-only" sums. If a net-import
-                                          cell ever lacked a comparison this raises -- see
-                                          bill_decomposition's own "no same-date SDG&E bundled
-                                          comparison" refusal -- but empirically none does.
+MIXED-SIGN CELLS (second Codex review, issue #11, confirmed broader than the single cell first
+cited). A (period, season, TOU) cell's kWh in cca_generation_rates.csv is a PERIOD-TOTAL net
+figure, but the underlying printed generation-comparison segments in bill_tou_detail.csv can
+carry BOTH signs within that same period -- part of the period net-exported (SDG&E prints its
+$0.00000/deferred-to-the-true-up sentinel), part net-imported (SDG&E prints a real per-kWh
+comparison rate) -- even though the two sub-stretches net down to one signed total. An earlier
+version of this script's segment-level pricing (added to fix the mid-cycle-rate-change defect
+described above) summed a cell's segments' kWh and dollars together to price it whenever the
+PERIOD-TOTAL happened to be positive, without checking whether the segments themselves agreed
+in sign. Where they did not, the resulting per-cell "effective rate" (bundled_comparison_usd /
+bundled_comparison_kwh) blended a real, same-date printed rate together with a $0 sentinel for
+energy no bundled comparison exists for at all -- a rate no tariff SDG&E ever printed. Checked
+directly against every generation-section row in data/bill_tou_detail.csv (not assumed, not
+special-cased to the one cell a review first flagged): exactly 3 (period, season, TOU) cells in
+the whole 66-cell CCA corpus carry mixed-sign segments, only one of which (the smallest swing)
+had actually been reaching the old priced branch -- the other two were already routed to
+excluded-absent by the (unrelated) representative-date existence check, but for the wrong
+reason (misleadingly labeled a "genuine data absence" when a real comparison rate does exist
+for part of the period). All 3 are now detected up front, before ANY disposition decision, by
+checking the raw segments for mixed sign (see `_mixed_sign()`) regardless of which way the
+period's own net kWh happens to fall.
+
+RESOLUTION CHOSEN: exclude the WHOLE mixed-sign cell from Direction A's priced total (never
+split or prorate its real CCA-side dollar between the two segments). The alternative -- price
+only the net-import segment(s) and treat the net-export segment(s) like a whole-cell export --
+was considered and rejected: CEA's own bill only prices the WHOLE cell's net kWh (no bill line
+ever prices one sub-segment of a cell on its own), so recovering a segment-level CCA dollar
+would require ASSUMING the flat charged rate applies exactly per sub-segment kWh -- which is
+directionally reasonable (the flat-rate finding in data/cca_generation_rates.csv holds across
+the whole corpus) but does not reconcile exactly to the cent the way every other figure in this
+script does, because CEA's own per-period dollar already carries a documented half-kWh
+unrounding tolerance (see cca_period_cells()'s own note) that a synthetic per-segment split
+would silently inherit and compound. Excluding the whole cell keeps every dollar in the priced
+total exactly bill-reconciled on both sides, at the cost of a small amount of information (the
+real-priced sub-segment's own bundled-comparison value is disclosed on each excluded row for
+transparency -- see import_segment_kwh / export_segment_kwh / segments in
+excluded_mixed_sign_detail -- but is not summed into any headline). These cells are their own
+disposition, separate from the whole-cell-export bucket above: unlike that bucket, a mixed-sign
+cell is not necessarily billed as a net export overall (one of the 3 nets to a net IMPORT for
+its period), so folding it into excluded_net_export_cca_credit_usd would misrepresent it as the
+same phenomenon; see excluded_mixed_sign_cca_usd / excluded_mixed_sign_note instead.
+
+Direction B (bundled_generation_cells(), below) is checked for the same theoretical risk and is
+structurally immune today: it never derives an effective rate by dividing a summed dollar by a
+summed kWh (an export segment's real $0 actual charge is genuinely correct there, not a
+same-date-comparison sentinel), so a mixed-sign bundled cell would not reproduce this defect --
+but it still fails closed if one is ever found, rather than assuming that reasoning forever (see
+its own docstring).
+
+Four-way disposition of each (period, season, TOU) cell for Direction A, decided by (1) whether
+its printed generation-comparison segments carry mixed signs, checked first and unconditionally,
+then (2) whether it was billed as a net import (kWh > 0) and (3) whether a same-date bundled
+figure exists -- (2) and (3) mirror provider_effect_whole_period()'s own net-import/net-export
+split (adapted here across all 19 periods rather than one):
+  MIXED-SIGN (segments carry both signs)  excluded regardless of the period-total's own sign;
+                                          see MIXED-SIGN CELLS above.
+  PRICED (kWh > 0, comparison present, single-sign segments)   the only cells "energy-only"
+                                          sums. If a net-import cell ever lacked a comparison
+                                          this raises -- see bill_decomposition's own "no
+                                          same-date SDG&E bundled comparison" refusal -- but
+                                          empirically none does.
   ABSENT (kWh <= 0, comparison absent)   SDG&E's bundled table prints nothing because a
                                           net-export bucket settles at the annual true-up
                                           under NEM 2.0, not because its bundled rate is zero
@@ -133,16 +189,18 @@ never moved, so 100% of any drift in "what CEA would charge now vs then" is a bu
 winter/off_peak -- have NO bundled-charged observation anywhere in the entire bundled era
 (genuinely absent, not a parser gap: this household's off-peak buckets were net-export
 whenever they were billed as bundled), so g0 does not exist for them; the affected
-Direction-A rows (6 of the 50 priced rows) still count fully toward Direction A's own
-headline (which needs no g0), they are simply excluded from the vintage/provider split and
-disclosed as such.
+Direction-A rows (a handful of the priced rows -- see the committed artifact's
+provider_vs_vintage_split.cells_with_no_vintage_baseline for the current count) still count
+fully toward Direction A's own headline (which needs no g0), they are simply excluded from the
+vintage/provider split and disclosed as such.
 
 AC6 -- THE TWO DIRECTIONS DISAGREE BY WELL OVER 20%, AND THE REASON IS NAMED, NOT AVERAGED
 AWAY. Direction A (modeled -- same-date bill rates, 547 days, spans two summers and two
 winters) finds the CCA
-premium at about $49/yr on the net-import cells it can price. Direction B (modeled, 216 days,
+premium at roughly $50/yr on the net-import cells it can price. Direction B (modeled, 216 days,
 May-Dec 2024 only -- one summer and one partial winter, no Jan-Apr) finds about $136/yr,
-roughly 2.7x larger. The provider/vintage split above supplies the mechanism: SDG&E's own
+roughly 2.7x larger (see the committed artifact for the current exact figures on both sides).
+The provider/vintage split above supplies the mechanism: SDG&E's own
 bundled generation rate ROSE substantially
 across the observed CCA era (the printed comparison table documents summer on-peak alone
 moving 0.38826 -> 0.40592 -> 0.47019 -- data/rate_vintages.csv), while CEA's charged rate did
@@ -420,6 +478,21 @@ def _generation_comparison_segments():
     return out
 
 
+def _mixed_sign(segs):
+    """True iff `segs` (a list of (kwh, rate) pairs for one (period, season, TOU) cell)
+    carries at least one net-IMPORT sub-segment (kwh > 0) AND at least one net-EXPORT
+    sub-segment (kwh <= 0) within the same cell -- e.g. a mid-cycle rate change that also
+    straddles a within-period export/import flip. See the module docstring's MIXED-SIGN
+    CELLS section for why this must be checked before a cell's segments are ever summed
+    into one dollar figure or one effective rate: an export sub-segment prints no real
+    comparison rate (SDG&E defers it to the NEM annual true-up, sentinel-value $0.00000),
+    so summing it alongside a real import sub-segment blends a genuine non-price into a
+    real one."""
+    if segs is None:
+        return False
+    return any(kwh > 0 for kwh, _rate in segs) and any(kwh <= 0 for kwh, _rate in segs)
+
+
 # ---------------------------------------------------------------------------
 # Direction A -- 19 CCA periods repriced at SDG&E's same-date bundled comparison
 # (MODELED -- same-date bill rates; see the module docstring's CONFIDENCE LABEL section)
@@ -432,19 +505,57 @@ def direction_a(cca_cells):
         "data/cca_generation_rates.csv", "CCA")
 
     gen_segments = _generation_comparison_segments()
-    priced, absent, carried_export = [], [], []
+    priced, absent, carried_export, mixed_sign = [], [], [], []
     for p in cca_periods:
         key = (p["statement_date"], p["period"])
         for (season, tou), c in cca_cells.get(key, {}).items():
+            row = {"statement_date": p["statement_date"], "period": p["period"],
+                   "season": season, "tou_period": tou, "kwh": c["kwh"],
+                   "cca_rate": c["rate"], "cca_usd": c["usd"]}
+
+            # Second Codex review (issue #11): checked BEFORE the kWh>0 disposition below,
+            # against the raw segments, regardless of which way this cell's PERIOD-TOTAL
+            # kWh nets -- a mixed-sign cell must never reach the summing logic further down,
+            # whichever aggregate sign cca_generation_rates.csv happens to report for it (see
+            # the module docstring's MIXED-SIGN CELLS section: this catches all 3 of the
+            # corpus's mixed cells, not just the one whose aggregate happens to be positive).
+            segs = gen_segments.get((p["period"], season, tou))
+            if _mixed_sign(segs):
+                seg_total = _r(sum(kwh for kwh, _rate in segs), 1)
+                if abs(seg_total - c["kwh"]) > 1.0:
+                    raise SystemExit(
+                        f"{key} {season}/{tou}: bill_tou_detail.csv's generation-section "
+                        f"kWh ({seg_total}) does not reconcile to cca_generation_rates.csv's "
+                        f"period-total kWh ({c['kwh']}) for this mixed-sign cell -- refusing "
+                        "to classify it against a kWh figure that does not match the CCA "
+                        "charge's own kWh base")
+                import_kwh = _r(sum(kwh for kwh, _rate in segs if kwh > 0), 1)
+                export_kwh = _r(sum(kwh for kwh, _rate in segs if kwh <= 0), 1)
+                row["segments"] = [{"kwh": _r(kwh, 1), "rate": rate} for kwh, rate in segs]
+                row["import_segment_kwh"] = import_kwh
+                row["export_segment_kwh"] = export_kwh
+                row["why_excluded"] = (
+                    "this cell's printed generation-comparison segments carry BOTH signs "
+                    f"within the same billing period ({import_kwh} kWh net-imported at a "
+                    f"real printed rate, {export_kwh} kWh net-exported at SDG&E's "
+                    "$0.00000/deferred-to-the-annual-true-up sentinel) even though the "
+                    f"period's own net kWh for this cell nets those two sub-stretches down "
+                    f"to {c['kwh']}. Pricing the whole cell as one blended figure would "
+                    "average a real per-kWh rate together with a genuine non-price into an "
+                    "effective rate no tariff ever printed. Excluded from the priced total; "
+                    "CEA's own real, whole-cell charge for this cell is disclosed as-is "
+                    "(never split or prorated across the two segments -- no bill line "
+                    "prices either segment on its own) in "
+                    "excluded_mixed_sign_cca_usd / excluded_mixed_sign_note")
+                mixed_sign.append(row)
+                continue
+
             d = _rep_date(season, p["start"], p["end"])
             try:
                 s1 = RH.rates_on(d).generation_comparison_table(season, tou)
                 have_s1 = True
             except SystemExit:
                 s1, have_s1 = None, False
-            row = {"statement_date": p["statement_date"], "period": p["period"],
-                   "season": season, "tou_period": tou, "kwh": c["kwh"],
-                   "cca_rate": c["rate"], "cca_usd": c["usd"]}
             if c["kwh"] > 0:
                 if not have_s1:
                     raise SystemExit(
@@ -459,8 +570,10 @@ def direction_a(cca_cells):
                 # segment's own kWh at its own segment's rate instead -- for a period whose
                 # comparison table never changed mid-cycle (nearly all of them) this is
                 # numerically IDENTICAL to the old one-rate approach, since there is only one
-                # segment to sum.
-                segs = gen_segments.get((p["period"], season, tou))
+                # segment to sum. `segs` was already fetched above (and confirmed NOT
+                # mixed-sign) by the mixed-sign guard before this branch runs, so every
+                # segment reaching this sum agrees in sign -- the second Codex review's
+                # defect (blending an unpriced export segment into this sum) cannot occur here.
                 if not segs:
                     raise SystemExit(
                         f"{key} {season}/{tou}: billed as a net import but "
@@ -541,6 +654,32 @@ def direction_a(cca_cells):
         "answer to whether switching to the CCA was a win for this household -- it is the "
         "answer for the subset of energy this analysis CAN price; see recommendation.text.")
 
+    # Second Codex review (issue #11): a DIFFERENT excluded category from the net-export
+    # bucket above -- a mixed-sign cell is not itself billed as a net export (case 3 below
+    # nets to a positive, net-IMPORT kWh for its period), so folding it into
+    # excluded_net_export_cca_credit_usd would misrepresent it as the same phenomenon.
+    # Disclosed in its own bucket instead, one real (never split/prorated) CCA dollar per
+    # cell, exactly the way the net-export bucket discloses its own real CCA dollar.
+    excluded_mixed_sign_cca_usd = _c(sum(r["cca_usd"] for r in mixed_sign))
+    excluded_mixed_sign_note = (
+        f"these {len(mixed_sign)} (period, season, TOU) cells carry BOTH a net-import and a "
+        "net-export sub-segment within the SAME billing period (see each row's own "
+        "segments/import_segment_kwh/export_segment_kwh) -- a materially different, "
+        "narrower phenomenon than the whole-cell net-export exclusion above. Pricing them "
+        "as one blended cell would average a real, same-date SDG&E printed comparison rate "
+        "(for the import sub-segment) together with a genuine non-price (SDG&E's "
+        "$0.00000/deferred-to-the-annual-true-up sentinel for the export sub-segment) into "
+        "an effective rate no tariff ever printed -- so they are excluded from the priced "
+        "total entirely, not partially. CEA's own real, whole-cell charge for these cells "
+        f"is {_money(excluded_mixed_sign_cca_usd)} total; it is NOT split or prorated "
+        "across the two segments (no bill line prices either segment on its own, so any "
+        "such split would be an invented figure, not a bill-reconciled one) -- see each "
+        "row's own why_excluded for the specific segments and kWh involved."
+    ) if mixed_sign else (
+        "no (period, season, TOU) cell in this corpus carries both a net-import and a "
+        "net-export sub-segment within the same billing period"
+    )
+
     return {
         "confidence": "modeled",
         "confidence_detail": (
@@ -568,12 +707,15 @@ def direction_a(cca_cells):
         "n_statements": len({p["statement_date"] for p in periods_by_provider()["CCA"]}),
         "days": days,
         "scope": ("energy-only, the net-import cells this analysis CAN price -- no "
-                  "product adders, no riders, and excluding a materially larger "
-                  "net-export effect this analysis cannot price (see "
-                  "excluded_net_export_cca_credit_usd / excluded_net_export_note)"),
+                  "product adders, no riders, and excluding both a materially larger "
+                  "net-export effect (see excluded_net_export_cca_credit_usd / "
+                  "excluded_net_export_note) and a small number of mixed-sign cells that "
+                  "cannot be priced as one blended figure (see "
+                  "excluded_mixed_sign_cca_usd / excluded_mixed_sign_note)"),
         "priced_cells": len(priced),
         "excluded_absent_cells": len(absent),
         "excluded_carried_export_cells": len(carried_export),
+        "excluded_mixed_sign_cells": len(mixed_sign),
         "cca_charged_usd": cca_usd,
         "bundled_comparison_usd": bundled_usd,
         "delta_usd": delta,
@@ -582,8 +724,11 @@ def direction_a(cca_cells):
         "excluded_net_export_cells": len(excluded_all),
         "excluded_net_export_cca_credit_usd": excluded_net_export_cca_credit_usd,
         "excluded_net_export_note": excluded_net_export_note,
+        "excluded_mixed_sign_cca_usd": excluded_mixed_sign_cca_usd,
+        "excluded_mixed_sign_note": excluded_mixed_sign_note,
         "excluded_absent_detail": absent,
         "excluded_carried_export_detail": carried_export,
+        "excluded_mixed_sign_detail": mixed_sign,
         "priced_detail": priced,
     }
 
@@ -598,9 +743,25 @@ def bundled_generation_cells():
     belong to the same net kWh bucket and are summed here). A net-export bucket's rows
     always print a literal $0.00000 rate (the corpus-wide invariant rates_history.py's own
     loader enforces) -- checked again here rather than assumed, since this reads the CSV
-    directly rather than through that loader."""
+    directly rather than through that loader.
+
+    MIXED-SIGN CELLS (second Codex review, issue #11): direction_a()'s analogous segment
+    sum had to guard against a cell whose segments carry BOTH signs (part of the period
+    net-exported, part net-imported), because dividing a summed dollar by a summed kWh
+    there produces an effective RATE that blends a real price with a genuine non-price.
+    This function never does that division -- actual_usd sums each segment's own REAL
+    charged dollar (an export segment's real charge is a genuine, correctly-charged $0
+    under NEM 2.0, not a sentinel standing in for "no rate available" the way a CCA-era
+    printed COMPARISON table's $0.00000 is), and `kwh` is only ever used net, the same
+    way every other bundled cell is treated by this whole direction. So a mixed-sign cell
+    here would not reproduce Direction A's blended-rate defect. Still checked and failed
+    closed below (not merely assumed) so a future reviewer does not have to re-derive this
+    reasoning from scratch if the corpus ever changes shape; verified empirically today
+    (case_bundled_generation_cells_has_no_mixed_sign_cells_today): zero of the 7
+    bundled-era periods' cells mix signs."""
     bundled_periods = {p["period"] for p in periods_by_provider()["bundled"]}
     agg = {}
+    seg_kwhs = {}
     for r in _read_csv(DATA / "bill_tou_detail.csv"):
         if r["section"] != "generation" or r["period"] not in bundled_periods:
             continue
@@ -614,6 +775,19 @@ def bundled_generation_cells():
         a = agg.setdefault(key, {"kwh": 0.0, "actual_usd": 0.0})
         a["kwh"] += kwh
         a["actual_usd"] += kwh * rate
+        seg_kwhs.setdefault(key, []).append(kwh)
+
+    mixed = {key: kwhs for key, kwhs in seg_kwhs.items()
+             if any(k > 0 for k in kwhs) and any(k <= 0 for k in kwhs)}
+    if mixed:
+        raise SystemExit(
+            f"bundled-era cell(s) {sorted(mixed)} carry both a net-import and a "
+            "net-export generation segment within the same billing period -- this "
+            "function's docstring reasons that this would not reproduce Direction A's "
+            "blended-effective-rate defect (no rate is ever derived here by dividing a "
+            "summed dollar by a summed kWh), but that reasoning has not been re-verified "
+            "against this specific corpus shape; refusing to silently proceed rather than "
+            "assume the reasoning still holds")
 
     # Codex review (issue #11), defect 2 sweep: direction_b() has no per-period existence
     # check of its own on this mapping (unlike Direction A's cca_cells.get(key, {}), this is
@@ -984,6 +1158,8 @@ def recommendation(a, b, recon):
     ann_a = a["delta_usd_per_year"]
     excl_usd = a["excluded_net_export_cca_credit_usd"]
     excl_n = a["excluded_net_export_cells"]
+    mixed_usd = a["excluded_mixed_sign_cca_usd"]
+    mixed_n = a["excluded_mixed_sign_cells"]
     return {
         "headline_basis": "direction_a (modeled -- same-date bill rates)",
         "why_not_direction_b": (
@@ -1002,14 +1178,17 @@ def recommendation(a, b, recon):
             "actually billed -- MODELED, qualified 'same-date bill rates', not MEASURED"),
         "scope_caveat": (
             "this figure prices ONLY the net-import cells (the ones where both a CEA "
-            "charge and a same-date SDG&E bundled comparison exist); it excludes "
-            f"{excl_n} net-export cells worth {_money(excl_usd)} in actual CEA export credits "
-            "that this analysis cannot price on the bundled side at all (NEM 2.0 defers "
-            "a net-export bucket's dollar value to the annual true-up, so SDG&E prints "
-            "no same-date bundled comparison to compare against -- see "
-            "direction_a.excluded_net_export_note). The whole-household answer to "
-            "'was switching to the CCA a win' is therefore NOT FULLY DETERMINED by this "
-            "analysis."),
+            "charge and a same-date SDG&E bundled comparison exist and agree in sign); "
+            f"it excludes {excl_n} net-export cells worth {_money(excl_usd)} in actual CEA "
+            "export credits that this analysis cannot price on the bundled side at all "
+            "(NEM 2.0 defers a net-export bucket's dollar value to the annual true-up, so "
+            "SDG&E prints no same-date bundled comparison to compare against -- see "
+            f"direction_a.excluded_net_export_note), plus {mixed_n} further cells worth "
+            f"{_money(mixed_usd)} whose printed comparison segments carry BOTH signs "
+            "within the same billing period and so cannot be priced as one blended "
+            "figure (direction_a.excluded_mixed_sign_note). The whole-household answer "
+            "to 'was switching to the CCA a win' is therefore NOT FULLY DETERMINED by "
+            "this analysis."),
         "text": (
             "On the same-date, energy-only comparison (Direction A, modeled from this "
             "household's own billed kWh and SDG&E's own same-date printed bundled "
@@ -1027,9 +1206,17 @@ def recommendation(a, b, recon):
             "2.0 rather than pricing monthly (direction_a.excluded_net_export_note). "
             "Reconstructing what the bundled side would have credited for that exported "
             "energy would mean rebuilding the whole NEM annual true-up, which is out of "
-            f"scope here. So: the priced-cell answer (${ann_a}/yr, CCA costs slightly "
+            f"scope here. A further {mixed_n} cells, worth {_money(mixed_usd)} in real CEA "
+            "charges, are excluded for a different reason: their printed comparison "
+            "segments carry BOTH signs within the same billing period (part of the "
+            "period net-exported, part net-imported), so pricing the whole cell as one "
+            "blended figure would average a real per-kWh rate together with a genuine "
+            "non-price into an effective rate no tariff ever printed -- see "
+            "direction_a.excluded_mixed_sign_note. So: the priced-cell answer "
+            f"(${ann_a}/yr, CCA costs slightly "
             "more) is a modeled, same-date-bill-rate figure with strong evidentiary "
-            "backing, but the LARGER, unresolved net-export effect means the true "
+            "backing, but the LARGER, unresolved net-export effect (and the smaller, "
+            "unpriceable mixed-sign one) means the true "
             "whole-household comparison is NOT FULLY DETERMINED by this analysis -- "
             f"stated honestly rather than letting the ${ann_a}/yr figure stand in for a "
             "conclusion it does not support. Two smaller facts bear on the PRICED "
@@ -1106,8 +1293,9 @@ def build():
             "the exact dollar base of the CCA-era franchise-fee-equivalent surcharge "
             "($189.93 on the 2026-07-02 statement) -- could not be reconciled to any "
             "single printed subtotal on the statement",
-            "the provider/vintage split for summer/off_peak and winter/off_peak (6 of the "
-            "50 Direction-A-priced rows) -- no bundled-charged rate exists anywhere in the "
+            "the provider/vintage split for summer/off_peak and winter/off_peak "
+            f"({len(pv['cells_with_no_vintage_baseline'])} of the {a['priced_cells']} "
+            "Direction-A-priced rows) -- no bundled-charged rate exists anywhere in the "
             "bundled era for these two cells to serve as a vintage baseline",
             "the bundled-side counterfactual dollar value of the "
             f"{a['excluded_net_export_cells']} net-export cells excluded from Direction A "
@@ -1120,6 +1308,13 @@ def build():
             "Because of this, the whole-household answer to whether switching to the CCA "
             "was a win is NOT FULLY DETERMINED by this analysis -- only the priced "
             "net-import subset is (see recommendation.text)",
+            "the bundled-side counterfactual dollar value of the "
+            f"{a['excluded_mixed_sign_cells']} cells excluded from Direction A because "
+            f"their printed comparison segments carry both signs within the same billing "
+            f"period ({_money(a['excluded_mixed_sign_cca_usd'])} in actual CEA charges) -- "
+            "the real-priced sub-segment's own value is not separately determined here "
+            "either, since no bill line prices it apart from the export sub-segment it "
+            "shares a cell with (see direction_a.excluded_mixed_sign_note)",
         ],
     }
 

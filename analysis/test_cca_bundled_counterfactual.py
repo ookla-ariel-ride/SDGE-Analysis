@@ -60,9 +60,14 @@ EPS = 0.02
 # ---------------------------------------------------------------------------
 @case
 def case_direction_a_priced_cells_are_exactly_the_net_import_cells():
-    """Every row Direction A prices must be a net import (kWh > 0); every row it excludes
-    (whichever reason) must be a net export. A row on the wrong side of this line would mean
-    a Settlement-shaped bug -- pricing a deferred true-up bucket, or dropping a real charge."""
+    """Every row Direction A prices must be a net import (kWh > 0) with single-sign segments;
+    every row it excludes as absent/carried-export (the whole-cell net-export dispositions)
+    must be a net export. A row on the wrong side of this line would mean a Settlement-shaped
+    bug -- pricing a deferred true-up bucket, or dropping a real charge. The mixed-sign
+    disposition is EXEMPT from the export-only rule -- by definition a mixed-sign cell's own
+    period-total kWh can net to either sign (one of the 3 on file nets to a net IMPORT), which
+    is exactly why it needs its own disposition rather than folding into absent/carried-export
+    (see case_mixed_sign_cells_are_excluded_regardless_of_aggregate_sign below)."""
     a = CX.direction_a(CX.cca_period_cells())
     bad_priced = [r for r in a["priced_detail"] if r["kwh"] <= 0]
     bad_absent = [r for r in a["excluded_absent_detail"] if r["kwh"] > 0]
@@ -70,10 +75,12 @@ def case_direction_a_priced_cells_are_exactly_the_net_import_cells():
     assert not bad_priced, f"priced a net-export cell: {bad_priced}"
     assert not bad_absent, f"excluded-absent a net-import cell: {bad_absent}"
     assert not bad_carried, f"excluded-carried-export a net-import cell: {bad_carried}"
-    total = a["priced_cells"] + a["excluded_absent_cells"] + a["excluded_carried_export_cells"]
+    total = (a["priced_cells"] + a["excluded_absent_cells"]
+             + a["excluded_carried_export_cells"] + a["excluded_mixed_sign_cells"])
     return (f"{a['priced_cells']} priced, {a['excluded_absent_cells']} excluded-absent, "
-           f"{a['excluded_carried_export_cells']} excluded-carried-export, {total} total, "
-           "every row on the correct side of the kWh>0 line")
+           f"{a['excluded_carried_export_cells']} excluded-carried-export, "
+           f"{a['excluded_mixed_sign_cells']} excluded-mixed-sign, {total} total, "
+           "every non-mixed-sign row on the correct side of the kWh>0 line")
 
 
 @case
@@ -296,12 +303,18 @@ def case_direction_a_confidence_is_modeled_not_measured():
     assert rec["confidence"] == "modeled"
     assert rec["headline_basis"] != "direction_a (measured)"
     assert "modeled" in rec["headline_basis"].lower()
-    # The dollar figures themselves must be untouched by a labeling fix.
-    assert da["delta_usd"] == 74.07, da["delta_usd"]
-    assert da["delta_usd_per_year"] == 49.46, da["delta_usd_per_year"]
+    # This case's job is the CONFIDENCE LABEL, not the dollar figures -- a later, separate
+    # fix (the mixed-sign-cell fix, issue #11 second Codex review) legitimately changed the
+    # headline number, so asserting a fixed literal here would go stale every time a real
+    # computational fix lands, for a reason unrelated to labeling. Checked for internal
+    # consistency (the annualization is still derived correctly from delta_usd/days) instead
+    # of pinning a value that belongs to case_direction_a_cca_charged_equals_the_sum_of_its_
+    # own_priced_rows and the mixed-sign regression cases below.
+    assert da["delta_usd_per_year"] == CX._annualize(da["delta_usd"], da["days"])
+    assert rec["annual_dollar_result_usd"] == da["delta_usd_per_year"]
     return (f"direction_a confidence={a['confidence']!r} (was 'measured'), "
            f"recommendation confidence={rec['confidence']!r}, headline_basis="
-           f"{rec['headline_basis']!r}, dollar figures unchanged")
+           f"{rec['headline_basis']!r}, dollar figures internally consistent")
 
 
 # ---------------------------------------------------------------------------
@@ -361,8 +374,12 @@ def case_recommendation_discloses_excluded_scope_and_does_not_overclaim():
     assert "NOT FULLY DETERMINED" in text
     assert str(a["excluded_net_export_cells"]) in text, \
         "the excluded cell count must be named in the recommendation, not just the artifact"
-    assert "-378" in text or "-$378" in text, \
-        "the excluded dollar magnitude must be named in the recommendation text"
+    # Live-derived from the artifact (never a hardcoded literal): the whole-dollar magnitude
+    # of the excluded net-export credit, formatted the same way CX._money() renders it.
+    excl_whole = int(abs(a["excluded_net_export_cca_credit_usd"]))
+    assert f"-${excl_whole}" in text, (
+        f"the excluded dollar magnitude (-${excl_whole}...) must be named in the "
+        "recommendation text", text)
     assert "ONLY on the net-import cells" in text
     assert "does not by itself justify" not in text, \
         "the old overclaiming phrase must not reappear"
@@ -390,7 +407,8 @@ def case_segment_level_pricing_matches_naive_for_every_single_segment_priced_row
         naive_usd = round(row["kwh"] * naive_rate, 2)
         assert abs(naive_usd - row["bundled_comparison_usd"]) < EPS, (row, naive_usd)
         checked += 1
-    assert checked > 40, f"expected most of the 50 priced rows to be single-segment, got {checked}"
+    assert checked > 40, (
+        f"expected most of the (currently 49) priced rows to be single-segment, got {checked}")
     return (f"{checked} single-segment priced rows: segment-level pricing == the old "
            "representative-date pricing, to the cent")
 
@@ -428,6 +446,187 @@ def case_segment_level_pricing_fixes_the_real_mid_period_rate_change_period():
     return (f"{period} {season}/{tou}: naive representative-date pricing = ${naive_usd}, "
            f"segment-level pricing = ${fixed_usd} (${round(fixed_usd - naive_usd, 2)} "
            "different) on a real, on-file mid-period rate change")
+
+
+# ---------------------------------------------------------------------------
+# (a2b) Second Codex review (issue #11) -- the mixed-sign-segment defect: a (period,
+# season, TOU) cell whose printed generation-comparison segments carry BOTH signs must
+# never be summed into one blended dollar/rate, whichever way its own period-total kWh
+# happens to net.
+# ---------------------------------------------------------------------------
+_MIXED_SIGN_CELLS = [
+    # (statement_date, period, season, tou_period, [(kwh, rate), ...], period_total_kwh)
+    ("2025-01-31", "12/27/24 - 1/27/25", "winter", "off_peak",
+     [(34.0, 0.1185), (-253.0, 0.0)], -219.0),
+    ("2026-02-02", "12/27/25 - 1/27/26", "winter", "off_peak",
+     [(64.0, 0.12379), (-93.0, 0.0)], -29.0),
+    ("2026-05-04", "3/28/26 - 4/28/26", "winter", "off_peak",
+     [(-9.0, 0.0), (27.0, 0.14337)], 18.0),
+]
+
+
+@case
+def case_mixed_sign_cells_are_found_directly_in_the_raw_corpus_and_number_exactly_three():
+    """Reproduces the second Codex review's own verification method: scans every
+    generation-section row of data/bill_tou_detail.csv directly (not through direction_a's
+    disposition logic) and confirms there are EXACTLY 3 (statement, period, season, TOU)
+    cells whose segments carry both signs, and that they are exactly the 3 named in the
+    defect report -- not a hardcoded count, an independent re-derivation of it."""
+    import csv as _csv
+    from collections import defaultdict
+    rows = list(_csv.DictReader(open(CX.DATA / "bill_tou_detail.csv")))
+    segs = defaultdict(list)
+    for r in rows:
+        if r["section"] != "generation":
+            continue
+        key = (r["statement_date"], r["period"], r["season"], r["tou_period"])
+        segs[key].append((float(r["kwh"]), float(r["rate_per_kwh"])))
+    mixed = {key: s for key, s in segs.items()
+             if any(k > 0 for k, _ in s) and any(k <= 0 for k, _ in s)}
+    expected = {(sd, p, se, tp) for sd, p, se, tp, _segs, _tot in _MIXED_SIGN_CELLS}
+    assert set(mixed) == expected, (set(mixed), expected)
+    return f"exactly {len(mixed)} mixed-sign cells found directly in bill_tou_detail.csv, matching the defect report"
+
+
+@case
+def case_mixed_sign_cells_are_excluded_from_direction_a_regardless_of_aggregate_sign():
+    """The bug this fix targets: an EARLIER version of direction_a() only checked segment
+    signs for cells whose PERIOD-TOTAL kWh was positive (the kWh > 0 branch), so a
+    mixed-sign cell whose aggregate happened to net NEGATIVE (2 of the 3 real cells here)
+    would never even reach the segment-summing code, while the 1 whose aggregate happened
+    to net POSITIVE (3/28/26 - 4/28/26) would be priced as one blended figure. This
+    asserts the fix catches all 3 regardless: none of the 3 real mixed-sign cells appear
+    in priced_detail, and all 3 appear in excluded_mixed_sign_detail -- proving the
+    exclusion is NOT gated on the aggregate's own sign (the corpus already gives us one
+    of each: 2 net-export aggregates and 1 net-import aggregate)."""
+    a = CX.direction_a(CX.cca_period_cells())
+    priced_keys = {(r["statement_date"], r["period"], r["season"], r["tou_period"])
+                   for r in a["priced_detail"]}
+    mixed_keys = {(r["statement_date"], r["period"], r["season"], r["tou_period"])
+                  for r in a["excluded_mixed_sign_detail"]}
+    expected = {(sd, p, se, tp) for sd, p, se, tp, _segs, _tot in _MIXED_SIGN_CELLS}
+    assert expected.isdisjoint(priced_keys), (
+        f"a mixed-sign cell leaked into priced_detail: {expected & priced_keys}")
+    assert expected == mixed_keys, (expected, mixed_keys)
+    aggregate_signs = {tot > 0 for _sd, _p, _se, _tp, _segs, tot in _MIXED_SIGN_CELLS}
+    assert aggregate_signs == {True, False}, (
+        "the 3 real cells must include both a net-import and a net-export aggregate, or "
+        "this case would not actually prove the exclusion is sign-independent")
+    return (f"all 3 mixed-sign cells excluded (excluded_mixed_sign_cells="
+           f"{a['excluded_mixed_sign_cells']}), none priced, regardless of the period's "
+           "own net-kWh sign (2 net-export aggregates + 1 net-import aggregate)")
+
+
+@case
+def case_no_priced_cell_ever_has_mixed_sign_segments():
+    """The general regression guard the fix requires: for EVERY row direction_a() prices,
+    independently re-fetch its own raw segments from bill_tou_detail.csv and confirm they
+    do NOT carry mixed signs. If this ever failed, a future change would have let a
+    blended-rate cell back into the priced total -- exactly the defect this fix closes."""
+    a = CX.direction_a(CX.cca_period_cells())
+    gen_segments = CX._generation_comparison_segments()
+    offenders = []
+    for row in a["priced_detail"]:
+        segs = gen_segments.get((row["period"], row["season"], row["tou_period"]))
+        if CX._mixed_sign(segs):
+            offenders.append(row)
+    assert not offenders, f"priced a mixed-sign cell as one blended figure: {offenders}"
+    return f"all {len(a['priced_detail'])} priced rows have single-sign segments only"
+
+
+@case
+def case_the_codex_named_period_no_longer_produces_a_blended_effective_rate():
+    """The specific cell the second Codex review named (3/28/26 - 4/28/26, winter/off_peak):
+    its segments are [-9.0 kWh @ $0.00000 (export, deferred), +27.0 kWh @ $0.14337 (real
+    import rate)]. The OLD code priced this as one blended cell: kwh=18 (the period-total),
+    bundled_comparison_usd=$3.87 (correct in isolation, since the $0 export segment
+    contributes nothing), but bundled_comparison_rate = 3.87/18 = $0.21505/kWh -- a rate
+    that does not match ANY printed tariff (the real printed rate for the import segment is
+    $0.14337). This asserts the cell is now excluded entirely (never split, never
+    prorated) and its real segments are disclosed as-is."""
+    a = CX.direction_a(CX.cca_period_cells())
+    period, season, tou = "3/28/26 - 4/28/26", "winter", "off_peak"
+    priced_hit = [r for r in a["priced_detail"]
+                  if r["period"] == period and r["season"] == season and r["tou_period"] == tou]
+    assert not priced_hit, f"the Codex-named cell must not be priced: {priced_hit}"
+    mixed_hit = [r for r in a["excluded_mixed_sign_detail"]
+                 if r["period"] == period and r["season"] == season and r["tou_period"] == tou]
+    assert len(mixed_hit) == 1, mixed_hit
+    row = mixed_hit[0]
+    assert row["kwh"] == 18.0, row
+    assert row["import_segment_kwh"] == 27.0, row
+    assert row["export_segment_kwh"] == -9.0, row
+    assert row["cca_usd"] == 2.91, row
+    # The old fictitious blended rate ($0.21505/kWh) must not appear anywhere on this row;
+    # only the real per-segment rates (0.0 and 0.14337) are disclosed, never averaged.
+    seg_rates = {s["rate"] for s in row["segments"]}
+    assert seg_rates == {0.0, 0.14337}, seg_rates
+    assert "bundled_comparison_rate" not in row, (
+        "a mixed-sign cell must never carry a computed effective rate")
+    return (f"{period} {season}/{tou}: excluded as mixed-sign (import={row['import_segment_kwh']} "
+           f"kWh @ real rate, export={row['export_segment_kwh']} kWh @ deferred $0), no "
+           "blended $0.21505/kWh effective rate computed")
+
+
+@case
+def case_bundled_generation_cells_has_no_mixed_sign_cells_today():
+    """Direction B / bundled_generation_cells() sweep (second Codex review, issue #11):
+    the real 7-period bundled-era corpus must not trip the new mixed-sign guard --
+    confirms the guard is dormant today (0 mixed-sign bundled cells), matching the
+    function's own docstring claim, re-verified here rather than assumed."""
+    agg = CX.bundled_generation_cells()
+    assert agg, "bundled_generation_cells() returned nothing"
+    return f"{len(agg)} bundled-era cells, none mixed-sign (the guard did not raise)"
+
+
+@case
+def case_bundled_generation_cells_fails_closed_on_a_synthetic_mixed_sign_cell():
+    """Injects a synthetic bundled-era cell whose two generation-section segments carry
+    BOTH signs (a real-rate import segment and a real-$0 export segment) -- the new
+    defensive guard in bundled_generation_cells() must refuse rather than silently sum
+    them into one aggregate, mirroring Direction A's own mixed-sign protection."""
+    tmp = tempfile.mkdtemp()
+    try:
+        pdir = pathlib.Path(tmp)
+        with open(pdir / "bill_periods_electric.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["statement_date", "period", "days", "generation_provider", "net_kwh",
+                       "gross_kwh", "sdge_delivery", "cca_generation", "current_charges",
+                       "base_services_charge", "monthly_service_fee", "fixed_charge_total"])
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "31", "bundled", "10", "10",
+                       "5.00", "0.0", "5.00", "", "16.0", "16.0"])
+            w.writerow(["2099-03-01", "2/1/99 - 2/28/99", "28", "CCA", "10", "10",
+                       "5.00", "3.00", "8.00", "16.0", "", "16.0"])
+        with open(pdir / "bill_tou_detail.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["statement_date", "period", "section", "season", "segment",
+                       "segment_days", "tou_period", "kwh", "rate_per_kwh"])
+            # winter/off_peak carries two segments of opposite sign for the same cell.
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "generation", "winter", "0",
+                       "5", "off_peak", "20.0", "0.20000"])
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "generation", "winter", "1",
+                       "26", "off_peak", "-15.0", "0.0"])
+            # winter/on_peak and winter/super_off_peak present and single-sign, so the
+            # coverage gate (a different check) does not mask this case.
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "generation", "winter", "0",
+                       "31", "on_peak", "5.0", "0.30000"])
+            w.writerow(["2099-01-01", "1/1/99 - 1/31/99", "generation", "winter", "0",
+                       "31", "super_off_peak", "5.0", "0.10000"])
+        orig = CX.DATA
+        CX.DATA = pdir
+        try:
+            CX.bundled_generation_cells()
+        except SystemExit as e:
+            assert "mixed" in str(e).lower() or "both a net-import" in str(e).lower(), e
+            assert "off_peak" in str(e), e
+            return "bundled_generation_cells refuses a synthetic mixed-sign cell"
+        else:
+            raise AssertionError(
+                "bundled_generation_cells silently summed a mixed-sign cell's segments")
+        finally:
+            CX.DATA = orig
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +687,8 @@ def case_direction_a_real_corpus_passes_the_coverage_gate_cleanly():
     corpus exactly as before the gate was added."""
     a = CX.direction_a(CX.cca_period_cells())
     assert a["n_periods"] == 19, a["n_periods"]
-    total = a["priced_cells"] + a["excluded_absent_cells"] + a["excluded_carried_export_cells"]
+    total = (a["priced_cells"] + a["excluded_absent_cells"]
+             + a["excluded_carried_export_cells"] + a["excluded_mixed_sign_cells"])
     assert total == 66, total
     return f"real corpus passes the coverage gate cleanly: {a['n_periods']} periods, {total} cells"
 
