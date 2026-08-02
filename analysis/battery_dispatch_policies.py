@@ -25,6 +25,14 @@ set, no cross-model splicing.
 Output: battery_dispatch_policies.json — savings per policy/config, kWh served,
 cycles/day, summer hourly grid-import profiles, escalation ladder, post_behavior
 package figures. This script fully regenerates the committed artifact.
+
+run_batt() also takes an optional power_kw (default 11.5, matching every config
+above and preserving this module's own output byte-for-byte) so it can be reused
+as a shared dispatch primitive at other capacities/power caps — battery_sizing_
+curve.py (issue #12) sweeps it across an energy and a power grid. Every call
+asserts its own energy-conservation identity (final SOC must equal the initial
+SOC plus charge throughput minus discharge, net of round-trip loss) and raises
+SystemExit if it does not hold — a real invariant, not just a signature change.
 """
 import numpy as np, pandas as pd, json
 import behavior_rebuild as br
@@ -32,9 +40,11 @@ import rates as R
 
 ETA = np.sqrt(0.90); PWRQ = 11.5 / 4
 
-def run_batt(d, imp0, gen0, cap, policy):
+def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, soc0=None):
     imp = imp0.copy(); exp = gen0.copy()
-    soc = cap / 2; served = 0.0; thru = 0.0
+    pwrq = power_kw / 4
+    soc0 = cap / 2 if soc0 is None else soc0
+    soc = soc0; served = 0.0; thru = 0.0
     p = d.p.values; h = d.hour.values; kw = imp0 * 4
     for i in range(len(d)):
         disch_win = (16 <= h[i] < 21) or \
@@ -44,18 +54,25 @@ def run_batt(d, imp0, gen0, cap, policy):
             # charge from surplus — unless this interval also has import inside a
             # discharge window (6.3% of intervals carry both flows; serving a
             # 51-87c import beats storing surplus worth ~8c)
-            c = min(exp[i], (cap - soc) / ETA, PWRQ)
+            c = min(exp[i], (cap - soc) / ETA, pwrq)
             if c > 0: soc += c * ETA; exp[i] -= c; thru += c * ETA
             continue
         if p[i] == "sop":
             grid_ok = (policy == "greedy") or (h[i] < 6)
             lim = cap if policy == "greedy" else 0.6 * cap
-            take = min(max((lim - soc) / ETA, 0), PWRQ) if grid_ok else 0
+            take = min(max((lim - soc) / ETA, 0), pwrq) if grid_ok else 0
             if take > 0: soc += take * ETA; imp[i] += take; thru += take * ETA
             continue
         if disch_win:
-            dd = min(imp[i], soc * ETA, PWRQ)
+            dd = min(imp[i], soc * ETA, pwrq)
             if dd > 0: soc -= dd / ETA; imp[i] -= dd; served += dd
+    # energy-conservation identity (CLAUDE.md 1b): every joule leaving the pack
+    # equals a joule that entered it, net of round-trip loss — soc0 + thru
+    # (AC-in, already at pack-side value) - served/ETA (AC-out, back to pack-side)
+    # must equal the final soc to the float epsilon.
+    if abs(soc - (soc0 + thru - served / ETA)) > 1e-6:
+        raise SystemExit("run_batt: energy-conservation identity failed — "
+                          "soc drifted from the charge/discharge throughput")
     return imp, exp, served, thru
 
 def billed(d, imp, exp):

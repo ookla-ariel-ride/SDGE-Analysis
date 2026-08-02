@@ -1804,6 +1804,169 @@ unconditionally against committed CSV/engine data; the cases needing the two rea
 PDFs (the PCIA and franchise-fee citations) gate on `_require_archive()` and SKIP with the
 reason named when this checkout lacks `private/`.
 
+### 3.22 `analysis/battery_sizing_curve.py` — a sizing curve, not a two-product comparison (`data/battery_sizing_curve.json`)
+
+**Purpose (issue #12).** §3.13 (`battery_dispatch_policies.py`) only ever compared two
+shipping configs — 13.5 kWh Powerwall 3 and 27 kWh PW3+Expansion, both at 11.5 kW — which
+answers "which of these two" but never "how much storage this house actually wants." This
+script re-runs the same price-aware ("greedy") dispatch across an **energy grid** (5–40
+kWh, holding power at 11.5 kW — the rate both shipping Tesla configs share) and a **power
+grid** (5–15 kW, holding energy at 13.5 kWh — the base Powerwall 3), on **both** current
+behavior and post-behavior (EV-shifted) load, on the measured year via the same canonical
+engine (`rates.bill_nem`) and the identical EV-spillover exclusion rule (≥2.5 kW outside
+on-peak is never battery-served) at every grid point. Both shipping configs' own capacity
+and power (13.5 kWh, 27 kWh, 11.5 kW) are added to the grids as exact points, not
+interpolated from neighbors, so they are genuinely ON the swept curve.
+
+**`run_batt` generalized, not duplicated.** Rather than write a second dispatch loop,
+`battery_dispatch_policies.run_batt()` gained optional `power_kw=11.5` and `soc0=None`
+parameters (both default to the exact prior behavior — verified: `battery_dispatch_
+policies.json` and `battery_plan_matrix.json` regenerate identically after the change,
+and every one of the ~30 other call sites across the analysis package, which never pass
+either new parameter, is unaffected) and now returns after asserting its own internal
+energy-conservation identity (`soc == soc0 + thru - served/ETA`, i.e. every joule leaving
+the pack matches one that entered it net of the round-trip loss) — `SystemExit` if it does
+not hold, CLAUDE.md §1b. `battery_sizing_curve.py` adds a second, independent conservation
+check per grid point (`_check_conservation`): the import series' total discharge relief
+must equal `served` exactly, and the export series' total solar-routed-to-charging plus
+grid top-up must equal `thru` net of the round-trip loss — defense in depth, not a
+formality (`analysis/test_battery_sizing_curve.py` fails both checks closed against a
+synthetically corrupted `served`/`thru` value). The return tuple's arity was deliberately
+left unchanged (still `imp, exp, served, thru`) rather than adding a fifth "final SOC"
+value: with ~30 call sites elsewhere in the package unpacking exactly four values, that
+would have forced changes far outside this issue's scope. `battery_sizing_curve.py`
+instead derives the final SOC itself from the same public identity `run_batt` already
+asserts (`soc0 + thru - served / ETA`) — see steady-state fix below.
+
+**Steady-state dispatch, not a one-time year-1 boundary condition (Codex adversarial
+review, third pass).** `run_batt()` always started at `soc0 = cap/2` and ran the measured
+year exactly once. On the real data, this house's greedy dispatch always saturates against
+a hard boundary (empty or full) within the year, so the STARTING soc0 has no lasting
+effect once it does — but until it converges, larger capacities carry a larger absolute
+amount of un-costed "free" starting charge (current-behavior, which drains toward empty:
+observed year-1 ending SOC ranged from 0 kWh at 5-27 kWh capacity to 5.0 kWh at 40 kWh) or
+un-recovered "stranded" ending charge (post-behavior, which can end the year over 90%
+full: observed year-1 ending SOC ranged from 4.3 kWh at 5 kWh capacity to 39.3 kWh at
+40 kWh) — an arbitrary boundary effect that grows with capacity and could in principle
+contaminate the reported annual savings, marginals, and knee. Fixed by `_steady_state_run()`:
+iterate `run_batt`, feeding each pass's ending SOC forward as the next pass's starting SOC,
+until the two converge to within 0.01 kWh (`STEADY_STATE_TOL_KWH`) — a genuine steady
+annual charge/discharge cycle rather than a transient. On this house's data, every grid
+point converges in exactly one extra pass (the greedy policy's aggressive daily cycling
+erases any memory of the starting condition almost immediately), and the corrected annual
+savings differ from the uncorrected, boundary-contaminated figures by single-digit dollars
+per grid point (e.g. 13.5 kWh current-behavior: $2,328.66 → $2,327.77) — the underlying
+methodological defect was real and worth fixing (CLAUDE.md §0/§1: a result should not
+depend on an arbitrary boundary condition), even though its numeric impact on this
+particular dataset turned out to be small; the knee's location (20 kWh, both scenarios)
+and the sensitivity conclusion (energy binds) are unchanged by the correction. One
+consequence worth stating plainly: an EARLIER version of this section described post-EV-fix
+savings past 30 kWh as very slightly DECLINING (a boundary-condition artifact — the
+uncorrected run's growing "stranded" ending charge at higher capacities was itself the
+cause of that apparent decline); the steady-state-corrected data shows a clean flat
+plateau instead (kWh served AND saving both exactly unchanged from 30 through 40 kWh),
+which is also the more physically sensible result. If the SOC iteration ever failed to
+converge within 8 passes, `_steady_state_run()` raises `SystemExit` naming the capacity
+and power at fault rather than silently returning an unconverged result.
+
+**Cost model — fit to same-power quotes only, not blended (Codex adversarial review, second
+pass).** The energy sweep holds power fixed at 11.5 kW, so its cost model is fit to ONLY
+the two real quoted configs that also run at 11.5 kW — PW3 $14,500/13.5 kWh and
+PW3+Expansion $20,400/27 kWh — giving slope $437.04/kWh, intercept $8,600.00. `index.html`
+§6's other two quoted configs (IQ 5P $8,500/5 kWh at 3.8 kW, IQ 10C $13,000/10 kWh at
+7.1 kW) are deliberately EXCLUDED from this fit and kept only as documented context
+(`cost_model.excluded_from_fit`): their own kW differs from the 11.5 kW reference, so
+blending them in would price some of their own lower power capability into a per-kWh rate
+applied to a fixed-power sweep. An earlier version of this script fit all four configs
+together (slope $512.80/kWh) — materially higher, because the smaller units' own lower
+power capability was silently priced into the per-kWh rate; that version is retired.
+Because both shipping configs are themselves the fit's only two anchors, the fitted cost
+at 13.5 kWh and 27 kWh now equals their own real quoted cost exactly (no residual). The
+power sweep still reports the physical curve (dollars saved, kWh served) only; no real
+anchor isolates power-only cost scaling, so its cost and payback stay `null` (**not
+determined**, CLAUDE.md §0), never guessed from the energy-fit slope.
+
+**Knee — pre-declared, not picked by eye.** Because the cost fit is linear, the marginal
+cost of one more kWh is the same constant (the fit's own slope, $437.04/kWh) at every grid
+point. The knee is the smallest energy-grid point whose own marginal kWh (versus the
+previous grid point) fails to pay back that constant marginal cost within **10 years** —
+the Powerwall 3 warranty term §6 already cites — stated in the script before the sweep
+runs, not chosen after seeing the curve. Result on the real data: **20 kWh** in both
+scenarios (marginal saving/kWh drops to $42.10 current-behavior, $22.46 post-behavior —
+marginal payback 10.4 yr / 19.5 yr, both past the $437.04/10 ≈ $43.70/kWh/yr line a
+10-year payback requires; the knee's location is unchanged by either the cost-model or
+the steady-state correction below — only its stated marginal-payback years moved).
+
+**Sensitivity — local elasticity, not a raw span (Codex adversarial review, second pass).**
+An earlier version compared the energy sweep's top-to-bottom dollar span (5–40 kWh) against
+the power sweep's (5–15 kW) directly to decide which "binds" — not a valid comparison,
+since the two spans cover different units and arbitrarily different relative ranges (8× vs
+3×), so the classification could flip under a different choice of grid endpoints without
+any change in the house's actual sensitivity. Replaced with a **local elasticity**: an
+unequal-spacing 3-point (Lagrange) derivative AT the shared reference point (13.5 kWh,
+11.5 kW), using the reference's own row and the grid points immediately flanking it in
+each sweep, normalized to percent-change-in-saving per percent-change-in-the-dimension —
+a local derivative property, immune to how far either grid extends beyond that
+neighborhood. A version after that used a plain secant between the reference's two
+neighbors (equivalent to the ordinary centered-difference formula) — Codex adversarial
+review, third pass: that estimates the derivative at the NEIGHBORS' midpoint, not at the
+reference, whenever the grid is not symmetric around it, which is true for both grids here
+(energy neighbors sit 3.5 kWh below / 1.5 kWh above 13.5 kWh; power neighbors sit 1.5 kW
+below / 1.0 kW above 11.5 kW). The corrected formula (`h0 = ref-lo`, `h1 = hi-ref`) reduces
+to the ordinary centered difference when `h0 == h1`, and is verified EXACT (not merely a
+closer approximation) against a known quadratic `f(x) = x²` on a deliberately asymmetric
+grid in `analysis/test_battery_sizing_curve.py`. Result: energy elasticity 0.47
+current-behavior / 0.38 post-behavior vs power elasticity 0.0024 / −0.0001 — energy is
+still >150× more sensitive at this reference point in both scenarios (moved from the
+retired secant-based 0.56/0.48 vs 0.0025/−0.0001, but the qualitative conclusion —
+capacity, not discharge rate, is what this house's load shape responds to near the
+reference configuration — is unchanged), and both sweeps' `save_usd` at the shared
+reference point are asserted equal to the float epsilon, since they describe the identical
+13.5 kWh/11.5 kW configuration.
+
+**Shipping products located on the curve.** At 13.5 kWh / 11.5 kW: $2,327.77/yr saved
+current-behavior (payback 6.23 yr — now exactly the real $14,500 quote's own payback,
+since 13.5 kWh is one of the fit's only two anchors, matching §6's cited ~6.2–6.5 yr
+range), $2,239.16/yr post-behavior (payback 6.48 yr, exactly the §6 figure). At 27 kWh /
+11.5 kW: $2,792.86/yr current-behavior, $2,455.80/yr post-behavior (payback 8.31 yr) —
+both cross-checked against `battery_dispatch_policies.json`'s own `pw3`/`pw3x` `greedy.save`
+and `post_behavior.mid`/`high.battery_marginal` figures, within $2.14 (that canonical
+artifact is deliberately NOT steady-state — correcting its own single-pass boundary
+condition is a separate concern outside this issue's scope — so a small, expected gap
+between the two remains; $2.14 against $1,000+ savings figures is itself evidence the
+steady-state correction is a minor refinement here, not a large swing). The **gap between
+the economic optimum and what can actually be bought**: the knee (20 kWh) marks the first
+capacity whose own marginal kWh no longer clears the 10-year payback bar — 15 kWh is the
+largest capacity that still does — and no shipping product sits at either 15 or 20 kWh.
+The choice in practice is 13.5 kWh (leaves some economic value below 15 kWh on the table)
+or 27 kWh (well past the knee), stated plainly rather than implying a 15 or 20 kWh product
+exists.
+
+**Output** `data/battery_sizing_curve.json`. Registered in `test_scripts_runnable.py`
+under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
+`household.yaml`, the same dependency shape as `battery_dispatch_policies.py` — no
+tie-out assertion against archive-derived data inside the generator itself, unlike
+`battery_plan_matrix.py`, so synthetic CI inputs run it cleanly rather than tripping a
+divergence check).
+
+**Tests** `analysis/test_battery_sizing_curve.py`, 25 cases: synthetic-frame unit tests of
+the cost fit (including that only the two same-power configs are anchors, that the two
+different-power configs are excluded with a named reason, and that the fitted cost passes
+through both shipping configs exactly — Codex adversarial review, second pass), the
+conservation checks (including two fail-closed corruption cases), the marginal-difference
+helper, the knee-detection rule, `_locate_products()`'s two fail-closed guards (a shipping
+product absent from the swept kWh grid, and — second adversarial review — one whose own
+kW does not match the energy sweep's reference power), and the local-elasticity sensitivity
+calculation (that it is unaffected by a grid point far outside the reference neighborhood,
+that it fails closed on a reference point with no flanking neighbor, and — third
+adversarial review — that it reproduces the exact analytic derivative of a known quadratic
+on a deliberately asymmetric grid, the case that distinguishes the corrected unequal-spacing
+formula from the retired plain-secant one) need no private archive at all; cases
+cross-checking the 13.5 kWh point and the steady-state shipping saves' bounded gap against
+`battery_dispatch_policies.json`, the sensitivity conclusion, the knee's presence, and
+byte-identical regeneration gate on `_require_archive()` and SKIP with the reason named
+when this checkout lacks `private/`.
+
 ---
 
 ## 4. Battery simulation methodology

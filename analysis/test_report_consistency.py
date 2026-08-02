@@ -269,6 +269,111 @@ def case_cca_verdict_annualized_figure_matches_the_artifact():
     return f"the §10 verdict's rounded ${rounded}/yr matches the live artifact's {per_year}/yr"
 
 
+def _fmt_usd(x):
+    return f"${round(x):,}"
+
+
+def case_sizing_curve_table_matches_the_artifact_row_by_row():
+    """The §6 sizing-curve table is hand-written, not templated. An earlier
+    version of this case only spot-checked the knee capacity and the two
+    shipping products' paybacks -- a regeneration that changed any OTHER row's
+    Save/yr, Marginal $/kWh, or fitted-cost Payback would have desynced the
+    table from data/battery_sizing_curve.json with nothing to catch it. This
+    case parses every row of the actual HTML table and checks every numeric
+    cell (both scenarios, both payback columns) against the artifact, the same
+    rigor this file already applies to the chart-series cases above (issue
+    #12, adversarial review finding 3)."""
+    bsc_path = ROOT / "data" / "battery_sizing_curve.json"
+    assert bsc_path.exists(), f"{bsc_path} is committed public data and must exist"
+    bsc = json.loads(bsc_path.read_text())
+    cur_rows = {r["kwh"]: r for r in bsc["current_behavior"]["energy_sweep_at_11.5kw"]}
+    post_rows = {r["kwh"]: r for r in bsc["post_behavior"]["energy_sweep_at_11.5kw"]}
+    assert cur_rows.keys() == post_rows.keys(), "current/post-behavior grids diverge"
+
+    start = HTML.index("Sizing as a curve")
+    end = HTML.index("Outage endurance (simulated", start)
+    table_html = HTML[start:end]
+    tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
+    td_re = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+    tag_re = re.compile(r"<[^>]+>")
+    kwh_re = re.compile(r"(\d+(?:\.\d+)?)\s*kWh")
+
+    body_rows = [m.group(1) for m in tr_re.finditer(table_html)][1:]  # skip <thead> row
+    assert len(body_rows) == len(cur_rows), (
+        f"expected {len(cur_rows)} table rows (one per energy-grid point), "
+        f"found {len(body_rows)}")
+
+    checked = 0
+    for row_html in body_rows:
+        cells = [tag_re.sub("", c).strip() for c in td_re.findall(row_html)]
+        assert len(cells) == 7, f"expected 7 cells, got {len(cells)}: {cells}"
+        m = kwh_re.search(cells[0])
+        assert m, f"could not find a kWh figure in the row's first cell: {cells[0]!r}"
+        kwh = float(m.group(1))
+        kwh = int(kwh) if kwh == int(kwh) else kwh
+        assert kwh in cur_rows, f"table cites {kwh} kWh, which is not an artifact grid point"
+        cur, post = cur_rows[kwh], post_rows[kwh]
+
+        assert cells[1] == _fmt_usd(cur["save_usd"]), (
+            f"{kwh} kWh: Save/yr (current) {cells[1]} != {_fmt_usd(cur['save_usd'])}")
+        assert cells[2] == _fmt_usd(post["save_usd"]), (
+            f"{kwh} kWh: Save/yr (post-EV-fix) {cells[2]} != {_fmt_usd(post['save_usd'])}")
+
+        for cell, row, key in ((cells[3], cur, "marginal_save_usd_per_kwh"),
+                               (cells[4], post, "marginal_save_usd_per_kwh")):
+            m_val = row[key]
+            if m_val is None:
+                assert cell == "—", f"{kwh} kWh: expected no marginal at the first grid point, got {cell!r}"
+            else:
+                rounded = round(m_val)
+                expected = "~$0" if rounded == 0 else f"${rounded}"
+                assert cell == expected, f"{kwh} kWh: marginal cell {cell!r} != {expected!r} (raw {m_val})"
+
+        for cell, row in ((cells[5], cur), (cells[6], post)):
+            expected = f"{round(row['asset_alone_payback_years'], 1)} yr"
+            assert cell == expected, (
+                f"{kwh} kWh: payback cell {cell!r} != {expected!r} "
+                f"(raw {row['asset_alone_payback_years']})")
+        checked += 1
+
+    assert checked == len(cur_rows), "not every artifact grid point was matched to a table row"
+
+    knee_kwh = bsc["current_behavior"]["knee"]["kwh"]
+    assert f"{knee_kwh} kWh — the knee" in HTML, (
+        f"the artifact's knee ({knee_kwh} kWh) is not cited in the §6 table as expected")
+    for scen_key in ("current_behavior", "post_behavior"):
+        for prod in bsc[scen_key]["shipping_products_on_curve"]:
+            payback = round(prod["payback_years"], 1)
+            assert f"{payback} yr" in HTML, (
+                f"{scen_key} {prod['name']} real-quote payback {payback} yr not found in the report")
+
+    return f"all {checked} rows of the §6 sizing-curve table match the live artifact exactly"
+
+
+def case_sizing_curve_knee_direction_is_not_reversed():
+    """Codex adversarial review caught the §6 prose describing the knee's OWN
+    marginal kWh as one that 'still pays back... within 10 years' when the
+    artifact's knee is, by its own pre-declared rule, the first capacity whose
+    marginal kWh FAILS that payback -- the exact opposite claim, which could
+    steer a reader toward buying capacity the report's own rule rejects. This
+    locks the corrected direction against the live artifact so a future
+    regeneration can't silently reintroduce the reversal (issue #12)."""
+    bsc_path = ROOT / "data" / "battery_sizing_curve.json"
+    bsc = json.loads(bsc_path.read_text())
+    assert "still pays back the" not in HTML, (
+        "the reversed knee-direction claim ('still pays back') has resurfaced in the report")
+    for scen_key in ("current_behavior", "post_behavior"):
+        knee = bsc[scen_key]["knee"]
+        assert knee["marginal_payback_years"] > knee["threshold_years"], (
+            f"{scen_key}: the artifact's own knee must be a FAILING point "
+            "(marginal payback > threshold), or the prose fix's premise is wrong")
+        payback_str = f"{round(knee['marginal_payback_years'], 1)} yr"
+        assert payback_str in HTML, (
+            f"{scen_key} knee's marginal payback ({payback_str}) -- the number "
+            "that proves the knee fails the 10-yr bar -- is not cited in the report")
+    return "the report correctly states the knee's marginal kWh FAILS the 10-yr payback bar"
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -282,6 +387,8 @@ CASES = [
     case_report_totals_match_the_artifact,
     case_cca_cheaper_period_count_matches_the_artifact,
     case_cca_verdict_annualized_figure_matches_the_artifact,
+    case_sizing_curve_table_matches_the_artifact_row_by_row,
+    case_sizing_curve_knee_direction_is_not_reversed,
 ]
 
 
