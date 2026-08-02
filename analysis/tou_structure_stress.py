@@ -229,6 +229,40 @@ SCENARIOS = {
 }
 
 
+ETA = np.sqrt(0.90)
+STEADY_STATE_TOL_KWH = 0.01
+STEADY_STATE_MAX_ITERS = 8
+
+
+def _steady_state_battery(d, imp_shifted, gen0):
+    """run_batt always starts at soc0=cap/2 and runs the year once -- a
+    one-time year-1 boundary condition, not a steady annual cycle. Left
+    uncorrected, a scenario whose altered window shape happens to leave the
+    battery meaningfully more or less full at year's end than another
+    scenario would fold un-costed "free" starting charge or un-recovered
+    "stranded" ending charge into the very DELTA this script exists to
+    report (Codex adversarial review, third pass -- the identical class of
+    boundary-condition issue battery_sizing_curve.py's `_steady_state_run`
+    fixed for issue #12's capacity sweep, reimplemented locally here rather
+    than importing that module's underscore-prefixed internal helper
+    across a script boundary). Iterates run_batt, feeding each pass's
+    ending SOC forward as the next pass's starting SOC, until they converge
+    to within STEADY_STATE_TOL_KWH kWh -- a steady annual charge/discharge
+    cycle, not an arbitrary one-time boundary."""
+    soc0 = CAP_KWH / 2
+    for it in range(STEADY_STATE_MAX_ITERS):
+        imp2, exp2, served, thru = bdp.run_batt(
+            d, imp_shifted, gen0, CAP_KWH, "greedy", power_kw=POWER_KW, soc0=soc0)
+        soc_final = soc0 + thru - served / ETA
+        if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
+            return imp2, exp2, soc0
+        soc0 = soc_final
+    raise SystemExit(
+        "tou_structure_stress: SOC did not converge to a steady annual cycle "
+        f"within {STEADY_STATE_MAX_ITERS} iterations -- last diff "
+        f"{soc_final - soc0:.4f} kWh")
+
+
 def _pipeline(d):
     """(baseline_bill, behavior_save, battery_marginal_save) for one
     structure's frame -- EV-shift-only behavior saving (scenario a: 100%
@@ -249,8 +283,7 @@ def _pipeline(d):
     behavior_save = baseline_bill - behavior_bill
 
     gen0 = d.exp.values.astype(float)
-    imp_batt, exp_batt, _served, _thru = bdp.run_batt(
-        d, imp_shifted, gen0, CAP_KWH, "greedy", power_kw=POWER_KW)
+    imp_batt, exp_batt, _soc0 = _steady_state_battery(d, imp_shifted, gen0)
     battery_bill = bdp.billed(d, imp_batt, exp_batt)
     battery_marginal = behavior_bill - battery_bill
 

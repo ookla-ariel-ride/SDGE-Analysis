@@ -2291,10 +2291,36 @@ much": how much MORE (or less) a fully-optimized household (EV shift + price-awa
 would pay per year under that scenario, holding physical usage fixed.
 
 **Independent cross-check.** The CURRENT-structure figures this script recomputes from
-scratch ($4,904.13 baseline, $1,220.85 behavior save, $2,238.36 battery marginal) agree with
-`behavior_rebuild.json`'s scenario (a) and `battery_dispatch_policies.json`'s post-behavior
-MID figures to the cent — an independent proof the reused pipeline (`shift_ev` + `run_batt`)
-is wired correctly, not merely internally self-consistent (`test_tou_structure_stress.py`).
+scratch ($4,904.13 baseline, $1,220.85 behavior save) agree with `behavior_rebuild.json`'s
+scenario (a) to the cent — an independent proof the reused pipeline (`shift_ev`) is wired
+correctly, not merely internally self-consistent (`test_tou_structure_stress.py`). The
+battery marginal ($2,239.16) is DELIBERATELY $0.80 off `battery_dispatch_policies.json`'s
+post-behavior MID figure ($2,238.36) rather than matching it to the cent -- see the
+steady-state boundary fix immediately below for why.
+
+**Do not ship (Codex adversarial review, third pass): steady-state battery boundary.**
+`run_batt` always starts at `soc0=cap/2` and runs the year once -- a one-time year-1
+boundary condition, not a steady annual cycle, the identical issue Codex's adversarial
+review already found and fixed for issue #12's `battery_sizing_curve.py` capacity sweep
+(`_steady_state_run`, §3.22). Left uncorrected here, a scenario whose altered window shape
+happens to leave the battery meaningfully fuller or emptier at year's end than another
+scenario would fold un-costed "free" starting charge or un-recovered "stranded" ending
+charge into the very DELTA this script exists to report -- exactly the class of defect
+that mattered for issue #12's capacity sweep. Checked empirically before fixing: the
+boundary drift (ending SOC minus starting SOC) measured 6.054-6.056 kWh across the current
+structure and all four scenarios -- nearly IDENTICAL regardless of scenario, unlike issue
+#12's sweep across capacities, where the drift's magnitude itself varied with capacity.
+Fixed anyway, matching this project's own established rule that "a fix that barely moves
+the numbers can still be the correct fix": added `_steady_state_battery()`, a local
+reimplementation of `battery_sizing_curve._steady_state_run`'s convergence loop (iterating
+`run_batt`, feeding each pass's ending SOC forward as the next pass's starting SOC, until
+they converge to within 0.01 kWh) rather than importing that module's underscore-prefixed
+internal helper across a script boundary. **Result: every scenario's own `battery_marginal_
+delta_usd` and `total_package_impact_usd` are UNCHANGED to the cent** (the near-identical
+boundary drift across scenarios cancels almost entirely in the differencing); only the
+CURRENT structure's own absolute battery marginal moved, from $2,238.36 (the one-shot
+figure) to $2,239.16 (the steady-state figure) -- an $0.80 correction, confirming the
+boundary artifact was real but immaterial to every published dollar figure in this section.
 
 **Result: a genuinely counterintuitive finding, verified by direct inspection of the
 physical data before publishing it.** On-peak shifting later hurts most (**+$132.81/yr**
@@ -2312,7 +2338,7 @@ and was verified against the household's own import/export profile (not merely a
 because the arithmetic ran without error) before being written into the report. The summer
 extension is roughly neutral (−$1.04/yr).
 
-**Tests** `analysis/test_tou_structure_stress.py`, 14 cases: `period_variant` reproduces
+**Tests** `analysis/test_tou_structure_stress.py`, 15 cases: `period_variant` reproduces
 `rates.period` exactly at CURRENT's parameters; `assign_structure` preserves physical
 load; each scenario's window reclassification checked directly (midday-narrowed reverts
 weekday 10-14 to off-peak while leaving 0-6 and on-peak alone; widened reclassifies 14-16;
@@ -2330,8 +2356,11 @@ scenario specifically must be measured, in-corpus; the midday-narrowed precedent
 `tou_audit.MIDDAY_SOP_START`
 live rather than a hand-copied date; `total_package_impact_usd` is the exact hand-derived
 combination of the three deltas; every scenario's EV shift conserves energy; the
-current-structure recomputation matches the committed sibling artifacts; the committed
-`worst_scenario` is the true argmax on the real measured year; and byte-identical artifact
+steady-state battery boundary genuinely converges (soc0 approx soc_final within
+STEADY_STATE_TOL_KWH) for the current structure and all four scenarios on the real
+measured year (Codex adversarial review, third pass); the current-structure recomputation
+matches the committed sibling artifacts; the committed `worst_scenario` is the true argmax
+on the real measured year; and byte-identical artifact
 regeneration.
 
 **Output** `data/tou_structure_stress.json`. Registered in `test_scripts_runnable.py` under

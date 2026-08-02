@@ -292,6 +292,45 @@ def case_pipeline_conserves_energy_under_every_scenario():
 # (b) archive-gated cases -- need the real measured year
 # ---------------------------------------------------------------------------
 @case
+def case_steady_state_battery_converges_for_every_structure():
+    """Codex adversarial review, third pass: run_batt's one-time year-1
+    boundary (soc0=cap/2, no cyclic closure) could fold un-costed "free"
+    starting charge or un-recovered "stranded" ending charge into the very
+    scenario DELTA this script reports, if different structures leave the
+    battery meaningfully fuller or emptier at year's end. _steady_state_
+    battery fixes this by iterating to a converged annual cycle -- this
+    case proves convergence actually holds (soc0 approx soc_final within
+    STEADY_STATE_TOL_KWH) for the CURRENT structure and all four scenarios
+    on the real measured year, not just that the function returns without
+    raising."""
+    _require_archive()
+    d = br.load()
+    d["imp"] = d.Consumption.astype(float)
+    d["exp"] = d.Generation.astype(float)
+
+    def converges(frame):
+        ev, sessions = br.detect_sessions(frame)
+        sop_idx, sop_ts = br.build_sop_index(frame)
+        all_mask = [True] * len(sessions)
+        imp_shifted, _ = br.shift_ev(frame, ev, sessions, all_mask, sop_idx, sop_ts)
+        gen0 = frame.exp.values.astype(float)
+        _, _, soc0 = tss._steady_state_battery(frame, imp_shifted, gen0)
+        _, _, served, thru = bdp.run_batt(frame, imp_shifted, gen0, tss.CAP_KWH, "greedy",
+                                          power_kw=tss.POWER_KW, soc0=soc0)
+        soc_final = soc0 + thru - served / tss.ETA
+        return abs(soc_final - soc0)
+
+    diffs = {"current": converges(d)}
+    for key, spec in tss.SCENARIOS.items():
+        diffs[key] = converges(tss.assign_structure(d, **spec["params"]))
+    for key, diff in diffs.items():
+        assert diff < tss.STEADY_STATE_TOL_KWH, (
+            f"{key} did not converge to a steady annual cycle: soc0 vs soc_final "
+            f"differ by {diff:.4f} kWh")
+    return f"every structure converges to a steady annual battery cycle (max diff {max(diffs.values()):.5f} kWh)"
+
+
+@case
 def case_current_pipeline_matches_the_committed_behavior_and_battery_artifacts():
     """The CURRENT-structure figures this script recomputes from scratch
     must agree with the sibling, independently-generated artifacts
