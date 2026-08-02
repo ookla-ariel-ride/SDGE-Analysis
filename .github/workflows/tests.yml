@@ -61,6 +61,8 @@ jobs:
         run: python analysis/test_tou_spread.py
       - name: NEM 2.0 grandfathering value + battery-marginal reconciliation guard tests
         run: python analysis/test_nem3_grandfathering.py
+      - name: DSGS VPP backtest guard tests
+        run: python analysis/test_dsgs_vpp_backtest.py
       - name: analysis scripts runnable or explicitly retired
         run: python analysis/test_scripts_runnable.py
       - name: carbon raw-cache and fail-closed branches

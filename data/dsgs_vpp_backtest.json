@@ -1,0 +1,820 @@
+{
+ "backup_reserve_caveat": "BACKUP_RESERVE_FRAC=0.20 is an ASSUMED, uncited operating parameter -- no reserve figure is established elsewhere in this repository (checked against battery_backup_sims.py and extended_findings.py; the existing outage-endurance sims assume a FULLY charged battery at outage start, the opposite convention). It is an EVENT-HOUR-ONLY dispatch floor: enforced only during a declared DSGS event hour (both the ordinary and the event-forced discharge are capped against it then), NOT a continuously-held standing backup-reserve setting -- ordinary, non-VPP arbitrage in the hours before an event is unaffected, so a real Powerwall's own continuously-enforced reserve setting would leave LESS reserve actually available by the time a declared event starts than this figure implies. A 0% (no reserve) sensitivity is included for comparison.",
+ "baseline_kw": 1.2408,
+ "battery_config": {
+  "power_kw": 11.5,
+  "round_trip_eta": 0.9,
+  "usable_kwh": 13.5
+ },
+ "bau_battery_bill_usd": 2575.47,
+ "events_in_window": {
+  "count": 46,
+  "dates": [
+   "2025-07-29",
+   "2025-07-30",
+   "2025-07-31",
+   "2025-08-21",
+   "2025-08-22",
+   "2025-08-25",
+   "2025-08-27",
+   "2025-08-28",
+   "2025-08-29",
+   "2025-09-03",
+   "2025-09-16",
+   "2025-09-17",
+   "2025-09-18",
+   "2025-09-23",
+   "2025-09-25",
+   "2025-09-26",
+   "2025-09-30",
+   "2025-10-10",
+   "2025-10-21",
+   "2025-10-22",
+   "2025-10-28",
+   "2025-10-29",
+   "2025-10-30"
+  ],
+  "test_capacity_hours": 40,
+  "test_non_capacity_hours": 6
+ },
+ "events_outside_window": {
+  "pre_window_count": 22,
+  "pre_window_dates": [
+   "2025-05-20",
+   "2025-05-22",
+   "2025-05-28",
+   "2025-05-29",
+   "2025-06-19",
+   "2025-06-24",
+   "2025-06-25",
+   "2025-06-26",
+   "2025-06-27",
+   "2025-06-30",
+   "2025-07-22"
+  ],
+  "season_2026_note": "The 2026 DSGS season (May-Oct 2026) overlaps the tail of the measured window (through 2026-07-23), but the CEC has not yet published 2026 performance data (2025's data was not filed until March 2026) -- a data-availability gap, not an extrapolatable one. 0 events counted, 0 revenue attributed."
+ },
+ "finding_2025_no_real_emergency_events": "0 'Capacity' (LMP-triggered) and 0 'Energy-Only' event hours occurred in 2025 (confirmed against the raw Data Dictionary's own text and against all 361,008 Hourly Discharge Dataset rows). Every 2025 event hour is 'Test Capacity' or 'Test Non-Capacity' -- a mandatory monthly test dispatch, not a real grid emergency.",
+ "finding_2026_enrollment_eligibility": "CORRECTED (issue #10 third adversarial review): the restriction is on AGGREGATORS, not individual households. The CEC's own DSGS Program Guidelines, Fifth Edition (TN 269649, Section II.C.1 and Appendix A, the authoritative source, not just Olivine's FAQ paraphrase) state: 'participation in the 2026 program season is limited to storage VPP aggregators that participated in October 2025, except for VPP aggregators of bi-directional EVSEs.' This freezes WHICH AGGREGATORS (e.g. Tesla's VPP program) may participate at all in 2026 -- it does NOT say a new household's battery cannot join an aggregator that itself already qualifies. An earlier version of this artifact wrongly concluded the household 'could not join at all' by conflating the aggregator-level restriction with a household-level one -- that claim is retracted as unsupported by the source. What the source DOES additionally establish: each qualifying aggregator's total 2026 compensation is CAPPED at its own October 2025 pro-rata share of available program funds (Appendix A) -- so adding new participant sites in 2026 does not increase what the CEC pays that aggregator, creating a real economic disincentive to enroll new customers even if not a rule against it. Whether a specific aggregator (e.g. Tesla, which the CEC lists as an approved Option 3 provider generally) both (a) actually participated in October 2025 specifically and (b) would accept a new residential site in 2026 given the funding cap is NOT DETERMINED from public CEC data -- this anonymized dataset cannot identify which real aggregator this household's utility corresponds to (see udc_identity_caveat), so confirm directly with the battery manufacturer's VPP program before assuming either way.",
+ "grandfathering_interaction_finding": "SEARCHED, NOTHING FOUND: whether DSGS ENROLLMENT (distinct from mere battery ownership) affects NEM 2.0 grandfathering. The CEC's DSGS Program Guidelines, Fifth Edition (89 pages, TN 269649) contain zero occurrences of 'net energy metering', 'net billing', 'NBT', or 'grandfath'; its 4 'NEM' hits are all the unrelated term 'VNEM' (Virtual Net Energy Metering, a multi-tenant billing arrangement). Olivine's DSGS Option 3 FAQ has no NEM mention either. Consistent with nem3_grandfathering.py's (issue #9) finding that NEM 2.0 forfeiture (SDG&E tariff Schedule NEM Special Condition 7(b), D.16-04-020) is triggered by ADDING generating/storage equipment past a nameplate threshold, not by enrolling existing equipment in a demand-response program. No source found that DSGS enrollment itself has any grandfathering effect -- a searched, sourced absence, not an assumption.",
+ "hour_detail": [
+  {
+   "caiso_lmp_usd_per_mwh": 59.68113,
+   "date": "2025-07-29",
+   "demonstrated_net_discharge_kw": 3.9449,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": false,
+   "month": 7,
+   "served_fraction_of_nameplate": 0.4509,
+   "soc_at_hour_start_kwh": 8.1663,
+   "total_discharge_kwh": 5.1858
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 56.4175,
+   "date": "2025-07-29",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 21,
+   "miss": true,
+   "month": 7,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 55.83822,
+   "date": "2025-07-30",
+   "demonstrated_net_discharge_kw": 4.5649,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": false,
+   "month": 7,
+   "served_fraction_of_nameplate": 0.5049,
+   "soc_at_hour_start_kwh": 8.8198,
+   "total_discharge_kwh": 5.8058
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 54.57397,
+   "date": "2025-07-30",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 21,
+   "miss": true,
+   "month": 7,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 49.3248,
+   "date": "2025-07-31",
+   "demonstrated_net_discharge_kw": 9.0049,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 7,
+   "served_fraction_of_nameplate": 0.8909,
+   "soc_at_hour_start_kwh": 13.5,
+   "total_discharge_kwh": 10.2458
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 50.36542,
+   "date": "2025-07-31",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 7,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 110.87108,
+   "date": "2025-08-21",
+   "demonstrated_net_discharge_kw": 8.9899,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.8896,
+   "soc_at_hour_start_kwh": 13.4842,
+   "total_discharge_kwh": 10.2308
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 107.00868,
+   "date": "2025-08-21",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 108.11571,
+   "date": "2025-08-22",
+   "demonstrated_net_discharge_kw": 6.2949,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.6553,
+   "soc_at_hour_start_kwh": 10.6434,
+   "total_discharge_kwh": 7.5358
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 121.07777,
+   "date": "2025-08-22",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 85.41826,
+   "date": "2025-08-25",
+   "demonstrated_net_discharge_kw": 5.8899,
+   "event_type": "Test Non-Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.6201,
+   "soc_at_hour_start_kwh": 10.2165,
+   "total_discharge_kwh": 7.1308
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 87.3805,
+   "date": "2025-08-25",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Non-Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 64.17923,
+   "date": "2025-08-27",
+   "demonstrated_net_discharge_kw": 3.7659,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.4354,
+   "soc_at_hour_start_kwh": 7.9776,
+   "total_discharge_kwh": 5.0068
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 68.41765,
+   "date": "2025-08-27",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 63.28224,
+   "date": "2025-08-28",
+   "demonstrated_net_discharge_kw": 8.9649,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.8875,
+   "soc_at_hour_start_kwh": 13.4578,
+   "total_discharge_kwh": 10.2058
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 62.91238,
+   "date": "2025-08-28",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 75.328,
+   "date": "2025-08-29",
+   "demonstrated_net_discharge_kw": 9.0049,
+   "event_type": "Test Capacity",
+   "hour_end": 17,
+   "miss": false,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.8909,
+   "soc_at_hour_start_kwh": 13.5,
+   "total_discharge_kwh": 10.2458
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 97.667,
+   "date": "2025-08-29",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": true,
+   "month": 8,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 93.47264,
+   "date": "2025-09-03",
+   "demonstrated_net_discharge_kw": -1.2401,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0001,
+   "soc_at_hour_start_kwh": 2.7008,
+   "total_discharge_kwh": 0.0008
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 97.15879,
+   "date": "2025-09-03",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 80.24077,
+   "date": "2025-09-16",
+   "demonstrated_net_discharge_kw": 9.0049,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.8909,
+   "soc_at_hour_start_kwh": 13.5,
+   "total_discharge_kwh": 10.2458
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 83.39,
+   "date": "2025-09-16",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 79.5795,
+   "date": "2025-09-17",
+   "demonstrated_net_discharge_kw": 3.9849,
+   "event_type": "Test Non-Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.4544,
+   "soc_at_hour_start_kwh": 8.2085,
+   "total_discharge_kwh": 5.2258
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 74.53127,
+   "date": "2025-09-17",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Non-Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 88.6859,
+   "date": "2025-09-18",
+   "demonstrated_net_discharge_kw": 6.8949,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.7075,
+   "soc_at_hour_start_kwh": 11.2759,
+   "total_discharge_kwh": 8.1358
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 79.66131,
+   "date": "2025-09-18",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 82.41706,
+   "date": "2025-09-23",
+   "demonstrated_net_discharge_kw": 8.2299,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.8235,
+   "soc_at_hour_start_kwh": 12.6831,
+   "total_discharge_kwh": 9.4708
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 91.0326,
+   "date": "2025-09-23",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 55.38,
+   "date": "2025-09-25",
+   "demonstrated_net_discharge_kw": 5.3499,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.5731,
+   "soc_at_hour_start_kwh": 9.6473,
+   "total_discharge_kwh": 6.5908
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 54.58387,
+   "date": "2025-09-25",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 54.35299,
+   "date": "2025-09-26",
+   "demonstrated_net_discharge_kw": 8.8349,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.8762,
+   "soc_at_hour_start_kwh": 13.3208,
+   "total_discharge_kwh": 10.0758
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 54.78708,
+   "date": "2025-09-26",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 45.99993,
+   "date": "2025-09-30",
+   "demonstrated_net_discharge_kw": 8.0149,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.8049,
+   "soc_at_hour_start_kwh": 12.4564,
+   "total_discharge_kwh": 9.2558
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 46.03,
+   "date": "2025-09-30",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 9,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 59.25944,
+   "date": "2025-10-10",
+   "demonstrated_net_discharge_kw": 8.5499,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.8514,
+   "soc_at_hour_start_kwh": 13.0204,
+   "total_discharge_kwh": 9.7908
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 58.30828,
+   "date": "2025-10-10",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 55.20589,
+   "date": "2025-10-21",
+   "demonstrated_net_discharge_kw": 7.5349,
+   "event_type": "Test Non-Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.7631,
+   "soc_at_hour_start_kwh": 11.9505,
+   "total_discharge_kwh": 8.7758
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 54.63887,
+   "date": "2025-10-21",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Non-Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 49.34607,
+   "date": "2025-10-22",
+   "demonstrated_net_discharge_kw": 6.7049,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": false,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.6909,
+   "soc_at_hour_start_kwh": 11.0756,
+   "total_discharge_kwh": 7.9458
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 47.41471,
+   "date": "2025-10-22",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 20,
+   "miss": true,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 62.29814,
+   "date": "2025-10-28",
+   "demonstrated_net_discharge_kw": 7.2849,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.7414,
+   "soc_at_hour_start_kwh": 11.687,
+   "total_discharge_kwh": 8.5258
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 60.93226,
+   "date": "2025-10-28",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 67.74258,
+   "date": "2025-10-29",
+   "demonstrated_net_discharge_kw": 7.9364,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.798,
+   "soc_at_hour_start_kwh": 12.3737,
+   "total_discharge_kwh": 9.1773
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 70.36833,
+   "date": "2025-10-29",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 63.73928,
+   "date": "2025-10-30",
+   "demonstrated_net_discharge_kw": 6.1439,
+   "event_type": "Test Capacity",
+   "hour_end": 18,
+   "miss": false,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.6422,
+   "soc_at_hour_start_kwh": 10.4842,
+   "total_discharge_kwh": 7.3848
+  },
+  {
+   "caiso_lmp_usd_per_mwh": 58.69837,
+   "date": "2025-10-30",
+   "demonstrated_net_discharge_kw": -1.2408,
+   "event_type": "Test Capacity",
+   "hour_end": 19,
+   "miss": true,
+   "month": 10,
+   "served_fraction_of_nameplate": 0.0,
+   "soc_at_hour_start_kwh": 2.7,
+   "total_discharge_kwh": 0.0
+  }
+ ],
+ "household_has_battery_today": false,
+ "hypothetical": true,
+ "measured_window": {
+  "end": "2026-07-23",
+  "start": "2025-07-24"
+ },
+ "miss_rate": {
+  "note": "The 20% reserve case has a HIGHER miss count than the 0% reserve sensitivity, and a lower total delivered kWh -- the expected direction: holding back an event-hour-only floor (see backup_reserve_caveat -- enforced only during a declared event hour, not continuously) leaves less headroom for BOTH the ordinary/BAU-equivalent discharge and the event-forced increment during that hour (the floor is enforced jointly across both, not just the incremental event-forced portion -- see run_batt_vpp()), so more event hours end with too little SOC above the floor to clear the 1 kWh miss threshold.",
+  "reserve_0pct_sensitivity": {
+   "misses": 17,
+   "rate": 0.3696,
+   "total": 46
+  },
+  "reserve_20pct": {
+   "misses": 24,
+   "rate": 0.5217,
+   "total": 46
+  }
+ },
+ "monthly_rate_usd_per_kw": {
+  "10": 10.244,
+  "5": 8.775,
+  "6": 9.074,
+  "7": 16.38,
+  "8": 17.55,
+  "9": 18.72
+ },
+ "notes": {
+  "category_filter": "UDC2 (candidate SDG&E) x Residential x Stationary x 2-hour resource duration (matches a Powerwall-class residential battery)",
+  "engine": "battery_dispatch_policies.run_batt (BAU) / run_batt_vpp (event dispatch, this script) + rates.bill_nem via battery_dispatch_policies.billed",
+  "event_hour_union_caveat": "The committed calendar -- and every gross/net/kWh/miss-rate figure in this artifact computed from it -- is the UNION of distinct (date, hour) event slots across ~14 aggregations in this category, since a single real household sees only ONE aggregation's own schedule and anonymization prevents identifying which. Treat these figures as an INCLUSIVE UPPER-BOUND SCENARIO, not a headline point estimate: see per_aggregation_sensitivity for the range across the individual aggregation schedules a real household might actually have belonged to."
+ },
+ "opportunity_cost_note": "Computed here, not assumed, and it came out small and slightly NEGATIVE (the re-billed VPP-dispatch year costs marginally LESS than the no-VPP/BAU year, before counting the DSGS payment at all). Traced to the monthly per-TOU-period NEM netting engine (rates.bill_nem): DSGS event hours fall inside the 4-9pm on-peak window, already this household's highest-value discharge time under ordinary price-aware dispatch, so forcing extra export there and drawing the battery down a bit further mostly reduces future SOC availability during CHEAPER off-peak/super-off-peak hours (which the overnight SOP grid top-up refills anyway) rather than costing expensive on-peak service later. This is a real, computed NEM-netting effect specific to this household's TOU schedule and usage pattern, not an assumption.",
+ "partial_months_note": "Month(s) [7] have event hours on BOTH sides of the measured-window boundary (issue #10 Codex review Finding 2): DSGS's own Monthly DC is an LMP-weighted average over ALL of a month's event hours, and this household's pre-window hours in that same month cannot be replayed (no measured load exists for them). Pricing only the in-window subset at the month's full published $/kW rate would misrepresent a partial month as a complete settlement, so these month(s) are EXCLUDED from monthly_gross_usd/net revenue entirely -- their dispatch/miss-rate outcomes for the in-window hours that DO exist are still reported in hour_detail (AC2 requires every in-window event to be replayed, and that simulation is valid; only the monthly CAPACITY PAYMENT computation is not), but they contribute $0 to gross/net revenue. The opportunity-cost figure feeding net revenue is computed from a SEPARATE dispatch run that excludes these month(s)' event-forcing entirely (a third adversarial/Codex review pass found the opportunity cost was still drawing on the full event set, netting a partial month's bill effect against zero revenue for it) -- so hour_detail's per-hour figures for an excluded month reflect the FULL event-forced dispatch (for AC2), while gross/net revenue reflect the PRICED-months-only dispatch (for consistency).",
+ "partial_season_caveat": "This backtest's revenue/kWh/miss-rate figures cover ONLY 2025-07-24 through 2025-10-30 -- the portion of the household's measured window that overlaps the 2025 DSGS season (which runs May-October), NOT the whole season. 22 union event hours before 2025-07-24 are excluded (unreplayable -- no measured load exists for them in any year), so this is a PARTIAL-SEASON observation, not a complete season and not an annualized figure. A full season would very likely earn MORE (it only adds event hours relative to this partial figure), but a full-season/annual revenue figure is NOT DETERMINED here -- it is not extrapolated from the partial figure, because no measured load exists for the missing May-July hours in any year. Any downstream use of this figure as an annual input (e.g. extended_findings.py's payback tornado lever) must carry this same caveat, not present it as a complete season's revenue.",
+ "payment_rate_source": "EMPIRICAL: Monthly Capacity Payment ($) / Demonstrated Capacity (MW) from the Monthly Aggregation Dataset, UDC2/Residential/2-hr rows with positive demonstrated capacity (essentially constant within each month). Tesla's $150-350/season program-terms figure (already cited in \u00a76) is used only as an order-of-magnitude sanity check, not as the payment source.",
+ "per_aggregation_sensitivity": {
+  "miss_rate_max": 0.6,
+  "miss_rate_min": 0.5,
+  "n_aggregations": 14,
+  "net_usd_max": 213.19,
+  "net_usd_max_aggregation": "Aggregation-034",
+  "net_usd_min": 96.99,
+  "net_usd_min_aggregation": "Aggregation-009",
+  "note": "A real household belongs to exactly ONE of these aggregations' actual dispatch schedules, not the union the rest of this artifact's headline figures use. The union-based figures are an inclusive upper bound on event FREQUENCY (see build_calendar()'s docstring), not a point estimate of what this household would actually have earned -- this range is what a real single-aggregation household could have earned instead, at the same 20% reserve.",
+  "per_aggregation": {
+   "Aggregation-002": {
+    "gross_usd": 138.33,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 137.97,
+    "opportunity_cost_usd": 0.36,
+    "total_discharge_kwh": 28.23
+   },
+   "Aggregation-009": {
+    "gross_usd": 93.06,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 14,
+    "net_usd": 96.99,
+    "opportunity_cost_usd": -3.93,
+    "total_discharge_kwh": 50.41
+   },
+   "Aggregation-011": {
+    "gross_usd": 156.4,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 12,
+    "net_usd": 155.89,
+    "opportunity_cost_usd": 0.51,
+    "total_discharge_kwh": 44.72
+   },
+   "Aggregation-014": {
+    "gross_usd": 138.57,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 12,
+    "net_usd": 138.23,
+    "opportunity_cost_usd": 0.34,
+    "total_discharge_kwh": 44.87
+   },
+   "Aggregation-015": {
+    "gross_usd": 185.8,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 190.24,
+    "opportunity_cost_usd": -4.44,
+    "total_discharge_kwh": 32.7
+   },
+   "Aggregation-017": {
+    "gross_usd": 162.86,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 6,
+    "net_usd": 162.72,
+    "opportunity_cost_usd": 0.14,
+    "total_discharge_kwh": 27.99
+   },
+   "Aggregation-024": {
+    "gross_usd": 138.33,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 137.97,
+    "opportunity_cost_usd": 0.36,
+    "total_discharge_kwh": 28.23
+   },
+   "Aggregation-034": {
+    "gross_usd": 209.28,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 16,
+    "net_usd": 213.19,
+    "opportunity_cost_usd": -3.91,
+    "total_discharge_kwh": 64.74
+   },
+   "Aggregation-037": {
+    "gross_usd": 138.33,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 137.97,
+    "opportunity_cost_usd": 0.36,
+    "total_discharge_kwh": 28.23
+   },
+   "Aggregation-050": {
+    "gross_usd": 195.49,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 196.69,
+    "opportunity_cost_usd": -1.2,
+    "total_discharge_kwh": 34.64
+   },
+   "Aggregation-053": {
+    "gross_usd": 108.43,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 108.45,
+    "opportunity_cost_usd": -0.02,
+    "total_discharge_kwh": 29.81
+   },
+   "Aggregation-062": {
+    "gross_usd": 163.58,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 162.63,
+    "opportunity_cost_usd": 0.95,
+    "total_discharge_kwh": 30.91
+   },
+   "Aggregation-065": {
+    "gross_usd": 122.13,
+    "miss_rate": 0.6,
+    "n_event_hours_in_window": 10,
+    "net_usd": 122.79,
+    "opportunity_cost_usd": -0.66,
+    "total_discharge_kwh": 32.97
+   },
+   "Aggregation-066": {
+    "gross_usd": 138.33,
+    "miss_rate": 0.5,
+    "n_event_hours_in_window": 8,
+    "net_usd": 137.97,
+    "opportunity_cost_usd": 0.36,
+    "total_discharge_kwh": 28.23
+   }
+  }
+ },
+ "revenue": {
+  "reserve_0pct_sensitivity": {
+   "gross_usd": 187.78,
+   "monthly_gross_usd": {
+    "10": 45.01,
+    "8": 73.92,
+    "9": 68.85
+   },
+   "net_usd": 199.14,
+   "opportunity_cost_usd": -11.36,
+   "total_discharge_kwh": 241.11
+  },
+  "reserve_20pct": {
+   "gross_usd": 128.47,
+   "monthly_demonstrated_capacity_kw": {
+    "10": 3.0992,
+    "8": 2.9555,
+    "9": 2.3957
+   },
+   "monthly_gross_usd": {
+    "10": 31.75,
+    "8": 51.87,
+    "9": 44.85
+   },
+   "net_usd": 139.95,
+   "opportunity_cost_usd": -11.48,
+   "total_discharge_kwh": 182.19
+  }
+ },
+ "second_program_year_event_list_2024": {
+  "option_3_event_totals": "26 total event hours over 16 days (statewide: 19 hours/13 days; additional PG&E-only DLAP events: 2 hours/2 days; additional SCE/SDG&E-only DLAP events: 5 hours/3 days), per page 10. Day counts as stated in the source; not independently re-derived here.",
+  "payment_rate_2024": "NOT DETERMINED. TN 266629 states the incentive rate 'varies by month' (page 8) but does not publish the actual $/kW-month figures the way the 2025 Monthly Aggregation Dataset does; no 2024 settlement-level dataset was found. The earliest publicly available per-event payment rate is 2025's (used as this backtest's primary rate source).",
+  "program_year": 2024,
+  "replayable": false,
+  "replayable_note": "Entirely outside this household's measured window (starts 2025-07-24) -- not replayable against measured load regardless of rate availability. Zero revenue attributed, consistent with events_outside_window's 2025 pre-window handling.",
+  "source": "CEC docket 22-RENEW-01, TN 266629, filed 2025-10-16, pages 10 and 23",
+  "statewide_2hr_event_dates": [
+   "2024-07-10",
+   "2024-09-04",
+   "2024-09-05"
+  ],
+  "statewide_2hr_event_dates_note": "The three statewide 2-hour VPP events (page 23's chart title and page 20's 'three statewide 2-hour events' annotation agree), each a 2-hour block within hour-ending 19-21. These are the only 2024 dates legible unambiguously in the source's charts; the remaining PG&E-only/SCE-SDG&E-only event dates are stated in the source but not transcribed here to avoid misreading a chart axis."
+ },
+ "tesla_sanity_check_note": "\u00a76's existing program-terms estimate cites $150-$350/season; this backtest's empirically-rated gross revenue for the 4 in-window participation month(s) is $128.47 -- same order of magnitude as a partial (not full 6-month) season at the program-terms rate.",
+ "total_discharge_kwh_note": "AC4's 'kWh exported' figure: total battery discharge across the in-window event hours (event-forced discharge -- which this dispatch model routes entirely to export, see run_batt_vpp -- plus any concurrent ordinary/BAU discharge that hour). This matches the CEC's own Net Discharge crediting basis (both avoided import and true export reduce net metered demand identically for DSGS purposes), not a narrower grid-export-only figure.",
+ "udc_identity_caveat": "UDC 2 in the CEC anonymized file is an INFERENCE (candidate SDG&E) by 2025 enrollment scale, cross-checked against the 2024 CEC analysis's real utility names showing the same relative ordering one year earlier -- not a confirmed identity. See this script's module docstring for the full site-month and nameplate-MW figures."
+}

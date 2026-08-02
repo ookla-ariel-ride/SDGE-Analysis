@@ -2,3 +2,4 @@ pandas
 numpy
 pyyaml
 pdfplumber>=0.11
+openpyxl

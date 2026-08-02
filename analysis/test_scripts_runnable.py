@@ -74,6 +74,7 @@ MANIFEST = {
     "service_headroom.py": "generator",
     "irreducible_bill.py": "generator",
     "nem3_grandfathering.py": "generator",
+    "dsgs_vpp_backtest.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -109,6 +110,10 @@ OWNS = {
     "service_headroom.py":          [("data", "service_headroom.json")],
     "irreducible_bill.py":          [("data", "irreducible_bill.json")],
     "nem3_grandfathering.py":       [("data", "nem3_grandfathering.json")],
+    # Not listed: dsgs_event_calendar_2025.csv, which only build_calendar() writes,
+    # gated behind --build-calendar (never passed by this generic runner) -- same
+    # shape as nem3_grandfathering.py's RATE_CSV/--build-rates, above.
+    "dsgs_vpp_backtest.py":         [("data", "dsgs_vpp_backtest.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -269,6 +274,11 @@ CI_RUNNABLE = {
     # reconciliation reference) -- no raw MIDAS archive needed for the normal
     # run (only --build-rates needs that, and CI never passes that flag)
     "nem3_grandfathering.py",
+    # needs only usage.csv (via behavior_rebuild.load()) and the committed PUBLIC
+    # data/dsgs_event_calendar_2025.csv (CEC policy data, not household-specific)
+    # -- no raw CEC xlsx needed for the normal run (only --build-calendar needs
+    # that, and CI never passes that flag)
+    "dsgs_vpp_backtest.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
