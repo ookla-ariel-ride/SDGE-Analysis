@@ -2307,18 +2307,23 @@ and was verified against the household's own import/export profile (not merely a
 because the arithmetic ran without error) before being written into the report. The summer
 extension is roughly neutral (−$1.04/yr).
 
-**Tests** `analysis/test_tou_structure_stress.py`, 13 cases: `period_variant` reproduces
+**Tests** `analysis/test_tou_structure_stress.py`, 14 cases: `period_variant` reproduces
 `rates.period` exactly at CURRENT's parameters; `assign_structure` preserves physical
 load; each scenario's window reclassification checked directly (midday-narrowed reverts
 weekday 10-14 to off-peak while leaving 0-6 and on-peak alone; widened reclassifies 14-16;
 shifted-later drops 16-17 and picks up 21-22; summer-extended reclassifies only November);
-every scenario's precedent label is one of measured/measured-in-corpus/hypothetical, and
-the summer-extension scenario specifically must be hypothetical; the midday-narrowed
-precedent note cites `tou_audit.MIDDAY_SOP_START` live rather than a hand-copied date;
-`total_package_impact_usd` is the exact hand-derived combination of the three deltas;
-every scenario's EV shift conserves energy; the current-structure recomputation matches
-the committed sibling artifacts; the committed `worst_scenario` is the true argmax on the
-real measured year; and byte-identical artifact regeneration.
+`run_batt`'s discharge window genuinely tracks a scenario's own on-peak reassignment
+rather than the hardcoded clock hours an earlier version tested (adversarial review,
+first pass — a synthetic fixture places a single >=2.5 kW spike at a slot that changes
+on/off status between structures, isolating the discriminating case so an unfixed bug
+would fail rather than pass vacuously); every scenario's precedent label is one of
+measured/measured-in-corpus/hypothetical, and the summer-extension scenario specifically
+must be hypothetical; the midday-narrowed precedent note cites `tou_audit.MIDDAY_SOP_START`
+live rather than a hand-copied date; `total_package_impact_usd` is the exact hand-derived
+combination of the three deltas; every scenario's EV shift conserves energy; the
+current-structure recomputation matches the committed sibling artifacts; the committed
+`worst_scenario` is the true argmax on the real measured year; and byte-identical artifact
+regeneration.
 
 **Output** `data/tou_structure_stress.json`. Registered in `test_scripts_runnable.py` under
 `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and `household.yaml`;
