@@ -374,6 +374,39 @@ def case_sizing_curve_knee_direction_is_not_reversed():
     return "the report correctly states the knee's marginal kWh FAILS the 10-yr payback bar"
 
 
+def case_optimality_gap_table_matches_the_artifact():
+    """The §6 'How good is the controller?' table and its verdict figures are
+    hand-written, not templated -- lock every cited number against the live
+    artifact so a regeneration can't silently drift them (issue #13)."""
+    pfd_path = ROOT / "data" / "perfect_foresight_dispatch.json"
+    assert pfd_path.exists(), f"{pfd_path} is committed public data and must exist"
+    pfd = json.loads(pfd_path.read_text())
+    gc = pfd["greedy_comparison"]
+    da = pfd["day_ahead_forecast"]
+    ps = pfd["purchasing_statement"]
+
+    checks = [
+        f"${gc['greedy_save_usd']:,}",
+        f"${gc['perfect_foresight_save_usd']:,.2f}",
+        f"${gc['optimality_gap_usd']:,.2f}",
+        f"{gc['optimality_gap_pct_of_greedy']:.1f}%",
+        f"${da['save_usd']:,.2f}",
+        f"${ps['remaining_gap_day_ahead_to_perfect_usd']:,.2f}",
+    ]
+    for value in checks:
+        assert value in HTML, f"§6 controller-quality table: {value!r} not found in the report"
+
+    assert gc["perfect_foresight_save_usd"] >= gc["greedy_save_usd"], (
+        "the true optimum must never save less than the greedy policy")
+    assert da["save_usd"] >= gc["greedy_save_usd"], (
+        "the day-ahead case must never save less than the greedy policy")
+    assert da["save_usd"] <= gc["perfect_foresight_save_usd"], (
+        "the day-ahead case must never beat the true optimum")
+    assert abs(pfd["verification"]["agreement_usd"]) < 1.0, (
+        "the LP's own required $1 agreement with rates.bill_nem is not met")
+    return "the §6 controller-quality table matches the live perfect-foresight artifact"
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -389,6 +422,7 @@ CASES = [
     case_cca_verdict_annualized_figure_matches_the_artifact,
     case_sizing_curve_table_matches_the_artifact_row_by_row,
     case_sizing_curve_knee_direction_is_not_reversed,
+    case_optimality_gap_table_matches_the_artifact,
 ]
 
 

@@ -11,7 +11,8 @@ and any agent.
 # One-time setup on any fresh clone — enable the secret/PII pre-commit gate:
 git config core.hooksPath .githooks       # requires: brew install gitleaks
 
-# Python environment (scripts need pandas/numpy/pyyaml; parse_bills.py also pdfplumber):
+# Python environment (scripts need pandas/numpy/pyyaml; parse_bills.py also pdfplumber;
+# perfect_foresight_dispatch.py also scipy, for its LP solver):
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 
 # Data intake (Phase A) — create private/household.yaml BEFORE running analysis:
@@ -401,5 +402,7 @@ diff-check -> report-template.html), never the retired analyze.py/D-block flow.
 Any future edit of CLAUDE.md must keep: the "Commands" section at the top (hook setup,
 venv/requirements.txt, the private/verify sandbox pattern, the regeneration gate, gitleaks
 scan invocations), the mechanical-enforcement text in section 4, and the reference to the
-committed requirements.txt (pandas, numpy, pyyaml, pdfplumber). These encode the working developer setup;
+committed requirements.txt (pandas, numpy, pyyaml, pdfplumber, openpyxl, scipy — the last
+added for issue #13's perfect-foresight LP solver, `scipy.optimize.linprog`/HiGHS). These
+encode the working developer setup;
 dropping them in a regeneration silently breaks the privacy gate and the reproduction path.

@@ -1,0 +1,53 @@
+{
+ "method": "linear program minimizing the exact rates.bill_nem_monthly objective (36 month/season/period netting buckets + NBC on gross imports), solved via scipy.optimize.linprog (HiGHS), at identical capacity/power/efficiency/EV-exclusion constraints as battery_dispatch_policies.run_batt's greedy policy, with a cyclic (steady-state) SOC boundary",
+ "cap_kwh": 13.5,
+ "power_kw": 11.5,
+ "eta": 0.9486832980505138,
+ "baseline_bill_current_rates": 4904,
+ "perfect_foresight_bill": 1074.51,
+ "perfect_foresight_save_usd": 3829.61,
+ "lp_info": {
+  "lp_status": "Optimization terminated successfully. (HiGHS Status 7: Optimal)",
+  "lp_objective_usd": 784.91,
+  "n_intervals": 35040,
+  "n_buckets": 39,
+  "charge_kwh_total": 8802.72,
+  "discharge_kwh_total": 7922.45,
+  "soc_init_kwh": -0.0,
+  "soc_final_kwh": -0.0,
+  "cycles_per_day": 1.6948
+ },
+ "verification": {
+  "lp_objective_usd_excl_bsc": 784.91,
+  "n_days": 365,
+  "lp_objective_plus_bsc_usd": 1074.51,
+  "rebilled_via_rates_bill_nem_usd": 1074.51,
+  "agreement_usd": 0.0013
+ },
+ "greedy_comparison": {
+  "greedy_save_usd": 2329,
+  "perfect_foresight_save_usd": 3829.61,
+  "optimality_gap_usd": 1500.61,
+  "optimality_gap_pct_of_greedy": 64.43
+ },
+ "day_ahead_forecast": {
+  "forecast_method": "persistence: yesterday's actual house-net profile (Consumption - Generation), time-of-day aligned, used as tomorrow's forecast; the first day of the year persists from the last day (cyclic)",
+  "forecast_mae_kw_equivalent_kwh_per_interval": 0.6695,
+  "forecast_rmse_kwh_per_interval": 1.1779,
+  "n_days": 365,
+  "n_days_with_dst_length_mismatch": 4,
+  "soc_start_kwh": -0.0,
+  "soc_end_kwh": 0.0,
+  "bill_usd": 1114.97,
+  "save_usd": 3789.16,
+  "energy_conservation_check_passed": true
+ },
+ "purchasing_statement": {
+  "greedy_save_usd": 2329,
+  "day_ahead_save_usd": 3789.16,
+  "perfect_foresight_save_usd": 3829.61,
+  "day_ahead_value_over_greedy_usd": 1460.16,
+  "remaining_gap_day_ahead_to_perfect_usd": 40.45,
+  "note": "what a smarter (day-ahead-forecast) controller is worth over the shipping greedy policy, and what is still left even after that upgrade, at the same 13.5 kWh / 11.5 kW hardware -- no shipping product changes the CONTROLLER, only the hardware, so this gap is a software/firmware question, not a purchasing one"
+ }
+}

@@ -1967,6 +1967,107 @@ cross-checking the 13.5 kWh point and the steady-state shipping saves' bounded g
 byte-identical regeneration gate on `_require_archive()` and SKIP with the reason named
 when this checkout lacks `private/`.
 
+### 3.23 `analysis/perfect_foresight_dispatch.py` — how much is a smarter controller worth? (`data/perfect_foresight_dispatch.json`)
+
+**Purpose (issue #13).** The "greedy" price-aware policy (§3.13) is a threshold heuristic:
+serve every import priced above the battery's stored-energy cost. Nobody had checked how
+close that gets to the best ANY controller could do on this house's own measured year, at
+identical hardware (13.5 kWh, 11.5 kW, 90% round-trip) and the identical EV-spillover
+exclusion (≥2.5 kW outside on-peak never battery-served). This script computes the TRUE
+annual-bill-minimizing dispatch directly, as a linear program — not a heuristic and not
+naive price arbitrage. The distinction is real: `rates.bill_nem_monthly` nets import
+against export per (month, season, TOU-period) bucket, charging the bucket's net position
+at the higher "energy" rate if positive or crediting it at the lower "credit" rate if
+negative, and separately charges non-bypassable costs (NBC) on GROSS monthly imports
+regardless of netting. An optimizer that just chases the biggest per-interval price spread
+can genuinely bill WORSE, because it ignores which side of zero a bucket's net position
+lands on, or that NBC keeps accruing on gross imports even when energy nets to zero.
+
+**LP formulation.** Per 15-minute interval (n = 35,040/year): `charge_i`, `discharge_i` ≥ 0
+(each ≤ power_kw/4 kWh), `imp_i`, `exp_i` ≥ 0 (post-battery grid flow), `soc_i` ∈ [0, cap].
+Constraints: net-flow (`imp_i - exp_i - charge_i + discharge_i = house_net_i`), SOC
+continuity (`soc_i = soc_{i-1} + charge_i·ETA - discharge_i/ETA`), a **cyclic SOC
+boundary** (`soc_init = soc_{n-1}` — a steady annual cycle, not a one-time year-1 starting-
+charge windfall or ending stranded-charge deficit; issue #12's Codex review caught exactly
+this class of bug in the heuristic dispatch script, built in here from the start rather
+than fixed after the fact), and EV exclusion (`discharge_i` forced to 0 wherever kW ≥ 2.5
+outside on-peak). Objective (minimize; BSC excluded as dispatch-invariant): for each of the
+~36-39 (month, season, period) buckets with `net_b = x_b - y_b` (the standard convex-
+piecewise-linear-as-LP split, `x_b, y_b ≥ 0`), `sum_b[energy_rate_b·x_b - credit_rate_b·y_b]
++ NBC·sum_i(imp_i)` — the EXACT structure of `rates.bill_nem_monthly`, not an approximation.
+Solved via `scipy.optimize.linprog` (HiGHS) — a new dependency (`requirements.txt`), solving
+in ~2.4 seconds for the full year (≈175,000 variables, ≈70,000 constraints).
+
+**Verification (the AC's own explicit requirement).** The LP's objective, plus the BSC it
+deliberately excludes, is re-billed through `rates.bill_nem` directly and must agree to
+within $1 — enforced with a `SystemExit` inside the generator itself (not only a separate
+test), since the whole point of "verified" is a property the artifact-producing script
+checks every run. Observed agreement: **$0.0013**. An early version of this check compared
+the LP objective directly against `rates.bill_nem`'s output (which includes BSC) and found
+a spurious $289.60 discrepancy — exactly `365 × $0.79343` (BSC), not a modeling bug at all;
+fixed by adding BSC back to the LP objective before comparing.
+
+**Energy conservation.** Checked via exact algebraic identities derived directly from the
+LP's own net-flow equation (`sum(imp-exp) - sum(house_net) = charge_sum - discharge_sum`),
+not a heuristic decomposition. An early version tried to split discharge into "import
+relief" vs "solar absorbed" using per-interval `clip(min=0)` sums, which silently assumed
+discharge only ever REDUCES import — but a true optimum legitimately also discharges to
+CREATE new export (capturing a bucket's credit rate) when that is more valuable, which the
+heuristic mis-flagged as a conservation failure. Also checked: no interval imports and
+exports simultaneously, no interval charges and discharges simultaneously (both would be
+pure waste with no benefit, never optimal, worth confirming empirically rather than
+assumed), and the cyclic boundary holds to the float epsilon.
+
+**Result: a 64.4% optimality gap.** The greedy policy saves $2,329/yr; perfect foresight
+saves $3,829.61/yr — a $1,500.61/yr gap, 64.4% of the greedy policy's own saving. The true
+optimum cycles far more actively (1.69 cycles/day vs greedy's 1.01, 7,922 kWh discharged
+vs 4,720 kWh) — it coordinates SOC allocation across the WHOLE year, including choosing
+exactly how far to push each bucket past its zero-net threshold, something a per-interval
+threshold rule cannot do.
+
+**Day-ahead forecast (the realistic middle case).** Rather than perfect knowledge, this
+case commits to a schedule using only a persistence forecast: yesterday's actual house-net
+profile (Consumption − Generation), time-of-day aligned, stands in for tomorrow's forecast
+(the first day of the year persists from the last day — the same cyclic convention as the
+annual boundary). Each day's schedule is planned by solving a same-day-scoped LP (SOC fixed
+at the real carried-over starting level — not required to return to it, since a single day
+is a slice of a longer sequence, not a closed loop — with buckets rescoped to that day's own
+contribution), then the resulting plan is re-clipped against REAL feasibility (SOC/power
+bounds) and applied to the REAL data — a walk-forward backtest, not a hypothetical. Forecast
+error: MAE 0.6695 kWh, RMSE 1.1779 kWh per 15-minute interval (a real, sizable per-interval
+error). Result: **$3,789.16/yr saved — 98.9% of the theoretical maximum**, using a forecast
+method (next-day persistence) any existing smart-battery product could implement today.
+This says the shipping policy's shortfall is a DECISION-RULE problem, not a forecasting
+one: monthly netting means a single day's forecast error mostly shifts WHICH day within the
+month serves a given kWh, not WHETHER it gets served at all, as long as the controller
+reasons about the netting structure correctly. 4 of 365 days have no same-length day to
+persist from (DST transitions) and fall back to their own actual data for that day only,
+excluded from the reported forecast-error statistics rather than silently blended in.
+
+**Purchasing statement.** A smarter (day-ahead-forecast) controller is worth ~$1,460/yr
+over the shipping greedy policy, at the SAME hardware — no shipping product changes the
+controller, only the hardware, so this gap is a firmware/software question, not a
+purchasing one. The remaining gap after a day-ahead upgrade (perfect foresight vs day-ahead)
+is $40.45/yr — small enough that further forecast-quality investment past next-day
+persistence is not obviously worth it on this house's own numbers.
+
+**Output** `data/perfect_foresight_dispatch.json`. Registered in `test_scripts_runnable.py`
+under `CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and
+`household.yaml`; its optional cross-check against `battery_dispatch_policies.json` is
+read-only and skipped gracefully if absent, not a hard tie-out assertion, so synthetic CI
+inputs run it cleanly).
+
+**Tests** `analysis/test_perfect_foresight_dispatch.py`, 16 cases: synthetic-frame unit
+tests of the bucket assignment (matches `bill_nem_monthly`'s own grouping), the core LP
+solver (a hand-verifiable two-interval case, EV-exclusion enforcement, both SOC boundary
+modes), both fail-closed conservation checks (corrupted aggregate, simultaneous import/
+export, simultaneous charge/discharge), and the day-ahead forecast machinery (cyclic
+persistence for day 0, energy conservation, SOC bounds under heavy load) need no private
+archive at all; cases requiring the $1 agreement with `rates.bill_nem`, the real annual
+solve's conservation and cyclic closure, the greedy ≤ day-ahead ≤ perfect-foresight
+ordering, and byte-identical regeneration gate on `_require_archive()` and SKIP with the
+reason named when this checkout lacks `private/`.
+
 ---
 
 ## 4. Battery simulation methodology
