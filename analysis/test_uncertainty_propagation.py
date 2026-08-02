@@ -249,14 +249,36 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     assert abs(calib["mid_nominal"] - committed_mid) < 1.0, (
         f"recomputed post-behavior marginal {calib['mid_nominal']:.2f} disagrees "
         f"with committed post_behavior.mid.battery_marginal {committed_mid} by >$1")
-    # higher round-trip efficiency must raise the marginal saving; more
-    # soiling-driven generation loss must lower it -- sign checks on the real
-    # calibrated engine, not just curve-fit arithmetic
+    # Higher round-trip efficiency must raise the marginal saving -- unambiguous:
+    # less energy is lost per cycle, full stop.
     assert calib["rte_slope_mid"] > 0, "higher RTE must raise the battery marginal saving"
-    assert calib["soil_slope_mid"] < 0, "more soiling loss must lower the battery marginal saving"
+    # Soiling's sign is NOT asserted a priori. An earlier draft assumed "more
+    # loss must lower the marginal saving" and hardcoded that as a test -- but
+    # that draft's marginal() had the finding-1 bug (mismatched generation
+    # baseline), and its "confirming" negative slope was an artifact of the
+    # SAME bug, not independent verification. Less midday solar surplus means
+    # some previously net-exporting intervals become small net importers that
+    # the battery can now discharge into; whether that nets out above or below
+    # the lost-solar-charging effect is genuinely ambiguous without running the
+    # real engine -- exactly why this script calibrates from real reruns
+    # instead of assuming a sign. What IS checked: the effect is small (this
+    # household's realistic 1.3-6.6% loss range should not swing the marginal
+    # saving by more than a few percent either way) and the pre-/post-behavior
+    # calibrations agree in sign and rough magnitude with each other, i.e. the
+    # measurement is internally consistent, not a coin-flip between reruns.
+    assert abs(calib["soil_slope_mid"]) < 0.5, (
+        f"soiling slope {calib['soil_slope_mid']} implausibly large -- a small "
+        "realistic loss fraction should not swing the marginal saving by more "
+        "than a few percent; investigate before trusting the calibration")
+    same_sign = (calib["soil_slope_mid"] > 0) == (calib["soil_slope_pre"] > 0)
+    assert same_sign, (
+        f"pre- ({calib['soil_slope_pre']}) and post-behavior "
+        f"({calib['soil_slope_mid']}) soiling slopes disagree in sign -- not "
+        "internally consistent enough to average into one slope")
     return (f"real dispatch calibration matches the committed artifact within $1 "
             f"(pre={calib['pre_nominal']:.2f}, mid={calib['mid_nominal']:.2f}) "
-            "with correctly-signed RTE/soiling sensitivities")
+            "with a correctly-signed RTE sensitivity and an internally-"
+            f"consistent, small soiling sensitivity ({calib['soil_slope_mid']:+.4f})")
 
 
 @case

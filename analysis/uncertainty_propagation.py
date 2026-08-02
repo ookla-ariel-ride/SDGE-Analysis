@@ -253,36 +253,45 @@ def dispatch_calibration():
     imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
     b_sh = bp.billed(d, imp_sh, gen0)
 
-    def marginal(imp_base, bill_base, rte=RTE_NOM, gen_scale=1.0):
+    def marginal(imp_base, rte=RTE_NOM, gen_scale=1.0):
+        """Battery-alone marginal saving at a given RTE and generation scale.
+        The no-battery baseline is recomputed AT THE SAME gen_scale (adversarial
+        review pass 1, finding 1): billing a scaled-generation battery run
+        against an unscaled-generation baseline silently folded the direct
+        cost of lost solar into what was supposed to be an isolated battery
+        effect, contaminating the soiling slope. Both sides of the subtraction
+        must see the identical generation input."""
+        gen = gen0 * gen_scale
+        bill_base = bp.billed(d, imp_base, gen)
         orig_eta = bp.ETA
         bp.ETA = np.sqrt(rte)
         try:
-            i2, e2, _, _ = bp.run_batt(d, imp_base, gen0 * gen_scale, 13.5, "greedy")
+            i2, e2, _, _ = bp.run_batt(d, imp_base, gen, 13.5, "greedy")
             b2 = bp.billed(d, i2, e2)
         finally:
             bp.ETA = orig_eta
         return float(bill_base - b2)
 
-    pre_nominal = marginal(imp0, base)
-    mid_nominal = marginal(imp_sh, b_sh)
+    pre_nominal = marginal(imp0)
+    mid_nominal = marginal(imp_sh)
 
     soiling = _committed("soiling_results.json")["annual_economics"]
     gen_kwh = soiling["annual_generation_kwh"]
     lossA = soiling["scenario_A_this_years_evidence"]["annual_lost_kwh"] / gen_kwh
     lossB = soiling["scenario_B_2024_cleaning_evidence"]["annual_lost_kwh"] / gen_kwh
 
-    rte_points_mid = {RTE_LO: marginal(imp_sh, b_sh, rte=RTE_LO),
+    rte_points_mid = {RTE_LO: marginal(imp_sh, rte=RTE_LO),
                       RTE_NOM: mid_nominal,
-                      RTE_HI: marginal(imp_sh, b_sh, rte=RTE_HI)}
-    rte_points_pre = {RTE_LO: marginal(imp0, base, rte=RTE_LO),
+                      RTE_HI: marginal(imp_sh, rte=RTE_HI)}
+    rte_points_pre = {RTE_LO: marginal(imp0, rte=RTE_LO),
                       RTE_NOM: pre_nominal,
-                      RTE_HI: marginal(imp0, base, rte=RTE_HI)}
+                      RTE_HI: marginal(imp0, rte=RTE_HI)}
     soil_points_mid = {0.0: mid_nominal,
-                       lossA: marginal(imp_sh, b_sh, gen_scale=1 - lossA),
-                       lossB: marginal(imp_sh, b_sh, gen_scale=1 - lossB)}
+                       lossA: marginal(imp_sh, gen_scale=1 - lossA),
+                       lossB: marginal(imp_sh, gen_scale=1 - lossB)}
     soil_points_pre = {0.0: pre_nominal,
-                       lossA: marginal(imp0, base, gen_scale=1 - lossA),
-                       lossB: marginal(imp0, base, gen_scale=1 - lossB)}
+                       lossA: marginal(imp0, gen_scale=1 - lossA),
+                       lossB: marginal(imp0, gen_scale=1 - lossB)}
 
     def slope_of(points, nominal_x, nominal_y):
         xs = np.array(sorted(points))
@@ -453,6 +462,25 @@ def full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma,
     def pct(arr, p):
         return round(float(np.percentile(arr, p)))
 
+    # A finite N-draw Monte Carlo observing zero failures does not itself prove
+    # a true probability of exactly 1.0 (adversarial review pass 1, finding 2:
+    # "100%" overstates certainty a 5,000-draw sample cannot establish). Report
+    # the raw counts alongside a one-sided 95% Clopper-Pearson bound so a
+    # near-1-or-0 point estimate carries its own finite-sample caveat.
+    from scipy import stats as _stats
+
+    def _clopper_pearson_bounds(k, n, alpha=0.05):
+        lower = float(_stats.beta.ppf(alpha, k, n - k + 1)) if k > 0 else 0.0
+        upper = float(_stats.beta.ppf(1 - alpha, k + 1, n - k)) if k < n else 1.0
+        return lower, upper
+
+    n_within_10 = int(np.sum(payback <= WARRANTY_YR))
+    n_within_15 = int(np.sum(payback <= MIDTERM_YR))
+    n_never = int(np.sum(np.isnan(payback)))
+    ci10_lo, _ = _clopper_pearson_bounds(n_within_10, N)
+    ci15_lo, _ = _clopper_pearson_bounds(n_within_15, N)
+    _, ci_never_hi = _clopper_pearson_bounds(n_never, N)
+
     out = {
         "N": N,
         "seed": seed,
@@ -462,6 +490,19 @@ def full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma,
         "prob_within_warranty_10yr": round(float(np.mean(payback <= WARRANTY_YR)), 3),
         "prob_within_15yr": round(float(np.mean(payback <= MIDTERM_YR)), 3),
         "prob_never_within_25yr": round(float(np.mean(np.isnan(payback))), 3),
+        "n_within_warranty_10yr": n_within_10,
+        "n_within_15yr": n_within_15,
+        "n_never_within_25yr": n_never,
+        "prob_within_warranty_10yr_ci95_lower": round(ci10_lo, 4),
+        "prob_within_15yr_ci95_lower": round(ci15_lo, 4),
+        "prob_never_within_25yr_ci95_upper": round(ci_never_hi, 4),
+        "finite_sample_caveat": (
+            f"{n_within_10}/{N} modeled draws repaid within the {WARRANTY_YR}-yr "
+            "warranty; a finite Monte Carlo sample observing zero failures does "
+            "not itself establish a true probability of exactly 1.0 -- the "
+            "one-sided 95% Clopper-Pearson lower bound above is the decision-"
+            "relevant, sample-size-honest statement (and the mirrored upper "
+            "bound for 'never')."),
         "npv": {
             f"{int(dr*100)}pct": {
                 "10yr": {"median": pct(npv[dr][10], 50), "p10": pct(npv[dr][10], 10),
