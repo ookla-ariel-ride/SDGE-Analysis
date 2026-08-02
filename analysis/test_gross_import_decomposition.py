@@ -284,6 +284,49 @@ def case_decomposition_attributes_the_increase_mostly_to_consumption():
 
 
 @case
+def case_identifiability_robustness_check_reports_an_alternative_shape_honestly():
+    """Adversarial review pass 2, finding 1: back-solving production_scale to
+    hit the 2024 bill exactly makes the endpoint agreement tautological, not
+    a validation, because no 2024 hourly shape exists to independently pin
+    down HOW consumption grew across hours. This case exercises the
+    companion identifiability check under a materially different,
+    data-grounded shape assumption (EV-charging-concentrated growth) and
+    requires it to report its finding honestly -- including reporting a
+    DIVERGENT result plainly rather than only ever reporting agreement."""
+    _require_archive()
+    bill = gi.load_bill_periods()
+    prod = gi.production_block()
+    cons = gi.consumption_block(bill, prod)
+    hourly = gi.hourly_reconstruction(bill)
+    decomp = gi.decomposition_block(bill, prod, cons, hourly)
+    robust = gi.identifiability_robustness_check(bill, prod, cons, hourly, decomp)
+    assert robust["realizable"] is True, (
+        "the EV-concentrated alternative should be physically realizable for "
+        "this household (measured EV kWh comfortably exceeds the required "
+        "consumption reduction) -- if this ever flips, the note explaining "
+        "why must still be present")
+    assert robust["ev_hourly_total_2026_kwh"] > 0
+    assert 0.0 <= robust["implied_ev_reduction_pct_of_2026_ev_kwh"] <= 100.0
+    assert "conclusion_robust_to_this_alternative_shape" in robust
+    assert isinstance(robust["conclusion_robust_to_this_alternative_shape"], bool)
+    # This is the actual, honest empirical finding for this dataset: the two
+    # shape assumptions' production terms diverge meaningfully (roughly -1
+    # vs -135 kWh), so the split is NOT robust to this alternative -- the
+    # test pins that finding rather than assuming either direction, so a
+    # future regeneration that silently reverts to reporting only agreement
+    # would be caught.
+    assert robust["conclusion_robust_to_this_alternative_shape"] is False, (
+        "expected the EV-concentrated scenario to diverge meaningfully from "
+        "the uniform-scaling baseline for this dataset -- if this now "
+        "agrees, the underlying numbers changed and the prose in index.html/"
+        "TECHNICAL.md describing the divergence needs updating too")
+    return (f"EV-concentrated scenario production term "
+            f"({robust['production_term_kwh_this_scenario']} kWh) vs baseline "
+            f"({robust['production_term_kwh_baseline_scenario']} kWh) -- "
+            "divergence reported honestly, not smoothed over")
+
+
+@case
 def case_ev_attribution_uses_real_detection_and_states_its_own_limits():
     """AC5: EV share must come from detect_sessions on real data, not a guess,
     and the artifact must say plainly what it cannot determine."""

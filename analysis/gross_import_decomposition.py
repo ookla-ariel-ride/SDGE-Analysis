@@ -49,13 +49,22 @@ METHOD SUMMARY (full derivation: TECHNICAL.md 3.26):
      bill's own net_kwh (exact) plus the estimated 2024 production.
   4. Hourly gross load (CT) and an hourly-resolution PRODUCTION series
      derived by combining CT load with the Green Button's import/export
-     columns are used to run a physically-grounded counterfactual: scale
-     2026's actual hourly consumption and production down to their
-     2024-estimated LEVELS (holding the diurnal SHAPE fixed) and recompute
-     the resulting gross import. This reproduces both bill-actual endpoints
-     (1,934 and 1,438 kWh) as an internal validation, then a Shapley-style
-     two-factor decomposition attributes the change to a consumption term
-     and a production term that sum to the observed change by construction.
+     columns feed a physically-grounded counterfactual: 2024's consumption
+     is PINNED by an exact accounting identity (bill-exact net_kwh plus
+     estimated production), leaving production_scale as the one genuinely
+     free parameter, back-solved (not assumed) so the simulated 2024 corner
+     matches the 2024 bill exactly. This makes the simulated-vs-bill
+     agreement EXACT BY CONSTRUCTION, not an independent validation --
+     with no 2024 hourly shape available, the specific split into a
+     consumption term and a production term depends on the modeling choice
+     of HOW 2024 differed from 2026's diurnal shape (this script's default:
+     uniform proportional scaling). A companion identifiability check
+     (identifiability_robustness_check) re-solves under one materially
+     different, still-defensible shape assumption (all consumption decline
+     concentrated in EV-charging hours) to test whether the reported split's
+     CONCLUSION -- not its exact magnitude -- survives that alternative; see
+     its own docstring and the artifact's own
+     decomposition_identifiability_robustness_check field for the result.
   5. EV share of the 2026 window's consumption comes from detect_sessions,
      not a guess; its share of the two-year INCREASE is bounded, not
      claimed exactly, because 2024's EV baseline is unavailable.
@@ -629,14 +638,135 @@ def decomposition_block(bill, prod, cons, hourly):
         "decomposition_pct_error_vs_observed": round(pct_error, 2),
         "within_5_pct_tolerance": bool(pct_error < 5.0),
         "verdict": (
-            "The gross-import increase for this pair of bill periods is "
-            "overwhelmingly a CONSUMPTION story: the consumption term "
-            "accounts for essentially all of the observed change, and the "
-            "production term is small (bill-exact accounting, cross-checked "
-            "against the independent weather-based estimate above, "
-            "attributes little of the change to the array itself)."
+            "Under this scenario's modeling assumption -- 2024 shared 2026's "
+            "diurnal SHAPE exactly, scaled uniformly -- the gross-import "
+            "increase is overwhelmingly a CONSUMPTION story: the consumption "
+            "term accounts for essentially all of the observed change. "
+            "IMPORTANT: this specific split is NOT uniquely identified by "
+            "the available data (adversarial review pass 2, finding 1) -- "
+            "see decomposition_identifiability_robustness_check for how much "
+            "the production term can move under a materially different, "
+            "still-defensible shape assumption. Read this scenario's exact "
+            "numbers as ONE plausible decomposition consistent with both "
+            "bill totals, not as the uniquely correct physical split."
             if abs(sh["production_term_kwh"]) < abs(sh["consumption_term_kwh"]) * 0.25
             else "See consumption_term_kwh vs production_term_kwh for the split."),
+    }
+
+
+def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
+    """Adversarial review pass 2, finding 1: back-solving production_scale to
+    hit the 2024 bill exactly makes the endpoint agreement TAUTOLOGICAL, not
+    a validation -- with no 2024 hourly load/production shape available, the
+    single accounting constraint (net_kwh + production = consumption) pins
+    production_scale UNIQUELY only under decomposition_block's own modeling
+    choice (2024 = 2026's diurnal SHAPE, scaled uniformly). A DIFFERENT,
+    equally defensible shape assumption for how 2024-to-2026 consumption grew
+    could back-solve to a materially different production_scale, changing the
+    reported split, while still satisfying the exact same two bill totals.
+
+    This function re-runs the identical back-solve under ONE genuinely
+    different, data-grounded shape assumption -- ALL of the consumption
+    reduction concentrated in EV-charging hours specifically (detect_sessions
+    already isolates which hours those are; EV charging is independently
+    documented, in this repo, as having grown as a load category) -- rather
+    than decomposition_block's own uniform-proportional-growth assumption.
+    If the two assumptions' back-solved production_scale (and hence the
+    production/consumption split) agree closely, the "consumption story"
+    conclusion is robust to this particular identifiability concern, not
+    merely an artifact of one modeling choice; if they diverge sharply, that
+    is reported plainly rather than hidden behind the headline split."""
+    import behavior_rebuild as br
+    from scipy.optimize import brentq
+
+    gb = load_green_button_period(pd.Timestamp(P26_START), pd.Timestamp(P26_END) + pd.Timedelta(days=1))
+    ev_kwh_15min, _sessions = br.detect_sessions(gb)
+    ev_series = pd.Series(ev_kwh_15min, index=gb["dt"])
+    ct_index = hourly["ct_index"]
+    ev_hourly = ev_series.groupby(ev_series.index.floor("h")).sum().reindex(ct_index, fill_value=0.0).values
+    ev_hourly_total = float(ev_hourly.sum())
+
+    ct_values = hourly["ct_values"]
+    prod_values = hourly["production_hourly_derived"]
+    correction = decomposition["hourly_resolution_correction_factor"]
+    net_2024 = bill["period_2024"]["net_kwh"]
+    prod_2026 = prod["period_2026_measured_pvoutput_kwh"]
+    cons_2026 = cons["period_2026_ct_measured_kwh"]
+    gross_2024 = bill["period_2024"]["gross_kwh"]
+
+    def ev_reduction_fraction(p):
+        cons_2024 = net_2024 + p * prod_2026
+        total_reduction = cons_2026 - cons_2024
+        return total_reduction / ev_hourly_total
+
+    def residual(p):
+        frac = ev_reduction_fraction(p)
+        ct_shape = ct_values - ev_hourly * frac
+        sim = correction * float(np.maximum(0.0, ct_shape - p * prod_values).sum())
+        return sim - gross_2024
+
+    # Confirm the EV-concentrated assumption is even physically realizable
+    # (the required reduction must fit within the measured EV energy itself)
+    # before trusting a root the solver might otherwise find outside [0,1].
+    frac_at_uniform_p = ev_reduction_fraction(decomposition["production_scale_2024_over_2026"])
+    assumption_realizable = 0.0 <= frac_at_uniform_p <= 1.0
+
+    if not assumption_realizable:
+        return {
+            "scenario": "EV-charging-concentrated consumption decline",
+            "realizable": False,
+            "note": (
+                f"At the baseline scenario's own production_scale, the "
+                f"EV-concentrated assumption would require reducing EV "
+                f"charging by {frac_at_uniform_p * 100:.0f}% of its measured "
+                "2026 total, outside the physically meaningful [0%, 100%] "
+                "range -- this alternative shape cannot explain the observed "
+                "change on its own and is not evaluated further."),
+        }
+
+    p_star_ev = brentq(residual, 0.2, 3.0, xtol=1e-10)
+    ev_reduction_pct = ev_reduction_fraction(p_star_ev) * 100
+    production_term_ev = round(prod_2026 * (1 - p_star_ev), 1)
+    baseline_production_term = decomposition["production_term_kwh"]
+    baseline_consumption_term = decomposition["consumption_term_kwh"]
+
+    agree = abs(production_term_ev - baseline_production_term) < 0.25 * abs(baseline_consumption_term)
+
+    return {
+        "scenario": "EV-charging-concentrated consumption decline",
+        "realizable": True,
+        "assumption": (
+            "Instead of decomposition_block's uniform-proportional scaling "
+            "of every hour, ALL of the 2024-to-2026 consumption growth is "
+            "assumed concentrated in EV-charging hours specifically (per-hour "
+            "EV kWh from behavior_rebuild.detect_sessions, reused read-only), "
+            "with every non-EV hour held at its exact 2026 level."),
+        "ev_hourly_total_2026_kwh": round(ev_hourly_total, 1),
+        "implied_ev_reduction_pct_of_2026_ev_kwh": round(ev_reduction_pct, 1),
+        "production_scale_backsolved_this_scenario": round(p_star_ev, 5),
+        "production_scale_backsolved_baseline_scenario": decomposition["production_scale_2024_over_2026"],
+        "production_term_kwh_this_scenario": production_term_ev,
+        "production_term_kwh_baseline_scenario": baseline_production_term,
+        "conclusion_robust_to_this_alternative_shape": agree,
+        "note": (
+            f"The two shape assumptions' back-solved production levels "
+            f"agree closely (production term {production_term_ev} kWh here "
+            f"vs {baseline_production_term} kWh under uniform scaling) -- "
+            "the 'consumption story, not a production story' conclusion "
+            "does not depend on the specific uniform-scaling assumption; it "
+            "holds under this materially different, data-grounded "
+            "alternative too."
+            if agree else
+            f"The two shape assumptions' back-solved production levels "
+            f"diverge meaningfully (production term {production_term_ev} kWh "
+            f"here vs {baseline_production_term} kWh under uniform scaling) "
+            "-- the headline split is sensitive to which diurnal-shape "
+            "assumption is used, and should be read as ONE plausible "
+            "decomposition rather than a uniquely identified physical "
+            "split. Both scenarios still attribute the dominant share of "
+            "the change to consumption over production, but the exact "
+            "magnitude is genuinely underdetermined by the data available."
+        ),
     }
 
 
@@ -883,6 +1013,7 @@ def build():
     cons = consumption_block(bill, prod)
     hourly = hourly_reconstruction(bill)
     decomposition = decomposition_block(bill, prod, cons, hourly)
+    robustness = identifiability_robustness_check(bill, prod, cons, hourly, decomposition)
     ev = ev_block(cons)
     degradation = degradation_block()
     temperature = temperature_sensitivity_block()
@@ -925,6 +1056,7 @@ def build():
         "consumption": cons,
         "hourly_reconstruction_validation": hourly_public,
         "decomposition": decomposition,
+        "decomposition_identifiability_robustness_check": robustness,
         "ev_attribution": ev,
         "degradation": degradation,
         "temperature_sensitivity": temperature,

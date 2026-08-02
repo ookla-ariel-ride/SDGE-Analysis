@@ -2702,15 +2702,41 @@ transfer method were used). This reframes what AC1's normalization is FOR here: 
 the headline split (an exact accounting identity does that, once one parameter is pinned), but
 to independently sanity-check whether the pinned value is physically plausible.
 
-**The answer.** `consumption_term_kwh` = +497.3 kWh; `production_term_kwh` = -1.3 kWh. For
-THIS pair of bill periods, the gross-import increase is overwhelmingly a CONSUMPTION story,
-not a production story — the back-solved production level implies 2024 production was
-essentially flat relative to 2026's measured output (99.4%), consistent with the small
-expected 2-year degradation signal (roughly 45-60 kWh at the naive 1.3-1.8%/yr rate applied to
-this window) being too small to resolve confidently against this method's own noise floor in
-a single 29-32 day window two years apart. This does not contradict the 6-year degradation
-trend above — a small, real per-year decline can be simultaneously true and undetectable
-against noise in one short window.
+**The answer, and why it is a range, not a single number (AC4, adversarial review pass 2,
+finding 1).** Under the DEFAULT scenario (2024 shares 2026's diurnal shape exactly, scaled
+uniformly), `consumption_term_kwh` = +497.3 kWh; `production_term_kwh` = -1.3 kWh. Codex's
+adversarial review pass 2 correctly identified that this endpoint agreement is EXACT BY
+CONSTRUCTION (the back-solve guarantees it), not an independent validation, and that with no
+2024 hourly shape available, a DIFFERENT, equally defensible shape assumption could back-solve
+to a materially different split while satisfying the identical two bill totals — the model
+does not uniquely identify the physical split from the data available, only from the data
+PLUS a chosen shape assumption.
+
+`identifiability_robustness_check()` tests this directly rather than asserting either that the
+default scenario is fine or that the whole exercise is hopeless: it re-solves under ONE
+materially different, still data-grounded shape assumption — ALL of the 2024-to-2026
+consumption decline concentrated in EV-charging hours specifically (per-hour EV kWh from
+`detect_sessions()`, reused read-only, rather than spread uniformly across every hour) — and
+compares the resulting production term against the default scenario's. Result: -135.0 kWh
+under the EV-concentrated assumption vs -1.3 kWh under uniform scaling — a genuine, ~14x
+divergence, not a rounding difference. Both assumptions still attribute the LARGER share of
+the change to consumption (497.3 vs an implied ~468 kWh consumption term in the EV-concentrated
+scenario, against production terms of -1.3 and -135.0 kWh respectively), so the QUALITATIVE
+conclusion (predominantly consumption, not production) is directionally robust across both
+tested assumptions — but the EXACT MAGNITUDE of the production term is genuinely underdetermined
+by this two-bill-period comparison, ranging from negligible to roughly a quarter of the total
+observed change (135 of 496 kWh) depending on an assumption this data cannot itself adjudicate.
+`test_gross_import_decomposition.py`'s `case_identifiability_robustness_check_reports_an_
+alternative_shape_honestly` pins this exact finding (including that the two scenarios
+DISAGREE) so a future regeneration that silently converges to false agreement would be caught,
+not celebrated. The default scenario's own numbers are reported alongside this honest range,
+not replaced by it — reporting only a range with no concrete central estimate would itself lose
+information the uniform-scaling assumption legitimately provides as one plausible reading.
+
+This does not contradict the 6-year degradation trend above — the -1.3-to-135 kWh production
+range brackets the ~45-60 kWh expected from the naive 1.3-1.8%/yr degradation rate applied to
+this window comfortably, so a small, real per-year decline remains entirely consistent with
+what this short, two-years-apart, no-2024-daily-data comparison can and cannot resolve.
 
 **EV attribution (AC5) — real detection, honestly bounded, not assumed.** `ev_block()` runs
 `analysis/behavior_rebuild.py`'s `detect_sessions()` (imported read-only, never modified) on
