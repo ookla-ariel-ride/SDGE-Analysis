@@ -94,7 +94,7 @@ def case_committed_csv_covers_every_expected_statement_and_period():
     assert got_pairs == expected_pairs, (
         f"missing from artifact: {sorted(expected_pairs - got_pairs)}; "
         f"extra in artifact: {sorted(got_pairs - expected_pairs)}")
-    return f"18 statements, 19 periods, exact set match"
+    return "18 statements, 19 periods, exact set match"
 
 
 @case
