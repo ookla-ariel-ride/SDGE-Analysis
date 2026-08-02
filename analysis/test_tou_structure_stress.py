@@ -32,6 +32,7 @@ _hh._cache = None
 
 import rates as R                          # noqa: E402
 import behavior_rebuild as br              # noqa: E402
+import battery_dispatch_policies as bdp    # noqa: E402
 import tou_audit as TA                     # noqa: E402
 import tou_structure_stress as tss         # noqa: E402
 
@@ -172,6 +173,49 @@ def case_summer_extended_reclassifies_november_only():
     assert (d_scen.seas[other_winter] == "W").all(), "other winter months must stay winter"
     assert (d_scen.seas[summer_unchanged] == "S").all(), "existing summer months must stay summer"
     return "summer_extended reclassifies only November, leaving every other month alone"
+
+
+@case
+def case_battery_discharge_window_actually_tracks_the_scenario_on_peak_window():
+    """Adversarial review, first pass: run_batt's greedy discharge window used
+    to test the hardcoded clock hours 16<=h<21 directly rather than reading
+    p[i]=="on" off the frame it was given -- happening to coincide with the
+    CURRENT structure (rates.period defines "on" as exactly that window) but
+    silently NOT tracking a scenario that moves on-peak elsewhere, exactly
+    what onpeak_widened/onpeak_shifted_later do. A >=2.5 kW import at 21-22 is
+    the discriminating case: under the greedy policy, an import that large is
+    ONLY served via the unconditional p=="on" clause (the "p!=sop and
+    kw&lt;2.5" clause requires import BELOW 2.5 kW), so if the discharge
+    window still silently used clock hours, this import would go unserved
+    under BOTH structures and this test would not distinguish the bug from
+    correct behavior -- it must be served under onpeak_shifted_later (where
+    21-22 is on-peak) and NOT under the current structure (where it is not).
+    Baseline load is zero everywhere except the discriminating slot: the
+    greedy policy's OTHER discharge clause (p!="sop" and kw<2.5) would
+    otherwise also fire on any nonzero baseline load throughout every
+    non-sop hour of the day, draining SOC before reaching the on-peak
+    window under test and confounding the comparison (caught empirically:
+    an earlier version of this fixture used a 1 kW constant baseline load,
+    which failed for exactly this reason)."""
+    d = _synthetic_frame(n_days=1, kwh_per_interval=0.0, start="2026-01-05")
+    hour = d.hour.values
+    slot = np.where((hour >= 21) & (hour < 22))[0][0]
+    d.loc[slot, "Consumption"] = 20.0 / 4.0   # >=2.5 kW, well above the EV-exclusion gate
+    d["imp"] = d.Consumption.astype(float)
+    d["exp"] = d.Generation.astype(float)
+
+    imp_cur, _, served_cur, _ = bdp.run_batt(d, d.imp.values, d.exp.values, cap=10.0,
+                                             policy="greedy", power_kw=20.0, soc0=10.0)
+    d_later = tss.assign_structure(d, **tss.SCENARIOS["onpeak_shifted_later"]["params"])
+    imp_later, _, served_later, _ = bdp.run_batt(d_later, d.imp.values, d.exp.values, cap=10.0,
+                                                 policy="greedy", power_kw=20.0, soc0=10.0)
+    assert imp_cur[slot] > 1e-6, ("fixture check: the 21-22 import must be UNSERVED under "
+                                  "the current structure (21-22 is off-peak today)")
+    assert imp_later[slot] < 1e-6, ("the 21-22 import must be served once onpeak_shifted_later "
+                                    "makes 21-22 on-peak -- run_batt's discharge window is not "
+                                    "tracking the scenario's own p column")
+    assert served_later > served_cur + 1e-6
+    return "run_batt's discharge window genuinely tracks the scenario's on-peak reassignment, not clock hours"
 
 
 @case

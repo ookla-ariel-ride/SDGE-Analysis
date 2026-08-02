@@ -33,6 +33,23 @@ curve.py (issue #12) sweeps it across an energy and a power grid. Every call
 asserts its own energy-conservation identity (final SOC must equal the initial
 SOC plus charge throughput minus discharge, net of round-trip loss) and raises
 SystemExit if it does not hold — a real invariant, not just a signature change.
+
+The unconditional discharge-window clause reads p[i] == "on" (the TOU period
+column ANY caller's frame already carries), not a hardcoded clock-hour test
+(issue #14 adversarial review, first pass): an earlier version tested
+16 <= h[i] < 21 directly, which happens to equal p[i] == "on" for every frame
+built from rates.period_at() (rates.py itself defines "on" as exactly that
+window, unconditionally, before its own weekday/weekend branching) but silently
+stopped tracking on-peak the moment a caller supplied a frame whose p column
+encoded a DIFFERENT on-peak window -- exactly what tou_structure_stress.py
+(issue #14) does to stress-test alternate tariff structures. Reading p[i]
+directly is a no-op for every existing caller (verified: this module's own
+committed artifact, and every downstream artifact that reuses run_batt --
+battery_sizing_curve.json, battery_plan_matrix.json, perfect_foresight_
+dispatch.json's greedy comparison, package_results.json, extended_results.json
+-- all regenerate byte-identically) and makes the function genuinely portable
+to a caller's own TOU structure, which its own module docstring already claimed
+before this fix made the claim true.
 """
 import numpy as np, pandas as pd, json
 import behavior_rebuild as br
@@ -47,7 +64,7 @@ def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, soc0=None):
     soc = soc0; served = 0.0; thru = 0.0
     p = d.p.values; h = d.hour.values; kw = imp0 * 4
     for i in range(len(d)):
-        disch_win = (16 <= h[i] < 21) or \
+        disch_win = (p[i] == "on") or \
                     (policy == "twowin" and 6 <= h[i] < 9 and kw[i] < 2.5) or \
                     (policy == "greedy" and p[i] != "sop" and kw[i] < 2.5)
         if exp[i] > 0 and not (disch_win and imp[i] > 0):

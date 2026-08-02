@@ -2292,11 +2292,12 @@ MID figures to the cent — an independent proof the reused pipeline (`shift_ev`
 is wired correctly, not merely internally self-consistent (`test_tou_structure_stress.py`).
 
 **Result: a genuinely counterintuitive finding, verified by direct inspection of the
-physical data before publishing it.** On-peak shifting later hurts most (**+$188.25/yr**
+physical data before publishing it.** On-peak shifting later hurts most (**+$132.81/yr**
 even after the EV shift and battery) — the newly-captured evening hour (9-10pm) is pure
-grid import with no solar to offset it (confirmed directly: 512.7 kWh imported, 0 kWh
-exported in that slot across the measured year). Widening on-peak and narrowing the midday
-super-off-peak window each LOWER this household's bill (−$512.72/yr and −$1,437.11/yr)
+grid import with no solar to offset it (confirmed directly: 731.8 kWh imported, 0 kWh
+exported in that slot across the measured year, every day of the week — the on-peak window
+applies daily, not just on weekdays). Widening on-peak and narrowing the midday
+super-off-peak window each LOWER this household's bill (−$515.35/yr and −$1,437.11/yr)
 rather than raise it — both reclassify hours when this household is a heavy net EXPORTER
 (10am-4pm weekday, confirmed directly: 6,508 kWh exported vs 459 kWh imported across the
 10am-4pm weekday window in the measured year) into periods with a materially higher export
