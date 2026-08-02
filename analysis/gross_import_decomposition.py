@@ -502,7 +502,7 @@ def _shapley_two_factor(ct_values, prod_values, c_scale, p_scale, correction=1.0
 
 
 def _backsolve_production_scale(ct_values, prod_values, correction, net_2024_exact,
-                                prod_2026_measured, cons_2026_measured, target_gross_2024):
+                                cons_2026_measured, target_gross_2024):
     """The independent weather-based production_scale (seasonal-rate
     transfer) and the bill-exact consumption identity together do not, in
     general, make the simulated 2024 corner hit the actual 2024 bill total
@@ -510,10 +510,10 @@ def _backsolve_production_scale(ct_values, prod_values, correction, net_2024_exa
     bill-exact number by coincidence is not something to expect or rely on.
     Given the consumption side is PINNED by an exact accounting identity
     once production_scale is chosen (cons_2024 = net_2024_exact +
-    production_scale * prod_2026_measured -- net_2024_exact is a bill-exact
-    fact, not an estimate), production_scale is the ONE genuinely free
-    parameter here. Back-solving for the value that makes the simulated 2024
-    corner match the ACTUAL 2024 bill total exactly turns an
+    production_scale * prod_2026_actual_used_in_sim -- net_2024_exact is a
+    bill-exact fact, not an estimate), production_scale is the ONE genuinely
+    free parameter here. Back-solving for the value that makes the
+    simulated 2024 corner match the ACTUAL 2024 bill total exactly turns an
     over-constrained, noisy problem (independent estimate vs bill fact,
     hoping they roughly agree) into a well-posed one (bill fact pins the
     parameter; the independent weather-based estimate becomes a genuine,
@@ -521,11 +521,27 @@ def _backsolve_production_scale(ct_values, prod_values, correction, net_2024_exa
     decomposition's accuracy depends on). See decomposition_block's own
     docstring for why an earlier draft's independent-estimate-only approach
     could not reliably satisfy AC4 once the day-count bug (adversarial
-    review pass 1, finding 1) was corrected."""
+    review pass 1, finding 1) was corrected.
+
+    `prod_2026_actual_used_in_sim` MUST be sum(prod_values) -- the SAME
+    meter-derived hourly production series `residual` actually scales and
+    sums -- not the separately-measured PVOutput figure (Codex review pass
+    1, finding 1): the two disagree by ~1.7% (a real, already-documented
+    cross-meter gap), and using PVOutput's total in the identity while the
+    simulation scales the meter-derived series makes the accounting
+    identity internally inconsistent with what is actually being solved --
+    the modeled 2024 corner would match gross import while implying a net
+    import different from the bill-exact net_2024_exact it was supposed to
+    be pinned to. PVOutput's own measured total remains the basis for the
+    SEPARATE, independent weather/seasonal-rate cross-check elsewhere
+    (production_scale_estimated_from_weather) -- it is deliberately not
+    used here."""
     from scipy.optimize import brentq
 
+    prod_2026_actual_used_in_sim = float(prod_values.sum())
+
     def c_of_p(p):
-        return (net_2024_exact + p * prod_2026_measured) / cons_2026_measured
+        return (net_2024_exact + p * prod_2026_actual_used_in_sim) / cons_2026_measured
 
     def residual(p):
         c = c_of_p(p)
@@ -563,8 +579,7 @@ def decomposition_block(bill, prod, cons, hourly):
 
     production_scale_backsolved, consumption_scale_backsolved = _backsolve_production_scale(
         ct_values, prod_values, hourly_resolution_correction,
-        bill["period_2024"]["net_kwh"], prod["period_2026_measured_pvoutput_kwh"],
-        cons["period_2026_ct_measured_kwh"], gross_2024)
+        bill["period_2024"]["net_kwh"], cons["period_2026_ct_measured_kwh"], gross_2024)
 
     sh = _shapley_two_factor(ct_values, prod_values, consumption_scale_backsolved,
                              production_scale_backsolved, correction=hourly_resolution_correction)
@@ -709,12 +724,19 @@ def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
     prod_values = hourly["production_hourly_derived"]
     correction = decomposition["hourly_resolution_correction_factor"]
     net_2024 = bill["period_2024"]["net_kwh"]
-    prod_2026 = prod["period_2026_measured_pvoutput_kwh"]
+    # Codex review pass 1, finding 1 (same bug, same fix, as
+    # _backsolve_production_scale): the identity must use the SAME
+    # meter-derived production total the simulation actually scales
+    # (sum(prod_values)), not the separately-measured PVOutput figure --
+    # the two differ by ~1.7%, and mixing them would make this scenario's
+    # own accounting identity internally inconsistent with what residual()
+    # actually solves.
+    prod_2026_actual_used_in_sim = float(prod_values.sum())
     cons_2026 = cons["period_2026_ct_measured_kwh"]
     gross_2024 = bill["period_2024"]["gross_kwh"]
 
     def ev_reduction_fraction(p):
-        cons_2024 = net_2024 + p * prod_2026
+        cons_2024 = net_2024 + p * prod_2026_actual_used_in_sim
         total_reduction = cons_2026 - cons_2024
         return total_reduction / ev_hourly_total
 

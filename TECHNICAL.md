@@ -2691,8 +2691,8 @@ asserts this precisely rather than merely under a tolerance.
 **The independent weather-based estimate becomes a cross-check, not an input the accuracy
 depends on.** `production_block()`'s AC1 weather/seasonal-rate estimate is still computed and
 reported (`production_scale_estimated_from_weather` = 1.088), but the DECOMPOSITION now uses
-the bill-anchored, back-solved value (`production_scale_backsolved_from_bill` = 0.994)
-instead. The two differ by 8.7% — not a precise match, but the same order of magnitude and
+the bill-anchored, back-solved value (`production_scale_backsolved_from_bill` = 1.014)
+instead. The two differ by 6.8% — not a precise match, but the same order of magnitude and
 the same qualitative conclusion (both close to 1.0, i.e. little year-over-year production
 change), which is itself meaningful: it says the independent weather-normalization approach is
 in the right neighborhood for this window, given how sensitive a two-year, no-daily-data
@@ -2702,9 +2702,23 @@ transfer method were used). This reframes what AC1's normalization is FOR here: 
 the headline split (an exact accounting identity does that, once one parameter is pinned), but
 to independently sanity-check whether the pinned value is physically plausible.
 
+**A third bug, found by Codex review pass 1: the back-solve's own accounting identity used the
+wrong production total.** `_backsolve_production_scale()`'s identity (`cons_2024 = net_2024_
+exact + production_scale * prod_2026`) is only internally consistent if `prod_2026` is the SAME
+production quantity the hourly simulation actually scales (`prod_values`, the meter-derived
+`CT_load - GreenButton_import + GreenButton_export` series) — an earlier draft used the
+SEPARATELY-measured PVOutput total instead (`prod["period_2026_measured_pvoutput_kwh"]`), which
+differs from the meter-derived total by ~1.7% (a real, already-documented cross-meter gap, not
+noise). Mixing the two meant the "exact" 2024 identity matched gross import while implying a net
+import different from the bill-exact `net_2024_exact` it was supposed to be pinned to. Fixed by
+deriving the identity from `sum(prod_values)` — the same series `residual()` actually scales and
+sums — reserving the PVOutput figure for the separate, clearly-labeled weather/seasonal-rate
+cross-check only. The SAME bug existed in `identifiability_robustness_check()`'s own
+`ev_reduction_fraction()` and was fixed identically.
+
 **The answer, checked against a second, independent shape assumption (AC4, adversarial review
 passes 2 and 3).** Under the DEFAULT scenario (2024 shares 2026's diurnal shape exactly, scaled
-uniformly), `consumption_term_kwh` = +497.3 kWh; `production_term_kwh` = -1.3 kWh. Codex's
+uniformly), `consumption_term_kwh` = +492.9 kWh; `production_term_kwh` = +3.1 kWh. Codex's
 adversarial review pass 2 correctly identified that this endpoint agreement is EXACT BY
 CONSTRUCTION (the back-solve guarantees it), not an independent validation, and that with no
 2024 hourly shape available, a DIFFERENT, equally defensible shape assumption could back-solve
@@ -2725,16 +2739,16 @@ gross-import CONTRIBUTION — different physical quantities entirely, since most
 change is absorbed by export/self-consumption rather than changing gross import 1:1. That bug
 manufactured a spurious "-135 kWh, ~14x divergence" that evaporates once both scenarios go
 through the same decomposition: recomputed correctly, the EV-concentrated scenario gives
-+477.5 kWh consumption against +18.5 kWh production — its own terms summing to the observed
++472.9 kWh consumption against +23.1 kWh production — its own terms summing to the observed
 496 kWh change exactly, just like the default scenario's (a property
 `test_gross_import_decomposition.py`'s own test now asserts explicitly, per Codex's own
 recommendation, rather than only asserting the default scenario's sum).
 
 With both scenarios computed in the same units, the finding is reassuring rather than alarming:
--1.3 kWh (uniform scaling) and +18.5 kWh (EV-concentrated) are both small relative to the
-~490 kWh consumption term either scenario reports, and the "consumption story, not a production
-story" conclusion is genuinely robust to this identifiability concern, not merely an artifact of
-one modeling choice. `test_gross_import_decomposition.py`'s
++3.1 kWh (uniform scaling) and +23.1 kWh (EV-concentrated) are both small relative to the
+~480-490 kWh consumption term either scenario reports, and the "consumption story, not a
+production story" conclusion is genuinely robust to this identifiability concern, not merely an
+artifact of one modeling choice. `test_gross_import_decomposition.py`'s
 `case_identifiability_robustness_check_reports_an_alternative_shape_honestly` pins this exact
 agreement (`conclusion_robust_to_this_alternative_shape` = `True`) so a future regeneration that
 silently reintroduces the units-mismatch bug — which would look like a dramatic, attention-
