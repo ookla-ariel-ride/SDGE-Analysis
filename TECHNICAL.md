@@ -1557,17 +1557,48 @@ comparison table printed for that exact date — the same same-statement diagnos
 SDG&E's bundled-generation (EECC) comparison, printed for reference rather than charged,
 and it is the only place a same-date bundled rate exists for a CCA-billed date. This is
 measured, not modeled — SDG&E prints the comparison figure on the household's own bill, for
-the household's own usage, on the household's own date. Each (period, season, TOU) cell is
-classified PRICED (billed as a net import, comparison present — 50 of 63 cells, the only
-ones the energy-only total sums), ABSENT (billed as a net export, no comparison printed —
-13 cells; SDG&E prints nothing because a net-export bucket settles at the annual true-up
-under NEM 2.0, not because its bundled rate is zero), or CARRIED-EXPORT (billed as a net
-export in that specific period, yet a same-date bundled rate is still knowable because it
-was carried across the gap from flanking direct observations elsewhere in the corpus —
-`rates_history`'s "carried" tier — 3 cells, excluded from the priced total for the same
-NEM-2.0-defers-the-dollar reason as ABSENT, reported separately rather than folded in).
-**Result: CEA charged $2,453.69 against $2,381.25 of same-date bundled comparison over the
-547 days on file — $72.44 more, $48.37/yr.**
+the household's own usage, on the household's own date. Bundled comparison dollars are
+priced at SEGMENT level (`data/bill_tou_detail.csv`'s own segment/segment_days columns),
+never at one representative date's rate applied to the whole period's kWh: a period whose
+printed comparison table itself changed mid-cycle (a rate revision landed inside a billing
+cycle — e.g. 1/28/25–2/26/25, four days at the old winter rate and 26 at the new one) prints
+two segments at two different $/kWh, and both are priced at their own rate. An earlier
+version of this script priced such periods at one representative date's rate for the whole
+period, overstating the bundled comparison by $1.63 across the four affected periods (Codex
+review, issue #11); segment-level pricing is numerically identical to the old approach for
+every period whose comparison table did not change mid-cycle (41 of the 50 priced rows).
+Each (period, season, TOU) cell is classified PRICED (billed as a net import, comparison
+present — 50 of 66 cells, the only ones the energy-only total sums), ABSENT (billed as a net
+export, no comparison printed — 13 cells; SDG&E prints nothing because a net-export bucket
+settles at the annual true-up under NEM 2.0, not because its bundled rate is zero), or
+CARRIED-EXPORT (billed as a net export in that specific period, yet a same-date bundled rate
+is still knowable because it was carried across the gap from flanking direct observations
+elsewhere in the corpus — `rates_history`'s "carried" tier — 3 cells, excluded from the
+priced total for the same NEM-2.0-defers-the-dollar reason as ABSENT, reported separately
+rather than folded in). **Result: CEA charged $2,453.69 against $2,379.62 of same-date
+bundled comparison over the 547 days on file — $74.07 more, $49.46/yr.**
+
+**This figure is narrower than "was switching to the CCA a win" — it prices only the
+net-import cells.** The 16 excluded (13 ABSENT + 3 CARRIED-EXPORT) cells carry a real CEA
+credit of −$378.06 on the household's own bills — over 5× the size of the $74.07 priced-cell
+delta — but there is no same-date SDG&E bundled counterfactual to compare it against: NEM 2.0
+defers a net-export bucket's dollar value to the annual true-up, so SDG&E's bill prints no
+bundled comparison for these cells at all (a genuine absence, not a bundled rate of zero —
+the same Settlement-is-not-a-price distinction `bill_decomposition.py`'s `Settlement` type
+enforces). What the bundled side would have credited for that exported energy is **not
+determined** here: reconstructing it would mean rebuilding the whole NEM annual true-up (which
+nets exports against imports across the compensation year at rates this repo has not
+extracted for the export side), a materially larger undertaking, properly scoped as its own
+follow-up rather than estimated. `data/cca_bundled_counterfactual.json` carries this live —
+`direction_a.excluded_net_export_cca_credit_usd` and `.excluded_net_export_note`, computed
+from the same committed CSV as every other Direction-A figure, never hardcoded. Direction B
+carries the analogous, MODELED disclosure for its own excluded net-export cells (10 cells, a
+hypothetical −$472.80 CEA-side credit, smaller in evidentiary weight since CEA never served
+this household in 2024) in `direction_b.excluded_net_export_hypothetical_cca_credit_usd`. The
+practical consequence: the whole-household answer to whether switching to the CCA was a win
+is **not fully determined** by this analysis — the $49.46/yr figure is the real, small answer
+for the net-import cells, and `recommendation.text` states this scope explicitly rather than
+letting the priced-cell figure stand in for a conclusion it does not, on its own, support.
 
 **Direction B — the 7 bundled periods repriced at CCA rates (MODELED).** For each
 bundled-era period's actual generation kWh (summed from `data/bill_tou_detail.csv`'s
@@ -1595,7 +1626,7 @@ later date, holding usage fixed — attributable to tariff vintage, not the prov
 attributable to the switch, not vintage. Over the subset of Direction-A-priced cells with a
 vintage baseline, `provider_usd + vintage_usd` sums to the total change to the cent
 (`identity_check.residual_usd == 0.0`, asserted in `test_cca_bundled_counterfactual.py`):
-**provider effect $71.13, vintage effect $180.01**. The CCA side of this split is exactly
+**provider effect $74.05, vintage effect $177.09**. The CCA side of this split is exactly
 zero by construction — §3.20 found CEA's charged rate never moved, so 100% of the drift in
 "what CEA would charge now vs then" is a bundled-side vintage phenomenon. Two cells
 (summer/off_peak, winter/off_peak) have no bundled-charged observation anywhere in the
@@ -1604,8 +1635,8 @@ so `g0` does not exist for them; their 6 (of 50) Direction-A rows still count fu
 Direction A's headline (which needs no `g0`) and are simply excluded from, and disclosed
 as excluded from, the provider/vintage split.
 
-**The two directions disagree by 180.5%, and the reason is named, not averaged away.**
-Direction A ($48.37/yr) and Direction B ($135.70/yr) are not two readings of the same
+**The two directions disagree by 174.4%, and the reason is named, not averaged away.**
+Direction A ($49.46/yr) and Direction B ($135.70/yr) are not two readings of the same
 question. Direction A prices CEA against the same-date bundled rate, so the vintage drift
 above nets out of it by construction. Direction B has no 2024 CCA rate to anchor to, so it
 necessarily compares 2024's cheaper bundled rate against CEA's rate as observed in
@@ -1636,8 +1667,8 @@ furthest (summer on-peak's comparison rate held at 0.40592 through 2025 before m
 flat throughout, so this is the date where the provider-effect term had shrunk furthest
 toward (and past, on some cells) zero. Averaged across the other 18 periods, most billed
 earlier in the sample before the bundled rate had risen this far, CEA cost more than
-bundled would have — the full 547-day average is the $48.37/yr headline above. The two
-single-statement figures in `bill_decomposition.py`/§10 remain correct for that one
+bundled would have — the full 547-day average is the $49.46/yr priced-cell headline above.
+The two single-statement figures in `bill_decomposition.py`/§10 remain correct for that one
 statement; they are not superseded, only placed in the context of the fuller sample.
 
 **PCIA, read directly off the bundled statement.** The 2024-06-27 (bundled) statement's own

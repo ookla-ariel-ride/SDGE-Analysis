@@ -225,6 +225,132 @@ def case_recommendation_headline_is_direction_a_not_an_average():
 
 
 # ---------------------------------------------------------------------------
+# (a2) Codex review (issue #11) regression cases -- defect 1 (excluded net-export scope)
+# and defect 2 (segment-level bundled-comparison pricing)
+# ---------------------------------------------------------------------------
+@case
+def case_direction_a_excluded_net_export_credit_is_live_and_material():
+    """Defect 1: the excluded net-export CCA credit must be a LIVE sum over the same
+    committed CSV every other Direction-A figure reads (never a hardcoded literal), must
+    equal the sum of cca_usd across BOTH excluded categories, and must be disclosed as
+    materially LARGER in magnitude than the priced-cell headline it sits beside -- that is
+    the whole point of the disclosure, not an incidental fact."""
+    a = CX.direction_a(CX.cca_period_cells())
+    expected = round(sum(r["cca_usd"] for r in
+                          a["excluded_absent_detail"] + a["excluded_carried_export_detail"]), 2)
+    assert abs(a["excluded_net_export_cca_credit_usd"] - expected) < EPS, \
+        (a["excluded_net_export_cca_credit_usd"], expected)
+    assert a["excluded_net_export_cells"] == \
+        a["excluded_absent_cells"] + a["excluded_carried_export_cells"]
+    assert a["excluded_net_export_cca_credit_usd"] < 0, "a net-export bucket is a credit"
+    assert abs(a["excluded_net_export_cca_credit_usd"]) > abs(a["delta_usd"]), (
+        "the excluded export-side effect must be disclosed as larger than the priced "
+        "headline, not a footnote to it")
+    assert "NOT DETERMINED" in a["excluded_net_export_note"]
+    return (f"excluded net-export credit ${a['excluded_net_export_cca_credit_usd']} over "
+           f"{a['excluded_net_export_cells']} cells, live-summed and larger in magnitude "
+           f"than the ${a['delta_usd']} priced-cell delta")
+
+
+@case
+def case_direction_b_excluded_net_export_hypothetical_is_live():
+    """The Direction B analogue: a live-summed, modeled (not measured) hypothetical
+    credit over the excluded net-export cells, disclosed the same way."""
+    b = CX.direction_b(CX.cca_flat_rate())
+    expected = round(sum(r["hypothetical_cca_usd"] for r in b["excluded_detail"]), 2)
+    assert abs(b["excluded_net_export_hypothetical_cca_credit_usd"] - expected) < EPS, \
+        (b["excluded_net_export_hypothetical_cca_credit_usd"], expected)
+    assert b["excluded_net_export_hypothetical_cca_credit_usd"] < 0
+    assert "excluded_net_export_note" in b and "MODELED" in b["excluded_net_export_note"]
+    return (f"Direction B excluded hypothetical credit "
+           f"${b['excluded_net_export_hypothetical_cca_credit_usd']}, live-summed and "
+           "labeled modeled")
+
+
+@case
+def case_recommendation_discloses_excluded_scope_and_does_not_overclaim():
+    """Defect 1's actual fix: the recommendation must (a) name the excluded cell count
+    and dollar magnitude, (b) say the whole-household answer is NOT FULLY DETERMINED, and
+    (c) no longer contain the old unqualified whole-household assertion this defect
+    report flagged ("does not by itself justify [opting out]") -- that phrasing implied
+    the priced-cell figure settled a question it does not, on its own, settle."""
+    out = json.loads((CX.DATA / "cca_bundled_counterfactual.json").read_text())
+    rec = out["recommendation"]
+    a = out["direction_a_cca_repriced_at_bundled"]
+    text = rec["text"]
+    assert "NOT FULLY DETERMINED" in text
+    assert str(a["excluded_net_export_cells"]) in text, \
+        "the excluded cell count must be named in the recommendation, not just the artifact"
+    assert "-378" in text or "-$378" in text, \
+        "the excluded dollar magnitude must be named in the recommendation text"
+    assert "ONLY on the net-import cells" in text
+    assert "does not by itself justify" not in text, \
+        "the old overclaiming phrase must not reappear"
+    assert "scope_caveat" in rec and "NOT FULLY DETERMINED" in rec["scope_caveat"]
+    return "recommendation names the excluded scope/magnitude and drops the old overclaiming phrase"
+
+
+@case
+def case_segment_level_pricing_matches_naive_for_every_single_segment_priced_row():
+    """Defect 2, the no-regression half: for the overwhelming majority of priced cells,
+    whose printed bundled-comparison table did NOT change mid-cycle, the new segment-level
+    pricing must reproduce the OLD one-representative-date product exactly -- the fix must
+    be a no-op wherever there was nothing to fix."""
+    cca_cells = CX.cca_period_cells()
+    a = CX.direction_a(cca_cells)
+    periods = {p["period"]: p for p in CX.periods_by_provider()["CCA"]}
+    checked = 0
+    for row in a["priced_detail"]:
+        if row["bundled_comparison_n_segments"] != 1:
+            continue
+        p = periods[row["period"]]
+        rep_date = CX._rep_date(row["season"], p["start"], p["end"])
+        naive_rate = CX.RH.rates_on(rep_date).generation_comparison_table(
+            row["season"], row["tou_period"])
+        naive_usd = round(row["kwh"] * naive_rate, 2)
+        assert abs(naive_usd - row["bundled_comparison_usd"]) < EPS, (row, naive_usd)
+        checked += 1
+    assert checked > 40, f"expected most of the 50 priced rows to be single-segment, got {checked}"
+    return (f"{checked} single-segment priced rows: segment-level pricing == the old "
+           "representative-date pricing, to the cent")
+
+
+@case
+def case_segment_level_pricing_fixes_the_real_mid_period_rate_change_period():
+    """Defect 2, the real regression: 1/28/25 - 2/26/25 is a real CCA period on file whose
+    printed bundled-generation comparison table changed mid-cycle (data/bill_tou_detail.csv
+    prints segment 0 at 4 days and segment 1 at 26 days for this period's generation
+    section, at two different rates for winter/on_peak). The old approach (one
+    representative date's rate times the whole period's kWh) and the fixed approach
+    (each segment's own kWh at its own rate) must give DIFFERENT numbers here -- if they
+    ever agreed, the fix would not be exercised by this period at all."""
+    period = "1/28/25 - 2/26/25"
+    season, tou = "winter", "on_peak"
+    p = next(pp for pp in CX.periods_by_provider()["CCA"] if pp["period"] == period)
+    cca_cells = CX.cca_period_cells()
+    c = cca_cells[(p["statement_date"], p["period"])][(season, tou)]
+    assert c["kwh"] > 0, "this cell must be a priced (net-import) cell"
+
+    rep_date = CX._rep_date(season, p["start"], p["end"])
+    naive_rate = CX.RH.rates_on(rep_date).generation_comparison_table(season, tou)
+    naive_usd = round(c["kwh"] * naive_rate, 2)
+
+    a = CX.direction_a(cca_cells)
+    row = next(r for r in a["priced_detail"] if r["period"] == period
+               and r["season"] == season and r["tou_period"] == tou)
+    assert row["bundled_comparison_n_segments"] == 2, (
+        f"expected this real period to carry 2 printed rate segments, got "
+        f"{row['bundled_comparison_n_segments']}")
+    fixed_usd = row["bundled_comparison_usd"]
+    assert abs(fixed_usd - naive_usd) > 0.10, (
+        f"expected the segment-level fix to change this period's priced value; naive="
+        f"{naive_usd} fixed={fixed_usd}")
+    return (f"{period} {season}/{tou}: naive representative-date pricing = ${naive_usd}, "
+           f"segment-level pricing = ${fixed_usd} (${round(fixed_usd - naive_usd, 2)} "
+           "different) on a real, on-file mid-period rate change")
+
+
+# ---------------------------------------------------------------------------
 # (b) fail-closed: synthetic data, no archive needed
 # ---------------------------------------------------------------------------
 @case
