@@ -152,6 +152,14 @@ after the sim said $1,669.) After any figure change, grep the report for the old
   household.yaml).
 - Never type the user's password or enter credentials. The user logs in; you drive.
 - git history is permanent — if PII is ever committed, recommend delete+recreate over scrubbing.
+- **Never delete `.env`, in this checkout or any worktree, for any reason — not as
+  "cleanup," not because a copy already exists elsewhere.**
+  Copy-in is the only sanctioned operation; there is no sanctioned `rm`. On
+  2026-08-02, two independent subagents each invented their own unrequested `rm -f`
+  "cleanup" step while following the copy instructions above and deleted the live
+  credential files from the main checkout — one was recoverable from a worktree's
+  stale copy, one (an untracked `.env.backup`) was not. If a stray copy genuinely
+  needs removing, stop and ask; do not act on that judgment call unsupervised.
 
 ## 5. Commits actually land — verify, don't assume.
 The GitHub web UI can silently fail if you navigate away before the commit POST completes.
