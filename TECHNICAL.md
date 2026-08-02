@@ -2397,7 +2397,7 @@ byte-identical — this script never imports `deep_analyses.py`).
 | EV-behavior persistence | Beta(4,1) compliance fraction *c*, mean 0.8 | **Estimated** — blends `battery_dispatch_policies.json`'s pre-behavior marginal (`pw3.greedy.save`, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. Left-skewed toward full persistence because the EV-shift behavior is already an OBSERVED, completed behavior in this household's own Green Button history, not a hypothetical future one. |
 | Soiling / production loss | Triangular(lossA, lossA, lossB) | `data/soiling_results.json`'s two named, genuinely different scenarios: `scenario_A_this_years_evidence` (mode, the more recent evidence window) to `scenario_B_2024_cleaning_evidence` (upper tail). Converted into a battery-saving derate via a REAL, calibrated sensitivity (below), not an assumed proportionality. |
 | Round-trip efficiency (RTE) | Uniform(85%, 95%) | **Engineering estimate** around the Powerwall 3 nameplate 90% round-trip spec (`battery_dispatch_policies.py`'s `ETA = sqrt(0.90)`); no independent RTE measurement exists in this repo for this household. |
-| Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical** — `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the ANNUAL relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the MEAN daily gap rather than shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap) rather than each day being an independent noisy draw that would average out. |
+| Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical** — `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the ANNUAL relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the MEAN daily gap rather than shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap) rather than each day being an independent noisy draw that would average out. Routed through the SAME calibrated generation-sensitivity (`soil_slope`, below) as soiling rather than applied as a direct 1:1 multiplier on the dollar saving — a production-measurement discrepancy and a soiling-driven generation loss are uncertainty about the identical physical quantity, so an equal-fraction change from either source must move the saving identically (adversarial review pass 2, finding 2: an earlier draft assumed a 1:1 response, overstating this lever's swing roughly 1/`soil_slope`-fold). |
 
 **Calibrating the RTE and soiling saving-sensitivity from the REAL engine, not an assumed
 proportionality.** Rather than guess how much a change in round-trip efficiency or a
@@ -2459,10 +2459,11 @@ py`'s own, and `test_uncertainty_propagation.py`'s
 physical input), `post_behavior` (a 2-point sensitivity: G vs G_POST), and
 `escalation_5yr_avg` (an average-uplift approximation over a narrower 0-8% band). This
 script's own ranking, most-to-least swing on the real measured year: **install_cost** and
-**escalation** (1.6 yr each, over $12.5-17k and 0-12% respectively), **production_
-measurement_spread** (0.4 yr), **degradation** and **round_trip_efficiency** (0.3 yr each),
-**ev_persistence** (0.2 yr), **soiling** (0.0 yr — the calibration fix above shrank its
-realistic-range effect to well under a tenth of a year). Reconciliation: `install_cost` (the
+**escalation** (1.6 yr each, over $12.5-17k and 0-12% respectively), **degradation** and
+**round_trip_efficiency** (0.3 yr each), **ev_persistence** (0.2 yr), **soiling** and
+**production_measurement_spread** (0.0 yr each — both route through the same calibrated
+generation-sensitivity, see below, which shrinks their realistic-range effect to well under
+a tenth of a year). Reconciliation: `install_cost` (the
 one directly shared lever, same band) matches closely (old 2.1 yr vs new 1.6 yr — both root
 in the same `post_behavior.mid.battery_marginal`-derived base case); `escalation`'s larger
 swing here (1.6 yr vs the old model's 0.9 yr) is an expected reordering, not a disagreement
@@ -2478,16 +2479,22 @@ anywhere else in the repo. The full numeric comparison is regenerated into the a
 own `tornado.reconciliation_vs_extended_results_tornado_battery` field, not hand-copied here.
 
 **The comprehensive result (`battery_marginal_only_full_model`, N=5,000, seed 43, on the
-real measured year).** Payback median 5.9 yr (p10-p90 5.1-6.9 yr); 5,000 of 5,000 draws
-repay within the 10-yr warranty and within 15 years; 0 of 5,000 draws never repaid within
-the 25-year horizon this script treats as the outer bound of "never" (the same horizon
-`deep_analyses.py`'s own loop already uses, `range(1, 26)`). A finite 5,000-draw sample
-observing zero failures does not itself prove a true probability of exactly 1.0 (adversarial
-review pass 1, finding 2), so the artifact also reports the raw counts and a one-sided 95%
-Clopper-Pearson bound: repayment-within-warranty is bounded below at 99.94%, and
-never-repaying is bounded above at 0.06% — the decision-relevant, sample-size-honest
-statement, alongside (not instead of) the point estimate. NPV: 10-yr median $7,396 at a 4%
-discount rate ($4,221 at 7%); 15-yr median $18,719 at 4% ($12,090 at 7%) — reported per
+real measured year).** Payback median 5.9 yr (p10-p90 5.1-6.9 yr); under this model's stated
+assumptions, 5,000 of 5,000 draws repay within the 10-yr warranty and within 15 years; 0 of
+5,000 draws never repaid within the 25-year horizon this script treats as the outer bound of
+"never" (the same horizon `deep_analyses.py`'s own loop already uses, `range(1, 26)`). A
+finite 5,000-draw sample observing zero failures does not itself prove a true probability of
+exactly 1.0 (adversarial review pass 1, finding 2), so the artifact reports the raw counts
+and a one-sided 95% Clopper-Pearson bound: repayment-within-warranty is bounded below at
+99.94%, and never-repaying is bounded above at 0.06%. That bound is itself only a
+finite-sample statement CONDITIONAL on this exact model (adversarial review pass 2, finding
+1) — it quantifies sampling error within the seven assumed input distributions, not
+uncertainty in whether those distributions or their independence assumption are themselves
+correct, several of which are labeled "estimated" rather than "measured" above; the artifact
+records this distinction explicitly in a dedicated `epistemic_caveat` field, separate from
+the sampling-only `finite_sample_caveat`, and the report states the result as conditional on
+the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,399 at
+a 4% discount rate ($4,254 at 7%); 15-yr median $18,749 at 4% ($12,057 at 7%) — reported per
 draw as the standard `-price + PV(savings)`, unlike the old artifact's own
 `npv10_at_4pct_median` (a `median(npv) - median(price)` convention, reproduced exactly but
 only inside `legacy_reproduction()` for special-case matching, not used for this

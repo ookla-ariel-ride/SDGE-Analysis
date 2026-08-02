@@ -78,8 +78,17 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    manufacturer spec, covering spec-sheet tolerance and thermal/age effects),
    explicitly not measured from this household's data, converted into a
    saving derate via `rte_factor()` (see CALIBRATION below).
-7. production measurement spread   Normal(mean=1.0, sd=PROD_SIGMA), applied
-   as a multiplicative noise factor on the year-1 battery-marginal saving.
+7. production measurement spread   Normal(mean=1.0, sd=PROD_SIGMA), a factor
+   on TRUE generation (uncertainty about which of the two meters is closer to
+   the real output). Routed through the SAME calibrated soil_slope as
+   soiling (see CALIBRATION below and save1_of()'s own docstring), not
+   applied as a direct 1:1 multiplier on the dollar saving: a production
+   measurement discrepancy and a soiling-driven generation loss are
+   uncertainty about the identical physical quantity (how much the array
+   actually generated), and soiling's own calibration already measured how
+   weakly a generation-level change moves the battery's marginal saving
+   (adversarial review pass 2, finding 2 — an earlier draft assumed a full
+   1:1 response, overstating this lever's impact by roughly 1/soil_slope).
    PROD_SIGMA is computed AT RUNTIME from
    data/threeway_production_validation.csv (365 days, two independent
    monitoring sources for the same array — PVOutput and the Enphase meter):
@@ -424,10 +433,25 @@ def draw_inputs(N, seed, rte_slope, soil_slope, lossA, lossB, prod_sigma):
 
 
 def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope):
+    """prod_noise is a multiplicative factor on TRUE generation (1.0 = the
+    measured value is right; >1 = true generation is higher than measured).
+    Adversarial review pass 2, finding 2: an earlier draft multiplied prod_noise
+    directly into the dollar saving, implicitly assuming a 1:1 saving response
+    to a generation change -- inconsistent with the CALIBRATED soil_slope,
+    which found a real generation-scale change (soiling) moves the battery
+    marginal by only ~0.057x the fractional change, not 1:1 (most of a
+    generation swing changes exports/self-consumption directly, and only a
+    damped fraction interacts with the battery's own arbitrage timing).
+    Production-measurement uncertainty is uncertainty about the SAME physical
+    quantity (true generation level) soiling calibration already measured the
+    sensitivity of, so it is routed through the identical soil_slope rather
+    than assumed proportional: a prod_noise of (1-x) is treated exactly like a
+    soiling loss fraction of x, and a prod_noise of (1+x) like a loss of -x."""
     base_marginal = c * mid + (1 - c) * pre
     rte_factor = 1 + rte_slope * (rte - RTE_NOM)
     soil_factor = 1 + soil_slope * loss
-    return base_marginal * rte_factor * soil_factor * prod_noise
+    prod_factor = 1 + soil_slope * (1 - prod_noise)
+    return base_marginal * rte_factor * soil_factor * prod_factor
 
 
 def full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma,
@@ -503,6 +527,16 @@ def full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma,
             "one-sided 95% Clopper-Pearson lower bound above is the decision-"
             "relevant, sample-size-honest statement (and the mirrored upper "
             "bound for 'never')."),
+        "epistemic_caveat": (
+            "The Clopper-Pearson bound above quantifies ONLY sampling error "
+            "within this exact model -- it is conditional on the seven input "
+            "distributions (and their independence assumption) being correct, "
+            "several of which are themselves labeled 'estimated' rather than "
+            "'measured' in the inputs section above (adversarial review pass "
+            "2, finding 1). It is not an unconditional real-world probability "
+            "of repayment: it does not cover uncertainty in the model's own "
+            "form or input ranges. Report this as a conditional, model-"
+            "relative statement, never as a bare real-world guarantee."),
         "npv": {
             f"{int(dr*100)}pct": {
                 "10yr": {"median": pct(npv[dr][10], 50), "p10": pct(npv[dr][10], 10),

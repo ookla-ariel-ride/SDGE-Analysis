@@ -233,6 +233,41 @@ def case_full_monte_carlo_rejects_a_non_positive_saving_draw():
     raise AssertionError("a non-positive year-1 saving draw was not caught")
 
 
+@case
+def case_production_spread_and_soiling_get_consistent_generation_sensitivity():
+    """Adversarial review pass 2, finding 2: production-measurement uncertainty
+    and soiling are both uncertainty about the same physical quantity (true
+    generation level), so an x-fraction generation shortfall from either
+    source must move save1_of() by the identical amount -- a prod_noise of
+    (1-x) must equal a soiling loss of x, and a prod_noise of (1+x) must equal
+    a loss of -x. This is a regression test against re-introducing the
+    original bug (prod_noise multiplied 1:1 into the dollar saving,
+    overstating this lever's impact relative to soiling's calibrated
+    sensitivity by roughly 1/soil_slope)."""
+    pre, mid, rte_slope, soil_slope = 2329.0, 2238.0, 0.55, 0.057
+    for x in (0.0, 0.02, 0.0568, 0.10):
+        via_soiling = up.save1_of(c=1.0, rte=0.90, loss=x, prod_noise=1.0,
+                                  pre=pre, mid=mid, rte_slope=rte_slope,
+                                  soil_slope=soil_slope)
+        via_prod_shortfall = up.save1_of(c=1.0, rte=0.90, loss=0.0, prod_noise=1 - x,
+                                         pre=pre, mid=mid, rte_slope=rte_slope,
+                                         soil_slope=soil_slope)
+        via_prod_surplus = up.save1_of(c=1.0, rte=0.90, loss=0.0, prod_noise=1 + x,
+                                       pre=pre, mid=mid, rte_slope=rte_slope,
+                                       soil_slope=soil_slope)
+        assert abs(via_soiling - via_prod_shortfall) < 1e-9, (
+            f"x={x}: soiling loss and an equal-fraction prod_noise shortfall "
+            f"must produce the identical save1 ({via_soiling} vs {via_prod_shortfall})")
+        via_soiling_negative = up.save1_of(c=1.0, rte=0.90, loss=-x, prod_noise=1.0,
+                                           pre=pre, mid=mid, rte_slope=rte_slope,
+                                           soil_slope=soil_slope)
+        assert abs(via_soiling_negative - via_prod_surplus) < 1e-9, (
+            f"x={x}: a negative loss (generation surplus) and an equal-fraction "
+            f"prod_noise surplus must produce the identical save1 "
+            f"({via_soiling_negative} vs {via_prod_surplus})")
+    return "soiling and production-measurement uncertainty share one calibrated generation-sensitivity, in both directions"
+
+
 # ---------------------------------------------------------------------------
 # (b) archive-gated: exercise the REAL dispatch engine and REAL household
 # ---------------------------------------------------------------------------
