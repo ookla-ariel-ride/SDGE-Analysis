@@ -1,0 +1,256 @@
+{
+ "meta": {
+  "N_full_monte_carlo": 5000,
+  "seed_full_monte_carlo": 43,
+  "N_legacy_reproduction": 5000,
+  "seed_legacy_reproduction": 42,
+  "warranty_yr": 10,
+  "midterm_yr": 15,
+  "horizon_yr_for_never": 25,
+  "discount_rates": [
+   0.04,
+   0.07
+  ]
+ },
+ "inputs": {
+  "escalation": {
+   "dist": "Uniform",
+   "low": 0.0,
+   "high": 0.12,
+   "evidential_basis": "estimated -- data/tou_spread.json's battery.uniform_ladder bounding range (3/5/8/12%); the underlying escalation TREND is itself 'not determined' per that artifact's per_period.summer/winter verdicts"
+  },
+  "degradation_fade": {
+   "dist": "Uniform",
+   "low": 0.005,
+   "high": 0.025,
+   "evidential_basis": "manufacturer (Powerwall 3) warranty degradation curve; unchanged from deep_analyses.py's existing Monte Carlo"
+  },
+  "install_cost": {
+   "dist": "Uniform",
+   "low": 12500.0,
+   "high": 17000.0,
+   "evidential_basis": "quoted installer cost bound; unchanged from deep_analyses.py's existing Monte Carlo"
+  },
+  "ev_behavior_persistence": {
+   "dist": "Beta",
+   "a": 4.0,
+   "b": 1.0,
+   "mean": 0.8,
+   "evidential_basis": "estimated blend between battery_dispatch_policies.json's pw3.greedy.save (no behavior, c=0) and post_behavior.mid.battery_marginal (full behavior, c=1) -- the only two compliance points the pipeline computes"
+  },
+  "soiling_loss_fraction": {
+   "dist": "Triangular",
+   "low": 0.01288675099471465,
+   "mode": 0.01288675099471465,
+   "high": 0.06568085990854564,
+   "evidential_basis": "data/soiling_results.json's split evidence: scenario_A_this_years_evidence (mode, more recent) to scenario_B_2024_cleaning_evidence (upper tail)"
+  },
+  "round_trip_efficiency": {
+   "dist": "Uniform",
+   "low": 0.85,
+   "high": 0.95,
+   "evidential_basis": "engineering estimate around the Powerwall 3 nameplate 90% round-trip spec (battery_dispatch_policies.py's ETA=sqrt(0.90)); not independently measured from this household's data"
+  },
+  "production_measurement_spread": {
+   "dist": "Normal",
+   "mean": 1.0,
+   "sd": 0.020450359988631688,
+   "evidential_basis": "empirical -- data/threeway_production_validation.csv's annual relative gap between two independent monitoring sources",
+   "stats": {
+    "days": 365,
+    "daily_rel_diff_mean": 0.025615711812910905,
+    "daily_rel_diff_std": 0.02803436794063411,
+    "annual_rel_diff": 0.020450359988631688,
+    "prod_sigma_used": 0.020450359988631688,
+    "prod_sigma_rationale": "annual (systematic) relative gap between the two full-year totals, not the larger daily std, because the annual gap tracks the mean daily gap rather than shrinking by 1/sqrt(n) -- evidence of a persistent meter-to-meter disagreement rather than independent daily noise"
+   }
+  }
+ },
+ "correlation_assumption": "All seven inputs are drawn independently. No correlation between them is measured anywhere in this repo. Two plausible real correlations both point the SAME direction: (a) escalation and soiling could positively correlate (a warmer/drier pattern raising both wildfire-driven rate escalation and soiling accumulation); (b) round-trip efficiency and capacity fade both trend with cell aging/heat, so a hard-cycled or hot-climate pack would tend to show both together. Modeling all seven as independent therefore likely UNDERSTATES the true probability of the worst-of-both-worlds tail (e.g. high escalation with high soiling, or low RTE with high fade) relative to reality -- independent sampling under-represents scenarios where multiple bad draws share a common root cause. No numeric correction is applied; no data in this repo quantifies either correlation.",
+ "calibration": {
+  "pre_nominal": 2328.66,
+  "mid_nominal": 2238.36,
+  "committed_pre": 2329.0,
+  "committed_mid": 2238.0,
+  "rte_slope_mid": 0.552059479230672,
+  "rte_slope_pre": 0.5911456483040853,
+  "rte_slope_used": 0.5716025637673787,
+  "soil_slope_mid": -1.0698256091240042,
+  "soil_slope_pre": -1.0485880928720912,
+  "soil_slope_used": -1.0592068509980477,
+  "lossA": 0.01288675099471465,
+  "lossB": 0.06568085990854564,
+  "rte_calibration_points_mid": {
+   "0.85": 2173.5872449848384,
+   "0.9": 2238.3598887810413,
+   "0.95": 2297.1580244379675
+  },
+  "rte_calibration_points_pre": {
+   "0.85": 2256.850927200761,
+   "0.9": 2328.659296622694,
+   "0.95": 2394.508608158897
+  },
+  "soil_calibration_points_mid": {
+   "0.0": 2238.3598887810413,
+   "0.01288675099471465": 2207.451702315332,
+   "0.06568085990854564": 2081.0604462967567
+  },
+  "soil_calibration_points_pre": {
+   "0.0": 2328.659296622694,
+   "0.01288675099471465": 2297.157234803077,
+   "0.06568085990854564": 2168.2676477743157
+  },
+  "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes"
+ },
+ "battery_marginal_only_full_model": {
+  "N": 5000,
+  "seed": 43,
+  "payback_median": 6.0,
+  "payback_p10": 5.2,
+  "payback_p90": 7.1,
+  "prob_within_warranty_10yr": 1.0,
+  "prob_within_15yr": 1.0,
+  "prob_never_within_25yr": 0.0,
+  "npv": {
+   "4pct": {
+    "10yr": {
+     "median": 6645,
+     "p10": 2281,
+     "p90": 11929
+    },
+    "15yr": {
+     "median": 17624,
+     "p10": 8801,
+     "p90": 30416
+    }
+   },
+   "7pct": {
+    "10yr": {
+     "median": 3591,
+     "p10": -154,
+     "p90": 7998
+    },
+    "15yr": {
+     "median": 11253,
+     "p10": 4528,
+     "p90": 20719
+    }
+   }
+  },
+  "save1_median": 2183,
+  "save1_p10": 2101,
+  "save1_p90": 2271
+ },
+ "tornado": {
+  "nominal_payback_yr": 6.0,
+  "levers": {
+   "install_cost": {
+    "payback_range_yr": [
+     5.2,
+     6.8
+    ],
+    "swing_yr": 1.6
+   },
+   "escalation": {
+    "payback_range_yr": [
+     5.4,
+     7.1
+    ],
+    "swing_yr": 1.7
+   },
+   "degradation": {
+    "payback_range_yr": [
+     5.9,
+     6.2
+    ],
+    "swing_yr": 0.3
+   },
+   "ev_persistence": {
+    "payback_range_yr": [
+     5.9,
+     6.1
+    ],
+    "swing_yr": 0.2
+   },
+   "soiling": {
+    "payback_range_yr": [
+     5.9,
+     6.3
+    ],
+    "swing_yr": 0.3
+   },
+   "round_trip_efficiency": {
+    "payback_range_yr": [
+     5.9,
+     6.2
+    ],
+    "swing_yr": 0.3
+   },
+   "production_measurement_spread": {
+    "payback_range_yr": [
+     5.9,
+     6.2
+    ],
+    "swing_yr": 0.4
+   }
+  },
+  "ranked_by_swing": [
+   "escalation",
+   "install_cost",
+   "production_measurement_spread",
+   "degradation",
+   "soiling",
+   "round_trip_efficiency",
+   "ev_persistence"
+  ],
+  "reconciliation_vs_extended_results_tornado_battery": {
+   "old_ranked_by_swing": [
+    "dispatch_policy",
+    "install_cost",
+    "escalation_5yr_avg",
+    "post_behavior"
+   ],
+   "new_ranked_by_swing": [
+    "escalation",
+    "install_cost",
+    "production_measurement_spread",
+    "degradation",
+    "soiling",
+    "round_trip_efficiency",
+    "ev_persistence"
+   ],
+   "notes": [
+    "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.2, 6.8]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
+    "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.7 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
+    "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.3 yr, G vs G_POST) into a continuous Beta(4,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
+    "dispatch_policy (old model's largest lever, swing 2.2 yr) has no counterpart here: it is a discrete DESIGN CHOICE the household makes (evening/twowin/greedy dispatch), not an uncertain physical input to propagate, so this Monte Carlo holds it fixed at greedy (the recommended policy) throughout, matching the old model's own base case.",
+    "soiling, round_trip_efficiency and production_measurement_spread have no counterpart in the old tornado at all -- they are new levers this issue adds, not previously quantified anywhere in the repo."
+   ]
+  }
+ },
+ "legacy_reproduction": {
+  "new_model_restricted_to_3_inputs": {
+   "payback_median": 6.0,
+   "payback_p10": 5.3,
+   "payback_p90": 7.0,
+   "prob_payback_within_warranty10yr": 1.0,
+   "npv10_at_4pct_median": 6186
+  },
+  "committed_deep_results_monte_carlo": {
+   "payback_median": 6.0,
+   "payback_p10": 5.3,
+   "payback_p90": 7.0,
+   "prob_payback_within_warranty10yr": 1.0,
+   "npv10_at_4pct_median": 6186
+  },
+  "diffs": {
+   "payback_median": 0.0,
+   "payback_p10": 0.0,
+   "payback_p90": 0.0,
+   "prob_payback_within_warranty10yr": 0.0,
+   "npv10_at_4pct_median": 0
+  },
+  "matches": true,
+  "tolerance_note": "exact equality (< 1e-9) is expected and checked, not merely 'close': legacy_reproduction() draws the SAME three inputs in the SAME order from the SAME seeded numpy.random.default_rng(42) instance and runs the SAME algorithm as deep_analyses.py's own monte_carlo block, so the two are bit-identical up to the rounding both apply -- a real discrepancy would mean this script's base input or algorithm has drifted, not stochastic noise (a fixed seed has none)."
+ }
+}

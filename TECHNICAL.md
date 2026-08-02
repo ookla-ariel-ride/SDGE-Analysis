@@ -2368,6 +2368,130 @@ regeneration.
 unlike `perfect_foresight_dispatch.py` it reads no sibling artifact at all, only recomputing
 its own CURRENT-structure baseline fresh, so there is no optional cross-check to skip).
 
+### 3.25 `analysis/uncertainty_propagation.py` — putting an error bar on the recommendation: a 7-input Monte Carlo that reproduces the old 3-input one as a verified special case (`data/uncertainty_results.json`)
+
+**Why the old Monte Carlo was not enough (issue #15).** `deep_analyses.py`'s `monte_carlo`
+block draws three inputs (rate escalation, battery capacity fade, install cost) around one
+point base case (`post_behavior.mid.battery_marginal`). That is real uncertainty
+propagation, but it is not the uncertainty this project has actually measured elsewhere:
+issue #4 found the escalation TREND itself "not determined" (`data/tou_spread.json`'s
+`per_period.summer/winter` verdicts — a structural break, not a survives-scrutiny trend);
+the three-way production validation (`data/threeway_production_validation.csv`) shows two
+independent monitoring sources disagreeing on the same physical production by a few
+percent; the soiling analysis (`data/soiling_results.json`) has two genuinely different
+rate estimates depending on which evidence window is trusted ("split evidence" in its own
+words); round-trip efficiency is a nameplate spec, never independently measured here; and
+the battery-marginal base case is itself conditional on an EV-charging behavior shift
+persisting, which is a real, previously unquantified risk. This script draws all seven of
+those inputs and reports the payback/NPV question as a probability distribution rather than
+a point estimate, without editing `deep_analyses.py` or its artifact (both stay
+byte-identical — this script never imports `deep_analyses.py`).
+
+**The seven input distributions and their evidential basis:**
+
+| Input | Distribution | Evidential basis |
+|---|---|---|
+| Escalation | Uniform(0%, 12%) | **Estimated** — `data/tou_spread.json`'s `battery.uniform_ladder` bounding range (3/5/8/12%); the escalation TREND itself is "not determined" in that artifact, so this is a bounding scenario range, not a measured rate. Floor kept at the old model's 0%; ceiling asserted at build time to equal the ladder's own top scenario, so a future `tou_spread.json` regeneration cannot silently drift out of sync. |
+| Degradation (battery capacity fade) | Uniform(0.5%, 2.5%)/yr | Manufacturer (Powerwall 3) warranty degradation curve — unchanged from the old Monte Carlo. Not solar panel degradation (a separate, already-published ~0.5-1.0%/yr figure, index.html §9), which answers a different question. |
+| Install cost | Uniform($12,500, $17,000) | Quoted installer cost bound — unchanged from the old Monte Carlo. |
+| EV-behavior persistence | Beta(4,1) compliance fraction *c*, mean 0.8 | **Estimated** — blends `battery_dispatch_policies.json`'s pre-behavior marginal (`pw3.greedy.save`, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. Left-skewed toward full persistence because the EV-shift behavior is already an OBSERVED, completed behavior in this household's own Green Button history, not a hypothetical future one. |
+| Soiling / production loss | Triangular(lossA, lossA, lossB) | `data/soiling_results.json`'s two named, genuinely different scenarios: `scenario_A_this_years_evidence` (mode, the more recent evidence window) to `scenario_B_2024_cleaning_evidence` (upper tail). Converted into a battery-saving derate via a REAL, calibrated sensitivity (below), not an assumed proportionality. |
+| Round-trip efficiency (RTE) | Uniform(85%, 95%) | **Engineering estimate** around the Powerwall 3 nameplate 90% round-trip spec (`battery_dispatch_policies.py`'s `ETA = sqrt(0.90)`); no independent RTE measurement exists in this repo for this household. |
+| Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical** — `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the ANNUAL relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the MEAN daily gap rather than shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap) rather than each day being an independent noisy draw that would average out. |
+
+**Calibrating the RTE and soiling saving-sensitivity from the REAL engine, not an assumed
+proportionality.** Rather than guess how much a change in round-trip efficiency or a
+soiling-driven generation loss moves the battery's marginal saving, the script reruns
+`battery_dispatch_policies.run_batt`/`.billed` (imported read-only, never edited) at RTE ∈
+{0.85, 0.90, 0.95} and generation scaled by {1, 1-lossA, 1-lossB}, on both the pre- and
+post-behavior load — six to eight real dispatch reruns. `ETA` is a module-level constant
+`run_batt` reads by name at call time rather than a function parameter, so a temporary
+`battery_dispatch_policies.ETA = ...` override for one calibration call (restored
+immediately after) changes its behavior without editing the file. A linear factor(x) = 1 +
+slope·(x - nominal) is fit by least squares to each lever's points. The pre- and
+post-behavior calibration runs land on nearly identical fractional slopes (RTE: +0.552 vs
++0.591; soiling: -1.070 vs -1.049 per unit loss fraction) — evidence that averaging the two
+into a single slope, applied to whichever pre/post-behavior blend a given Monte Carlo draw
+lands on, is a reasonable simplification rather than a fabricated shortcut. The nominal
+recomputation (`pre_nominal` $2,328.66, `mid_nominal` $2,238.36) is cross-checked against
+the committed `battery_dispatch_policies.json` (`pw3.greedy.save` $2,329, `post_behavior.
+mid.battery_marginal` $2,238) at build time — a disagreement over $1 raises `SystemExit`,
+the same fail-loud convention `deep_analyses.py`'s own `_base_save()` uses for a stale
+sibling artifact.
+
+**Correlation structure: assumed independent, stated bias direction.** All seven draws are
+independent random variables. No correlation between them is measured anywhere in this
+repo, so none is modeled numerically — but two plausible real correlations both point the
+SAME direction: (a) escalation and soiling could positively correlate (a warmer/drier
+climate pattern raising both wildfire-driven rate escalation and soiling accumulation); (b)
+round-trip efficiency and capacity fade both trend with cell aging and heat, so a
+hard-cycled or hot-climate pack would tend to show both together. Modeling all seven as
+independent therefore likely UNDERSTATES the true probability of the worst-of-both-worlds
+tail (e.g. high escalation together with high soiling, or low RTE together with high fade)
+relative to reality, because independent sampling under-represents scenarios that share a
+common root cause. No numeric correction is applied — no data in this repo quantifies
+either correlation (CLAUDE.md §0: state what would settle it, not a guessed value).
+
+**Reproducing the old 3-input Monte Carlo as a verified special case (issue #15's AC5).**
+`legacy_reproduction()` draws exactly the old three inputs, in the old order, from the same
+seeded `numpy.random.default_rng(42)`, fed the COMMITTED (already-rounded) `post_behavior.
+mid.battery_marginal` as its base case — matching `deep_analyses.py`'s own `_base_save()`,
+which reads that same rounded committed figure rather than an unrounded recomputation (an
+earlier draft of this script fed its own higher-precision recomputation instead and the
+resulting NPV differed from the committed artifact by $3 after 5,000 draws — traced to that
+rounding mismatch, not RNG drift, and fixed by reading the committed figure directly). The
+other four levers are not drawn at all in this mode — not merely fixed, never touched by the
+RNG stream — so the (escalation, fade, price) arrays are bit-identical to `deep_analyses.
+py`'s own, and `test_uncertainty_propagation.py`'s
+`case_legacy_reproduction_matches_committed_deep_results_exactly` asserts every field of
+`data/deep_results.json`'s `monte_carlo` block matches to < 1e-9 — exact equality, not
+"close", because a fixed-seed RNG has no sampling variance left to be close about.
+
+**Tornado reconciliation against `data/extended_results.json`'s `tornado_battery` (issue
+#15's AC6).** `extended_findings.py`'s tornado sweeps four different things: `install_cost`,
+`dispatch_policy` (a discrete DESIGN CHOICE among evening/twowin/greedy, not an uncertain
+physical input), `post_behavior` (a 2-point sensitivity: G vs G_POST), and
+`escalation_5yr_avg` (an average-uplift approximation over a narrower 0-8% band). This
+script's own ranking, most-to-least swing on the real measured year: **escalation** (1.7 yr
+swing over 0-12%), **install_cost** (1.6 yr over $12.5-17k), **production_measurement_
+spread** (0.4 yr), **degradation** and **soiling** (0.3 yr each), **round_trip_efficiency**
+(0.3 yr), **ev_persistence** (0.2 yr). Reconciliation: `install_cost` (the one directly
+shared lever, same band) matches closely (old 2.1 yr vs new 1.6 yr — both root in the same
+`post_behavior.mid.battery_marginal`-derived base case); `escalation`'s larger swing here
+(1.7 yr vs the old model's 0.9 yr) is an expected reordering, not a disagreement — the old
+sweep used a narrower 0-8% band with an average-uplift approximation, this one sweeps the
+full 0-12% ladder-bound range directly; `ev_persistence` generalizes the old `post_behavior`
+2-point lever into a continuous Beta(4,1) blend across the SAME two endpoints and lands on a
+swing of the same order (0.2 yr vs 0.3 yr); `dispatch_policy` (the OLD model's largest
+lever, 2.2 yr) has no counterpart here because it is a design choice the household makes,
+not an uncertain input to propagate — this Monte Carlo holds it fixed at greedy throughout,
+matching the old model's own base case; `soiling`, `round_trip_efficiency` and
+`production_measurement_spread` are new levers this issue adds, never quantified anywhere
+else in the repo. The full numeric comparison is regenerated into the artifact's own
+`tornado.reconciliation_vs_extended_results_tornado_battery` field, not hand-copied here.
+
+**The comprehensive result (`battery_marginal_only_full_model`, N=5,000, seed 43, on the
+real measured year).** Payback median 6.0 yr (p10-p90 5.2-7.1 yr); 100% of draws repay
+within the 10-yr warranty; 100% within 15 years; 0 of 5,000 draws never repaid within the
+25-year horizon this script treats as the outer bound of "never" (the same horizon
+`deep_analyses.py`'s own loop already uses, `range(1, 26)`). NPV: 10-yr median $6,645 at a
+4% discount rate ($3,591 at 7%); 15-yr median $17,624 at 4% ($11,253 at 7%) — reported per
+draw as the standard `-price + PV(savings)`, unlike the old artifact's own
+`npv10_at_4pct_median` (a `median(npv) - median(price)` convention, reproduced exactly but
+only inside `legacy_reproduction()` for special-case matching, not used for this
+comprehensive figure).
+
+**Run** from `private/verify` per the standard sandbox (needs `usage.csv`/`samA.csv`/
+`samB.csv`/`rates.py`/`behavior_rebuild.py`/`battery_dispatch_policies.py` beside it, plus
+`private/household.yaml`; recomputes its own calibration fresh every run — no cached
+intermediate state — so two runs on the same inputs are byte-identical, verified with
+`cmp`). Tests: `analysis/test_uncertainty_propagation.py`, following `test_battery_sizing_
+curve.py`'s convention (`household.PATH` stubbed with a synthetic YAML before import so the
+file imports cleanly with no private data; archive-dependent cases gate on the private
+Green Button archive's presence and SKIP rather than fail when it is absent). Not registered
+in `test_scripts_runnable.py`'s `MANIFEST`/`CI_RUNNABLE` — out of this issue's scope box; a
+follow-up should add it there.
+
 ---
 
 ## 4. Battery simulation methodology
