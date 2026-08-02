@@ -450,25 +450,36 @@ def hourly_reconstruction(bill):
     }
 
 
-def _shapley_two_factor(ct_values, prod_values, c_scale, p_scale, correction=1.0):
-    """f(c,p) = correction * sum(max(0, c*CT - p*Production)) over the hourly
-    series. `correction` rescales for a KNOWN, disclosed, equally-applied
-    artifact (see decomposition_block: the CT archive's native hourly
-    resolution smooths some real sub-hourly import/export crossovers that a
-    finer-resolution meter would catch, understating simulated gross import
-    by a small, consistent amount) -- applying it uniformly to every corner
-    does not change WHICH corner explains WHAT, only removes a shared,
-    understood bias before decomposing. Returns the four corner evaluations
-    and the exact order-independent (Shapley/telescoping) decomposition of
-    f(1,1)-f(c_scale,p_scale) into a consumption term and a production term
-    that sum to it EXACTLY."""
-    def f(c, p):
-        return correction * float(np.maximum(0.0, c * ct_values - p * prod_values).sum())
+def _shapley_two_factor_vectors(ct_2026, prod_2026, ct_2024, prod_2024, correction=1.0):
+    """g(load, prod) = correction * sum(max(0, load - prod)) over the hourly
+    series, evaluated at all 4 corners of {ct_2026, ct_2024} x {prod_2026,
+    prod_2024} -- FULL HOURLY VECTORS, not scalar scale factors, so this
+    works identically whether the 2024 counterfactual came from a uniform
+    multiplicative scale (ct_2024 = c_scale * ct_2026) or a per-hour
+    ADDITIVE shape change (ct_2024 = ct_2026 - ev_hourly*frac). `correction`
+    rescales for a KNOWN, disclosed, equally-applied artifact (see
+    decomposition_block: the CT archive's native hourly resolution smooths
+    some real sub-hourly import/export crossovers a finer-resolution meter
+    would catch, understating simulated gross import by a small, consistent
+    amount) -- applying it uniformly to every corner does not change WHICH
+    corner explains WHAT, only removes a shared, understood bias before
+    decomposing. Returns the four corner evaluations and the exact
+    order-independent (Shapley/telescoping) decomposition of g(2026,2026)-
+    g(2024,2024) into a consumption term and a production term that sum to
+    it EXACTLY -- in GROSS-IMPORT kWh, the same units on both sides, always
+    (adversarial review pass 3, finding 1: an earlier draft compared this
+    scenario's RAW production-energy delta, prod_2026*(1-p), against the
+    baseline's Shapley gross-import CONTRIBUTION -- different quantities
+    entirely, since most of a production change is absorbed by export/
+    self-consumption rather than changing gross import 1:1; every caller
+    must go through this shared function so the two are always comparable)."""
+    def g(load, prod):
+        return correction * float(np.maximum(0.0, load - prod).sum())
 
-    f11 = f(1.0, 1.0)              # both at the 2026-actual level
-    f01 = f(c_scale, 1.0)          # consumption at 2024 level, production at 2026 level
-    f10 = f(1.0, p_scale)          # consumption at 2026 level, production at 2024 level
-    f00 = f(c_scale, p_scale)      # both at the 2024-estimated level
+    f11 = g(ct_2026, prod_2026)    # both at the 2026-actual level
+    f01 = g(ct_2024, prod_2026)    # consumption at 2024 level, production at 2026 level
+    f10 = g(ct_2026, prod_2024)    # consumption at 2026 level, production at 2024 level
+    f00 = g(ct_2024, prod_2024)    # both at the 2024-estimated level
 
     consumption_term = 0.5 * ((f10 - f00) + (f11 - f01))
     production_term = 0.5 * ((f01 - f00) + (f11 - f10))
@@ -480,6 +491,14 @@ def _shapley_two_factor(ct_values, prod_values, c_scale, p_scale, correction=1.0
         "consumption_term_kwh": consumption_term,
         "production_term_kwh": production_term,
     }
+
+
+def _shapley_two_factor(ct_values, prod_values, c_scale, p_scale, correction=1.0):
+    """Uniform-multiplicative-scaling special case of
+    _shapley_two_factor_vectors: ct_2024 = c_scale*ct_values, prod_2024 =
+    p_scale*prod_values."""
+    return _shapley_two_factor_vectors(
+        ct_values, prod_values, c_scale * ct_values, p_scale * prod_values, correction)
 
 
 def _backsolve_production_scale(ct_values, prod_values, correction, net_2024_exact,
@@ -726,7 +745,22 @@ def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
 
     p_star_ev = brentq(residual, 0.2, 3.0, xtol=1e-10)
     ev_reduction_pct = ev_reduction_fraction(p_star_ev) * 100
-    production_term_ev = round(prod_2026 * (1 - p_star_ev), 1)
+
+    # Run the SAME 4-corner Shapley decomposition the baseline scenario uses
+    # (adversarial review pass 3, finding 1: an earlier draft compared this
+    # scenario's raw production-ENERGY delta, prod_2026*(1-p), against the
+    # baseline's Shapley gross-IMPORT contribution -- different quantities,
+    # since most of a production change is absorbed by export/self-
+    # consumption rather than changing gross import 1:1. Both scenarios now
+    # go through _shapley_two_factor_vectors so their terms are directly
+    # comparable, in the same units, always.)
+    ct_shape_ev = ct_values - ev_hourly * ev_reduction_fraction(p_star_ev)
+    sh_ev = _shapley_two_factor_vectors(
+        ct_values, prod_values, ct_shape_ev, p_star_ev * prod_values, correction)
+    consumption_term_ev = round(sh_ev["consumption_term_kwh"], 1)
+    production_term_ev = round(sh_ev["production_term_kwh"], 1)
+    decomposed_sum_ev = round(consumption_term_ev + production_term_ev, 1)
+
     baseline_production_term = decomposition["production_term_kwh"]
     baseline_consumption_term = decomposition["consumption_term_kwh"]
 
@@ -740,32 +774,40 @@ def identifiability_robustness_check(bill, prod, cons, hourly, decomposition):
             "of every hour, ALL of the 2024-to-2026 consumption growth is "
             "assumed concentrated in EV-charging hours specifically (per-hour "
             "EV kWh from behavior_rebuild.detect_sessions, reused read-only), "
-            "with every non-EV hour held at its exact 2026 level."),
+            "with every non-EV hour held at its exact 2026 level. The SAME "
+            "4-corner Shapley decomposition as the baseline scenario "
+            "(_shapley_two_factor_vectors) is run against this alternative "
+            "consumption shape, so both scenarios' terms are directly "
+            "comparable gross-import contributions, not a production-energy "
+            "delta compared against a gross-import contribution."),
         "ev_hourly_total_2026_kwh": round(ev_hourly_total, 1),
         "implied_ev_reduction_pct_of_2026_ev_kwh": round(ev_reduction_pct, 1),
         "production_scale_backsolved_this_scenario": round(p_star_ev, 5),
         "production_scale_backsolved_baseline_scenario": decomposition["production_scale_2024_over_2026"],
+        "consumption_term_kwh_this_scenario": consumption_term_ev,
         "production_term_kwh_this_scenario": production_term_ev,
+        "decomposed_sum_kwh_this_scenario": decomposed_sum_ev,
+        "consumption_term_kwh_baseline_scenario": baseline_consumption_term,
         "production_term_kwh_baseline_scenario": baseline_production_term,
         "conclusion_robust_to_this_alternative_shape": agree,
         "note": (
-            f"The two shape assumptions' back-solved production levels "
-            f"agree closely (production term {production_term_ev} kWh here "
-            f"vs {baseline_production_term} kWh under uniform scaling) -- "
-            "the 'consumption story, not a production story' conclusion "
-            "does not depend on the specific uniform-scaling assumption; it "
+            f"The two shape assumptions' Shapley production terms agree "
+            f"closely (production term {production_term_ev} kWh here vs "
+            f"{baseline_production_term} kWh under uniform scaling) -- the "
+            "'consumption story, not a production story' conclusion does "
+            "not depend on the specific uniform-scaling assumption; it "
             "holds under this materially different, data-grounded "
             "alternative too."
             if agree else
-            f"The two shape assumptions' back-solved production levels "
-            f"diverge meaningfully (production term {production_term_ev} kWh "
-            f"here vs {baseline_production_term} kWh under uniform scaling) "
-            "-- the headline split is sensitive to which diurnal-shape "
-            "assumption is used, and should be read as ONE plausible "
-            "decomposition rather than a uniquely identified physical "
-            "split. Both scenarios still attribute the dominant share of "
-            "the change to consumption over production, but the exact "
-            "magnitude is genuinely underdetermined by the data available."
+            f"The two shape assumptions' Shapley production terms diverge "
+            f"meaningfully ({production_term_ev} kWh here vs "
+            f"{baseline_production_term} kWh under uniform scaling) -- the "
+            "headline split is sensitive to which diurnal-shape assumption "
+            "is used, and should be read as ONE plausible decomposition "
+            "rather than a uniquely identified physical split. Both "
+            "scenarios still attribute the dominant share of the change to "
+            "consumption over production, but the exact magnitude is "
+            "genuinely underdetermined by the data available."
         ),
     }
 

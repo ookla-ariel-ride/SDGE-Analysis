@@ -291,8 +291,13 @@ def case_identifiability_robustness_check_reports_an_alternative_shape_honestly(
     down HOW consumption grew across hours. This case exercises the
     companion identifiability check under a materially different,
     data-grounded shape assumption (EV-charging-concentrated growth) and
-    requires it to report its finding honestly -- including reporting a
-    DIVERGENT result plainly rather than only ever reporting agreement."""
+    requires it to report its finding honestly, using the SAME 4-corner
+    Shapley decomposition the baseline scenario uses (adversarial review
+    pass 3, finding 1: an earlier draft compared this scenario's raw
+    production-ENERGY delta against the baseline's Shapley gross-import
+    CONTRIBUTION -- different, incomparable quantities; both must now go
+    through _shapley_two_factor_vectors so a like-for-like comparison is
+    even possible)."""
     _require_archive()
     bill = gi.load_bill_periods()
     prod = gi.production_block()
@@ -307,23 +312,37 @@ def case_identifiability_robustness_check_reports_an_alternative_shape_honestly(
         "why must still be present")
     assert robust["ev_hourly_total_2026_kwh"] > 0
     assert 0.0 <= robust["implied_ev_reduction_pct_of_2026_ev_kwh"] <= 100.0
+    # This alternative scenario's own terms must sum to the SAME observed
+    # gross-import change the baseline scenario does -- the back-solve
+    # guarantees this by construction, and it is the property that makes
+    # the two scenarios' terms meaningfully comparable in the first place
+    # (Codex's own explicit request after finding 1 of this pass).
+    observed_delta = decomp["observed_delta_gross_kwh"]
+    assert abs(robust["decomposed_sum_kwh_this_scenario"] - observed_delta) < 0.1, (
+        f"EV-concentrated scenario's own terms ({robust['consumption_term_kwh_this_scenario']} "
+        f"+ {robust['production_term_kwh_this_scenario']} = "
+        f"{robust['decomposed_sum_kwh_this_scenario']}) must sum to the observed "
+        f"change ({observed_delta}) just like the baseline scenario does")
     assert "conclusion_robust_to_this_alternative_shape" in robust
     assert isinstance(robust["conclusion_robust_to_this_alternative_shape"], bool)
-    # This is the actual, honest empirical finding for this dataset: the two
-    # shape assumptions' production terms diverge meaningfully (roughly -1
-    # vs -135 kWh), so the split is NOT robust to this alternative -- the
-    # test pins that finding rather than assuming either direction, so a
-    # future regeneration that silently reverts to reporting only agreement
-    # would be caught.
-    assert robust["conclusion_robust_to_this_alternative_shape"] is False, (
-        "expected the EV-concentrated scenario to diverge meaningfully from "
-        "the uniform-scaling baseline for this dataset -- if this now "
-        "agrees, the underlying numbers changed and the prose in index.html/"
-        "TECHNICAL.md describing the divergence needs updating too")
+    # The actual, honest empirical finding for this dataset, once both
+    # scenarios are computed in the SAME (Shapley gross-import) units: the
+    # two shape assumptions' production terms are both small relative to
+    # the ~497 kWh consumption term (-1.3 kWh uniform vs +18.5 kWh
+    # EV-concentrated) -- the "consumption story" conclusion IS robust to
+    # this alternative. Pinned explicitly so a future regeneration that
+    # silently reintroduces the units bug (which produced a spurious "large
+    # divergence") would be caught, not mistaken for a more dramatic finding.
+    assert robust["conclusion_robust_to_this_alternative_shape"] is True, (
+        "expected the EV-concentrated scenario's production term to stay "
+        "small (comfortably under 25% of the consumption term) like the "
+        "uniform-scaling baseline -- if this now disagrees, check whether "
+        "_shapley_two_factor_vectors is being bypassed again before "
+        "concluding the split has genuinely become non-robust")
     return (f"EV-concentrated scenario production term "
             f"({robust['production_term_kwh_this_scenario']} kWh) vs baseline "
             f"({robust['production_term_kwh_baseline_scenario']} kWh) -- "
-            "divergence reported honestly, not smoothed over")
+            "agree; the consumption-dominant conclusion is robust to this alternative")
 
 
 @case

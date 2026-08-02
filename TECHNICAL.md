@@ -2702,8 +2702,8 @@ transfer method were used). This reframes what AC1's normalization is FOR here: 
 the headline split (an exact accounting identity does that, once one parameter is pinned), but
 to independently sanity-check whether the pinned value is physically plausible.
 
-**The answer, and why it is a range, not a single number (AC4, adversarial review pass 2,
-finding 1).** Under the DEFAULT scenario (2024 shares 2026's diurnal shape exactly, scaled
+**The answer, checked against a second, independent shape assumption (AC4, adversarial review
+passes 2 and 3).** Under the DEFAULT scenario (2024 shares 2026's diurnal shape exactly, scaled
 uniformly), `consumption_term_kwh` = +497.3 kWh; `production_term_kwh` = -1.3 kWh. Codex's
 adversarial review pass 2 correctly identified that this endpoint agreement is EXACT BY
 CONSTRUCTION (the back-solve guarantees it), not an independent validation, and that with no
@@ -2712,31 +2712,39 @@ to a materially different split while satisfying the identical two bill totals �
 does not uniquely identify the physical split from the data available, only from the data
 PLUS a chosen shape assumption.
 
-`identifiability_robustness_check()` tests this directly rather than asserting either that the
-default scenario is fine or that the whole exercise is hopeless: it re-solves under ONE
-materially different, still data-grounded shape assumption — ALL of the 2024-to-2026
-consumption decline concentrated in EV-charging hours specifically (per-hour EV kWh from
-`detect_sessions()`, reused read-only, rather than spread uniformly across every hour) — and
-compares the resulting production term against the default scenario's. Result: -135.0 kWh
-under the EV-concentrated assumption vs -1.3 kWh under uniform scaling — a genuine, ~14x
-divergence, not a rounding difference. Both assumptions still attribute the LARGER share of
-the change to consumption (497.3 vs an implied ~468 kWh consumption term in the EV-concentrated
-scenario, against production terms of -1.3 and -135.0 kWh respectively), so the QUALITATIVE
-conclusion (predominantly consumption, not production) is directionally robust across both
-tested assumptions — but the EXACT MAGNITUDE of the production term is genuinely underdetermined
-by this two-bill-period comparison, ranging from negligible to roughly a quarter of the total
-observed change (135 of 496 kWh) depending on an assumption this data cannot itself adjudicate.
-`test_gross_import_decomposition.py`'s `case_identifiability_robustness_check_reports_an_
-alternative_shape_honestly` pins this exact finding (including that the two scenarios
-DISAGREE) so a future regeneration that silently converges to false agreement would be caught,
-not celebrated. The default scenario's own numbers are reported alongside this honest range,
-not replaced by it — reporting only a range with no concrete central estimate would itself lose
-information the uniform-scaling assumption legitimately provides as one plausible reading.
+`identifiability_robustness_check()` tests this directly: it re-solves under ONE materially
+different, still data-grounded shape assumption — ALL of the 2024-to-2026 consumption decline
+concentrated in EV-charging hours specifically (per-hour EV kWh from `detect_sessions()`,
+reused read-only, rather than spread uniformly across every hour) — and runs the SAME 4-corner
+Shapley decomposition (`_shapley_two_factor_vectors`, generalized from `_shapley_two_factor` to
+accept full alternative hourly vectors, not just scalar scale factors, so both scenarios are
+computed in identical units) against that alternative shape. **Pass 3 caught a second, distinct
+bug in this comparison**: an earlier draft compared the EV-concentrated scenario's raw
+production-ENERGY delta (`prod_2026 * (1 - p)`) against the default scenario's Shapley
+gross-import CONTRIBUTION — different physical quantities entirely, since most of a production
+change is absorbed by export/self-consumption rather than changing gross import 1:1. That bug
+manufactured a spurious "-135 kWh, ~14x divergence" that evaporates once both scenarios go
+through the same decomposition: recomputed correctly, the EV-concentrated scenario gives
++477.5 kWh consumption against +18.5 kWh production — its own terms summing to the observed
+496 kWh change exactly, just like the default scenario's (a property
+`test_gross_import_decomposition.py`'s own test now asserts explicitly, per Codex's own
+recommendation, rather than only asserting the default scenario's sum).
 
-This does not contradict the 6-year degradation trend above — the -1.3-to-135 kWh production
-range brackets the ~45-60 kWh expected from the naive 1.3-1.8%/yr degradation rate applied to
-this window comfortably, so a small, real per-year decline remains entirely consistent with
-what this short, two-years-apart, no-2024-daily-data comparison can and cannot resolve.
+With both scenarios computed in the same units, the finding is reassuring rather than alarming:
+-1.3 kWh (uniform scaling) and +18.5 kWh (EV-concentrated) are both small relative to the
+~490 kWh consumption term either scenario reports, and the "consumption story, not a production
+story" conclusion is genuinely robust to this identifiability concern, not merely an artifact of
+one modeling choice. `test_gross_import_decomposition.py`'s
+`case_identifiability_robustness_check_reports_an_alternative_shape_honestly` pins this exact
+agreement (`conclusion_robust_to_this_alternative_shape` = `True`) so a future regeneration that
+silently reintroduces the units-mismatch bug — which would look like a dramatic, attention-
+grabbing "divergence" rather than the quieter, correct agreement — would be caught rather than
+mistaken for a more interesting finding.
+
+This does not contradict the 6-year degradation trend above — both scenarios' production terms
+sit comfortably inside (indeed below) the ~45-60 kWh expected from the naive 1.3-1.8%/yr
+degradation rate applied to this window, so a small, real per-year decline remains entirely
+consistent with what this short, two-years-apart, no-2024-daily-data comparison can resolve.
 
 **EV attribution (AC5) — real detection, honestly bounded, not assumed.** `ev_block()` runs
 `analysis/behavior_rebuild.py`'s `detect_sessions()` (imported read-only, never modified) on

@@ -107,15 +107,18 @@
  "decomposition_identifiability_robustness_check": {
   "scenario": "EV-charging-concentrated consumption decline",
   "realizable": true,
-  "assumption": "Instead of decomposition_block's uniform-proportional scaling of every hour, ALL of the 2024-to-2026 consumption growth is assumed concentrated in EV-charging hours specifically (per-hour EV kWh from behavior_rebuild.detect_sessions, reused read-only), with every non-EV hour held at its exact 2026 level.",
+  "assumption": "Instead of decomposition_block's uniform-proportional scaling of every hour, ALL of the 2024-to-2026 consumption growth is assumed concentrated in EV-charging hours specifically (per-hour EV kWh from behavior_rebuild.detect_sessions, reused read-only), with every non-EV hour held at its exact 2026 level. The SAME 4-corner Shapley decomposition as the baseline scenario (_shapley_two_factor_vectors) is run against this alternative consumption shape, so both scenarios' terms are directly comparable gross-import contributions, not a production-energy delta compared against a gross-import contribution.",
   "ev_hourly_total_2026_kwh": 1253.0,
   "implied_ev_reduction_pct_of_2026_ev_kwh": 37.3,
   "production_scale_backsolved_this_scenario": 1.07965,
   "production_scale_backsolved_baseline_scenario": 0.99407,
-  "production_term_kwh_this_scenario": -135.0,
+  "consumption_term_kwh_this_scenario": 477.5,
+  "production_term_kwh_this_scenario": 18.5,
+  "decomposed_sum_kwh_this_scenario": 496.0,
+  "consumption_term_kwh_baseline_scenario": 497.3,
   "production_term_kwh_baseline_scenario": -1.3,
-  "conclusion_robust_to_this_alternative_shape": false,
-  "note": "The two shape assumptions' back-solved production levels diverge meaningfully (production term -135.0 kWh here vs -1.3 kWh under uniform scaling) -- the headline split is sensitive to which diurnal-shape assumption is used, and should be read as ONE plausible decomposition rather than a uniquely identified physical split. Both scenarios still attribute the dominant share of the change to consumption over production, but the exact magnitude is genuinely underdetermined by the data available."
+  "conclusion_robust_to_this_alternative_shape": true,
+  "note": "The two shape assumptions' Shapley production terms agree closely (production term 18.5 kWh here vs -1.3 kWh under uniform scaling) -- the 'consumption story, not a production story' conclusion does not depend on the specific uniform-scaling assumption; it holds under this materially different, data-grounded alternative too."
  },
  "ev_attribution": {
   "period_2026_ev_kwh_detected": 1253.0,
