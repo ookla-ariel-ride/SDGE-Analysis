@@ -2207,6 +2207,123 @@ perfect-horizon variant never beating the true optimum, the leak-sensitivity bou
 staying small on the real measured year, and byte-identical regeneration gate on
 `_require_archive()` and SKIP with the reason named when this checkout lacks `private/`.
 
+### 3.24 `analysis/tou_structure_stress.py` — stress-testing the tariff STRUCTURE, not the rate level (`data/tou_structure_stress.json`)
+
+**Why this is a different sensitivity than §13's escalation ladder.** `battery_dispatch_
+policies.escalation()` (§13, index.html's "Battery payback vs rate escalation" table) holds
+the TOU window SHAPES fixed and varies how fast $/kWh prices rise. Issue #14's premise: for
+a battery with a 10-15 year horizon, a redrawn window boundary — on-peak starting an hour
+earlier, the midday super-off-peak window narrowing — changes the arithmetic more than any
+plausible escalation rate, and it was completely unmodeled. This script holds today's prices
+fixed and varies the window SHAPES instead: on-peak start/end, the weekday midday
+super-off-peak window, and the summer-season month set.
+
+**Corpus check first (the issue's own first acceptance criterion).** Before inventing
+hypothetical scenarios, the household's own bill corpus was checked for a structural change
+that already happened. It has one: `tou_audit.py`'s `refit_changeover()` independently fits
+the exact changeover day for the weekday 10am-2pm window from statement residuals (35.4 kWh
+unexplained assuming no changeover, 0.5 kWh assuming one) and pins it to `tou_audit.
+MIDDAY_SOP_START` (2026-03-01, ambiguous only within the enclosing 2026-02-28..03-02
+weekend). Before that date those hours were off-peak; after, super-off-peak. That is exactly
+the shape of the "midday super-off-peak narrowed" scenario, so that scenario reverts to the
+pre-2026-03-01 structure directly — measured, in-corpus precedent, not an invented one.
+`lifetime_payback.py` separately hardcodes a THIRD, older window shape (`_per_old`: midday
+SOP only in March/April, pre-2026) for its multi-year valuation, but unlike the 2026-03-01
+change, no `tou_audit.py` function scores it against a bill, and the bill corpus here only
+starts 2024-05-25 — noted as a lead for a future audit, not relied on as measured precedent.
+
+**The other three scenarios have no in-corpus precedent**, so each cites external, checked
+grounding instead of inventing a number, per the issue's own instruction to label an
+ungrounded scenario hypothetical:
+
+- **On-peak widened** (16-21 → 14-21, 5h → 7h) and **on-peak shifted later** (16-21 → 17-22)
+  both draw on the same real, checked history: SDG&E's own on-peak window was **11am-6pm (7
+  hours)** for roughly 30 years before the CPUC's **March 2019** mandated default-TOU
+  transition moved it to today's 4-9pm (5 hours), explicitly to track the evening "duck
+  curve" net-demand peak as rooftop solar grew (KPBS "SDG&E's New Time-Of-Use Plan
+  Explained", Jul 2019; Utility Dive "California utilities prep nation's biggest
+  time-of-use rate roll-out"). Widening tests a partial reversion toward that historical
+  WIDTH (7h, though not the historical clock hours); shifting later tests a further, smaller
+  move in the SAME direction the 2019 transition already moved — a real, precedented lever,
+  though the specific magnitude modeled is a bounding choice, not a re-enactment.
+- **Summer season extended** one month (Jun-Oct → Jun-Nov) has **no precedent**: SDG&E's
+  summer is already longer than PG&E's or SCE's (5 months vs 4 each), and no CPUC proceeding
+  defining a longer season turned up in a direct check. Labeled **hypothetical** in both the
+  artifact (`precedent: "hypothetical"`) and the report prose, motivated only by real (if not
+  yet regulatorily acted-on) evidence that California's fire/heat season is measurably
+  lengthening into the traditionally cooler months (NOAA/Yale Climate Connections coverage
+  of the Jan 2025 LA fires; Scripps Institution of Oceanography Santa Ana wind-timing
+  research) — a directional motivation, not a settled precedent.
+
+**Mechanics: no changes to `rates.py`, `behavior_rebuild.py`, or `battery_dispatch_
+policies.py`.** `rates.py`'s canonical `period()`/`period_at()` remain the single source of
+truth for the CURRENT tariff. `period_variant()` in the new script is a parametrized
+generalization (`on_start`, `on_end`, `weekday_sop_windows`, `weekend_sop_end`) — verified
+directly (`test_tou_structure_stress.py`) to reproduce `rates.period` exactly at today's own
+parameters, across a fine hour grid, both day types. `assign_structure()` builds a scenario's
+own `p`/`seas` columns on a COPY of the real measured year; Consumption/Generation (physical
+reality) never change, only which TOU bucket each interval is billed under. Because
+`behavior_rebuild.build_sop_index/shift_ev/shift_house` and `battery_dispatch_policies.
+run_batt` already read `p`/`hour`/`seas` off the frame they are GIVEN rather than importing
+`rates.py` directly, re-running them against a scenario frame naturally re-derives the EV
+shift's destination window and the battery's discharge windows under that scenario's own
+structure — zero code changes needed in either module. (This module's own hardcoded "on"/
+"off"/"sop" string constants, by design a parametrized alternative to the canonical rule,
+correctly pass `test_scripts_runnable.py`'s `case_tou_assignment_comes_from_the_canonical_
+module` check via its `imports_loader` branch, since the script does import
+`behavior_rebuild`; the dedicated reproduction test above is the actual correctness
+guarantee, not incidental exemption from that check.)
+
+**The three reported numbers, per scenario, and the combined verdict.** Each scenario
+reports `baseline_delta_usd` (change to the no-behavior, no-battery bill), `behavior_save_
+delta_usd` (change to the EV-shift-only saving, 100% compliance), and `battery_marginal_
+delta_usd` (change to the price-aware/"greedy" battery's marginal saving on top of the
+shifted load) — all three recomputed FRESH for the CURRENT structure inside this same script
+(not read from a sibling artifact), so every comparison is apples-to-apples on identical
+code and identical physical data. A combined `total_package_impact_usd = baseline_delta -
+behavior_delta - battery_delta` answers "which structural change hurts most, and by how
+much": how much MORE (or less) a fully-optimized household (EV shift + price-aware battery)
+would pay per year under that scenario, holding physical usage fixed.
+
+**Independent cross-check.** The CURRENT-structure figures this script recomputes from
+scratch ($4,904.13 baseline, $1,220.85 behavior save, $2,238.36 battery marginal) agree with
+`behavior_rebuild.json`'s scenario (a) and `battery_dispatch_policies.json`'s post-behavior
+MID figures to the cent — an independent proof the reused pipeline (`shift_ev` + `run_batt`)
+is wired correctly, not merely internally self-consistent (`test_tou_structure_stress.py`).
+
+**Result: a genuinely counterintuitive finding, verified by direct inspection of the
+physical data before publishing it.** On-peak shifting later hurts most (**+$188.25/yr**
+even after the EV shift and battery) — the newly-captured evening hour (9-10pm) is pure
+grid import with no solar to offset it (confirmed directly: 512.7 kWh imported, 0 kWh
+exported in that slot across the measured year). Widening on-peak and narrowing the midday
+super-off-peak window each LOWER this household's bill (−$512.72/yr and −$1,437.11/yr)
+rather than raise it — both reclassify hours when this household is a heavy net EXPORTER
+(10am-4pm weekday, confirmed directly: 6,508 kWh exported vs 459 kWh imported across the
+10am-4pm weekday window in the measured year) into periods with a materially higher export
+credit rate, a windfall a grid-dependent household would not see. This inverts the naive
+"wider/narrower window = worse" intuition for a net-exporting solar household specifically,
+and was verified against the household's own import/export profile (not merely accepted
+because the arithmetic ran without error) before being written into the report. The summer
+extension is roughly neutral (−$1.04/yr).
+
+**Tests** `analysis/test_tou_structure_stress.py`, 13 cases: `period_variant` reproduces
+`rates.period` exactly at CURRENT's parameters; `assign_structure` preserves physical
+load; each scenario's window reclassification checked directly (midday-narrowed reverts
+weekday 10-14 to off-peak while leaving 0-6 and on-peak alone; widened reclassifies 14-16;
+shifted-later drops 16-17 and picks up 21-22; summer-extended reclassifies only November);
+every scenario's precedent label is one of measured/measured-in-corpus/hypothetical, and
+the summer-extension scenario specifically must be hypothetical; the midday-narrowed
+precedent note cites `tou_audit.MIDDAY_SOP_START` live rather than a hand-copied date;
+`total_package_impact_usd` is the exact hand-derived combination of the three deltas;
+every scenario's EV shift conserves energy; the current-structure recomputation matches
+the committed sibling artifacts; the committed `worst_scenario` is the true argmax on the
+real measured year; and byte-identical artifact regeneration.
+
+**Output** `data/tou_structure_stress.json`. Registered in `test_scripts_runnable.py` under
+`CI_RUNNABLE` (needs only `usage.csv` via `behavior_rebuild.load()` and `household.yaml`;
+unlike `perfect_foresight_dispatch.py` it reads no sibling artifact at all, only recomputing
+its own CURRENT-structure baseline fresh, so there is no optional cross-check to skip).
+
 ---
 
 ## 4. Battery simulation methodology

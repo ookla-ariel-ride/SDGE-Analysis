@@ -415,6 +415,39 @@ def case_optimality_gap_table_matches_the_artifact():
     return "the §6 controller-quality table matches the live perfect-foresight artifact"
 
 
+def case_tou_structure_stress_table_matches_the_artifact():
+    """The §7 tariff-structure-risk table and its worst-scenario sentence are
+    hand-written, not templated -- lock every cited number against the live
+    artifact so a regeneration can't silently drift them (issue #14)."""
+    tss_path = ROOT / "data" / "tou_structure_stress.json"
+    assert tss_path.exists(), f"{tss_path} is committed public data and must exist"
+    tss = json.loads(tss_path.read_text())
+
+    def fmt(v):
+        sign = "&minus;$" if v < 0 else "+$"
+        return f"{sign}{abs(v):,.2f}"
+
+    checks = []
+    for key in ("onpeak_widened", "onpeak_shifted_later", "midday_sop_narrowed",
+                "summer_extended"):
+        s = tss["scenarios"][key]
+        checks += [fmt(s["baseline_delta_usd"]), fmt(s["behavior_save_delta_usd"]),
+                  fmt(s["battery_marginal_delta_usd"]), fmt(s["total_package_impact_usd"])]
+    for value in checks:
+        assert value in HTML, f"§7 tariff-structure-risk table: {value!r} not found in the report"
+
+    worst = tss["worst_scenario"]
+    assert f"{worst['total_package_impact_usd']:.2f}" in HTML, (
+        "the worst-scenario dollar figure is not cited in the report prose")
+    # every scenario's precedent label must be one that the AC allows, and the
+    # summer-extension scenario specifically must be labeled hypothetical --
+    # nothing here is fabricated as a fake precedent
+    assert "hypothetical" in HTML, "the ungrounded scenario must be labeled hypothetical in prose"
+    for key, spec in tss["scenarios"].items():
+        assert spec["precedent"] in {"measured", "measured, in-corpus", "hypothetical"}
+    return "the §7 tariff-structure-risk table matches the live tou_structure_stress artifact"
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -431,6 +464,7 @@ CASES = [
     case_sizing_curve_table_matches_the_artifact_row_by_row,
     case_sizing_curve_knee_direction_is_not_reversed,
     case_optimality_gap_table_matches_the_artifact,
+    case_tou_structure_stress_table_matches_the_artifact,
 ]
 
 

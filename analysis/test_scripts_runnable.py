@@ -57,6 +57,7 @@ MANIFEST = {
     "battery_plan_matrix.py": "generator",
     "battery_sizing_curve.py": "generator",
     "perfect_foresight_dispatch.py": "generator",
+    "tou_structure_stress.py": "generator",
     "package_results.py": "generator",
     "extended_findings.py": "generator",
     "report_data.py": "generator",
@@ -96,6 +97,7 @@ OWNS = {
     "battery_plan_matrix.py":       [("data", "battery_plan_matrix.json")],
     "battery_sizing_curve.py":      [("data", "battery_sizing_curve.json")],
     "perfect_foresight_dispatch.py": [("data", "perfect_foresight_dispatch.json")],
+    "tou_structure_stress.py":      [("data", "tou_structure_stress.json")],
     "package_results.py":           [("data", "package_results.json")],
     "extended_findings.py":         [("data", "extended_results.json")],
     "report_data.py":               [("data", "report_data.json")],
@@ -296,6 +298,10 @@ CI_RUNNABLE = {
     # read-only and optional (skipped gracefully if absent), not a hard tie-out
     # assertion, so synthetic CI inputs run it cleanly
     "perfect_foresight_dispatch.py",
+    # needs only usage.csv (via behavior_rebuild.load()) and household.yaml; it
+    # recomputes its own CURRENT-structure figures fresh (no sibling artifact
+    # read at all, unlike perfect_foresight_dispatch.py's optional cross-check)
+    "tou_structure_stress.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run
