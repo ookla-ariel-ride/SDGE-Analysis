@@ -232,7 +232,7 @@
    "notes": [
     "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.0, 6.6]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
     "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.6 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
-    "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.3 yr, G vs G_POST) into a continuous Beta(4,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
+    "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.3 yr, G vs G_POST) into a continuous Beta(2,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
     "dispatch_policy (old model's largest lever, swing 2.2 yr) has no counterpart here: it is a discrete DESIGN CHOICE the household makes (evening/twowin/greedy dispatch), not an uncertain physical input to propagate, so this Monte Carlo holds it fixed at greedy (the recommended policy) throughout, matching the old model's own base case.",
     "soiling, round_trip_efficiency and production_measurement_spread have no counterpart in the old tornado at all -- they are new levers this issue adds, not previously quantified anywhere in the repo."
    ]

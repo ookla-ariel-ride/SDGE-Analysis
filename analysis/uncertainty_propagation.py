@@ -641,7 +641,7 @@ def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
     esc_nom = (ESC_LO + ESC_HI) / 2
     fade_nom = (FADE_LO + FADE_HI) / 2
     price_nom = (PRICE_LO + PRICE_HI) / 2
-    c_nom = EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B)   # Beta mean = 0.8
+    c_nom = EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B)   # Beta(2,1) mean = 0.667
     rte_nom = RTE_NOM
     loss_nom = (lossA + lossA + lossB) / 3                  # triangular mean
     prod_nom = 1.0
@@ -699,7 +699,7 @@ def reconcile_tornado(new_tornado, old_tornado_battery):
     notes.append(
         "ev_persistence generalizes the old model's 2-point 'post_behavior' "
         f"lever (swing {old_levers.get('post_behavior', {}).get('swing_yr')} yr, "
-        "G vs G_POST) into a continuous Beta(4,1) blend across the SAME two "
+        "G vs G_POST) into a continuous Beta(2,1) blend across the SAME two "
         f"endpoints; this model's swing ({new_tornado['levers']['ev_persistence']['swing_yr']} yr) "
         "should be of the same order since it is rooted in the identical "
         "pair of measured marginals.")
