@@ -194,25 +194,25 @@
    },
    {
     "kw": 7.5,
-    "save_usd": 2323.45,
+    "save_usd": 2323.19,
     "kwh_served": 4713.93,
     "cycles_per_day": 1.0084,
-    "steady_state_soc0_kwh": -0.0,
+    "steady_state_soc0_kwh": 0.0,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 4.6,
+    "marginal_save_usd_per_kw": 4.49,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 10.0,
-    "save_usd": 2326.94,
+    "save_usd": 2326.56,
     "kwh_served": 4718.64,
     "cycles_per_day": 1.0094,
-    "steady_state_soc0_kwh": -0.0,
+    "steady_state_soc0_kwh": 0.0,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 1.4,
+    "marginal_save_usd_per_kw": 1.35,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
@@ -224,31 +224,31 @@
     "steady_state_soc0_kwh": 0.0,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.32,
+    "marginal_save_usd_per_kw": 0.57,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 12.5,
-    "save_usd": 2328.21,
+    "save_usd": 2327.87,
     "kwh_served": 4720.49,
     "cycles_per_day": 1.0098,
-    "steady_state_soc0_kwh": -0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.79,
+    "marginal_save_usd_per_kw": 0.45,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 15.0,
-    "save_usd": 2328.74,
+    "save_usd": 2328.42,
     "kwh_served": 4721.27,
     "cycles_per_day": 1.01,
-    "steady_state_soc0_kwh": -0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.21,
+    "marginal_save_usd_per_kw": 0.22,
     "cost_usd": null,
     "asset_alone_payback_years": null
    }
@@ -285,9 +285,14 @@
   "sensitivity": {
    "save_at_reference_usd": 2327.42,
    "energy_elasticity": 0.473,
-   "power_elasticity": 0.003,
+   "power_elasticity": 0.0025,
    "binds": "energy",
-   "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood"
+   "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood",
+   "energy_elasticity_charge_held_fixed_diagnostic": 0.4721,
+   "energy_elasticity_ratio_to_power_real": 191.7,
+   "energy_elasticity_ratio_to_power_charge_held_fixed": 191.4,
+   "ratio_null_note": null,
+   "charge_held_fixed_diagnostic_note": "the published energy_elasticity's flanking point above the 13.5 kWh reference (15 kWh) correctly uses the real with-expansion charge rate (8 kW) for that capacity, while the reference point itself uses the bare-unit rate (5 kW) -- a small second variable (charge rate) moving alongside the intended one (capacity) in that one derivative (Codex adversarial review, fourth pass). energy_elasticity_charge_held_fixed_diagnostic re-derives the SAME local elasticity a second way, with the 15 kWh flanking point's charge rate counterfactually held at 5 kW instead of 8 kW -- diagnostic only, does NOT change energy_sweep_at_11.5kw's own rows (still correct, real per-product hardware) or the published energy_elasticity above. See TECHNICAL.md for the comparison and why the qualitative energy-binds-far-more-than-power conclusion is unaffected."
   }
  },
  "post_behavior": {
@@ -430,25 +435,25 @@
    },
    {
     "kw": 7.5,
-    "save_usd": 2239.01,
+    "save_usd": 2238.78,
     "kwh_served": 4705.99,
     "cycles_per_day": 1.0067,
     "steady_state_soc0_kwh": 12.804,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 2.9,
+    "marginal_save_usd_per_kw": 2.81,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 10.0,
-    "save_usd": 2239.19,
+    "save_usd": 2238.89,
     "kwh_served": 4706.09,
     "cycles_per_day": 1.0067,
     "steady_state_soc0_kwh": 12.804,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.07,
+    "marginal_save_usd_per_kw": 0.04,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
@@ -460,31 +465,31 @@
     "steady_state_soc0_kwh": 12.804,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": -0.2,
+    "marginal_save_usd_per_kw": 0.0,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 12.5,
-    "save_usd": 2239.14,
+    "save_usd": 2238.89,
     "kwh_served": 4706.09,
     "cycles_per_day": 1.0067,
     "steady_state_soc0_kwh": 12.804,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.25,
+    "marginal_save_usd_per_kw": 0.0,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
    {
     "kw": 15.0,
-    "save_usd": 2239.12,
+    "save_usd": 2238.89,
     "kwh_served": 4706.09,
     "cycles_per_day": 1.0067,
     "steady_state_soc0_kwh": 12.804,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": -0.01,
+    "marginal_save_usd_per_kw": 0.0,
     "cost_usd": null,
     "asset_alone_payback_years": null
    }
@@ -521,9 +526,14 @@
   "sensitivity": {
    "save_at_reference_usd": 2238.89,
    "energy_elasticity": 0.3837,
-   "power_elasticity": 0.0004,
+   "power_elasticity": 0.0,
    "binds": "energy",
-   "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood"
+   "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood",
+   "energy_elasticity_charge_held_fixed_diagnostic": 0.3829,
+   "energy_elasticity_ratio_to_power_real": null,
+   "energy_elasticity_ratio_to_power_charge_held_fixed": null,
+   "ratio_null_note": "power_elasticity is a true (or floating-point-noise) zero in this scenario's reference neighborhood once charge is held fixed -- save_usd does not measurably change with discharge power there -- so there is no local sensitivity to form a ratio against; the ratio fields are null rather than a large number produced by dividing by noise. energy binds; power does not measurably bind at all in this neighborhood.",
+   "charge_held_fixed_diagnostic_note": "the published energy_elasticity's flanking point above the 13.5 kWh reference (15 kWh) correctly uses the real with-expansion charge rate (8 kW) for that capacity, while the reference point itself uses the bare-unit rate (5 kW) -- a small second variable (charge rate) moving alongside the intended one (capacity) in that one derivative (Codex adversarial review, fourth pass). energy_elasticity_charge_held_fixed_diagnostic re-derives the SAME local elasticity a second way, with the 15 kWh flanking point's charge rate counterfactually held at 5 kW instead of 8 kW -- diagnostic only, does NOT change energy_sweep_at_11.5kw's own rows (still correct, real per-product hardware) or the published energy_elasticity above. See TECHNICAL.md for the comparison and why the qualitative energy-binds-far-more-than-power conclusion is unaffected."
   },
   "ev_kwh_moved": 2618
  }

@@ -620,6 +620,107 @@ def case_sweep_routes_the_expansion_charge_rate_only_above_the_bare_unit_referen
 
 
 @case
+def case_power_sweep_holds_charge_kw_fixed_at_every_point_not_symmetric_with_discharge():
+    """Codex adversarial review, fourth pass: the power sweep is supposed to
+    isolate discharge power as the SOLE varying dimension. An earlier version
+    passed charge_kw=CHARGE_KW only at the one real REF_POWER_KW anchor and
+    let every OTHER power-sweep point fall back to charge_kw=None (symmetric
+    -- charge power silently tracking whatever hypothetical discharge power
+    that point swept to), a second variable moving alongside the named one
+    and confounding the power-elasticity derivative specifically. Spies on
+    run_batt (via _steady_state_run) across the FULL power grid and asserts
+    every single call receives the SAME charge_kw, regardless of the power_kw
+    (discharge) value varying underneath it -- the actual regression this
+    finding is about, not just that the module's constants exist."""
+    from battery_dispatch_policies import CHARGE_KW
+    d, imp0, gen0 = _synthetic_day(consumption_kw=1.0, generation_kw=6.0)
+    d["ym"] = d.dt.dt.strftime("%Y-%m")
+    base_bill = billed(d, imp0, gen0)
+    calls = []
+    real_run_batt = bsc.run_batt
+
+    def spy(*args, **kwargs):
+        calls.append((kwargs.get("power_kw"), kwargs.get("charge_kw")))
+        return real_run_batt(*args, **kwargs)
+
+    bsc.run_batt = spy
+    try:
+        power_rows = bsc._sweep(d, imp0, gen0, base_bill, bsc.POWER_GRID, "power",
+                                 charge_kw=CHARGE_KW)
+    finally:
+        bsc.run_batt = real_run_batt
+
+    # _steady_state_run may call run_batt more than once per grid point while
+    # converging SOC, so len(calls) >= len(POWER_GRID), not necessarily equal.
+    assert len(calls) >= len(bsc.POWER_GRID), \
+        f"expected at least one run_batt call per power-grid point, got {len(calls)}"
+    powers_seen = {p for p, _ in calls}
+    assert len(powers_seen) == len(bsc.POWER_GRID), \
+        "power_kw did not actually vary across the sweep -- test fixture is broken"
+    charges_seen = {c for _, c in calls}
+    assert charges_seen == {CHARGE_KW}, (
+        f"every power-sweep point must be called with the SAME fixed "
+        f"charge_kw ({CHARGE_KW}) regardless of its own varying discharge "
+        f"power -- got distinct charge_kw values across the sweep: {calls}")
+    assert power_rows
+    return ("every power-sweep point uses the same fixed charge_kw "
+            f"({CHARGE_KW}) across all {len(bsc.POWER_GRID)} discharge-power "
+            "points -- charge no longer tracks the swept discharge dimension")
+
+
+@case
+def case_energy_elasticity_charge_held_fixed_diagnostic_is_close_to_the_published_number():
+    """Codex adversarial review, fourth pass: the published energy elasticity's
+    flanking point above the 13.5 kWh reference (15 kWh) correctly uses the
+    real with-expansion charge rate (8 kW) while the reference point uses the
+    bare-unit rate (5 kW) -- a small second variable in that one derivative.
+    _energy_elasticity_charge_held_fixed re-derives the same local elasticity
+    with the flanking point's charge rate counterfactually held at 5 kW, as a
+    diagnostic on how much of the confound is baked into the published number.
+    This is a live (not committed-artifact-only) check against the real
+    archive: the two variants must agree within a documented tolerance (the
+    confound is expected to be small relative to the ~150-190x energy-vs-
+    power gap that drives the report's conclusion), and the qualitative
+    conclusion -- energy elasticity is at least an order of magnitude larger
+    than power elasticity -- must survive under EITHER variant."""
+    _require_archive()
+    d = br.load()
+    imp0 = d.Consumption.values.astype(float)
+    gen0 = d.Generation.values.astype(float)
+    base_bill = billed(d, imp0, gen0)
+    from battery_dispatch_policies import CHARGE_KW, CHARGE_KW_WITH_EXPANSION
+    energy_rows = bsc._sweep(d, imp0, gen0, base_bill, bsc.ENERGY_GRID, "energy",
+                              charge_kw=CHARGE_KW, charge_kw_with_expansion=CHARGE_KW_WITH_EXPANSION)
+    e_marg = bsc._marginal(energy_rows, "kwh")
+    for r, m in zip(energy_rows, e_marg):
+        r["marginal_save_usd_per_kwh"] = m
+    power_rows = bsc._sweep(d, imp0, gen0, base_bill, bsc.POWER_GRID, "power", charge_kw=CHARGE_KW)
+
+    published, _ = bsc._local_elasticity(energy_rows, "kwh", bsc.REF_ENERGY_KWH)
+    diagnostic, hi_save = bsc._energy_elasticity_charge_held_fixed(d, imp0, gen0, base_bill, energy_rows)
+    power_elasticity, _ = bsc._local_elasticity(power_rows, "kw", bsc.REF_POWER_KW)
+
+    RELATIVE_TOLERANCE = 0.02   # documented: the confound moves the number <2%
+    rel_diff = abs(diagnostic - published) / abs(published)
+    assert rel_diff < RELATIVE_TOLERANCE, (
+        f"charge-held-fixed diagnostic ({diagnostic}) differs from the "
+        f"published energy elasticity ({published}) by {rel_diff:.1%}, "
+        f"outside the documented {RELATIVE_TOLERANCE:.0%} tolerance -- the "
+        "confound may be larger than TECHNICAL.md's stated small effect")
+
+    MIN_ORDER_OF_MAGNITUDE = 10  # energy must dominate power by at least 10x
+    if abs(power_elasticity) > 1e-6:
+        assert abs(published / power_elasticity) > MIN_ORDER_OF_MAGNITUDE
+        assert abs(diagnostic / power_elasticity) > MIN_ORDER_OF_MAGNITUDE
+    # else: power_elasticity is a true/floating-point zero -- energy trivially
+    # dominates (nothing to divide by), consistent with the artifact's own
+    # null-ratio handling in _scenario().
+    return (f"charge-held-fixed diagnostic ({diagnostic:.4f}) is within "
+            f"{rel_diff:.2%} of the published energy elasticity ({published:.4f}); "
+            "energy still dominates power by >10x under either variant")
+
+
+@case
 def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_not_the_bare_rate():
     """Regression guard against issue #40 Finding 1 recurring silently: this
     pins the committed artifact's 27 kWh shipping-product save/served figures
@@ -654,6 +755,51 @@ def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_
     return ("committed sizing-curve artifact's 27 kWh point (save_usd=2792.85) "
             "reflects CHARGE_KW_WITH_EXPANSION, not the old uniform bare-unit "
             "figure (2792.51)")
+
+
+@case
+def case_committed_artifact_power_sweep_confound_fix_is_reflected():
+    """Regression guard on the committed artifact for the power sweep's own
+    charge-power confound fix (Codex adversarial review, fourth pass): pins
+    power_elasticity to the value produced once charge_kw is held fixed at
+    every power-sweep point (0.0025 current-behavior; ~0, not the old
+    0.0004, post-behavior -- floating-point noise around a true zero once
+    the confound is removed), the ratio fields' correct null-handling when
+    power_elasticity has nothing meaningful to divide by, and that the
+    diagnostic elasticity field is present and close to the published one."""
+    if not ARTIFACT.is_file():
+        raise SkipCase(f"{ARTIFACT} not present")
+    data = json.loads(ARTIFACT.read_text())
+    cur = data["current_behavior"]["sensitivity"]
+    post = data["post_behavior"]["sensitivity"]
+
+    OLD_SYMMETRIC_POWER_ELASTICITY_CUR = 0.003    # pre-fourth-pass-fix committed value
+    OLD_SYMMETRIC_POWER_ELASTICITY_POST = 0.0004  # pre-fourth-pass-fix committed value
+    assert cur["power_elasticity"] != OLD_SYMMETRIC_POWER_ELASTICITY_CUR, (
+        "current-behavior power_elasticity still matches the OLD symmetric-"
+        "charge-power figure -- the fourth-pass confound fix may have reverted")
+    assert cur["power_elasticity"] == 0.0025, cur["power_elasticity"]
+    assert post["power_elasticity"] != OLD_SYMMETRIC_POWER_ELASTICITY_POST
+    assert abs(post["power_elasticity"]) < 1e-6, post["power_elasticity"]
+
+    # ratio fields: current has a real, finite ratio; post's power_elasticity
+    # is a true zero, so its ratio fields must be null, not a huge fabricated
+    # number produced by dividing by floating-point noise.
+    assert cur["energy_elasticity_ratio_to_power_real"] is not None
+    assert cur["energy_elasticity_ratio_to_power_real"] > 100
+    assert post["energy_elasticity_ratio_to_power_real"] is None
+    assert post["ratio_null_note"], "post-behavior must explain why its ratio is null"
+
+    # diagnostic field present and within the documented tolerance of published
+    for block in (cur, post):
+        diag = block["energy_elasticity_charge_held_fixed_diagnostic"]
+        pub = block["energy_elasticity"]
+        rel = abs(diag - pub) / abs(pub)
+        assert rel < 0.02, (diag, pub, rel)
+    return ("committed artifact reflects the power-sweep charge-fixed fix "
+            "(power_elasticity 0.0025 current / ~0 post, correct null-ratio "
+            "handling) and the energy-elasticity diagnostic is within 2% of "
+            "published in both scenarios")
 
 
 # ---------------------------------------------------------------------------

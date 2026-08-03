@@ -28,12 +28,21 @@ this household's real Powerwall-3-family hardware, and now uses the correct
 charge cap PER POINT: 5 kW at and below the bare unit's 13.5 kWh, 8 kW
 above it. The POWER sweep instead VARIES the discharge rating itself
 (5-15 kW) at a FIXED 13.5 kWh (bare-unit) capacity to ask "what if this
-hardware could discharge faster or slower" -- only its OWN REF_POWER_KW=11.5
-grid point is the real, cited Powerwall 3; the other points are hypothetical
-inverters with no cited charge rating of their own, so the 5 kW bare-unit
-charge cap is applied ONLY at that one real point on the power sweep, not
-assumed for the others (inventing a charge rating for a hypothetical 5 kW or
-15 kW discharge unit would violate CLAUDE.md's no-invented-rate rule).
+hardware could discharge faster or slower" -- charge_kw is held FIXED at
+5 kW (CHARGE_KW, the one real, cited figure for this household's actual
+battery) at EVERY point on this sweep, not just its own REF_POWER_KW=11.5
+anchor. An earlier version let charge default to symmetric-with-discharge
+(charge_kw=None) at every OTHER power-sweep point, reasoning that a
+hypothetical 5 kW or 15 kW discharge unit has no cited charge rating of its
+own -- but that let charge power drift uncontrolled alongside the swept
+discharge dimension (from 5 kW at the reference to whatever the flanking
+discharge value was), a second variable moving alongside the one the sweep
+is named for and meant to isolate (Codex adversarial review, fourth pass).
+This household's actual battery never changes its own capacity or charge
+circuitry in this sweep -- only the hypothetical discharge rating varies --
+so holding charge at the one real, known figure genuinely isolates
+discharge power as the sole varying dimension, which making it track the
+hypothetical discharge rating does not.
 
 Both shipping configs' own capacity/power (13.5 kWh, 27 kWh, 11.5 kW) are added
 to the grids exactly, not interpolated, so they are genuinely ON the swept
@@ -74,6 +83,23 @@ plain secant between the reference's two neighbors, which is only centered AT
 the reference when the grid is symmetric around it — not true for either grid
 here — so it was replaced again with the proper unequal-spacing formula
 (Codex adversarial review, third pass).
+
+Energy elasticity's own confound (Codex adversarial review, fourth pass): the
+published energy elasticity's flanking point ABOVE the 13.5 kWh reference (15
+kWh) correctly uses the with-expansion charge rate (8 kW, real hardware at
+that capacity) while the reference point itself uses the bare-unit rate (5
+kW) -- a genuine, if small, second variable (charge rate) moving alongside
+the intended one (capacity) in that one derivative specifically. This is
+CORRECT and unchanged for the full energy curve (knee-finding, payback fit,
+shipping products) — a real product at 15 kWh really does charge at 8 kW, and
+representing it any other way there would misprice that point. For the LOCAL
+ELASTICITY NUMBER specifically, `sensitivity.energy_elasticity_charge_held_
+fixed_diagnostic` recomputes the same derivative with the 15 kWh flanking
+point's charge rate counterfactually held at the bare-unit 5 kW instead, to
+quantify how much of the published elasticity is the confound vs. the
+capacity effect. See sensitivity.charge_held_fixed_diagnostic_note in the
+artifact for the comparison and TECHNICAL.md for the numbers and the
+conclusion's robustness.
 
 Output: battery_sizing_curve.json. This script fully regenerates the artifact.
 """
@@ -205,15 +231,26 @@ def _sweep(d, imp0, gen0, base_bill, grid, dim, charge_kw=None, charge_kw_with_e
     27 kWh and above, contradicting the with-expansion rate the datasheet
     actually gives for those capacities. Now: points at or below
     REF_ENERGY_KWH (13.5, the bare unit) get charge_kw; points above it
-    (any expansion) get charge_kw_with_expansion when given. The POWER
-    sweep varies the discharge rating itself at a FIXED 13.5 kWh (bare-unit)
-    capacity, so charge_kw is applied ONLY at its REF_POWER_KW grid point
-    (the one real, cited Powerwall 3) -- every other power-sweep point is a
-    hypothetical inverter with no cited charge rating and stays symmetric
-    (charge_kw=None) rather than inventing one; charge_kw_with_expansion
+    (any expansion) get charge_kw_with_expansion when given.
+
+    The POWER sweep varies the discharge rating itself at a FIXED 13.5 kWh
+    (bare-unit) capacity, so charge_kw is held FIXED at the passed-in value
+    (CHARGE_KW, 5 kW -- the one real, cited figure for THIS household's
+    actual battery) at EVERY point on this sweep, not just its own
+    REF_POWER_KW anchor. An earlier version reused charge_kw only at the
+    REF_POWER_KW point and fell back to symmetric (charge_kw=None, i.e.
+    charge power == whatever hypothetical discharge power that point swept
+    to) at every other point -- reasoning that a hypothetical 5 kW or 15 kW
+    discharge unit has no cited charge rating of its own. That let charge
+    power drift uncontrolled alongside the swept discharge dimension between
+    the reference and its neighbors, confounding the power-elasticity
+    derivative specifically with a second moving variable (Codex adversarial
+    review, fourth pass). This household's battery never changes its own
+    charge circuitry in this sweep -- only the hypothetical discharge rating
+    varies -- so fixing charge at the one real, known figure isolates
+    discharge power as the sole varying dimension; charge_kw_with_expansion
     never applies on this dimension, since capacity never leaves the bare
-    unit's 13.5 kWh there. Both default to None, preserving the prior
-    symmetric-power behavior exactly at every point on both sweeps."""
+    unit's 13.5 kWh there. Both parameters default to None."""
     rows = []
     for x in grid:
         cap, power = (x, REF_POWER_KW) if dim == "energy" else (REF_ENERGY_KWH, x)
@@ -222,7 +259,7 @@ def _sweep(d, imp0, gen0, base_bill, grid, dim, charge_kw=None, charge_kw_with_e
                                if (cap > REF_ENERGY_KWH and charge_kw_with_expansion is not None)
                                else charge_kw)
         else:
-            point_charge_kw = charge_kw if power == REF_POWER_KW else None
+            point_charge_kw = charge_kw
         imp2, exp2, served, thru, soc0, soc_final, iters = _steady_state_run(
             d, imp0, gen0, cap, power, charge_kw=point_charge_kw)
         _check_conservation(d, imp0, gen0, imp2, exp2, served, thru, cap)
@@ -332,11 +369,48 @@ def _local_elasticity(rows, key, ref_value):
     lo, ref, hi = rows[idx - 1], rows[idx], rows[idx + 1]
     h0 = ref[key] - lo[key]
     h1 = hi[key] - ref[key]
-    f0, f1, f2 = lo["save_usd"], ref["save_usd"], hi["save_usd"]
-    slope = (f0 * (-h1) / (h0 * (h0 + h1))
-             + f1 * (h1 - h0) / (h0 * h1)
-             + f2 * h0 / (h1 * (h0 + h1)))
+    slope = _lagrange_slope(h0, h1, lo["save_usd"], ref["save_usd"], hi["save_usd"])
+    f1 = ref["save_usd"]
     return slope * ref_value / f1, f1
+
+
+def _lagrange_slope(h0, h1, f0, f1, f2):
+    """The unequal-spacing 3-point (Lagrange) derivative formula shared by
+    _local_elasticity and its charge-held-fixed diagnostic counterfactual
+    below -- factored out so both use the exact same math, not two
+    independently-typed copies of it."""
+    return (f0 * (-h1) / (h0 * (h0 + h1))
+            + f1 * (h1 - h0) / (h0 * h1)
+            + f2 * h0 / (h1 * (h0 + h1)))
+
+
+def _energy_elasticity_charge_held_fixed(d, imp0, gen0, base_bill, energy_rows):
+    """Diagnostic-only counterfactual for the energy elasticity's own small
+    confound (Codex adversarial review, fourth pass): the published energy
+    elasticity's flanking point ABOVE REF_ENERGY_KWH (15 kWh) correctly uses
+    CHARGE_KW_WITH_EXPANSION (8 kW, real hardware at that capacity) while the
+    reference point (13.5 kWh) uses CHARGE_KW (5 kW) -- a second variable
+    (charge rate) moving alongside the intended one (capacity) in that one
+    derivative. This does NOT change the published energy_sweep rows
+    themselves (still correct, real-per-product hardware for the knee,
+    payback fit, and shipping products) -- it only re-derives the ONE local
+    elasticity number a second way, recomputing just the 15 kWh flanking
+    point's save_usd with charge_kw counterfactually held at the bare-unit
+    5 kW instead of 8 kW, to quantify how much of the published elasticity
+    is attributable to the confound vs. the capacity effect itself."""
+    idx = ENERGY_GRID.index(REF_ENERGY_KWH)
+    lo_kwh, hi_kwh = ENERGY_GRID[idx - 1], ENERGY_GRID[idx + 1]
+    lo_row = next(r for r in energy_rows if r["kwh"] == lo_kwh)
+    ref_row = next(r for r in energy_rows if r["kwh"] == REF_ENERGY_KWH)
+    imp2, exp2, served, thru, soc0, soc_final, iters = _steady_state_run(
+        d, imp0, gen0, hi_kwh, REF_POWER_KW, charge_kw=CHARGE_KW)
+    _check_conservation(d, imp0, gen0, imp2, exp2, served, thru, hi_kwh)
+    hi_save = round(base_bill - billed(d, imp2, exp2), 2)
+    h0 = REF_ENERGY_KWH - lo_kwh
+    h1 = hi_kwh - REF_ENERGY_KWH
+    slope = _lagrange_slope(h0, h1, lo_row["save_usd"], ref_row["save_usd"], hi_save)
+    elasticity = slope * REF_ENERGY_KWH / ref_row["save_usd"]
+    return elasticity, hi_save
 
 
 def _scenario(d, imp0, gen0, label):
@@ -365,6 +439,22 @@ def _scenario(d, imp0, gen0, label):
             f"{save_at_ref_p}) -- they should be the identical (13.5 kWh, "
             "11.5 kW) configuration")
     binding = "energy" if energy_elasticity >= power_elasticity else "power"
+    energy_elasticity_cf, hi_save_cf = _energy_elasticity_charge_held_fixed(
+        d, imp0, gen0, base_bill, energy_rows)
+    # power_elasticity can be genuine floating-point noise around a TRUE zero
+    # (post-behavior: save_usd is identical to the penny at kw=10, 11.5, 12.5
+    # once the charge-fixed fix above removes the confound that used to give
+    # each point slightly different charge power too -- there is no real
+    # local sensitivity to discharge power left to divide by). A ratio against
+    # that noise is not a real number (it swings between arbitrarily large
+    # values depending on floating-point rounding, not on anything physical),
+    # so it is reported as None with binding still correctly "energy" rather
+    # than as a fabricated-looking large number.
+    RATIO_EPS = 1e-6
+    ratio_real = (abs(energy_elasticity / power_elasticity)
+                  if abs(power_elasticity) > RATIO_EPS else None)
+    ratio_cf = (abs(energy_elasticity_cf / power_elasticity)
+                if abs(power_elasticity) > RATIO_EPS else None)
     return {
         "label": label,
         "baseline_bill_current_rates": round(base_bill),
@@ -384,6 +474,33 @@ def _scenario(d, imp0, gen0, label):
                      "flanking it in each sweep -- a local derivative property, "
                      "not a raw top-to-bottom span, so it does not depend on "
                      "how far either grid extends beyond that neighborhood"),
+            "energy_elasticity_charge_held_fixed_diagnostic": round(energy_elasticity_cf, 4),
+            "energy_elasticity_ratio_to_power_real": round(ratio_real, 1) if ratio_real else None,
+            "energy_elasticity_ratio_to_power_charge_held_fixed": round(ratio_cf, 1) if ratio_cf else None,
+            "ratio_null_note": (
+                None if (ratio_real is not None and ratio_cf is not None) else
+                "power_elasticity is a true (or floating-point-noise) zero in "
+                "this scenario's reference neighborhood once charge is held "
+                "fixed -- save_usd does not measurably change with discharge "
+                "power there -- so there is no local sensitivity to form a "
+                "ratio against; the ratio fields are null rather than a large "
+                "number produced by dividing by noise. energy binds; power "
+                "does not measurably bind at all in this neighborhood."),
+            "charge_held_fixed_diagnostic_note": (
+                "the published energy_elasticity's flanking point above the 13.5 "
+                "kWh reference (15 kWh) correctly uses the real with-expansion "
+                "charge rate (8 kW) for that capacity, while the reference point "
+                "itself uses the bare-unit rate (5 kW) -- a small second variable "
+                "(charge rate) moving alongside the intended one (capacity) in "
+                "that one derivative (Codex adversarial review, fourth pass). "
+                "energy_elasticity_charge_held_fixed_diagnostic re-derives the "
+                "SAME local elasticity a second way, with the 15 kWh flanking "
+                "point's charge rate counterfactually held at 5 kW instead of 8 "
+                "kW -- diagnostic only, does NOT change energy_sweep_at_11.5kw's "
+                "own rows (still correct, real per-product hardware) or the "
+                "published energy_elasticity above. See TECHNICAL.md for the "
+                "comparison and why the qualitative "
+                "energy-binds-far-more-than-power conclusion is unaffected."),
         },
     }
 

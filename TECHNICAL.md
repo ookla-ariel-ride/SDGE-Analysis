@@ -1929,13 +1929,61 @@ below / 1.0 kW above 11.5 kW). The corrected formula (`h0 = ref-lo`, `h1 = hi-re
 to the ordinary centered difference when `h0 == h1`, and is verified EXACT (not merely a
 closer approximation) against a known quadratic `f(x) = x²` on a deliberately asymmetric
 grid in `analysis/test_battery_sizing_curve.py`. Result: energy elasticity 0.47
-current-behavior / 0.38 post-behavior vs power elasticity 0.003 / 0.0004 — energy is
-still >150× more sensitive at this reference point in both scenarios (moved from the
+current-behavior / 0.38 post-behavior vs power elasticity 0.0025 / ~0 — energy is
+far more sensitive at this reference point in both scenarios (moved from the
 retired secant-based 0.56/0.48 vs 0.0025/−0.0001, but the qualitative conclusion —
 capacity, not discharge rate, is what this house's load shape responds to near the
 reference configuration — is unchanged), and both sweeps' `save_usd` at the shared
 reference point are asserted equal to the float epsilon, since they describe the identical
 13.5 kWh/11.5 kW configuration.
+
+**Power sweep's own charge-power confound (Codex adversarial review, fourth pass).**
+The power sweep is supposed to isolate discharge power as the SOLE varying dimension.
+An earlier version held `charge_kw` at the real, cited 5 kW ONLY at its one real point
+(the REF_POWER_KW=11.5 kW anchor) and let every other power-sweep point fall back to
+`charge_kw=None` (symmetric — charge power tracking whatever hypothetical discharge
+power that point swept to). That let charge power drift uncontrolled alongside the
+named dimension between the reference and its immediate neighbors, contaminating the
+power-elasticity derivative with a second moving variable. Fixed: `charge_kw` is now
+held FIXED at 5 kW at EVERY power-sweep point — more principled than the retired
+symmetric fallback, since this household's actual battery never changes its own
+capacity or charge circuitry in this sweep (only the hypothetical discharge rating
+varies), so 5 kW genuinely isolates discharge power rather than inventing a rating
+for a hypothetical unit. Effect on the real data: the non-anchor power-sweep points'
+`save_usd` shift down a few cents each (less charging capacity than the old symmetric
+fallback gave them); power elasticity moves from 0.003 → 0.0025 current-behavior and
+from 0.0004 → ~1e-15 (a true, not merely rounded, zero — `save_usd` is now identical
+to the penny at kw = 10, 11.5, 12.5, 15 once the confound is removed) post-behavior.
+Both changes make the qualitative conclusion (energy binds, power does not) STRONGER,
+not weaker: the energy/power elasticity ratio moves from ~158× to 191.7× current-
+behavior; post-behavior's ratio is no longer a finite number to report (there is no
+measurable local power sensitivity left to form a ratio against — reported as `null`
+in `sensitivity.energy_elasticity_ratio_to_power_real`, not as a fabricated-looking
+large number from dividing by floating-point noise). Neither the knee (still 20 kWh,
+both scenarios) nor either shipping product's `save_usd`/payback moved — this fix is
+confined to the power sweep's own five non-13.5-kWh points and the derived
+power-elasticity number.
+
+**Energy elasticity's own smaller confound, and why the published number is
+unchanged.** The energy sweep's per-point charge rate (5 kW at/below 13.5 kWh, 8 kW
+above — §3.13/this section, correct and unchanged) means the energy elasticity's
+own flanking point above the reference (15 kWh) uses a genuinely different charge
+rate (8 kW) than the reference itself (5 kW) — a small second variable moving
+alongside the intended one (capacity) in that ONE derivative. This is correct and
+must stay for the full curve (knee, payback, shipping products all price real
+per-product hardware), so it is not "fixed" there. Instead,
+`sensitivity.energy_elasticity_charge_held_fixed_diagnostic` recomputes the SAME
+local derivative a second way, counterfactually holding the 15 kWh flanking point's
+charge rate at 5 kW too (diagnostic only — does not touch the published
+`energy_sweep_at_11.5kw` rows or `energy_elasticity`). Result: 0.4721
+(charge-held-fixed) vs 0.473 (published, real-hardware) current-behavior — a 0.2%
+difference; 0.3829 vs 0.3837 post-behavior — a 0.2% difference. The
+>150×-energy-vs-power conclusion is unaffected either way (191.4× vs 191.7×
+current-behavior; post-behavior has no finite power elasticity to compare against
+under either variant). The published `energy_elasticity` stays the real-hardware
+number (it is more representative — every point really does run its own product's
+real charge rate); the diagnostic exists to show the confound's size is negligible
+next to the ~190× gap driving the conclusion, not to replace the published figure.
 
 **Shipping products located on the curve.** At 13.5 kWh / 11.5 kW: $2,327.42/yr saved
 current-behavior (payback 6.23 yr — now exactly the real $14,500 quote's own payback,
@@ -1962,7 +2010,7 @@ tie-out assertion against archive-derived data inside the generator itself, unli
 `battery_plan_matrix.py`, so synthetic CI inputs run it cleanly rather than tripping a
 divergence check).
 
-**Tests** `analysis/test_battery_sizing_curve.py`, 25 cases: synthetic-frame unit tests of
+**Tests** `analysis/test_battery_sizing_curve.py`, 33 cases: synthetic-frame unit tests of
 the cost fit (including that only the two same-power configs are anchors, that the two
 different-power configs are excluded with a named reason, and that the fitted cost passes
 through both shipping configs exactly — Codex adversarial review, second pass), the
@@ -1978,7 +2026,18 @@ formula from the retired plain-secant one) need no private archive at all; cases
 cross-checking the 13.5 kWh point and the steady-state shipping saves' bounded gap against
 `battery_dispatch_policies.json`, the sensitivity conclusion, the knee's presence, and
 byte-identical regeneration gate on `_require_archive()` and SKIP with the reason named
-when this checkout lacks `private/`.
+when this checkout lacks `private/`. Issue #40 Finding 1's sweep added cases pinning that
+the energy sweep routes `CHARGE_KW_WITH_EXPANSION` above 13.5 kWh (not the bare-unit rate)
+and that the committed artifact's 27 kWh point matches it, not the retired uniform-5kW
+figure. Fourth-pass adversarial review (the power-sweep and elasticity confounds above)
+added: a spy-based regression proving every power-sweep point now shares the SAME fixed
+`charge_kw` regardless of its own varying discharge power (needs no private archive — a
+synthetic fixture with `power_kw` genuinely varying across the grid); a live case (needs
+the real archive) asserting the charge-held-fixed diagnostic elasticity stays within 2% of
+the published one and that energy still dominates power by >10x under either variant; and
+a committed-artifact regression pin on the corrected `power_elasticity` values themselves
+(0.0025 current-behavior, ~0 — not the old symmetric 0.003/0.0004 — post-behavior) and on
+the ratio fields' null-handling when there is no finite power sensitivity to divide by.
 
 ### 3.23 `analysis/perfect_foresight_dispatch.py` — how much is a smarter controller worth? (`data/perfect_foresight_dispatch.json`)
 
