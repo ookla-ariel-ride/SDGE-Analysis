@@ -1,5 +1,5 @@
 {
- "method": "integrated: bill the year with and without the price-aware PW3 dispatch (run_batt 'greedy', 13.5 kWh / 11.5 kW, 90% RTE, EV-spillover exclusion) under each plan's own rate structure",
+ "method": "integrated: bill the year with and without the price-aware PW3 dispatch (run_batt 'greedy', 13.5 kWh, 11.5 kW discharge / 5 kW charge (Tesla's own datasheet, see research/battery-research-notes.md), 90% RTE, EV-spillover exclusion) under each plan's own rate structure",
  "rates_basis": "published rate tables, CEA generation without relief credit (ranking-only; ties out to data/plan_results.csv, asserted). Canonical TOU assignment via rates.period_at, holidays included.",
  "plans_selection": "EV-TOU-5 + the two nearest competitors in data/plan_results.csv",
  "dispatch_note": "all three plans share the same 2026 three-period TOU windows, so one dispatch trace is billed under each plan; kWh served 4720, cycles/day 1.01",
@@ -22,7 +22,7 @@
  },
  "canonical_crosscheck_ev_tou_5": {
   "no_battery": 4904,
-  "battery_value": 2329,
+  "battery_value": 2328,
   "basis": "data/battery_dispatch_policies.json \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, canonical holiday rule; the published EV-TOU-5 battery economics"
  }
 }

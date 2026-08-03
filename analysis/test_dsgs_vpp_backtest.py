@@ -807,7 +807,12 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
 
     d = br.load()
     cal = vb.load_calendar()
-    result = vb.backtest(d, cal)
+    # charge_kw=vb.CHARGE_KW (issue #40): main()'s production run passes this
+    # explicitly (backtest()'s own default stays None/symmetric for general
+    # reuse), so the committed battery_dispatch_policies.json this compares
+    # against is ALSO computed at the real 5 kW charge cap -- both sides of
+    # this cross-check must use the same figure or it would fail spuriously.
+    result = vb.backtest(d, cal, charge_kw=vb.CHARGE_KW)
     assert abs(result["bau_battery_bill_usd"] - expected_bau_bill) < 1.0, (
         result["bau_battery_bill_usd"], expected_bau_bill)
     return (f"BAU battery bill ${result['bau_battery_bill_usd']:,.2f} agrees with "
@@ -884,6 +889,49 @@ def case_committed_calendar_regenerates_byte_identically_from_raw_archive():
     if before is not None:
         assert after == before, "data/dsgs_event_calendar_2025.csv is not reproducible"
     return "data/dsgs_event_calendar_2025.csv regenerates byte-identically from the raw archive"
+
+
+# ---------------------------------------------------------------------------
+# issue #40 -- run_batt_vpp's charge-direction cap is now a DISTINCT, optional
+# parameter from the module's discharge-direction PWRQ, not one number
+# serving both directions.
+# ---------------------------------------------------------------------------
+@case
+def case_run_batt_vpp_threads_a_distinct_charge_kw():
+    """AC5: charge_kw must be wired to run_batt_vpp's charging branches (solar
+    surplus and sop grid top-up), separate from PWRQ's discharge cap, and its
+    None default must still reproduce the empty-event-set run_batt equivalence
+    exactly (byte-for-byte) -- proving the new parameter did not disturb the
+    existing byte-identity guarantee this module's docstring already claims."""
+    import inspect
+    assert "charge_kw" in inspect.signature(vb.run_batt_vpp).parameters
+
+    # None default still matches run_batt('greedy') exactly, empty event set
+    d, imp0, gen0 = _synthetic_day(consumption_kw=1.0)
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_b, exp_b, _soc, event_kwh, _bau = vb.run_batt_vpp(
+        d, imp0, gen0, vb.CAP, set(), 0.20, charge_kw=None)
+    assert np.array_equal(imp_a, imp_b) and np.array_equal(exp_a, exp_b), \
+        "charge_kw=None must not disturb the empty-event-set run_batt equivalence"
+
+    # a tighter charge_kw actually reduces charging on a single-interval,
+    # empty-battery, large-surplus fixture (multi-interval fixtures let
+    # overnight grid top-up erase any rate difference -- see
+    # test_battery_sizing_curve.py's identical technique)
+    d1 = pd.DataFrame({"dt": pd.date_range("2026-01-07 12:00", periods=1, freq="15min")})
+    d1["hour"] = d1.dt.dt.hour + d1.dt.dt.minute / 60
+    d1["p"] = [R.period_at(ts) for ts in d1.dt]
+    imp0_1 = np.array([0.0])
+    gen0_1 = np.array([5.0])
+    _, exp_sym, _, _, _ = vb.run_batt_vpp(d1, imp0_1, gen0_1, vb.CAP, set(), 0.20)
+    _, exp_asym, _, _, _ = vb.run_batt_vpp(d1, imp0_1, gen0_1, vb.CAP, set(), 0.20, charge_kw=5.0)
+    charged_sym = gen0_1[0] - exp_sym[0]
+    charged_asym = gen0_1[0] - exp_asym[0]
+    assert charged_asym < charged_sym - 1e-9, (
+        f"a tighter charge_kw=5.0 must charge less than the symmetric default "
+        f"({charged_asym} vs {charged_sym})")
+    assert vb.PWRQ * 4 != 5.0, "the module's discharge PWRQ and this test's charge_kw must differ"
+    return "run_batt_vpp threads a distinct, independently-effective charge_kw without disturbing the empty-event-set guarantee"
 
 
 # ---------------------------------------------------------------------------

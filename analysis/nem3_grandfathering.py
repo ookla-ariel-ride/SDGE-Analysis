@@ -528,7 +528,11 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
     """
     imp0 = d["imp"].values.astype(float)
     gen0 = d["exp"].values.astype(float)
-    i2, e2, served_kwh, thru_kwh = bp.run_batt(d, imp0, gen0, 13.5, "greedy")
+    # charge_kw=bp.CHARGE_KW (issue #40): this household's real, cited
+    # Powerwall 3 charge rating (5 kW), so this script's dispatch matches
+    # the same hardware every other PW3-modeling script now uses.
+    i2, e2, served_kwh, thru_kwh = bp.run_batt(d, imp0, gen0, 13.5, "greedy",
+                                                charge_kw=bp.CHARGE_KW)
 
     d_batt = d.copy()
     d_batt["imp"] = i2
@@ -565,7 +569,9 @@ def battery_marginal_under_real_nbt(d, credit_lookups):
 
     return {
         "method": ("Same battery physical dispatch as nbt_2039 "
-                  "(bp.run_batt(d, imp0, gen0, 13.5, 'greedy')); both the "
+                  "(bp.run_batt(d, imp0, gen0, 13.5, 'greedy', "
+                  "charge_kw=bp.CHARGE_KW) -- 5 kW charge / 11.5 kW discharge, "
+                  "Tesla's own datasheet, issue #40); both the "
                   "no-battery and with-battery series billed through this "
                   "script's own bill_nbt() (real hourly NBT export schedule, "
                   f"tariff year {TARIFF_YEAR} only -- a snapshot, not a "

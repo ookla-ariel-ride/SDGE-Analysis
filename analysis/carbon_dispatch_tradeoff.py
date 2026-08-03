@@ -7,10 +7,11 @@ one month-hour-mean interpolated day, data/carbon_fullyear_results.json). This
 script asks the second half's question: does dispatching the household battery
 to minimize the BILL fight dispatching it to minimize grid CO2, and by how much?
 
-Three dispatch runs, all at 13.5 kWh usable (Powerwall 3), 11.5 kW, ETA =
-sqrt(0.90) round-trip split per direction -- the exact constants
-battery_dispatch_policies.py already uses, imported from there rather than
-re-declared:
+Three dispatch runs, all at 13.5 kWh usable (Powerwall 3), 11.5 kW continuous
+discharge / 5 kW continuous charge (Tesla's own datasheet -- issue #40, see
+research/battery-research-notes.md), ETA = sqrt(0.90) round-trip split per
+direction -- the exact constants battery_dispatch_policies.py already uses,
+imported from there rather than re-declared:
 
   Run A -- cost-minimizing. battery_dispatch_policies.run_batt(d, imp0, gen0,
     13.5, "greedy") is called DIRECTLY, unmodified: this is the existing,
@@ -146,6 +147,9 @@ OUT_JSON = DATA / "carbon_dispatch_tradeoff.json"
 
 ETA = bp.ETA
 PWRQ = bp.PWRQ
+CHARGE_KW = bp.CHARGE_KW  # Powerwall 3 continuous CHARGE rating, 5 kW (issue #40) --
+                          # imported, not re-declared, so this script cannot drift
+                          # onto a different figure than the canonical dispatch engine
 KG = 1e-3          # kWh * kg/MWh -> kg, identical to carbon_fullyear.py
 CAP = 13.5         # Powerwall 3 usable capacity, matching battery_dispatch_policies.py's "pw3"
 MEANINGFUL_PCT = 0.02   # Run C is judged "distinct" if it clears this vs BOTH A and B
@@ -271,7 +275,7 @@ def carbon_threshold(d, inten):
 
 
 # --------------------------------------------------------------- dispatch runs
-def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
+def run_batt_carbon(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     """Carbon-minimizing dispatch -- see module docstring "Run B" for the full
     reasoning. Mirrors battery_dispatch_policies.run_batt's "greedy" control
     structure (charge from solar surplus first unless this interval both wants
@@ -302,6 +306,10 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     that gap guarantees every allowed charge/discharge combination is net
     carbon-non-negative, regardless of which specific charged kWh a pooled
     (non-FIFO) state of charge later delivers at which specific discharge.
+
+    charge_kw (issue #40) is the CHARGE-direction power cap, separate from
+    PWRQ's discharge-direction cap below; defaults to None, which reuses PWRQ
+    for both directions -- byte-for-byte the prior symmetric behavior.
     """
     disch_threshold = threshold / (ETA ** 2)
     imp = imp0.copy()
@@ -310,18 +318,19 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     served = 0.0
     thru = 0.0
     kw = imp0 * 4
+    pwrq_chg = PWRQ if charge_kw is None else charge_kw / 4
     for i in range(len(d)):
         chargeable = inten[i] <= threshold
         disch_win = (inten[i] > disch_threshold) and kw[i] < 2.5
         if exp[i] > 0 and chargeable:
-            c = min(exp[i], (cap - soc) / ETA, PWRQ)
+            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
             if c > 0:
                 soc += c * ETA
                 exp[i] -= c
                 thru += c * ETA
             continue
         if chargeable:
-            take = min(max((cap - soc) / ETA, 0), PWRQ)
+            take = min(max((cap - soc) / ETA, 0), pwrq_chg)
             if take > 0:
                 soc += take * ETA
                 imp[i] += take
@@ -336,7 +345,7 @@ def run_batt_carbon(d, imp0, gen0, cap, inten, threshold):
     return imp, exp, served, thru
 
 
-def run_batt_union(d, imp0, gen0, cap, inten, threshold):
+def run_batt_union(d, imp0, gen0, cap, inten, threshold, charge_kw=None):
     """The union/efficient policy -- see module docstring "Run C". Discharges
     whenever EITHER Run A's actual disch_win (on-peak-unconditional OR
     non-sop-with-low-kW, exactly as battery_dispatch_policies.run_batt computes
@@ -355,6 +364,10 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
     price-driven one) uses the SAME higher discharge threshold as Run B
     (charge threshold / ETA**2), for the identical round-trip-efficiency
     reason -- see carbon_threshold()'s and run_batt_carbon's docstrings.
+
+    charge_kw (issue #40) is the CHARGE-direction power cap, separate from
+    PWRQ's discharge-direction cap below; defaults to None, which reuses PWRQ
+    for both directions -- byte-for-byte the prior symmetric behavior.
     """
     disch_threshold = threshold / (ETA ** 2)
     imp = imp0.copy()
@@ -365,6 +378,7 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
     p = d.p.values
     h = d.hour.values
     kw = imp0 * 4
+    pwrq_chg = PWRQ if charge_kw is None else charge_kw / 4
     for i in range(len(d)):
         chargeable = inten[i] <= threshold
         cond_a = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
@@ -372,14 +386,14 @@ def run_batt_union(d, imp0, gen0, cap, inten, threshold):
         disch_win = cond_a or cond_b
         cheap_clean = (p[i] == "sop") and chargeable
         if exp[i] > 0 and chargeable and not (disch_win and imp[i] > 0):
-            c = min(exp[i], (cap - soc) / ETA, PWRQ)
+            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
             if c > 0:
                 soc += c * ETA
                 exp[i] -= c
                 thru += c * ETA
             continue
         if cheap_clean:
-            take = min(max((cap - soc) / ETA, 0), PWRQ)
+            take = min(max((cap - soc) / ETA, 0), pwrq_chg)
             if take > 0:
                 soc += take * ETA
                 imp[i] += take
@@ -422,7 +436,7 @@ def compute():
         raise SystemExit(f"baseline CO2 footprint {base_co2} kg is not positive")
 
     # ---------------- Run A: cost-minimizing (reuse, do not reimplement) ----
-    iA, eA, servedA, thruA = bp.run_batt(d, imp0, gen0, CAP, "greedy")
+    iA, eA, servedA, thruA = bp.run_batt(d, imp0, gen0, CAP, "greedy", charge_kw=CHARGE_KW)
     billA = bp.billed(d, iA, eA)
     co2A = float((iA * inten).sum() * KG)
     expA = float((eA * inten).sum() * KG)
@@ -440,13 +454,15 @@ def compute():
             "trusting either")
 
     # ---------------- Run B: carbon-minimizing (new) ------------------------
-    iB, eB, servedB, thruB = run_batt_carbon(d, imp0, gen0, CAP, inten, threshold)
+    iB, eB, servedB, thruB = run_batt_carbon(d, imp0, gen0, CAP, inten, threshold,
+                                             charge_kw=CHARGE_KW)
     billB = bp.billed(d, iB, eB)
     co2B = float((iB * inten).sum() * KG)
     expB = float((eB * inten).sum() * KG)
 
     # ---------------- Run C: union/efficient policy (new) --------------------
-    iC, eC, servedC, thruC = run_batt_union(d, imp0, gen0, CAP, inten, threshold)
+    iC, eC, servedC, thruC = run_batt_union(d, imp0, gen0, CAP, inten, threshold,
+                                            charge_kw=CHARGE_KW)
     billC = bp.billed(d, iC, eC)
     co2C = float((iC * inten).sum() * KG)
     expC = float((eC * inten).sum() * KG)
@@ -607,7 +623,8 @@ def compute():
                 f"{len(interpolated_dates)} day(s) ({', '.join(interpolated_dates)}) "
                 "use the month-hour mean of covered days in the same calendar "
                 "month, identical to carbon_fullyear.py's own treatment.",
-            "All three runs share one battery model (13.5 kWh usable, 11.5 kW, "
+            "All three runs share one battery model (13.5 kWh usable, 11.5 kW "
+                "discharge / 5 kW charge -- Tesla's own datasheet, issue #40 -- "
                 "90% round-trip efficiency) and one billing engine "
                 "(rates.bill_nem); the discharge/charge DECISION differs "
                 "between them by design, but (see the throughput caveat above) "
@@ -625,7 +642,7 @@ def compute():
             ],
             "generator": "analysis/carbon_dispatch_tradeoff.py",
             "engine": "rates.bill_nem via battery_dispatch_policies.billed()",
-            "battery": {"cap_kwh": CAP, "power_kw": 11.5, "rte": 0.9},
+            "battery": {"cap_kwh": CAP, "power_kw": 11.5, "charge_kw": CHARGE_KW, "rte": 0.9},
         },
     }
     return result

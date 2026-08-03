@@ -781,10 +781,19 @@ def compute_package_gross_imports():
             "publish a package-specific figure built on a pipeline that no "
             "longer matches its own documented invariant")
 
-    mid_imp, _, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5, "greedy")
+    # charge_kw (issue #40): MID is the bare 13.5 kWh unit (CHARGE_KW, 5 kW);
+    # HIGH is 27.0 kWh, PW3 + 1 Expansion (CHARGE_KW_WITH_EXPANSION, 8 kW) --
+    # the SAME per-configuration split battery_dispatch_policies.json's own
+    # post_behavior.mid/high now use. An earlier version of this function
+    # passed no charge_kw at all, silently defaulting to the OLD symmetric
+    # 11.5 kW charge behavior for both -- missed entirely by issue #40's
+    # original consumer audit (Codex adversarial review caught it).
+    mid_imp, _, mid_served, _ = bdp.run_batt(d, imp_sh, gen0, 13.5, "greedy",
+                                             charge_kw=bdp.CHARGE_KW)
     mid_gross_kwh = float(mid_imp.sum())
 
-    high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0, "greedy")
+    high_imp, _, high_served, _ = bdp.run_batt(d, imp_sh, gen0, 27.0, "greedy",
+                                               charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
     high_gross_kwh = float(high_imp.sum())
 
     annual_days = int(d.dt.dt.date.nunique())
@@ -801,8 +810,9 @@ def compute_package_gross_imports():
             "(private/1-raw-data/" + RAW_INTERVAL_GLOB + "), behavior_rebuild."
             "shift_ev() for the 100%-compliance EV-shift scenario every "
             "package sits on top of, then battery_dispatch_policies.run_batt("
-            "..., 'greedy') at 13.5 kWh (MID) and 27.0 kWh (HIGH) usable -- "
-            "the same calls and package definitions battery_dispatch_policies."
+            "..., 'greedy', charge_kw=...) at 13.5 kWh / 5 kW charge (MID) and "
+            "27.0 kWh / 8 kW charge (HIGH) usable -- the same calls and "
+            "package definitions battery_dispatch_policies."
             "json's own committed post_behavior block already uses. "
             "annual_days is the distinct-calendar-day count of that same "
             "365-day interval frame, used by build_package_floor_fractions() "

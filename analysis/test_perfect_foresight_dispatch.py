@@ -184,29 +184,27 @@ def case_solve_lp_respects_ev_exclusion():
 
 
 @case
-def case_solve_lp_combined_power_cap_row_includes_discharge():
-    """Codex adversarial review, fourth pass ("do not ship"): a single
-    physical inverter serves both directions, so the combined-throughput
-    inequality must bound grid_topup + solar_absorbed + discharge TOGETHER,
-    not grid_topup + solar_absorbed alone with discharge left on an
-    independent bound -- the latter would let one interval charge at full
-    power AND discharge at full power simultaneously, demanding 2x the
-    rated throughput through hardware that can only deliver it once. This
-    fixture's own economics never actually push combined use above the cap
-    (round-tripping through the battery for no net bucket benefit is a
-    strict loss -- confirmed empirically on the real annual and day-ahead
-    solves too, where combined throughput tops out exactly at the cap and
-    never exceeds it), so a purely behavioral assertion on the LP's OUTPUT
-    would pass even with the discharge column silently dropped from this
-    row. This test instead captures the actual A_ub matrix
-    scipy.optimize.linprog is called with and checks its structure
-    directly, so it fails if that column is ever dropped again."""
-    captured = {}
+def case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows():
+    """Issue #40 correction: the combined-throughput row (Codex adversarial
+    review, fourth pass) is generalized to asymmetric charge/discharge rates
+    via a NORMALIZED single row -- discharge_i/power_kw +
+    (grid_topup_i+solar_absorbed_i)/charge_kw <= 1/4 -- not split into two
+    INDEPENDENT rows. A first, WRONG attempt at this generalization used two
+    independent rows and silently permitted simultaneous full-rate charge
+    AND full-rate discharge (the exact bug the fourth-pass review fixed).
+    This captures the actual A_ub matrix scipy.optimize.linprog is called
+    with and checks its structure directly: there must be exactly ONE row
+    touching both the charge columns (GT, SA) and the discharge column
+    (DC) together, with coefficients (power_kw/charge_kw, power_kw/charge_kw,
+    1.0) and right-hand side power_kw/4 -- proving the two directions share
+    ONE combined budget, scaled for their different rates, not two separate
+    ones."""
+    captured = []
     real_linprog = pfd.linprog
 
-    def spy(c, A_ub=None, **kwargs):
-        captured["A_ub"] = A_ub
-        return real_linprog(c, A_ub=A_ub, **kwargs)
+    def spy(c, A_ub=None, b_ub=None, **kwargs):
+        captured.append((A_ub, b_ub))
+        return real_linprog(c, A_ub=A_ub, b_ub=b_ub, **kwargs)
 
     imp0 = np.array([5.0])
     gen0 = np.array([5.0])
@@ -216,42 +214,231 @@ def case_solve_lp_combined_power_cap_row_includes_discharge():
     pfd.linprog = spy
     try:
         pfd._solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
-                      cap=10.0, power_kw=4.0, soc_boundary=("fixed", 1.0))
+                      cap=10.0, power_kw=4.0, soc_boundary=("fixed", 1.0),
+                      charge_kw=2.0)
     finally:
         pfd.linprog = real_linprog
-    A_ub = captured["A_ub"].toarray()
+    A_ub, b_ub = captured[0]
+    A_ub = A_ub.toarray()
     n = 1
     GT, SA, DC = 0, n, 2 * n
+    # exactly one A_ub row (not zero, not two)
+    assert A_ub.shape[0] == 1, f"expected exactly one combined power-cap row, found {A_ub.shape[0]}"
     row = A_ub[0]
-    assert row[GT] == 1.0 and row[SA] == 1.0 and row[DC] == 1.0, (
-        "combined power-cap row must bound grid_topup+solar_absorbed+discharge "
-        f"together, got coefficients GT={row[GT]}, SA={row[SA]}, DC={row[DC]}")
-    return "the combined power-cap row binds grid_topup, solar_absorbed, AND discharge together"
+    expected_charge_coef = 4.0 / 2.0  # power_kw / charge_kw
+    assert abs(row[GT] - expected_charge_coef) < 1e-9, row[GT]
+    assert abs(row[SA] - expected_charge_coef) < 1e-9, row[SA]
+    assert abs(row[DC] - 1.0) < 1e-9, (
+        "the discharge column's coefficient must be exactly 1.0 (power_kw/power_kw), "
+        f"got {row[DC]}")
+    assert abs(b_ub[0] - 1.0) < 1e-9, f"right-hand side must be power_kw/4=1.0, got {b_ub[0]}"
+    return "the combined power-cap row is ONE normalized row spanning both directions, not two independent ones"
 
 
 @case
-def case_check_conservation_detects_combined_power_cap_violation():
-    """The hard physical check _check_conservation adds alongside the LP's
-    own constraint (Codex adversarial review, fourth pass): a synthetic
-    charge/discharge pair that together exceed the interval power rating
-    must be caught even if every OTHER invariant (aggregate identity,
-    no-manufactured-export, no-over-discharge, SOC continuity) happens to
-    hold. cap/power_kw chosen so combined=1.5 exceeds power_kw/4=1.0."""
-    imp0 = np.array([1.0])
-    gen0 = np.array([1.0])
-    charge = np.array([0.75])
-    discharge = np.array([0.75])
-    soc_init = 1.0
-    soc = np.array([soc_init + 0.75 * pfd.ETA - 0.75 / pfd.ETA])
-    imp = imp0 - discharge + charge  # grid_topup=charge here (solar_absorbed=0)
-    exp = gen0  # solar_absorbed=0, so exp = gen0 exactly
+def case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_fourth_pass_constraint():
+    """The normalized row must reduce to EXACTLY the original fourth-pass
+    constraint (coefficients 1.0/1.0/1.0, RHS power_kw/4) whenever charge_kw
+    is None or equals power_kw -- not merely an equivalent-but-differently-
+    scaled row. This matters beyond algebra: the day-ahead rolling case
+    solves many small, likely-degenerate per-day LPs, and a mathematically
+    equivalent but numerically DIFFERENT row (e.g. built from raw 1/power_kw
+    and 1/charge_kw divisions) can lead the solver to a different tied-
+    optimal vertex with the same objective but a different realized
+    charge/discharge split -- confirmed empirically while building this fix
+    (see the module docstring's CORRECTION note). Bit-identical coefficients
+    remove that risk rather than relying on the solver breaking ties the
+    same way."""
+    captured = []
+    real_linprog = pfd.linprog
+
+    def spy(c, A_ub=None, b_ub=None, **kwargs):
+        captured.append((A_ub, b_ub))
+        return real_linprog(c, A_ub=A_ub, b_ub=b_ub, **kwargs)
+
+    imp0 = np.array([5.0])
+    gen0 = np.array([5.0])
+    ev_spillover = np.array([False])
+    bucket_idx = np.array([0])
+    bucket_rates = [(0.5, 0.2)]
+    pfd.linprog = spy
+    try:
+        pfd._solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
+                      cap=10.0, power_kw=4.0, soc_boundary=("fixed", 1.0))  # charge_kw=None
+    finally:
+        pfd.linprog = real_linprog
+    A_ub, b_ub = captured[0]
+    A_ub = A_ub.toarray()
+    n = 1
+    GT, SA, DC = 0, n, 2 * n
+    row = A_ub[0]
+    # bit-for-bit 1.0, not merely close to it
+    assert row[GT] == 1.0 and row[SA] == 1.0 and row[DC] == 1.0, (
+        f"symmetric row coefficients must be the literal float 1.0, got "
+        f"GT={row[GT]!r} SA={row[SA]!r} DC={row[DC]!r}")
+    assert b_ub[0] == 1.0, f"symmetric RHS must be exactly power_kw/4=1.0, got {b_ub[0]!r}"
+    return "the symmetric-default row is bit-identical to the original fourth-pass constraint"
+
+
+@case
+def case_solve_lp_does_not_choose_simultaneous_full_rate_charge_and_discharge_at_symmetric_power():
+    """A sanity/smoke check, NOT the regression test for the bug the
+    coordinator found -- relabeled after an independent code-reviewer agent
+    (PR #69) reinstated the retired two-independent-rows bug in a scratch
+    copy and found this exact test still passes ("ok"), because it can't
+    distinguish correct from buggy here: with imp0/gen0 both large and a
+    FIXED SOC boundary with the ending SOC left free and unpriced, storing
+    energy this same interval has no downstream value the LP can capture
+    (see the module docstring's combined-power-cap section for why grid_
+    topup/solar_absorbed and discharge are, by this LP's own derived-
+    imp/exp accounting, cost-neutral-at-best or strictly worse when paired
+    in the SAME interval and bucket, independent of the actual rates
+    supplied) -- so the optimizer picks discharge=1.0/charge=0.0 regardless
+    of whether the combined cap exists at all. Confirmed: reinstating the
+    bug (two independent rows, each equal to the existing per-direction box
+    bound) still produces discharge=[1.0], charge=[0.0] here, satisfying
+    this test's assertion by coincidence, not because the cap did its job.
+
+    The REAL regression guards are the two tests that inspect the actual
+    A_ub matrix scipy.optimize.linprog is called with, and correctly FAIL
+    when the bug is reinstated:
+    case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows
+    (asserts exactly one combined row, not two) and
+    case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_fourth_pass_constraint
+    (asserts that row's coefficients at symmetric power). This test is kept
+    as a smoke check that _solve_lp still runs and returns a sane,
+    feasible, bounded result on this specific scenario -- not as evidence
+    the combined cap is enforced."""
+    # power_kw=4 -> a full-rate discharge this interval is 1.0 kWh; a
+    # full-rate charge is also 1.0 kWh (symmetric). Force SOC away from both
+    # boundaries (fixed at 5.0 of a 10.0 cap) so neither action is blocked
+    # by SOC alone, and give plenty of imp0/gen0 so gross-flow bounds do not
+    # bind either.
+    imp0 = np.array([10.0])
+    gen0 = np.array([10.0])
+    ev_spillover = np.array([False])
+    bucket_idx = np.array([0])
+    bucket_rates = [(0.5, 0.2)]
+    imp, exp, charge, discharge, soc, soc_init, res = pfd._solve_lp(
+        imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
+        cap=10.0, power_kw=4.0, soc_boundary=("fixed", 5.0))  # charge_kw=None (symmetric)
+    assert res.success, res.message
+    # This scenario's own OPTIMAL solution naturally avoids simultaneous
+    # charge+discharge (see docstring) -- the assertion below is a real
+    # property of THIS solve, but a passing result here does not prove the
+    # combined power cap is doing anything; see the A_ub-inspecting tests
+    # above for the actual regression guard.
+    assert discharge[0] + charge[0] <= 1.0 + 1e-6, (
+        f"combined charge {charge[0]} + discharge {discharge[0]} exceeds the "
+        "symmetric combined power cap of 1.0 kWh/interval")
+    return "solve_lp returns a sane, bounded result at symmetric power (smoke check, not a regression guard -- see the A_ub tests above for that)"
+
+
+@case
+def case_check_conservation_detects_combined_duty_cycle_violation_discharge_alone():
+    """_check_conservation's combined, normalized duty-cycle check must
+    catch discharge alone exceeding power_kw/4 (charge=0), the same as the
+    original fourth-pass check did at symmetric rates. imp0 is set well
+    above the discharge amount so the (unrelated) discharge-vs-gross-import
+    check does not fire first."""
+    imp0 = np.array([3.0])
+    gen0 = np.array([0.0])
+    charge = np.array([0.0])
+    discharge = np.array([1.5])
+    soc_init = 2.0
+    soc = np.array([soc_init - 1.5 / pfd.ETA])
+    imp = imp0 - discharge + charge
+    exp = gen0
     try:
         pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc,
                                 soc_init, cap=5.0, power_kw=4.0)
     except SystemExit as e:
-        assert "power rating" in str(e)
-        return "combined charge+discharge above the battery's power rating is caught"
-    raise AssertionError("a combined-throughput power-cap violation slipped past the conservation check")
+        assert "combined duty cycle" in str(e), e
+        return "a discharge-alone combined-duty-cycle violation is caught"
+    raise AssertionError("a discharge-alone power-cap violation slipped past the conservation check")
+
+
+@case
+def case_check_conservation_detects_combined_duty_cycle_violation_charge_alone():
+    """_check_conservation's combined, normalized duty-cycle check must
+    catch charge alone (grid_topup+solar_absorbed, summed into `charge`)
+    exceeding charge_kw/4 (discharge=0)."""
+    imp0 = np.array([0.0])
+    gen0 = np.array([0.0])
+    charge = np.array([1.5])
+    discharge = np.array([0.0])
+    soc_init = 0.0
+    soc = np.array([soc_init + 1.5 * pfd.ETA])
+    imp = imp0 - discharge + charge
+    exp = gen0
+    try:
+        pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc,
+                                soc_init, cap=5.0, power_kw=4.0, charge_kw=1.0)
+    except SystemExit as e:
+        assert "combined duty cycle" in str(e), e
+        return "a charge-alone combined-duty-cycle violation is caught"
+    raise AssertionError("a charge-alone power-cap violation slipped past the conservation check")
+
+
+@case
+def case_check_conservation_rejects_simultaneous_moderate_charge_and_discharge_that_only_combined_check_catches():
+    """The precise failure mode two independent per-direction checks would
+    MISS: discharge at 60% of its own cap AND charge at 60% of ITS own cap
+    simultaneously -- each individually under its own limit, but combined
+    120% of the shared duty cycle. Two independent checks (the bug the
+    coordinator found) would pass this fixture; only a genuine COMBINED
+    check catches it."""
+    imp0 = np.array([2.0])
+    gen0 = np.array([2.0])
+    discharge = np.array([0.6])   # 60% of power_kw/4=1.0 -- fine on its OWN
+    charge = np.array([0.6])      # 60% of charge_kw/4=1.0 -- fine on its OWN, but
+                                   # combined duty cycle = 0.6+0.6 = 1.2 > 1.0
+    soc_init = 5.0
+    soc = np.array([soc_init + charge[0] * pfd.ETA - discharge[0] / pfd.ETA])
+    imp = imp0 - discharge + charge
+    exp = gen0
+    try:
+        pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc,
+                                soc_init, cap=10.0, power_kw=4.0, charge_kw=4.0)
+    except SystemExit as e:
+        assert "combined duty cycle" in str(e), e
+        return "simultaneous moderate charge+discharge, each individually fine but combined over cap, is caught"
+    raise AssertionError(
+        "a combined-duty-cycle violation slipped past the conservation check even "
+        "though each individual direction was under its own separate cap -- this is "
+        "exactly the regression two independent per-direction checks would miss")
+
+
+@case
+def case_check_conservation_allows_asymmetric_charge_and_discharge_within_the_combined_cap():
+    """Positive case: charge and discharge at DIFFERENT rates (5 kW charge,
+    11.5 kW discharge, this household's real cited figures) that together
+    stay within the combined, normalized duty cycle must still pass.
+    charge_i/discharge_i are chosen so the combined duty cycle sits EXACTLY
+    at its 0.25 boundary AND SOC is held exactly constant (discharge_i =
+    charge_i * ETA**2), so this fixture isolates the combined-duty-cycle
+    check from the (unrelated) cyclic-boundary check."""
+    charge_kw = 5.0
+    power_kw = 11.5
+    eta2 = pfd.ETA ** 2
+    # solve charge_i*(eta2/power_kw + 1/charge_kw) = 0.25 for charge_i, then
+    # set discharge_i = eta2*charge_i so soc_final == soc_init exactly.
+    charge_i = 0.25 / (eta2 / power_kw + 1.0 / charge_kw)
+    discharge_i = eta2 * charge_i
+    imp0 = np.array([discharge_i + 1.0])
+    gen0 = np.array([charge_i + 1.0])
+    charge = np.array([charge_i])
+    discharge = np.array([discharge_i])
+    soc_init = 5.0
+    soc = np.array([soc_init + charge_i * pfd.ETA - discharge_i / pfd.ETA])
+    imp = imp0 - discharge + charge
+    exp = gen0 - 0.0
+    assert abs(soc[0] - soc_init) < 1e-9, "fixture must hold SOC exactly constant"
+    duty = discharge_i / power_kw + charge_i / charge_kw
+    assert abs(duty - 0.25) < 1e-9, duty
+    pfd._check_conservation(imp0, gen0, imp, exp, charge, discharge, soc,
+                            soc_init, cap=10.0, power_kw=power_kw, charge_kw=charge_kw)
+    return "asymmetric charge/discharge exactly at the combined duty-cycle boundary passes"
 
 
 @case

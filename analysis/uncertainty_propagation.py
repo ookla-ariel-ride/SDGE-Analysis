@@ -297,7 +297,8 @@ def dispatch_calibration():
         SOC, until they converge to within STEADY_STATE_TOL_KWH kWh."""
         soc0 = CAP_KWH / 2
         for _ in range(STEADY_STATE_MAX_ITERS):
-            i2, e2, served, thru = bp.run_batt(d, imp_base, gen, CAP_KWH, "greedy", soc0=soc0)
+            i2, e2, served, thru = bp.run_batt(d, imp_base, gen, CAP_KWH, "greedy", soc0=soc0,
+                                               charge_kw=bp.CHARGE_KW)
             soc_final = soc0 + thru - served / eta
             if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
                 return i2, e2
@@ -341,7 +342,7 @@ def dispatch_calibration():
         below) uses the steady-state method throughout for internal
         consistency across every calibration point, matching Codex review
         pass 1 finding 2's fix."""
-        i2, e2, _, _ = bp.run_batt(d, imp_base, gen0, CAP_KWH, "greedy")
+        i2, e2, _, _ = bp.run_batt(d, imp_base, gen0, CAP_KWH, "greedy", charge_kw=bp.CHARGE_KW)
         return float(bp.billed(d, imp_base, gen0) - bp.billed(d, i2, e2))
 
     pre_nominal_single_pass = _single_pass_marginal(imp0)

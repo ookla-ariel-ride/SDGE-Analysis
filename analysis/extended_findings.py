@@ -273,14 +273,14 @@ base_bill = bp.billed(d, imp0, gen0)
 ev, sessions = br.detect_sessions(d)
 POL_SAVE = {}
 for _pol in ("evening", "twowin", "greedy"):
-    _i, _e, _, _ = bp.run_batt(d, imp0, gen0, 13.5, _pol)
+    _i, _e, _, _ = bp.run_batt(d, imp0, gen0, 13.5, _pol, charge_kw=bp.CHARGE_KW)
     POL_SAVE[_pol] = base_bill - bp.billed(d, _i, _e)
 G = POL_SAVE["greedy"]
 # post-behavior marginal (EV shift first, then battery — bp's integrated pipeline)
 _sop_idx, _sop_ts = br.build_sop_index(d)
 _imp_sh, _ = br.shift_ev(d, ev, sessions, [True] * len(sessions), _sop_idx, _sop_ts)
 _b_sh = bp.billed(d, _imp_sh, gen0)
-_i3, _e3, _, _ = bp.run_batt(d, _imp_sh, gen0, 13.5, "greedy")
+_i3, _e3, _, _ = bp.run_batt(d, _imp_sh, gen0, 13.5, "greedy", charge_kw=bp.CHARGE_KW)
 G_POST = _b_sh - bp.billed(d, _i3, _e3)
 # consistency gate: computed values must match the committed dispatch artifact;
 # a mismatch means battery_dispatch_policies.json is stale — regenerate it FIRST.
@@ -500,7 +500,7 @@ def bill_flat_export(dd, imp, exp, credit):
 nbt = {}
 for credit in (0.03, 0.05, 0.08):
     b0 = bill_flat_export(d, imp0, gen0, credit)
-    i2, e2, _, _ = bp.run_batt(d, imp0, gen0, 13.5, "greedy")
+    i2, e2, _, _ = bp.run_batt(d, imp0, gen0, 13.5, "greedy", charge_kw=bp.CHARGE_KW)
     b1 = bill_flat_export(d, i2, e2, credit)
     nbt[f"{int(credit*100)}c"] = {"battery_marginal_yr": round(b0 - b1)}
 _MON = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",

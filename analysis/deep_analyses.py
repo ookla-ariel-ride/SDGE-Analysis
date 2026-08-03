@@ -116,21 +116,31 @@ def rates(U,C): return np.array([U[s][p]+WFNBC+PCIA+C[s][p] for s,p in zip(d.sea
 onp=d[(d.p=="on")&(d.seas=="S")].groupby("date").Consumption.sum().sort_values(ascending=False)
 events=set(onp.head(15).index)
 d["event"]=d["date"].isin(events)&(d.p=="on")
-def cost_with_batt(U,C,adder_on_events, cap=13.5,pwr=11.5,eff=0.90):
+def cost_with_batt(U,C,adder_on_events, cap=13.5,pwr=11.5,eff=0.90,charge_pwr=None):
+    # pwr is the DISCHARGE cap; charge_pwr (issue #40) is the CHARGE cap (both
+    # the solar-surplus and grid-top-up branches use it), defaulting to None
+    # (reuse pwr) so every existing call below is byte-for-byte unchanged.
+    cpwr = pwr if charge_pwr is None else charge_pwr
     r=rates(U,C)+np.where(d.event & adder_on_events,1.16,0)
     soc=0;offv=np.zeros(len(d));forg=np.zeros(len(d));grid=np.zeros(len(d))
     P=d.p.values;H=d.hour.values;G=d.Generation.values;Cn=d.Consumption.values
     for i in range(len(d)):
         if P[i]!="on" and G[i]>0 and soc<cap:
-            ch=min(G[i],pwr*.25,cap-soc);soc+=ch;forg[i]=ch*max(r[i]-NBC,0)
+            ch=min(G[i],cpwr*.25,cap-soc);soc+=ch;forg[i]=ch*max(r[i]-NBC,0)
         elif P[i]=="sop" and H[i]<6 and soc<cap*.6:
-            ch=min(pwr*.25,cap*.6-soc);soc+=ch;grid[i]=ch*r[i]
+            ch=min(cpwr*.25,cap*.6-soc);soc+=ch;grid[i]=ch*r[i]
         if P[i]=="on" and Cn[i]>0 and soc>0:
             di=min(Cn[i],pwr*.25,soc*eff);soc-=di/eff;offv[i]=di*r[i]
     energy=(Cn*r).sum()-(G*np.clip(r-NBC,0,None)).sum()-offv.sum()+forg.sum()+grid.sum()
     return energy+365*BSC
-drp_batt=cost_with_batt(UDCP,CEAP,True)
-ev5_batt=cost_with_batt(UDC5,CEA5,False)
+# CHARGE_KW_PW3: Tesla's own official 2025 Powerwall 3 Datasheet continuous
+# CHARGE rating (issue #40) -- 5 kW, vs. the 11.5 kW continuous discharge
+# `pwr` default above. Both wildcard scenarios below model this household's
+# real Powerwall 3 (cap=13.5, pwr=11.5 defaults), so both get the cited
+# charge cap. See research/battery-research-notes.md.
+CHARGE_KW_PW3=5.0
+drp_batt=cost_with_batt(UDCP,CEAP,True,charge_pwr=CHARGE_KW_PW3)
+ev5_batt=cost_with_batt(UDC5,CEA5,False,charge_pwr=CHARGE_KW_PW3)
 drp_nobatt_energy=(d.Consumption.values*(rates(UDCP,CEAP)+np.where(d.event,1.16,0))).sum() - (d.Generation.values*np.clip(rates(UDCP,CEAP)-NBC,0,None)).sum()
 out["wildcard"]={"TOU-DR-P + PW3 (15 events dodged)":round(drp_batt),
                  "EV-TOU-5 + PW3":round(ev5_batt),

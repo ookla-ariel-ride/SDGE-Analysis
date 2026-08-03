@@ -26,22 +26,43 @@ d["rate"]=[UDC[s][p]+WFNBC+PCIA+CEA[s][p] for s,p in zip(d.seas,d.p)]
 
 # ---- arbitrage sim: charge from would-be exports (forgone credit) + overnight SOP top-up,
 #      discharge against on-peak imports; 90% round-trip ----
-def sim(cap,pwr,name,eff=0.90):
+# `pwr` is the DISCHARGE cap; `charge_pwr` (issue #40) is the CHARGE cap, both the
+# export-charging branch and the grid-top-up branch, defaulting to None (reuse
+# `pwr`) so every existing call below is byte-for-byte unchanged.
+def sim(cap,pwr,name,eff=0.90,charge_pwr=None):
     soc=0.0; forgone=grid=offset=cyc=0.0
+    cpwr = pwr if charge_pwr is None else charge_pwr
     for row in d.itertuples():
         step=0.25
         if row.p in("sop","off") and row.Generation>0 and soc<cap:
-            c=min(row.Generation,pwr*step,cap-soc); soc+=c; forgone+=c*max(row.rate-NBC,0)
+            c=min(row.Generation,cpwr*step,cap-soc); soc+=c; forgone+=c*max(row.rate-NBC,0)
         elif row.p=="sop" and soc<cap*0.6 and row.hour<6:
-            c=min(pwr*step,cap*0.6-soc); soc+=c; grid+=c*row.rate
+            c=min(cpwr*step,cap*0.6-soc); soc+=c; grid+=c*row.rate
         if row.p=="on" and row.Consumption>0 and soc>0:
             disc=min(row.Consumption,pwr*step,soc*eff); soc-=disc/eff; offset+=disc*row.rate; cyc+=disc/cap
     return {"config":name,"usable_kwh":cap,"power_kw":pwr,"onpeak_offset_value":round(offset),
             "forgone_export_credits":round(forgone),"grid_charge_cost":round(grid),
             "net_annual_savings":round(offset-forgone-grid),"equiv_full_cycles":round(cyc)}
-configs=[(5.0,3.84,"1x Enphase IQ 5P"),(10.0,7.08,"1x Enphase IQ 10C"),(13.5,11.5,"1x Tesla Powerwall 3"),
-         (15.0,7.68,"3x Enphase IQ 5P"),(20.0,7.08,"2x Enphase IQ 10C"),(27.0,11.5,"PW3 + 1 Expansion")]
-json.dump([sim(*c) for c in configs],open("battery_sim.json","w"),indent=1)
+# Tesla's own official 2025 Powerwall 3 Datasheet continuous CHARGE ratings
+# (issue #40) -- 5 kW for a BARE single unit, 8 kW for a unit WITH UP TO 3
+# EXPANSION packs, vs. the 11.5 kW continuous discharge `pwr` above (the
+# SAME for both configs; only charge is re-rated by adding expansion
+# capacity). These are DIFFERENT, separately cited figures -- an earlier
+# version of this constant incorrectly applied the bare-unit rate to the
+# "PW3 + 1 Expansion" config too, contradicting the datasheet split
+# research/battery-research-notes.md already recorded (Codex adversarial
+# review caught this). NOT applied to the Enphase configs: no cited charge
+# rating exists in this project for the 5P/10C, so they keep the symmetric
+# charge=discharge default (charge_pwr=None) rather than borrowing an
+# uncited number.
+CHARGE_KW_PW3=5.0
+CHARGE_KW_PW3_WITH_EXPANSION=8.0
+configs=[(5.0,3.84,"1x Enphase IQ 5P",None),(10.0,7.08,"1x Enphase IQ 10C",None),
+         (13.5,11.5,"1x Tesla Powerwall 3",CHARGE_KW_PW3),
+         (15.0,7.68,"3x Enphase IQ 5P",None),(20.0,7.08,"2x Enphase IQ 10C",None),
+         (27.0,11.5,"PW3 + 1 Expansion",CHARGE_KW_PW3_WITH_EXPANSION)]
+json.dump([sim(cap,pwr,name,charge_pwr=cpwr) for cap,pwr,name,cpwr in configs],
+          open("battery_sim.json","w"),indent=1)
 
 # ---- backup endurance: stitched hourly load (SAM 8760) + derived hourly production ----
 b=pd.read_csv("samB.csv").iloc[:,0].values; a=pd.read_csv("samA.csv").iloc[:,0].values

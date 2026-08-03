@@ -35,7 +35,7 @@ import pandas as pd
 
 import rates as R                 # canonical TOU assignment
 import behavior_rebuild as br
-from battery_dispatch_policies import run_batt
+from battery_dispatch_policies import run_batt, CHARGE_KW
 
 # ---- published rate-table values (ranking-only; identical to analyze*.py) ----
 WFNBC_DWR = 0.00591
@@ -90,8 +90,11 @@ if __name__ == "__main__":
     imp0 = d.Consumption.values.astype(float)
     gen0 = d.Generation.values.astype(float)
 
-    # one dispatch trace (shared TOU windows across the three plans)
-    imp_b, exp_b, served, thru = run_batt(d, imp0, gen0, 13.5, "greedy")
+    # one dispatch trace (shared TOU windows across the three plans). charge_kw
+    # (issue #40) is this household's real, cited Powerwall 3 charge rating
+    # (5 kW, vs. 11.5 kW discharge) -- imported from battery_dispatch_
+    # policies.py so the two scripts cannot drift onto different figures.
+    imp_b, exp_b, served, thru = run_batt(d, imp0, gen0, 13.5, "greedy", charge_kw=CHARGE_KW)
 
     ref = pd.read_csv(os.path.join(root, "data", "plan_results.csv"))
     ref = ref[ref.provider == "CEA"].set_index("plan").total.to_dict()
@@ -114,8 +117,9 @@ if __name__ == "__main__":
         "EV-TOU-5 battery value diverged from the canonical dispatch artifact"
     out = {
         "method": ("integrated: bill the year with and without the price-aware PW3 "
-                   "dispatch (run_batt 'greedy', 13.5 kWh / 11.5 kW, 90% RTE, EV-spillover "
-                   "exclusion) under each plan's own rate structure"),
+                   "dispatch (run_batt 'greedy', 13.5 kWh, 11.5 kW discharge / 5 kW charge "
+                   "(Tesla's own datasheet, see research/battery-research-notes.md), 90% RTE, "
+                   "EV-spillover exclusion) under each plan's own rate structure"),
         "rates_basis": ("published rate tables, CEA generation without relief credit "
                         "(ranking-only; ties out to data/plan_results.csv, asserted). "
                         "Canonical TOU assignment via rates.period_at, holidays included."),

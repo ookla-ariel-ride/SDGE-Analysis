@@ -68,39 +68,39 @@
  },
  "correlation_assumption": "All seven inputs are drawn independently. No correlation between them is measured anywhere in this repo. Two plausible real correlations both point the SAME direction: (a) escalation and soiling could positively correlate (a warmer/drier pattern raising both wildfire-driven rate escalation and soiling accumulation); (b) round-trip efficiency and capacity fade both trend with cell aging/heat, so a hard-cycled or hot-climate pack would tend to show both together. Modeling all seven as independent therefore likely UNDERSTATES the true probability of the worst-of-both-worlds tail (e.g. high escalation with high soiling, or low RTE with high fade) relative to reality -- independent sampling under-represents scenarios where multiple bad draws share a common root cause. No numeric correction is applied; no data in this repo quantifies either correlation.",
  "calibration": {
-  "pre_nominal": 2327.77,
-  "mid_nominal": 2239.16,
-  "pre_nominal_single_pass": 2328.66,
-  "mid_nominal_single_pass": 2238.36,
+  "pre_nominal": 2327.42,
+  "mid_nominal": 2238.89,
+  "pre_nominal_single_pass": 2328.31,
+  "mid_nominal_single_pass": 2238.09,
   "steady_state_vs_single_pass_note": "pre_nominal/mid_nominal use a steady-state-converged SOC boundary (Codex review pass 1, finding 2); pre_nominal_single_pass/mid_nominal_single_pass use the same single-pass method as the committed battery_dispatch_policies.json (which this issue does not modify) and are what the $1 tie-out below checks against -- the ~$1-2 gap between the two conventions is the known, expected size of this SOC-boundary effect, not a discrepancy to resolve further.",
-  "committed_pre": 2329.0,
+  "committed_pre": 2328.0,
   "committed_mid": 2238.0,
   "generation_proxy_limitation": "The soiling and production-measurement-spread calibrations scale the Green Button 'Generation' column (net grid EXPORT, not gross PV production -- self-consumed solar never crosses the meter and is invisible in this dataset) directly by the loss/noise fraction, rather than reconstructing true gross production from an independent load source and reallocating the shortfall against export before spilling into import (Codex review pass 1, finding 1). Because true production during an exporting interval equals export plus whatever load was simultaneously self-consumed, this likely UNDERSTATES the magnitude of both slopes somewhat (a given fractional production loss removes more energy than a same-fraction cut to export alone would). The calibrated slopes are already small (see soil_slope below); a full fix needs the household's independent gross-load series (samA/samB) to reconstruct production and is filed as a follow-up rather than attempted here (issue #60).",
-  "rte_slope_mid": 0.5516874857563216,
-  "rte_slope_pre": 0.5915840130388954,
-  "rte_slope_used": 0.5716357493976085,
-  "soil_slope_mid": 0.056544182522909936,
-  "soil_slope_pre": 0.056847848776146126,
-  "soil_slope_used": 0.05669601564952803,
+  "rte_slope_mid": 0.5525170732494493,
+  "rte_slope_pre": 0.5924853723365193,
+  "rte_slope_used": 0.5725012227929843,
+  "soil_slope_mid": 0.05605402062021063,
+  "soil_slope_pre": 0.05634980307893865,
+  "soil_slope_used": 0.05620191184957464,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
-   "0.85": 2174.405034283588,
-   "0.9": 2239.1572936167263,
-   "0.95": 2297.9365400364222
+   "0.85": 2174.048805092456,
+   "0.9": 2238.892300422283,
+   "0.95": 2297.7514272074604
   },
   "rte_calibration_points_pre": {
-   "0.85": 2255.936117901963,
-   "0.9": 2327.7702617870095,
-   "0.95": 2393.6432851920194
+   "0.85": 2255.4836060167145,
+   "0.9": 2327.418408081455,
+   "0.95": 2393.3797422262155
   },
   "soil_calibration_points_mid": {
-   "0.0": 2239.1572936167263,
-   "0.05279410891383099": 2245.841625366308
+   "0.0": 2238.892300422283,
+   "0.05279410891383099": 2245.5179038185624
   },
   "soil_calibration_points_pre": {
-   "0.0": 2327.7702617870095,
-   "0.05279410891383099": 2334.756439267549
+   "0.0": 2327.418408081455,
+   "0.05279410891383099": 2334.342332710065
   },
   "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes"
  },
@@ -124,30 +124,30 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7477,
-     "p10": 2975,
-     "p90": 12830
+     "median": 7474,
+     "p10": 2972,
+     "p90": 12827
     },
     "15yr": {
-     "median": 18880,
-     "p10": 9691,
-     "p90": 32200
+     "median": 18875,
+     "p10": 9688,
+     "p90": 32195
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4320,
-     "p10": 488,
-     "p90": 8762
+     "median": 4318,
+     "p10": 486,
+     "p90": 8759
     },
     "15yr": {
-     "median": 12219,
-     "p10": 5247,
-     "p90": 22005
+     "median": 12215,
+     "p10": 5244,
+     "p90": 22001
     }
    }
   },
-  "save1_median": 2270,
+  "save1_median": 2269,
   "save1_p10": 2212,
   "save1_p90": 2327
  },

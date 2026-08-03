@@ -25,7 +25,7 @@
  "current_figures_usd": {
   "baseline_bill": 4904.13,
   "behavior_save": 1220.85,
-  "battery_marginal_save": 2239.16
+  "battery_marginal_save": 2238.89
  },
  "scenarios": {
   "onpeak_widened": {
@@ -56,11 +56,11 @@
    },
    "baseline_bill_usd": 4403.65,
    "behavior_save_usd": 1242.69,
-   "battery_marginal_save_usd": 2232.19,
+   "battery_marginal_save_usd": 2231.82,
    "baseline_delta_usd": -500.48,
    "behavior_save_delta_usd": 21.84,
-   "battery_marginal_delta_usd": -6.96,
-   "total_package_impact_usd": -515.35
+   "battery_marginal_delta_usd": -7.07,
+   "total_package_impact_usd": -515.25
   },
   "onpeak_shifted_later": {
    "label": "On-peak shifted later (16-21 -> 17-22)",
@@ -90,7 +90,7 @@
    },
    "baseline_bill_usd": 5112.68,
    "behavior_save_usd": 1213.88,
-   "battery_marginal_save_usd": 2321.87,
+   "battery_marginal_save_usd": 2321.61,
    "baseline_delta_usd": 208.55,
    "behavior_save_delta_usd": -6.97,
    "battery_marginal_delta_usd": 82.71,
@@ -123,8 +123,8 @@
    "battery_marginal_save_usd": 2053.89,
    "baseline_delta_usd": -1603.23,
    "behavior_save_delta_usd": 19.15,
-   "battery_marginal_delta_usd": -185.27,
-   "total_package_impact_usd": -1437.11
+   "battery_marginal_delta_usd": -185.01,
+   "total_package_impact_usd": -1437.37
   },
   "summer_extended": {
    "label": "Summer season extended one month (Jun-Oct -> Jun-Nov)",
@@ -155,7 +155,7 @@
    },
    "baseline_bill_usd": 4980.11,
    "behavior_save_usd": 1237.34,
-   "battery_marginal_save_usd": 2299.7,
+   "battery_marginal_save_usd": 2299.43,
    "baseline_delta_usd": 75.99,
    "behavior_save_delta_usd": 16.49,
    "battery_marginal_delta_usd": 60.54,

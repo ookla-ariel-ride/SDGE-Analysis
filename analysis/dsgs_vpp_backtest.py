@@ -285,7 +285,8 @@ CALENDAR_CSV = DATA / "dsgs_event_calendar_2025.csv"    # committed, PUBLIC (CEC
 RESULTS_JSON = DATA / "dsgs_vpp_backtest.json"          # committed results artifact
 
 CAP = 13.5                 # Powerwall 3 usable kWh -- battery_dispatch_policies.py's constant
-BATT_KW = 11.5             # nameplate discharge power (same source)
+BATT_KW = 11.5             # nameplate DISCHARGE power (same source)
+CHARGE_KW = bp.CHARGE_KW   # nameplate CHARGE power (5 kW, issue #40) -- imported, not re-declared
 ETA = bp.ETA               # sqrt(0.90), one-way efficiency -- imported, not re-declared
 PWRQ = bp.PWRQ             # 11.5/4 kWh per 15-min interval -- imported, not re-declared
 
@@ -544,7 +545,8 @@ def build_per_aggregation_calendars(xlsx_path=RAW_XLSX):
     return calendars
 
 
-def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESERVE_FRAC):
+def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESERVE_FRAC,
+                                charge_kw=None):
     """Defect-#2 fix: run the SAME backtest() pipeline independently against each
     individual aggregation's OWN calendar (build_per_aggregation_calendars()), and
     summarize the resulting spread of outcomes across the aggregations a real
@@ -560,7 +562,7 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     calendars = build_per_aggregation_calendars(xlsx_path)
     per_agg = {}
     for agg_id, cal in calendars.items():
-        r = backtest(d, cal, reserve_frac=reserve_frac)
+        r = backtest(d, cal, reserve_frac=reserve_frac, charge_kw=charge_kw)
         rev = r["revenue"]["reserve_20pct"]
         miss = r["miss_rate"]["reserve_20pct"]
         per_agg[agg_id] = {
@@ -602,7 +604,7 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
 
 
 # --------------------------------------------------------------------------- dispatch
-def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac):
+def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
     """A close variant of battery_dispatch_policies.run_batt's "greedy" policy.
 
     For any interval NOT in event_set, the control flow is IDENTICAL to run_batt's
@@ -651,6 +653,12 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac):
                              beyond what the ordinary greedy step already did
       bau_discharge_kwh  -- the ordinary greedy discharge each interval (the `dd` run_batt
                              would have produced with no VPP participation at all)
+
+    charge_kw (issue #40) is the CHARGE-direction power cap (both the solar-
+    surplus and grid-top-up branches below use it), separate from PWRQ's
+    discharge-direction cap; defaults to None, which reuses PWRQ for both
+    directions -- byte-for-byte the prior symmetric behavior, preserving the
+    empty-event_set byte-identity guarantee to run_batt.
     """
     imp = imp0.copy(); exp = gen0.copy()
     soc = cap / 2.0
@@ -661,6 +669,7 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac):
     is_event = np.fromiter(
         ((dates[i], int(floor_h[i])) in event_set for i in range(n)), dtype=bool, count=n)
     reserve_kwh = reserve_frac * cap
+    pwrq_chg = PWRQ if charge_kw is None else charge_kw / 4
     soc_start = np.empty(n)
     event_discharge = np.zeros(n)
     bau_discharge = np.zeros(n)
@@ -675,11 +684,11 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac):
         # hour (is_event[i] is False) this clause is a no-op, preserving the
         # empty-event_set byte-identity guarantee to run_batt.
         if exp[i] > 0 and not (disch_win and imp[i] > 0) and not is_event[i]:
-            c = min(exp[i], (cap - soc) / ETA, PWRQ)
+            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
             if c > 0:
                 soc += c * ETA; exp[i] -= c
         elif p[i] == "sop":
-            take = min(max((cap - soc) / ETA, 0), PWRQ)
+            take = min(max((cap - soc) / ETA, 0), pwrq_chg)
             if take > 0:
                 soc += take * ETA; imp[i] += take
         elif disch_win:
@@ -722,8 +731,12 @@ def _event_set_and_hours(cal, window_start, window_end):
     return event_set, inwin.reset_index(drop=True), outwin.reset_index(drop=True)
 
 
-def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
-    """The full computation: returns a dict with every figure the artifact needs."""
+def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
+    """The full computation: returns a dict with every figure the artifact needs.
+
+    charge_kw (issue #40) is threaded through to every run_batt/run_batt_vpp
+    call below (BAU, both reserve levels, both priced/unpriced variants);
+    default None preserves the prior symmetric-power behavior exactly."""
     window_start = d.dt.min().date()
     window_end = d.dt.max().date()
     event_set, inwin, outwin = _event_set_and_hours(cal, window_start, window_end)
@@ -748,7 +761,8 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
 
     # BAU (no VPP participation) -- must match battery_dispatch_policies.py's own
     # "greedy" pw3 figures exactly (cross-checked in the test suite).
-    imp_bau, exp_bau, _served_bau, _thru_bau = bp.run_batt(d, imp0, gen0, CAP, "greedy")
+    imp_bau, exp_bau, _served_bau, _thru_bau = bp.run_batt(
+        d, imp0, gen0, CAP, "greedy", charge_kw=charge_kw)
     bill_bau = bp.billed(d, imp_bau, exp_bau)
 
     # With VPP event dispatch -- the FULL in-window event set, including partial months.
@@ -756,14 +770,14 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
     # partial months' hours still appear in hour_detail/miss_rate below (that simulation
     # is valid regardless of whether the month can be priced).
     imp_vpp, exp_vpp, soc_start, event_kwh, bau_kwh = run_batt_vpp(
-        d, imp0, gen0, CAP, event_set, reserve_frac)
+        d, imp0, gen0, CAP, event_set, reserve_frac, charge_kw=charge_kw)
 
     # A SEPARATE dispatch run, event-forcing ONLY the priced months, used exclusively for
     # the opportunity-cost feeding into net_revenue -- so a partial month's bill impact
     # (from event-forcing hours whose revenue was zeroed out) never gets netted against
     # revenue from a different set of months.
     imp_vpp_priced, exp_vpp_priced, _, _, _ = run_batt_vpp(
-        d, imp0, gen0, CAP, event_set_priced, reserve_frac)
+        d, imp0, gen0, CAP, event_set_priced, reserve_frac, charge_kw=charge_kw)
     bill_vpp_priced = bp.billed(d, imp_vpp_priced, exp_vpp_priced)
     opportunity_cost = round(bill_vpp_priced - bill_bau, 2)
 
@@ -823,12 +837,12 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC):
 
     # ---- sensitivity: 0% reserve (no reserve held) ----
     imp_vpp0, exp_vpp0, soc_start0, event_kwh0, bau_kwh0 = run_batt_vpp(
-        d, imp0, gen0, CAP, event_set, 0.0)
+        d, imp0, gen0, CAP, event_set, 0.0, charge_kw=charge_kw)
     # Same priced-months-only split as the 20%-reserve case above, for the same reason:
     # the opportunity cost feeding net_revenue0 must not include a partial month's bill
     # effect when that month's gross revenue is zeroed out.
     imp_vpp0_priced, exp_vpp0_priced, _, _, _ = run_batt_vpp(
-        d, imp0, gen0, CAP, event_set_priced, 0.0)
+        d, imp0, gen0, CAP, event_set_priced, 0.0, charge_kw=charge_kw)
     bill_vpp0_priced = bp.billed(d, imp_vpp0_priced, exp_vpp0_priced)
     opp_cost0 = round(bill_vpp0_priced - bill_bau, 2)
     monthly_gross0 = {}
@@ -1098,7 +1112,7 @@ def per_aggregation_sensitivity_or_preserved(d):
     committed yet (e.g. a from-scratch bootstrap with no archive ever available,
     which should not happen in practice but must not crash)."""
     if RAW_XLSX.exists():
-        return per_aggregation_sensitivity(d)
+        return per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
     if RESULTS_JSON.exists():
         existing = json.loads(RESULTS_JSON.read_text())
         return existing.get(
@@ -1119,7 +1133,7 @@ def per_aggregation_sensitivity_or_preserved(d):
 def main():
     cal = load_calendar()
     d = br.load()
-    result = backtest(d, cal)
+    result = backtest(d, cal, charge_kw=CHARGE_KW)
     result["per_aggregation_sensitivity"] = per_aggregation_sensitivity_or_preserved(d)
 
     DATA.mkdir(parents=True, exist_ok=True)

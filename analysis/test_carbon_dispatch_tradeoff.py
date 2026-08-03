@@ -490,6 +490,41 @@ def case_reports_the_tradeoff_numbers():
         f"Run C meaningfully differs: {result['run_c_analysis']['meaningfully_differs_from_a_and_b']}")
 
 
+# ---------------------------------------------------------------------------
+# issue #40 -- charge and discharge power are now DISTINCT, optional
+# parameters on run_batt_carbon/run_batt_union, not one shared PWRQ serving
+# both directions.
+# ---------------------------------------------------------------------------
+@case
+def case_run_batt_carbon_and_union_thread_a_distinct_charge_kw():
+    """AC5: charge_kw must be a SEPARATE parameter from the module's
+    discharge-direction PWRQ, actually wired to the charging branches (not
+    silently dropped), on both run_batt_carbon and run_batt_union. A single
+    interval with a large solar surplus and an empty battery isolates the
+    charging RATE (see test_battery_sizing_curve.py's identical technique
+    and its docstring for why a multi-interval fixture would mask this)."""
+    import inspect
+    assert "charge_kw" in inspect.signature(CDT.run_batt_carbon).parameters
+    assert "charge_kw" in inspect.signature(CDT.run_batt_union).parameters
+
+    d = pd.DataFrame({"p": ["off"], "hour": [12.0]})
+    imp0 = np.array([0.0])
+    gen0 = np.array([5.0])
+    inten = np.array([50.0])
+    threshold = 100.0  # this hour reads as chargeable (clean) for both functions
+    cap = 13.5
+
+    for fn, name in [(CDT.run_batt_carbon, "run_batt_carbon"),
+                     (CDT.run_batt_union, "run_batt_union")]:
+        _, _, _, thru_sym = fn(d, imp0, gen0, cap, inten, threshold)
+        _, _, _, thru_asym = fn(d, imp0, gen0, cap, inten, threshold, charge_kw=5.0)
+        assert thru_asym < thru_sym - EPS, (
+            f"{name}: a tighter charge_kw=5.0 must reduce charging throughput "
+            f"below the symmetric default ({thru_asym} vs {thru_sym})")
+    assert CDT.PWRQ * 4 != 5.0, "the module's discharge PWRQ and this test's charge_kw must differ"
+    return "run_batt_carbon and run_batt_union thread a distinct, independently-effective charge_kw"
+
+
 def main():
     listed = [c.__name__ for c in CASES]
     assert len(listed) == len(set(listed)), \

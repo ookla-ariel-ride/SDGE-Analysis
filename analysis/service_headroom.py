@@ -299,13 +299,13 @@ restatement of something measured. The three-valued ones:
     true sum of overcurrent devices, so a sum already over the busbar rating
     fails and a sum under it is `not_determined`.
 
-The battery's demand-side figure is the one assumption left standing, and it is
-labelled rather than hidden: research/battery-research-notes.md records a single
-11.5 kW continuous power rating for the Powerwall 3 with no split between charge
-and discharge, so applying it to grid charging is a conservative stand-in for a
-charge-input specification this project does not have. A unit whose AC charge
-input is below its discharge output would draw less. What would settle it is the
-selected unit's own nameplate; no figure is invented here in either direction.
+The battery's demand-side figure was the one assumption left standing until
+issue #40: research/battery-research-notes.md now records Tesla's own datasheet
+split between the Powerwall 3's charge and discharge continuous power (5 kW
+charge vs. 11.5 kW discharge, single unit, no expansions -- the modeled
+configuration), so the demand-side grid-charging load is computed from the
+CHARGE figure rather than borrowing the discharge rating. See
+BATTERY_CHARGING_BASIS for the cited arithmetic.
 
 Run from anywhere in the checkout:  ./.venv/bin/python analysis/service_headroom.py
 Writes data/service_headroom.json atomically.
@@ -504,17 +504,31 @@ CONTINUOUS_DERATE = 0.80
 WALL_CONNECTOR_OUTPUTS_A = (12.0, 16.0, 20.0, 24.0, 32.0, 40.0, 48.0)
 EXISTING_EVSE_OUTPUT_A = 48.0
 
-# The repo's canonical battery is the Tesla Powerwall 3 at 11.5 kW -- the same
-# unit battery_dispatch_policies.py and battery_plan_matrix.py model. Kept here
-# as one number so the hardware cannot fork between scripts.
+# The repo's canonical battery is the Tesla Powerwall 3 -- the same unit
+# battery_dispatch_policies.py and battery_plan_matrix.py model. Kept here as
+# two numbers, one per direction, so the hardware cannot fork between scripts.
 #
-# research/battery-research-notes.md is the only place in this project that
-# records a power rating for the unit, and it records ONE: 11.5 kW of
-# "continuous power", with no split between what the unit can deliver and what
-# it draws while charging. Everything below that uses 11.5 kW as a CHARGING draw
-# is therefore applying that single figure to the demand side as an assumption,
-# and says so where it is published. See BATTERY_CHARGING_BASIS.
-BATTERY_INVERTER_KW = 11.5
+# Tesla's own official 2025 Powerwall 3 Datasheet gives DIFFERENT continuous
+# power ratings for discharge and for charge (single unit, no expansions -- the
+# configuration research/battery-research-notes.md recommends and this project
+# models). Canonical URL:
+# https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf
+# (Tesla's own domain blocks automated fetches; retrieved 2026-08-03 via an
+# identical third-party-hosted mirror at longhornsolar.com -- see
+# research/battery-research-notes.md for the full citation.) The two figures:
+#   - Maximum Continuous Discharge Power (Nominal Output Power AC), on-grid,
+#     top of 4 configurable levels: 11.5 kW, 48 A max continuous current.
+#   - Maximum Continuous Charge Power, Powerwall 3 only (one unit, no
+#     expansions): 5 kW AC, 20.8 A.
+# These are genuinely different (~2.3x) and are used below on the sides they
+# actually apply to: discharge for the backfeed breaker and busbar source
+# current, charge for the grid-charging demand-side load. See
+# BATTERY_CHARGING_BASIS for the demand-side arithmetic.
+BATTERY_DISCHARGE_KW = 11.5
+
+# Maximum Continuous Charge Power, Powerwall 3 only (single unit, no
+# expansions) -- see the citation above BATTERY_DISCHARGE_KW.
+BATTERY_CHARGE_KW = 5.0
 
 # The hours a residential condenser works hardest, used only to READ the annual
 # maximum -- whether it looks cooling-shaped or not. Nothing computed anywhere
@@ -1719,20 +1733,24 @@ def amps(kw):
 
 
 # The demand-side figure for a battery is what it DRAWS while charging from the
-# grid, and this project records one power rating for the unit rather than two.
-# Applying it to charging is an assumption; it is stated as one, and it is the
-# conservative direction for a capacity answer.
+# grid. Tesla's own official 2025 Powerwall 3 Datasheet gives that figure
+# directly for a single unit with no expansions (this household's modeled
+# configuration): Maximum Continuous Charge Power 5 kW AC, 20.8 A. See the
+# citation above BATTERY_DISCHARGE_KW / BATTERY_CHARGE_KW and
+# research/battery-research-notes.md for the full retrieval note.
 BATTERY_CHARGING_BASIS = (
-    f"{BATTERY_INVERTER_KW} kW is this project's canonical continuous power "
-    f"rating for the unit -- research/battery-research-notes.md records it as "
-    f"the Powerwall 3's continuous power and does not separate charging from "
-    f"discharging. Applying it to GRID CHARGING is an assumption, not a reading "
-    f"off a charging specification. It is the conservative direction: a unit "
-    f"whose AC charge input is lower than its discharge output would draw less "
-    f"than this, so the demand-side load counted here is if anything "
-    f"overstated. On that basis the code value is "
-    f"{amps(BATTERY_INVERTER_KW):.2f} A x 1.25 continuous = "
-    f"{amps(BATTERY_INVERTER_KW) * NEC_625_42_FACTOR:.2f} A.")
+    f"{BATTERY_CHARGE_KW} kW is the Powerwall 3's Maximum Continuous Charge "
+    f"Power for a single unit with no expansions (this household's modeled "
+    f"configuration), read off Tesla's own official 2025 Powerwall 3 Datasheet "
+    f"-- see research/battery-research-notes.md for the citation and retrieval "
+    f"date. This is DIFFERENT from the unit's {BATTERY_DISCHARGE_KW} kW "
+    f"continuous DISCHARGE rating (the figure this project already used "
+    f"correctly for the backfeed breaker and busbar source current): the "
+    f"datasheet gives the two directions separately, and the demand-side "
+    f"grid-charging load below is computed from the CHARGE figure, not "
+    f"borrowed from discharge. On that basis the code value is "
+    f"{amps(BATTERY_CHARGE_KW):.2f} A x 1.25 continuous = "
+    f"{amps(BATTERY_CHARGE_KW) * NEC_625_42_FACTOR:.2f} A.")
 
 # The EVSE load-sharing mitigation splits into a code claim and a hardware
 # claim, and only one of them is this project's to make.
@@ -1746,9 +1764,10 @@ BATTERY_CHARGING_BASIS = (
 # occupy ONE branch circuit, or whether each still needs its own circuit and
 # breaker, is a manufacturer installation fact. Nothing in this repo records
 # it -- not research/, not TECHNICAL.md, not the intake -- so it is not
-# asserted in either direction, the same treatment the battery's charge input
-# gets in BATTERY_CHARGING_NOT_DETERMINED. The physical-fit consequence is
-# given BOTH ways instead, so the reader can act on whichever the
+# asserted in either direction, the same not-determined treatment the
+# battery's charge input carried before issue #40 settled it with a cited
+# datasheet figure (see BATTERY_CHARGING_BASIS). The physical-fit consequence
+# is given BOTH ways instead, so the reader can act on whichever the
 # manufacturer's instructions turn out to say.
 EVSE_SHARING_AMPS_BASIS = (
     f"{nec('625.42')} permits an EVSE load-management system to be sized to the "
@@ -1768,13 +1787,6 @@ EVSE_SHARING_CIRCUIT_NOT_DETERMINED = (
     "acceptance of the wiring method, would settle it. The amps above do not "
     "depend on the answer; the panel-space consequence does, and is given for "
     "both answers.")
-
-BATTERY_CHARGING_NOT_DETERMINED = (
-    "NOT DETERMINED -- the selected unit's AC CHARGE INPUT. No figure for it "
-    "exists anywhere in this project and none is invented here. The maximum "
-    "continuous AC input on the selected unit's own nameplate or datasheet "
-    "would settle it, and could only lower the demand-side figure used above.")
-
 
 def nec_220_87_steps(max_demand_kw, service_rating_a, socket_rating_a, days,
                      socket_basis):
@@ -2887,13 +2899,19 @@ def build():
     # 0 A, it is a scenario that does not apply. Nothing downstream may quietly
     # add it to a case.
     evse2_a = evse_code_load_a(EXISTING_EVSE_OUTPUT_A) if has_ev else None
-    batt_a = amps(BATTERY_INVERTER_KW) * NEC_625_42_FACTOR
+    # Demand side: what the battery DRAWS while charging from the grid, so this
+    # uses the CHARGE rating, not the discharge rating (issue #40).
+    batt_a = amps(BATTERY_CHARGE_KW) * NEC_625_42_FACTOR
     # The position leg here is about the PROPOSED battery breaker, which has no
     # surveyed position. The existing PV breaker's end is a fact about the
     # device already on the bus and is reported separately -- inheriting it
     # would let the battery read as compliant because someone else's breaker
     # happens to sit opposite the main.
-    batt_breaker_a = standard_circuit_for(amps(BATTERY_INVERTER_KW))
+    #
+    # Breaker sizing for backfeed and busbar source current are both about
+    # power flowing FROM the battery INTO the panel, i.e. discharge, so these
+    # two correctly use the discharge rating.
+    batt_breaker_a = standard_circuit_for(amps(BATTERY_DISCHARGE_KW))
     # The rule counts 125% of each source's OUTPUT CIRCUIT CURRENT; this
     # arithmetic counts breaker ratings. Both figures go into the artifact so
     # the direction of the difference is visible -- see source_current_basis().
@@ -2906,9 +2924,9 @@ def build():
             f"solar.kw_ac, the array's inverter AC nameplate: {kw_ac:.2f} kW "
             f"at {SERVICE_VOLTAGE_V:.0f} V"))
     busbar_sources.append((
-        SOURCE_PROPOSED_BATTERY, batt_breaker_a, amps(BATTERY_INVERTER_KW),
-        f"the unit's continuous power rating, {BATTERY_INVERTER_KW} kW at "
-        f"{SERVICE_VOLTAGE_V:.0f} V"))
+        SOURCE_PROPOSED_BATTERY, batt_breaker_a, amps(BATTERY_DISCHARGE_KW),
+        f"the unit's continuous discharge power rating, {BATTERY_DISCHARGE_KW} "
+        f"kW at {SERVICE_VOLTAGE_V:.0f} V"))
     busbar = busbar_120_percent(panel["busbar_rating_a"],
                                 panel["service_rating_a"],
                                 existing_backfeed_a,
@@ -3267,8 +3285,9 @@ def build():
 
     battery = {
         "unit": "Tesla Powerwall 3",
-        "inverter_kw": BATTERY_INVERTER_KW,
-        "continuous_output_a": _r(amps(BATTERY_INVERTER_KW), 2),
+        "discharge_kw": BATTERY_DISCHARGE_KW,
+        "charge_kw": BATTERY_CHARGE_KW,
+        "continuous_output_a": _r(amps(BATTERY_DISCHARGE_KW), 2),
         "backfeed_breaker_a": _r(batt_breaker_a, 1),
         "busbar_120_percent": busbar,
         "ampacity_leg": amp_leg,
@@ -3533,7 +3552,6 @@ def build():
                 f"NOT APPLICABLE -- {NO_EV_REASON}"),
             "battery_charging_a": _r(batt_a, 2),
             "battery_charging_basis": BATTERY_CHARGING_BASIS,
-            "battery_charging_not_determined": BATTERY_CHARGING_NOT_DETERMINED,
             "heat_pump_a": None,
             "heat_pump_basis": (
                 f"NOT DETERMINED -- no unit has been selected anywhere in this "

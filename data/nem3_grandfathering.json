@@ -85,44 +85,44 @@
  },
  "mechanism_of_change_from_old_bracket": "The old bracket applied ONE flat export credit (3c/5c/8c, an assumed sensitivity range) to every export kWh all year. The real SDG&E-published hourly schedule varies far more (see export_credit_shape) and is lowest exactly when this household's solar produces (midday) and highest when it does not (evening peak) -- so pricing the REAL export shape against the REAL hourly schedule yields a single computed figure, traceable to a committed public rate table, rather than an assumed range.",
  "battery_marginal_reconciliation_vs_nbt_2039": {
-  "method": "Same battery physical dispatch as nbt_2039 (bp.run_batt(d, imp0, gen0, 13.5, 'greedy')); both the no-battery and with-battery series billed through this script's own bill_nbt() (real hourly NBT export schedule, tariff year 2026 only -- a snapshot, not a projection to 2039 or any other future year) per vintage, marginal = no-battery bill - with-battery bill.",
+  "method": "Same battery physical dispatch as nbt_2039 (bp.run_batt(d, imp0, gen0, 13.5, 'greedy', charge_kw=bp.CHARGE_KW) -- 5 kW charge / 11.5 kW discharge, Tesla's own datasheet, issue #40); both the no-battery and with-battery series billed through this script's own bill_nbt() (real hourly NBT export schedule, tariff year 2026 only -- a snapshot, not a projection to 2039 or any other future year) per vintage, marginal = no-battery bill - with-battery bill.",
   "served_kwh_yr": 4719.8,
   "throughput_kwh_yr": 4968.4,
   "battery_marginal_real_hourly_usd_yr": {
    "NBT00": {
     "annual_bill_no_battery_usd": 7007.7,
-    "annual_bill_with_battery_usd": 4486.15,
-    "battery_marginal_usd_yr": 2521.55
+    "annual_bill_with_battery_usd": 4485.09,
+    "battery_marginal_usd_yr": 2522.61
    },
    "NBT26": {
     "annual_bill_no_battery_usd": 7007.7,
-    "annual_bill_with_battery_usd": 4486.15,
-    "battery_marginal_usd_yr": 2521.55
+    "annual_bill_with_battery_usd": 4485.09,
+    "battery_marginal_usd_yr": 2522.61
    }
   },
   "reference_nbt_2039": {
-   "battery_marginal_under_nem2_usd_yr": 2329,
+   "battery_marginal_under_nem2_usd_yr": 2328,
    "battery_marginal_under_flat_nbt_usd_yr": {
-    "3c": 2540,
-    "5c": 2527,
-    "8c": 2506
+    "3c": 2542,
+    "5c": 2528,
+    "8c": 2507
    },
    "source": "data/extended_results.json -> nbt_2039 (extended_findings.py; read-only, not recomputed here)"
   },
   "disagreement_vs_reference": {
    "NBT00": {
-    "vs_nem2_usd": 192.55,
-    "vs_flat_3c_usd": -18.45,
-    "vs_flat_5c_usd": -5.45,
-    "vs_flat_8c_usd": 15.55,
+    "vs_nem2_usd": 194.61,
+    "vs_flat_3c_usd": -19.39,
+    "vs_flat_5c_usd": -5.39,
+    "vs_flat_8c_usd": 15.61,
     "real_within_flat_3c_8c_bracket": true,
     "gap_from_flat_bracket_usd": 0.0
    },
    "NBT26": {
-    "vs_nem2_usd": 192.55,
-    "vs_flat_3c_usd": -18.45,
-    "vs_flat_5c_usd": -5.45,
-    "vs_flat_8c_usd": 15.55,
+    "vs_nem2_usd": 194.61,
+    "vs_flat_3c_usd": -19.39,
+    "vs_flat_5c_usd": -5.39,
+    "vs_flat_8c_usd": 15.61,
     "real_within_flat_3c_8c_bracket": true,
     "gap_from_flat_bracket_usd": 0.0
    }
