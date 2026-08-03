@@ -1829,6 +1829,13 @@ ALLOWED_BOOLEANS = {
         "there is no established circuit to reuse -- the case then carries "
         "none of the ampacity or spaces claims a guess would need, rather "
         "than a three-valued verdict with nothing behind it",
+    "capped_by_existing_branch_circuit":
+        "heat_pump_replaces_ac only (issue #45 review): restates binding > "
+        "existing_ac_ocpd_a before the cap was applied, both of which are "
+        "printed beside it (the pre-cap panel-level figure is recoverable "
+        "from vs_service_rating/vs_meter_socket, and existing_ac_ocpd_a "
+        "sits at the case's own top level) -- true means the published "
+        "binding is the breaker rating, not the panel's own headroom",
 }
 
 
@@ -2042,7 +2049,7 @@ def case_every_optional_intake_read_distinguishes_absent_from_null():
     # the three that DO distinguish are the three with three published states
     # (issue #45 added the condenser nameplate to the other two)
     assert presence == {"panel.pv_backfeed_a", "panel.meter_socket_continuous_a",
-                        "panel.existing_ac_nameplate_mca_a"}, presence
+                        "panel.existing_ac_nameplate_rla_a"}, presence
     return f"all {len(optional)} optional intake reads handle absent vs null explicitly"
 
 
@@ -3166,10 +3173,10 @@ def case_heat_pump_replacement_case_shows_the_full_220_60_arithmetic():
 
     assert c["case"] == "heat_pump_replaces_ac" and c["scored"] is True, c
     assert c["rule"] == S.nec_rule("220.60"), c
-    assert "125 percent of either the motor load" in c["rule"], c
-    assert "whichever is larger" in c["rule"], c
+    assert "125 percent of the motor load" in c["rule"], c
+    assert "if it is the largest motor" in c["rule"], c
     assert _close(c["existing_ac_ocpd_a"], 40.0), c
-    assert _close(c["existing_ac_nameplate_mca_a"], 8.0), c
+    assert _close(c["existing_ac_nameplate_rla_a"], 8.0), c
     assert c["existing_ac_nameplate_basis"] == S.AC_NAMEPLATE_READ, c
     # 125% of the nameplate, the same 220.87(2) factor, not the breaker rating
     assert _close(c["noncoincident_credit_bounds_a"]["low"], 0.0), c
@@ -3218,11 +3225,13 @@ def case_heat_pump_replacement_case_verdict_spans_the_credit_and_envelope_axes()
     assert absent["remaining_headroom_a"]["assuming_full_credit"][
         "measured_basis"] is None, absent
 
-    # A generous nameplate still cannot manufacture a pass on its own: the
-    # worst case is always assessed at ZERO credit, so a conservative reading
-    # that is already negative stays undetermined-or-worse regardless of MCA.
+    # A generous nameplate (the largest plausible RLA -- equal to the 40 A
+    # breaker's own rating) still cannot manufacture a pass on its own: the
+    # worst case is always assessed at ZERO credit, so a conservative
+    # reading that is already negative stays undetermined-or-worse
+    # regardless of RLA.
     generous = S.heat_pump_replacement_case(
-        ac, 500.0, S.AC_NAMEPLATE_READ, avail, avail_upper,
+        ac, 40.0, S.AC_NAMEPLATE_READ, avail, avail_upper,
         S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
     assert generous["ampacity_verdict"] != "pass", generous
     return ("the verdict spans the credit and envelope axes together, and a "
@@ -3248,8 +3257,32 @@ def case_heat_pump_replacement_case_pass_does_not_need_the_nameplate():
     return "a zero-credit pass needs no nameplate reading to stand"
 
 
+def case_a_recorded_nameplate_never_changes_a_zero_credit_pass():
+    """Review finding #7: the headline fail-closed property -- a nameplate
+    reading, once the zero-credit conservative basis already passes, can
+    only ever confirm the SAME verdict, never move it -- is the one this
+    case's whole design rests on (a real credit can only raise headroom) but
+    it was never asserted directly. Same panel figures through the case
+    twice, with and without the reading, at several plausible RLA values."""
+    ac = S.existing_ac_ocpd(AC_SCHEDULE)          # 40 A breaker
+    occ = _replacement_occ(spaces_free=1)
+    avail, avail_upper = {"service": 40.0}, {"service": 5.0}
+    without = S.heat_pump_replacement_case(
+        ac, None, S.AC_NAMEPLATE_NOT_RECORDED, avail, avail_upper,
+        S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+    assert without["ampacity_verdict"] == "pass", without
+    for rla in (0.1, 1.0, 8.0, 20.0, 40.0):
+        with_reading = S.heat_pump_replacement_case(
+            ac, rla, S.AC_NAMEPLATE_READ, avail, avail_upper,
+            S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+        assert with_reading["ampacity_verdict"] == "pass", (rla, with_reading)
+        assert with_reading["what_would_settle_it"] is None, (rla, with_reading)
+    return ("a recorded nameplate never flips a zero-credit pass, at any "
+            "plausible RLA")
+
+
 def case_heat_pump_replacement_case_distinguishes_null_from_absent():
-    """panel.existing_ac_nameplate_mca_a follows the same three-state contract
+    """panel.existing_ac_nameplate_rla_a follows the same three-state contract
     as pv_backfeed_a and meter_socket_continuous_a: a surveyed null (the plate
     was read and carries no legible figure) is a different sentence from an
     absent key (nobody has looked), even though neither yields a number."""
@@ -3297,12 +3330,23 @@ def case_heat_pump_replacement_case_is_unscored_without_an_identified_circuit():
     """AC1/AC6: neither leg can be answered without knowing which schedule
     entry is the A/C's -- no space claim (there is no established circuit to
     reuse) and no demand claim (nothing to credit). The case says so rather
-    than guessing, and carries none of the scored shape."""
+    than guessing, and carries none of the scored shape.
+
+    Includes the pole-count gate (review finding #3): a label match alone
+    does not prove a 240 V circuit. {"poles": 1, "amps": 20, "label": "A/C
+    attic fan"} matches an air-conditioning token on a 120 V, 1-pole branch,
+    and without the gate existing_ac_ocpd() would have read it as AC_READ,
+    letting the case claim `physical_fit: pass` and "reuses the existing
+    2-pole circuit" for a circuit that is not 2-pole at all -- a heat pump
+    there needs an actual new 2-pole breaker and a net +1 space, not zero.
+    """
     occ = _replacement_occ(spaces_free=1)
     for schedule, expect_basis in (
         ([{"poles": 1, "amps": 15, "label": "Garage"}], S.AC_NO_MATCH),
         ([{"poles": 2, "amps": 40, "label": "Condenser"},
           {"poles": 2, "amps": 30, "label": "Condenser B"}], S.AC_AMBIGUOUS),
+        ([{"poles": 1, "amps": 20, "label": "A/C attic fan"}],
+         S.AC_NOT_TWO_POLE),
     ):
         ac = S.existing_ac_ocpd(schedule)
         assert ac["basis"] == expect_basis, ac
@@ -3314,7 +3358,167 @@ def case_heat_pump_replacement_case_is_unscored_without_an_identified_circuit():
         assert "spaces" not in c and "ampacity_verdict" not in c, c
         assert expect_basis in c["reason"], c
         assert c["what_would_settle_it"] == ac["what_would_settle_it"], c
-    return "the case reports itself unscored without an identified A/C circuit"
+    return ("the case reports itself unscored without an identified, "
+            "2-pole A/C circuit")
+
+
+def case_existing_ac_ocpd_rejects_a_non_two_pole_match():
+    """The pole-count gate in isolation (review finding #3), including the
+    positive case: a genuine 2-pole match still reads normally."""
+    one_pole = S.existing_ac_ocpd(
+        [{"poles": 1, "amps": 20, "label": "A/C attic fan"}])
+    assert one_pole["ocpd_a"] is None, one_pole
+    assert one_pole["basis"] == S.AC_NOT_TWO_POLE, one_pole
+    assert one_pole["matches"] == 1, one_pole
+    assert "1-pole" in one_pole["reading"], one_pole
+    assert "240 V" in one_pole["reading"] or "120 V" in one_pole["reading"], \
+        one_pole
+    assert one_pole["what_would_settle_it"], one_pole
+    # a quad (4-pole) with a matching label is caught the same way
+    four_pole = S.existing_ac_ocpd(
+        [{"poles": 4, "amps": [15, 20, 20, 15], "label": "Condenser panel"}])
+    # twin-density (amps is a list) is checked first and wins the label --
+    # both are legitimate reasons this entry cannot be read as one 2-pole
+    # circuit, and the twin-density check catches it before the pole count
+    # does
+    assert four_pole["basis"] == S.AC_NOT_ONE_DEVICE, four_pole
+    # the real household's own entry is 2-pole and still reads normally
+    two_pole = S.existing_ac_ocpd(AC_SCHEDULE)
+    assert two_pole["basis"] == S.AC_READ, two_pole
+    return "a label match on a non-2-pole entry is not read as the A/C's circuit"
+
+
+def case_heat_pump_replacement_case_caps_the_solved_mca_at_the_existing_breaker():
+    """Review finding #4: physical_fit() only ever checked SPACE, and a
+    solved-for heat pump MCA past the existing breaker's own rating is not
+    really "reusing the circuit" -- larger conductors would be needed too.
+    The case caps every headroom figure it publishes at existing_ac_ocpd_a
+    and says so, rather than publishing an unqualified pass built on an
+    unverified assumption about the branch conductors."""
+    ac = S.existing_ac_ocpd(AC_SCHEDULE)          # 40 A breaker
+    occ = _replacement_occ(spaces_free=1)
+    # Deliberately large panel-level headroom -- 100 A -- so the raw,
+    # uncapped answer would be far past what a 40 A breaker's own circuit
+    # could be said to support without new conductors.
+    avail, avail_upper = {"service": 100.0}, {"service": 60.0}
+    c = S.heat_pump_replacement_case(
+        ac, None, S.AC_NAMEPLATE_NOT_RECORDED, avail, avail_upper,
+        S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+    rem = c["remaining_headroom_a"]
+    assert _close(rem["measured_basis"]["binding"], 40.0), rem
+    assert rem["measured_basis"]["capped_by_existing_branch_circuit"] is True, rem
+    # the conservative basis (60 A raw) is ALSO past the 40 A cap here
+    assert _close(rem["conservative_basis"]["binding"], 40.0), rem
+    assert rem["conservative_basis"]["capped_by_existing_branch_circuit"] is True, rem
+    assert c["conductor_ampacity_caveat"] == S.CONDUCTOR_CAP_BASIS, c
+    assert c["conductor_ampacity_what_would_settle_it"] == \
+        S.CONDUCTOR_CAP_SETTLE, c
+    assert "Capped at the existing branch circuit" in c["remaining_is"], c
+    # still passes -- the cap narrows the CLAIM, not the verdict, when the
+    # capped figure is itself still positive
+    assert c["ampacity_verdict"] == "pass", c
+
+    # and where the raw panel-level headroom sits BELOW the breaker rating,
+    # the cap changes nothing and is not claimed to have applied
+    small_avail, small_avail_upper = {"service": 10.0}, {"service": 5.0}
+    uncapped = S.heat_pump_replacement_case(
+        ac, None, S.AC_NAMEPLATE_NOT_RECORDED, small_avail, small_avail_upper,
+        S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+    urem = uncapped["remaining_headroom_a"]
+    assert urem["measured_basis"]["capped_by_existing_branch_circuit"] is False, urem
+    assert uncapped["conductor_ampacity_caveat"] is None, uncapped
+    return ("the solved-for MCA is capped at the existing branch breaker's "
+            "rating, and the cap names itself only when it actually binds")
+
+
+def case_heat_pump_replacement_case_conductor_cap_covers_the_credit_scenarios_too():
+    """The same cap applies to the full-credit figures, not only the
+    zero-credit ones -- a nameplate reading does not exempt the branch
+    conductors from the same physical limit."""
+    ac = S.existing_ac_ocpd(AC_SCHEDULE)          # 40 A breaker
+    occ = _replacement_occ(spaces_free=1)
+    avail, avail_upper = {"service": 100.0}, {"service": 100.0}
+    c = S.heat_pump_replacement_case(
+        ac, 8.0, S.AC_NAMEPLATE_READ, avail, avail_upper,
+        S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+    fc = c["remaining_headroom_a"]["assuming_full_credit"]
+    assert _close(fc["measured_basis"]["binding"], 40.0), fc
+    assert fc["measured_basis"]["capped_by_existing_branch_circuit"] is True, fc
+    assert _close(fc["conservative_basis"]["binding"], 40.0), fc
+    assert fc["conservative_basis"]["capped_by_existing_branch_circuit"] is True, fc
+    return "the conductor cap applies to the full-credit reading as well as zero-credit"
+
+
+def case_an_implausible_nameplate_reading_fails_closed():
+    """Review nitpick #10: an RLA reading above the ampere rating of the very
+    breaker protecting that circuit cannot be a NEC-compliant installation
+    (440.22(A) only ever sizes the breaker AT OR ABOVE the equipment's own
+    RLA). A number that large is a data error -- wrong units, a transposed
+    digit, or MCA recorded where RLA was asked for -- not a real fact to
+    build a credit on, and the run stops naming both figures rather than
+    publishing an implausible credit."""
+    ac = S.existing_ac_ocpd(AC_SCHEDULE)          # 40 A breaker
+    occ = _replacement_occ(spaces_free=1)
+    try:
+        S.heat_pump_replacement_case(
+            ac, 200.0, S.AC_NAMEPLATE_READ, {"service": 50.0},
+            {"service": 50.0}, S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+        raise AssertionError("a 200 A RLA on a 40 A breaker was accepted")
+    except SystemExit as e:
+        assert "200" in str(e) and "40" in str(e), e
+        assert "existing_ac_nameplate_rla_a" in str(e), e
+        assert "440.22(A)" in str(e), e
+    # exactly at the breaker's own rating is plausible and runs
+    at_the_limit = S.heat_pump_replacement_case(
+        ac, 40.0, S.AC_NAMEPLATE_READ, {"service": 50.0}, {"service": 50.0},
+        S.SOCKET_SURVEYED_NONE, occ, None, "m", "c", "v")
+    assert at_the_limit["scored"] is True, at_the_limit
+    return "an RLA reading above its own protecting breaker's rating fails closed"
+
+
+def case_a_replacement_notes_do_not_overclaim_when_unscored():
+    """Review nitpick #12: the shared ADD-case spaces.note and
+    noncoincident_loads.why_it_matters used to say unconditionally that the
+    replacement is "scored separately as heat_pump_replaces_ac" -- true only
+    when the A/C circuit is actually identified. On a panel with no matching
+    schedule entry, both must say the fifth case is UNSCORED, not silently
+    claim a credit or a space answer that case never produces."""
+    d0, d1 = dt.date(2025, 5, 31), dt.date(2025, 6, 1)
+    rows = ([(d0, hf, 1.0, 0.0) for hf in R.expected_day_hours(d0)]
+            + [(d1, hf, 1.0, 0.0) for hf in R.expected_day_hours(d1)])
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n"
+        "  schedule:\n"
+        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        d = S.build_no_solar()
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+
+    hpr = next(c for c in d["cases"] if c["case"] == "heat_pump_replaces_ac")
+    assert hpr["scored"] is False, hpr
+    nc = d["noncoincident_loads"]
+    assert nc["existing_ac_ocpd_basis"] == S.AC_NO_MATCH, nc
+    assert "reports itself unscored" in nc["why_it_matters"], nc
+    assert "applies this credit" not in nc["why_it_matters"], nc
+    for c in d["cases"]:
+        if c["case"] == "heat_pump_replaces_ac":
+            continue
+        note = c["spaces"]["note"]
+        assert "not scored for this household" in note, note
+        assert "is scored separately as heat_pump_replaces_ac, which is " \
+            "not blocked" not in note, note
+    return "the shared notes report the fifth case unscored rather than overclaiming"
 
 
 def case_the_other_four_cases_are_unaffected_by_the_fifth():
@@ -3343,18 +3547,34 @@ def case_the_other_four_cases_are_unaffected_by_the_fifth():
 
 
 def case_the_noncoincident_rule_is_stated_whole():
-    """220.60's second sentence is the one that bears on this case -- a motor or
-    A/C load that is NOT the largest noncoincident load still carries 125%. The
-    artifact stated the first sentence only."""
+    """220.60's second sentence is real 2020-NEC text, verified against Mike
+    Holt's Code Forum and EC&M's code-basics coverage of the 2020 revision,
+    independent of up.codes' own AI-generated (and disclaimed) summary of the
+    section, which is what the previous string here actually was -- it
+    widened the subject from 'a motor' to 'a motor or air-conditioning load'
+    and replaced 'if it is the largest motor' with a max-of-two selection,
+    neither of which is in the real code. The artifact's own rule string
+    must be the corrected text, not the AI summary."""
     d = json.loads(S.OUT.read_text())
     nc = d["noncoincident_loads"]
     rule = nc["rule"]
     assert "largest load(s) that will be used at one time" in rule, rule
-    assert "125 percent of either the motor load or the air-conditioning load" \
-        in rule, rule
-    assert "whichever is larger" in rule, rule
+    assert "Where a motor is part of the noncoincident load" in rule, rule
+    assert "125 percent of the motor load shall be used" in rule, rule
+    assert "if it is the largest motor" in rule, rule
+    # the wrong, AI-summary-derived wording must not survive anywhere
+    assert "air-conditioning load, whichever is larger" not in rule, rule
+    assert "125 percent of either the motor load" not in rule, rule
     assert rule == S.nec_rule("220.60"), rule
-    assert "second sentence" in nc["the_second_sentence_matters_here"], nc
+    # the anchor explaining which sentence actually applies is renamed and
+    # reworked (issue #45 review): the second sentence sets a floor under a
+    # RETAINED noncoincident load and authorizes nothing for one being
+    # removed, which is what a replacement case actually does
+    which = nc["which_sentence_of_220_60_applies"]
+    assert "the_second_sentence_matters_here" not in nc, nc
+    assert "FIRST sentence" in which and "SECOND sentence" in which, which
+    assert "retain" in which.lower(), which
+    assert "remov" in which.lower(), which
     # and the space note no longer asserts a universal the artifact contradicts
     # (issue #45: it stopped being true once heat_pump_replaces_ac needs none)
     for c in d["cases"]:
@@ -3367,6 +3587,10 @@ def case_the_noncoincident_rule_is_stated_whole():
         else:
             assert "ADDS equipment" in note, note
             assert "REPLACES the existing A/C" in note, note
+            # this household's A/C circuit IS identified, so the ADD cases'
+            # note correctly claims the fifth case is scored, not just
+            # attempted -- see case_a_replacement_notes_do_not_overclaim_
+            # when_unscored for the other branch
             assert "heat_pump_replaces_ac" in note, note
     # the replacement scenario noncoincident_loads names is scored now, not
     # merely flagged -- the artifact says so instead of still saying "not
@@ -4294,12 +4518,18 @@ CASES = [
     case_the_artifact_flags_an_unmeasured_binding_hour,
     case_mitigations_carry_both_bases_and_a_verdict,
     case_the_existing_ac_ocpd_is_three_valued,
+    case_existing_ac_ocpd_rejects_a_non_two_pole_match,
     case_heat_pump_replacement_case_shows_the_full_220_60_arithmetic,
     case_heat_pump_replacement_case_verdict_spans_the_credit_and_envelope_axes,
     case_heat_pump_replacement_case_pass_does_not_need_the_nameplate,
+    case_a_recorded_nameplate_never_changes_a_zero_credit_pass,
     case_heat_pump_replacement_case_distinguishes_null_from_absent,
     case_heat_pump_replacement_case_is_never_space_blocked,
     case_heat_pump_replacement_case_is_unscored_without_an_identified_circuit,
+    case_heat_pump_replacement_case_caps_the_solved_mca_at_the_existing_breaker,
+    case_heat_pump_replacement_case_conductor_cap_covers_the_credit_scenarios_too,
+    case_an_implausible_nameplate_reading_fails_closed,
+    case_a_replacement_notes_do_not_overclaim_when_unscored,
     case_the_other_four_cases_are_unaffected_by_the_fifth,
     case_the_noncoincident_rule_is_stated_whole,
     case_the_artifact_says_what_it_cannot_say_about_the_peak,

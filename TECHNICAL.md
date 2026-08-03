@@ -4141,19 +4141,29 @@ publicly from `appliance_fuels`, which is where an artifact takes it from.
 
 ### 11.3a The condenser nameplate field (issue #45)
 
-`panel.existing_ac_nameplate_mca_a` — the existing air conditioner's or heat pump condenser's
-own nameplate rated-load amps (RLA) or minimum circuit ampacity (MCA), added for the fifth
+`panel.existing_ac_nameplate_rla_a` — the existing air conditioner's or heat pump condenser's
+own nameplate RATED-LOAD AMPS (RLA) specifically, not MCA, added for the fifth
 `heat_pump_replaces_ac` case (a heat pump REPLACING the existing A/C on its own circuit, rather
-than every other case's ADD). It is `public-ok`, on the same principle 11.3 states rather than
-as an exception to it: it is a bare equipment rating (the same class of fact as `solar.kw_ac`
-and `charger.kw`, both already `public-ok`), it is load-bearing (the case's own NEC 220.60
-noncoincident-credit arithmetic is 125% of it, and AC1/AC2 of the issue require that arithmetic
-shown), and a `private-only` tier here would make the credit unpublishable — the case would
-have nothing to show. This is a DIFFERENT fact from `existing_ac_ocpd_a` (11.3's derived
-exception): that is the branch breaker's rating, read off the schedule; this is the equipment's
-own draw, and NEC 240.6(A) sizes a breaker up from it, so the two numbers routinely differ. The
-case fails closed without it — `not_determined` rather than an assumed credit — per CLAUDE.md
-§0; see `analysis/service_headroom.py`'s `heat_pump_replacement_case()`.
+than every other case's ADD). RLA rather than MCA because MCA (NEC 440.32/440.33) already
+carries a 125% margin on the largest motor, and the case applies its own, independently
+justified 125% (the NEC 220.87(2) factor) on top of whatever this field holds — recording MCA
+would compound two different margins and overstate the credit. It is `public-ok`, on the same
+principle 11.3 states rather than as an exception to it: it is a bare equipment rating (the same
+class of fact as `solar.kw_ac` and `charger.kw`, both already `public-ok`), it is load-bearing
+(the case's own noncoincident-credit arithmetic is 125% of it, and AC1/AC2 of the issue require
+that arithmetic shown), and a `private-only` tier here would make the credit unpublishable — the
+case would have nothing to show. This is a DIFFERENT fact from `existing_ac_ocpd_a` (11.3's
+derived exception): that is the branch breaker's rating, read off the schedule; this is the
+equipment's own draw, and NEC 440.22(A) — not 240.6(A), which is only the standard-ampere-rating
+list — permits a breaker to be sized up to 175-225% of the equipment's RLA, so the two numbers
+routinely differ. The case also caps the heat pump MCA it solves for at `existing_ac_ocpd_a`
+(the existing breaker's own rating): a solved MCA above it would need larger branch conductors
+too, which is no longer "reusing the circuit" for free, and the cap itself is only an upper
+bound on the true conductor ampacity, never a measurement of it (`conductor_ampacity_caveat`
+names this when it binds). The case fails closed without the RLA reading — `not_determined`
+rather than an assumed credit, and never a guessed `fail` either, since an unbounded real
+credit could still rescue a case that fails only at zero credit — per CLAUDE.md §0; see
+`analysis/service_headroom.py`'s `heat_pump_replacement_case()`.
 
 ### 11.4 The monitoring feeds (issue #38)
 
