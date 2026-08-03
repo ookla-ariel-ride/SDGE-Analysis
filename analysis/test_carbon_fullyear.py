@@ -28,6 +28,13 @@ import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+
+class SkipCase(Exception):
+    """Typed skip signal (matching test_parse_bills.py's convention, issue #44
+    AC4) -- a case raises this instead of returning a "SKIP ..."-prefixed
+    string, so a case that legitimately returns a message starting with those
+    five letters can never be silently miscounted as skipped."""
+
 # carbon_fullyear imports behavior_rebuild, whose module level reads the intake
 # file and fails closed without it -- correct behavior, tested in
 # test_household.py, but it would block THIS suite in a clean checkout (CI).
@@ -177,8 +184,8 @@ def case_partial_raw_cache_merges_with_a_valid_committed_csv():
         usage_files = sorted(glob.glob(
             str(C.ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")))
         if not usage_files:
-            return ("SKIP the merge-vs-shadow check needs the real Green Button "
-                     "archive, which this checkout does not have")
+            raise SkipCase("the merge-vs-shadow check needs the real Green Button "
+                           "archive, which this checkout does not have")
         old_dir, old_csv, old_results, old_br_csv = (
             C.CAISO_DIR, C.HOURLY_CSV, C.RESULTS_JSON, br.CSV)
         C.CAISO_DIR = cdir
@@ -312,8 +319,8 @@ def case_ac3_28day_reproduction_within_2pct():
     just assert a boolean pass.
     """
     if not C.CAISO_DIR.is_dir() or not list(C.CAISO_DIR.glob("caiso_co2_*.csv")):
-        return ("SKIP the AC3 reproduction check needs the real raw CAISO cache "
-                f"({C.CAISO_DIR}), which this checkout does not have")
+        raise SkipCase("the AC3 reproduction check needs the real raw CAISO cache "
+                       f"({C.CAISO_DIR}), which this checkout does not have")
     per_date = []
     worst = None
     for day, old_vals in sorted(_OLD_28DAY_INTENSITY.items()):
@@ -372,12 +379,11 @@ def main():
     for case in CASES:
         try:
             msg = case()
-            if msg.startswith("SKIP"):
-                print(f"SKIP  {msg[5:]}")
-                skipped += 1
-            else:
-                print(f"PASS  {msg}")
-                ran += 1
+            print(f"PASS  {msg}")
+            ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1

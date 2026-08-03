@@ -95,3 +95,40 @@ jobs:
       # The real-value scan runs in the local pre-commit hook (CLAUDE.md §4).
       - name: intake privacy tiers — contract and synthetic controls (real-value scan SKIPS, no private data on a runner)
         run: python analysis/test_privacy_tiers.py
+
+  archive-only-generators:
+    # issue #44: these generators used to sit in test_scripts_runnable.py's
+    # NEEDS_PRIVATE_ARCHIVE with no CI exercise of their own -- a defect in
+    # their main path (not just their leaf functions) could reach main with
+    # every check reporting green. Each file below builds its own small,
+    # mostly hand-computable synthetic fixture (a flat SAM-8760 pair, a
+    # promoted dispatch artifact, a production record shaped from the
+    # module's own public rain calendar, ...) and runs the REAL generator
+    # end to end against it, so an injected arithmetic defect fails HERE.
+    # See test_scripts_runnable.py's VERIFIED_ELSEWHERE_IN_CI for the mapping
+    # from NEEDS_PRIVATE_ARCHIVE generator to the CI job that verifies it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: battery backup/arbitrage simulation guard tests
+        run: python analysis/test_battery_backup_sims.py
+      - name: deep-dive analyses guard tests
+        run: python analysis/test_deep_analyses.py
+      - name: lifetime solar payback guard tests
+        run: python analysis/test_lifetime_payback.py
+      - name: panel soiling regression guard tests
+        run: python analysis/test_soiling_analysis.py
+      - name: extended findings guard tests
+        run: python analysis/test_extended_findings.py
+      - name: battery x plan matrix guard tests
+        run: python analysis/test_battery_plan_matrix.py
+      - name: 7-input Monte Carlo uncertainty propagation guard tests
+        run: python analysis/test_uncertainty_propagation.py
+      - name: gross-import decomposition guard tests
+        run: python analysis/test_gross_import_decomposition.py
+      - name: reprice-by-vintage guard tests
+        run: python analysis/test_reprice_by_vintage.py

@@ -128,6 +128,14 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bill_decomposition as B
 
+
+class SkipCase(Exception):
+    """Typed skip signal (matching test_parse_bills.py's convention, issue #44
+    AC4) -- a case raises this instead of returning a "SKIP ..."-prefixed
+    string, so a case that legitimately returns a message starting with those
+    five letters can never be silently miscounted as skipped."""
+
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ARTIFACT = ROOT / "data" / "bill_decomposition.json"
 CENT = 0.005
@@ -544,8 +552,8 @@ def case_a_statement_missing_from_the_corpus_fails_closed():
                 _raises(B.statement_dates, "do not match", want[-1])
             finally:
                 B.ELEC_DIR = saved
-        return ("SKIP the real-corpus half needs the private archive; the withheld-"
-                "statement refusal was still exercised synthetically")
+        raise SkipCase("the real-corpus half needs the private archive; the withheld-"
+                       "statement refusal was still exercised synthetically")
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         for stmt in want[:-1]:                       # one statement withheld
@@ -1353,8 +1361,8 @@ def case_the_artifact_labels_its_confidence_and_its_limits():
 
 def case_the_generator_reproduces_the_committed_artifact():
     if not B.ELEC_DIR.exists() or not B.HISTORY_CSV.exists():
-        return ("SKIP regeneration needs the private archive (the bill PDF corpus and "
-                "the billing-history export)")
+        raise SkipCase("regeneration needs the private archive (the bill PDF corpus and "
+                       "the billing-history export)")
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         B.write(tmp)
@@ -1411,12 +1419,11 @@ def main():
     for case in CASES:
         try:
             msg = case()
-            if msg.startswith("SKIP"):
-                print(f"SKIP  {msg[5:]}")
-                skipped += 1
-            else:
-                print(f"PASS  {msg}")
-                ran += 1
+            print(f"PASS  {msg}")
+            ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1

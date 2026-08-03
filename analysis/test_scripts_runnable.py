@@ -159,6 +159,15 @@ TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py",
 
 ABS_PATH = re.compile(r"""["'](/[A-Za-z0-9_.\-]+/[^"']*)["']""")
 
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
+
+
+class SkipCase(Exception):
+    """Typed skip signal (matching test_parse_bills.py's convention, issue #44
+    AC4) -- a case raises this instead of returning a "SKIP ..."-prefixed
+    string, so a case that legitimately returns a message starting with those
+    five letters can never be silently miscounted as skipped."""
+
 
 def _scripts():
     return sorted(f for f in ANALYSIS.glob("*.py") if not f.name.startswith("test_"))
@@ -381,6 +390,55 @@ NEEDS_PRIVATE_ARCHIVE = {
     "reprice_by_vintage.py": ("the raw Green Button export (usage.csv, via "
                               "billing_model_nem.load()) for the interval data it reconciles "
                               "against the 13-period bill corpus"),
+}
+
+# Generators listed above that nonetheless run END TO END IN CI -- just not
+# through the shared Green-Button-only synthetic fixture below, which is not
+# shaped for what they specifically need (a SAM-8760 pair, a promoted dispatch
+# artifact, a monitoring production history, ...). Each maps to its own
+# dedicated test_<name>.py AND the exact case name(s) inside it that must
+# genuinely PASS (never skip) with no private archive present -- not just "a
+# file exists with this name somewhere in tests.yml". That distinction is not
+# decorative: an earlier version of this dict listed 15 entries by file name
+# alone, and a clean-room review (git-archive checkout, no private/) found 9
+# of them false -- every case in those files that actually invokes the real
+# generator (subprocess.run, B.write(tmp), CX.write(...), ...) SKIPS without
+# the archive; only leaf/unit checks on synthetic text passed. The self-check
+# below (case_verified_elsewhere_mapping_is_real_and_wired_into_ci) now
+# EXECUTES every entry's named case(s) in a freshly-built archive-free root
+# and fails if any of them skips, specifically so this dict cannot silently
+# regress to asserting something false again.
+#
+# Only 7 of the 16 NEEDS_PRIVATE_ARCHIVE generators are covered this way today
+# (battery_plan_matrix.py added after its "genuinely cannot" claim was
+# disproved by a working demonstration -- an independently computed
+# reference, not the generator's own committed real-year artifact, can
+# satisfy its fail-closed tie-outs for real). The other 9 (parse_bills.py,
+# bill_decomposition.py, irreducible_bill.py, carbon_dispatch_tradeoff.py,
+# cca_rate_extraction.py, cca_bundled_counterfactual.py,
+# uncertainty_propagation.py, gross_import_decomposition.py,
+# reprice_by_vintage.py) are NOT verified end to end anywhere in CI as of this
+# commit -- see TECHNICAL.md 6.7 for the honest per-generator accounting of
+# why each one is or is not yet covered, and which are believed tractable vs.
+# disproportionate.
+VERIFIED_ELSEWHERE_IN_CI = {
+    "service_headroom.py": ("test_service_headroom.py",
+                            ["case_build_runs_end_to_end_on_a_synthetic_house"]),
+    "battery_backup_sims.py": ("test_battery_backup_sims.py",
+                               ["case_arbitrage_sim_matches_hand_computation",
+                                "case_backup_endurance_matches_hand_computation"]),
+    "deep_analyses.py": ("test_deep_analyses.py",
+                         ["case_deep_analyses_end_to_end_matches_hand_and_oracle_computations"]),
+    "lifetime_payback.py": ("test_lifetime_payback.py",
+                            ["case_derive_blended_matches_hand_computation"]),
+    "soiling_analysis.py": ("test_soiling_analysis.py",
+                            ["case_soiling_regression_recovers_the_injected_rate"]),
+    "extended_findings.py": ("test_extended_findings.py",
+                             ["case_extended_findings_end_to_end_on_a_synthetic_house"]),
+    "battery_plan_matrix.py": ("test_battery_plan_matrix.py",
+                               ["case_battery_plan_matrix_end_to_end_on_a_synthetic_house"]),
+    "carbon_dispatch_tradeoff.py": ("test_carbon_dispatch_tradeoff.py",
+                                    ["case_compute_runs_end_to_end_on_a_synthetic_house"]),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
@@ -649,11 +707,27 @@ def case_generators_run_on_the_real_archive():
     usage = SANDBOX / "usage.csv"
     if not usage.exists():
         # Skipping here is legitimate: these generators need raw private inputs
-        # that have no synthetic stand-in. The CI guarantee does not rest on this
-        # case -- case_generators_run_on_synthetic_inputs has no skip path at all,
-        # so something always executes wherever this suite runs.
-        return ("SKIP generators needing the private archive (" +
-                ", ".join(sorted(NEEDS_PRIVATE_ARCHIVE)) + ")")
+        # that have no synthetic stand-in FOR THIS SUITE'S shared fixture. The CI
+        # guarantee does not rest on this one case -- case_generators_run_on_
+        # synthetic_inputs has no skip path at all, so something always executes
+        # wherever this suite runs -- but issue #44 AC1 asks for more than that:
+        # every one of these generators must be named as either verified by a
+        # DIFFERENT CI job (VERIFIED_ELSEWHERE_IN_CI), or genuinely unverified
+        # anywhere in CI, with why, stated per generator rather than lumped into
+        # one bare name list.
+        lines = []
+        for name in sorted(NEEDS_PRIVATE_ARCHIVE):
+            reason = NEEDS_PRIVATE_ARCHIVE[name]
+            elsewhere = VERIFIED_ELSEWHERE_IN_CI.get(name)
+            if elsewhere:
+                test_file, _cases = elsewhere
+                lines.append(f"  {name}: verified end to end in CI by {test_file} "
+                            f"instead (this case's own real-archive run needs {reason})")
+            else:
+                lines.append(f"  {name}: NOT verified end to end anywhere in CI "
+                            f"-- needs {reason}")
+        raise SkipCase("generators needing the private archive, and why "
+                       "(none of these run in THIS case in CI):\n" + "\n".join(lines))
     def inspect(tmp):
         """The section 9 gate, folded in: on the real inputs every owned artifact
         must reproduce the committed copy byte-for-byte."""
@@ -675,6 +749,136 @@ def case_generators_run_on_the_real_archive():
     n = len(NEEDS_PRIVATE_ARCHIVE) + len(CI_RUNNABLE)
     return (f"all {n} generators execute against the real inputs and every owned "
             "artifact reproduces the committed copy byte-for-byte")
+
+
+def _ci_wired_test_files(workflow_src):
+    """Test files with a REAL, enabled `run: python analysis/X.py` step
+    somewhere in jobs.*.steps -- parsed as actual YAML structure, not a bare
+    substring or a line-shaped regex, so a commented-out line, an unrelated
+    mention of the filename in prose, or a step disabled with `if: false`
+    cannot satisfy this. (A bare-substring predecessor of this function is
+    what let VERIFIED_ELSEWHERE_IN_CI assert 15 covered generators when only
+    6 actually were -- the file existed and had SOME line mentioning it, but
+    that is not the same claim as "a job actually runs it".)"""
+    import yaml
+    doc = yaml.safe_load(workflow_src) or {}
+    found = set()
+    for job in (doc.get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            cond = step.get("if")
+            if cond is False or (isinstance(cond, str) and cond.strip().lower() == "false"):
+                continue
+            run = step.get("run")
+            if not isinstance(run, str):
+                continue
+            m = re.search(r"^\s*python analysis/(\S+)\s*$", run, re.M)
+            if m:
+                found.add(m.group(1))
+    return found
+
+
+def _archive_free_root(tmp):
+    """A repo-shaped root with the analysis/ package and the real, COMMITTED
+    data/ tree, but NO private/ anywhere -- exactly what a CI runner checks
+    out (private/ is gitignored and never pushed). Deliberately NOT built by
+    copying test_scripts_runnable.py's own _build_throwaway_root, which
+    always writes a private/household.yaml (synthetic or real): the whole
+    point here is to prove a claimed case survives with private/ ABSENT."""
+    shutil.copytree(ANALYSIS, tmp / "analysis")
+    shutil.copytree(ROOT / "data", tmp / "data")
+    return tmp
+
+
+def case_verified_elsewhere_mapping_is_real_and_wired_into_ci():
+    """VERIFIED_ELSEWHERE_IN_CI is a claim about what actually runs in CI --
+    check it by actually running it, not by trusting the dict.
+
+    Issue #44 follow-up review: a prior version of this case only checked that
+    each named test file existed and appeared somewhere in tests.yml, which
+    passed even though 9 of 15 claimed entries were false -- the file existed
+    and had a CI step, but the specific case that invokes the real generator
+    SKIPS without the private archive, and only leaf/unit checks passed. That
+    is precisely "a guard that reports success without checking anything",
+    reproduced inside the fix for it. This version builds a fresh
+    archive-free root (analysis/ + the real committed data/, no private/ at
+    all) and RUNS every named test file there, then fails unless every
+    case named in VERIFIED_ELSEWHERE_IN_CI actually reports PASS -- not SKIP,
+    not silently absent from the output -- in that run.
+    """
+    unknown = set(VERIFIED_ELSEWHERE_IN_CI) - set(NEEDS_PRIVATE_ARCHIVE)
+    assert not unknown, f"VERIFIED_ELSEWHERE_IN_CI names non-archive generators: {unknown}"
+    assert CI_WORKFLOW.is_file(), f"{CI_WORKFLOW} not found"
+    wired = _ci_wired_test_files(CI_WORKFLOW.read_text())
+    missing_file, missing_step = [], []
+    for name, (test_file, cases) in VERIFIED_ELSEWHERE_IN_CI.items():
+        assert cases, f"{name}: VERIFIED_ELSEWHERE_IN_CI lists no required-pass case"
+        if not (ANALYSIS / test_file).is_file():
+            missing_file.append(test_file)
+        if test_file not in wired:
+            missing_step.append(test_file)
+    assert not missing_file, f"VERIFIED_ELSEWHERE_IN_CI names test files that don't exist: {missing_file}"
+    assert not missing_step, (
+        f"VERIFIED_ELSEWHERE_IN_CI names test files with no `run: python "
+        f"analysis/X.py` step in {CI_WORKFLOW.name}: {missing_step}")
+
+    wrong = []
+    with tempfile.TemporaryDirectory() as td:
+        free = _archive_free_root(pathlib.Path(td))
+        assert not (free / "private").exists(), "archive-free root must have no private/ at all"
+        for name, (test_file, cases) in sorted(VERIFIED_ELSEWHERE_IN_CI.items()):
+            src = (ANALYSIS / test_file).read_text()
+            for c in cases:
+                # static: the case must actually be a defined function referenced
+                # in this file's own CASES list -- catches a rename/removal that
+                # would otherwise leave the case silently absent from every run
+                # (neither PASS, SKIP nor FAIL: main()'s PASS branch never prints
+                # a case's __name__, only its returned message, so "present in
+                # this file at all" has to be checked statically, not by grepping
+                # subprocess output for a name that a passing case never prints).
+                assert f"def {c}(" in src, (
+                    f"{name}: {test_file} has no function named {c} -- "
+                    "VERIFIED_ELSEWHERE_IN_CI is stale")
+                # registered either via an explicit CASES = [...] list (name
+                # appears again outside its own def line) or the `@case`
+                # decorator convention (test_carbon_dispatch_tradeoff.py /
+                # test_uncertainty_propagation.py): the decorator line
+                # immediately precedes `def NAME(`, so the name need not repeat.
+                registered = src.count(c) >= 2 or f"@case\ndef {c}(" in src
+                assert registered, (
+                    f"{name}: {test_file}'s {c} is defined but not registered "
+                    "(not in CASES, and not @case-decorated) -- "
+                    "VERIFIED_ELSEWHERE_IN_CI is stale")
+            try:
+                r = subprocess.run([sys.executable, test_file], cwd=free / "analysis",
+                                   capture_output=True, text=True, timeout=900)
+            except subprocess.TimeoutExpired:
+                wrong.append(f"{name}: {test_file} timed out in the archive-free root")
+                continue
+            out = r.stdout + r.stderr
+            skipped = set(re.findall(r"SKIP\s+(case_\w+)", out))
+            failed = set(re.findall(r"FAIL\s+(case_\w+)", out))
+            for c in cases:
+                if c in skipped:
+                    wrong.append(f"{name}: {test_file}'s {c} SKIPPED in an "
+                                "archive-free root -- claimed coverage is false")
+                elif c in failed:
+                    wrong.append(f"{name}: {test_file}'s {c} FAILED in an "
+                                f"archive-free root: {out[-300:]}")
+            if r.returncode != 0 and not skipped and not failed:
+                wrong.append(f"{name}: {test_file} exited {r.returncode} in an "
+                            f"archive-free root for an unexplained reason: {out[-300:]}")
+    assert not wrong, ("VERIFIED_ELSEWHERE_IN_CI claims false coverage:\n  "
+                       + "\n  ".join(wrong))
+
+    undeclared = set(NEEDS_PRIVATE_ARCHIVE) - set(VERIFIED_ELSEWHERE_IN_CI)
+    return (f"{len(VERIFIED_ELSEWHERE_IN_CI)} of {len(NEEDS_PRIVATE_ARCHIVE)} "
+            "NEEDS_PRIVATE_ARCHIVE generators are verified end to end -- each "
+            "claimed case was actually RUN in a fresh archive-free root and "
+            f"confirmed to pass, not skip; {len(undeclared)} "
+            f"({', '.join(sorted(undeclared))}) are documented as not yet "
+            "covered in CI")
 
 
 def case_the_ci_tier_cannot_skip():
@@ -790,6 +994,7 @@ CASES = [
     case_missing_day_fails_the_chart_generator,
     case_small_charger_refuses_ev_discrimination,
     case_publication_failure_leaves_artifacts_untouched,
+    case_verified_elsewhere_mapping_is_real_and_wired_into_ci,
     case_generators_run_on_the_real_archive,
 ]
 
@@ -799,12 +1004,11 @@ def main():
     for case in CASES:
         try:
             msg = case()
-            if msg.startswith("SKIP"):
-                print(f"SKIP  {msg[5:]}")
-                skipped += 1
-            else:
-                print(f"PASS  {msg}")
-                ran += 1
+            print(f"PASS  {msg}")
+            ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1

@@ -3339,6 +3339,107 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` reads `base_save` from
 `battery_dispatch_policies.json` (`post_behavior.mid.battery_marginal`) — rerun order matters
 (§7): regenerate the dispatch artifact before the Monte Carlo.
 
+**6.7 What CI actually verifies, and what stays local-only (issue #44).** A green CI badge on
+a pull request is a claim about a specific, checkable set of properties — recorded here so the
+badge stops implying more coverage than it has. `analysis/test_scripts_runnable.py` classifies
+every generator into exactly one of three tiers, and the case-by-case tier assignment
+(`CI_RUNNABLE` / `NEEDS_PRIVATE_ARCHIVE`, plus `VERIFIED_ELSEWHERE_IN_CI` for the second tier)
+is itself guarded (`case_every_generator_is_covered_by_one_of_the_two_tiers`,
+`case_verified_elsewhere_mapping_is_real_and_wired_into_ci`), so this can't silently drift from
+the code:
+
+- **`CI_RUNNABLE` (15 generators)** — `behavior_rebuild.py`, `battery_dispatch_policies.py`,
+  `package_results.py`, `report_data.py`, `analyze.py`, `analyze_norelief.py`,
+  `carbon_fullyear.py`, `tou_audit.py`, `rates_history.py`, `tou_spread.py`,
+  `nem3_grandfathering.py`, `dsgs_vpp_backtest.py`, `battery_sizing_curve.py`,
+  `perfect_foresight_dispatch.py`, `tou_structure_stress.py` — run end to end in CI against a
+  synthetic Green Button export shaped by `test_scripts_runnable.py`'s own fixture (a real
+  household file only has to look like this, not be it: 96-slot/DST-adjusted days, an EV
+  session signature, a solar shape). **CI verifies their main computational path directly**,
+  with no skip path at all (`case_the_ci_tier_cannot_skip`).
+- **`NEEDS_PRIVATE_ARCHIVE` (16 generators)** need an input that shared fixture cannot supply
+  (a bill-PDF corpus, a SAM-8760 pair, a monitoring production history, or a fail-closed
+  tie-out against a real-year-derived committed artifact that a synthetic run must legitimately
+  fail). Before issue #44, CI's only exercise of these was `test_scripts_runnable.py`'s own
+  real-archive case, which skips entirely on a runner (no `private/`) — so a defect in, say,
+  `service_headroom.py`'s `build()` could pass every CI check (demonstrated: a 10% error
+  injected into `build()` on a fresh archive-less checkout still reported 78/81 passed, 3
+  skipped, exit 0). An earlier draft of this section claimed 15 of the 16 were covered this
+  way; a clean-room review (a `git archive` checkout with no `private/` at all) found 9 of
+  those 15 false — the named test file existed and had a CI step, but every case in it that
+  actually invokes the real generator SKIPS without the archive, and only leaf/unit checks on
+  synthetic text ran. That defect is now caught mechanically:
+  `case_verified_elsewhere_mapping_is_real_and_wired_into_ci` builds a fresh archive-free root
+  (the real `analysis/` + the real committed `data/`, no `private/` anywhere) and actually RUNS
+  every claimed case there, failing if any of them skips instead of trusting the dict. The
+  honest count as of this commit:
+  - **8 of 16 are verified end to end in CI**, each by its own dedicated test file whose
+    claimed case was confirmed, by that mechanical check, to pass (not skip) with no private
+    archive present:
+    - `service_headroom.py` (`test_service_headroom.py`, pre-existing).
+    - `battery_backup_sims.py`, `deep_analyses.py`, `lifetime_payback.py`, `soiling_analysis.py`,
+      `extended_findings.py` (added for issue #44's first pass). Each was validated by
+      deliberate fault injection — a small arithmetic defect planted in a scratch copy of the
+      generator's main path was confirmed to turn its test red, then reverted and confirmed
+      green again.
+    - `battery_plan_matrix.py` (added on review): its NEEDS_PRIVATE_ARCHIVE entry originally
+      claimed its fail-closed tie-out against `battery_dispatch_policies.json` "must diverge"
+      on synthetic inputs; that claim was **false** and was disproven with a working
+      demonstration (an independently-computed reference bill, transcribing the generator's own
+      published-rate-table formula, promoted into a throwaway `data/` as the tie-out target —
+      satisfied for real, not neutered). `test_battery_plan_matrix.py` formalizes this and was
+      fault-injection tested the same way as the first five.
+    - `carbon_dispatch_tradeoff.py` (added on review): `compute()` now runs end to end on the
+      synthetic Green Button fixture against the REAL, PUBLIC, committed
+      `data/caiso_hourly_intensity.csv` (aggregate CAISO grid data — not household-specific, so
+      no synthesis needed), with a promoted `battery_dispatch_policies.json` tie-out and an
+      independent hand-computed baseline-CO2 check. Fault-injection tested.
+  - **8 of 16 are NOT verified end to end anywhere in CI today.** Per generator, what was
+    actually checked (not guessed) before concluding this:
+    - `uncertainty_propagation.py` — **assessed, harder than it first looked.** Its own code
+      comments describe "the same tie-out shape as `battery_plan_matrix.py`", but `build()`
+      actually cross-checks FOUR committed artifacts at once —
+      `battery_dispatch_policies.json`, `tou_spread.json` (its `ESC_HI` must match
+      `tou_spread.json`'s own escalation-ladder ceiling exactly), `deep_results.json`
+      (reproduced to float-equality via a specific rounding chain through
+      `battery_dispatch_policies.json`'s `post_behavior.mid.battery_marginal`), and
+      `extended_results.json`'s `tornado_battery` block — all of which would need to derive
+      from the SAME synthetic fixture with sub-dollar tolerances between them. That is a
+      four-generator consistent-artifact chain, not a single promoted JSON; not attempted given
+      the effort already spent on this issue.
+    - `gross_import_decomposition.py` — **assessed, partially promising.** Its bill-ground-truth
+      read (`load_bill_periods()`) is against `data/bill_periods_electric.csv`, which is already
+      PUBLIC and committed (not private) — so no bill-PDF corpus is needed for that part. But it
+      requires that file to contain rows for two SPECIFIC hardcoded historical statement periods
+      (`PERIOD_2024`, `PERIOD_2026`) and reconciles a real two-calendar-year-apart pair of SAM
+      8760 exports against them; a synthetic fixture would need to land inside those exact real
+      date windows rather than inventing new ones. Plausibly tractable with more time; not
+      attempted.
+    - `reprice_by_vintage.py` — **not independently assessed in depth**; grouped with
+      `gross_import_decomposition.py` on the strength of its own NEEDS_PRIVATE_ARCHIVE entry
+      (reconciles interval data against the real 13-period bill corpus), not verified by reading
+      its source. Not attempted.
+    - `parse_bills.py`, `bill_decomposition.py`, `irreducible_bill.py`,
+      `cca_rate_extraction.py`, `cca_bundled_counterfactual.py` — need a genuine bill-PDF-shaped
+      text corpus (these parse PDF statement text directly, not derived CSVs), which is a
+      larger, qualitatively different fixture-building effort than a synthetic Green Button
+      export or a promoted JSON artifact. **Believed disproportionate effort relative to this
+      issue's scope, not attempted.**
+- **The real-archive byte-tie-out itself** (`case_generators_run_on_the_real_archive`: every
+  `NEEDS_PRIVATE_ARCHIVE` and `CI_RUNNABLE` generator reproduces its committed artifact
+  byte-for-byte against the actual private data) is **local-only** — CI runners never have
+  `private/`, so this case always skips there. It is the strongest single check in the suite
+  (it is literally the CLAUDE.md §9 regeneration gate folded in) and must be run manually
+  (`./.venv/bin/python analysis/test_scripts_runnable.py` from the `private/verify` sandbox,
+  or from a checkout with `private/` staged) before trusting a change to any generator.
+
+In short: CI now either runs a generator's real logic against real or fixture-shaped data, or
+says explicitly which generator it didn't and why — never a guard that reports success without
+checking anything, and never a passing summary that silently skips its strongest case. The
+"which generators are covered" claim is itself mechanically checked against a live run, not
+just against a name appearing in a dict, specifically because the previous version of this
+paragraph was wrong and nothing caught it before it shipped.
+
 ---
 
 ## 7. Reproduction checklist
