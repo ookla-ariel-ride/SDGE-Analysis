@@ -143,6 +143,42 @@ hard-coded four. A naive `groupby(date, hour).sum()` reports a phantom 21.4 kW
 on the fall-back Sunday, because that hour carries eight intervals covering two
 real hours.
 
+The no-solar path
+------------------
+Everything above exists to solve one problem: a net-recording revenue meter
+hides self-consumed production, so gross load has to be reconstructed from an
+independent instrument. A household with `has_new_load_interest: true` and no
+`solar:` block in its intake (has_solar is answered by the shape of the file,
+DATA-SOURCES-CHEATSHEET.md -- there is no `household.has_solar` boolean) does
+not have that problem: with nothing on the roof, gross load IS the metered
+import, exactly, at every interval. `solar_present()` checks for the block
+before any solar-specific input is opened, and `build_no_solar()` is a
+complete second implementation of the rest of this module for that case --
+not a conditional threaded through the first. It shares every panel/busbar/
+case primitive with the solar path (`load_panel()`, `nec_220_87_steps()`,
+`busbar_120_percent()`, `panel_occupancy()`, `existing_ac_ocpd()`,
+`sum_of_breakers_rule()`, `ampacity_verdict()`, `physical_fit()`) and reads
+neither the Enphase consumption-CT exports nor the PVOutput/threeway
+production references: there is nothing for either to corroborate. Every
+interval is point-determined, so every case verdict on this path is
+two-valued (pass/fail, never not_determined) and the PV ceiling, the daylight
+envelope and the production corroboration are omitted from the artifact
+rather than published as null or zero -- a computation that does not apply
+is not the same as one that ran and found nothing. The 120% busbar section
+still runs unchanged: with no array there is no existing-PV source to add to
+`busbar_sources`, so `panel.pv_backfeed_a` absent (or an explicit surveyed
+null) means no existing source and the whole 120% allowance is available to
+the proposed battery, exactly as the busbar arithmetic already expressed it
+for a panel with nothing backfeeding it.
+
+Two contradictions between this branch and the data stop the run rather
+than being netted through silently: a nonzero meter export (nothing should
+be backfeeding a service with no array), and an enphase_sam8760_*.csv file
+sitting in private/1-raw-data/ at all (a household rarely holds a genuine
+Enphase consumption-CT export without an array behind it). The second check
+lists filenames with glob() and opens none of them, so it costs this path
+nothing of the "reads no Enphase file" property it exists to protect.
+
 What is computed
 ----------------
   1. the 15-minute gross-load envelope and its energy-conservation residual
@@ -840,6 +876,67 @@ def not_applicable():
             "them on hand still gets this artifact instead of an error."),
         "flag_contract": NEW_LOAD_FLAG_CONTRACT,
     }
+
+
+# ---------------------------------------------------------------------------
+# Whether there is a PV array to reconstruct at all (issue #42).
+#
+# has_solar is documented (DATA-SOURCES-CHEATSHEET.md's applicability-flag
+# table) as an APPLICABILITY FLAG ANSWERED BY THE SHAPE OF THE FILE, unlike
+# has_ev and has_new_load_interest, which are literal booleans read through
+# _flag(). household.example.yaml says as much at the block's own opening
+# comment: "solar: # omit only if you have no solar (has_solar: false)".
+# There is no `household.has_solar` key to read; the fact is the presence of
+# the `solar:` block itself.
+#
+# Everything above this point in the module -- the measurement problem in the
+# module docstring, kw_ac, the Enphase/PVOutput reconstruction, the
+# conservation gates -- exists to solve one problem: a net-recording revenue
+# meter hides self-consumed production, so gross load has to be reconstructed
+# from an independent instrument. Remove the array and the problem is gone:
+# the meter's own import IS the gross load, exactly, at every interval. That
+# is a second, simpler path through the same NEC 220.87 calculation, not a
+# conditional bolted onto the first -- see build_no_solar().
+# ---------------------------------------------------------------------------
+
+NO_SOLAR_REASON = (
+    "private/household.yaml carries no solar: block (DATA-SOURCES-CHEATSHEET.md "
+    "-- has_solar is an applicability flag answered by the shape of the file, "
+    "not a boolean key under household:). This household records no on-site "
+    "generation, so there is nothing for the revenue meter's import to net "
+    "out: gross load IS the metered import, exactly, at every interval. The "
+    "reconstruction the solar path performs -- deriving PV from the Enphase "
+    "consumption CT, bounding daylight intervals against an inverter AC "
+    "nameplate, closing energy conservation against two independent "
+    "production references -- exists only to solve a measurement problem this "
+    "household does not have, so it does not run here.")
+
+
+def solar_present():
+    """Whether this household's intake carries a `solar:` block at all.
+
+    NOT `HH.get("solar", required=False) is not None`: reading the CONTAINER
+    hands over everything underneath it, including `solar.itc_claimed`, the
+    one private-only field the block carries (DATA-SOURCES-CHEATSHEET.md,
+    section E) -- privacy_tiers.py's own committed leak scan treats an
+    ancestor read exactly that way (see its read_paths()/scan_script_reads()
+    docstrings) and is right to. So this checks five PUBLIC-OK fields the
+    intake contract requires TOGETHER whenever solar exists at all --
+    solar.kw_ac (this module's own hard requirement the moment the solar path
+    runs), solar.kw_dc, solar.module_count, solar.inverter_model,
+    solar.inverter_count -- and reads none of them for their value, only
+    whether an answer was recorded. A solar block that supplies none of the
+    five is not a state a filled-in intake produces; the household template's
+    own comment ("omit only if you have no solar") documents the block as
+    filled in whole or not written at all, and this module's own hard
+    requirement on kw_ac before the solar path can do anything means a block
+    missing every one of the five could not have run the solar path either.
+    """
+    return (HH.get("solar.kw_ac", required=False) is not None
+            or HH.get("solar.kw_dc", required=False) is not None
+            or HH.get("solar.module_count", required=False) is not None
+            or HH.get("solar.inverter_model", required=False) is not None
+            or HH.get("solar.inverter_count", required=False) is not None)
 
 
 def _optional_number(key):
@@ -1909,7 +2006,108 @@ def nec_220_87_conditions(days, pv_kw_ac):
                 "The route that is closed is the WEAKER one. The household "
                 "qualifies under condition (1) itself, on a full year of "
                 "revenue-meter data, which is the evidence the Exception "
-                "exists to substitute for."),
+                "exists to substitute for."
+                if days >= NEC_220_87_CONDITION_1_DAYS else
+                f"Not a strengthening on this window: with {days} days "
+                f"against the {NEC_220_87_CONDITION_1_DAYS}-day requirement, "
+                f"condition (1) is not met either, and the Exception that "
+                f"would otherwise cover a shorter window is closed to this "
+                f"service because it has a renewable energy system. Neither "
+                f"route currently qualifies this household; more continuous "
+                f"data is what would."),
+        },
+        "condition_2": {
+            "rule": nec_rule("220.87(2)"),
+            "where_it_is_evaluated": (
+                "This is what the steps below and every case verdict compute: "
+                "the measured maximum demand at 125% plus the new load, "
+                "against the service rating and the meter socket's continuous "
+                "rating. It is a per-case question, so it is answered per case "
+                "rather than once."),
+        },
+        "condition_3": {
+            "rule": nec_rule("220.87(3)"),
+            "verdict": "not_determined",
+            "reading": (
+                "Neither the feeder's overcurrent protection nor the service's "
+                "overload protection was inspected. Nothing in this project "
+                "records them, and neither is inferable from interval data or "
+                "from a panel schedule, so this condition is UNVERIFIED here "
+                "rather than met. The artifact computes condition (2) and "
+                "reads condition (1) off the window; condition (3) is the one "
+                "it cannot answer."),
+            "what_would_settle_it": (
+                f"An on-site check by a licensed electrician: that the feeder "
+                f"is protected in accordance with {nec('240.4')} and the "
+                f"service has overload protection in accordance with "
+                f"{nec('230.90')}. Both are readings off the installed "
+                f"equipment, not calculations."),
+        },
+    }
+
+
+def nec_220_87_conditions_no_solar(days):
+    """The three conditions 220.87 sets, for a household with no solar: block.
+
+    Same shape as nec_220_87_conditions(), and conditions (2) and (3) are
+    identical prose -- neither one turns on whether the service has PV.
+    Condition (1)'s Exception is the one that differs, and it differs exactly
+    where the module docstring says it must: the Exception's own closing
+    sentence excludes "a feeder or service [that] has a renewable energy
+    system", and this household's intake has no solar: block, so nothing
+    excludes it here. The 30-day recording route was genuinely OPEN to this
+    service -- unlike the solar path's household, which qualifies under
+    condition (1) despite the Exception being closed to it. Reporting the
+    Exception as available and then not resting on it is not a contradiction:
+    condition (1) itself is met outright, on a full year of data, which is
+    the stronger of the two routes regardless of which one a PV array would
+    have closed.
+    """
+    margin = days / float(NEC_220_87_CONDITION_1_DAYS)
+    return {
+        "rule": nec_rule("220.87"),
+        "edition": NEC_EDITION,
+        "condition_1": {
+            "rule": nec_rule("220.87(1)"),
+            "days_required": NEC_220_87_CONDITION_1_DAYS,
+            "days_available": days,
+            "margin_x": _r(margin, 2),
+            "verdict": "pass" if days >= NEC_220_87_CONDITION_1_DAYS else "fail",
+            "reading": (
+                f"{days} days of continuous 15-minute revenue-meter data "
+                f"covers the 1-year period condition (1) requires, with "
+                f"{_r(margin, 2)}x the required span."
+                if days >= NEC_220_87_CONDITION_1_DAYS else
+                f"{days} days is short of the 1-year period condition (1) "
+                f"requires; see condition_1_exception_30_day_recording, which "
+                f"is open to this service."),
+        },
+        "condition_1_exception_30_day_recording": {
+            "rule": nec_rule("220.87(1) Exception"),
+            "available_to_this_service": True,
+            "why": (
+                f"{NO_SOLAR_REASON} The Exception's own closing sentence "
+                f"excludes only a feeder or service with a renewable energy "
+                f"system or peak load shaving; neither applies here, so the "
+                f"30-day recording route was genuinely open to this service."),
+            "why_it_strengthens_rather_than_weakens": (
+                "Not applicable in the direction the solar path reports it: "
+                "there the Exception being CLOSED made qualifying under "
+                "condition (1) a strengthening. Here the Exception is open, "
+                "and condition (1) is met outright on a full year of data "
+                "regardless -- the stronger route was taken because it is "
+                "the one the data supports, not because the weaker one was "
+                "unavailable."
+                if days >= NEC_220_87_CONDITION_1_DAYS else
+                f"Not applicable in the direction the solar path reports it, "
+                f"and not yet a strengthening either way: with {days} days "
+                f"against the {NEC_220_87_CONDITION_1_DAYS}-day requirement, "
+                f"condition (1) is not met on this window. The Exception "
+                f"being open means the 30-day route may be what qualifies "
+                f"this service instead -- see "
+                f"condition_1_exception_30_day_recording.why for what it "
+                f"requires, none of which is verified from interval data "
+                f"alone."),
         },
         "condition_2": {
             "rule": nec_rule("220.87(2)"),
@@ -2730,6 +2928,822 @@ def enphase_peak_invariant(sam_max_kw, sam_max_at, peak_kw, envelope_max_kw):
     }
 
 
+NO_SOLAR_VERDICT_BASIS = (
+    "Two-valued, not three. The solar path's verdict is three-valued because "
+    "its gross-load reconstruction is a BOUND wherever an interval's hour is "
+    "not point-determined; here there is no PV to reconstruct, so every "
+    "interval's gross load is exactly the metered import and there is no "
+    "reconstruction width for an answer to hide inside. pass = the case fits "
+    "against the measured maximum; fail = it does not. not_determined never "
+    "applies on this path.")
+
+NO_SOLAR_HEADROOM_BASIS = (
+    "Single basis, not two. Without solar there is no PV self-consumption to "
+    "bound, so the measured and conservative figures the solar path computes "
+    "separately would be the identical number here -- the metered import at "
+    "every interval is already point-determined. Only one figure is "
+    "published rather than two copies of it.")
+
+
+def build_no_solar():
+    """The whole of service_headroom.py's analysis, on the no-solar path.
+
+    Issue #42: a household with has_new_load_interest: true and no solar
+    cannot be told this is a small conditional grafted onto build() -- it is
+    a second, simpler route through the same NEC 220.87 calculation, sharing
+    every panel/busbar/case primitive with the solar path (load_panel(),
+    nec_220_87_steps(), busbar_120_percent(), panel_occupancy(),
+    existing_ac_ocpd(), sum_of_breakers_rule(), ampacity_verdict(),
+    physical_fit()) and diverging only where the solar path's actual work
+    is: the gross-load RECONSTRUCTION. With no array to net out of the
+    revenue meter, that whole apparatus -- the Enphase consumption CT, the
+    inverter AC nameplate ceiling, the PVOutput/threeway corroboration, the
+    energy-conservation gates -- does not apply, and none of it is read: no
+    enphase_sam8760_*.csv, no threeway_production_validation.csv, no
+    pvoutput_5min_sample.csv. The meter's own 15-minute import IS the gross
+    load, point-determined at every interval, and this function says so
+    rather than defaulting the PV fields to null or zero.
+
+    build() dispatches here BEFORE load_panel() is called a second time --
+    each path calls it once, on its own copy of the flow -- and no
+    enphase_sam8760_*.csv, threeway_production_validation.csv or
+    pvoutput_5min_sample.csv is ever OPENED here: the "no Enphase or
+    PVOutput file is read" half of the issue's acceptance criteria is true
+    by construction, not by a runtime check. One filesystem-existence check
+    is the exception and proves the rule rather than breaking it -- see the
+    stray-Enphase-export guard below, which lists filenames with glob() and
+    reads none of their contents.
+    """
+    panel = load_panel()
+    has_ev = panel["has_ev"]
+
+    raw = only_match("Electric_15_Minute_*.csv", "Green Button 15-minute export")
+
+    # A stray Enphase consumption-CT export sitting beside the meter file is a
+    # second, independent contradiction of the branch this function is on --
+    # a household rarely has one on hand without an array behind it -- so it
+    # is checked for and stops the run rather than being silently ignored.
+    # This is an EXISTENCE check only: glob() lists filenames, and nothing
+    # below opens or parses one, so it does not cost this path the "reads no
+    # Enphase file" property -- it is what makes the property worth having.
+    stray_sam = sorted(RAW_DIR.glob("enphase_sam8760_*.csv"))
+    if stray_sam:
+        raise SystemExit(
+            f"service_headroom.py: build_no_solar() found "
+            f"{len(stray_sam)} enphase_sam8760_*.csv file(s) in {RAW_DIR} "
+            f"({', '.join(p.name for p in stray_sam)}) but "
+            f"private/household.yaml carries no solar: block. A household "
+            f"with a genuine Enphase consumption-CT export on hand almost "
+            f"certainly has an array; either the intake is missing its "
+            f"solar: block or a stale export from a prior system is sitting "
+            f"in private/1-raw-data/ by mistake. Neither file's contents are "
+            f"read here -- only its name -- so resolve the contradiction "
+            f"before rerunning rather than clearing this check by deleting "
+            f"real data.")
+
+    intervals = load_intervals(raw)
+    days = sorted({d for d, _h, _c, _g in intervals})
+    R.validate_interval_coverage([(d, h) for d, h, _c, _g in intervals],
+                                 days[0], days[-1])
+
+    # Gross load IS the metered import: with no array there is nothing for it
+    # to net out. A NONZERO export on a no-solar meter is a contradiction
+    # between this branch and the data, not a quantity to net through
+    # unexamined -- checked with != rather than > 0.0 because a NEGATIVE
+    # export (meter/CT rounding or reverse-flow noise, not physically
+    # impossible to record) is just as much a signal that something is
+    # backfeeding this service as a positive one, and a > 0.0 guard would
+    # have let it slip straight into "100% zero-export" below unexamined.
+    # Either way the run stops rather than silently taking import-minus-export
+    # as gross load on a household this function has been told has no
+    # production to explain a credit.
+    exporting = [(d, hf, exp) for d, hf, _imp, exp in intervals if exp != 0.0]
+    if exporting:
+        d0, hf0, exp0 = exporting[0]
+        raise SystemExit(
+            f"service_headroom.py: build_no_solar() found nonzero export "
+            f"({exp0:.4f} kWh at {fmt_ts(d0, hf0)}, {len(exporting)} "
+            f"interval(s) total) but private/household.yaml carries no "
+            f"solar: block. A service with nothing backfeeding it should "
+            f"never export; either the intake is missing solar:, this "
+            f"household is not on the no-solar path, or this is meter/CT "
+            f"rounding or reverse-flow noise on an otherwise no-solar "
+            f"service. Resolve the contradiction rather than deleting or "
+            f"editing the interval data to clear this check.")
+
+    # The envelope, in the SOLAR PATH'S OWN 7-field shape (date, hour_frac,
+    # lower_kw, upper_kw, export_kwh, exact, pv_basis) so the peak/monthly/
+    # peak-attribution arithmetic below is the same read as gross_envelope()
+    # produces -- lower equals upper equals the metered import because there
+    # is no bound to compute, and every interval is exact for the same
+    # reason. This is not a placeholder: the collapse gross_envelope()
+    # documents as happening "wherever the containing hour produced no PV"
+    # happens at EVERY interval when there is no PV to produce any.
+    env = [(d, hf, _r(imp * 4.0), _r(imp * 4.0), 0.0, True, None)
+           for d, hf, imp, _exp in intervals]
+    n = len(env)
+    # Computed from env, not asserted as n/100.0/0 -- the same shape the solar
+    # path's gross_envelope() reading uses (see zero_export/exact below build()'s
+    # gross_envelope() call). The export guard above should make every count
+    # here trivially equal to n, 100.0 and 0 respectively; reading them off
+    # env instead means a future bug in that guard, or in how env is built,
+    # shows up here as a wrong number rather than as an artifact that keeps
+    # publishing a claim the data no longer supports.
+    zero_export = sum(1 for e in env if e[4] == 0.0)
+    exact = sum(1 for e in env if e[5])
+
+    peak = max(env, key=lambda e: e[2])
+    peak_kw = peak[2]
+    monthly = {}
+    for e in env:
+        ym = f"{e[0].year:04d}-{e[0].month:02d}"
+        if ym not in monthly or e[2] > monthly[ym][2]:
+            monthly[ym] = e
+
+    peak_ix = max(range(len(env)), key=lambda i: env[i][2])
+    around = [{"timestamp_local": fmt_ts(env[j][0], env[j][1]),
+               "gross_kw": _r(env[j][2]),
+               "point_determined": bool(env[j][5])}
+              for j in range(max(0, peak_ix - 2), min(len(env), peak_ix + 3))]
+    neighbour_max = max(r["gross_kw"] for r in around
+                        if r["timestamp_local"] != fmt_ts(peak[0], peak[1]))
+    evse_kw = panel["charger_kw"]
+    peak_attribution = {
+        "verdict": "not_determined",
+        "reading": (
+            "Which loads were running at the annual maximum cannot be "
+            "determined from this data. The revenue meter reads the WHOLE "
+            "HOUSE and no quantity in this artifact separates one circuit "
+            "from another, so nothing here names an appliance."),
+        "what_would_settle_it": (
+            "Circuit-level submetering on the panel's branch circuits, or a "
+            "whole-house feed sampled fast enough to disaggregate loads by "
+            "their switching signatures. Either one attributes the peak; "
+            "15-minute whole-house energy cannot."),
+        "what_the_series_does_show": {
+            "intervals_around_the_peak": around,
+            "peak_kw": _r(peak_kw),
+            "largest_neighbouring_interval_kw": neighbour_max,
+            "peak_minus_largest_neighbour_kw": _r(peak_kw - neighbour_max),
+            "existing_evse_rated_kw": evse_kw,
+            "peak_minus_existing_evse_rated_kw": (
+                None if evse_kw is None else _r(peak_kw - float(evse_kw))),
+            "reading": (
+                f"The maximum is a single-interval spike: the quarter-hours "
+                f"around it run "
+                + " -> ".join(f"{r['gross_kw']}" for r in around)
+                + f" kW, so the peak stands {_r(peak_kw - neighbour_max)} kW "
+                f"above its largest neighbour."
+                + ("" if evse_kw is None else
+                   f" It also stands {_r(peak_kw - float(evse_kw))} kW above "
+                   f"the {evse_kw} kW rating of the home EV charger "
+                   f"(charger.kw), so the charger drawing its full rated "
+                   f"power does not account for the interval on its own -- "
+                   f"something else was drawing at the same time. WHAT else "
+                   f"is not determined.")),
+        },
+    }
+
+    socket_a = panel["meter_socket_continuous_a"]
+    socket_basis = socket_basis_of(panel)
+    steps = nec_220_87_steps(peak_kw, panel["service_rating_a"], socket_a,
+                             len(days), socket_basis)
+    conditions = nec_220_87_conditions_no_solar(len(days))
+    a_calc = steps[1]["result_a"]
+    avail = availability(panel["service_rating_a"], socket_a, a_calc)
+
+    # An explicit null pv_backfeed_a still means the panel was surveyed and
+    # nothing backfeeds it, and an absent key still means nobody asked --
+    # existing_backfeed()/BACKFEED_NOTE carry the same three states here as
+    # on the solar path, because the field is about whatever backfeeds the
+    # busbar today, not about the array this function has already
+    # established does not exist. What differs is busbar_sources below: with
+    # no solar.kw_ac there is no existing-PV entry to build, whatever the
+    # backfeed basis turns out to be.
+    existing_backfeed_a, backfeed_basis = existing_backfeed(panel)
+    evse2_a = evse_code_load_a(EXISTING_EVSE_OUTPUT_A) if has_ev else None
+    batt_a = amps(BATTERY_CHARGE_KW) * NEC_625_42_FACTOR
+    batt_breaker_a = standard_circuit_for(amps(BATTERY_DISCHARGE_KW))
+    # No SOURCE_EXISTING_PV entry: this function has already established there
+    # is no array, so there is no inverter AC nameplate to cite as a source's
+    # output current. The proposed battery is the only source in play, and
+    # existing_backfeed_a still enters the 120% arithmetic below whatever its
+    # basis -- see busbar_120_percent().
+    busbar_sources = [(
+        SOURCE_PROPOSED_BATTERY, batt_breaker_a, amps(BATTERY_DISCHARGE_KW),
+        f"the unit's continuous discharge power rating, {BATTERY_DISCHARGE_KW} "
+        f"kW at {SERVICE_VOLTAGE_V:.0f} V")]
+    busbar = busbar_120_percent(panel["busbar_rating_a"],
+                                panel["service_rating_a"],
+                                existing_backfeed_a,
+                                backfeed_basis,
+                                panel["battery_breaker_position"],
+                                panel["main_breaker_position"],
+                                SOURCE_PROPOSED_BATTERY,
+                                busbar_sources)
+    # WHAT_WOULD_SETTLE_THE_POSITION[SOURCE_PROPOSED_BATTERY] is shared with
+    # the solar path and, correctly there, contrasts the proposed battery
+    # breaker against "the existing PV breaker's end" to explain why one is
+    # never substituted for the other. There is no existing PV breaker on
+    # this branch -- this household has already published solar.present =
+    # false -- so that contrast is reworded here, on this call's own dict
+    # (freshly returned, not shared or cached), rather than by branching the
+    # shared constant or position_condition() itself.
+    if busbar["position_condition"]["what_would_settle_it"] is not None:
+        busbar["position_condition"]["what_would_settle_it"] = (
+            "A SURVEYED position for the new breaker: which end of the "
+            "busbar the main lands on, and whether two adjacent full-size "
+            "spaces exist at the opposite end for a 2-pole source breaker "
+            "to occupy. There is no existing backfeed source on this panel "
+            "to compare it against.")
+    occ = panel_occupancy(panel["schedule"], panel["spaces"],
+                          panel["max_circuits"])
+    adjacent_free_pairs = None
+
+    def case(name, fixed_a, new_2pole_breakers, solves_for_heat_pump, note):
+        """One scenario, single-basis -- see NO_SOLAR_HEADROOM_BASIS /
+        NO_SOLAR_VERDICT_BASIS for why there is one figure here where the
+        solar path carries two."""
+        headroom = remaining_headroom(avail, fixed_a, socket_basis)
+        verdict = ampacity_verdict(headroom["binding"], headroom["binding"])
+        spaces_needed = 2 * new_2pole_breakers
+        fit = physical_fit(new_2pole_breakers, occ["spaces_free"],
+                           adjacent_free_pairs)
+        if headroom["binding"] <= 0:
+            remaining_is = (
+                "a SHORTFALL, not headroom: the loads already specified in "
+                "this case exceed the calculated headroom by this much, so "
+                "no heat pump fits" if solves_for_heat_pump else
+                "a SHORTFALL, not headroom: this case exceeds the calculated "
+                "headroom by this much")
+        else:
+            remaining_is = ("the largest heat-pump MCA that fits"
+                            if solves_for_heat_pump else
+                            "spare headroom above the calculated load")
+        return {
+            "case": name,
+            "fixed_added_load_a": _r(fixed_a),
+            # Nested the same way the solar path's two-basis case is, with
+            # both bases pointing at the SAME dict object: not two figures
+            # that happen to agree, but one figure the solar path would have
+            # published twice. See NO_SOLAR_HEADROOM_BASIS for why.
+            "remaining_headroom_a": {
+                "measured_basis": headroom,
+                "conservative_basis": headroom,
+                "measured_basis_is": (
+                    "the point-determined 15-minute maximum, exactly the "
+                    "metered import -- the only figure this path computes"),
+                "conservative_basis_is": NO_SOLAR_HEADROOM_BASIS,
+            },
+            "remaining_is": remaining_is,
+            "ampacity_verdict": verdict,
+            "ampacity_verdict_basis": NO_SOLAR_VERDICT_BASIS,
+            "what_would_settle_it": None,
+            "spaces": {
+                "new_2pole_breakers_required": new_2pole_breakers,
+                "full_size_spaces_required": spaces_needed,
+                "spaces_free": occ["spaces_free"],
+                "adjacent_free_pairs": adjacent_free_pairs,
+                "physical_fit": fit,
+                "physical_fit_basis": PHYSICAL_FIT_BASIS,
+                "what_would_settle_it": (PHYSICAL_FIT_SETTLE
+                                         if fit == "not_determined" else None),
+                "note": (
+                    "Every case published here ADDS equipment, and each added "
+                    "240 V load -- a heat pump, a second EVSE, a battery -- "
+                    "needs its own 2-pole breaker and therefore two adjacent "
+                    "free spaces. A heat pump that REPLACES the existing A/C "
+                    "on that circuit is a different configuration and is not "
+                    "modelled here, so nothing in this artifact says what it "
+                    "would need; see noncoincident_loads for the demand-side "
+                    "half of that scenario."),
+            },
+            "note": note,
+        }
+
+    amp_leg = busbar_ampacity_leg(batt_breaker_a,
+                                  busbar["remaining_backfeed_a"],
+                                  backfeed_basis)
+    pos_leg = busbar["position_condition"]["verdict"]
+    batt_verdict = battery_verdict(amp_leg, pos_leg)
+    battery_case_note = (
+        f"The battery is counted on the DEMAND side at {batt_a:.2f} A. "
+        f"{BATTERY_CHARGING_BASIS} "
+        + ("The 120% busbar rule fails independently of this arithmetic, "
+           "so ampacity is not what decides the battery here."
+           if amp_leg == "fail" else
+           "The 120% busbar rule is evaluated separately under "
+           "battery_inverter; neither constraint is assumed to decide the "
+           "other."))
+
+    heat_pump_case = case(
+        "heat_pump_only", 0.0, 1, True,
+        f"No heat pump has been selected, so the term is solved for rather "
+        f"than assumed: this is the largest minimum circuit ampacity that "
+        f"fits. MCA is the figure marked on the equipment nameplate "
+        f"({nec('440.4(B)')}) and the one its conductors are sized to "
+        f"({nec('440.35')}); it already embeds the 125% on the largest motor. "
+        f"Point-determined -- it adds the heat pump on top of a measured "
+        f"maximum that is exactly the metered import and already contains "
+        f"the existing A/C.")
+
+    if not has_ev:
+        cases = [
+            heat_pump_case,
+            case("heat_pump_and_battery", batt_a, 2, True,
+                 battery_case_note + " There is no second EVSE in this case: "
+                 + NO_EV_REASON),
+        ]
+    else:
+        cases = [
+            heat_pump_case,
+            case("second_evse_only", evse2_a, 1, False,
+                 f"A second Tesla Wall Connector at "
+                 f"{EXISTING_EVSE_OUTPUT_A:.0f} A continuous on its own "
+                 f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
+                 f"circuit. {nec('625.42')} makes EVSE a continuous load, so the "
+                 f"code value is {EXISTING_EVSE_OUTPUT_A:.0f} x 1.25 = "
+                 f"{evse2_a:.0f} A. What remains is spare headroom, not a heat "
+                 f"pump."),
+            case("heat_pump_and_second_evse", evse2_a, 2, True,
+                 "The second EVSE at its code value, with the heat pump solved "
+                 "for against what is left."),
+            case("heat_pump_second_evse_and_battery", evse2_a + batt_a, 3, True,
+                 battery_case_note),
+        ]
+
+    ac = existing_ac_ocpd(panel["schedule"])
+    ac_ocpd = ac["ocpd_a"]
+    summer_peaks = {ym: e[2] for ym, e in monthly.items()
+                    if int(ym[5:]) in R.SUMMER_MONTHS}
+    winter_peaks = {ym: e[2] for ym, e in monthly.items()
+                    if int(ym[5:]) not in R.SUMMER_MONTHS}
+    # This path is specifically the one nec_220_87_conditions_no_solar()
+    # documents as designed to work on a SHORT window -- the 30-day Exception
+    # is open to it -- and a window under a year can fall wholly inside or
+    # wholly outside R.SUMMER_MONTHS, leaving one side of max()...max() with
+    # no month to read at all. That is a fact about the window, not an
+    # error condition; each side is published only where the window actually
+    # has a month in that season, and the comparison is reported
+    # not-applicable with a named reason otherwise, rather than raising
+    # ValueError: max() arg is an empty sequence on the very short-window
+    # route this function exists to support.
+    summer_max_raw = max(summer_peaks.values()) if summer_peaks else None
+    winter_max_raw = max(winter_peaks.values()) if winter_peaks else None
+    both_seasons_present = summer_max_raw is not None and winter_max_raw is not None
+    season_gap = (_r(summer_max_raw - winter_max_raw, 2)
+                  if both_seasons_present else None)
+    if both_seasons_present:
+        season_gap_na_reason = None
+    elif summer_max_raw is None and winter_max_raw is None:
+        season_gap_na_reason = (  # pragma: no cover -- monthly is never empty
+            "the window contains no months at all")
+    elif summer_max_raw is None:
+        season_gap_na_reason = (
+            "the window contains no summer month (R.SUMMER_MONTHS is "
+            + ", ".join(str(m) for m in sorted(R.SUMMER_MONTHS)) + ")")
+    else:
+        season_gap_na_reason = "the window contains no winter month"
+    cooling_shaped = int(peak[1]) in COOLING_HOURS
+    noncoincident = {
+        "rule": nec_rule("220.60"),
+        "the_second_sentence_matters_here": (
+            f"{nec('220.60')} does not stop at 'count only the largest'. Where "
+            "a motor or "
+            "air-conditioning load is one of the noncoincident loads and is NOT "
+            "the largest of them, the calculation still carries 125% of the "
+            "larger of the motor or air-conditioning load. A heat pump swapped "
+            "in for this A/C is exactly that pairing, so the second sentence is "
+            "part of the rule that applies and is stated with the first."),
+        "why_it_matters": (
+            "A heat pump that REPLACES the existing A/C does not add its whole "
+            "MCA: whatever the A/C was drawing is already inside the measured "
+            "maximum. The case above ignores that credit. The replacement "
+            "configuration itself is not modelled here -- no case in this "
+            "artifact removes a load."),
+        "existing_ac_ocpd_a": ac_ocpd,
+        "existing_ac_ocpd_basis": ac["basis"],
+        "existing_ac_ocpd_reading": ac["reading"],
+        "existing_ac_ocpd_what_would_settle_it": ac["what_would_settle_it"],
+        "schedule_entries_matching_an_air_conditioning_token": ac["matches"],
+        "credit_bounds_a": {
+            "low": 0.0,
+            "high": (_r(ac_ocpd * NEC_220_87_FACTOR)
+                     if ac_ocpd is not None else None)},
+        "evidence_on_where_the_credit_sits": {
+            "annual_peak_month": f"{peak[0].year:04d}-{peak[0].month:02d}",
+            "annual_peak_hour": int(peak[1]),
+            "cooling_hours": f"{COOLING_HOURS[0]:02d}:00-{COOLING_HOURS[-1]:02d}:59",
+            "annual_peak_falls_in_the_cooling_hours": cooling_shaped,
+            "max_summer_month_peak_kw": (
+                _r(summer_max_raw) if summer_max_raw is not None else None),
+            "max_winter_month_peak_kw": (
+                _r(winter_max_raw) if winter_max_raw is not None else None),
+            "summer_minus_winter_peak_kw": season_gap,
+            "season_comparison_not_applicable_reason": season_gap_na_reason,
+            "reading": (
+                f"The annual maximum falls at {int(peak[1]):02d}:00 in "
+                f"{peak[0].year:04d}-{peak[0].month:02d}, "
+                + ("inside" if cooling_shaped else "outside")
+                + f" the {COOLING_HOURS[0]:02d}:00-{COOLING_HOURS[-1]:02d}:59 "
+                f"hours a condenser works hardest. "
+                + (
+                    f"The window does not span both a summer and a winter "
+                    f"month ({season_gap_na_reason}), so the summer/winter "
+                    f"peak comparison is not applicable here; whether the "
+                    f"annual maximum falls in the cooling hours is read "
+                    f"directly above instead."
+                    if season_gap is None else
+                    f"The largest non-cooling-season month peaks "
+                    f"{abs(season_gap)} kW "
+                    + ("below" if season_gap > 0 else "above")
+                    + " the largest cooling-season month. "
+                    + ("Cooling may therefore be part of the measured "
+                       "maximum, and where the credit sits inside the "
+                       "bounds above is not determined from whole-house "
+                       "data." if cooling_shaped else
+                       "Neither fact points at cooling setting the measured "
+                       "maximum, so the A/C credit at the peak reads as "
+                       "near the low end of the bounds above and the "
+                       "conservative figure is the one to use.")
+                )),
+        },
+        "not_determined": (
+            "The A/C's actual draw at the moment of the annual peak cannot be "
+            "separated from whole-house data. Sub-metering the condenser, or "
+            "its nameplate RLA/MCA, would settle it."),
+    }
+
+    evse_mitigations = []
+    if has_ev:
+        share_reduction = evse2_a
+        rate_table = []
+        for out_a in WALL_CONNECTOR_OUTPUTS_A:
+            code_a = evse_code_load_a(out_a)
+            row = remaining_headroom(avail, code_a, socket_basis)
+            row_verdict = ampacity_verdict(row["binding"], row["binding"])
+            rate_table.append({
+                "evse_output_a": _r(out_a, 1),
+                "min_circuit_a": _r(standard_circuit_for(out_a), 1),
+                "code_load_a": _r(code_a, 2),
+                "headroom_left_vs_service_a": _r(avail["service"] - code_a),
+                "headroom_left_vs_meter_socket_a": (
+                    None if socket_a is None
+                    else _r(avail["meter_socket"] - code_a)),
+                "headroom_left_a": row,
+                "ampacity_verdict": row_verdict,
+                "what_would_settle_it": None,
+            })
+        settings_that_pass = [r["evse_output_a"] for r in rate_table
+                              if r["ampacity_verdict"] == "pass"]
+        shared_verdict = ampacity_verdict(_r(min(avail.values())),
+                                          _r(min(avail.values())))
+        shared_headroom = {
+            "headroom_a": remaining_headroom(avail, 0.0, socket_basis),
+            "ampacity_verdict": shared_verdict,
+            "what_would_settle_it": None,
+        }
+        evse_mitigations = [
+            {"mitigation": "EVSE load sharing",
+             "basis": EVSE_SHARING_AMPS_BASIS,
+             "added_load_without_a": _r(evse2_a),
+             "added_load_with_a": 0.0,
+             "reduction_a": _r(share_reduction),
+             "case_second_evse_only_headroom_a": shared_headroom,
+             "case_both_heat_pump_mca_a": shared_headroom,
+             "both_figures_are": (
+                 "the headroom left once the sharing group adds no code load: "
+                 "the second connector's demand term is 0 A, so what remains "
+                 "is the whole of the calculated headroom. " +
+                 NO_SOLAR_HEADROOM_BASIS),
+             "shares_the_existing_branch_circuit": None,
+             "shares_the_existing_branch_circuit_not_determined":
+                 EVSE_SHARING_CIRCUIT_NOT_DETERMINED,
+             "physical_fit_if_it_shares_the_existing_circuit": (
+                 "No new breaker and no new space: the second connector joins "
+                 "the circuit already there, and the panel's "
+                 f"{occ['spaces_free']} free full-size space(s) are not called "
+                 "on at all."),
+             "physical_fit_if_it_needs_its_own_circuit": (
+                 f"A 2-pole branch circuit takes two ADJACENT full-size "
+                 f"spaces. The panel has {occ['spaces_free']} free"
+                 + (", short of two on the count alone, so it does not fit "
+                    "whatever their arrangement -- it would take consolidating "
+                    "existing circuits onto twin-density devices or adding a "
+                    "subpanel."
+                    if occ["spaces_free"] < 2 else
+                    ", enough on the count, but the schedule records devices "
+                    "rather than slot positions, so whether two of them are "
+                    "adjacent is not established -- see the second_evse_only "
+                    "case's physical_fit.")),
+             "what_is_determined_here": (
+                 "The amps. The added demand goes from "
+                 f"{_r(evse2_a)} A to 0 A on {nec('625.42')}, and that figure "
+                 "does not depend on how the connectors are wired. Whether a "
+                 "new breaker is needed is a separate, unsettled question and "
+                 "is not folded into the saving.")},
+            {"mitigation": "Charge-rate limit on the second EVSE",
+             "basis": (f"The connector's output is settable; the code value "
+                       f"follows it directly at 125% ({nec('625.42')}), and "
+                       f"the minimum circuit is the smallest standard OCPD "
+                       f"({nec('240.6(A)')}) carrying that output at 80%."),
+             "table": rate_table,
+             "table_verdict_vocabulary": (
+                 "pass = the case fits; fail = it does not. Every row here is "
+                 "point-determined -- see NO_SOLAR_VERDICT_BASIS -- so neither "
+                 "row nor summary carries a not_determined."),
+             "settings_that_pass_a": settings_that_pass,
+             "reading": (
+                 f"{len(settings_that_pass)} of "
+                 f"{len(WALL_CONNECTOR_OUTPUTS_A)} selectable settings fit"
+                 + (f" -- up to {max(settings_that_pass):.0f} A."
+                    if settings_that_pass else ": none of them.")),
+             "reduction_a_at_lowest_setting": _r(evse2_a - evse_code_load_a(
+                 WALL_CONNECTOR_OUTPUTS_A[0]))},
+        ]
+    pcs_reduction = (existing_backfeed_a + batt_breaker_a
+                     - busbar["total_backfeed_allowed_a"])
+    mitigations = evse_mitigations + [
+        {"mitigation": f"Power control system on the sources ({nec('705.13')})",
+         "basis": ("A listed PCS limits the combined output of the sources on "
+                   "the busbar; with no solar there is only the proposed "
+                   "battery to limit, plus whatever the panel's own backfeed "
+                   "basis already carries."),
+         "counted_backfeed_without_a": _r(existing_backfeed_a + batt_breaker_a, 1),
+         "counted_backfeed_with_a": busbar["total_backfeed_allowed_a"],
+         "reduction_a": _r(pcs_reduction, 1),
+         "largest_combined_output_within_the_120pct_allowance_kva": _r(
+             busbar["total_backfeed_allowed_a"] * SERVICE_VOLTAGE_V / 1000.0, 2),
+         "that_figure_is_not_a_compliant_design": (
+             "It is what the 120% arithmetic leaves, nothing more. The "
+             "breaker-position condition, the panel's listing, and whether a "
+             "PCS is listed for this equipment are separate questions, none of "
+             "them settled here.")},
+    ]
+
+    battery = {
+        "unit": "Tesla Powerwall 3",
+        "discharge_kw": BATTERY_DISCHARGE_KW,
+        "charge_kw": BATTERY_CHARGE_KW,
+        "continuous_output_a": _r(amps(BATTERY_DISCHARGE_KW), 2),
+        "backfeed_breaker_a": _r(batt_breaker_a, 1),
+        "busbar_120_percent": busbar,
+        "ampacity_leg": amp_leg,
+        "ampacity_leg_basis": AMPACITY_LEG_BASIS,
+        "ampacity_leg_what_would_settle_it": (
+            AMPACITY_LEG_SETTLE if amp_leg == "not_determined" else None),
+        "position_leg": pos_leg,
+        "position_leg_what_would_settle_it":
+            busbar["position_condition"]["what_would_settle_it"],
+        "position_leg_is_about": (
+            "the PROPOSED battery backfeed breaker's own position "
+            "(panel.battery_breaker_position). No position has been surveyed "
+            "for a new breaker here, so this leg is not_determined on that "
+            "ground alone -- see position_condition.what_would_settle_it."),
+        "verdict": batt_verdict,
+        "verdict_basis": (
+            f"{nec('705.12(B)(3)(2)')} is conjunctive: the 120% arithmetic AND "
+            "the opposite-end breaker position. A failure on either leg fails "
+            "the panel, and the arithmetic alone is never a compliant "
+            "verdict."),
+        "shortfall_a": _r(batt_breaker_a - busbar["remaining_backfeed_a"], 1),
+        "sum_rule": sum_of_breakers_rule(occ["branch_ocpd_sum_a"],
+                                         panel["busbar_rating_a"],
+                                         batt_breaker_a),
+        "alternatives_not_evaluated_here": [
+            f"supply-side (line-side) tap ahead of the main disconnect, "
+            f"{nec('705.11')}",
+            f"the {nec('705.12(B)(3)(3)')} sum-of-breakers rule, if the branch "
+            f"total can be brought under the busbar rating",
+            f"a listed power control system limiting combined source output, "
+            f"{nec('705.13')}",
+            "a main-breaker downgrade, which trades backfeed allowance against "
+            "the demand headroom computed above",
+        ],
+        "alternatives_note": (
+            "Routes a licensed electrician would price and evaluate. None of "
+            "them is computed here, and listing one is not a recommendation "
+            "for or against it."),
+        "note": (
+            f"The busbar rule fails on its own arithmetic, independently of "
+            f"the {nec('220.87')} demand result, so it is what decides the "
+            f"battery here."
+            if amp_leg == "fail" else
+            f"The busbar rule and the {nec('220.87')} demand headroom are "
+            f"reported separately; neither is assumed to decide the other."),
+    }
+
+    scenarios_not_applicable = []
+    if not has_ev:
+        scenarios_not_applicable = [
+            {"item": item, "kind": kind, "reason": NO_EV_REASON,
+             "flag": EV_FLAG, "flag_contract": NO_EV_CONTRACT,
+             "to_enable_it": (
+                 f"Set {EV_FLAG}: true in private/household.yaml and answer "
+                 f"charger.kw (DATA-SOURCES-CHEATSHEET.md, charger_kw), then "
+                 f"rerun analysis/service_headroom.py.")}
+            for item, kind in (
+                ("second_evse_only", "case"),
+                ("heat_pump_and_second_evse", "case"),
+                ("heat_pump_second_evse_and_battery", "case"),
+                ("EVSE load sharing", "mitigation"),
+                ("Charge-rate limit on the second EVSE", "mitigation"),
+                ("panel.existing_evse_kw", "intake fact"),
+                ("added_load_code_values.second_evse_a", "code value"),
+            )]
+
+    return {
+        "caveat": CAVEAT,
+        "scenarios_not_applicable": scenarios_not_applicable,
+        "solar": {
+            "present": False,
+            "reason": NO_SOLAR_REASON,
+        },
+        "provenance": {
+            "meter_export": raw.name,
+            "enphase_consumption_ct_files_read": 0,
+            "production_reference_read": False,
+            "inverter_power_reference_read": False,
+            "no_solar_input_note": (
+                "enphase_consumption_ct/production_reference/"
+                "inverter_power_reference -- the solar path's provenance "
+                "keys naming the files it read -- are omitted here rather "
+                "than published as null or an empty list: no Enphase, "
+                "PVOutput or threeway file is opened on this path at all, "
+                "see " + NO_SOLAR_REASON),
+            "window_start": str(days[0]),
+            "window_end": str(days[-1]),
+            "window_days": len(days),
+            "interval_rows": n,
+            "interval_minutes": 15,
+            "intervals_per_day": {str(k): v for k, v in sorted(
+                collections.Counter(
+                    collections.Counter(d for d, *_ in env).values()).items())},
+            "service_voltage_v": SERVICE_VOLTAGE_V,
+            "voltage_basis": ("120/240 V single-phase 3-wire residential "
+                              "service; service amps taken across the 240 V "
+                              "legs"),
+            "timezone_handling": ("local wall clock as exported; no timezone "
+                                  "conversion applied"),
+        },
+        "panel": {
+            "service_rating_a": panel["service_rating_a"],
+            "busbar_rating_a": panel["busbar_rating_a"],
+            "meter_socket_continuous_a": socket_a,
+            "meter_socket_basis": socket_basis,
+            "meter_socket_constraint": SOCKET_CONSTRAINT[socket_basis],
+            "meter_socket_what_would_settle_it": (
+                SOCKET_SETTLE if socket_basis == SOCKET_NOT_RECORDED else None),
+            "existing_pv_backfeed_a": existing_backfeed_a,
+            "existing_pv_backfeed_basis": backfeed_basis,
+            "existing_pv_backfeed_note": busbar["existing_pv_backfeed_note"],
+            "pv_breaker_position": panel["pv_breaker_position"],
+            "battery_breaker_position": panel["battery_breaker_position"],
+            "battery_breaker_position_note": (
+                "the PROPOSED battery/source breaker's end of the busbar. "
+                "Null means no position has been surveyed for a new breaker, "
+                "which is what makes the battery's position leg "
+                "not_determined."),
+            "main_breaker_position": panel["main_breaker_position"],
+            "existing_evse_kw": panel["charger_kw"],
+            "existing_evse_kw_basis": (
+                "charger.kw, the home EVSE's rated power from the intake"
+                if has_ev else f"NOT APPLICABLE -- {NO_EV_REASON}"),
+            "occupancy": occ,
+        },
+        "gross_reconstruction": {
+            "identity": "gross = import (no on-site generation to net out)",
+            "intervals": n,
+            "zero_export_intervals": zero_export,
+            "zero_export_fraction_pct": _r(100.0 * zero_export / n, 3),
+            "point_determined_intervals": exact,
+            "point_determined_fraction_pct": _r(100.0 * exact / n, 3),
+            "bounded_intervals": n - exact,
+            "max_lower_bound_kw": _r(peak_kw),
+            "max_upper_bound_kw": _r(peak_kw),
+            "honesty": (
+                "Every interval here is EXACT, not a bound. The solar path's "
+                "gross load is a bound wherever the containing hour produced "
+                "PV or the interval exported anything; with no solar: block "
+                "on this household neither ever happens, so the collapse it "
+                "documents as a special case is the general case here -- "
+                "gross load is precisely the metered import at every "
+                "15-minute interval."),
+            "pv_reconstruction": {
+                "applicable": False,
+                "reason": NO_SOLAR_REASON,
+                "omitted_relative_to_the_solar_path": [
+                    "pv_ac_ceiling", "pv_ceiling_basis_split",
+                    "max_upper_bound_binding_interval",
+                    "independent_corroboration (Enphase consumption CT / "
+                    "PVOutput 5-minute sample)"],
+                "why_omitted": (
+                    "These fields describe a reconstruction this household's "
+                    "data does not need: the PV ceiling and the daylight "
+                    "envelope bound self-consumed production, which is zero "
+                    "by construction with no array on the roof, and the "
+                    "PVOutput/Enphase corroboration checks instruments this "
+                    "household has none of. Publishing them as null or zero "
+                    "would read as a computation that ran and found nothing, "
+                    "rather than one that does not apply -- so they are left "
+                    "out."),
+            },
+            "conservation": {
+                "applicable": False,
+                "reason": (
+                    "Energy conservation reconciles a gross-load "
+                    "RECONSTRUCTION against independent production "
+                    "references. There is no reconstruction here to "
+                    "reconcile and no production to reference: the meter's "
+                    "own import is the whole of the gross-load series, "
+                    "exactly."),
+            },
+        },
+        "maximum_demand": {
+            "basis": ("15-minute gross load, exact: no on-site generation to "
+                      "net out of the metered import"),
+            "peak_kw": _r(peak_kw),
+            "peak_a": _r(amps(peak_kw)),
+            "peak_timestamp_local": fmt_ts(peak[0], peak[1]),
+            "peak_coincident": {
+                "point_determined": True,
+                "hour_of_day": int(peak[1]),
+                "weekday": peak[0].strftime("%A"),
+                "month": f"{peak[0].year:04d}-{peak[0].month:02d}",
+                "tariff_season": ("summer" if peak[0].month in R.SUMMER_MONTHS
+                                  else "winter"),
+                "tou_period": R.period(peak[1], R.off_peak_day(peak[0])),
+            },
+            "what_was_running": peak_attribution,
+            "by_month": [
+                {"month": ym,
+                 "peak_kw": _r(e[2]),
+                 "peak_a": _r(amps(e[2])),
+                 "timestamp_local": fmt_ts(e[0], e[1]),
+                 "point_determined": bool(e[5])}
+                for ym, e in sorted(monthly.items())],
+        },
+        "nec_220_87": {
+            "rule": nec_rule("220.87"),
+            "conditions": conditions,
+            "measurement_days": len(days),
+            "condition_1_days_required": NEC_220_87_CONDITION_1_DAYS,
+            "window_note": (
+                f"{len(days)} days of continuous 15-minute data, "
+                f"{_r(len(days) / float(NEC_220_87_CONDITION_1_DAYS), 2)}x the "
+                f"1-year period condition (1) requires. See conditions -- "
+                f"unlike the solar path, the 30-day Exception was open to "
+                f"this service; a full year is simply the stronger basis and "
+                f"is what this household has."
+                if len(days) >= NEC_220_87_CONDITION_1_DAYS else
+                f"{len(days)} days of continuous 15-minute data, short of "
+                f"the {NEC_220_87_CONDITION_1_DAYS}-day period condition (1) "
+                f"requires. See conditions -- unlike the solar path, the "
+                f"30-day Exception is open to this service, so a window "
+                f"meeting ITS OWN conditions (continuously recorded, "
+                f"occupied, including the larger of the heating or cooling "
+                f"load -- none of which is verified here) may still qualify "
+                f"this household even though condition (1) alone does not "
+                f"on this window."),
+            "steps": steps,
+            "calculated_load_a": a_calc,
+            "headroom_a": {"vs_service_rating": avail["service"],
+                           "vs_meter_socket": avail.get("meter_socket"),
+                           "binding": _r(min(avail.values())),
+                           "binding_is": BINDING_IS[socket_basis]},
+        },
+        "added_load_code_values": {
+            "second_evse_a": _r(evse2_a, 2) if has_ev else None,
+            "second_evse_basis": (
+                f"{nec('625.42')} continuous load: {EXISTING_EVSE_OUTPUT_A:.0f} A "
+                f"output x 1.25 on a "
+                f"{standard_circuit_for(EXISTING_EVSE_OUTPUT_A):.0f} A 2-pole "
+                f"circuit" if has_ev else
+                f"NOT APPLICABLE -- {NO_EV_REASON}"),
+            "battery_charging_a": _r(batt_a, 2),
+            "battery_charging_basis": BATTERY_CHARGING_BASIS,
+            "heat_pump_a": None,
+            "heat_pump_basis": (
+                f"NOT DETERMINED -- no unit has been selected anywhere in this "
+                f"project, and a nameplate cannot be invented. The heat-pump "
+                f"term is solved for instead: each case reports the largest "
+                f"minimum circuit ampacity that fits, MCA being the figure "
+                f"marked on the equipment ({nec('440.4(B)')}) and the one its "
+                f"conductors are sized to ({nec('440.35')})."),
+            "heat_pump_what_would_settle_it": (
+                "The selected unit's own nameplate: its marked minimum circuit "
+                f"ampacity ({nec('440.4(B)')}), which is directly comparable "
+                f"with the solved-for figure each case publishes. Until a unit "
+                f"is chosen there is nothing to read, and the largest MCA that "
+                f"fits is the answer this data can give."),
+        },
+        "cases": cases,
+        "noncoincident_loads": noncoincident,
+        "battery_inverter": battery,
+        "mitigations": mitigations,
+    }
+
+
 def build():
     # The applicability flag comes FIRST, before any input is opened. A
     # household that told the intake it is not adding new load has no panel
@@ -2737,6 +3751,16 @@ def build():
     # NEW_LOAD_FLAG_CONTRACT. Absent is not false.
     if _flag(NEW_LOAD_FLAG) is False:
         return not_applicable()
+
+    # The second applicability check, also before any solar-specific input is
+    # opened: with no solar: block in the intake there is no array to
+    # reconstruct and none of the Enphase/PVOutput/threeway inputs below
+    # apply. build_no_solar() is a complete, separate implementation of the
+    # rest of this function (issue #42) -- see its docstring for why sharing
+    # the panel/busbar/case primitives while diverging on the reconstruction
+    # is a second path rather than a conditional threaded through this one.
+    if not solar_present():
+        return build_no_solar()
 
     panel = load_panel()
     # The second applicability flag, read inside load_panel() because it decides
@@ -3512,7 +4536,14 @@ def build():
                 f"route is the Exception to (1), not the condition, and it is "
                 f"closed to a service with a photovoltaic system -- so a year "
                 f"is the only span that qualifies this household, and it has "
-                f"one. See conditions."),
+                f"one. See conditions."
+                if len(days) >= NEC_220_87_CONDITION_1_DAYS else
+                f"{len(days)} days of continuous 15-minute data, short of "
+                f"the {NEC_220_87_CONDITION_1_DAYS}-day period condition (1) "
+                f"requires. The 30-day recording route is the Exception to "
+                f"(1), not the condition, and it is closed to a service "
+                f"with a photovoltaic system -- so neither route currently "
+                f"qualifies this household on this window. See conditions."),
             "steps": steps,
             "calculated_load_a": a_calc,
             "headroom_a": {"vs_service_rating": avail["service"],

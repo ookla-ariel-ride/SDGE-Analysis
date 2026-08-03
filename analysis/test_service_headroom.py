@@ -1936,6 +1936,18 @@ OPTIONAL_READS_WITHOUT_A_PRESENCE_TEST = {
         "answered', which leaves charger.kw required exactly as it was -- the "
         "conservative direction, since a household that has an EV and never "
         "set the flag keeps the fail-closed read"),
+    "solar.kw_dc": (
+        "one of solar_present()'s five presence probes, deliberately NOT read "
+        "through _key_present(): has_solar (DATA-SOURCES-CHEATSHEET.md) is "
+        "answered by the shape of the file, not by a boolean, so there is no "
+        "surveyed-null state for 'this household was asked and has no solar' "
+        "to occupy -- absent and null both mean the same thing here, unlike "
+        "the panel fields where a null is itself an answer"),
+    "solar.module_count": (
+        "same as solar.kw_dc, and the same reasoning covers the other three "
+        "presence probes (solar.kw_ac, solar.inverter_model, "
+        "solar.inverter_count) exempted separately above for their own, "
+        "narrower reasons predating issue #42"),
 }
 
 
@@ -3372,8 +3384,548 @@ def case_build_runs_end_to_end_on_a_synthetic_house():
     assert nc["credit_bounds_a"]["high"] is None, nc
     # and the artifact serializes, which is what main() would write
     assert json.dumps(d, indent=1, sort_keys=True), "the result is not JSON"
+    # issue #42's "solar" marker section is new API surface build_no_solar()
+    # returns; build()'s own solar path is untouched by that issue (a single
+    # early dispatch before panel = load_panel(), see build()'s own source)
+    # and must carry no such key -- adding one here would break the
+    # byte-identical regeneration CLAUDE.md requires.
+    assert "solar" not in d, d
     return ("build() runs end to end on a synthetic year and reproduces every "
             "figure the fixture determines")
+
+
+# ---------------------------------------------------------------------------
+# The no-solar path (issue #42): a household with has_new_load_interest: true
+# and no solar: block in its intake. build() dispatches to build_no_solar()
+# before panel = load_panel(), so the solar-path cases above never run this
+# code and this code never runs theirs.
+# ---------------------------------------------------------------------------
+
+NO_SOLAR_PANEL_YAML = """
+household:
+  has_new_load_interest: true
+  has_ev: true
+charger:
+  kw: 11.5
+panel:
+  service_rating_a: 175
+  busbar_rating_a: 200
+  pv_backfeed_a: null
+  meter_socket_continuous_a: 170
+  spaces: 20
+  max_circuits: 40
+  schedule:
+    - {device: full-size 2-pole, poles: 2, amps: 60}
+"""
+
+
+def case_solar_present_reads_the_shape_of_the_file():
+    """has_solar is documented (DATA-SOURCES-CHEATSHEET.md) as an
+    applicability flag answered by the SHAPE of the intake file, not a
+    boolean key -- there is no household.has_solar to read. solar_present()
+    is required=False on the solar: block itself, and an explicit null is no
+    more informative than the key being absent."""
+    for text, expected in [
+        ("solar:\n  kw_ac: 5.0\n  inverter_model: x\n  inverter_count: 1\n", True),
+        ("household:\n  has_ev: false\n", False),
+        ("solar: null\n", False),
+        ("", False),
+    ]:
+        hh = _with_household(text)
+        try:
+            assert S.solar_present() is expected, (text, expected)
+        finally:
+            del hh
+    return ("solar_present() is true only where the solar: block is present "
+            "and non-null, matching the cheatsheet's shape-of-the-file "
+            "contract")
+
+
+def case_build_no_solar_runs_end_to_end_and_reads_no_solar_input():
+    """build_no_solar(), in CI, against a synthetic no-solar house.
+
+    S.PVOUTPUT_5MIN/S.THREEWAY are repointed at paths that do not exist at
+    all -- FileNotFoundError, not a caught SystemExit, would surface if
+    build_no_solar() ever opened either. RAW_DIR carries only the Green
+    Button export: no enphase_sam8760_*.csv at all, because that file's mere
+    PRESENCE (not its content) now stops the run on its own -- see
+    case_the_no_solar_path_fails_closed_on_a_stray_enphase_export, which
+    proves that guard directly. Between the two, "asserts no Enphase or
+    PVOutput file is read" (issue #42's acceptance criteria) is proven by
+    construction rather than by a call-count mock: there is nothing left in
+    this fixture's directory that a read of either could possibly touch.
+
+    The fixture also carries a single 16 kW night spike, exactly like
+    case_build_runs_end_to_end_on_a_synthetic_house's solar fixture, so the
+    same measured maximum is independently verifiable by hand -- and here it
+    is also the CONSERVATIVE maximum, because there is nothing to bound.
+    """
+    start = dt.date(2025, 6, 1)
+    end = dt.date(2026, 6, 30)          # 395 days, both seasons, DST both ways
+    peak_day, peak_hf, peak_kwh = dt.date(2025, 9, 10), 5.75, 4.0
+    rows = []
+    day = start
+    while day <= end:
+        for hf in R.expected_day_hours(day):
+            imp = peak_kwh if (day, hf) == (peak_day, peak_hf) else 1.0
+            rows.append((day, hf, imp, 0.0))
+        day += dt.timedelta(days=1)
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(NO_SOLAR_PANEL_YAML)
+    real_raw = S.RAW_DIR
+    real_pvo = S.PVOUTPUT_5MIN
+    real_3way = S.THREEWAY
+    try:
+        S.RAW_DIR = raw
+        S.PVOUTPUT_5MIN = raw / "MUST_NOT_BE_OPENED_pvoutput.csv"
+        S.THREEWAY = raw / "MUST_NOT_BE_OPENED_threeway.csv"
+        assert S.solar_present() is False
+        d = S.build()
+    finally:
+        S.RAW_DIR, S.PVOUTPUT_5MIN, S.THREEWAY = real_raw, real_pvo, real_3way
+        del hh
+        td.cleanup()
+
+    # the applicability marker, and every interval point-determined
+    assert d["solar"]["present"] is False, d["solar"]
+    md = d["maximum_demand"]
+    assert _close(md["peak_kw"], 16.0), md
+    assert md["peak_timestamp_local"] == "2025-09-10 05:45", md
+    assert md["peak_coincident"]["point_determined"] is True, md
+    assert "independent_corroboration" not in md, md
+    assert "dst_guard" not in md, md
+    g = d["gross_reconstruction"]
+    assert g["intervals"] == len(rows), g
+    assert g["point_determined_intervals"] == g["intervals"], g
+    assert g["point_determined_fraction_pct"] == 100.0, g
+    assert g["bounded_intervals"] == 0, g
+    assert _close(g["max_lower_bound_kw"], g["max_upper_bound_kw"]), g
+    assert g["pv_reconstruction"]["applicable"] is False, g
+    assert g["conservation"]["applicable"] is False, g
+    # the fields a solar household's artifact carries and this one must not
+    for absent in ("pv_ac_ceiling", "pv_ceiling_basis_split",
+                   "max_upper_bound_binding_interval"):
+        assert absent not in g, (absent, g)
+
+    # 220.87: the Exception WAS open to this service (no renewable system),
+    # unlike the solar household, which qualifies under condition (1) with
+    # the Exception closed to it
+    cond = d["nec_220_87"]["conditions"]["condition_1_exception_30_day_recording"]
+    assert cond["available_to_this_service"] is True, cond
+
+    # every case verdict is two-valued: measured and conservative are the
+    # same object, and nothing here is ever not_determined on ampacity
+    assert [c["case"] for c in d["cases"]] == [
+        "heat_pump_only", "second_evse_only", "heat_pump_and_second_evse",
+        "heat_pump_second_evse_and_battery"], d["cases"]
+    for c in d["cases"]:
+        rem = c["remaining_headroom_a"]
+        assert rem["measured_basis"] == rem["conservative_basis"], c
+        assert c["ampacity_verdict"] in ("pass", "fail"), c
+        assert c["what_would_settle_it"] is None, c
+
+    # the busbar, panel occupancy and mitigations all assembled
+    assert d["battery_inverter"]["verdict"], d["battery_inverter"]
+    assert d["panel"]["occupancy"]["spaces_total"] == 20, d["panel"]
+    assert len(d["mitigations"]) == 3, d["mitigations"]
+    assert json.dumps(d, indent=1, sort_keys=True), "the result is not JSON"
+    return ("build_no_solar() runs end to end, reads no Enphase or PVOutput "
+            "file, and reports every interval point-determined")
+
+
+def case_the_no_solar_path_fails_closed_on_unexpected_export():
+    """A no-solar household whose meter shows nonzero export contradicts the
+    branch it is on -- something is backfeeding a service with no solar:
+    block recorded -- so build_no_solar() stops rather than silently netting
+    an unexplained credit into gross load."""
+    day = dt.date(2025, 6, 1)
+    hours = R.expected_day_hours(day)
+    rows = [(day, hf, 1.0, 0.0) for hf in hours]
+    mid = len(rows) // 2
+    rows[mid] = (day, hours[mid], 0.5, 0.5)     # one interval exports 0.5 kWh
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n  schedule: []\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        try:
+            S.build_no_solar()
+            raise _Reached
+        except _Reached:
+            raise AssertionError(
+                "nonzero export on a no-solar house did not fail closed")
+        except SystemExit as e:
+            assert "export" in str(e).lower(), e
+            assert "solar" in str(e).lower(), e
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+    return ("a no-solar household whose meter exports anything fails closed "
+            "instead of netting an unexplained credit into gross load")
+
+
+def case_the_no_solar_path_catches_a_negative_export_too():
+    """A NEGATIVE export (meter/CT rounding or reverse-flow noise -- not
+    physically impossible to record) is just as much a contradiction of the
+    no-solar branch as a positive one, and a guard checking `exp > 0.0` would
+    let it slip straight through to a "100% zero-export, all point-determined"
+    claim the data does not support. The guard checks `!= 0.0` for exactly
+    this reason."""
+    day = dt.date(2025, 6, 1)
+    hours = R.expected_day_hours(day)
+    rows = [(day, hf, 1.0, 0.0) for hf in hours]
+    mid = len(rows) // 2
+    rows[mid] = (day, hours[mid], 1.0, -0.05)   # one interval "exports" -0.05 kWh
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n  schedule: []\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        try:
+            S.build_no_solar()
+            raise _Reached
+        except _Reached:
+            raise AssertionError(
+                "a negative export on a no-solar house did not fail closed")
+        except SystemExit as e:
+            assert "export" in str(e).lower(), e
+            assert "solar" in str(e).lower(), e
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+    return ("a negative export on a no-solar household fails closed exactly "
+            "like a positive one -- the guard checks != 0.0, not > 0.0")
+
+
+def case_the_no_solar_path_handles_a_single_season_window():
+    """A window that falls wholly inside or wholly outside R.SUMMER_MONTHS
+    used to crash noncoincident_loads with ValueError: max() arg is an empty
+    sequence -- the exact failure a reviewer reproduced with a summer-only
+    and a winter-only 31-day window. This path is specifically the one
+    nec_220_87_conditions_no_solar() documents as designed to work on a
+    sub-year window (the 30-day Exception is open to it), so a short window
+    crashing here is the worst possible place for that bug to live. Both
+    all-summer and all-winter windows are exercised; each reports the
+    season comparison as not applicable, with a reason, rather than
+    raising or silently publishing a fabricated gap."""
+    for start, label in ((dt.date(2025, 7, 1), "summer"),
+                        (dt.date(2025, 1, 1), "winter")):
+        end = start + dt.timedelta(days=30)          # 31 days, one month only
+        assert start.month == end.month, (start, end)
+        rows = []
+        day = start
+        while day <= end:
+            rows += [(day, hf, 1.0, 0.0) for hf in R.expected_day_hours(day)]
+            day += dt.timedelta(days=1)
+
+        td = tempfile.TemporaryDirectory()
+        raw = pathlib.Path(td.name)
+        _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+        hh = _with_household(
+            "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+            "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+            "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+            "  spaces: 20\n  max_circuits: 40\n"
+            "  schedule:\n"
+            "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+        real_raw = S.RAW_DIR
+        try:
+            S.RAW_DIR = raw
+            d = S.build_no_solar()          # must not raise
+        finally:
+            S.RAW_DIR = real_raw
+            del hh
+            td.cleanup()
+
+        ev = d["noncoincident_loads"]["evidence_on_where_the_credit_sits"]
+        assert ev["summer_minus_winter_peak_kw"] is None, (label, ev)
+        assert ev["season_comparison_not_applicable_reason"], (label, ev)
+        if label == "summer":
+            assert ev["max_summer_month_peak_kw"] is not None, ev
+            assert ev["max_winter_month_peak_kw"] is None, ev
+        else:
+            assert ev["max_winter_month_peak_kw"] is not None, ev
+            assert ev["max_summer_month_peak_kw"] is None, ev
+    return ("a window falling wholly inside or outside the summer months "
+            "no longer crashes noncoincident_loads, and reports the season "
+            "comparison as not applicable with a reason")
+
+
+def case_the_no_solar_path_narrative_matches_a_failed_condition_1():
+    """A window short of the 1-year requirement must not claim, in the same
+    breath, that condition (1) is met or that "a full year ... is what this
+    household has" -- both false once condition_1.verdict is fail. 181 days
+    (the exact width a reviewer used to catch this) spans both seasons, so
+    only the days-vs-365 shortfall is under test here, not the season split
+    covered above."""
+    start = dt.date(2025, 5, 1)
+    end = start + dt.timedelta(days=180)             # 181 days total
+    rows = []
+    day = start
+    while day <= end:
+        rows += [(day, hf, 1.0, 0.0) for hf in R.expected_day_hours(day)]
+        day += dt.timedelta(days=1)
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n"
+        "  schedule:\n"
+        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        d = S.build_no_solar()
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+
+    nec = d["nec_220_87"]
+    assert nec["conditions"]["condition_1"]["days_available"] == 181, nec
+    assert nec["conditions"]["condition_1"]["verdict"] == "fail", nec
+    strengthens = nec["conditions"]["condition_1_exception_30_day_recording"][
+        "why_it_strengthens_rather_than_weakens"]
+    window_note = nec["window_note"]
+    for banned, text in (("met outright", strengthens),
+                        ("stronger basis", strengthens),
+                        ("stronger basis", window_note),
+                        ("is what this household has", window_note)):
+        assert banned not in text, (banned, text)
+    return ("the no-solar path's narrative text no longer claims condition "
+            "(1) is met or a full year is what this household has when the "
+            "verdict itself says otherwise")
+
+
+def case_the_no_solar_path_fails_closed_on_a_stray_enphase_export():
+    """A stray enphase_sam8760_*.csv sitting beside the meter export
+    contradicts a no-solar household -- a genuine Enphase consumption-CT
+    export is not something a house with no array holds -- so build_no_solar()
+    stops on its mere PRESENCE. The file's content is garbage here on purpose:
+    the guard is a glob(), not a read, and this proves it needs no valid
+    content to fire."""
+    day = dt.date(2025, 6, 1)
+    rows = [(day, hf, 1.0, 0.0) for hf in R.expected_day_hours(day)]
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    (raw / "enphase_sam8760_2025.csv").write_text("this is not a valid export")
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n  schedule: []\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        try:
+            S.build_no_solar()
+            raise _Reached
+        except _Reached:
+            raise AssertionError(
+                "a stray enphase_sam8760 export on a no-solar house did not "
+                "fail closed")
+        except SystemExit as e:
+            assert "enphase_sam8760" in str(e), e
+            assert "solar" in str(e).lower(), e
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+    return ("a stray Enphase consumption-CT export on a no-solar household "
+            "fails closed on its filename alone, with no read of its content")
+
+
+def case_the_no_solar_path_respects_has_ev_too():
+    """has_ev is a second, independent applicability flag on the no-solar
+    path exactly as it is on the solar path (module docstring, "Whether the
+    question is asked at all"): false switches off the second-EVSE cases and
+    mitigations, not the heat-pump or battery ones. Spans a non-summer and a
+    summer day so the noncoincident-loads season split has both buckets."""
+    d0, d1 = dt.date(2025, 5, 31), dt.date(2025, 6, 1)
+    rows = ([(d0, hf, 1.0, 0.0) for hf in R.expected_day_hours(d0)]
+            + [(d1, hf, 1.0, 0.0) for hf in R.expected_day_hours(d1)])
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n"
+        "  schedule:\n"
+        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        d = S.build_no_solar()
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+
+    assert [c["case"] for c in d["cases"]] == [
+        "heat_pump_only", "heat_pump_and_battery"], d["cases"]
+    assert d["panel"]["existing_evse_kw"] is None, d["panel"]
+    items = {s["item"] for s in d["scenarios_not_applicable"]}
+    assert "second_evse_only" in items, d["scenarios_not_applicable"]
+    assert d["mitigations"] and all(
+        m["mitigation"] != "EVSE load sharing" for m in d["mitigations"]), \
+        d["mitigations"]
+    return "the no-solar path's has_ev contract matches the solar path's"
+
+
+def case_the_no_solar_path_reports_a_shortfall_not_headroom():
+    """A measured maximum that already exceeds the service rating is a
+    SHORTFALL, not spare headroom -- the same wording the solar path's
+    case() uses on its measured basis, exercised here on the no-solar path's
+    single basis (fail on ampacity, the case's own remaining_is text names it
+    a shortfall rather than a negative number with no explanation)."""
+    d0, d1 = dt.date(2025, 5, 31), dt.date(2025, 6, 1)
+    peak_day, peak_hf = d1, R.expected_day_hours(d1)[10]
+    rows = ([(d0, hf, 1.0, 0.0) for hf in R.expected_day_hours(d0)]
+            + [(d1, hf, 40.0 if hf == peak_hf else 1.0, 0.0)
+               for hf in R.expected_day_hours(d1)])
+
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    hh = _with_household(
+        "household:\n  has_new_load_interest: true\n  has_ev: false\n"
+        "panel:\n  service_rating_a: 50\n  busbar_rating_a: 60\n"
+        "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
+        "  spaces: 20\n  max_circuits: 40\n"
+        "  schedule:\n"
+        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw
+        d = S.build_no_solar()
+    finally:
+        S.RAW_DIR = real_raw
+        del hh
+        td.cleanup()
+
+    # 40 kWh in one quarter-hour is 160 kW; at 125% that is far past a 50 A
+    # service, so even the bare heat_pump_only case (no fixed load added) is
+    # already a shortfall
+    hp = d["cases"][0]
+    assert hp["case"] == "heat_pump_only", d["cases"]
+    assert hp["remaining_headroom_a"]["measured_basis"]["binding"] < 0, hp
+    assert hp["ampacity_verdict"] == "fail", hp
+    assert "SHORTFALL" in hp["remaining_is"], hp
+    assert "no heat pump fits" in hp["remaining_is"], hp
+    return ("a measured maximum past the service rating reports a SHORTFALL "
+            "on the no-solar path's single basis, not a bare negative number")
+
+
+def case_the_two_paths_keep_their_shared_blocks_in_lockstep():
+    """build_no_solar() is ~70% hand-copied from build(): the battery dict,
+    the case()-closure's spaces sub-dict, and the EVSE-sharing mitigation are
+    each written out twice rather than shared, and a future NEC fix applied
+    to one twin could silently miss the other. Nothing here can stop that
+    from happening -- only a refactor could -- but this case makes a
+    schema-level drift SHOW UP: it runs a matched pair of has_ev: true
+    fixtures, one with solar and one without, through build() and
+    build_no_solar() respectively, and asserts the KEY SETS of the blocks
+    that are meant to be copy-identical still match. Leaf VALUES are not
+    compared -- the two paths derive their numbers from different
+    reconstructions on purpose -- only the shape.
+    """
+    rows, sam, daily_pv = _synth_series()
+    dst = {d for y in (2025, 2026) for d in R.dst_transition_sundays(y)
+           if SYNTH_START <= d <= SYNTH_END}
+    real = (S.RAW_DIR, S.THREEWAY)
+    td = tempfile.TemporaryDirectory()
+    raw = pathlib.Path(td.name)
+    _write_synth_meter(raw / "Electric_15_Minute_synthetic.csv", rows)
+    for year in (2025, 2026):
+        _write_synth_sam(raw / f"enphase_sam8760_{year}.csv", year, sam)
+    _write_synth_threeway(raw / "threeway.csv", daily_pv, dst)
+    hh = _with_household("household:\n  has_new_load_interest: true\n"
+                         + PANEL_YAML)
+    try:
+        S.RAW_DIR, S.THREEWAY = raw, raw / "threeway.csv"
+        solar = S.build()
+    finally:
+        S.RAW_DIR, S.THREEWAY = real
+        del hh
+        td.cleanup()
+
+    day = dt.date(2025, 6, 1)
+    no_solar_rows = [(day, hf, 1.0, 0.0) for hf in R.expected_day_hours(day)]
+    td2 = tempfile.TemporaryDirectory()
+    raw2 = pathlib.Path(td2.name)
+    _write_synth_meter(raw2 / "Electric_15_Minute_synthetic.csv", no_solar_rows)
+    hh2 = _with_household(NO_SOLAR_PANEL_YAML)
+    real_raw = S.RAW_DIR
+    try:
+        S.RAW_DIR = raw2
+        no_solar = S.build_no_solar()
+    finally:
+        S.RAW_DIR = real_raw
+        del hh2
+        td2.cleanup()
+
+    b_solar, b_no_solar = solar["battery_inverter"], no_solar["battery_inverter"]
+    assert set(b_solar) == set(b_no_solar), (set(b_solar), set(b_no_solar))
+    assert (set(b_solar["busbar_120_percent"]) ==
+            set(b_no_solar["busbar_120_percent"])), b_no_solar
+    assert (set(b_solar["busbar_120_percent"]["position_condition"]) ==
+            set(b_no_solar["busbar_120_percent"]["position_condition"])), \
+        b_no_solar
+    assert set(b_solar["sum_rule"]) == set(b_no_solar["sum_rule"]), b_no_solar
+
+    solar_cases = {c["case"]: c for c in solar["cases"]}
+    no_solar_cases = {c["case"]: c for c in no_solar["cases"]}
+    assert set(solar_cases) == set(no_solar_cases), (
+        set(solar_cases), set(no_solar_cases))
+    for name in solar_cases:
+        assert (set(solar_cases[name]["spaces"]) ==
+                set(no_solar_cases[name]["spaces"])), name
+
+    def _by_name(mitigations, name):
+        hits = [m for m in mitigations if m["mitigation"] == name]
+        assert len(hits) == 1, (name, mitigations)
+        return hits[0]
+
+    sharing_solar = _by_name(solar["mitigations"], "EVSE load sharing")
+    sharing_no_solar = _by_name(no_solar["mitigations"], "EVSE load sharing")
+    assert set(sharing_solar) == set(sharing_no_solar), (
+        set(sharing_solar), set(sharing_no_solar))
+
+    for k in ("service_voltage_v", "voltage_basis", "timezone_handling"):
+        assert k in solar["provenance"], k
+        assert k in no_solar["provenance"], k
+    return ("the battery dict, the per-case spaces sub-dict, the EVSE-sharing "
+            "mitigation, and the provenance tail keep the same key shape "
+            "between the solar and no-solar paths")
+
 
 CASES = [
     case_220_87_chain_on_hand_computed_inputs,
@@ -3468,6 +4020,16 @@ CASES = [
     case_charger_kw_is_read_only_where_there_is_an_ev,
     case_a_household_with_no_ev_still_gets_its_panel_answer,
     case_an_absent_ev_flag_reproduces_the_committed_artifact,
+    case_solar_present_reads_the_shape_of_the_file,
+    case_build_no_solar_runs_end_to_end_and_reads_no_solar_input,
+    case_the_no_solar_path_fails_closed_on_unexpected_export,
+    case_the_no_solar_path_catches_a_negative_export_too,
+    case_the_no_solar_path_handles_a_single_season_window,
+    case_the_no_solar_path_narrative_matches_a_failed_condition_1,
+    case_the_no_solar_path_fails_closed_on_a_stray_enphase_export,
+    case_the_no_solar_path_respects_has_ev_too,
+    case_the_no_solar_path_reports_a_shortfall_not_headroom,
+    case_the_two_paths_keep_their_shared_blocks_in_lockstep,
 ]
 
 
