@@ -32,7 +32,7 @@ for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_battery_backup_sims test_deep_analyses test_lifetime_payback test_soiling_analysis \
          test_extended_findings test_battery_plan_matrix test_report_tokens \
          test_llm_providers test_egress_preflight test_report_blocks test_prose_lint \
-         test_generate_report; do
+         test_generate_report test_quiet_night_floor; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null
   echo "suite  $t"
 done
@@ -49,7 +49,7 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
          bill_decomposition irreducible_bill nem3_grandfathering dsgs_vpp_backtest \
          cca_rate_extraction cca_bundled_counterfactual battery_sizing_curve \
          perfect_foresight_dispatch tou_structure_stress gross_import_decomposition \
-         reprice_by_vintage; do
+         reprice_by_vintage quiet_night_floor; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "$g.py" >/dev/null 2>&1 \
     && echo "gen    $g" || { echo "gen    $g FAILED"; exit 1; }
 done

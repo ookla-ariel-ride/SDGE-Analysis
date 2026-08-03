@@ -1,0 +1,2617 @@
+{
+ "method": "Price the always-on load (issue #17): what does the quiet-night floor cost,\nand what is cutting it worth?",
+ "window": {
+  "start": "2025-07-24",
+  "end": "2026-07-24"
+ },
+ "night_floor": {
+  "nights_total": 365,
+  "quiet_nights": 43,
+  "ev_nights": 322,
+  "median_kw": 1.03,
+  "p10_kw": 0.822,
+  "p90_kw": 1.36,
+  "cycling_within_night_std_kw_median": 0.1387,
+  "monthly_median_kw": {
+   "1": 1.06,
+   "2": 1.21,
+   "3": 0.98,
+   "4": 1.02,
+   "5": 0.845,
+   "6": 1.025,
+   "7": 1.04,
+   "8": 1.18,
+   "9": 1.37,
+   "10": 1.37,
+   "11": 0.99,
+   "12": 1.14
+  },
+  "window_hours": [
+   1.0,
+   5.0
+  ],
+  "ev_gate_kw": 2.0,
+  "daily_series": [
+   {
+    "date": "2025-07-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-31",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-22",
+    "ev_night": false,
+    "median_kw": 1.18,
+    "within_night_std_kw": 0.0335
+   },
+   {
+    "date": "2025-08-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-31",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-29",
+    "ev_night": false,
+    "median_kw": 1.37,
+    "within_night_std_kw": 0.1391
+   },
+   {
+    "date": "2025-09-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-12",
+    "ev_night": false,
+    "median_kw": 1.1,
+    "within_night_std_kw": 0.0992
+   },
+   {
+    "date": "2025-10-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-27",
+    "ev_night": false,
+    "median_kw": 1.47,
+    "within_night_std_kw": 0.1357
+   },
+   {
+    "date": "2025-10-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-31",
+    "ev_night": false,
+    "median_kw": 1.37,
+    "within_night_std_kw": 0.045
+   },
+   {
+    "date": "2025-11-01",
+    "ev_night": false,
+    "median_kw": 1.01,
+    "within_night_std_kw": 0.0538
+   },
+   {
+    "date": "2025-11-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-04",
+    "ev_night": false,
+    "median_kw": 0.98,
+    "within_night_std_kw": 0.0995
+   },
+   {
+    "date": "2025-11-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-07",
+    "ev_night": false,
+    "median_kw": 1.02,
+    "within_night_std_kw": 0.0808
+   },
+   {
+    "date": "2025-11-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-09",
+    "ev_night": false,
+    "median_kw": 0.98,
+    "within_night_std_kw": 0.0519
+   },
+   {
+    "date": "2025-11-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-13",
+    "ev_night": false,
+    "median_kw": 1.0,
+    "within_night_std_kw": 0.1968
+   },
+   {
+    "date": "2025-11-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-22",
+    "ev_night": false,
+    "median_kw": 0.75,
+    "within_night_std_kw": 0.1885
+   },
+   {
+    "date": "2025-11-23",
+    "ev_night": false,
+    "median_kw": 0.68,
+    "within_night_std_kw": 0.1387
+   },
+   {
+    "date": "2025-11-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-29",
+    "ev_night": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.1871
+   },
+   {
+    "date": "2025-11-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-14",
+    "ev_night": false,
+    "median_kw": 0.92,
+    "within_night_std_kw": 0.0477
+   },
+   {
+    "date": "2025-12-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-27",
+    "ev_night": false,
+    "median_kw": 1.36,
+    "within_night_std_kw": 0.1362
+   },
+   {
+    "date": "2025-12-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-31",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-03",
+    "ev_night": false,
+    "median_kw": 1.17,
+    "within_night_std_kw": 0.1669
+   },
+   {
+    "date": "2026-01-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-06",
+    "ev_night": false,
+    "median_kw": 1.06,
+    "within_night_std_kw": 0.0322
+   },
+   {
+    "date": "2026-01-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-08",
+    "ev_night": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.2201
+   },
+   {
+    "date": "2026-01-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-13",
+    "ev_night": false,
+    "median_kw": 1.42,
+    "within_night_std_kw": 0.106
+   },
+   {
+    "date": "2026-01-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-18",
+    "ev_night": false,
+    "median_kw": 0.74,
+    "within_night_std_kw": 0.1726
+   },
+   {
+    "date": "2026-01-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-31",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-21",
+    "ev_night": false,
+    "median_kw": 1.32,
+    "within_night_std_kw": 0.1702
+   },
+   {
+    "date": "2026-02-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-24",
+    "ev_night": false,
+    "median_kw": 1.1,
+    "within_night_std_kw": 0.1656
+   },
+   {
+    "date": "2026-02-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-12",
+    "ev_night": false,
+    "median_kw": 0.77,
+    "within_night_std_kw": 0.0743
+   },
+   {
+    "date": "2026-03-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-18",
+    "ev_night": false,
+    "median_kw": 1.04,
+    "within_night_std_kw": 0.2077
+   },
+   {
+    "date": "2026-03-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-31",
+    "ev_night": false,
+    "median_kw": 0.98,
+    "within_night_std_kw": 0.296
+   },
+   {
+    "date": "2026-04-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-04",
+    "ev_night": false,
+    "median_kw": 1.08,
+    "within_night_std_kw": 0.1929
+   },
+   {
+    "date": "2026-04-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-12",
+    "ev_night": false,
+    "median_kw": 1.02,
+    "within_night_std_kw": 0.0332
+   },
+   {
+    "date": "2026-04-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-19",
+    "ev_night": false,
+    "median_kw": 0.82,
+    "within_night_std_kw": 0.0343
+   },
+   {
+    "date": "2026-04-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-25",
+    "ev_night": false,
+    "median_kw": 1.36,
+    "within_night_std_kw": 0.1167
+   },
+   {
+    "date": "2026-04-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-28",
+    "ev_night": false,
+    "median_kw": 1.0,
+    "within_night_std_kw": 0.1459
+   },
+   {
+    "date": "2026-04-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-08",
+    "ev_night": false,
+    "median_kw": 0.84,
+    "within_night_std_kw": 0.0761
+   },
+   {
+    "date": "2026-05-09",
+    "ev_night": false,
+    "median_kw": 0.84,
+    "within_night_std_kw": 0.0296
+   },
+   {
+    "date": "2026-05-10",
+    "ev_night": false,
+    "median_kw": 0.85,
+    "within_night_std_kw": 0.0369
+   },
+   {
+    "date": "2026-05-11",
+    "ev_night": false,
+    "median_kw": 0.84,
+    "within_night_std_kw": 0.0538
+   },
+   {
+    "date": "2026-05-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-24",
+    "ev_night": false,
+    "median_kw": 1.12,
+    "within_night_std_kw": 0.1694
+   },
+   {
+    "date": "2026-05-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-31",
+    "ev_night": false,
+    "median_kw": 1.01,
+    "within_night_std_kw": 0.2244
+   },
+   {
+    "date": "2026-06-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-04",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-05",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-06",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-08",
+    "ev_night": false,
+    "median_kw": 1.02,
+    "within_night_std_kw": 0.2354
+   },
+   {
+    "date": "2026-06-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-15",
+    "ev_night": false,
+    "median_kw": 1.05,
+    "within_night_std_kw": 0.1426
+   },
+   {
+    "date": "2026-06-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-20",
+    "ev_night": false,
+    "median_kw": 0.83,
+    "within_night_std_kw": 0.0291
+   },
+   {
+    "date": "2026-06-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-23",
+    "ev_night": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.2086
+   },
+   {
+    "date": "2026-06-24",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-25",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-26",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-27",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-28",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-29",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-30",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-01",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-02",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-03",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-04",
+    "ev_night": false,
+    "median_kw": 1.04,
+    "within_night_std_kw": 0.1615
+   },
+   {
+    "date": "2026-07-05",
+    "ev_night": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.1708
+   },
+   {
+    "date": "2026-07-06",
+    "ev_night": false,
+    "median_kw": 1.05,
+    "within_night_std_kw": 0.1705
+   },
+   {
+    "date": "2026-07-07",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-08",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-09",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-10",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-11",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-12",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-13",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-14",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-15",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-16",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-17",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-18",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-19",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-20",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-21",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-22",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-23",
+    "ev_night": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   }
+  ],
+  "cross_check_extra_results_json": {
+   "published_median_kw": 1.025,
+   "this_run_median_kw": 1.03,
+   "gap_kw": 0.005,
+   "published_quiet_nights": 44,
+   "this_run_quiet_nights": 43,
+   "note": "published in data/extra_results.json's phantom key, an in-session computation with no committed generator (TECHNICAL.md 3.11); this script re-measures independently rather than reading that figure as an input"
+  }
+ },
+ "hour_of_day": {
+  "profile": [
+   {
+    "hour": 0,
+    "p10_kw": 1.341,
+    "median_kw": 12.348,
+    "p90_kw": 12.986
+   },
+   {
+    "hour": 1,
+    "p10_kw": 1.077,
+    "median_kw": 12.494,
+    "p90_kw": 12.969
+   },
+   {
+    "hour": 2,
+    "p10_kw": 1.0054,
+    "median_kw": 7.178,
+    "p90_kw": 12.6276
+   },
+   {
+    "hour": 3,
+    "p10_kw": 0.9768,
+    "median_kw": 1.314,
+    "p90_kw": 9.0396
+   },
+   {
+    "hour": 4,
+    "p10_kw": 1.0024,
+    "median_kw": 1.528,
+    "p90_kw": 3.899
+   },
+   {
+    "hour": 5,
+    "p10_kw": 1.0272,
+    "median_kw": 1.773,
+    "p90_kw": 11.1242
+   },
+   {
+    "hour": 6,
+    "p10_kw": 1.0634,
+    "median_kw": 1.746,
+    "p90_kw": 8.8522
+   },
+   {
+    "hour": 7,
+    "p10_kw": 1.0664,
+    "median_kw": 1.82,
+    "p90_kw": 8.2168
+   },
+   {
+    "hour": 8,
+    "p10_kw": 0.9818,
+    "median_kw": 1.543,
+    "p90_kw": 7.823
+   },
+   {
+    "hour": 9,
+    "p10_kw": 0.9588,
+    "median_kw": 1.402,
+    "p90_kw": 4.059
+   },
+   {
+    "hour": 10,
+    "p10_kw": 0.9468,
+    "median_kw": 1.455,
+    "p90_kw": 4.3996
+   },
+   {
+    "hour": 11,
+    "p10_kw": 0.948,
+    "median_kw": 1.458,
+    "p90_kw": 5.2574
+   },
+   {
+    "hour": 12,
+    "p10_kw": 0.946,
+    "median_kw": 1.411,
+    "p90_kw": 5.0316
+   },
+   {
+    "hour": 13,
+    "p10_kw": 0.9414,
+    "median_kw": 1.437,
+    "p90_kw": 5.036
+   },
+   {
+    "hour": 14,
+    "p10_kw": 0.921,
+    "median_kw": 1.298,
+    "p90_kw": 4.1726
+   },
+   {
+    "hour": 15,
+    "p10_kw": 0.9384,
+    "median_kw": 1.549,
+    "p90_kw": 4.8566
+   },
+   {
+    "hour": 16,
+    "p10_kw": 0.954,
+    "median_kw": 1.778,
+    "p90_kw": 5.138
+   },
+   {
+    "hour": 17,
+    "p10_kw": 1.0124,
+    "median_kw": 1.919,
+    "p90_kw": 5.2164
+   },
+   {
+    "hour": 18,
+    "p10_kw": 1.0038,
+    "median_kw": 1.727,
+    "p90_kw": 4.9618
+   },
+   {
+    "hour": 19,
+    "p10_kw": 1.0504,
+    "median_kw": 1.813,
+    "p90_kw": 4.92
+   },
+   {
+    "hour": 20,
+    "p10_kw": 1.1488,
+    "median_kw": 2.066,
+    "p90_kw": 5.1052
+   },
+   {
+    "hour": 21,
+    "p10_kw": 1.047,
+    "median_kw": 1.358,
+    "p90_kw": 3.1724
+   },
+   {
+    "hour": 22,
+    "p10_kw": 0.9938,
+    "median_kw": 1.255,
+    "p90_kw": 2.7008
+   },
+   {
+    "hour": 23,
+    "p10_kw": 0.981,
+    "median_kw": 1.2,
+    "p90_kw": 2.6772
+   }
+  ],
+  "source": "Enphase SAM 8760 whole-home consumption (samA.csv/samB.csv)",
+  "midday_10to14_p10_kw": 0.9455,
+  "night_1to5_median_kw": 5.6285,
+  "note": "the midday p10 (a low percentile of whole-home consumption when solar is most abundant) is the day-side analog of the night-import floor; the two independent instruments corroborating each other supports (but does not prove) that the load runs continuously rather than only at night"
+ },
+ "pricing": {
+  "floor_kw_priced": 1.03,
+  "floor_kw_basis": "the measured quiet-night median import power (night_floor.median_kw), applied as a constant across all 8,760 hours of the year -- see confidence_labels.pricing",
+  "price_map_source": "rates.allin()/rates.credit(), cross-checked against the committed data/extra_results.json price_map (issue #17's cited source) to within $0.0005/kWh",
+  "price_map": {
+   "S_on": {
+    "import": 0.8681,
+    "export": 0.8189
+   },
+   "S_off": {
+    "import": 0.5111,
+    "export": 0.4618
+   },
+   "S_sop": {
+    "import": 0.125,
+    "export": 0.0757
+   },
+   "W_on": {
+    "import": 0.6053,
+    "export": 0.556
+   },
+   "W_off": {
+    "import": 0.5188,
+    "export": 0.4696
+   },
+   "W_sop": {
+    "import": 0.1272,
+    "export": 0.0779
+   }
+  },
+  "method_a_price_map": {
+   "avoided_import_usd": 2389.01,
+   "displaced_export_usd": 853.4,
+   "total_usd": 3242.41
+  },
+  "method_b_rebill": {
+   "baseline_bill_usd": 4904.13,
+   "counterfactual_bill_usd": 1618.79,
+   "avoided_import_usd": 2373.2,
+   "displaced_export_usd": 912.13,
+   "total_usd": 3285.34
+  },
+  "reconciliation": {
+   "gap_usd": -42.93,
+   "gap_pct": -1.31,
+   "avoided_import_gap_usd": 15.81,
+   "displaced_export_gap_usd": -58.73,
+   "sign_flip_buckets": [
+    {
+     "year_month": "2025-08",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 204.15,
+     "counterfactual_net_kwh": -42.03
+    },
+    {
+     "year_month": "2025-09",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 229.08,
+     "counterfactual_net_kwh": -11.94
+    },
+    {
+     "year_month": "2025-10",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 220.76,
+     "counterfactual_net_kwh": -33.65
+    },
+    {
+     "year_month": "2025-11",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 105.56,
+     "counterfactual_net_kwh": -123.09
+    },
+    {
+     "year_month": "2025-12",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 214.84,
+     "counterfactual_net_kwh": -35.46
+    },
+    {
+     "year_month": "2026-01",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 169.47,
+     "counterfactual_net_kwh": -76.7
+    },
+    {
+     "year_month": "2026-02",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 32.03,
+     "counterfactual_net_kwh": -190.45
+    },
+    {
+     "year_month": "2026-03",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 100.5,
+     "counterfactual_net_kwh": -149.79
+    },
+    {
+     "year_month": "2026-04",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 11.38,
+     "counterfactual_net_kwh": -233.77
+    },
+    {
+     "year_month": "2026-05",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 22.77,
+     "counterfactual_net_kwh": -219.28
+    },
+    {
+     "year_month": "2026-06",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 154.02,
+     "counterfactual_net_kwh": -91.12
+    },
+    {
+     "year_month": "2026-07",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 65.94,
+     "counterfactual_net_kwh": -122.55
+    }
+   ],
+   "sign_flip_buckets_kwh": 1530.5,
+   "explanation": "method (a) prices every 15-minute interval by its OWN import/export sign against a flat season/period rate; method (b)'s monthly NEM netting prices the marginal kWh by the (month, season, period) BUCKET's aggregate sign. The non-bypassable-charge term is linear in total gross import regardless of bucketing, so it contributes no gap; the entire reconciliation gap traces to buckets where the two sign conventions disagree -- 12 bucket(s) totalling 1530.5 kWh in this measured year. A small gap concentrated in a handful of near-zero-net buckets is the expected signature of this mechanism, not an error in either method."
+  }
+ },
+ "sensitivity_per_100w": {
+  "basis": "method b (full monthly re-bill) at 100 W steps from 100 to 1200 W",
+  "steps": [
+   {
+    "reduction_w": 100,
+    "annual_savings_usd": 323.18,
+    "marginal_usd_per_100w": 323.18
+   },
+   {
+    "reduction_w": 200,
+    "annual_savings_usd": 644.81,
+    "marginal_usd_per_100w": 321.63
+   },
+   {
+    "reduction_w": 300,
+    "annual_savings_usd": 965.97,
+    "marginal_usd_per_100w": 321.16
+   },
+   {
+    "reduction_w": 400,
+    "annual_savings_usd": 1286.77,
+    "marginal_usd_per_100w": 320.8
+   },
+   {
+    "reduction_w": 500,
+    "annual_savings_usd": 1606.36,
+    "marginal_usd_per_100w": 319.6
+   },
+   {
+    "reduction_w": 600,
+    "annual_savings_usd": 1925.25,
+    "marginal_usd_per_100w": 318.89
+   },
+   {
+    "reduction_w": 700,
+    "annual_savings_usd": 2243.63,
+    "marginal_usd_per_100w": 318.38
+   },
+   {
+    "reduction_w": 800,
+    "annual_savings_usd": 2560.89,
+    "marginal_usd_per_100w": 317.25
+   },
+   {
+    "reduction_w": 900,
+    "annual_savings_usd": 2877.28,
+    "marginal_usd_per_100w": 316.39
+   },
+   {
+    "reduction_w": 1000,
+    "annual_savings_usd": 3191.45,
+    "marginal_usd_per_100w": 314.17
+   },
+   {
+    "reduction_w": 1100,
+    "annual_savings_usd": 3503.95,
+    "marginal_usd_per_100w": 312.5
+   },
+   {
+    "reduction_w": 1200,
+    "annual_savings_usd": 3815.32,
+    "marginal_usd_per_100w": 311.37
+   }
+  ],
+  "usd_per_100w_at_current_floor": {
+   "floor_w_used": 1000,
+   "value_usd": 314.17,
+   "note": "the marginal $/100W step nearest the measured floor (1030 W) -- the rate a household actually near this floor level should expect from the NEXT 100 W removed"
+  },
+  "usd_per_100w_general_average": {
+   "value_usd": 317.69,
+   "note": "linear-fit slope across the full 100-1200 W range -- a general marginal rate, not specific to the current floor level"
+  },
+  "linearity_note": "max deviation from the linear fit is $10.70 (0.28% of total savings at 1200 W) across the tested range -- effectively linear over this range"
+ },
+ "battery_interaction": {
+  "config": "13.5 kWh Powerwall 3 (bare unit), greedy policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",
+  "baseline_battery_marginal_usd": 2327.42,
+  "reduced_floor_battery_marginal_usd": 1272.05,
+  "delta_usd": -1055.37,
+  "delta_pct": -45.35,
+  "direction": "removing the floor SHRINKS the battery's own marginal saving: the floor persists into the 4-9pm on-peak window the battery discharges into, so a smaller floor leaves less expensive import for the battery to displace"
+ },
+ "confidence_labels": {
+  "load_magnitude": "measured -- night_floor is read directly from 15-minute Green Button import data (no solar to mask it); hour_of_day is read directly from the Enphase SAM 8760 whole-home consumption meter, an independent instrument that sees self-consumed solar and so is the only one that can see a daytime floor",
+  "load_cause": "attested, not measured -- the owner identifies the floor as home-lab computer systems (TECHNICAL.md 3.11); this script does not verify that with a plug-meter study or device-level monitoring, and reports the load's cost regardless of cause",
+  "pricing": "modeled -- both pricing methods apply the measured floor_kw as a CONSTANT across all 8,760 hours of the year, an assumption (continuous compute load) that is plausible but not separately verified outside the measured 1-5am night window and the SAM hour-of-day cross-check",
+  "battery_interaction": "modeled -- battery_dispatch_policies.run_batt, the same engine behind every published battery figure in this repo, applied to a counterfactual load series"
+ },
+ "notes": {
+  "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+  "quiet_night_method": "TECHNICAL.md 3.11: 1-5am median import power, EV nights excluded (max 1-5am power >= 2 kW)"
+ }
+}

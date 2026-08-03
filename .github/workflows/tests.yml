@@ -132,3 +132,5 @@ jobs:
         run: python analysis/test_gross_import_decomposition.py
       - name: reprice-by-vintage guard tests
         run: python analysis/test_reprice_by_vintage.py
+      - name: quiet-night-floor guard tests
+        run: python analysis/test_quiet_night_floor.py

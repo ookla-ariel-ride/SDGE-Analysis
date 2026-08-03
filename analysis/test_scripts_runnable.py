@@ -88,6 +88,7 @@ MANIFEST = {
     "cca_bundled_counterfactual.py": "generator",
     "gross_import_decomposition.py": "generator",
     "reprice_by_vintage.py": "generator",
+    "quiet_night_floor.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -138,6 +139,9 @@ OWNS = {
     # exactly like rates_history.py -- NOT the cwd-then-promote convention
     # gross_import_decomposition.py uses.
     "reprice_by_vintage.py":        [("data", "reprice_by_vintage.json")],
+    # writes directly into ROOT/data via its own repo_root() walk-up, same
+    # convention as tou_structure_stress.py/rates_history.py/reprice_by_vintage.py
+    "quiet_night_floor.py":         [("data", "quiet_night_floor.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -390,6 +394,12 @@ NEEDS_PRIVATE_ARCHIVE = {
     "reprice_by_vintage.py": ("the raw Green Button export (usage.csv, via "
                               "billing_model_nem.load()) for the interval data it reconciles "
                               "against the 13-period bill corpus"),
+    "quiet_night_floor.py": ("both SAM 8760 exports (samA.csv/samB.csv, the only "
+                             "independent gross-load instrument that can see the "
+                             "day-side floor -- same dependency as service_headroom.py "
+                             "and gross_import_decomposition.py), none of which has a "
+                             "synthetic stand-in carrying a real, continuous always-on "
+                             "signature"),
 }
 
 # Generators listed above that nonetheless run END TO END IN CI -- just not
