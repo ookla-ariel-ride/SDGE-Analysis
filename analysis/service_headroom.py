@@ -2006,7 +2006,15 @@ def nec_220_87_conditions(days, pv_kw_ac):
                 "The route that is closed is the WEAKER one. The household "
                 "qualifies under condition (1) itself, on a full year of "
                 "revenue-meter data, which is the evidence the Exception "
-                "exists to substitute for."),
+                "exists to substitute for."
+                if days >= NEC_220_87_CONDITION_1_DAYS else
+                f"Not a strengthening on this window: with {days} days "
+                f"against the {NEC_220_87_CONDITION_1_DAYS}-day requirement, "
+                f"condition (1) is not met either, and the Exception that "
+                f"would otherwise cover a shorter window is closed to this "
+                f"service because it has a renewable energy system. Neither "
+                f"route currently qualifies this household; more continuous "
+                f"data is what would."),
         },
         "condition_2": {
             "rule": nec_rule("220.87(2)"),
@@ -2089,7 +2097,17 @@ def nec_220_87_conditions_no_solar(days):
                 "and condition (1) is met outright on a full year of data "
                 "regardless -- the stronger route was taken because it is "
                 "the one the data supports, not because the weaker one was "
-                "unavailable."),
+                "unavailable."
+                if days >= NEC_220_87_CONDITION_1_DAYS else
+                f"Not applicable in the direction the solar path reports it, "
+                f"and not yet a strengthening either way: with {days} days "
+                f"against the {NEC_220_87_CONDITION_1_DAYS}-day requirement, "
+                f"condition (1) is not met on this window. The Exception "
+                f"being open means the 30-day route may be what qualifies "
+                f"this service instead -- see "
+                f"condition_1_exception_30_day_recording.why for what it "
+                f"requires, none of which is verified from interval data "
+                f"alone."),
         },
         "condition_2": {
             "rule": nec_rule("220.87(2)"),
@@ -2989,13 +3007,17 @@ def build_no_solar():
                                  days[0], days[-1])
 
     # Gross load IS the metered import: with no array there is nothing for it
-    # to net out. A nonzero export on a no-solar meter is a contradiction
+    # to net out. A NONZERO export on a no-solar meter is a contradiction
     # between this branch and the data, not a quantity to net through
-    # unexamined -- it means either the intake is missing its solar: block or
-    # this is not a no-solar household, and either way the run stops rather
-    # than silently taking import-minus-export as gross load on a household
-    # this function has been told has no production to explain a credit.
-    exporting = [(d, hf, exp) for d, hf, _imp, exp in intervals if exp > 0.0]
+    # unexamined -- checked with != rather than > 0.0 because a NEGATIVE
+    # export (meter/CT rounding or reverse-flow noise, not physically
+    # impossible to record) is just as much a signal that something is
+    # backfeeding this service as a positive one, and a > 0.0 guard would
+    # have let it slip straight into "100% zero-export" below unexamined.
+    # Either way the run stops rather than silently taking import-minus-export
+    # as gross load on a household this function has been told has no
+    # production to explain a credit.
+    exporting = [(d, hf, exp) for d, hf, _imp, exp in intervals if exp != 0.0]
     if exporting:
         d0, hf0, exp0 = exporting[0]
         raise SystemExit(
@@ -3003,8 +3025,11 @@ def build_no_solar():
             f"({exp0:.4f} kWh at {fmt_ts(d0, hf0)}, {len(exporting)} "
             f"interval(s) total) but private/household.yaml carries no "
             f"solar: block. A service with nothing backfeeding it should "
-            f"never export; either the intake is missing solar: or this "
-            f"household is not on the no-solar path.")
+            f"never export; either the intake is missing solar:, this "
+            f"household is not on the no-solar path, or this is meter/CT "
+            f"rounding or reverse-flow noise on an otherwise no-solar "
+            f"service. Resolve the contradiction rather than deleting or "
+            f"editing the interval data to clear this check.")
 
     # The envelope, in the SOLAR PATH'S OWN 7-field shape (date, hour_frac,
     # lower_kw, upper_kw, export_kwh, exact, pv_basis) so the peak/monthly/
@@ -3017,6 +3042,15 @@ def build_no_solar():
     env = [(d, hf, _r(imp * 4.0), _r(imp * 4.0), 0.0, True, None)
            for d, hf, imp, _exp in intervals]
     n = len(env)
+    # Computed from env, not asserted as n/100.0/0 -- the same shape the solar
+    # path's gross_envelope() reading uses (see zero_export/exact below build()'s
+    # gross_envelope() call). The export guard above should make every count
+    # here trivially equal to n, 100.0 and 0 respectively; reading them off
+    # env instead means a future bug in that guard, or in how env is built,
+    # shows up here as a wrong number rather than as an artifact that keeps
+    # publishing a claim the data no longer supports.
+    zero_export = sum(1 for e in env if e[4] == 0.0)
+    exact = sum(1 for e in env if e[5])
 
     peak = max(env, key=lambda e: e[2])
     peak_kw = peak[2]
@@ -3107,6 +3141,21 @@ def build_no_solar():
                                 panel["main_breaker_position"],
                                 SOURCE_PROPOSED_BATTERY,
                                 busbar_sources)
+    # WHAT_WOULD_SETTLE_THE_POSITION[SOURCE_PROPOSED_BATTERY] is shared with
+    # the solar path and, correctly there, contrasts the proposed battery
+    # breaker against "the existing PV breaker's end" to explain why one is
+    # never substituted for the other. There is no existing PV breaker on
+    # this branch -- this household has already published solar.present =
+    # false -- so that contrast is reworded here, on this call's own dict
+    # (freshly returned, not shared or cached), rather than by branching the
+    # shared constant or position_condition() itself.
+    if busbar["position_condition"]["what_would_settle_it"] is not None:
+        busbar["position_condition"]["what_would_settle_it"] = (
+            "A SURVEYED position for the new breaker: which end of the "
+            "busbar the main lands on, and whether two adjacent full-size "
+            "spaces exist at the opposite end for a 2-pole source breaker "
+            "to occupy. There is no existing backfeed source on this panel "
+            "to compare it against.")
     occ = panel_occupancy(panel["schedule"], panel["spaces"],
                           panel["max_circuits"])
     adjacent_free_pairs = None
@@ -3229,7 +3278,32 @@ def build_no_solar():
                     if int(ym[5:]) in R.SUMMER_MONTHS}
     winter_peaks = {ym: e[2] for ym, e in monthly.items()
                     if int(ym[5:]) not in R.SUMMER_MONTHS}
-    season_gap = _r(max(summer_peaks.values()) - max(winter_peaks.values()), 2)
+    # This path is specifically the one nec_220_87_conditions_no_solar()
+    # documents as designed to work on a SHORT window -- the 30-day Exception
+    # is open to it -- and a window under a year can fall wholly inside or
+    # wholly outside R.SUMMER_MONTHS, leaving one side of max()...max() with
+    # no month to read at all. That is a fact about the window, not an
+    # error condition; each side is published only where the window actually
+    # has a month in that season, and the comparison is reported
+    # not-applicable with a named reason otherwise, rather than raising
+    # ValueError: max() arg is an empty sequence on the very short-window
+    # route this function exists to support.
+    summer_max_raw = max(summer_peaks.values()) if summer_peaks else None
+    winter_max_raw = max(winter_peaks.values()) if winter_peaks else None
+    both_seasons_present = summer_max_raw is not None and winter_max_raw is not None
+    season_gap = (_r(summer_max_raw - winter_max_raw, 2)
+                  if both_seasons_present else None)
+    if both_seasons_present:
+        season_gap_na_reason = None
+    elif summer_max_raw is None and winter_max_raw is None:
+        season_gap_na_reason = (  # pragma: no cover -- monthly is never empty
+            "the window contains no months at all")
+    elif summer_max_raw is None:
+        season_gap_na_reason = (
+            "the window contains no summer month (R.SUMMER_MONTHS is "
+            + ", ".join(str(m) for m in sorted(R.SUMMER_MONTHS)) + ")")
+    else:
+        season_gap_na_reason = "the window contains no winter month"
     cooling_shaped = int(peak[1]) in COOLING_HOURS
     noncoincident = {
         "rule": nec_rule("220.60"),
@@ -3261,25 +3335,38 @@ def build_no_solar():
             "annual_peak_hour": int(peak[1]),
             "cooling_hours": f"{COOLING_HOURS[0]:02d}:00-{COOLING_HOURS[-1]:02d}:59",
             "annual_peak_falls_in_the_cooling_hours": cooling_shaped,
-            "max_summer_month_peak_kw": _r(max(summer_peaks.values())),
-            "max_winter_month_peak_kw": _r(max(winter_peaks.values())),
+            "max_summer_month_peak_kw": (
+                _r(summer_max_raw) if summer_max_raw is not None else None),
+            "max_winter_month_peak_kw": (
+                _r(winter_max_raw) if winter_max_raw is not None else None),
             "summer_minus_winter_peak_kw": season_gap,
+            "season_comparison_not_applicable_reason": season_gap_na_reason,
             "reading": (
                 f"The annual maximum falls at {int(peak[1]):02d}:00 in "
                 f"{peak[0].year:04d}-{peak[0].month:02d}, "
                 + ("inside" if cooling_shaped else "outside")
                 + f" the {COOLING_HOURS[0]:02d}:00-{COOLING_HOURS[-1]:02d}:59 "
-                f"hours a condenser works hardest, and the largest "
-                f"non-cooling-season month peaks {abs(season_gap)} kW "
-                + ("below" if season_gap > 0 else "above")
-                + " the largest cooling-season month. "
-                + ("Cooling may therefore be part of the measured maximum, and "
-                   "where the credit sits inside the bounds above is not "
-                   "determined from whole-house data." if cooling_shaped else
-                   "Neither fact points at cooling setting the measured "
-                   "maximum, so the A/C credit at the peak reads as near the "
-                   "low end of the bounds above and the conservative figure is "
-                   "the one to use.")),
+                f"hours a condenser works hardest. "
+                + (
+                    f"The window does not span both a summer and a winter "
+                    f"month ({season_gap_na_reason}), so the summer/winter "
+                    f"peak comparison is not applicable here; whether the "
+                    f"annual maximum falls in the cooling hours is read "
+                    f"directly above instead."
+                    if season_gap is None else
+                    f"The largest non-cooling-season month peaks "
+                    f"{abs(season_gap)} kW "
+                    + ("below" if season_gap > 0 else "above")
+                    + " the largest cooling-season month. "
+                    + ("Cooling may therefore be part of the measured "
+                       "maximum, and where the credit sits inside the "
+                       "bounds above is not determined from whole-house "
+                       "data." if cooling_shaped else
+                       "Neither fact points at cooling setting the measured "
+                       "maximum, so the A/C credit at the peak reads as "
+                       "near the low end of the bounds above and the "
+                       "conservative figure is the one to use.")
+                )),
         },
         "not_determined": (
             "The A/C's actual draw at the moment of the annual peak cannot be "
@@ -3527,11 +3614,11 @@ def build_no_solar():
         "gross_reconstruction": {
             "identity": "gross = import (no on-site generation to net out)",
             "intervals": n,
-            "zero_export_intervals": n,
-            "zero_export_fraction_pct": 100.0,
-            "point_determined_intervals": n,
-            "point_determined_fraction_pct": 100.0,
-            "bounded_intervals": 0,
+            "zero_export_intervals": zero_export,
+            "zero_export_fraction_pct": _r(100.0 * zero_export / n, 3),
+            "point_determined_intervals": exact,
+            "point_determined_fraction_pct": _r(100.0 * exact / n, 3),
+            "bounded_intervals": n - exact,
             "max_lower_bound_kw": _r(peak_kw),
             "max_upper_bound_kw": _r(peak_kw),
             "honesty": (
@@ -3607,7 +3694,17 @@ def build_no_solar():
                 f"1-year period condition (1) requires. See conditions -- "
                 f"unlike the solar path, the 30-day Exception was open to "
                 f"this service; a full year is simply the stronger basis and "
-                f"is what this household has."),
+                f"is what this household has."
+                if len(days) >= NEC_220_87_CONDITION_1_DAYS else
+                f"{len(days)} days of continuous 15-minute data, short of "
+                f"the {NEC_220_87_CONDITION_1_DAYS}-day period condition (1) "
+                f"requires. See conditions -- unlike the solar path, the "
+                f"30-day Exception is open to this service, so a window "
+                f"meeting ITS OWN conditions (continuously recorded, "
+                f"occupied, including the larger of the heating or cooling "
+                f"load -- none of which is verified here) may still qualify "
+                f"this household even though condition (1) alone does not "
+                f"on this window."),
             "steps": steps,
             "calculated_load_a": a_calc,
             "headroom_a": {"vs_service_rating": avail["service"],
@@ -4439,7 +4536,14 @@ def build():
                 f"route is the Exception to (1), not the condition, and it is "
                 f"closed to a service with a photovoltaic system -- so a year "
                 f"is the only span that qualifies this household, and it has "
-                f"one. See conditions."),
+                f"one. See conditions."
+                if len(days) >= NEC_220_87_CONDITION_1_DAYS else
+                f"{len(days)} days of continuous 15-minute data, short of "
+                f"the {NEC_220_87_CONDITION_1_DAYS}-day period condition (1) "
+                f"requires. The 30-day recording route is the Exception to "
+                f"(1), not the condition, and it is closed to a service "
+                f"with a photovoltaic system -- so neither route currently "
+                f"qualifies this household on this window. See conditions."),
             "steps": steps,
             "calculated_load_a": a_calc,
             "headroom_a": {"vs_service_rating": avail["service"],
