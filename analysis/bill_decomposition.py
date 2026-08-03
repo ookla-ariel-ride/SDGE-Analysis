@@ -600,16 +600,35 @@ def cca_block(stmt):
 # Every non-TOU-energy line this analysis knows how to name, in the order the
 # statements print them. A line the statements print and this table does not name
 # breaks the reconciliation below, by construction: nothing is absorbed silently.
+#
+# _SIGNED_DOLLAR (issue #46): SDG&E prints a negative per-kWh rate as
+# "kWh x -$.02828 -28.31" -- the minus BEFORE the dollar sign -- not "kWh x $-.02828"
+# (minus after, which _NUM's own leading [-] already covers). PCIA in particular is
+# routinely negative (see rates.py), and it and the two other adjustment lines below
+# share the literal "kWh x $RATE" construction, so a bare \$ here made the whole line
+# fail to match -- not parse to a wrong value, fail to match at all -- and the caller's
+# lines.get(name, 0.0) silently priced the missing charge at zero. Every _LINE_PATTERNS
+# entry with this "kWh x $RATE" shape (wildfire_fund_charge, pcia,
+# incremental_procurement_cost_adjustment) needs the tolerance; base_services_charge's
+# "$RATE x N days" puts the $ in a different position (right after the charge name, not
+# after "x") and is a flat access fee that has never printed negative in the corpus, so
+# it is a different shape and is left alone. Wherever _SIGNED_DOLLAR is made optional
+# below, it is wrapped in its own (?:...)? group rather than written as
+# "{_SIGNED_DOLLAR}?" -- the latter would silently apply the "?" to only the LAST atom
+# of whatever _SIGNED_DOLLAR happens to expand to (today just "\$", so it works by
+# accident), which would quietly stop tolerating the sign if _SIGNED_DOLLAR ever grew
+# an extra atom (e.g. trailing "\s*"), with no test catching the regression.
+_SIGNED_DOLLAR = r"[−-]?\$"
 _LINE_PATTERNS = [
     ("monthly_service_fee", rf"Monthly Service Fee\s+({_NUM})"),
     ("base_services_charge", rf"Base Services Charge \$(?:{_NUM}) x \d+ days\s+({_NUM})"),
     ("non_bypassable_charges", rf"Non-Bypassable Charges\s+({_NUM})"),
     ("wildfire_fund_charge",
-     rf"Wildfire Fund Charge\s+[\d,]+ kWh x \${_NUM}\s+({_NUM})"),
+     rf"Wildfire Fund Charge\s+[\d,]+ kWh x {_SIGNED_DOLLAR}{_NUM}\s+({_NUM})"),
     ("electricity_generation_credit", rf"Electricity Generation Credit\s+({_NUM})"),
-    ("pcia", rf"PCIA \d+\s+[\d,]+ kWh x \$?({_NUM}\s+{_NUM})"),
+    ("pcia", rf"PCIA \d+\s+[\d,]+ kWh x (?:{_SIGNED_DOLLAR})?({_NUM}\s+{_NUM})"),
     ("incremental_procurement_cost_adjustment",
-     rf"Incremental Procurement Cost Adjustment\s+[\d,]+ kWh x \${_NUM}\s+({_NUM})"),
+     rf"Incremental Procurement Cost Adjustment\s+[\d,]+ kWh x {_SIGNED_DOLLAR}{_NUM}\s+({_NUM})"),
     ("economic_development_program_credit",
      rf"Economic Development Program Credit\s+({_NUM})"),
     ("applied_generation_credit_energy", rf"Applied Generation Credit\s+({_NUM})"),

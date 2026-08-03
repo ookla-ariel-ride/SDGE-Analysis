@@ -4224,19 +4224,24 @@ within **$0.50** (the issue's own stated tolerance, never widened) on every one 
 periods; the worst observed residual is $0.02, on the 9/26/24 – 10/25/24 period, so the
 tolerance was never tested against its own edge.
 
-**Two parsing gaps found while building this, fixed locally.** `bill_decomposition._LINE_PATTERNS`
-anchors its per-kWh-rate lines on a literal `x $`, with no allowance for a minus sign printed
-*before* the dollar sign — SDG&E prints PCIA that way routinely (`PCIA 2023 802 kWh x -$.03161
--25.35`, 2025-03-04 statement), and the unmodified pattern simply fails to match, silently
-undercounting PCIA. Also, those same per-kWh-rate lines (Wildfire Fund Charge, PCIA, the
-Incremental Procurement Cost Adjustment) can reprint more than once *within a single period*
-when a mid-cycle rate change splits it into segments (confirmed: wildfire on 2025-03-04 and
-2026-02-02; PCIA on 2025-03-04 and 2026-05-04) — each reprint is a portion of the same charge
-and must be summed, not conflated with a genuine conflict. `irreducible_bill.py` carries its
-own patterns (`_OWN_PATTERNS`) that allow the leading sign and sum same-name segments
-(`_SUM_ACROSS_SEGMENTS`); `bill_decomposition.py` itself is untouched — it is owned by a
-sibling phase — and its own conflict guard still correctly refuses a *genuine* same-period
-duplicate with differing values (e.g. two different "Non-Bypassable Charges" totals).
+**Two parsing gaps found while building this.** `bill_decomposition._LINE_PATTERNS` anchored its
+per-kWh-rate lines on a literal `x $`, with no allowance for a minus sign printed *before* the
+dollar sign — SDG&E prints PCIA that way routinely (`PCIA 2023 802 kWh x -$.03161 -25.35`,
+2025-03-04 statement), and the unmodified pattern simply failed to match, silently undercounting
+PCIA. `irreducible_bill.py` carried its own patterns (`_OWN_PATTERNS`) that allowed the leading
+sign, discovered here because this script's independent cross-check came out $25.35 high on that
+exact statement until the sign was allowed for; issue #46 has since fixed
+`bill_decomposition._LINE_PATTERNS` itself to accept the sign in either position (neither of the
+two statements that module's own year-over-year comparison uses happened to trigger the gap, so
+its committed artifact is unchanged by the fix). Separately, those same per-kWh-rate lines
+(Wildfire Fund Charge, PCIA, the Incremental Procurement Cost Adjustment) can reprint more than
+once *within a single period* when a mid-cycle rate change splits it into segments (confirmed:
+wildfire on 2025-03-04 and 2026-02-02; PCIA on 2025-03-04 and 2026-05-04) — each reprint is a
+portion of the same charge and must be summed, not conflated with a genuine conflict.
+`bill_decomposition.py`'s own conflict guard has no segment-summing concept and correctly refuses
+any same-period duplicate with differing values, genuine or segmented alike, which is why
+`irreducible_bill.py` still carries its own patterns and sums same-name segments
+(`_SUM_ACROSS_SEGMENTS`) rather than calling `bill_decomposition.charge_lines()` for this purpose.
 
 **Scoping a two-period statement.** The 2025-10-31 statement carries two billing periods (a
 5-day stub then a 27-day remainder) in one PDF. Rather than allocate the statement's totals
