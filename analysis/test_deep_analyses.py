@@ -44,16 +44,32 @@ class SkipCase(Exception):
 END = dt.date(2026, 7, 24)
 START = END - dt.timedelta(days=365)
 
-# deep_analyses.py's own hardcoded UDC5/CEA5 + WFNBC/PCIA constants (local to
-# the script, matching battery_backup_sims.py's, used to hand-verify the
-# EV-session dollar figures the same way that suite verifies its own).
-_WFNBC, _PCIA = 0.00591, 0.02828
-_UDC5 = {"S": {"sop": 0.04114}, "W": {"sop": 0.04114}}
-_CEA5 = {"S": {"sop": 0.04961}, "W": {"sop": 0.05187}}
+def _generator_constants():
+    """EXTRACT deep_analyses.py's own hardcoded WFNBC/PCIA/NBC/BSC/UDC5/CEA5
+    directly out of its source (executing the exact declaring line, not
+    hand-copying literals into this file) -- the same drift risk
+    test_battery_backup_sims.py's identical pattern documents: the generator
+    declares its own rate table, not analysis/rates.py's canonical one, and a
+    hand-copied number silently stops matching the moment the generator's own
+    constant changes."""
+    src = (ANALYSIS / "deep_analyses.py").read_text()
+    line = src[src.index("WFNBC=0.00591"):src.index("\nout={}")]
+    ns = {}
+    exec(line, ns)
+    udc5_cea5 = src[src.index('UDC5={"S":'):src.index("\ndef rates(")]
+    exec(udc5_cea5, ns)
+    return ns["WFNBC"], ns["PCIA"], ns["UDC5"], ns["CEA5"]
+
+
+_WFNBC, _PCIA, _UDC5, _CEA5 = _generator_constants()
 
 
 def _rate_sop(season):
     return _UDC5[season]["sop"] + _WFNBC + _PCIA + _CEA5[season]["sop"]
+
+
+def _rate_off(season):
+    return _UDC5[season]["off"] + _WFNBC + _PCIA + _CEA5[season]["off"]
 
 
 def _season(month):
@@ -192,8 +208,8 @@ def case_deep_analyses_end_to_end_matches_hand_and_oracle_computations():
     # "sop": h>=14 rules both the weekend and holiday branches out too), so
     # this uses the OFF entries of the script's own UDC5/CEA5 tables.
     raw_session_kwh = EV_KWH * 8   # 16.0, unadjusted
-    exp_cost_total = (n_summer * raw_session_kwh * (0.31711 + _WFNBC + _PCIA + 0.15975)
-                      + n_winter * raw_session_kwh * (0.31711 + _WFNBC + _PCIA + 0.15782))
+    exp_cost_total = (n_summer * raw_session_kwh * _rate_off("S")
+                      + n_winter * raw_session_kwh * _rate_off("W"))
     assert abs(ev["cost_total"] - round(exp_cost_total)) <= 2, (ev, exp_cost_total)
     exp_cost_if_all_sop = round(exp_kwh_total * 0.1257)
     assert abs(ev["cost_if_all_sop"] - exp_cost_if_all_sop) <= 1, ev
@@ -221,7 +237,7 @@ CASES = [case_deep_analyses_end_to_end_matches_hand_and_oracle_computations]
 
 
 def main():
-    ran = failures = 0
+    ran = skipped = failures = 0
     for case in CASES:
         try:
             msg = case()
@@ -229,10 +245,12 @@ def main():
             ran += 1
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0
 
 

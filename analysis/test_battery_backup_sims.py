@@ -44,18 +44,37 @@ class SkipCase(Exception):
 END = dt.date(2026, 7, 24)
 START = END - dt.timedelta(days=365)   # 2025-07-24, inclusive
 
-# battery_backup_sims.py's OWN hardcoded rate constants (local to the script,
-# not analysis/rates.py -- it declares its own UDC/CEA/WFNBC/PCIA/NBC). Copied
-# here as the basis for hand-computing the expected arbitrage totals; if the
-# script's own constants ever change this copy must be updated to match, same
-# as any other hand-derived fixture in this suite.
-_WFNBC = 0.00591
-_PCIA = 0.02828
-_NBC = 0.01515 - 0.00007 + _WFNBC
-_UDC = {"S": {"on": 0.31711, "off": 0.31711, "sop": 0.04114},
-        "W": {"on": 0.31711, "off": 0.31711, "sop": 0.04114}}
-_CEA = {"S": {"on": 0.51684, "off": 0.15975, "sop": 0.04961},
-        "W": {"on": 0.24430, "off": 0.15782, "sop": 0.05187}}
+def _generator_constants():
+    """EXTRACT battery_backup_sims.py's own hardcoded rate constants and its
+    `configs` list (cap, discharge_kw, name, charge_kw) directly out of its
+    source, by executing the exact lines that declare them, rather than
+    hand-copying literals into this file. The generator declares its own
+    UDC/CEA/WFNBC/PCIA/NBC (not analysis/rates.py's canonical energy()/
+    credit() -- see its own module docstring) and its own per-config charge
+    power (CHARGE_KW_PW3/_WITH_EXPANSION, issue #40); a hand-copied constant
+    silently drifts out of sync with the generator the moment either changes
+    (issue #40 landed a `charge_pwr` 4th tuple element AFTER this suite's
+    first draft hardcoded two-tuples -- exactly the drift this function
+    exists to make impossible). Executing the generator's OWN lines means
+    this test always sees whatever the generator actually computes with."""
+    src = (ANALYSIS / "battery_backup_sims.py").read_text()
+    # rate constants: exactly the 3 lines between their declaration and the
+    # next line, which references the script's own dataframe `d` and would
+    # NameError if executed here
+    r_start = src.index("WFNBC=0.00591")
+    r_end = src.index('\nd["rate"]=')
+    # the config list: from its own charge-rating constants (issue #40) up to
+    # (not including) the json.dump() call that actually runs sim() -- pure
+    # literals, no dataframe/pandas dependency
+    c_start = src.index("CHARGE_KW_PW3=5.0")
+    c_end = src.index("\njson.dump(")
+    ns = {}
+    exec(src[r_start:r_end], ns)
+    exec(src[c_start:c_end], ns)
+    return ns["WFNBC"], ns["PCIA"], ns["NBC"], ns["UDC"], ns["CEA"], ns["configs"]
+
+
+_WFNBC, _PCIA, _NBC, _UDC, _CEA, GENERATOR_CONFIGS = _generator_constants()
 
 
 def _rate(s, p):
@@ -76,8 +95,8 @@ def _write_meter_csv(path, day_row_fn):
             "Disclaimer,synthetic test fixture - no real data", "Title,CSV Export Electric Meter(s)",
             "Resource,Electric", "Meter Number,09999999", "Interval UOM,Minute(s)",
             f"Reading Start,{START.month}/{START.day}/{START.year} 00:00",
-            f"Reading End,{END.month}/{END.day}/{END.year - 1 if False else END.year} 23:45",
-            f"Total Duration,365 Days", "Total Usage,0", "UOM,kWh",
+            f"Reading End,{END.month}/{END.day}/{END.year} 23:45",
+            "Total Duration,365 Days", "Total Usage,0", "UOM,kWh",
             "Meter Number,Date,Start Time,Duration,Consumption,Generation,Net"]
     rows = []
     d = START
@@ -124,6 +143,18 @@ def _run(tmp):
 #   offset/day  = cap * eff * rate_on(season)          [eff = 0.90]
 #   grid/day    = 0   (soc never drops below 60% of cap before sop ends)
 # summed over the fixture's 153 summer + 212 winter days in the window.
+#
+# DELIBERATE SCOPE LIMIT (stated explicitly, not left implicit): this fixture
+# saturates every config by construction -- Generation/Consumption are always
+# "ample" relative to power and capacity, so sim()'s charging/discharging is
+# always POWER-limited, never capacity- or supply-limited. Two branches of
+# sim() are therefore never exercised by this case: the elif overnight
+# grid-top-up-to-60%-of-cap branch (asserted not to fire via
+# grid_charge_cost == 0 below, rather than actually driving soc through it),
+# and any interval where min(Generation, pwr*step, cap-soc) or
+# min(Consumption, pwr*step, soc*eff) is clamped by the FIRST or THIRD
+# argument rather than the power term. A defect specifically inside the
+# grid-top-up branch or the non-power clamps would not be caught here.
 # ---------------------------------------------------------------------------
 def case_arbitrage_sim_matches_hand_computation():
     def shape(d, h):
@@ -142,11 +173,15 @@ def case_arbitrage_sim_matches_hand_computation():
                        + n_winter * (_rate("W", "sop") - _NBC))
     offset_per_cap = 0.90 * (n_summer * _rate("S", "on") + n_winter * _rate("W", "on"))
 
-    configs = [(5.0, 3.84), (10.0, 7.08), (13.5, 11.5),
-               (15.0, 7.68), (20.0, 7.08), (27.0, 11.5)]
-    for cap, pwr in configs:
+    # (cap, discharge_kw, name, charge_kw) -- read from the generator's own
+    # source (see _generator_constants), not hand-copied: issue #40 gave the
+    # PW3 configs a charge rate DIFFERENT from their discharge rate, and a
+    # hardcoded two-tuple list here would silently check the wrong power for
+    # the charge-window assertion below.
+    for cap, pwr, _name, charge_kw in GENERATOR_CONFIGS:
+        cpwr = pwr if charge_kw is None else charge_kw
         # both windows give every config enough slot-capacity to fully cycle:
-        assert pwr * 0.25 * 24 >= cap, "charge window too short for this fixture"
+        assert cpwr * 0.25 * 24 >= cap, "charge window too short for this fixture"
         assert pwr * 0.25 * 20 >= cap, "discharge window too short for this fixture"
 
     with tempfile.TemporaryDirectory() as td:
@@ -162,10 +197,9 @@ def case_arbitrage_sim_matches_hand_computation():
         got = json.loads((tmp / "battery_sim.json").read_text())
 
     by_name = {c["config"]: c for c in got}
-    names = ["1x Enphase IQ 5P", "1x Enphase IQ 10C", "1x Tesla Powerwall 3",
-             "3x Enphase IQ 5P", "2x Enphase IQ 10C", "PW3 + 1 Expansion"]
+    names = [name for _cap, _pwr, name, _ckw in GENERATOR_CONFIGS]
     assert set(by_name) == set(names), by_name.keys()
-    for name, (cap, pwr) in zip(names, configs):
+    for cap, pwr, name, _charge_kw in GENERATOR_CONFIGS:
         c = by_name[name]
         exp_forgone = cap * forgone_per_cap
         exp_offset = cap * offset_per_cap
@@ -241,7 +275,7 @@ CASES = [
 
 
 def main():
-    ran = failures = 0
+    ran = skipped = failures = 0
     for case in CASES:
         try:
             msg = case()
@@ -249,10 +283,12 @@ def main():
             ran += 1
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0
 
 

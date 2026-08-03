@@ -32,6 +32,8 @@ Run from the repo root:  ./.venv/bin/python analysis/test_carbon_dispatch_tradeo
 import glob
 import json
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -488,6 +490,103 @@ def case_reports_the_tradeoff_numbers():
         f"cost penalty of clean ${t['cost_penalty_of_clean_policy_usd']:,.2f}/yr | "
         f"CO2 penalty of cheap {t['co2_penalty_of_cheap_policy_kg']:,.1f} kg/yr (net) | "
         f"Run C meaningfully differs: {result['run_c_analysis']['meaningfully_differs_from_a_and_b']}")
+
+
+# ---------------------------------------------------------------------------
+# issue #44 follow-up review: compute() itself (not just its leaf functions)
+# sat behind _require_archive() with no synthetic path at all, so a defect in
+# the top-level assembly -- CO2 unit conversion, result-dict wiring, the
+# baseline/Run-A/B/C aggregation -- could reach main invisibly to CI. This
+# case runs the REAL compute() end to end on the already-proven synthetic
+# Green Button fixture (test_scripts_runnable's), monkeypatching the SAME
+# three module globals test_carbon_fullyear.py already established this
+# pattern for (br.CSV, CF.HOURLY_CSV, CDT.DATA) rather than a throwaway-root
+# subprocess, since this file already tests in-process throughout.
+#
+# The intensity source is the REAL, PUBLIC, committed data/caiso_hourly_
+# intensity.csv (aggregate CAISO grid data, not household-specific -- no
+# privacy concern, and its date range 2025-07-24..2026-07-23 already matches
+# WINDOW_END, so the synthetic house's calendar dates land inside its
+# coverage with no extra fixture work). The battery_dispatch_policies.json
+# tie-out is promoted from THIS run's own bp.run_batt/bp.billed computation
+# (the same call compute() itself makes for Run A), so it is satisfied for
+# real, not neutered -- and because it is the same underlying computation,
+# this specific tie-out mostly proves internal consistency; the independent
+# value here is the hand-computed baseline CO2 check and the Run B/C
+# DIRECTIONAL checks below, which a defect in compute()'s own assembly (as
+# opposed to bp's dispatch engine, already covered elsewhere) would trip.
+# ---------------------------------------------------------------------------
+@case
+def case_compute_runs_end_to_end_on_a_synthetic_house():
+    import test_scripts_runnable as TSR
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        (tmp / "data").mkdir()
+        usage = tmp / "usage.csv"
+        TSR._synthetic_usage(usage)
+        real_csv = ROOT / "data" / "caiso_hourly_intensity.csv"
+        shutil.copy(real_csv, tmp / "data" / "caiso_hourly_intensity.csv")
+
+        saved_csv, saved_hourly, saved_data = br.CSV, CF.HOURLY_CSV, CDT.DATA
+        try:
+            br.CSV = str(usage)
+            CF.HOURLY_CSV = tmp / "data" / "caiso_hourly_intensity.csv"
+            CDT.DATA = tmp / "data"
+
+            d = br.load()
+            imp0 = d.Consumption.values.astype(float)
+            gen0 = d.Generation.values.astype(float)
+            base = bp.billed(d, imp0, gen0)
+            iA, eA, _, _ = bp.run_batt(d, imp0, gen0, CDT.CAP, "greedy", charge_kw=CDT.CHARGE_KW)
+            billA = bp.billed(d, iA, eA)
+            (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
+                "pw3": {"greedy": {"save": round(base - billA)}}}))
+
+            # independent baseline-CO2 check: reuse household_intensity() as a
+            # trusted building block (covered by this file's OTHER, already
+            # archive-free cases), but do the FINAL aggregation with this
+            # test's OWN formula, so a defect in compute()'s own KG-conversion
+            # or aggregation wiring -- not in household_intensity() itself --
+            # is what this specific check is sensitive to.
+            inten_map, n_covered, _missing = CDT.build_intensity_map()
+            assert n_covered >= CF.COVERAGE_MIN, (n_covered, "real committed CSV should be measured")
+            inten = CDT.household_intensity(d, inten_map)
+            exp_base_co2 = float((imp0 * inten).sum() * CDT.KG)
+            exp_base_export_avoided = float((gen0 * inten).sum() * CDT.KG)
+            exp_base_net_co2 = exp_base_co2 - exp_base_export_avoided
+
+            result = CDT.compute()
+        finally:
+            br.CSV, CF.HOURLY_CSV, CDT.DATA = saved_csv, saved_hourly, saved_data
+
+    assert abs(result["baseline"]["bill_usd"] - round(base, 2)) < 0.01, result["baseline"]
+    assert abs(result["baseline"]["net_co2_kg"] - exp_base_net_co2) < 1.0, (
+        result["baseline"], exp_base_net_co2)
+    a, b, c = (result["policies"][k] for k in ("A_cost_min", "B_carbon_min", "C_union"))
+    # directional sanity a defect in Run B/C's own logic would plausibly
+    # break: all three battery policies save money (each policy's own stated
+    # objective is a floor every one of them must clear), and the
+    # CARBON-oriented policies (B, C -- the ones actually optimizing for it)
+    # avoid net CO2 vs. no battery. Run A is cost-minimizing ONLY -- it is
+    # NOT asserted to avoid CO2, because the whole thesis this generator
+    # exists to test is that cost- and carbon-optimal dispatch can conflict
+    # (confirmed on the real committed year: A's co2_avoided_vs_baseline_kg
+    # is actually negative there too -- asserting it positive here would
+    # assert the wrong physics, not guard against a defect).
+    for name, p in (("A", a), ("B", b), ("C", c)):
+        assert p["savings_vs_baseline_usd"] > 0, (name, p)
+    for name, p in (("B", b), ("C", c)):
+        assert p["co2_avoided_vs_baseline_kg"] > 0, (name, p)
+    t = result["tradeoff"]
+    assert t["cost_penalty_of_clean_policy_usd"] >= 0, t
+    assert t["co2_penalty_of_cheap_policy_kg"] >= 0, t
+    assert json.dumps(result), "compute() result is not JSON-serializable"
+    return ("compute() runs end to end on a synthetic house against the real "
+            "committed CAISO intensity data; baseline bill and net CO2 match "
+            "hand computation, every policy saves money, the two "
+            "carbon-oriented policies avoid net CO2, and the tradeoff signs "
+            "hold")
 
 
 # ---------------------------------------------------------------------------

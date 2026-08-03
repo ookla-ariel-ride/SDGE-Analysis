@@ -124,6 +124,8 @@ jobs:
         run: python analysis/test_soiling_analysis.py
       - name: extended findings guard tests
         run: python analysis/test_extended_findings.py
+      - name: battery x plan matrix guard tests
+        run: python analysis/test_battery_plan_matrix.py
       - name: 7-input Monte Carlo uncertainty propagation guard tests
         run: python analysis/test_uncertainty_propagation.py
       - name: gross-import decomposition guard tests

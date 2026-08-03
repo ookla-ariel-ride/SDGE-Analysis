@@ -164,7 +164,7 @@ CASES = [case_derive_blended_matches_hand_computation]
 
 
 def main():
-    ran = failures = 0
+    ran = skipped = failures = 0
     for case in CASES:
         try:
             msg = case()
@@ -172,10 +172,12 @@ def main():
             ran += 1
         except SkipCase as e:
             print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0
 
 
