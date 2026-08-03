@@ -353,24 +353,22 @@ Mono data — with system fallbacks).
 - No paragraph over ~800 characters. Findings use the .finding pattern: one bold claim
   sentence → a compact table.evidence (source | value | agreement) → a .small caveat line.
 - **BASIC-tier density cap (issue #68):** every finding's FIRST claim sentence — a
-  `.finding .claim`, a `.verdict` teaser, or, for a `.small`/`.note` methodology passage that
-  opens a point with no separate claim sentence ahead of it, that passage's own opening
-  sentence — must state the plain-language conclusion in **35 words or fewer up to its first
-  period**, with **at most one parenthetical or em-dash aside** before that period. Formula
-  names, derivative/elasticity mechanics, confound explanations, and multi-term decomposition
-  arithmetic do not belong in that lead sentence; they move AFTER it, into the rest of the
-  same block, a trailing `.small` caveat, or a "see TECHNICAL.md §N for the full derivation"
-  pointer. Once a lead sentence has stated the plain finding, the cap stops applying to what
-  follows in that same block — a caveat sentence that continues after an already-compliant
-  lead may run as dense as the evidence requires (e.g. a `.small` methodology paragraph placed
-  directly after a bolded lead claim is exempt from the cap on its own opening sentence,
-  because the claim ahead of it already did the job). This is mechanically checkable: count
-  the words before the first period and count the parenthetical/dash asides inside it — if
-  either cap is blown on a LEAD sentence, split it and move the excess after the period. It
-  governs ONLY the basic tier (§0–§7, "What to do Monday"); the ADVANCED tier (§8–§14) and
-  TECHNICAL.md are exempt and may keep their existing density, since that audience is reading
-  for the full derivation on purpose. No figure, evidence pill, or artifact citation may be
-  deleted to hit the cap — move it after the first period, never drop it.
+  `.finding .claim`, a `.verdict` teaser, or, absent a separate claim ahead of it, a
+  `.small`/`.note` methodology block's own opening sentence — must state the plain-language
+  conclusion in **35 words or fewer up to its first sentence-ending period** (a period
+  followed by a space or the tag's end; ignore periods glued to digits, as in `$264.10` or
+  `91.5%` — a human reader skips those too), with **at most one parenthetical or em-dash
+  aside** before that break. Formula names, derivative/elasticity mechanics, confound
+  explanations, and multi-term decomposition arithmetic move AFTER the lead: into the ONE
+  `.small`/`.note` block immediately following it (that single block is exempt from the cap
+  and may run as dense as the evidence requires — not an open-ended chain of further blocks),
+  a trailing caveat sentence in the same block, or a "see TECHNICAL.md §N" pointer. Checkable
+  by inspection: count words to the first real sentence break and count asides before it; if
+  either cap is blown on a LEAD sentence, split it and move the excess after the break.
+  Governs ONLY the basic tier (§0–§7, "What to do Monday"); the ADVANCED tier (§8–§14) and
+  TECHNICAL.md are exempt, since that audience reads for the full derivation on purpose. No
+  figure, evidence pill, or artifact citation may be deleted to hit the cap — move it after
+  the break, never drop it.
 - Every h2 section opens with a one-line .verdict ("In one sentence: ...") — the teaser
   pattern extended to the non-collapsible sections.
 - Every "§N" reference in prose is a real <a href="#sN"> link.
