@@ -186,9 +186,17 @@ def _not_applicable(what):
 
 # ---- battery parameters (Powerwall 3 hardware spec, NOT household config) ----
 BATT_KWH = 13.5        # usable
-BATT_KW = 11.5
+BATT_KW = 11.5         # continuous DISCHARGE power (Tesla datasheet, on-grid)
 BATT_STEP = BATT_KW * 0.25
 ETA = np.sqrt(0.90)    # one-way efficiency (90% round-trip)
+# Continuous CHARGE power, single unit / no expansions (issue #40). Tesla's own
+# official 2025 Powerwall 3 Datasheet gives this as a DIFFERENT, lower figure
+# than BATT_KW's discharge rating. Canonical URL:
+# https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf
+# (retrieved 2026-08-03 via a third-party mirror; see research/battery-
+# research-notes.md). Not applied by default anywhere in this module -- see
+# battery_sim()'s charge_kw parameter.
+BATT_CHARGE_KW = 5.0
 
 
 def load():
@@ -371,16 +379,24 @@ def shift_house(d, imp_in, ev, frac, sop_idx, sop_ts, cap):
 
 
 # ------------------------------------------------------------------ battery
-def battery_sim(d, imp_in, exp_in):
-    """13.5 kWh / 11.5 kW, 90% RTE. Charge from would-be exports outside on-peak,
-    top up from grid during the overnight (0-6) SOP window, discharge on-peak."""
+def battery_sim(d, imp_in, exp_in, charge_kw=None):
+    """13.5 kWh, 11.5 kW discharge, 90% RTE. Charge from would-be exports
+    outside on-peak, top up from grid during the overnight (0-6) SOP window,
+    discharge on-peak.
+
+    charge_kw (issue #40) is the CHARGE-direction power cap (both the exports
+    branch and the grid-top-up branch use it), separate from BATT_KW's
+    discharge cap; defaults to None, which reuses BATT_KW for both directions
+    -- byte-for-byte the prior symmetric behavior."""
     imp = imp_in.copy(); exp = exp_in.copy()
     p = d.p.values; hour = d.hour.values
     soc = 0.0
+    chg_step = (BATT_KW if charge_kw is None else charge_kw) * 0.25
     for i in range(len(d)):
-        step = BATT_STEP
+        dis_step = BATT_STEP
+        step = chg_step
         if p[i] == "on":
-            out = min(imp[i], step, soc * ETA)
+            out = min(imp[i], dis_step, soc * ETA)
             imp[i] -= out
             soc -= out / ETA
         else:

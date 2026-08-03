@@ -7,7 +7,9 @@ that is worth serving. Non-super-off-peak imports price at 51-87c, so the price-
 policy discharges against ALL of them; super-off-peak imports (12.5c) are never served.
 
 Three policies x two configurations (13.5 kWh Powerwall 3 / 27 kWh PW3+Expansion,
-both 11.5 kW, 90% round-trip split as sqrt-eta per direction):
+both 11.5 kW continuous discharge / 5 kW continuous charge -- Tesla's own
+datasheet, see research/battery-research-notes.md -- 90% round-trip split as
+sqrt-eta per direction):
   evening  discharge 16-21h only; overnight grid top-up to 60% capacity
   twowin   + 6-9am house load
   greedy   price-aware: any non-super-off-peak import; top-up toward full in any
@@ -34,6 +36,19 @@ asserts its own energy-conservation identity (final SOC must equal the initial
 SOC plus charge throughput minus discharge, net of round-trip loss) and raises
 SystemExit if it does not hold — a real invariant, not just a signature change.
 
+power_kw is the DISCHARGE cap (what the unit delivers). run_batt() also takes an
+optional charge_kw (issue #40), the CHARGE cap (what the unit draws, from solar
+surplus or grid top-up), defaulting to reuse power_kw when not given so every
+existing call site is byte-for-byte unchanged. Tesla's own official 2025
+Powerwall 3 Datasheet gives these as genuinely different figures for a single
+unit with no expansions — 11.5 kW continuous discharge vs. 5 kW continuous
+charge (canonical URL:
+https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf,
+retrieved 2026-08-03 via a third-party mirror; see research/battery-research-
+notes.md for the full citation) — so a caller that wants the asymmetric,
+datasheet-accurate limit passes charge_kw=5.0 explicitly; nothing here assumes
+that value by default.
+
 The unconditional discharge-window clause reads p[i] == "on" (the TOU period
 column ANY caller's frame already carries), not a hardcoded clock-hour test
 (issue #14 adversarial review, first pass): an earlier version tested
@@ -57,9 +72,31 @@ import rates as R
 
 ETA = np.sqrt(0.90); PWRQ = 11.5 / 4
 
-def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, soc0=None):
+# Real, cited Maximum Continuous Charge Power for a single Powerwall 3 unit
+# (issue #40) -- 5 kW AC, vs. the 11.5 kW continuous DISCHARGE rating (PWRQ
+# above). Tesla's own official 2025 Powerwall 3 Datasheet, canonical URL
+# https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf
+# (retrieved 2026-08-03 via a third-party mirror; see research/battery-
+# research-notes.md for the full citation). Applies to BOTH the base 13.5
+# kWh unit and the PW3+Expansion 27 kWh configuration -- the expansion pack
+# "shares [the base unit's] inverter" (same research notes), so the charge
+# port and its rating are unchanged by adding expansion capacity. Used below
+# as the production default for every run_batt() call that models this
+# household's real Powerwall 3-family hardware; run_batt() itself keeps
+# charge_kw=None as its own general-purpose default so it stays usable as a
+# reusable primitive at other, uncited capacities/powers (battery_sizing_
+# curve.py's sweep).
+CHARGE_KW = 5.0
+
+def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=None):
+    """power_kw is the discharge cap; charge_kw is the charge cap (solar-surplus
+    and grid-top-up charging both use it), defaulting to power_kw so a caller
+    that does not pass charge_kw gets the prior symmetric behavior byte-for-
+    byte. See the module docstring for the datasheet citation behind the real
+    asymmetric figures (11.5 kW discharge / 5 kW charge, single unit)."""
     imp = imp0.copy(); exp = gen0.copy()
-    pwrq = power_kw / 4
+    pwrq_dis = power_kw / 4
+    pwrq_chg = (power_kw if charge_kw is None else charge_kw) / 4
     soc0 = cap / 2 if soc0 is None else soc0
     soc = soc0; served = 0.0; thru = 0.0
     p = d.p.values; h = d.hour.values; kw = imp0 * 4
@@ -71,17 +108,17 @@ def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, soc0=None):
             # charge from surplus — unless this interval also has import inside a
             # discharge window (6.3% of intervals carry both flows; serving a
             # 51-87c import beats storing surplus worth ~8c)
-            c = min(exp[i], (cap - soc) / ETA, pwrq)
+            c = min(exp[i], (cap - soc) / ETA, pwrq_chg)
             if c > 0: soc += c * ETA; exp[i] -= c; thru += c * ETA
             continue
         if p[i] == "sop":
             grid_ok = (policy == "greedy") or (h[i] < 6)
             lim = cap if policy == "greedy" else 0.6 * cap
-            take = min(max((lim - soc) / ETA, 0), pwrq) if grid_ok else 0
+            take = min(max((lim - soc) / ETA, 0), pwrq_chg) if grid_ok else 0
             if take > 0: soc += take * ETA; imp[i] += take; thru += take * ETA
             continue
         if disch_win:
-            dd = min(imp[i], soc * ETA, pwrq)
+            dd = min(imp[i], soc * ETA, pwrq_dis)
             if dd > 0: soc -= dd / ETA; imp[i] -= dd; served += dd
     # energy-conservation identity (CLAUDE.md 1b): every joule leaving the pack
     # equals a joule that entered it, net of round-trip loss — soc0 + thru
@@ -133,11 +170,11 @@ if __name__ == "__main__":
     for cap, name in [(13.5, "pw3"), (27.0, "pw3x")]:
         row = {}
         for pol in ("evening", "twowin", "greedy"):
-            i2, e2, served, thru = run_batt(d, imp0, gen0, cap, pol)
+            i2, e2, served, thru = run_batt(d, imp0, gen0, cap, pol, charge_kw=CHARGE_KW)
             row[pol] = {"save": round(base - billed(d, i2, e2)),
                         "kwh_served": round(served),
                         "cycles_per_day": round(thru / cap / 365, 2)}
-        i2, e2, _, _ = run_batt(d, imp0, gen0, cap, "greedy")
+        i2, e2, _, _ = run_batt(d, imp0, gen0, cap, "greedy", charge_kw=CHARGE_KW)
         row["greedy_profile_S"] = summer_profile(d, i2)
         f = d.copy(); f["gi"] = i2
         row["onpeak_after_greedy"] = round(f[(f.hour >= 16) & (f.hour < 21)].gi.sum())
@@ -150,7 +187,7 @@ if __name__ == "__main__":
     b_sh = billed(d, imp_sh, gen0)
     pb = {"behavior_save": round(base - b_sh), "kwh_moved": round(moved)}
     for cap, name in [(13.5, "mid"), (27.0, "high")]:
-        i3, e3, _, _ = run_batt(d, imp_sh, gen0, cap, "greedy")
+        i3, e3, _, _ = run_batt(d, imp_sh, gen0, cap, "greedy", charge_kw=CHARGE_KW)
         b2 = billed(d, i3, e3)
         pb[name] = {"battery_marginal": round(b_sh - b2),
                     "combined_save": round(base - b2), "bill": round(b2)}
@@ -159,7 +196,8 @@ if __name__ == "__main__":
     out["escalation_note"] = "seeded from the post-EV-fix battery marginal (the decision-relevant figure)"
     out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
                     "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
-                    "rte": 0.9, "power_kw": 11.5, "requires": "multi-window time-based control"}
+                    "rte": 0.9, "power_kw": 11.5, "charge_kw": CHARGE_KW,
+                    "requires": "multi-window time-based control"}
     json.dump(out, open("battery_dispatch_policies.json", "w"), indent=1)
     print("post_behavior:", pb)
     print("escalation:", out["escalation_greedy_pw3_post_behavior"])

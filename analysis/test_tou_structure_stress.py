@@ -288,6 +288,40 @@ def case_pipeline_conserves_energy_under_every_scenario():
     return "every scenario's EV shift conserves energy (no SystemExit raised)"
 
 
+@case
+def case_steady_state_battery_threads_a_distinct_charge_kw_to_run_batt():
+    """Issue #40: _steady_state_battery must expose charge_kw as a parameter
+    DISTINCT from POWER_KW (discharge) and actually thread it through to
+    run_batt, not silently drop it. A spy standing in for bdp.run_batt
+    records the charge_kw it was called with."""
+    import inspect
+    assert "charge_kw" in inspect.signature(tss._steady_state_battery).parameters
+    dtr = pd.date_range("2026-01-07 12:00", periods=1, freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["seas"] = "W"
+    imp0 = np.full(1, 0.0)
+    gen0 = np.full(1, 5.0)
+    calls = []
+    real_run_batt = tss.bdp.run_batt
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("charge_kw"))
+        return real_run_batt(*args, **kwargs)
+
+    tss.bdp.run_batt = spy
+    try:
+        tss._steady_state_battery(d, imp0, gen0, charge_kw=5.0)
+    finally:
+        tss.bdp.run_batt = real_run_batt
+    assert calls, "run_batt was never called"
+    assert all(c == 5.0 for c in calls), \
+        f"_steady_state_battery did not thread charge_kw=5.0 through to run_batt: {calls}"
+    assert tss.POWER_KW != 5.0, "POWER_KW (discharge) and the test's charge_kw must differ"
+    return "_steady_state_battery threads a distinct charge_kw through to run_batt"
+
+
 # ---------------------------------------------------------------------------
 # (b) archive-gated cases -- need the real measured year
 # ---------------------------------------------------------------------------

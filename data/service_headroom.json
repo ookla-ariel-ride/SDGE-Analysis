@@ -1,8 +1,7 @@
 {
  "added_load_code_values": {
-  "battery_charging_a": 59.9,
-  "battery_charging_basis": "11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A.",
-  "battery_charging_not_determined": "NOT DETERMINED -- the selected unit's AC CHARGE INPUT. No figure for it exists anywhere in this project and none is invented here. The maximum continuous AC input on the selected unit's own nameplate or datasheet would settle it, and could only lower the demand-side figure used above.",
+  "battery_charging_a": 26.04,
+  "battery_charging_basis": "5.0 kW is the Powerwall 3's Maximum Continuous Charge Power for a single unit with no expansions (this household's modeled configuration), read off Tesla's own official 2025 Powerwall 3 Datasheet -- see research/battery-research-notes.md for the citation and retrieval date. This is DIFFERENT from the unit's 11.5 kW continuous DISCHARGE rating (the figure this project already used correctly for the backfeed breaker and busbar source current): the datasheet gives the two directions separately, and the demand-side grid-charging load below is computed from the CHARGE figure, not borrowed from discharge. On that basis the code value is 20.83 A x 1.25 continuous = 26.04 A.",
   "heat_pump_a": null,
   "heat_pump_basis": "NOT DETERMINED -- no unit has been selected anywhere in this project, and a nameplate cannot be invented. The heat-pump term is solved for instead: each case reports the largest minimum circuit ampacity that fits, MCA being the figure marked on the equipment (NEC 440.4(B)) and the one its conductors are sized to (NEC 440.35).",
   "heat_pump_what_would_settle_it": "The selected unit's own nameplate: its marked minimum circuit ampacity (NEC 440.4(B)), which is directly comparable with the solved-for figure each case publishes. Until a unit is chosen there is nothing to read, and the largest MCA that fits is the answer this data can give.",
@@ -60,7 +59,7 @@
      {
       "code_figure_125pct_of_output_a": 59.8958,
       "ocpd_rating_a": 60.0,
-      "output_basis": "the unit's continuous power rating, 11.5 kW at 240 V",
+      "output_basis": "the unit's continuous discharge power rating, 11.5 kW at 240 V",
       "output_circuit_current_a": 47.9167,
       "rating_is_at_or_above_the_code_figure": true,
       "rating_minus_code_figure_a": 0.1042,
@@ -72,8 +71,9 @@
    },
    "total_backfeed_allowed_a": 65.0
   },
+  "charge_kw": 5.0,
   "continuous_output_a": 47.92,
-  "inverter_kw": 11.5,
+  "discharge_kw": 11.5,
   "note": "The busbar rule fails on its own arithmetic, independently of the NEC 220.87 demand result, so it is what decides the battery here.",
   "position_leg": "not_determined",
   "position_leg_is_about": "the PROPOSED battery backfeed breaker's own position (panel.battery_breaker_position), not the existing PV breaker's. No position has been surveyed for a new breaker here, so this leg is not_determined on that ground alone -- see position_condition.what_would_settle_it.",
@@ -203,21 +203,21 @@
    "ampacity_verdict": "fail",
    "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
    "case": "heat_pump_second_evse_and_battery",
-   "fixed_added_load_a": 119.8958,
-   "note": "The battery is counted on the DEMAND side at 59.90 A. 11.5 kW is this project's canonical continuous power rating for the unit -- research/battery-research-notes.md records it as the Powerwall 3's continuous power and does not separate charging from discharging. Applying it to GRID CHARGING is an assumption, not a reading off a charging specification. It is the conservative direction: a unit whose AC charge input is lower than its discharge output would draw less than this, so the demand-side load counted here is if anything overstated. On that basis the code value is 47.92 A x 1.25 continuous = 59.90 A. The 120% busbar rule fails independently of this arithmetic, so ampacity is not what decides the battery here.",
+   "fixed_added_load_a": 86.0417,
+   "note": "The battery is counted on the DEMAND side at 26.04 A. 5.0 kW is the Powerwall 3's Maximum Continuous Charge Power for a single unit with no expansions (this household's modeled configuration), read off Tesla's own official 2025 Powerwall 3 Datasheet -- see research/battery-research-notes.md for the citation and retrieval date. This is DIFFERENT from the unit's 11.5 kW continuous DISCHARGE rating (the figure this project already used correctly for the backfeed breaker and busbar source current): the datasheet gives the two directions separately, and the demand-side grid-charging load below is computed from the CHARGE figure, not borrowed from discharge. On that basis the code value is 20.83 A x 1.25 continuous = 26.04 A. The 120% busbar rule fails independently of this arithmetic, so ampacity is not what decides the battery here.",
    "remaining_headroom_a": {
     "conservative_basis": {
-     "binding": -82.8645,
+     "binding": -49.0104,
      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-     "vs_meter_socket": -82.8645,
-     "vs_service_rating": -77.8645
+     "vs_meter_socket": -49.0104,
+     "vs_service_rating": -44.0104
     },
     "conservative_basis_is": "the top of the gross-load envelope: the largest upper bound over every 15-minute interval in the window, each interval capped at what the inverters can physically deliver in fifteen minutes. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
     "measured_basis": {
-     "binding": -43.4375,
+     "binding": -9.5834,
      "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
-     "vs_meter_socket": -43.4375,
-     "vs_service_rating": -38.4375
+     "vs_meter_socket": -9.5834,
+     "vs_service_rating": -4.5834
     },
     "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
    },

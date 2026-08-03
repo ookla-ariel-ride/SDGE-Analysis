@@ -103,7 +103,10 @@ import rates as R
 import tou_audit as TA
 
 CAP_KWH = 13.5
-POWER_KW = 11.5
+POWER_KW = 11.5   # continuous DISCHARGE, Tesla's own datasheet
+CHARGE_KW = bdp.CHARGE_KW  # continuous CHARGE (5 kW), issue #40 -- imported from
+                           # battery_dispatch_policies.py so this script cannot
+                           # drift onto a different figure than the canonical engine
 
 CURRENT = dict(on_start=16, on_end=21, weekday_sop_windows=((0, 6), (10, 14)),
               weekend_sop_end=14, summer_months=frozenset(R.SUMMER_MONTHS))
@@ -234,7 +237,7 @@ STEADY_STATE_TOL_KWH = 0.01
 STEADY_STATE_MAX_ITERS = 8
 
 
-def _steady_state_battery(d, imp_shifted, gen0):
+def _steady_state_battery(d, imp_shifted, gen0, charge_kw=None):
     """run_batt always starts at soc0=cap/2 and runs the year once -- a
     one-time year-1 boundary condition, not a steady annual cycle. Left
     uncorrected, a scenario whose altered window shape happens to leave the
@@ -248,11 +251,16 @@ def _steady_state_battery(d, imp_shifted, gen0):
     across a script boundary). Iterates run_batt, feeding each pass's
     ending SOC forward as the next pass's starting SOC, until they converge
     to within STEADY_STATE_TOL_KWH kWh -- a steady annual charge/discharge
-    cycle, not an arbitrary one-time boundary."""
+    cycle, not an arbitrary one-time boundary.
+
+    charge_kw (issue #40) is threaded straight through to run_batt's own
+    charge-direction parameter; default None preserves the prior symmetric
+    (POWER_KW both ways) behavior exactly."""
     soc0 = CAP_KWH / 2
     for it in range(STEADY_STATE_MAX_ITERS):
         imp2, exp2, served, thru = bdp.run_batt(
-            d, imp_shifted, gen0, CAP_KWH, "greedy", power_kw=POWER_KW, soc0=soc0)
+            d, imp_shifted, gen0, CAP_KWH, "greedy", power_kw=POWER_KW,
+            charge_kw=charge_kw, soc0=soc0)
         soc_final = soc0 + thru - served / ETA
         if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
             return imp2, exp2, soc0
@@ -283,7 +291,7 @@ def _pipeline(d):
     behavior_save = baseline_bill - behavior_bill
 
     gen0 = d.exp.values.astype(float)
-    imp_batt, exp_batt, _soc0 = _steady_state_battery(d, imp_shifted, gen0)
+    imp_batt, exp_batt, _soc0 = _steady_state_battery(d, imp_shifted, gen0, charge_kw=CHARGE_KW)
     battery_bill = bdp.billed(d, imp_batt, exp_batt)
     battery_marginal = behavior_bill - battery_bill
 

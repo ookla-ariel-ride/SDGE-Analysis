@@ -68,16 +68,16 @@
  },
  "nbt_2039": {
   "nem2_expiry": "~Dec 2039 (PTO 2019-12-27 + 20 yr)",
-  "battery_marginal_under_nem2": 2329,
+  "battery_marginal_under_nem2": 2328,
   "battery_marginal_under_nbt": {
    "3c": {
-    "battery_marginal_yr": 2540
+    "battery_marginal_yr": 2542
    },
    "5c": {
-    "battery_marginal_yr": 2527
+    "battery_marginal_yr": 2528
    },
    "8c": {
-    "battery_marginal_yr": 2506
+    "battery_marginal_yr": 2507
    }
   },
   "note": "under flat-credit exports the price-aware battery is worth MORE than under NEM 2.0 (stored surplus displaces ~51-87c imports instead of earning 3-8c credits); a 2026 PW3's 10-yr warranty ends 2036, three years before expiry \u2014 sequencing risk is modest and NBT raises, not lowers, its end-of-life value. NEM 2.0 transfers with the property on sale (worth ~$1,772-2,268/yr to a buyer at current rates)."

@@ -60,10 +60,10 @@
   "energy_sweep_at_11.5kw": [
    {
     "kwh": 5,
-    "save_usd": 1102.54,
+    "save_usd": 1102.64,
     "kwh_served": 2419.74,
     "cycles_per_day": 1.3976,
-    "steady_state_soc0_kwh": -0.0,
+    "steady_state_soc0_kwh": 0.0,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": null,
@@ -72,23 +72,23 @@
    },
    {
     "kwh": 10,
-    "save_usd": 1950.64,
+    "save_usd": 1950.29,
     "kwh_served": 4000.72,
     "cycles_per_day": 1.1554,
     "steady_state_soc0_kwh": 0.0,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 169.62,
+    "marginal_save_usd_per_kwh": 169.53,
     "cost_usd": 12970.37,
     "asset_alone_payback_years": 6.65
    },
    {
     "kwh": 13.5,
-    "save_usd": 2327.77,
+    "save_usd": 2327.42,
     "kwh_served": 4719.84,
     "cycles_per_day": 1.0097,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 107.75,
     "cost_usd": 14500.0,
@@ -96,11 +96,11 @@
    },
    {
     "kwh": 15,
-    "save_usd": 2432.92,
+    "save_usd": 2432.57,
     "kwh_served": 4922.72,
     "cycles_per_day": 0.9478,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 70.1,
     "cost_usd": 15155.56,
@@ -108,11 +108,11 @@
    },
    {
     "kwh": 20,
-    "save_usd": 2643.43,
+    "save_usd": 2643.07,
     "kwh_served": 5315.33,
     "cycles_per_day": 0.7675,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 42.1,
     "cost_usd": 17340.74,
@@ -120,11 +120,11 @@
    },
    {
     "kwh": 25,
-    "save_usd": 2759.19,
+    "save_usd": 2758.83,
     "kwh_served": 5519.56,
     "cycles_per_day": 0.6376,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 23.15,
     "cost_usd": 19525.93,
@@ -132,51 +132,51 @@
    },
    {
     "kwh": 27,
-    "save_usd": 2792.86,
+    "save_usd": 2792.51,
     "kwh_served": 5580.12,
     "cycles_per_day": 0.5969,
     "steady_state_soc0_kwh": -0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 16.84,
     "cost_usd": 20400.0,
-    "asset_alone_payback_years": 7.3
+    "asset_alone_payback_years": 7.31
    },
    {
     "kwh": 30,
-    "save_usd": 2832.32,
+    "save_usd": 2829.41,
     "kwh_served": 5651.36,
     "cycles_per_day": 0.544,
-    "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_soc0_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 13.15,
+    "marginal_save_usd_per_kwh": 12.3,
     "cost_usd": 21711.11,
     "asset_alone_payback_years": 7.67
    },
    {
     "kwh": 35,
-    "save_usd": 2879.59,
+    "save_usd": 2875.99,
     "kwh_served": 5740.29,
     "cycles_per_day": 0.4736,
     "steady_state_soc0_kwh": 0.025,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 9.45,
+    "marginal_save_usd_per_kwh": 9.32,
     "cost_usd": 23896.3,
-    "asset_alone_payback_years": 8.3
+    "asset_alone_payback_years": 8.31
    },
    {
     "kwh": 40,
-    "save_usd": 2904.63,
+    "save_usd": 2900.37,
     "kwh_served": 5790.8,
     "cycles_per_day": 0.4181,
     "steady_state_soc0_kwh": 5.025,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 5.01,
+    "marginal_save_usd_per_kwh": 4.88,
     "cost_usd": 26081.48,
-    "asset_alone_payback_years": 8.98
+    "asset_alone_payback_years": 8.99
    }
   ],
   "power_sweep_at_13.5kwh": [
@@ -218,13 +218,13 @@
    },
    {
     "kw": 11.5,
-    "save_usd": 2327.77,
+    "save_usd": 2327.42,
     "kwh_served": 4719.84,
     "cycles_per_day": 1.0097,
     "steady_state_soc0_kwh": 0.0,
-    "steady_state_boundary_imbalance_kwh": 0.0,
+    "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.55,
+    "marginal_save_usd_per_kw": 0.32,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
@@ -236,7 +236,7 @@
     "steady_state_soc0_kwh": -0.0,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": 0.44,
+    "marginal_save_usd_per_kw": 0.79,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
@@ -268,7 +268,7 @@
     "kwh": 13.5,
     "kw": 11.5,
     "quoted_cost_usd": 14500,
-    "save_usd": 2327.77,
+    "save_usd": 2327.42,
     "kwh_served": 4719.84,
     "payback_years": 6.23
    },
@@ -277,15 +277,15 @@
     "kwh": 27.0,
     "kw": 11.5,
     "quoted_cost_usd": 20400,
-    "save_usd": 2792.86,
+    "save_usd": 2792.51,
     "kwh_served": 5580.12,
-    "payback_years": 7.3
+    "payback_years": 7.31
    }
   ],
   "sensitivity": {
-   "save_at_reference_usd": 2327.77,
+   "save_at_reference_usd": 2327.42,
    "energy_elasticity": 0.4721,
-   "power_elasticity": 0.0024,
+   "power_elasticity": 0.003,
    "binds": "energy",
    "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood"
   }
@@ -296,7 +296,7 @@
   "energy_sweep_at_11.5kw": [
    {
     "kwh": 5,
-    "save_usd": 1113.52,
+    "save_usd": 1113.65,
     "kwh_served": 2500.57,
     "cycles_per_day": 1.4443,
     "steady_state_soc0_kwh": 4.304,
@@ -304,23 +304,23 @@
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": null,
     "cost_usd": 10785.19,
-    "asset_alone_payback_years": 9.69
+    "asset_alone_payback_years": 9.68
    },
    {
     "kwh": 10,
-    "save_usd": 1920.03,
+    "save_usd": 1919.77,
     "kwh_served": 4059.26,
     "cycles_per_day": 1.1723,
     "steady_state_soc0_kwh": 9.304,
     "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 161.3,
+    "marginal_save_usd_per_kwh": 161.22,
     "cost_usd": 12970.37,
     "asset_alone_payback_years": 6.76
    },
    {
     "kwh": 13.5,
-    "save_usd": 2239.16,
+    "save_usd": 2238.89,
     "kwh_served": 4706.09,
     "cycles_per_day": 1.0067,
     "steady_state_soc0_kwh": 12.804,
@@ -332,11 +332,11 @@
    },
    {
     "kwh": 15,
-    "save_usd": 2316.63,
+    "save_usd": 2316.36,
     "kwh_served": 4871.02,
     "cycles_per_day": 0.9378,
     "steady_state_soc0_kwh": 14.304,
-    "steady_state_boundary_imbalance_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 51.65,
     "cost_usd": 15155.56,
@@ -344,7 +344,7 @@
    },
    {
     "kwh": 20,
-    "save_usd": 2428.94,
+    "save_usd": 2428.68,
     "kwh_served": 5113.14,
     "cycles_per_day": 0.7383,
     "steady_state_soc0_kwh": 19.304,
@@ -356,19 +356,19 @@
    },
    {
     "kwh": 25,
-    "save_usd": 2452.57,
+    "save_usd": 2452.3,
     "kwh_served": 5164.77,
     "cycles_per_day": 0.5966,
     "steady_state_soc0_kwh": 24.304,
-    "steady_state_boundary_imbalance_kwh": -0.0,
+    "steady_state_boundary_imbalance_kwh": 0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kwh": 4.73,
+    "marginal_save_usd_per_kwh": 4.72,
     "cost_usd": 19525.93,
     "asset_alone_payback_years": 7.96
    },
    {
     "kwh": 27,
-    "save_usd": 2455.8,
+    "save_usd": 2455.54,
     "kwh_served": 5172.4,
     "cycles_per_day": 0.5532,
     "steady_state_soc0_kwh": 26.304,
@@ -380,7 +380,7 @@
    },
    {
     "kwh": 30,
-    "save_usd": 2457.23,
+    "save_usd": 2456.99,
     "kwh_served": 5176.55,
     "cycles_per_day": 0.4983,
     "steady_state_soc0_kwh": 29.304,
@@ -392,7 +392,7 @@
    },
    {
     "kwh": 35,
-    "save_usd": 2457.23,
+    "save_usd": 2456.99,
     "kwh_served": 5176.55,
     "cycles_per_day": 0.4271,
     "steady_state_soc0_kwh": 34.304,
@@ -400,11 +400,11 @@
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 0.0,
     "cost_usd": 23896.3,
-    "asset_alone_payback_years": 9.72
+    "asset_alone_payback_years": 9.73
    },
    {
     "kwh": 40,
-    "save_usd": 2457.23,
+    "save_usd": 2456.99,
     "kwh_served": 5176.55,
     "cycles_per_day": 0.3737,
     "steady_state_soc0_kwh": 39.304,
@@ -412,7 +412,7 @@
     "steady_state_iterations": 2,
     "marginal_save_usd_per_kwh": 0.0,
     "cost_usd": 26081.48,
-    "asset_alone_payback_years": 10.61
+    "asset_alone_payback_years": 10.62
    }
   ],
   "power_sweep_at_13.5kwh": [
@@ -454,13 +454,13 @@
    },
    {
     "kw": 11.5,
-    "save_usd": 2239.16,
+    "save_usd": 2238.89,
     "kwh_served": 4706.09,
     "cycles_per_day": 1.0067,
     "steady_state_soc0_kwh": 12.804,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": -0.02,
+    "marginal_save_usd_per_kw": -0.2,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
@@ -472,7 +472,7 @@
     "steady_state_soc0_kwh": 12.804,
     "steady_state_boundary_imbalance_kwh": -0.0,
     "steady_state_iterations": 2,
-    "marginal_save_usd_per_kw": -0.02,
+    "marginal_save_usd_per_kw": 0.25,
     "cost_usd": null,
     "asset_alone_payback_years": null
    },
@@ -504,7 +504,7 @@
     "kwh": 13.5,
     "kw": 11.5,
     "quoted_cost_usd": 14500,
-    "save_usd": 2239.16,
+    "save_usd": 2238.89,
     "kwh_served": 4706.09,
     "payback_years": 6.48
    },
@@ -513,15 +513,15 @@
     "kwh": 27.0,
     "kw": 11.5,
     "quoted_cost_usd": 20400,
-    "save_usd": 2455.8,
+    "save_usd": 2455.54,
     "kwh_served": 5172.4,
     "payback_years": 8.31
    }
   ],
   "sensitivity": {
-   "save_at_reference_usd": 2239.16,
+   "save_at_reference_usd": 2238.89,
    "energy_elasticity": 0.3829,
-   "power_elasticity": -0.0001,
+   "power_elasticity": 0.0004,
    "binds": "energy",
    "note": "elasticity = (% change in save) / (% change in the dimension), an unequal-spacing 3-point derivative AT the shared reference point (13.5 kWh, 11.5 kW) using the reference's own row and the grid points immediately flanking it in each sweep -- a local derivative property, not a raw top-to-bottom span, so it does not depend on how far either grid extends beyond that neighborhood"
   },

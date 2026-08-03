@@ -408,9 +408,10 @@ def case_steady_state_shipping_saves_stay_close_to_the_canonical_single_pass_art
     slightly from battery_dispatch_policies.json's own pw3/pw3x figures --
     that canonical artifact stays single-pass by design (correcting it is a
     separate concern, out of this issue's scope). Lock the gap to a small,
-    documented tolerance (TECHNICAL.md cites $2.14 as the observed max) so a
-    future change can't silently let steady-state and single-pass drift far
-    apart without anyone noticing."""
+    documented tolerance (TECHNICAL.md cites $1.54 as the observed max, as of
+    issue #40's Powerwall 3 charge/discharge split) so a future change can't
+    silently let steady-state and single-pass drift far apart without anyone
+    noticing."""
     if not ARTIFACT.exists():
         raise SkipCase("data/battery_sizing_curve.json not present")
     canon_path = ROOT / "data" / "battery_dispatch_policies.json"
@@ -454,6 +455,106 @@ def case_artifact_regenerates_byte_identically():
     after = ARTIFACT.read_bytes()
     assert after == before, "data/battery_sizing_curve.json is not reproducible"
     return "data/battery_sizing_curve.json regenerates byte-identically"
+
+
+# ---------------------------------------------------------------------------
+# issue #40 -- charge and discharge power are now DISTINCT parameters, not one
+# symmetric power_kw serving both directions. Tesla's own official 2025
+# Powerwall 3 Datasheet gives 11.5 kW continuous DISCHARGE and 5 kW continuous
+# CHARGE (single unit, no expansions) as genuinely different figures -- see
+# research/battery-research-notes.md for the citation.
+# ---------------------------------------------------------------------------
+@case
+def case_run_batt_charge_and_discharge_power_are_named_and_tracked_distinctly():
+    """AC5: the two directions must be named distinctly wherever both are
+    used, not one variable serving double duty. run_batt's power_kw
+    (discharge) and charge_kw (charge) are separate parameters; passing them
+    different values must produce a different result than passing them the
+    same value, proving they are actually wired to different code paths, not
+    just two names for the same number."""
+    import inspect
+    sig = inspect.signature(run_batt)
+    assert "power_kw" in sig.parameters, "run_batt must expose a discharge-power parameter"
+    assert "charge_kw" in sig.parameters, "run_batt must expose a SEPARATE charge-power parameter"
+    assert sig.parameters["charge_kw"].default is None, \
+        "charge_kw must default to None (reuse power_kw) for exact backward compatibility"
+
+    # A SINGLE 15-minute interval (not a full day) with a large solar surplus
+    # and an empty battery: with a whole day's worth of intervals available,
+    # even a lower charge rate eventually tops the battery off via overnight
+    # grid top-up, masking any rate difference in cumulative throughput. One
+    # interval isolates the per-interval RATE, which is what charge_kw caps.
+    dtr = pd.date_range("2026-01-07 12:00", periods=1, freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["seas"] = "W"
+    imp0 = np.full(1, 0.0)
+    gen0 = np.full(1, 5.0)  # 5 kWh surplus this interval, above both caps' per-interval kWh
+
+    _, _, served_sym, thru_sym = run_batt(d, imp0, gen0, 13.5, "greedy", power_kw=11.5, soc0=0.0)
+    _, _, served_asym, thru_asym = run_batt(
+        d, imp0, gen0, 13.5, "greedy", power_kw=11.5, charge_kw=5.0, soc0=0.0)
+    # discharge is identical (charge_kw does not touch the discharge branch);
+    # throughput (charging) must be LOWER with the tighter 5 kW charge cap on
+    # this fixture, proving charge_kw actually gates a different code path
+    # than power_kw rather than being cosmetic.
+    assert abs(served_sym - served_asym) < EPS, \
+        "charge_kw must not affect discharge -- served kWh changed"
+    assert thru_asym < thru_sym - EPS, \
+        "a tighter charge_kw must reduce charging throughput on a fixture " \
+        "whose solar surplus exceeds both caps"
+    return "run_batt's power_kw (discharge) and charge_kw (charge) are distinct and independently wired"
+
+
+@case
+def case_charge_kw_defaults_to_power_kw_for_exact_backward_compatibility():
+    """Every call site that predates issue #40 does not pass charge_kw; this
+    must reproduce byte-for-byte (not just approximately) the symmetric
+    behavior that existed before charge_kw was added."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0)
+    imp0 = np.where((d.hour.values >= 16) & (d.hour.values < 21), 3.0, 0.5) * 0.25
+    gen0 = np.where((d.hour.values >= 10) & (d.hour.values < 15), 4.0, 0.0) * 0.25
+    r_default = run_batt(d, imp0, gen0, 13.5, "greedy", power_kw=11.5)
+    r_explicit = run_batt(d, imp0, gen0, 13.5, "greedy", power_kw=11.5, charge_kw=11.5)
+    for a, b in zip(r_default[:2], r_explicit[:2]):
+        assert np.array_equal(a, b), "charge_kw=None must exactly match charge_kw=power_kw"
+    assert r_default[2] == r_explicit[2] and r_default[3] == r_explicit[3]
+    return "charge_kw=None reproduces charge_kw=power_kw exactly"
+
+
+@case
+def case_steady_state_run_and_sweep_thread_charge_kw_through_to_run_batt():
+    """battery_sizing_curve.py's own _steady_state_run/_sweep wrappers must
+    pass charge_kw through to run_batt rather than silently dropping it.
+    _steady_state_run's own SOC-convergence iteration makes an economic
+    (savings/throughput) probe unreliable here -- repeated annual passes with
+    an unlimited surplus available each pass converge to the same terminal
+    SOC regardless of per-interval rate, given enough iterations -- so this
+    checks the actual PLUMBING directly: a spy standing in for run_batt
+    records the charge_kw it was called with, proving it is threaded through
+    rather than silently dropped."""
+    import inspect
+    assert "charge_kw" in inspect.signature(bsc._steady_state_run).parameters
+    assert "charge_kw" in inspect.signature(bsc._sweep).parameters
+
+    d, imp0, gen0 = _synthetic_day(consumption_kw=0.0)
+    calls = []
+    real_run_batt = bsc.run_batt
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("charge_kw"))
+        return real_run_batt(*args, **kwargs)
+
+    bsc.run_batt = spy
+    try:
+        bsc._steady_state_run(d, imp0, gen0, 13.5, 11.5, charge_kw=5.0)
+    finally:
+        bsc.run_batt = real_run_batt
+    assert calls, "run_batt was never called"
+    assert all(c == 5.0 for c in calls), \
+        f"_steady_state_run did not thread charge_kw=5.0 through to run_batt: {calls}"
+    return "_steady_state_run/_sweep thread charge_kw through to run_batt, not dropped"
 
 
 # ---------------------------------------------------------------------------

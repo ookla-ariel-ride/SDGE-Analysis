@@ -288,8 +288,9 @@ def case_busbar_120_percent_rule_fails_the_battery():
     assert _close(b["total_backfeed_allowed_a"], 65.0), b
     assert _close(b["remaining_backfeed_a"], 15.0), b
     assert _close(b["remaining_backfeed_kva"], 3.6), b
-    # a Powerwall 3 at 11.5 kW needs a 60 A backfeed breaker, so it does not fit
-    breaker = S.standard_circuit_for(S.amps(S.BATTERY_INVERTER_KW))
+    # a Powerwall 3 at 11.5 kW discharge needs a 60 A backfeed breaker, so it
+    # does not fit
+    breaker = S.standard_circuit_for(S.amps(S.BATTERY_DISCHARGE_KW))
     assert _close(breaker, 60.0), breaker
     assert breaker > b["remaining_backfeed_a"], (breaker, b)
     assert _close(breaker - b["remaining_backfeed_a"], 45.0)
@@ -2037,35 +2038,48 @@ def case_artifact_reports_physical_fit_not_a_boolean():
     return "physical fit is three-valued in the artifact and fails on the count here"
 
 
-def case_artifact_states_the_battery_charging_assumption():
-    """Finding A. 11.5 kW is the only power rating this project records for the
-    unit, and research/battery-research-notes.md does not split charge from
-    discharge. The figure stays; asserting it as a charging specification does
-    not."""
+def case_artifact_states_the_battery_charging_basis_from_the_datasheet():
+    """Issue #40. Tesla's own official 2025 Powerwall 3 Datasheet gives
+    DIFFERENT continuous power ratings for charge (5 kW, single unit, no
+    expansions) and discharge (11.5 kW). The demand-side grid-charging load is
+    computed from the CHARGE figure, cited, not borrowed from the discharge
+    rating and not carried as an open assumption -- the prior 'not determined'
+    framing is retired because the datum now exists."""
     d = json.loads(S.OUT.read_text())
     v = d["added_load_code_values"]
     basis = v["battery_charging_basis"]
-    assert "assumption" in basis, basis
     assert "battery-research-notes" in basis, basis
-    assert "conservative" in basis, basis
-    assert "would draw less" in basis, basis
-    # the old sentence asserted it as fact; that phrasing must not come back
-    assert "kW grid charging =" not in basis, basis
-    nd = v["battery_charging_not_determined"]
-    assert nd.startswith("NOT DETERMINED"), nd
-    assert "AC CHARGE INPUT" in nd, nd
-    assert "nameplate or datasheet" in nd, nd
-    # the number itself is unchanged and still reproduces from the constant
+    assert "5.0 kW" in basis or "5 kW" in basis, basis
+    assert "Maximum Continuous Charge Power" in basis, basis
+    assert "11.5 kW" in basis, basis  # cites the discharge figure for contrast
+    # the old uncited-assumption framing must not come back
+    assert "assumption" not in basis, basis
+    assert "conservative" not in basis, basis
+    # the field that used to carry the open question is gone: it is settled
+    assert "battery_charging_not_determined" not in v, v
+    # the two directions are distinct constants, not one number serving twice
+    assert not _close(S.BATTERY_CHARGE_KW, S.BATTERY_DISCHARGE_KW)
+    assert _close(S.BATTERY_CHARGE_KW, 5.0)
+    assert _close(S.BATTERY_DISCHARGE_KW, 11.5)
+    # the demand-side amps now come from the CHARGE constant, not discharge
     assert _close(v["battery_charging_a"],
-                  _rq(S.amps(S.BATTERY_INVERTER_KW) * S.NEC_625_42_FACTOR, 2)), v
-    assert _close(S.BATTERY_INVERTER_KW, 11.5)
-    # and the case that carries it says the same thing rather than its own
+                  _rq(S.amps(S.BATTERY_CHARGE_KW) * S.NEC_625_42_FACTOR, 2)), v
+    assert not _close(v["battery_charging_a"],
+                       _rq(S.amps(S.BATTERY_DISCHARGE_KW) * S.NEC_625_42_FACTOR, 2))
+    # and the case that carries it repeats the same cited basis
     batt_case = [c for c in d["cases"] if "battery" in c["case"]][0]
-    assert "assumption" in batt_case["note"], batt_case["note"]
-    # the busbar leg is what fails, and it still does
+    assert "Maximum Continuous Charge Power" in batt_case["note"], batt_case["note"]
+    # the busbar leg is what fails, and it still does -- this fix is a demand-
+    # side correction and does not touch the independent busbar-leg failure
     assert d["battery_inverter"]["verdict"] == "FAILS as the panel stands"
     assert d["battery_inverter"]["ampacity_leg"] == "fail"
-    return "the battery charging basis is published as an assumption, not a fact"
+    # discharge-direction figures (breaker sizing, busbar source current)
+    # still use the discharge rating, unchanged by this fix
+    assert _close(d["battery_inverter"]["discharge_kw"], 11.5)
+    assert _close(d["battery_inverter"]["charge_kw"], 5.0)
+    assert _close(d["battery_inverter"]["continuous_output_a"],
+                  _rq(S.amps(S.BATTERY_DISCHARGE_KW), 2))
+    return "the battery charging basis is a cited datasheet figure, not an assumption"
 
 
 def case_the_load_sharing_mitigation_separates_the_amps_from_the_breaker():
@@ -3429,7 +3443,7 @@ CASES = [
     case_artifact_publishes_no_bare_boolean_judgement,
     case_every_optional_intake_read_distinguishes_absent_from_null,
     case_artifact_reports_physical_fit_not_a_boolean,
-    case_artifact_states_the_battery_charging_assumption,
+    case_artifact_states_the_battery_charging_basis_from_the_datasheet,
     case_the_load_sharing_mitigation_separates_the_amps_from_the_breaker,
     case_no_uncitable_breaker_claim_survives_anywhere,
     case_artifact_publishes_the_pv_ceiling_basis_split,

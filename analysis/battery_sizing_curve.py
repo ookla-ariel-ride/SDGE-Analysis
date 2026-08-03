@@ -12,6 +12,22 @@ load, using the same canonical engine (rates.bill_nem, monthly per-period NEM
 netting, NBC on gross imports) and the same EV-spillover exclusion rule
 (>=2.5 kW outside on-peak is never battery-served) at every grid point.
 
+CHARGE vs. DISCHARGE power (issue #40): Tesla's own datasheet gives the
+Powerwall 3 a DIFFERENT continuous charge rating (5 kW) from its continuous
+discharge rating (11.5 kW, REF_POWER_KW below) -- see research/battery-
+research-notes.md. The ENERGY sweep holds discharge power at REF_POWER_KW
+(11.5 kW) at every capacity, so every point on it is genuinely this
+household's real Powerwall-3-family hardware (expansion units share the base
+unit's inverter and charge port, per the same research notes) and uses the
+real 5 kW charge cap throughout. The POWER sweep instead VARIES the
+discharge rating itself (5-15 kW) to ask "what if this hardware could
+discharge faster or slower" -- only its OWN REF_POWER_KW=11.5 grid point is
+the real, cited Powerwall 3; the other points are hypothetical inverters
+with no cited charge rating of their own, so the 5 kW charge cap is applied
+ONLY at that one real point on the power sweep, not assumed for the others
+(inventing a charge rating for a hypothetical 5 kW or 15 kW discharge unit
+would violate CLAUDE.md's no-invented-rate rule).
+
 Both shipping configs' own capacity/power (13.5 kWh, 27 kWh, 11.5 kW) are added
 to the grids exactly, not interpolated, so they are genuinely ON the swept
 curve rather than approximated from neighboring points.
@@ -60,7 +76,7 @@ import os
 import numpy as np
 
 import behavior_rebuild as br
-from battery_dispatch_policies import billed, run_batt
+from battery_dispatch_policies import billed, run_batt, CHARGE_KW
 
 ENERGY_GRID = sorted({5, 10, 13.5, 15, 20, 25, 27, 30, 35, 40})
 POWER_GRID = sorted({5.0, 7.5, 10.0, 11.5, 12.5, 15.0})
@@ -134,7 +150,7 @@ STEADY_STATE_TOL_KWH = 0.01
 STEADY_STATE_MAX_ITERS = 8
 
 
-def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy"):
+def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy", charge_kw=None):
     """run_batt always starts at soc0=cap/2 and runs the measured year once --
     a one-time year-1 boundary condition, not a steady annual cycle. On the
     real data this house's greedy dispatch always saturates against a hard
@@ -147,11 +163,17 @@ def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy"):
     arbitrary boundary effect that grows with capacity (Codex adversarial
     review, third pass). Fixed here by iterating run_batt, feeding each pass's
     ending SOC forward as the next pass's starting SOC, until they converge to
-    within STEADY_STATE_TOL_KWH -- a steady annual charge/discharge cycle."""
+    within STEADY_STATE_TOL_KWH -- a steady annual charge/discharge cycle.
+
+    charge_kw (issue #40) is the CHARGE-direction cap, separate from `power`
+    (the DISCHARGE cap this function sweeps); defaults to None, which makes
+    run_batt reuse `power` for both directions, byte-for-byte unchanged from
+    before this parameter existed."""
     eta = np.sqrt(0.90)
     soc0 = cap / 2
     for it in range(STEADY_STATE_MAX_ITERS):
-        imp2, exp2, served, thru = run_batt(d, imp0, gen0, cap, policy, power_kw=power, soc0=soc0)
+        imp2, exp2, served, thru = run_batt(d, imp0, gen0, cap, policy, power_kw=power,
+                                            charge_kw=charge_kw, soc0=soc0)
         soc_final = soc0 + thru - served / eta
         if abs(soc_final - soc0) < STEADY_STATE_TOL_KWH:
             return imp2, exp2, served, thru, soc0, soc_final, it + 1
@@ -162,13 +184,26 @@ def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy"):
         f"-- last diff {soc_final - soc0:.4f} kWh")
 
 
-def _sweep(d, imp0, gen0, base_bill, grid, dim):
+def _sweep(d, imp0, gen0, base_bill, grid, dim, charge_kw=None):
     """dim: 'energy' sweeps ENERGY_GRID at REF_POWER_KW; 'power' sweeps
-    POWER_GRID at REF_ENERGY_KWH. Returns one row per grid point."""
+    POWER_GRID at REF_ENERGY_KWH. Returns one row per grid point.
+
+    charge_kw (issue #40) is applied differently per dimension, per the
+    module docstring's CHARGE vs. DISCHARGE section: the ENERGY sweep holds
+    discharge power at REF_POWER_KW throughout, so every point is real cited
+    Powerwall-3-family hardware and gets charge_kw at every point; the POWER
+    sweep varies the discharge rating itself, so charge_kw is applied ONLY
+    at its REF_POWER_KW grid point (the one real, cited Powerwall 3) --
+    every other power-sweep point is a hypothetical inverter with no cited
+    charge rating and stays symmetric (charge_kw=None) rather than
+    inventing one. Default None preserves the prior symmetric-power
+    behavior exactly at every point on both sweeps."""
     rows = []
     for x in grid:
         cap, power = (x, REF_POWER_KW) if dim == "energy" else (REF_ENERGY_KWH, x)
-        imp2, exp2, served, thru, soc0, soc_final, iters = _steady_state_run(d, imp0, gen0, cap, power)
+        point_charge_kw = charge_kw if (dim == "energy" or power == REF_POWER_KW) else None
+        imp2, exp2, served, thru, soc0, soc_final, iters = _steady_state_run(
+            d, imp0, gen0, cap, power, charge_kw=point_charge_kw)
         _check_conservation(d, imp0, gen0, imp2, exp2, served, thru, cap)
         save = base_bill - billed(d, imp2, exp2)
         row = {
@@ -285,8 +320,8 @@ def _local_elasticity(rows, key, ref_value):
 
 def _scenario(d, imp0, gen0, label):
     base_bill = billed(d, imp0, gen0)
-    energy_rows = _sweep(d, imp0, gen0, base_bill, ENERGY_GRID, "energy")
-    power_rows = _sweep(d, imp0, gen0, base_bill, POWER_GRID, "power")
+    energy_rows = _sweep(d, imp0, gen0, base_bill, ENERGY_GRID, "energy", charge_kw=CHARGE_KW)
+    power_rows = _sweep(d, imp0, gen0, base_bill, POWER_GRID, "power", charge_kw=CHARGE_KW)
     e_marg = _marginal(energy_rows, "kwh")
     p_marg = _marginal(power_rows, "kw")
     for r, m in zip(energy_rows, e_marg):
