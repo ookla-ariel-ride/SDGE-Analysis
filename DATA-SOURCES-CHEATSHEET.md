@@ -831,6 +831,16 @@ privacy: private-only
 privacy_note: "A claim about what one house's circuit legend does not contain, derived from the private-only schedule and read by no script. The same fact is available publicly from appliance_fuels, which is where a committed artifact takes it from. The rule issue #6 settled admits a schedule-derived value only where it is load-bearing and a standard NEC rating; this is neither."
 ```
 
+```yaml
+id: panel_existing_ac_nameplate_rla_a
+question: "What is the existing air conditioner's or heat pump condenser's nameplate rated-load amps (RLA), in amps? (RLA specifically, not MCA — see 'where'.)"
+type: number
+required_if: has_new_load_interest
+where: "On the condenser's own rating plate — the outdoor unit, not the panel — usually printed as 'RLA' (rated-load amps) next to the compressor's electrical data. Record RLA specifically, not the nameplate's separate MCA (minimum circuit ampacity) figure: MCA already has a 125% margin on the largest motor built into it (NEC 440.32/440.33), and analysis/service_headroom.py applies its own, independently-justified 125% on top of whatever this field holds, so reading MCA here would compound two different margins and overstate the credit. This is also a DIFFERENT fact from panel_schedule's `A/C`-labelled entry above: that is the branch breaker's rating, and NEC 440.22(A) permits that breaker to be sized well above the equipment's own RLA (up to 175%, or 225% where 175% will not hold the starting current), so the breaker is routinely larger than what the condenser itself draws. A heat pump that replaces this unit on its own circuit needs the equipment's own RLA, not the breaker's rating, to bound the credit for the load it physically removes. Set it to null if you have read the plate and no RLA figure is legible (only MCA is present) — that is an answer. Leave the key out entirely if you have not looked; the replacement case then reports itself not determined on the credit rather than assuming one, per CLAUDE.md's evidence rule."
+privacy: public-ok
+privacy_note: "A bare nameplate ampere rating on one piece of HVAC equipment — the same class of fact as solar.kw_ac and charger.kw, both already public-ok, and no more identifying than panel_service_rating_a or the existing_ac_ocpd_a this repo already publishes from the same circuit. analysis/service_headroom.py's heat_pump_replaces_ac case requires it to show its noncoincident-credit arithmetic at all; a private-only tier here would make that arithmetic unpublishable and the case would have nothing to show."
+```
+
 ## E4. Household energy-monitoring feeds ✍️🔒 (optional — a second, independent meter)
 
 A monitoring feed is a second measurement of the same house: a solar platform's production

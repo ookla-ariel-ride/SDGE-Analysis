@@ -183,6 +183,7 @@ panel:                               # omit only if you don't want a service-hea
                                      # only aggregates over it are ever published.
     - {device: "EX-2P60",  poles: 2, amps: 60, label: "EV charger"}
     - {device: "EX-2P40",  poles: 2, amps: 40, label: "Range"}
+    - {device: "EX-2P35",  poles: 2, amps: 35, label: "Condenser"}
     - {device: "EX-T2020 tandem", poles: 2, amps: [20, 20], label: "Kitchen"}
     - {device: "EX-2P30",  poles: 2, amps: 30, label: "Solar PV (backfed)"}
   schedule_confidence: "example: devices read directly; two legend entries unpaired"
@@ -201,6 +202,25 @@ panel:                               # omit only if you don't want a service-hea
                                      # electric circuit in this panel. Derived from the
                                      # private legend and read by no script; a committed
                                      # artifact takes the same fact from appliance_fuels.
+  existing_ac_nameplate_rla_a: 28.0  # [public-ok] the existing A/C's (labelled
+                                     # above, the EX-2P35 entry) OWN nameplate
+                                     # rated-load amps (RLA) -- read off the outdoor
+                                     # unit's rating plate, NOT the panel, and NOT the
+                                     # nameplate's separate MCA figure: MCA already
+                                     # carries its own 125% margin, and
+                                     # service_headroom.py applies a second, independently-
+                                     # justified 125% on top of whatever this field holds,
+                                     # so recording MCA here would double the margin.
+                                     # A different fact from the schedule breaker's own
+                                     # rating above: NEC 440.22(A) permits that breaker to
+                                     # sit well above the equipment's own RLA, so the 35 A
+                                     # breaker above and this 28 A RLA are both real and
+                                     # both expected to differ. Needed only for a heat pump
+                                     # that REPLACES this circuit (issue #45); set to null
+                                     # if the plate is checked and only MCA is legible, or
+                                     # leave the key out if nobody has looked -- the
+                                     # replacement case then reports the credit not
+                                     # determined rather than assuming one.
 
 monitoring:                          # energy-monitoring feeds beyond the utility meter.
                                      # [] if you have none. TIERS ARE PER KEY here, as in

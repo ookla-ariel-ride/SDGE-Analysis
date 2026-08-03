@@ -194,10 +194,11 @@ What is computed
      timestamp and coincident conditions of the annual peak;
   3. the 220.87 arithmetic step by step, against both the 175 A main breaker and
      the tighter 170 A continuous rating of the meter socket;
-  4. headroom for four cases -- heat pump only, second EVSE only, both, and both
-     plus a battery inverter -- with the heat pump left SOLVED-FOR (the largest
-     MCA that fits) because no unit has been selected and inventing a nameplate
-     would violate the evidence rule;
+  4. headroom for five cases -- heat pump only, second EVSE only, both, both
+     plus a battery inverter, and a heat pump REPLACING the existing A/C on
+     its own circuit (issue #45) -- with the heat pump left SOLVED-FOR (the
+     largest MCA that fits) because no unit has been selected and inventing a
+     nameplate would violate the evidence rule;
   5. the NEC 705.12(B)(3) busbar checks, which are what actually decide the
      battery case, and the panel's remaining physical spaces, which can veto a
      result that passes every ampacity test but can never confirm one, because
@@ -343,6 +344,30 @@ configuration), so the demand-side grid-charging load is computed from the
 CHARGE figure rather than borrowing the discharge rating. See
 BATTERY_CHARGING_BASIS for the cited arithmetic.
 
+The fifth case, added for issue #45: every case above ADDS a heat pump beside
+whatever already draws power, which is conservative but is not the scenario a
+household converting from gas heat actually faces -- a heat pump that
+REPLACES the existing A/C on the circuit it already occupies. Two things move
+in that case's favour and neither is assumed: it needs zero new panel spaces
+(physical_fit() is called with new_2pole_breakers=0, so it is never blocked
+by the panel's free-space count the way every ADD case correctly is), and
+the outgoing A/C's own historical contribution to the measured maximum
+simply drops out of NEC 220.87's method once it is physically removed --
+crediting the incoming heat pump's load rather than stacking it underneath.
+This is NOT an application of `NEC 220.60`'s second sentence (that sentence
+sets a 125%-of-largest-motor floor under a RETAINED noncoincident load, and
+nothing here is retained); it rests on 220.60's first sentence and general
+noncoincident-loads principle instead -- see
+noncoincident_loads.which_sentence_of_220_60_applies. The credit is bounded
+(0 A to 125% of the condenser's own nameplate RLA, rated-load amps -- not
+MCA, which already carries its own separate 125% margin) rather than assumed,
+because 15-minute WHOLE-HOUSE data cannot say what one circuit was doing at
+the instant of the annual peak, and it fails closed -- reads `not_determined`
+rather than guessing -- wherever `panel.existing_ac_nameplate_rla_a` is
+absent and the zero-credit case does not already pass on its own. See
+heat_pump_replacement_case() for the arithmetic and AC_REPLACEMENT_SETTLE for
+what would close the gap.
+
 Run from anywhere in the checkout:  ./.venv/bin/python analysis/service_headroom.py
 Writes data/service_headroom.json atomically.
 """
@@ -376,6 +401,25 @@ import rates as R
 # 2020 edition the sum-of-all-overcurrent-devices rule is 705.12(B)(3)(3), and
 # the 120% rule's own text now reads on 125 percent of source output current
 # rather than on the source breaker's rating.
+#
+# 220.60's second sentence (the 2020 edition's own addition) was WRONG here
+# from 6aec060 until issue #45's own review caught it: the table quoted "a
+# motor or air-conditioning load ... 125 percent of either the motor load or
+# the air-conditioning load, whichever is larger" -- a near-verbatim match for
+# up.codes' own AI-GENERATED summary of the section (up.codes prints that
+# summary with its own disclaimer that it "may contain errors ... should not
+# be relied on"), not the actual code text. The real second sentence narrows
+# to "a motor" alone and its 125% factor is conditioned on "if it is the
+# largest motor", not a max-of-two selection between a motor and an A/C load.
+# Re-verified independently against Mike Holt's Code Forum (the trade's
+# standard venue for verbatim-quoted code text -- threads "Art. 220.60 2020
+# NEC" and "220.60 Noncoincident loads") and EC&M's code-basics coverage of
+# the 2020 220.60 revision, both of which quote the same corrected wording
+# and neither of which is up.codes or derived from it. The bug had never
+# reached a published artifact before issue #45 made this section's rule
+# string load-bearing (cases[].rule, on the fifth case) -- see
+# heat_pump_replacement_case() for why that case does NOT rest on this
+# second sentence despite citing 220.60.
 # ---------------------------------------------------------------------------
 NEC_EDITION = "2020"
 
@@ -386,13 +430,12 @@ NEC_RULES = {
         "sentence of any one article"),
     "220.60": (
         "Noncoincident loads. Where it is unlikely that two or more "
-        "noncoincident loads will be in use simultaneously, it is permissible "
-        "to use only the largest load(s) that will be used at one time in "
-        "calculating the total load of a feeder or service. If a motor or "
-        "air-conditioning load is part of the noncoincident load and is not "
-        "the largest of the noncoincident loads, 125 percent of either the "
-        "motor load or the air-conditioning load, whichever is larger, shall "
-        "be used in the calculation"),
+        "noncoincident loads will be in use simultaneously, it shall be "
+        "permissible to use only the largest load(s) that will be used at "
+        "one time for calculating the total load of a feeder or service. "
+        "Where a motor is part of the noncoincident load and is not the "
+        "largest of the noncoincident loads, 125 percent of the motor load "
+        "shall be used in the calculation if it is the largest motor."),
     "220.82": "Optional calculation for a dwelling unit",
     "220.83": (
         "Optional calculation for an existing dwelling unit adding loads"),
@@ -418,12 +461,26 @@ NEC_RULES = {
         "the service has overload protection in accordance with 230.90"),
     "230.90": "Overload protection for service conductors",
     "240.4": "Protection of conductors",
+    "310.16": (
+        "Ampacities of insulated conductors, the table this module cites "
+        "only to name what would settle a branch circuit's true conductor "
+        "ampacity -- it computes nothing from this table itself"),
     "240.6(A)": (
         "Standard ampere ratings for fuses and inverse time circuit breakers"),
     "440.4(B)": (
         "Nameplate marking for air-conditioning and refrigerating equipment: "
         "the equipment is marked with its minimum circuit ampacity (MCA), "
         "which already embeds the 125 percent on the largest motor"),
+    "440.22(A)": (
+        "Rating and interrupting capacity: the branch-circuit short-circuit "
+        "and ground-fault protective device for a hermetic refrigerant "
+        "motor-compressor is permitted to be sized above the equipment's own "
+        "rated-load current or branch-circuit selection current -- up to 175 "
+        "percent, or 225 percent where 175 percent is insufficient for the "
+        "starting current -- which is why an HVAC breaker routinely sits "
+        "above what the equipment it protects actually draws. Not 240.6(A), "
+        "which is only the list of standard breaker ampere ratings and says "
+        "nothing about sizing one above a load's own rating"),
     "440.35": (
         "Conductors for room air conditioners are sized to the marked minimum "
         "circuit ampacity"),
@@ -1139,6 +1196,15 @@ def validate_panel(p):
             "is negative; an existing source cannot spend a negative share of "
             "the 120% allowance, and a negative one increases the remaining "
             "allowance rather than reducing it")
+    nameplate = p["existing_ac_nameplate_rla_a"]
+    if nameplate is not None and not nameplate > 0.0:
+        _panel_domain_error(
+            "existing_ac_nameplate_rla_a", nameplate,
+            "is recorded but is not a positive ampere rating; an explicit "
+            "null is how the intake says the nameplate was read and carries "
+            "no legible RLA (rated-load amps) figure, and a zero or "
+            f"negative one would be published as a real {nec('220.60')} "
+            "noncoincident credit")
     for f in ("spaces", "max_circuits"):
         if not p[f] > 0:
             _panel_domain_error(
@@ -1169,14 +1235,17 @@ def load_panel():
     The nullable fields are the exceptions the intake contract itself names --
     `pv_backfeed_a` (null when the panel was surveyed and nothing backfeeds it),
     `meter_socket_continuous_a` (null when the socket was read and carries no
-    printed continuous rating) and the three breaker positions. Each is carried
-    as None and handled explicitly downstream; none is coerced to a number that
-    would read as a measurement.
+    printed continuous rating), `existing_ac_nameplate_rla_a` (null when the
+    condenser's own nameplate was read and carries no legible RLA figure,
+    issue #45) and the three breaker positions. Each is carried as None and
+    handled explicitly downstream; none is coerced to a number that would read
+    as a measurement.
 
-    `pv_backfeed_recorded` and `meter_socket_recorded` carry whether each key
-    was there at all, which the value alone cannot say. A surveyed null and an
-    unanswered question look identical through household.get() and mean
-    opposite things -- see existing_backfeed() and socket_basis_of().
+    `pv_backfeed_recorded`, `meter_socket_recorded` and
+    `existing_ac_nameplate_rla_recorded` carry whether each key was there at
+    all, which the value alone cannot say. A surveyed null and an unanswered
+    question look identical through household.get() and mean opposite things
+    -- see existing_backfeed(), socket_basis_of() and ac_nameplate_basis_of().
 
     `battery_breaker_position` is the PROPOSED source breaker's end of the bus,
     a separate question from where the existing PV breaker sits. It is read
@@ -1206,6 +1275,10 @@ def load_panel():
         "meter_socket_continuous_a": _optional_number(
             "panel.meter_socket_continuous_a"),
         "meter_socket_recorded": _key_present("panel.meter_socket_continuous_a"),
+        "existing_ac_nameplate_rla_a": _optional_number(
+            "panel.existing_ac_nameplate_rla_a"),
+        "existing_ac_nameplate_rla_recorded": _key_present(
+            "panel.existing_ac_nameplate_rla_a"),
         "pv_breaker_position": HH.get("panel.pv_breaker_position", required=False),
         "battery_breaker_position": HH.get("panel.battery_breaker_position",
                                            required=False),
@@ -2545,6 +2618,7 @@ AC_READ = "read_off_the_schedule"
 AC_NO_MATCH = "no_schedule_label_matched"
 AC_AMBIGUOUS = "more_than_one_schedule_label_matched"
 AC_NOT_ONE_DEVICE = "the_matched_entry_is_a_twin_density_device"
+AC_NOT_TWO_POLE = "the_matched_entry_is_not_two_pole"
 
 AC_SETTLE = (
     "The condenser's own nameplate -- its rated-load amps and minimum circuit "
@@ -2556,10 +2630,10 @@ AC_SETTLE = (
 def existing_ac_ocpd(schedule):
     """The existing A/C branch device's ampere rating, three-valued.
 
-    Four outcomes, and only one of them is a number:
+    Five outcomes, and only one of them is a number:
 
-      * exactly one full-size entry whose label matches an air-conditioning
-        token -- its rating, read;
+      * exactly one full-size, 2-pole entry whose label matches an
+        air-conditioning token -- its rating, read;
       * NO entry matched. That is NOT "this panel has no A/C": a legend that
         says CONDENSER, HP or nothing at all reads the same way from here, and
         the two mean opposite things for the credit below. It reports
@@ -2568,7 +2642,15 @@ def existing_ac_ocpd(schedule):
         device the answer describes -- with two matching entries, which one the
         measured maximum contains is not established;
       * the matched entry is twin-density, so it carries a list of ratings
-        rather than one device's rating.
+        rather than one device's rating;
+      * the matched entry is not 2-pole. A label match alone does not prove a
+        240 V circuit: "A/C attic fan" or a small window unit on a 120 V,
+        1-pole branch matches the same tokens, and a heat pump needs a 2-pole
+        240 V circuit to land on. Publishing that entry's rating as though it
+        were the reusable circuit would let heat_pump_replaces_ac claim a
+        space fit (physical_fit() called with new_2pole_breakers=0) that does
+        not hold: a 1-pole circuit needs an actual new 2-pole breaker and a
+        net +1 space, not zero.
 
     The count of matches is published; nothing else about the rows is.
     """
@@ -2607,6 +2689,22 @@ def existing_ac_ocpd(schedule):
                 "single ampere rating to credit."),
             "what_would_settle_it": AC_SETTLE,
         }
+    if int(matches[0]["poles"]) != 2:
+        return {
+            "ocpd_a": None, "basis": AC_NOT_TWO_POLE, "matches": 1,
+            "reading": (
+                f"NOT DETERMINED -- the matched entry is "
+                f"{int(matches[0]['poles'])}-pole, not the 2-pole 240 V "
+                f"circuit a heat pump needs. A label match alone does not "
+                f"prove the circuit is 240 V -- a small window unit or an "
+                f"attic fan can carry an air-conditioning token on a 120 V, "
+                f"1-pole branch -- so this entry is not read as the existing "
+                f"A/C's own circuit."),
+            "what_would_settle_it": (
+                "A schedule entry recording an actual 2-pole 240 V "
+                "air-conditioning circuit, if the household has one; this "
+                "entry's own pole count rules it out."),
+        }
     amps_a = float(matches[0]["amps"])
     return {
         "ocpd_a": amps_a, "basis": AC_READ, "matches": 1,
@@ -2616,6 +2714,354 @@ def existing_ac_ocpd(schedule):
             f"the only thing taken from that row; the device marking and the "
             f"door-legend label are private-tier intake and stay there."),
         "what_would_settle_it": None,
+    }
+
+
+# The existing condenser's own nameplate rating (issue #45) -- a DIFFERENT
+# fact from existing_ac_ocpd_a above. That is the BREAKER protecting the
+# circuit, read off the schedule; NEC 440.22(A) permits that breaker to be
+# sized above the equipment's own rated-load current (up to 175%, or 225%
+# where 175% will not hold the starting current), so the breaker routinely
+# sits above what the condenser itself draws. (Not 240.6(A) -- that section is
+# only the enumeration of standard breaker ampere ratings and says nothing
+# about sizing one above a load's own rating; 440.22(A) is the rule that
+# actually does.) A heat pump that REPLACES the A/C needs the equipment
+# figure, not the breaker's, to bound the credit for the load it physically
+# removes -- crediting the breaker rating would overstate the credit
+# wherever the two differ.
+#
+# Specifically the RATED-LOAD AMPS (RLA), not MCA: MCA (NEC 440.32/440.33)
+# already embeds a 125 percent margin on the largest motor plus other
+# component loads, and this module applies its OWN 125 percent factor
+# (NEC_220_87_FACTOR, the 220.87(2) figure) to whatever this field holds when
+# it computes the credit -- reading MCA here would compound two different
+# 125 percent margins for two different reasons and overstate the credit.
+# RLA is the equipment's actual running current with no code margin baked
+# in, so it is the correct base for a SECOND, independently-justified 125
+# percent applied on top of it. The intake question and the cheatsheet ask
+# for RLA specifically for this reason, not "RLA or MCA" -- see
+# panel_existing_ac_nameplate_rla_a in DATA-SOURCES-CHEATSHEET.md.
+#
+# Same three-state contract as socket_basis_of()/existing_backfeed(): a
+# recorded number is a reading, an explicit null is a completed survey that
+# found no legible marking, and an absent key is a question nobody has asked.
+AC_NAMEPLATE_READ = "read_off_the_nameplate"
+AC_NAMEPLATE_SURVEYED_NONE = "surveyed_no_rating_legible"
+AC_NAMEPLATE_NOT_RECORDED = "not_recorded"
+
+AC_NAMEPLATE_NOTE = {
+    AC_NAMEPLATE_READ: "read off the existing condenser's own nameplate",
+    AC_NAMEPLATE_SURVEYED_NONE: (
+        "panel.existing_ac_nameplate_rla_a is recorded as an explicit null: "
+        "the condenser's nameplate was read and carries no legible RLA "
+        "(rated-load amps) figure. The credit this case can claim is 0 A on "
+        "this ground -- not because the equipment draws nothing, but "
+        "because its own marking does not say how much"),
+    AC_NAMEPLATE_NOT_RECORDED: (
+        "panel.existing_ac_nameplate_rla_a is ABSENT from the intake: "
+        "nobody has read the condenser's own nameplate. existing_ac_ocpd_a "
+        "above is the BREAKER's rating, not the equipment's, and "
+        f"{nec('440.22(A)')} permits a breaker to be sized well above the "
+        "equipment's own rated-load current, so it is not a substitute "
+        "reading"),
+}
+
+CONDUCTOR_CAP_BASIS = (
+    "A replacement heat pump reuses the EXISTING branch circuit's "
+    "conductors, not new ones, so the largest MCA this case can "
+    "respectably report is capped at the existing branch OCPD's own "
+    "rating: a heat pump whose solved MCA exceeds it would need larger "
+    "conductors too, which is no longer 'reusing the circuit' at zero new "
+    "space and zero new wiring -- the premise this case scores. The cap "
+    f"is itself only an upper bound on the true conductor ampacity ({nec('440.22(A)')} "
+    "lets the breaker sit at up to 175-225% of the equipment's own draw, "
+    "and standard-size rounding can widen it further), never a measurement "
+    "of the conductors themselves, so a figure the cap actually reduces is "
+    "reported as conductor-limited rather than panel-limited, and nothing "
+    "here claims to know the true gauge.")
+
+CONDUCTOR_CAP_SETTLE = (
+    "The existing A/C branch circuit's conductor gauge and ampacity "
+    f"({nec('310.16')}), read at the panel or the disconnect -- not "
+    "recorded in this intake. The branch OCPD's rating bounds it from "
+    "above but is not a measurement of it.")
+
+
+def _cap_to_existing_branch_circuit(headroom, conductor_cap_a):
+    """One case's remaining_headroom_a dict, with `binding` capped at the
+    existing branch circuit's own OCPD rating -- see CONDUCTOR_CAP_BASIS.
+
+    Every other field (vs_service_rating, vs_meter_socket, binding_is)
+    stays the panel-level figure; only `binding`, the number a reader takes
+    as "the answer", is capped, and `capped_by_existing_branch_circuit` says
+    whether the cap was the thing that actually bound it here.
+    """
+    capped = _r(min(headroom["binding"], conductor_cap_a))
+    out = dict(headroom)
+    out["binding"] = capped
+    out["capped_by_existing_branch_circuit"] = capped < headroom["binding"]
+    return out
+
+
+AC_REPLACEMENT_SETTLE = (
+    "Reading the existing condenser's own nameplate for its rated-load amps "
+    "(RLA) specifically -- not the minimum circuit ampacity (MCA), which "
+    "already carries its own 125 percent margin this module would double -- "
+    "and recording it as panel.existing_ac_nameplate_rla_a, or an explicit "
+    "null if the plate is no longer legible. existing_ac_ocpd_a (the branch "
+    "breaker's rating, "
+    "read off the schedule) is a different fact and does not substitute: "
+    f"{nec('440.22(A)')} permits that breaker to be sized well above the "
+    "equipment's own rated-load current, so a breaker can sit above what the "
+    "condenser it protects actually draws, and crediting the breaker "
+    "rating would overstate the credit wherever the two differ.")
+
+
+def ac_nameplate_basis_of(panel):
+    """Which of the three states the existing condenser's own nameplate
+    rating is in -- see the constants above."""
+    if panel["existing_ac_nameplate_rla_a"] is not None:
+        return AC_NAMEPLATE_READ
+    return (AC_NAMEPLATE_SURVEYED_NONE
+            if panel["existing_ac_nameplate_rla_recorded"]
+            else AC_NAMEPLATE_NOT_RECORDED)
+
+
+def heat_pump_replacement_case(ac, nameplate_rla_a, nameplate_basis, avail,
+                                avail_upper, socket_basis, occ,
+                                adjacent_free_pairs, measured_basis_is,
+                                conservative_basis_is_text,
+                                ampacity_verdict_basis_text):
+    """The fifth case (issue #45): a heat pump REPLACING the existing A/C on
+    its own circuit, rather than adding one beside it -- the scenario a
+    household converting from gas heat actually faces, and the one
+    `noncoincident_loads.why_it_matters` already names as realistic without
+    scoring it.
+
+    Shared by both build() and build_no_solar(): `avail_upper` is a second,
+    genuinely different availability map on the solar path and the SAME
+    object as `avail` on the no-solar path (checked with `is`, not `==`, to
+    match the no-solar case() closure's own "one figure, not two that happen
+    to agree" contract) -- so the credit axis below is isolated from the
+    envelope-reconstruction axis exactly where the latter does not exist.
+
+    Two constraints move in the favourable direction versus the four ADD
+    cases, and both are gated on evidence this intake may not carry:
+
+      SPACE. The heat pump lands on the same two full-size spaces the
+      existing A/C's 2-pole breaker already occupies, so physical_fit() is
+      called with new_2pole_breakers=0 -- unconditionally `pass`, regardless
+      of the panel's free-space count. That answer needs only to know WHICH
+      schedule entry is the A/C's, which is exactly what existing_ac_ocpd()
+      establishes or fails closed on; without it (anything but AC_READ)
+      neither leg of this case can be answered, because there is no
+      established circuit for a replacement to reuse.
+
+      DEMAND. The outgoing A/C is PHYSICALLY REMOVED in this case, not
+      retained beside the incoming heat pump, so whatever it was drawing at
+      the moment of the annual peak simply drops out of NEC 220.87's own
+      measured-maximum method once it is gone -- a plain consequence of that
+      method being reapplied to a changed load, not an application of
+      220.60's SECOND sentence. That sentence sets a 125%-of-largest-motor
+      FLOOR under a noncoincident load that stays INSTALLED at less than the
+      largest, which is not this case: nothing here is being retained below
+      the largest, it is being removed outright, so the floor authorizes
+      nothing (see noncoincident_loads.which_sentence_of_220_60_applies).
+      220.60's FIRST sentence's general principle -- count only the larger
+      of loads that will never operate together -- is still the right frame
+      for why a credit exists at all. The credit is bounded, not assumed:
+      0 A at the low end (the A/C was not running at the peak) and 125
+      percent of the condenser's own nameplate RLA (rated-load amps, not
+      MCA -- see the comment above AC_NAMEPLATE_READ for why) at the high
+      end (it was running flat out) -- the same 220.87(2) factor the rest of
+      this module applies to a measured maximum. Which end is closer to the
+      truth cannot be read from whole-house data (15-minute WHOLE-HOUSE
+      energy cannot disaggregate one circuit), so both ends are scored and
+      the verdict spans them: PASS only where the case fits even at zero
+      credit and the conservative envelope, FAIL only where it fails even at
+      full credit and the measured envelope, NOT DETERMINED between.
+
+      Without panel.existing_ac_nameplate_rla_a the high end is unbounded
+      above, not merely absent -- and an unbounded credit can only ever
+      RAISE the panel's headroom, never lower it. So the zero-credit
+      (fully conservative) scenario is still safe to publish on its own, and
+      the fail-closed behaviour bites only where zero credit does not
+      already pass: a conservative pass at zero credit survives any larger
+      real credit, so it is published as `pass`; a conservative fail or
+      not_determined at zero credit needs the number this intake does not
+      carry, so it reads `not_determined` rather than guessing which way a
+      real credit would have tipped it. This case never reports `fail` on
+      the demand leg without the nameplate reading, for the same reason: a
+      credit large enough to rescue it cannot be ruled out.
+    """
+    if ac["basis"] != AC_READ:
+        return {
+            "case": "heat_pump_replaces_ac",
+            "scored": False,
+            "reason": (
+                "The existing air-conditioning circuit is not identified in "
+                "the panel schedule (existing_ac_ocpd_basis="
+                f"{ac['basis']!r}), so there is no established circuit for a "
+                "replacement heat pump to reuse. Neither the space question "
+                "nor the demand question can be answered without it."),
+            "existing_ac_ocpd_reading": ac["reading"],
+            "what_would_settle_it": ac["what_would_settle_it"],
+            "note": (
+                "This case is scored only where existing_ac_ocpd_a is read "
+                "off exactly one schedule entry -- see noncoincident_loads. "
+                "It is not modelled here."),
+        }
+
+    fit = physical_fit(0, occ["spaces_free"], adjacent_free_pairs)
+
+    zero_credit_measured = remaining_headroom(avail, 0.0, socket_basis)
+    zero_credit_conservative = (
+        zero_credit_measured if avail_upper is avail else
+        remaining_headroom(avail_upper, 0.0, socket_basis))
+
+    nameplate_recorded = nameplate_basis == AC_NAMEPLATE_READ
+    if nameplate_recorded and nameplate_rla_a > ac["ocpd_a"]:
+        # A condenser's RLA reading above the ampere rating of the very
+        # breaker protecting it cannot be a NEC-compliant installation --
+        # 440.22(A) only ever sizes the breaker AT OR ABOVE the equipment's
+        # RLA, never below it -- so a reading past that ceiling is a data
+        # error (wrong units, a transposed digit, or MCA recorded where RLA
+        # was asked for) rather than a real fact to build a credit on.
+        raise SystemExit(
+            f"service_headroom.py: panel.existing_ac_nameplate_rla_a is "
+            f"{nameplate_rla_a!r}, which exceeds the {ac['ocpd_a']:.0f} A "
+            f"branch breaker already protecting that circuit "
+            f"(existing_ac_ocpd_a) -- {nec('440.22(A)')} never sizes a "
+            f"breaker below the equipment's own RLA, so this reading is not "
+            f"plausible for this circuit. Re-check the plate: confirm the "
+            f"figure recorded is RLA and not MCA, and that it was read off "
+            f"the condenser this schedule entry actually protects.")
+    credit_high_a = (_r(nameplate_rla_a * NEC_220_87_FACTOR)
+                     if nameplate_recorded else None)
+    full_credit_measured = (
+        remaining_headroom(avail, -credit_high_a, socket_basis)
+        if nameplate_recorded else None)
+    full_credit_conservative = (
+        None if not nameplate_recorded else
+        full_credit_measured if avail_upper is avail else
+        remaining_headroom(avail_upper, -credit_high_a, socket_basis))
+
+    # Capped at the existing branch circuit's own OCPD rating -- see
+    # CONDUCTOR_CAP_BASIS. Applied BEFORE the verdict is taken, since a
+    # panel-level headroom the branch conductors cannot actually carry is
+    # not a real fit, and every case verdict elsewhere in this module rests
+    # on the binding it reports being the true constraint, not merely the
+    # tightest one anybody happened to compute.
+    conductor_cap_a = ac["ocpd_a"]
+    zero_credit_measured = _cap_to_existing_branch_circuit(
+        zero_credit_measured, conductor_cap_a)
+    zero_credit_conservative = _cap_to_existing_branch_circuit(
+        zero_credit_conservative, conductor_cap_a)
+    if nameplate_recorded:
+        full_credit_measured = _cap_to_existing_branch_circuit(
+            full_credit_measured, conductor_cap_a)
+        full_credit_conservative = _cap_to_existing_branch_circuit(
+            full_credit_conservative, conductor_cap_a)
+    conductor_capped_anywhere = (
+        zero_credit_measured["capped_by_existing_branch_circuit"]
+        or zero_credit_conservative["capped_by_existing_branch_circuit"]
+        or (nameplate_recorded and (
+            full_credit_measured["capped_by_existing_branch_circuit"]
+            or full_credit_conservative["capped_by_existing_branch_circuit"])))
+
+    if nameplate_recorded:
+        best_binding = full_credit_measured["binding"]
+        worst_binding = zero_credit_conservative["binding"]
+        verdict = ampacity_verdict(best_binding, worst_binding)
+        settle = None if verdict != "not_determined" else AC_REPLACEMENT_SETTLE
+    else:
+        # The credit is unbounded above without the nameplate reading, which
+        # can only help -- so a conservative PASS at zero credit survives any
+        # real credit and is published as a pass, settled, with nothing left
+        # for a nameplate reading to change. Anything else needs the number,
+        # and is reported not_determined rather than as a fail no real credit
+        # has been ruled out of rescuing.
+        verdict = "pass" if zero_credit_conservative["binding"] > 0 else "not_determined"
+        settle = None if verdict == "pass" else AC_REPLACEMENT_SETTLE
+
+    return {
+        "case": "heat_pump_replaces_ac",
+        "scored": True,
+        "rule": nec_rule("220.60"),
+        "existing_ac_ocpd_a": ac["ocpd_a"],
+        "existing_ac_nameplate_rla_a": nameplate_rla_a,
+        "existing_ac_nameplate_basis": nameplate_basis,
+        "existing_ac_nameplate_note": AC_NAMEPLATE_NOTE[nameplate_basis],
+        "noncoincident_credit_bounds_a": {"low": 0.0, "high": credit_high_a},
+        "fixed_added_load_a": 0.0,
+        # measured_basis/conservative_basis are the ZERO-CREDIT reading -- the
+        # same shape and the same arithmetic every other case publishes (this
+        # is exactly heat_pump_only's own headroom, since fixed_a=0.0 on both
+        # sides), so a reader who ignores the credit entirely gets the same
+        # answer this case would give as an ordinary ADD case. The credit
+        # this case actually exists to score sits in assuming_full_credit
+        # beside it, never folded into these two numbers, so the two are
+        # never confused.
+        "remaining_headroom_a": {
+            "measured_basis": zero_credit_measured,
+            "conservative_basis": zero_credit_conservative,
+            "assuming_full_credit": {
+                "measured_basis": full_credit_measured,
+                "conservative_basis": full_credit_conservative,
+            },
+            "measured_basis_is": measured_basis_is,
+            "conservative_basis_is": conservative_basis_is_text,
+        },
+        "remaining_is": (
+            ("the largest heat-pump MCA that fits, as a RANGE: the low end "
+             "assumes the outgoing A/C contributed nothing to the measured "
+             "peak (no credit), the high end assumes it was running at its "
+             "own nameplate rating (full credit). Which end is closer to the "
+             "truth is not determined from whole-house data."
+             if nameplate_recorded else
+             "the largest heat-pump MCA that fits assuming the outgoing A/C "
+             "contributed nothing to the measured peak (no credit); the "
+             "credit a nameplate reading could add on top of that is not "
+             "bounded above without panel.existing_ac_nameplate_rla_a, so it "
+             "is not scored")
+            + (" Capped at the existing branch circuit's own OCPD rating "
+               "(existing_ac_ocpd_a) wherever the panel-level figure would "
+               "otherwise exceed it -- see conductor_ampacity_caveat."
+               if conductor_capped_anywhere else "")),
+        "ampacity_verdict": verdict,
+        "ampacity_verdict_basis": ampacity_verdict_basis_text,
+        "what_would_settle_it": settle,
+        "conductor_ampacity_caveat": (
+            CONDUCTOR_CAP_BASIS if conductor_capped_anywhere else None),
+        "conductor_ampacity_what_would_settle_it": (
+            CONDUCTOR_CAP_SETTLE if conductor_capped_anywhere else None),
+        "spaces": {
+            "new_2pole_breakers_required": 0,
+            "full_size_spaces_required": 0,
+            "spaces_free": occ["spaces_free"],
+            "adjacent_free_pairs": adjacent_free_pairs,
+            "physical_fit": fit,
+            "physical_fit_basis": PHYSICAL_FIT_BASIS,
+            "what_would_settle_it": None,
+            "note": (
+                "This case REUSES the existing 2-pole air-conditioning "
+                "circuit rather than adding a new one: the heat pump lands "
+                "on the same two full-size spaces the A/C's breaker already "
+                "occupies, so it needs no new space and is not blocked by "
+                "the panel's free-space count."),
+        },
+        "note": (
+            "The outgoing A/C is physically removed in this case, so "
+            f"whatever it was drawing drops out of the {nec('220.87')} "
+            "measured maximum once it is gone -- see noncoincident_loads."
+            "which_sentence_of_220_60_applies for why this rests on "
+            f"{nec('220.60')}'s first sentence and general principle, not "
+            "its second-sentence 125%-of-largest-motor floor, which governs "
+            "a load that stays RETAINED below the largest rather than one "
+            "being removed. The heat pump MCA is solved for exactly as "
+            "heat_pump_only does, but against headroom that CREDITS the "
+            "load this case removes instead of adding a heat pump on top "
+            "of it."),
     }
 
 
@@ -3159,6 +3605,10 @@ def build_no_solar():
     occ = panel_occupancy(panel["schedule"], panel["spaces"],
                           panel["max_circuits"])
     adjacent_free_pairs = None
+    # Computed here, before the cases, because the fifth case (issue #45)
+    # needs it as much as noncoincident_loads below does -- a single call,
+    # shared by both.
+    ac = existing_ac_ocpd(panel["schedule"])
 
     def case(name, fixed_a, new_2pole_breakers, solves_for_heat_pump, note):
         """One scenario, single-basis -- see NO_SOLAR_HEADROOM_BASIS /
@@ -3209,14 +3659,21 @@ def build_no_solar():
                 "what_would_settle_it": (PHYSICAL_FIT_SETTLE
                                          if fit == "not_determined" else None),
                 "note": (
-                    "Every case published here ADDS equipment, and each added "
-                    "240 V load -- a heat pump, a second EVSE, a battery -- "
-                    "needs its own 2-pole breaker and therefore two adjacent "
-                    "free spaces. A heat pump that REPLACES the existing A/C "
-                    "on that circuit is a different configuration and is not "
-                    "modelled here, so nothing in this artifact says what it "
-                    "would need; see noncoincident_loads for the demand-side "
-                    "half of that scenario."),
+                    "This case ADDS equipment beside what is already "
+                    "installed, and each added 240 V load -- a heat pump, a "
+                    "second EVSE, a battery -- needs its own 2-pole breaker "
+                    "and therefore two adjacent free spaces. A heat pump "
+                    "that REPLACES the existing A/C on its own circuit needs "
+                    "no new space at all"
+                    + (" and is scored separately as heat_pump_replaces_ac, "
+                       "which is not blocked by the count below; see "
+                       "noncoincident_loads for the demand-side half of "
+                       "that case."
+                       if ac["basis"] == AC_READ else
+                       ", but this panel's schedule does not identify a "
+                       "single 2-pole air-conditioning circuit to reuse (see "
+                       "noncoincident_loads), so heat_pump_replaces_ac is "
+                       "not scored for this household either.")),
             },
             "note": note,
         }
@@ -3272,7 +3729,14 @@ def build_no_solar():
                  battery_case_note),
         ]
 
-    ac = existing_ac_ocpd(panel["schedule"])
+    cases.append(heat_pump_replacement_case(
+        ac, panel["existing_ac_nameplate_rla_a"],
+        ac_nameplate_basis_of(panel), avail, avail, socket_basis, occ,
+        adjacent_free_pairs,
+        "the point-determined 15-minute maximum, exactly the metered "
+        "import -- the only figure this path computes",
+        NO_SOLAR_HEADROOM_BASIS, NO_SOLAR_VERDICT_BASIS))
+
     ac_ocpd = ac["ocpd_a"]
     summer_peaks = {ym: e[2] for ym, e in monthly.items()
                     if int(ym[5:]) in R.SUMMER_MONTHS}
@@ -3307,20 +3771,39 @@ def build_no_solar():
     cooling_shaped = int(peak[1]) in COOLING_HOURS
     noncoincident = {
         "rule": nec_rule("220.60"),
-        "the_second_sentence_matters_here": (
-            f"{nec('220.60')} does not stop at 'count only the largest'. Where "
-            "a motor or "
-            "air-conditioning load is one of the noncoincident loads and is NOT "
-            "the largest of them, the calculation still carries 125% of the "
-            "larger of the motor or air-conditioning load. A heat pump swapped "
-            "in for this A/C is exactly that pairing, so the second sentence is "
-            "part of the rule that applies and is stated with the first."),
+        "which_sentence_of_220_60_applies": (
+            f"{nec('220.60')}'s FIRST sentence -- count only the larger of "
+            "loads that will never operate together -- is the general "
+            "principle behind crediting a REPLACEMENT: once the outgoing A/C "
+            "is physically removed, it and the incoming heat pump can never "
+            "both be drawing at once, so only the larger matters. The SECOND "
+            "sentence (2020 edition) is a different, narrower rule: it sets "
+            "a 125%-of-largest-motor FLOOR under a noncoincident load that "
+            "stays INSTALLED at less than the largest. That does not describe "
+            "anything scored here -- the four ADD cases below RETAIN the A/C "
+            "and add a heat pump beside it, so nothing is being compared as "
+            "noncoincident at all, and heat_pump_replaces_ac REMOVES the A/C "
+            "rather than retaining it below the largest. The second "
+            "sentence's floor therefore authorizes nothing in this artifact; "
+            "heat_pump_replaces_ac's credit rests on the first sentence's "
+            f"principle and on {nec('220.87')}'s own measured-maximum "
+            "method simply no longer counting a load that no longer "
+            "exists."),
         "why_it_matters": (
-            "A heat pump that REPLACES the existing A/C does not add its whole "
-            "MCA: whatever the A/C was drawing is already inside the measured "
-            "maximum. The case above ignores that credit. The replacement "
-            "configuration itself is not modelled here -- no case in this "
-            "artifact removes a load."),
+            "A heat pump that REPLACES the existing A/C is physically "
+            "removing one load and installing another: whatever the A/C was "
+            "drawing at the moment of the measured maximum no longer exists "
+            "once it is gone. The cases above ignore that credit because "
+            "they ADD a heat pump beside the A/C rather than replacing it, "
+            "and nothing is removed. The replacement configuration is "
+            "scored separately as the heat_pump_replaces_ac case"
+            + (", which applies this credit -- bounded by the departing "
+               "equipment's own nameplate RLA, not assumed -- and needs no "
+               "new panel space."
+               if ac["basis"] == AC_READ else
+               ", but this panel's schedule does not identify a single "
+               "2-pole air-conditioning circuit for that case to reuse, so "
+               "it reports itself unscored rather than guessing one.")),
         "existing_ac_ocpd_a": ac_ocpd,
         "existing_ac_ocpd_basis": ac["basis"],
         "existing_ac_ocpd_reading": ac["reading"],
@@ -3330,6 +3813,20 @@ def build_no_solar():
             "low": 0.0,
             "high": (_r(ac_ocpd * NEC_220_87_FACTOR)
                      if ac_ocpd is not None else None)},
+        "credit_bounds_a_basis": (
+            "The LOOSEST bound available from the schedule alone: 125% of "
+            f"the branch OCPD's rating, not the equipment's own draw. "
+            f"{nec('440.22(A)')} permits an HVAC branch-circuit protective "
+            "device to be sized up to 175-225% of the equipment's rated-load "
+            "current, so a breaker routinely sits well above what the "
+            "condenser it protects actually draws, and this bound is "
+            "correspondingly looser than one built from the equipment's own "
+            "nameplate. Where panel.existing_ac_nameplate_rla_a has been "
+            "read, cases[].noncoincident_credit_bounds_a on "
+            "heat_pump_replaces_ac publishes the tighter, nameplate-based "
+            "bound that case actually scores against; this field is kept "
+            "for a reader with only the breaker rating on hand and is never "
+            "itself the basis for a scored verdict."),
         "evidence_on_where_the_credit_sits": {
             "annual_peak_month": f"{peak[0].year:04d}-{peak[0].month:02d}",
             "annual_peak_hour": int(peak[1]),
@@ -3370,8 +3867,11 @@ def build_no_solar():
         },
         "not_determined": (
             "The A/C's actual draw at the moment of the annual peak cannot be "
-            "separated from whole-house data. Sub-metering the condenser, or "
-            "its nameplate RLA/MCA, would settle it."),
+            "separated from whole-house data. The condenser's own nameplate "
+            "RLA (panel.existing_ac_nameplate_rla_a) tightens the bound "
+            "above and is what heat_pump_replaces_ac's own credit uses; "
+            "sub-metering the condenser would settle where inside it the "
+            "true figure sits."),
     }
 
     evse_mitigations = []
@@ -3971,6 +4471,10 @@ def build():
     # positions later is one change at one named place, and nothing starts
     # asserting a fit before then.
     adjacent_free_pairs = None
+    # Computed here, before the cases, because the fifth case (issue #45)
+    # needs it as much as noncoincident_loads below does -- a single call,
+    # shared by both.
+    ac = existing_ac_ocpd(panel["schedule"])
 
     def case(name, fixed_a, new_2pole_breakers, solves_for_heat_pump, note):
         """One scenario. `fixed_a` is the sum of the code values of the loads
@@ -4034,14 +4538,21 @@ def build():
                 "what_would_settle_it": (PHYSICAL_FIT_SETTLE
                                          if fit == "not_determined" else None),
                 "note": (
-                    "Every case published here ADDS equipment, and each added "
-                    "240 V load -- a heat pump, a second EVSE, a battery -- "
-                    "needs its own 2-pole breaker and therefore two adjacent "
-                    "free spaces. A heat pump that REPLACES the existing A/C "
-                    "on that circuit is a different configuration and is not "
-                    "modelled here, so nothing in this artifact says what it "
-                    "would need; see noncoincident_loads for the demand-side "
-                    "half of that scenario."),
+                    "This case ADDS equipment beside what is already "
+                    "installed, and each added 240 V load -- a heat pump, a "
+                    "second EVSE, a battery -- needs its own 2-pole breaker "
+                    "and therefore two adjacent free spaces. A heat pump "
+                    "that REPLACES the existing A/C on its own circuit needs "
+                    "no new space at all"
+                    + (" and is scored separately as heat_pump_replaces_ac, "
+                       "which is not blocked by the count below; see "
+                       "noncoincident_loads for the demand-side half of "
+                       "that case."
+                       if ac["basis"] == AC_READ else
+                       ", but this panel's schedule does not identify a "
+                       "single 2-pole air-conditioning circuit to reuse (see "
+                       "noncoincident_loads), so heat_pump_replaces_ac is "
+                       "not scored for this household either.")),
             },
             "note": note,
         }
@@ -4105,8 +4616,14 @@ def build():
                  battery_case_note),
         ]
 
+    cases.append(heat_pump_replacement_case(
+        ac, panel["existing_ac_nameplate_rla_a"],
+        ac_nameplate_basis_of(panel), avail, avail_upper, socket_basis, occ,
+        adjacent_free_pairs,
+        "the point-determined 15-minute maximum, the headline figure",
+        conservative_basis_is(binding), verdict_basis(binding)))
+
     # Noncoincident-load refinement, bounded rather than asserted.
-    ac = existing_ac_ocpd(panel["schedule"])
     ac_ocpd = ac["ocpd_a"]
     summer_peaks = {ym: e[2] for ym, e in monthly.items()
                     if int(ym[5:]) in R.SUMMER_MONTHS}
@@ -4119,20 +4636,40 @@ def build():
     cooling_shaped = int(peak[1]) in COOLING_HOURS
     noncoincident = {
         "rule": nec_rule("220.60"),
-        "the_second_sentence_matters_here": (
-            f"{nec('220.60')} does not stop at 'count only the largest'. Where "
-            "a motor or "
-            "air-conditioning load is one of the noncoincident loads and is NOT "
-            "the largest of them, the calculation still carries 125% of the "
-            "larger of the motor or air-conditioning load. A heat pump swapped "
-            "in for this A/C is exactly that pairing, so the second sentence is "
-            "part of the rule that applies and is stated with the first."),
+        "which_sentence_of_220_60_applies": (
+            f"{nec('220.60')}'s FIRST sentence -- count only the larger of "
+            "loads that will never operate together -- is the general "
+            "principle behind crediting a REPLACEMENT: once the outgoing A/C "
+            "is physically removed, it and the incoming heat pump can never "
+            "both be drawing at once, so only the larger matters. The SECOND "
+            "sentence (2020 edition) is a different, narrower rule: it sets "
+            "a 125%-of-largest-motor FLOOR under a noncoincident load that "
+            "stays INSTALLED at less than the largest. That does not describe "
+            "anything scored here -- the four ADD cases below RETAIN the A/C "
+            "and add a heat pump beside it, so nothing is being compared as "
+            "noncoincident at all, and heat_pump_replaces_ac REMOVES the A/C "
+            "rather than retaining it below the largest. The second "
+            "sentence's floor therefore authorizes nothing in this artifact; "
+            "heat_pump_replaces_ac's credit rests on the first sentence's "
+            f"principle and on {nec('220.87')}'s own measured-maximum "
+            "method simply no longer counting a load that no longer "
+            "exists."),
         "why_it_matters": (
-            "A heat pump that REPLACES the existing A/C does not add its whole "
-            "MCA: whatever the A/C was drawing is already inside the measured "
-            "maximum. The conservative cases above ignore that credit. The "
-            "replacement configuration itself is not modelled here -- no case "
-            "in this artifact removes a load."),
+            "A heat pump that REPLACES the existing A/C is physically "
+            "removing one load and installing another: whatever the A/C was "
+            "drawing at the moment of the measured maximum no longer exists "
+            "once it is gone. The conservative cases above ignore that "
+            "credit because they ADD a heat pump beside the A/C rather than "
+            "replacing it, and nothing is removed. The replacement "
+            "configuration is scored separately as the heat_pump_replaces_ac "
+            "case"
+            + (", which applies this credit -- bounded by the departing "
+               "equipment's own nameplate RLA, not assumed -- and needs no "
+               "new panel space."
+               if ac["basis"] == AC_READ else
+               ", but this panel's schedule does not identify a single "
+               "2-pole air-conditioning circuit for that case to reuse, so "
+               "it reports itself unscored rather than guessing one.")),
         "existing_ac_ocpd_a": ac_ocpd,
         "existing_ac_ocpd_basis": ac["basis"],
         "existing_ac_ocpd_reading": ac["reading"],
@@ -4142,6 +4679,20 @@ def build():
             "low": 0.0,
             "high": (_r(ac_ocpd * NEC_220_87_FACTOR)
                      if ac_ocpd is not None else None)},
+        "credit_bounds_a_basis": (
+            "The LOOSEST bound available from the schedule alone: 125% of "
+            f"the branch OCPD's rating, not the equipment's own draw. "
+            f"{nec('440.22(A)')} permits an HVAC branch-circuit protective "
+            "device to be sized up to 175-225% of the equipment's rated-load "
+            "current, so a breaker routinely sits well above what the "
+            "condenser it protects actually draws, and this bound is "
+            "correspondingly looser than one built from the equipment's own "
+            "nameplate. Where panel.existing_ac_nameplate_rla_a has been "
+            "read, cases[].noncoincident_credit_bounds_a on "
+            "heat_pump_replaces_ac publishes the tighter, nameplate-based "
+            "bound that case actually scores against; this field is kept "
+            "for a reader with only the breaker rating on hand and is never "
+            "itself the basis for a scored verdict."),
         "evidence_on_where_the_credit_sits": {
             "annual_peak_month": f"{peak[0].year:04d}-{peak[0].month:02d}",
             "annual_peak_hour": int(peak[1]),
@@ -4169,8 +4720,11 @@ def build():
         },
         "not_determined": (
             "The A/C's actual draw at the moment of the annual peak cannot be "
-            "separated from whole-house data. Sub-metering the condenser, or "
-            "its nameplate RLA/MCA, would settle it."),
+            "separated from whole-house data. The condenser's own nameplate "
+            "RLA (panel.existing_ac_nameplate_rla_a) tightens the bound "
+            "above and is what heat_pump_replaces_ac's own credit uses; "
+            "sub-metering the condenser would settle where inside it the "
+            "true figure sits."),
     }
 
     # Mitigations, computed. The first two are ways of adding a SECOND charger
@@ -4649,9 +5203,22 @@ def main():
           f"{nec['headroom_a']['vs_service_rating']} A vs the "
           f"{pan['service_rating_a']:.0f} A main, {socket}")
     for c in result["cases"]:
+        if c.get("scored") is False:
+            print(f"  {c['case']}: not scored -- {c['reason']}")
+            continue
         rem = c["remaining_headroom_a"]
+        credit = rem.get("assuming_full_credit")
+        credit_suffix = ""
+        if credit is not None:
+            credit_suffix = (
+                f", {credit['measured_basis']['binding']} A measured / "
+                f"{credit['conservative_basis']['binding']} A conservative "
+                f"at full noncoincident credit"
+                if credit["measured_basis"] is not None else
+                ", full noncoincident credit not scored (no nameplate reading)")
         print(f"  {c['case']}: {rem['measured_basis']['binding']} A measured / "
-              f"{rem['conservative_basis']['binding']} A conservative -- "
+              f"{rem['conservative_basis']['binding']} A conservative"
+              f"{credit_suffix} -- "
               f"{c['remaining_is']}  ({c['ampacity_verdict']} on ampacity, "
               f"{c['spaces']['physical_fit']} on "
               f"{c['spaces']['full_size_spaces_required']} spaces)")
