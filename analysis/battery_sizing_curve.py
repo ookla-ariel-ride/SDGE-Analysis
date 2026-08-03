@@ -475,8 +475,8 @@ def _scenario(d, imp0, gen0, label):
                      "not a raw top-to-bottom span, so it does not depend on "
                      "how far either grid extends beyond that neighborhood"),
             "energy_elasticity_charge_held_fixed_diagnostic": round(energy_elasticity_cf, 4),
-            "energy_elasticity_ratio_to_power_real": round(ratio_real, 1) if ratio_real else None,
-            "energy_elasticity_ratio_to_power_charge_held_fixed": round(ratio_cf, 1) if ratio_cf else None,
+            "energy_elasticity_ratio_to_power_real": round(ratio_real, 1) if ratio_real is not None else None,
+            "energy_elasticity_ratio_to_power_charge_held_fixed": round(ratio_cf, 1) if ratio_cf is not None else None,
             "ratio_null_note": (
                 None if (ratio_real is not None and ratio_cf is not None) else
                 "power_elasticity is a true (or floating-point-noise) zero in "

@@ -281,22 +281,39 @@ def case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_fourth_pass_c
 
 
 @case
-def case_solve_lp_rejects_simultaneous_full_rate_charge_and_discharge_at_symmetric_power():
-    """THE regression test for the bug the coordinator found: a first, WRONG
-    attempt at generalizing the combined constraint used two INDEPENDENT
-    rows, which silently permitted an interval to charge at its full rate
-    AND discharge at its full rate simultaneously -- physically impossible
-    through one bidirectional inverter, and exactly what the fourth-pass
-    review's original combined constraint existed to forbid. At SYMMETRIC
-    power (charge_kw == power_kw, matching the fourth-pass fix's own
-    scenario), forcing both a full-rate charge AND a full-rate discharge in
-    the same interval must be INFEASIBLE."""
+def case_solve_lp_does_not_choose_simultaneous_full_rate_charge_and_discharge_at_symmetric_power():
+    """A sanity/smoke check, NOT the regression test for the bug the
+    coordinator found -- relabeled after an independent code-reviewer agent
+    (PR #69) reinstated the retired two-independent-rows bug in a scratch
+    copy and found this exact test still passes ("ok"), because it can't
+    distinguish correct from buggy here: with imp0/gen0 both large and a
+    FIXED SOC boundary with the ending SOC left free and unpriced, storing
+    energy this same interval has no downstream value the LP can capture
+    (see the module docstring's combined-power-cap section for why grid_
+    topup/solar_absorbed and discharge are, by this LP's own derived-
+    imp/exp accounting, cost-neutral-at-best or strictly worse when paired
+    in the SAME interval and bucket, independent of the actual rates
+    supplied) -- so the optimizer picks discharge=1.0/charge=0.0 regardless
+    of whether the combined cap exists at all. Confirmed: reinstating the
+    bug (two independent rows, each equal to the existing per-direction box
+    bound) still produces discharge=[1.0], charge=[0.0] here, satisfying
+    this test's assertion by coincidence, not because the cap did its job.
+
+    The REAL regression guards are the two tests that inspect the actual
+    A_ub matrix scipy.optimize.linprog is called with, and correctly FAIL
+    when the bug is reinstated:
+    case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows
+    (asserts exactly one combined row, not two) and
+    case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_fourth_pass_constraint
+    (asserts that row's coefficients at symmetric power). This test is kept
+    as a smoke check that _solve_lp still runs and returns a sane,
+    feasible, bounded result on this specific scenario -- not as evidence
+    the combined cap is enforced."""
     # power_kw=4 -> a full-rate discharge this interval is 1.0 kWh; a
     # full-rate charge is also 1.0 kWh (symmetric). Force SOC away from both
     # boundaries (fixed at 5.0 of a 10.0 cap) so neither action is blocked
     # by SOC alone, and give plenty of imp0/gen0 so gross-flow bounds do not
-    # bind either -- the ONLY thing that can make "charge 1.0 AND discharge
-    # 1.0 in one interval" infeasible is the combined power cap.
+    # bind either.
     imp0 = np.array([10.0])
     gen0 = np.array([10.0])
     ev_spillover = np.array([False])
@@ -306,15 +323,15 @@ def case_solve_lp_rejects_simultaneous_full_rate_charge_and_discharge_at_symmetr
         imp0, gen0, ev_spillover, bucket_idx, bucket_rates,
         cap=10.0, power_kw=4.0, soc_boundary=("fixed", 5.0))  # charge_kw=None (symmetric)
     assert res.success, res.message
-    # the LP is free to choose ANY feasible schedule; the combined cap must
-    # have kept it from choosing simultaneous full-rate charge and discharge
-    # -- i.e. discharge=1.0 AND charge=1.0 together (2.0 combined) must not
-    # both be at their own individual maxima at once.
+    # This scenario's own OPTIMAL solution naturally avoids simultaneous
+    # charge+discharge (see docstring) -- the assertion below is a real
+    # property of THIS solve, but a passing result here does not prove the
+    # combined power cap is doing anything; see the A_ub-inspecting tests
+    # above for the actual regression guard.
     assert discharge[0] + charge[0] <= 1.0 + 1e-6, (
         f"combined charge {charge[0]} + discharge {discharge[0]} exceeds the "
-        "symmetric combined power cap of 1.0 kWh/interval -- the regression "
-        "the fourth-pass review fixed has recurred")
-    return "simultaneous full-rate charge and discharge at symmetric power is correctly infeasible"
+        "symmetric combined power cap of 1.0 kWh/interval")
+    return "solve_lp returns a sane, bounded result at symmetric power (smoke check, not a regression guard -- see the A_ub tests above for that)"
 
 
 @case

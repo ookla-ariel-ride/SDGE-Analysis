@@ -196,13 +196,26 @@ def case_battery_backup_sims_sim_threads_a_distinct_charge_pwr():
 
     r_sym = bbs.sim(13.5, 11.5, "test")
     r_asym = bbs.sim(13.5, 11.5, "test", charge_pwr=5.0)
-    # a tighter charge cap can only ever reduce (never increase) forgone
-    # export credits earned by charging faster from solar surplus, and can
-    # only reduce (never increase) grid-charge cost incurred overnight --
-    # so net_annual_savings under the tighter cap must be <= the symmetric
-    # figure on this household's real measured year.
-    assert r_asym["net_annual_savings"] <= r_sym["net_annual_savings"], (
-        r_sym["net_annual_savings"], r_asym["net_annual_savings"])
+    # Reviewer finding (independent code-reviewer agent, PR #69): the
+    # PREVIOUS version of this assertion checked net_annual_savings with a
+    # non-strict "<=" -- on this household's real measured year,
+    # net_annual_savings does not actually move between sym/asym (both round
+    # to 1680), so that assertion passed even against a completely no-op'd
+    # charge_pwr (cpwr = pwr unconditionally, ignoring the parameter). The
+    # real observable effect of a distinct charge_pwr here is
+    # forgone_export_credits: a tighter charge cap spreads the same total
+    # charge throughput across more/different-priced intervals while filling
+    # the pack, moving forgone_export_credits from 381 (symmetric) to 382
+    # (charge_pwr=5.0) even though net_annual_savings washes out in rounding.
+    # Asserting on the field that actually changes is what makes a no-op
+    # genuinely fail this test.
+    assert r_asym["forgone_export_credits"] != r_sym["forgone_export_credits"], (
+        f"a distinct charge_pwr=5.0 must produce a MEASURABLY different "
+        f"forgone_export_credits than the symmetric default (both "
+        f"{r_sym['forgone_export_credits']} here) -- equal values are the "
+        "exact signature of charge_pwr being silently ignored (a no-op)")
+    assert r_sym["forgone_export_credits"] == 381, r_sym["forgone_export_credits"]
+    assert r_asym["forgone_export_credits"] == 382, r_asym["forgone_export_credits"]
     assert r_sym["power_kw"] == 11.5, "sim's own power_kw field must report discharge, unaffected by charge_pwr"
     return "battery_backup_sims.sim threads a distinct charge_pwr, separate from its discharge pwr"
 
@@ -253,10 +266,21 @@ def case_deep_analyses_cost_with_batt_threads_a_distinct_charge_pwr():
 
     c_sym = da.cost_with_batt(da.UDC5, da.CEA5, False)
     c_asym = da.cost_with_batt(da.UDC5, da.CEA5, False, charge_pwr=5.0)
-    # a tighter charge cap can only make the battery LESS able to arbitrage
-    # (less forgone-export-credit avoided, less cheap-hour charging), so
-    # the resulting annual cost cannot go DOWN under the tighter cap.
-    assert c_asym >= c_sym - 1e-6, (c_sym, c_asym)
+    # Reviewer finding (independent code-reviewer agent, PR #69): the
+    # PREVIOUS version of this assertion ("c_asym >= c_sym - 1e-6") is a
+    # near-no-op itself -- it passes whenever c_asym is anywhere at or above
+    # c_sym minus a hair, which is also exactly what a genuinely no-op'd
+    # charge_pwr (cpwr = pwr unconditionally) would produce (c_asym == c_sym
+    # exactly). On this household's real data the two values are actually
+    # DIFFERENT (c_sym=3201.342094106666, c_asym=3201.869409756666, a
+    # ~$0.53 gap, comfortably above float noise), so a strict inequality
+    # with a real margin is what actually distinguishes the fix from a
+    # no-op.
+    assert c_asym > c_sym + 0.1, (
+        f"charge_pwr=5.0 must produce a MEASURABLY higher cost than the "
+        f"symmetric default (c_sym={c_sym}, c_asym={c_asym}) -- equal or "
+        "near-equal values here are the exact signature of charge_pwr "
+        "being silently ignored (a no-op)")
     return "deep_analyses.cost_with_batt threads a distinct charge_pwr, separate from its discharge pwr"
 
 

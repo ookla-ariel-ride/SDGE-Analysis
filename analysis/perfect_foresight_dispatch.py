@@ -367,10 +367,16 @@ def _solve_lp(imp0, gen0, ev_spillover, bucket_idx, bucket_rates, cap, power_kw,
     # reduces to the untouched original constraint at symmetric rates
     # (verified: byte-identical artifact regeneration) and correctly caps
     # the COMBINED duty cycle, not two independent budgets, at asymmetric
-    # ones. See test_perfect_foresight_dispatch.py's
-    # case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows,
-    # case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_fourth_pass_constraint,
-    # and case_solve_lp_rejects_simultaneous_full_rate_charge_and_discharge_at_symmetric_power.
+    # ones. The REGRESSION GUARDS are test_perfect_foresight_dispatch.py's
+    # case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows
+    # and case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_
+    # fourth_pass_constraint (both inspect the actual A_ub matrix handed to
+    # the solver and correctly fail when the bug is reinstated).
+    # case_solve_lp_does_not_choose_simultaneous_full_rate_charge_and_
+    # discharge_at_symmetric_power is a smoke check only -- an independent
+    # code-reviewer agent (PR #69) found it still passes against the
+    # reinstated bug on its own scenario, since that scenario's own optimum
+    # avoids the failure mode regardless of whether the cap is enforced.
     # Scaled by power_kw (equivalent to the 1/4-hour form above, multiplied
     # through by power_kw on both sides) rather than left in raw hours, so
     # that at the symmetric default the discharge coefficient is the

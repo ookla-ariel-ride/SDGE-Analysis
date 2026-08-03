@@ -7,7 +7,7 @@
 | Enphase IQ Battery 5P | 5.0 | 3.84 kW (7.68 peak) | not recorded | 15 yr / 4,000 cycles | ~$8,500 |
 | Enphase IQ Battery 10C | 10.0 | 7.08 kW (10.5 peak) | not recorded | 15 yr / 6,000 cycles | ~$13,000 |
 | Tesla Powerwall 3 | 13.5 | 11.5 kW | 5 kW | 10 yr | ~$13,000–16,500 (unit ~$9.3–10.5k) |
-| PW3 Expansion Pack | +13.5 | (shares PW3 inverter) | (shares PW3 inverter) | 10 yr | ~$5,900 |
+| PW3 Expansion Pack | +13.5 | (shares PW3 inverter, 11.5 kW — discharge is not re-rated by expansion) | 8 kW | 10 yr | ~$5,900 |
 
 Multi-unit notes: second PW3 incremental ~$7–9k; Tesla applies install-efficiency
 discounts on multi-unit systems. PW3 supports up to 3 expansions (54 kWh max).

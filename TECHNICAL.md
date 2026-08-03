@@ -2180,11 +2180,22 @@ combined row — this silently reintroduced the exact bug the fourth-pass fix ab
 prevent (simultaneous full-rate charge AND full-rate discharge through what is physically
 one bidirectional inverter), caught because it failed to reproduce the committed artifact
 byte-identically even at symmetric power (the day-ahead figure reverted to the pre-fourth-
-pass $1,711.13/yr). Corrected to the single normalized row; regression tests added
-(`case_solve_lp_rejects_simultaneous_full_rate_charge_and_discharge_at_symmetric_power` and
+pass $1,711.13/yr). Corrected to the single normalized row; the actual regression guards
+are `test_perfect_foresight_dispatch.py`'s
+`case_solve_lp_combined_power_cap_row_is_normalized_not_two_independent_rows` and
+`case_solve_lp_symmetric_normalized_row_is_bit_identical_to_the_fourth_pass_constraint`
+(both inspect the real `A_ub` matrix handed to the solver directly and correctly fail when
+the two-independent-rows bug is reinstated), plus
 `case_check_conservation_rejects_simultaneous_moderate_charge_and_discharge_that_only_
-combined_check_catches` in `test_perfect_foresight_dispatch.py`) so this specific class of
-regression can't recur silently.
+combined_check_catches`, so this specific class of regression can't recur silently.
+(An earlier version of this passage also credited
+`case_solve_lp_does_not_choose_simultaneous_full_rate_charge_and_discharge_at_symmetric_
+power` — formerly named as though it WERE the regression test — with this role; an
+independent code-reviewer agent (PR #69) found that test still passes when the bug is
+reinstated, because its specific scenario's own economic optimum avoids simultaneous
+charge/discharge regardless of whether the combined cap is enforced (fixed SOC boundary,
+free/unpriced ending SOC — see the test's own docstring for the full mechanism). It is kept
+as a smoke check on `_solve_lp`'s basic behavior, not relied on as a regression guard.)
 
 At the real 5 kW charge / 11.5 kW discharge rates (now this script's own production
 default), the effect is small — **~$4/yr, ~0.23%** on the day-ahead persistence figure,
