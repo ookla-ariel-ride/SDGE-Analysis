@@ -82,6 +82,7 @@ MANIFEST = {
     "cca_rate_extraction.py": "generator",
     "cca_bundled_counterfactual.py": "generator",
     "gross_import_decomposition.py": "generator",
+    "reprice_by_vintage.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -128,6 +129,10 @@ OWNS = {
     "cca_rate_extraction.py":       [("data", "cca_generation_rates.csv")],
     "cca_bundled_counterfactual.py": [("data", "cca_bundled_counterfactual.json")],
     "gross_import_decomposition.py": [("cwd", "gross_import_decomposition.json")],
+    # writes directly into ROOT/data (found via its own _repo_root() walk-up),
+    # exactly like rates_history.py -- NOT the cwd-then-promote convention
+    # gross_import_decomposition.py uses.
+    "reprice_by_vintage.py":        [("data", "reprice_by_vintage.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -356,6 +361,9 @@ NEEDS_PRIVATE_ARCHIVE = {
                                       "as service_headroom.py) and the raw Green Button "
                                       "export, none of which has a stand-in carrying a real "
                                       "two-year-apart pair of billing periods"),
+    "reprice_by_vintage.py": ("the raw Green Button export (usage.csv, via "
+                              "billing_model_nem.load()) for the interval data it reconciles "
+                              "against the 13-period bill corpus"),
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
