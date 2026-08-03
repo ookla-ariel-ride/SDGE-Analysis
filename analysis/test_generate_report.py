@@ -194,6 +194,37 @@ def case_numeral_guard_does_not_flag_an_ordinal_used_as_a_rank_not_a_quantity():
     return "'the third package option' (an ordinal rank, not a fraction) is not flagged"
 
 
+# ---------------------------------------------------------------------------
+# Adversarial review pass 3, finding 1: broadening "most" to match standalone
+# (pass 2's own fix, for "most on-peak imports...") false-positived on the
+# ordinary superlative-adjective construction ("the most efficient policy"),
+# which states no quantity at all. "most" is graded (superlative of "many"/
+# adjectives) in a way none of this list's other vague quantifiers are, so it
+# alone needs a narrower rule: exempt only when immediately preceded by "the"
+# (the superlative frame), which still catches the bare "most X"/"most of X"
+# quantifier sense pass 2 fixed.
+# ---------------------------------------------------------------------------
+@case
+def case_numeral_guard_does_not_flag_the_most_as_a_superlative_adjective():
+    for text in ("the most efficient dispatch policy is greedy",
+                "the most cost-effective option is the smaller battery",
+                "this is the most affordable package available"):
+        assert gr.find_fragment_violations(text) == [], (text, gr.find_fragment_violations(text))
+    return "'the most efficient/cost-effective/affordable ...' (superlative, not a quantity) is not flagged"
+
+
+@case
+def case_numeral_guard_still_flags_most_as_a_quantifier():
+    """The fix above must not regress pass 2's own case: 'most' with no
+    preceding 'the' is still overwhelmingly the 'majority of' quantifier
+    sense, and must still be caught."""
+    for text in ("most on-peak imports happen in the evening",
+                "most of the savings come from behavior change"):
+        violations = gr.find_fragment_violations(text)
+        assert violations, (text, violations)
+    return "'most on-peak imports...' / 'most of the savings...' (the quantifier sense) are still rejected"
+
+
 @case
 def case_numeral_guard_still_accepts_clean_prose_with_no_quantity_words():
     text = ("{{BEST_PLAN}} stays cheapest with or without a battery; see §3 for the "

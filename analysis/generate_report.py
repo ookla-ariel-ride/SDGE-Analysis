@@ -361,8 +361,20 @@ _CARDINAL_WORDS = ("two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
                    "hundred|thousand|million|billion")
 _FRACTION_ORDINAL_WORDS = "third|quarter|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
 _VAGUE_QUANTIFIER_WORDS = ("roughly|approximately|nearly|majority|several|dozens|numerous|"
-                          "most|many|much|handful|fraction|bulk|countless")
+                          "many|much|handful|fraction|bulk|countless")
 _MULTIPLIER_WORDS = "quadruple(?:s|d)?|triple(?:s|d)?|double(?:s|d)?|twice"
+# "most" is graded ("most" is the superlative of "many"/adjectives), so it has
+# a genuine second reading this list's other words don't: "the most efficient
+# dispatch policy" / "the most affordable package" state an ordinary
+# superlative comparison, not an invented quantity -- a third adversarial
+# review pass found "most"'s standalone match false-positiving on exactly
+# this construction. "the most ADJECTIVE" is that comparison; bare "most"
+# with no preceding "the" (or "most" followed directly by "of") is
+# overwhelmingly the "majority of" quantifier sense this guard exists to
+# catch ("most on-peak imports happen...", "most of the savings"). Excluding
+# "most" only when immediately preceded by "the" keeps both real cases
+# working: "the most efficient..." is exempt, "most imports..." still flags.
+_MOST_QUANTIFIER_RE = re.compile(r"(?<!\bthe )\bmost\b", re.I)
 
 _WORD_NUMBER_PATTERNS = [
     (re.compile(r"\b(" + _CARDINAL_WORDS + r")\b", re.I), "spelled-out cardinal number"),
@@ -372,6 +384,7 @@ _WORD_NUMBER_PATTERNS = [
     (re.compile(r"\b(" + _FRACTION_ORDINAL_WORDS + r")s?\s+(of|the)\b", re.I),
      "spelled-out fraction"),
     (re.compile(r"\b(" + _VAGUE_QUANTIFIER_WORDS + r")\b", re.I), "vague quantifier"),
+    (_MOST_QUANTIFIER_RE, "vague quantifier ('most', not the superlative 'the most ADJ')"),
     (re.compile(r"\ba\s+few\b", re.I), "vague quantifier ('a few')"),
     (re.compile(r"\b(" + _MULTIPLIER_WORDS + r")\b", re.I), "multiplier word"),
 ]
