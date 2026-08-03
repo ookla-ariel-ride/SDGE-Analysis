@@ -60,20 +60,23 @@ extraction to each period's own text chunk, bounded by that period's
 "Billing Period: ... Total Days: N" anchor and its own closing
 "Total Electric Service $X" line (see _period_text_chunks()).
 
-A SECOND, UNRELATED PARSING GAP FOUND WHILE BUILDING THIS (not fixed here --
-bill_decomposition.py is owned by a sibling phase; noted for that phase).
-bd._LINE_PATTERNS' per-kWh-rate lines ("Wildfire Fund Charge NNN kWh x $RATE
-VALUE", "PCIA 2023 NNN kWh x $RATE VALUE", "Incremental Procurement Cost
-Adjustment NNN kWh x $RATE VALUE") anchor on a literal "x $", with no
-allowance for a minus sign PRINTED BEFORE the dollar sign. PCIA rates are
-often negative and SDG&E prints them exactly that way: "PCIA 2023 802 kWh x
--$.03161 -25.35" (2025-03-04 statement). bd's pattern fails to match that
-line at all, and bd.charge_lines() would silently return a PCIA total short
-by whatever that dropped line was worth -- discovered here because this
-script's independent cross-check (see below) came out $25.35 high on that
-exact statement until the sign was allowed for. This script's own patterns
-(_OWN_PATTERNS) fix this locally; bd.py itself is untouched per this issue's
-file ownership.
+A SECOND, UNRELATED PARSING GAP FOUND WHILE BUILDING THIS -- FIXED IN bd.py BY
+ISSUE #46, noted here for the record. bd._LINE_PATTERNS' per-kWh-rate lines
+("Wildfire Fund Charge NNN kWh x $RATE VALUE", "PCIA 2023 NNN kWh x $RATE
+VALUE", "Incremental Procurement Cost Adjustment NNN kWh x $RATE VALUE")
+anchored on a literal "x $", with no allowance for a minus sign PRINTED
+BEFORE the dollar sign. PCIA rates are often negative and SDG&E prints them
+exactly that way: "PCIA 2023 802 kWh x -$.03161 -25.35" (2025-03-04
+statement). bd's pattern used to fail to match that line at all, and
+bd.charge_lines() would silently return a PCIA total short by whatever that
+dropped line was worth -- discovered here because this script's independent
+cross-check (see below) came out $25.35 high on that exact statement until
+the sign was allowed for in this script's own patterns (_OWN_PATTERNS, which
+predate and are independent of bd.py's fix). Issue #46 has since fixed
+bd._LINE_PATTERNS itself to accept the sign in either position; this
+script's own patterns are kept as-is because they are also relied on for the
+multi-segment summing and dual-period scoping bd.charge_lines() does not
+attempt (see below).
 
 ALSO DISCOVERED: bd._LINE_PATTERNS' per-kWh-rate lines can print MORE THAN
 ONCE within a SINGLE period, not just across two periods -- a mid-cycle rate

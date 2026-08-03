@@ -188,16 +188,22 @@ def case_dual_period_chunk_count_is_fail_closed():
 @case
 def case_pcia_negative_rate_sign_is_handled():
     """PCIA is often printed with the sign BEFORE the dollar sign ('kWh x
-    -$.03161'). bd._LINE_PATTERNS' own pcia pattern cannot match that (proven
-    against this exact real line below via the RAW bd pattern, run purely as
-    a unit check against a string -- no PDF needed); irr._OWN_PATTERNS fixes
-    it locally. Also proves the multi-segment case (two PCIA lines in one
-    period) sums correctly rather than keeping only the first."""
+    -$.03161'). Before issue #46's fix, bd._LINE_PATTERNS' own pcia pattern
+    could not match that at all; irr._OWN_PATTERNS has always fixed it locally,
+    independently of bd. Now that #46 is fixed, both patterns agree on this
+    single-segment line -- proven against this exact real line, run purely as
+    a unit check against a string, no PDF needed. What irr still does that
+    bd.charge_lines() does not is sum MULTIPLE PCIA segments within one period
+    (bd raises on a repeated line with conflicting values instead, by design
+    for the single-period statements it compares); that multi-segment summing
+    is proven below."""
     line = "PCIA 2023 802 kWh x -$.03161 -25.35"
     raw_pcia_pattern = dict(bd._LINE_PATTERNS)["pcia"]
-    assert not re.search(raw_pcia_pattern, line), \
-        "bd's own pcia pattern unexpectedly matched a negative-rate line -- " \
-        "this case's premise no longer holds, re-examine"
+    m_raw = re.search(raw_pcia_pattern, line)
+    assert m_raw, \
+        "bd's own pcia pattern no longer matches a negative-rate line -- " \
+        "issue #46's fix regressed"
+    assert float(m_raw.group(1).split()[-1]) == -25.35, m_raw
     fixed = irr._OWN_PATTERNS["pcia"]
     m = re.search(fixed, line)
     assert m and float(m.group(1)) == -25.35, m
@@ -209,8 +215,9 @@ def case_pcia_negative_rate_sign_is_handled():
                         "Total Taxes & Fees on Electric Charges $1.34\n")
     lines = irr.charge_lines_for_period(two_segment_text, "synthetic")
     assert _close(lines["pcia"], 0.39 + -25.35), lines
-    return (f"bd's raw pcia pattern misses a negative-rate line; irr's own pattern "
-           f"extracts -25.35 and sums two segments to {lines['pcia']:.2f}")
+    return (f"bd's raw pcia pattern and irr's own pattern now agree on a negative-"
+           f"rate line (-25.35); irr's own pattern additionally sums two segments "
+           f"to {lines['pcia']:.2f}")
 
 
 @case

@@ -10,6 +10,21 @@ the private archive, and it says so instead of passing quietly.
 
 WHAT IS BEING GUARDED, and why each case exists:
 
+  A SIGN PRINTED BEFORE THE DOLLAR, NOT AFTER (issue #46). SDG&E prints a negative
+  per-kWh rate as "kWh x -$.02828 -28.31", minus before the $, not "kWh x $-.02828".
+  Three _LINE_PATTERNS entries required a literal $ right after "x " with no
+  tolerance for a sign in front of it, so the line failed to match at all and
+  charge_lines()'s caller read the missing key as a silent $0 instead of the real
+  (negative) charge. case_charge_lines_accepts_a_minus_sign_printed_before_the_
+  dollar_sign proves both sign positions parse to the same magnitude from a
+  synthetic fixture; case_the_real_corpus_no_longer_drops_a_negative_pcia_line
+  re-scans every real statement and asserts none of them still drop the line
+  (this household's own bills carry the negative-before-$ form on 9 of 25
+  statements). Neither of the two statements this module actually compares (the
+  2024-06-27 base and 2026-07-02 current) happens to print PCIA in the affected
+  form, so data/bill_decomposition.json is unchanged by the fix — verified by
+  regenerating it and diffing against the committed copy.
+
   THE TRAP. The billing-history export reports current_charges of $0.00 for
   2024-06-27, the base period of this comparison, and for every statement through
   2025-04-02. A decomposition built on that column would compare $0.00 against
@@ -100,6 +115,7 @@ import copy
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 import tempfile
 
@@ -178,6 +194,94 @@ _SETTLEMENT_TEXT = (
     # and the True-Up Date field, and a synthetic one still trips the PII gate's
     # labelled-account-number rule, which is working as intended.
     "True-Up Date: 12/26/2099 Version: 2.0\n")
+
+
+def _with_statement_text(txt, fn):
+    """Run fn() with B.statement_text patched to return txt for any statement,
+    restoring the original afterward regardless of outcome."""
+    saved = B.statement_text
+    B.statement_text = lambda stmt: txt
+    try:
+        return fn()
+    finally:
+        B.statement_text = saved
+
+
+# ---------------------------------------------------------------------------
+# charge_lines() — a minus sign printed BEFORE the dollar sign (issue #46)
+# ---------------------------------------------------------------------------
+def case_charge_lines_accepts_a_minus_sign_printed_before_the_dollar_sign():
+    """SDG&E prints a negative per-kWh rate as 'kWh x -$.02828 -28.31' — the minus
+    BEFORE the dollar sign — not 'kWh x $-.02828' (minus after, which _NUM's own
+    leading sign already covered). Three _LINE_PATTERNS entries (wildfire_fund_
+    charge, pcia, incremental_procurement_cost_adjustment) required a literal '$'
+    right after 'x ' with no tolerance for a sign in front of it, so a negative
+    rate line failed to match AT ALL rather than parsing to a wrong value, and
+    lines.get(name, 0.0) then silently priced the missing charge at zero.
+
+    This is not a hypothetical: the real 2025-04-02 through 2026-01-06 statements
+    (9 of the 25 on file) print PCIA in exactly this negative-before-$ form, and
+    before this fix charge_lines() returned no 'pcia' key at all for every one of
+    them (see the reproduction below, run against the real corpus, in
+    case_the_real_corpus_no_longer_drops_a_negative_pcia_line).
+
+    Each affected line is checked against a synthetic statement chunk in both the
+    negative-before-$ and the plain positive form, asserting the same magnitude
+    comes out with the sign flipped — not that the key goes missing."""
+    positive_txt = (
+        "Wildfire Fund Charge 1,000 kWh x $.00595 5.95\n"
+        "PCIA 2023 1,000 kWh x $.02828 28.28\n"
+        "Incremental Procurement Cost Adjustment 1,000 kWh x $.00006 .06\n"
+    )
+    negative_txt = (
+        "Wildfire Fund Charge 1,000 kWh x -$.00595 -5.95\n"
+        "PCIA 2023 1,000 kWh x -$.02828 -28.28\n"
+        "Incremental Procurement Cost Adjustment 1,000 kWh x -$.00006 -.06\n"
+    )
+    pos = _with_statement_text(positive_txt, lambda: B.charge_lines("synthetic"))
+    neg = _with_statement_text(negative_txt, lambda: B.charge_lines("synthetic"))
+    for name in ("wildfire_fund_charge", "pcia", "incremental_procurement_cost_adjustment"):
+        assert name in neg, (
+            f"'{name}' went missing on the minus-before-$ form instead of parsing "
+            "to a negative value")
+        assert neg[name] == -pos[name], (
+            f"'{name}': expected {-pos[name]} from the negative-before-$ form "
+            f"(the mirror of the positive form's {pos[name]}), got {neg[name]}")
+    return ("charge_lines() extracts the wildfire/PCIA/IPA rate lines whether the "
+            "minus prints before or after the $")
+
+
+def case_the_real_corpus_no_longer_drops_a_negative_pcia_line():
+    """Every statement in the corpus, re-scanned: before this fix, the statements
+    that print PCIA in the negative-before-$ form (rates.py documents PCIA as
+    routinely negative) came back with no 'pcia' key from charge_lines() at all —
+    a silent $0, not a parse failure. This asserts the corpus no longer has any
+    such gap: every statement whose text contains a 'PCIA <year> ... kWh x' line
+    yields a numeric pcia value from charge_lines(), and statements that print it
+    negative-before-$ recover the printed negative amount, not None and not 0.0.
+
+    Two statements (2025-03-04, 2026-02-02) print a mid-period TOU-changeover
+    duplicate 'Wildfire Fund Charge' line and one (2025-10-31) carries two billing
+    periods — both raise inside charge_lines() for reasons this issue's scope
+    explicitly excludes (a different, pre-existing bug shape: 'printed with
+    conflicting values', unrelated to the dollar-sign position), so those three are
+    skipped here rather than asserted on."""
+    if not B.ELEC_DIR.exists():
+        return "SKIP needs the private bill PDF archive"
+    known_dual_valued = {"2025-03-04", "2025-10-31", "2026-02-02"}
+    checked = 0
+    for stmt in sorted(B.statement_dates()):
+        if stmt in known_dual_valued:
+            continue
+        txt = B.statement_text(stmt)
+        if not re.search(r"PCIA \d+\s+[\d,]+ kWh x", txt):
+            continue
+        lines = B.charge_lines(stmt)
+        assert "pcia" in lines, f"{stmt}: 'pcia' line present in the text but missing from charge_lines()"
+        assert isinstance(lines["pcia"], float)
+        checked += 1
+    assert checked >= 9, f"expected at least 9 PCIA-bearing statements, checked {checked}"
+    return f"{checked} PCIA-bearing statements all yield a numeric pcia value"
 
 
 # ---------------------------------------------------------------------------
@@ -1213,6 +1317,8 @@ def case_the_generator_reproduces_the_committed_artifact():
 
 
 CASES = [
+    case_charge_lines_accepts_a_minus_sign_printed_before_the_dollar_sign,
+    case_the_real_corpus_no_longer_drops_a_negative_pcia_line,
     case_the_billing_mode_question_is_answered_from_statement_text,
     case_an_accruing_statement_needs_its_deferral_sentence,
     case_a_payable_statement_must_prove_it_is_the_annual_settlement,
