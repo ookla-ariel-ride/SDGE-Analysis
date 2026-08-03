@@ -51,11 +51,13 @@ EGRESS PREFLIGHT
 import datetime as dt
 import hashlib
 import json
+import os
 import pathlib
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -489,25 +491,53 @@ def _gitleaks_scan(text):
     .githooks/pre-commit uses, applied to egress instead of a commit. Fails
     SAFE: if the gitleaks binary is not installed, this refuses rather than
     skipping the scan, since this is a security-critical gate, not a
-    nice-to-have."""
+    nice-to-have.
+
+    Scanned via a real, uniquely-named `.csv` temp file and `--source`/
+    `--no-git`, NOT `--pipe`: an adversarial review found that `--pipe` gives
+    gitleaks no file path to test, which silently disables every PATH-SCOPED
+    rule -- including .gitleaks.toml's own `green-button-export-header` rule
+    (path = '.*\\.csv$'), the one rule written specifically for "a raw Green
+    Button export's header carries the customer's name/address", i.e. exactly
+    the kind of content this gate exists to catch. `.csv` is used because it
+    is the broadest extension any currently-committed path-scoped rule
+    matches. `--no-git` lets a bare temp file (outside any git working tree)
+    be scanned at all. The temp file is removed in `finally`, including on a
+    timeout or an unexpected exception.
+
+    The `--config` path is ALWAYS passed explicitly now (never omitted to
+    rely on auto-discovery): gitleaks's config auto-discovery does not search
+    the process's cwd when `--source` points somewhere else, so the old
+    "no --config, let gitleaks find .gitleaks.toml at the repo root" fallback
+    (correct for `--pipe`, which runs with cwd=ROOT) would silently scan with
+    NO rules at all under `--source` -- confirmed by direct reproduction, not
+    assumed.
+    """
     binary = shutil.which("gitleaks")
     if not binary:
         raise EgressRefused(
             "gitleaks not installed (brew install gitleaks) -- refusing to send unscanned")
     pii_rules = ROOT / "private" / "pii-rules.toml"
-    cmd = [binary, "detect", "--pipe", "--redact", "--verbose", "--exit-code", "1"]
-    if pii_rules.is_file():
-        cmd += ["--config", str(pii_rules)]
-    # else: no --config, matching .githooks/pre-commit's own fallback -- gitleaks
-    # auto-discovers the committed .gitleaks.toml at the repo root (cwd below).
+    config_path = str(pii_rules) if pii_rules.is_file() else str(ROOT / ".gitleaks.toml")
+    fd, tmp_name = tempfile.mkstemp(suffix=".csv", prefix="egress-scan-")
+    os.close(fd)
     try:
-        r = subprocess.run(cmd, input=text, capture_output=True, text=True,
-                            cwd=str(ROOT), timeout=60)
-    except subprocess.TimeoutExpired:
-        raise EgressRefused("gitleaks scan timed out -- refusing to send unscanned") from None
-    except OSError as e:
-        raise EgressRefused(f"gitleaks scan failed to run: {e} -- refusing to send unscanned") \
-            from None
+        pathlib.Path(tmp_name).write_text(text)
+        cmd = [binary, "detect", "--no-git", "--source", tmp_name, "--config", config_path,
+               "--redact", "--verbose", "--exit-code", "1"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT), timeout=60)
+        except subprocess.TimeoutExpired:
+            raise EgressRefused("gitleaks scan timed out -- refusing to send unscanned") \
+                from None
+        except OSError as e:
+            raise EgressRefused(
+                f"gitleaks scan failed to run: {e} -- refusing to send unscanned") from None
+    finally:
+        try:
+            os.remove(tmp_name)
+        except OSError:
+            pass
     if r.returncode == 1:
         raise EgressRefused(
             "gitleaks flagged the assembled request body -- refusing to send: "

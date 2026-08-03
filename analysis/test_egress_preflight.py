@@ -246,6 +246,38 @@ def case_refuses_a_body_containing_a_fabricated_sdge_account_number():
 
 
 @case
+def case_refuses_a_body_shaped_like_a_green_button_export_header():
+    """Regression for an adversarial-review finding: .gitleaks.toml's
+    green-button-export-header rule is PATH-SCOPED (path matches *.csv), and
+    a naive `gitleaks detect --pipe` scan gives gitleaks no file path to test
+    that pattern against -- silently disabling the one rule written
+    specifically for 'a raw Green Button export's header carries the
+    customer's name/address'. Reproduced directly before the fix (--pipe
+    found nothing; --source against a real .csv-suffixed file correctly
+    flagged it); this locks the fixed _gitleaks_scan() against a regression
+    back to --pipe.
+
+    Single line ONLY: the rule's regex is anchored ^...$ with no (?m) flag,
+    so under Go/RE2 semantics those anchors bind to the whole scanned buffer,
+    not per line -- a SEPARATE, pre-existing latent gap in the rule itself
+    (confirmed by direct experiment: appending a second line to this same
+    body makes gitleaks stop matching, even with the --source fix in place).
+    That is a .gitleaks.toml correctness issue outside this fix's scope (this
+    PR was told not to touch that file); this test locks in what the fix
+    HERE actually restores -- detection is no longer unconditionally
+    disabled by --pipe -- without overclaiming it also fixes the regex's own
+    single-line limitation."""
+    _require_gitleaks()
+    poisoned_body = 'Name,"John Q Public"'  # gitleaks:allow
+    try:
+        lp.preflight([], poisoned_body)
+        raise AssertionError("preflight() sent a body shaped like a Green Button export header")
+    except lp.EgressRefused as e:
+        assert "gitleaks" in str(e).lower() or "flagged" in str(e).lower(), e
+    return "preflight() refuses a body matching the path-scoped green-button-export-header rule"
+
+
+@case
 def case_accepts_a_clean_body_through_the_real_gitleaks_scan():
     _require_gitleaks()
     result = lp.preflight([], "a perfectly ordinary sentence about kilowatt-hours")

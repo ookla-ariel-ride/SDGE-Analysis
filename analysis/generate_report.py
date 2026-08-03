@@ -111,6 +111,11 @@ import re
 import sys
 import tempfile
 import time
+from html import escape as _html_escape  # `html` is already this module's own
+                                          # convention for "the document text"
+                                          # (render(html, ...), fill_chart_data(html),
+                                          # run(..., html=None)) -- imported this way
+                                          # to avoid shadowing every one of those.
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import llm_providers as lp   # noqa: E402
@@ -146,7 +151,9 @@ SYSTEM_PROMPT = (
     "enforced mechanically after you answer:\n"
     "1. Write ONLY the replacement HTML fragment for this one slot -- no "
     "surrounding HTML, no other slot's content, no <script> or <style>.\n"
-    "2. Never write a bare digit. Every quantity must be written as "
+    "2. Never write a bare digit, and never spell a quantity out in words "
+    "either (no 'roughly two-thirds', no 'about forty percent', no 'the "
+    "majority', no 'several'). Every quantity must be written as "
     "{{TOKEN_NAME}} using one of the token names you were given verbatim -- "
     "never invent a token name, never paraphrase a number into words. A "
     "reference to a report section is written as §N (e.g. §3), which is "
@@ -303,13 +310,79 @@ _DIGIT_RE = re.compile(r"\d")
 # they appear verbatim in a fragment.
 NUMERAL_LITERAL_ALLOWLIST = frozenset()
 
+# ---------------------------------------------------------------------------
+# Word-number / fraction / vague-quantifier detection (adversarial review
+# finding 2): a decimal-digit scan alone misses an invented quantity spelled
+# out in words ("roughly two-thirds of imports", "about forty percent") --
+# an LLM told "never write a bare digit" can trivially comply while still
+# stating an unbacked number. These patterns are additional, INDEPENDENT
+# violations (not a replacement for the digit scan above); {{TOKEN}}/§N spans
+# do not exempt them, since a token's rendered STRING is never itself matched
+# against these word patterns (find_fragment_violations only scans the raw
+# fragment text a model wrote, not resolved token values).
+#
+# Design choices, spelled out because both are judgment calls:
+#   - "one" is DELIBERATELY EXCLUDED from the cardinal-word list. It is
+#     overwhelmingly an indefinite pronoun/article in this report's own
+#     reference voice ("one option", "no one", "someone", "one of the three
+#     packages") rather than a quantity, and including it produced far more
+#     false positives than caught fabrications. This is an accepted residual
+#     gap: "saves one hundred dollars" is still caught (via "hundred"), a
+#     bare "saves one dollar" would not be. "two" and up stay in the list --
+#     they are overwhelmingly real quantities when they appear in this
+#     report's prose ("two EVs" is exactly the kind of invented countable
+#     fact OTHER_MAJOR_LOADS should back instead).
+#   - Fraction words that double as ordinals ("third", "quarter", "fourth", ...)
+#     are flagged only in a QUANTITY-shaped context (preceded by an article/
+#     number word, or followed by "of"/"the") -- "the third package option"
+#     (an ordinal referring to LOW/MID/HIGH) is not flagged; "roughly a third
+#     of imports" and "two-thirds of production" are. "half" has no common
+#     non-quantity reading in this report's prose, so it is flagged bare.
+#   - Vague quantifiers ("roughly", "majority", "several", "a few", "most of",
+#     "many of", ...) are treated as HARD violations, not soft warnings,
+#     matching this repo's consistent fail-closed bias elsewhere (KNOWN_GAPS,
+#     human-block blocking, egress preflight's fail-safe-on-no-gitleaks) --
+#     "most of the on-peak imports" is exactly the kind of claim
+#     ONPEAK_IMPORT_SHARE_PCT should express as a token instead. This trades
+#     a higher false-positive/retry rate for never silently publishing an
+#     unbacked quantity claim.
+_CARDINAL_WORDS = ("two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+                   "thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+                   "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+                   "hundred|thousand|million|billion")
+_FRACTION_ORDINAL_WORDS = "third|quarter|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+
+_WORD_NUMBER_PATTERNS = [
+    (re.compile(r"\b(" + _CARDINAL_WORDS + r")\b", re.I), "spelled-out cardinal number"),
+    (re.compile(r"\bhalf\b", re.I), "spelled-out fraction ('half')"),
+    (re.compile(r"\b(a|an|one|" + _CARDINAL_WORDS + r")[\s-]+(" + _FRACTION_ORDINAL_WORDS
+               + r")s?\b", re.I), "spelled-out fraction"),
+    (re.compile(r"\b(" + _FRACTION_ORDINAL_WORDS + r")s?\s+(of|the)\b", re.I),
+     "spelled-out fraction"),
+    (re.compile(r"\b(roughly|approximately|nearly|majority|several|dozens|numerous)\b",
+               re.I), "vague quantifier"),
+    (re.compile(r"\ba\s+few\b", re.I), "vague quantifier ('a few')"),
+    (re.compile(r"\b(most|many)\s+of\b", re.I), "vague quantifier"),
+]
+
+
+def _word_number_violations(fragment):
+    violations = []
+    for pattern, label in _WORD_NUMBER_PATTERNS:
+        m = pattern.search(fragment)
+        if m:
+            violations.append(f"{label}: {m.group(0)!r}")
+    return violations
+
 
 def find_fragment_violations(fragment):
     """List of human-readable violation strings; empty means the fragment is
-    clean. Two independent problems are checked: an unrecognized {{TOKEN}}
-    reference (whether or not its name contains digits), and any digit
-    character outside a valid {{TOKEN}}, a §N reference, or a literal
-    allowlist entry."""
+    clean. Checks, all independent: an unrecognized {{TOKEN}} reference
+    (whether or not its name contains digits); any digit character outside a
+    valid {{TOKEN}}, a §N reference, or a literal allowlist entry; and any
+    spelled-out number, fraction, or vague quantifier word (see
+    _WORD_NUMBER_PATTERNS above) -- a decimal-digit scan alone cannot catch
+    "roughly two-thirds" or "about forty percent"."""
     violations = []
     safe_spans = []
     for m in _TOKEN_REF_RE.finditer(fragment):
@@ -336,6 +409,7 @@ def find_fragment_violations(fragment):
             ctx.append(fragment[max(0, pos - 12):pos + 3])
         violations.append(f"{len(bad_positions)} bare digit(s) outside any {{{{TOKEN}}}} or "
                           f"§N reference, e.g. near: {ctx}")
+    violations.extend(_word_number_violations(fragment))
     return violations
 
 
@@ -435,6 +509,21 @@ def call_with_backoff(llm_call, provider, model, system, user, env,
     raise last_err  # pragma: no cover - unreachable, loop always returns or raises
 
 
+def preflighted_call(llm_call, provider, model, system, user, env, items):
+    """THE single chokepoint for every real (non-dry-run) call to an LLM
+    anywhere in this module: always runs llm_providers.preflight() against
+    the EXACT body about to be sent, then (only if that succeeds) makes the
+    call via call_with_backoff(). No other function may call llm_call or
+    call_with_backoff for a real request -- test_generate_report.py's AST
+    guard (case_preflighted_call_is_the_only_real_call_site) enforces this
+    the same way llm_providers.py's own _post_json chokepoint is enforced,
+    after an adversarial review found the corrective-retry and --humanize
+    call sites bypassing preflight() entirely."""
+    body_text = json.dumps({"system": system, "user": user})
+    lp.preflight(items, body_text, dry_run=False)
+    return call_with_backoff(llm_call, provider, model, system, user, env)
+
+
 HUMANIZE_INSTRUCTION = (
     "Rewrite the fragment below to remove signs of AI-generated writing (Wikipedia's "
     "'Signs of AI writing' checklist): no inflated symbolism, no promotional language, "
@@ -445,17 +534,24 @@ HUMANIZE_INSTRUCTION = (
     "fragment, nothing else.")
 
 
-def humanize_fragment(fragment, provider, model, env, llm_call):
+def humanize_fragment(block, scope_values, fragment, provider, model, env, llm_call):
     """The optional --humanize second pass. NEVER fails the run: a rejected or
     errored rewrite falls back to the original, already-accepted fragment,
     per the issue's own design ('a second model call does not [fail closed],
     so it cannot be the gate') -- prose_lint.py and the numeral guard are the
     gate, and this function still runs both against the rewrite before ever
-    using it."""
+    using it. Egress: this is a REAL call, so it goes through
+    preflighted_call() like any other -- the instruction text is a fixed
+    claude_excerpt, the fragment being rewritten (this run's own already-
+    accepted, already-scanned output) is sent as todo_text, and the same
+    scope_values that justified the fragment travel with it so preflight can
+    re-verify any household_token still present."""
     user = f"{HUMANIZE_INSTRUCTION}\n\nFragment:\n{fragment}"
+    items = build_preflight_items(block, scope_values) + [
+        ("claude_excerpt", HUMANIZE_INSTRUCTION), ("todo_text", fragment)]
     try:
-        resp = call_with_backoff(llm_call, provider, model, SYSTEM_PROMPT, user, env)
-    except lp.ProviderError:
+        resp = preflighted_call(llm_call, provider, model, SYSTEM_PROMPT, user, env, items)
+    except (lp.ProviderError, lp.EgressRefused):
         return fragment
     normal = NORMAL_FINISH.get(provider, {resp.get("finish_reason")})
     if resp["finish_reason"] not in normal:
@@ -469,22 +565,30 @@ def humanize_fragment(fragment, provider, model, env, llm_call):
 def generate_prose_fragment(block, scope_values, provider, model, env, llm_call):
     """Returns the checked fragment, or raises BlockFailure. Never returns a
     fragment that failed the numeral guard or ended on an abnormal finish
-    reason -- the one retry either fixes it or the block hard-fails."""
+    reason -- the one retry either fixes it or the block hard-fails. BOTH
+    attempts are real calls and go through preflighted_call(); the retry's
+    correction text (which can embed excerpts of the model's own rejected
+    prior output, via `problems`) is sent as its own todo_text item so it is
+    gitleaks-scanned and allowlist-checked exactly like the first attempt's
+    body, never assumed safe because it is "just a correction"."""
     system = SYSTEM_PROMPT
     user = build_user_prompt(block, scope_values)
-    resp = call_with_backoff(llm_call, provider, model, system, user, env)
+    items = build_preflight_items(block, scope_values)
+    resp = preflighted_call(llm_call, provider, model, system, user, env, items)
     problems = find_fragment_violations(resp["text"]) + prose_lint.lint(resp["text"])
     normal = NORMAL_FINISH.get(provider, {resp.get("finish_reason")})
     if resp["finish_reason"] not in normal:
         problems.append(f"abnormal finish_reason {resp['finish_reason']!r} (expected one of "
                         f"{sorted(normal)})")
     if problems:
-        correction = ("your previous answer used a bare number outside a {{TOKEN}} "
-                     "reference, an unknown token, a banned prose construction, or was "
-                     f"truncated: {problems}. Rewrite using ONLY {{TOKEN}} syntax for any "
-                     "quantity, and avoid the flagged construction(s).")
+        correction = ("your previous answer used a bare number or a spelled-out number/"
+                     "fraction/vague quantifier outside a {{TOKEN}} reference, an unknown "
+                     f"token, a banned prose construction, or was truncated: {problems}. "
+                     "Rewrite using ONLY {{TOKEN}} syntax for any quantity, and avoid the "
+                     "flagged construction(s).")
         user2 = build_user_prompt(block, scope_values, correction=correction)
-        resp2 = call_with_backoff(llm_call, provider, model, system, user2, env)
+        items2 = build_preflight_items(block, scope_values) + [("todo_text", correction)]
+        resp2 = preflighted_call(llm_call, provider, model, system, user2, env, items2)
         problems2 = find_fragment_violations(resp2["text"]) + prose_lint.lint(resp2["text"])
         if resp2["finish_reason"] not in normal:
             problems2.append(f"abnormal finish_reason {resp2['finish_reason']!r} on retry")
@@ -530,7 +634,28 @@ def render(html, fragments, resolved):
     def _sub(m):
         name = m.group(1)
         if name in resolved:
-            return resolved[name]
+            # HTML-escaped (adversarial review finding 4): a resolved token
+            # value is substituted directly into the document with no prior
+            # sanitization otherwise, so a value containing <, >, &, ', or "
+            # would corrupt the markup of a page meant to be published on
+            # GitHub Pages. Verified no currently-declared report_tokens.TOKENS
+            # value intentionally carries raw HTML (none does today -- they
+            # are all short formatted numbers/dates/names). A handful of
+            # {{TOKEN}} references sit inside single-quoted JS STRING
+            # literals rather than HTML text (the five chart-title tokens,
+            # the periods-chart labels, a couple of dataset labels) -- for
+            # those, escaping is still the safer default: an unescaped quote
+            # or ampersand in a future token value would corrupt the JS
+            # syntax outright (prematurely closing the string), whereas an
+            # escaped one only shows as a literal entity, which is a display
+            # quirk, not a syntax break. `fill_chart_data()` runs BEFORE this
+            # substitution and writes its own `const D` array values via
+            # `json.dumps` from raw artifact data (never through `resolved`
+            # or this `_sub` pass), so the two never double-process the same
+            # value -- proven by case_generated_chart_arrays_match_their_
+            # committed_artifacts in test_generate_report.py, which is
+            # unaffected by this change.
+            return _html_escape(resolved[name], quote=True)
         missing_tokens.append(name)
         return m.group(0)
 
@@ -592,15 +717,14 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
                 cached = load_cache(cache_dir, b.id, key)
                 if cached is None:
                     if dry_run:
+                        # dry-run previews the FIRST attempt's body only (there is
+                        # no retry to simulate without a real response to react
+                        # to); still goes through the same preflight() gate.
                         items = build_preflight_items(b, scope_values)
                         user = build_user_prompt(b, scope_values)
                         body_text = json.dumps({"system": SYSTEM_PROMPT, "user": user})
                         lp.preflight(items, body_text, dry_run=True)
                         continue
-                    items = build_preflight_items(b, scope_values)
-                    user = build_user_prompt(b, scope_values)
-                    body_text = json.dumps({"system": SYSTEM_PROMPT, "user": user})
-                    lp.preflight(items, body_text, dry_run=False)
                     fragment = generate_prose_fragment(b, scope_values, provider, model,
                                                        env, llm_call)
                     save_cache(cache_dir, b.id, key, fragment)
@@ -611,7 +735,8 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
                                     humanize=True)
                     hcached = load_cache(cache_dir, b.id, hkey)
                     if hcached is None:
-                        fragment = humanize_fragment(fragment, provider, model, env, llm_call)
+                        fragment = humanize_fragment(b, scope_values, fragment, provider,
+                                                     model, env, llm_call)
                         save_cache(cache_dir, b.id, hkey, fragment)
                     else:
                         fragment = hcached

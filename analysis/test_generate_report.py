@@ -18,6 +18,7 @@ installed.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_generate_report.py
 """
+import ast
 import json
 import pathlib
 import re
@@ -117,6 +118,55 @@ def case_numeral_guard_rejects_a_digit_inside_an_unknown_token_name():
 
 
 # ---------------------------------------------------------------------------
+# Adversarial review finding 2: a decimal-digit scan alone misses an invented
+# quantity spelled out in words. One case per construction named in the
+# finding, plus the false-positive case it specifically asked to check.
+# ---------------------------------------------------------------------------
+@case
+def case_numeral_guard_rejects_a_spelled_out_fraction():
+    violations = gr.find_fragment_violations(
+        "roughly two-thirds of imports occur on-peak")
+    assert violations, violations
+    return "'roughly two-thirds' is rejected (spelled-out fraction + vague quantifier)"
+
+
+@case
+def case_numeral_guard_rejects_a_spelled_out_percent_phrase():
+    violations = gr.find_fragment_violations("about forty percent of production is exported")
+    assert violations, violations
+    return "'forty percent' is rejected (spelled-out cardinal number)"
+
+
+@case
+def case_numeral_guard_rejects_vague_quantifiers():
+    for text in ("the battery serves most of the on-peak imports",
+                "several bill facts were checked",
+                "the majority of savings come from behavior change"):
+        violations = gr.find_fragment_violations(text)
+        assert violations, (text, violations)
+    return "vague quantifiers ('most of', 'several', 'majority') are rejected"
+
+
+@case
+def case_numeral_guard_does_not_flag_an_ordinal_used_as_a_rank_not_a_quantity():
+    """The reviewer's own named false-positive risk: 'third' as an ordinal
+    referring to LOW/MID/HIGH (not a fraction) should not trip the guard.
+    Distinguished from a real fraction claim by requiring an article/number
+    word before, or 'of'/'the' after -- see _WORD_NUMBER_PATTERNS."""
+    text = "the third package option pencils better than the second"
+    assert gr.find_fragment_violations(text) == [], gr.find_fragment_violations(text)
+    return "'the third package option' (an ordinal rank, not a fraction) is not flagged"
+
+
+@case
+def case_numeral_guard_still_accepts_clean_prose_with_no_quantity_words():
+    text = ("{{BEST_PLAN}} stays cheapest with or without a battery; see §3 for the "
+           "full comparison and no one disputes the ranking.")
+    assert gr.find_fragment_violations(text) == [], gr.find_fragment_violations(text)
+    return "ordinary prose (including 'no one', an indefinite pronoun) is not flagged"
+
+
+# ---------------------------------------------------------------------------
 # Retry-once-then-hard-fail.
 # ---------------------------------------------------------------------------
 @case
@@ -130,6 +180,7 @@ def case_a_bad_fragment_followed_by_a_good_one_succeeds_via_retry():
         return next(responses)
 
     block = rb.parse_todo_blocks()[3]   # s0#1, an ordinary prose block
+    _require_gitleaks()
     frag = gr.generate_prose_fragment(block, {}, "anthropic", "m", None, fake_call)
     assert frag == SAFE_FRAGMENT
     return "a numeral-guard failure on attempt 1 is corrected by the single retry"
@@ -137,6 +188,8 @@ def case_a_bad_fragment_followed_by_a_good_one_succeeds_via_retry():
 
 @case
 def case_two_bad_fragments_in_a_row_hard_fail_the_block():
+    _require_gitleaks()
+
     def fake_call(provider, model, system, user, max_tokens, env=None):
         return {"text": "saves $2,900/yr", "finish_reason": "end_turn", "usage": {}}
 
@@ -160,6 +213,7 @@ def case_abnormal_finish_reason_triggers_the_retry_path():
         return next(responses)
 
     block = rb.parse_todo_blocks()[3]
+    _require_gitleaks()
     frag = gr.generate_prose_fragment(block, {}, "anthropic", "m", None, fake_call)
     assert frag == SAFE_FRAGMENT
     return "a truncated (max_tokens) finish_reason triggers the retry, which then succeeds"
@@ -177,6 +231,7 @@ def case_prose_lint_violation_triggers_the_retry_path():
         return next(responses)
 
     block = rb.parse_todo_blocks()[3]
+    _require_gitleaks()
     frag = gr.generate_prose_fragment(block, {}, "anthropic", "m", None, fake_call)
     assert frag == SAFE_FRAGMENT
     return "a prose_lint violation (promotional language) triggers the retry, which then succeeds"
@@ -185,34 +240,46 @@ def case_prose_lint_violation_triggers_the_retry_path():
 # ---------------------------------------------------------------------------
 # --humanize: an optional second pass that never fails the run.
 # ---------------------------------------------------------------------------
+_HUMANIZE_TEST_BLOCK = rb.parse_todo_blocks()[3]   # s0#1, an ordinary prose block
+
+
 @case
 def case_humanize_uses_the_clean_rewrite_when_it_passes_both_gates():
+    _require_gitleaks()
+
     def fake_call(provider, model, system, user, max_tokens, env=None):
         return {"text": "A rewritten, still-clean version of the fragment.",
                "finish_reason": "end_turn", "usage": {}}
 
-    out = gr.humanize_fragment(SAFE_FRAGMENT, "anthropic", "m", None, fake_call)
+    out = gr.humanize_fragment(_HUMANIZE_TEST_BLOCK, {}, SAFE_FRAGMENT, "anthropic", "m",
+                               None, fake_call)
     assert out == "A rewritten, still-clean version of the fragment."
     return "a clean rewrite that clears both gates is used in place of the original"
 
 
 @case
 def case_humanize_falls_back_to_the_original_on_a_numeral_guard_violation():
+    _require_gitleaks()
+
     def fake_call(provider, model, system, user, max_tokens, env=None):
         return {"text": "This saves $2,900/yr.", "finish_reason": "end_turn", "usage": {}}
 
-    out = gr.humanize_fragment(SAFE_FRAGMENT, "anthropic", "m", None, fake_call)
+    out = gr.humanize_fragment(_HUMANIZE_TEST_BLOCK, {}, SAFE_FRAGMENT, "anthropic", "m",
+                               None, fake_call)
     assert out == SAFE_FRAGMENT, out
     return "a rewrite that fails the numeral guard falls back to the original fragment"
 
 
 @case
 def case_humanize_falls_back_to_the_original_on_a_prose_lint_violation():
+    _require_gitleaks()
+
     def fake_call(provider, model, system, user, max_tokens, env=None):
         return {"text": "This cutting-edge, seamless improvement is a game-changer.",
                "finish_reason": "end_turn", "usage": {}}
 
-    out = gr.humanize_fragment(SAFE_FRAGMENT, "anthropic", "m", None, fake_call)
+    out = gr.humanize_fragment(_HUMANIZE_TEST_BLOCK, {}, SAFE_FRAGMENT, "anthropic", "m",
+                               None, fake_call)
     assert out == SAFE_FRAGMENT, out
     return "a rewrite that fails prose_lint falls back to the original fragment"
 
@@ -223,10 +290,13 @@ def case_humanize_never_raises_and_never_aborts_the_whole_run():
     it cannot be the gate' -- humanize_fragment must not be able to raise
     BlockFailure or propagate an unhandled exception at all, whether the
     rewrite call fails fast (a non-retryable 400) or not."""
+    _require_gitleaks()
+
     def fake_call(provider, model, system, user, max_tokens, env=None):
         raise lp.ProviderError("anthropic", 400, "bad request")
 
-    out = gr.humanize_fragment(SAFE_FRAGMENT, "anthropic", "m", None, fake_call)
+    out = gr.humanize_fragment(_HUMANIZE_TEST_BLOCK, {}, SAFE_FRAGMENT, "anthropic", "m",
+                               None, fake_call)
     assert out == SAFE_FRAGMENT
     return "even a non-retryable ProviderError from the rewrite call never propagates"
 
@@ -294,6 +364,114 @@ def case_review_tools_are_always_the_disclaimer_never_the_hardcoded_report_token
     assert "Claude Code" not in overridden["REVIEW_TOOL_1"]
     assert "Codex" not in overridden["REVIEW_TOOL_2"]
     return "REVIEW_TOOL_1/2 are always the fixed disclaimer, never report_tokens.py's values"
+
+
+# ---------------------------------------------------------------------------
+# AC (adversarial review finding 1): every REAL call to an LLM -- the first
+# attempt, the corrective retry, and the --humanize pass -- must be preceded
+# by preflight(). Before the fix, generate_prose_fragment's retry and
+# humanize_fragment each called the LLM directly with no preflight() call
+# anywhere in either function, so a corrective-retry prompt (which can embed
+# excerpts of the model's own prior, rejected output) or a humanize prompt
+# went out completely unscanned. preflighted_call() is now the ONE function
+# in this module allowed to call llm_call/call_with_backoff for a real
+# request; this is checked two ways: an AST guard (structural: no other
+# function constructs that call), and a live call-count invariant across a
+# full run with both a retry and --humanize in play (behavioral: the fix
+# actually fires as many times as it should, not just "exists somewhere").
+# ---------------------------------------------------------------------------
+class _RealCallFinder(ast.NodeVisitor):
+    """Finds every call to llm_call(...) or call_with_backoff(...), tagged
+    with the enclosing function name, anywhere in generate_report.py."""
+    def __init__(self):
+        self.current = None
+        self.hits = {}
+
+    def visit_FunctionDef(self, node):
+        prev = self.current
+        self.current = node.name
+        self.generic_visit(node)
+        self.current = prev
+
+    def visit_Call(self, node):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else (
+            func.id if isinstance(func, ast.Name) else None)
+        if name in ("llm_call", "call_with_backoff"):
+            self.hits.setdefault(self.current, []).append(node.lineno)
+        self.generic_visit(node)
+
+
+@case
+def case_preflighted_call_is_the_only_real_call_site():
+    src = pathlib.Path(gr.__file__).read_text()
+    finder = _RealCallFinder()
+    finder.visit(ast.parse(src))
+    # call_with_backoff itself calls llm_call -- that's the retry-loop
+    # primitive, not a second unguarded call site. preflighted_call calling
+    # call_with_backoff is the one sanctioned real-call site. Every other
+    # function touching either name is an offender.
+    allowed = {"call_with_backoff", "preflighted_call"}
+    offenders = {fn: lines for fn, lines in finder.hits.items() if fn not in allowed}
+    assert finder.hits, "no llm_call/call_with_backoff call found at all -- guard is broken"
+    assert not offenders, f"real-call sites outside preflighted_call: {offenders}"
+    return "llm_call/call_with_backoff are only ever invoked via preflighted_call"
+
+
+@case
+def case_preflight_call_count_matches_llm_call_count_with_a_retry_and_humanize_in_play():
+    """Full-run, behavioral version of the invariant above: wraps the REAL
+    lp.preflight (still doing the real gitleaks scan -- this is not mocked
+    out) with a counter, and drives a scenario that forces exactly one
+    corrective retry (the very first llm_call response fails the numeral
+    guard) plus a --humanize pass on every block, then asserts the preflight
+    call count equals the llm_call count exactly, not just "preflight was
+    called at least once somewhere"."""
+    _require_gitleaks()
+    _require_household()
+    calls = []
+    preflight_calls = []
+    real_preflight = lp.preflight
+
+    def counting_preflight(items, body_text, dry_run=False):
+        preflight_calls.append(1)
+        return real_preflight(items, body_text, dry_run=dry_run)
+
+    first_call_done = {"flag": False}
+
+    def fake_call(provider, model, system, user, max_tokens, env=None):
+        calls.append(1)
+        if not first_call_done["flag"]:
+            first_call_done["flag"] = True
+            return {"text": "saves $2,900/yr", "finish_reason": "end_turn", "usage": {}}
+        return {"text": SAFE_FRAGMENT, "finish_reason": "end_turn", "usage": {}}
+
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        old_preflight = gr.lp.preflight
+        gr.lp.preflight = counting_preflight
+        try:
+            gr.run(provider="anthropic", model="claude-fabricated-for-tests",
+                  human_answers=_all_human_answers(), env={}, cache_dir=cache_dir,
+                  dest_dir=dest_dir, manifest_path=manifest_path, llm_call=fake_call,
+                  only="s0", humanize=True)
+        finally:
+            gr.lp.preflight = old_preflight
+
+    n_s0_prose = sum(1 for bid, k in rb.CLASSIFICATION.items()
+                     if k == "prose" and bid.startswith("s0#"))
+    # 1 extra real call for the forced retry on the very first block processed,
+    # plus one humanize call per block.
+    expected = n_s0_prose + 1 + n_s0_prose
+    assert len(calls) == expected, (len(calls), expected)
+    assert len(preflight_calls) == len(calls), (
+        f"preflight() was called {len(preflight_calls)} times but llm_call was called "
+        f"{len(calls)} times -- every real call must be preceded by exactly one preflight()")
+    return (f"preflight() was called exactly once per real llm_call ({len(calls)} calls, "
+           "including the forced retry and every --humanize pass)")
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +740,47 @@ def case_generated_output_contains_only_report_tokens_style_provenance():
     assert "anthropic (claude-fabricated-for-tests)" in html
     assert gr.REVIEW_DISCLAIMER in html
     return "the generated provenance sentence names the actual provider/model and the disclaimer"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review finding 4: render()'s token substitution had no
+# HTML-escaping at all.
+# ---------------------------------------------------------------------------
+@case
+def case_render_html_escapes_a_token_value_containing_markup():
+    """Uses the real template (fill_chart_data() needs its real const D
+    placeholders to exist) with one fabricated evil value injected for a
+    real, live-in-HTML-text token (BEST_PLAN appears directly in plain
+    markup, e.g. inside a .card div). Every other token is deliberately left
+    unresolved -- irrelevant to this narrow check, which only cares whether
+    the ONE substituted value comes out escaped."""
+    template_text = rt.TEMPLATE.read_text()
+    evil = "<script>alert(1)</script> & \"quoted\" 'single'"
+    rendered, missing = gr.render(template_text, fragments={}, resolved={"BEST_PLAN": evil})
+    assert "<script>alert(1)</script>" not in rendered, "a raw <script> tag survived unescaped"
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered, rendered[:4000]
+    assert "&amp;" in rendered
+    assert "&quot;quoted&quot;" in rendered
+    assert "&#x27;single&#x27;" in rendered
+    return "render() HTML-escapes a resolved token value before substituting it"
+
+
+@case
+def case_fill_chart_data_and_render_do_not_double_process_the_same_values():
+    """fill_chart_data() writes const D's array values straight from
+    artifact JSON via json.dumps, never through the `resolved` token map or
+    render()'s _sub() -- so HTML-escaping tokens cannot also mangle chart
+    data, and chart data cannot leak back through the token substitution
+    pass. Confirmed structurally (fill_chart_data takes no `resolved`
+    argument at all) and behaviorally (the full generated file's chart
+    arrays still match their artifact byte-for-byte after HTML-escaping was
+    added -- see case_generated_chart_arrays_match_their_committed_artifacts)."""
+    import inspect
+    sig = inspect.signature(gr.fill_chart_data)
+    assert list(sig.parameters) == ["html"], (
+        "fill_chart_data must only ever see the document text, never the resolved "
+        "token map, or it could re-process a value _sub() already escaped")
+    return "fill_chart_data() has no access to the resolved token map at all"
 
 
 def main():
