@@ -331,11 +331,17 @@ _SUM_ACROSS_SEGMENTS = {"wildfire_fund_charge", "pcia",
                         "incremental_procurement_cost_adjustment"}
 _FIRST_HIT_ONLY = {"applied_generation_credit_energy"}
 
-# bd._LINE_PATTERNS' per-kWh-rate patterns anchor "kWh x \$RATE" with no
-# allowance for a minus sign printed BEFORE the dollar sign ("kWh x
-# -$.03161"), which PCIA prints routinely. Our own patterns allow that sign
-# on the (uncaptured) rate token while still capturing only the VALUE that
-# follows it. See the module docstring for how this was found.
+# Before issue #46, bd._LINE_PATTERNS' per-kWh-rate patterns anchored "kWh x
+# \$RATE" with no allowance for a minus sign printed BEFORE the dollar sign
+# ("kWh x -$.03161"), which PCIA prints routinely; #46 has since fixed
+# bd._LINE_PATTERNS itself to accept the sign in either position. Our own
+# patterns here are kept regardless -- and still independently allow that sign
+# on the (uncaptured) rate token while capturing only the VALUE that follows it
+# -- because this module relies on them for two things bd.charge_lines() does
+# not attempt: summing a line that reprints once per mid-cycle rate segment
+# (_SUM_ACROSS_SEGMENTS, below) and scoping extraction to one period of a
+# multi-period statement. See the module docstring for how the sign gap was
+# found.
 _OWN_PATTERNS = {
     "wildfire_fund_charge":
         rf"Wildfire Fund Charge\s+[\d,]+ kWh x [−-]?\${bd._NUM}\s+({bd._NUM})",
@@ -1322,7 +1328,15 @@ def build_minimum_bill_provision(rows, statements):
 # ---------------------------------------------------------------------------
 # Step 6: NBC-on-gross re-verification
 # ---------------------------------------------------------------------------
-_WILDFIRE_LINE = re.compile(rf"Wildfire Fund Charge\s+([\d,]+) kWh x \$({bd._NUM})\s+({bd._NUM})")
+# Same defect shape as bd._LINE_PATTERNS' pre-#46 pcia/wildfire/IPA patterns (a bare
+# \$ with no tolerance for a minus sign printed BEFORE it): the wildfire rate has
+# never printed negative in this corpus, so this has never actually mismatched, but
+# it is the same "kWh x $RATE" construction and gets the same tolerance rather than
+# being left as a second, unswept instance of the shape #46 fixed. The sign is its
+# own capture group (not folded into the rate group) so a future negative rate
+# prints correctly signed here instead of the leading "-" being silently dropped.
+_WILDFIRE_LINE = re.compile(
+    rf"Wildfire Fund Charge\s+([\d,]+) kWh x ([−-]?)\$({bd._NUM})\s+({bd._NUM})")
 
 
 def build_nbc_gross_check(rows):
@@ -1351,8 +1365,9 @@ def build_nbc_gross_check(rows):
         raise SystemExit(f"{stmt}/{period}: no 'Wildfire Fund Charge ... kWh x $...' "
                          "line found in this period's own text -- cannot re-verify")
     printed_kwh = float(m.group(1).replace(",", ""))
-    printed_rate = float(m.group(2))
-    printed_usd = float(m.group(3))
+    sign = -1.0 if m.group(2) in ("-", "−") else 1.0
+    printed_rate = sign * float(m.group(3))
+    printed_usd = float(m.group(4))
     matches_gross = abs(printed_kwh - row["gross_kwh"]) < EPS
     matches_net = abs(printed_kwh - row["net_kwh"]) < EPS
     return {

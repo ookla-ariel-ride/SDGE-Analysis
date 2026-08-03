@@ -612,7 +612,12 @@ def cca_block(stmt):
 # incremental_procurement_cost_adjustment) needs the tolerance; base_services_charge's
 # "$RATE x N days" puts the $ in a different position (right after the charge name, not
 # after "x") and is a flat access fee that has never printed negative in the corpus, so
-# it is a different shape and is left alone.
+# it is a different shape and is left alone. Wherever _SIGNED_DOLLAR is made optional
+# below, it is wrapped in its own (?:...)? group rather than written as
+# "{_SIGNED_DOLLAR}?" -- the latter would silently apply the "?" to only the LAST atom
+# of whatever _SIGNED_DOLLAR happens to expand to (today just "\$", so it works by
+# accident), which would quietly stop tolerating the sign if _SIGNED_DOLLAR ever grew
+# an extra atom (e.g. trailing "\s*"), with no test catching the regression.
 _SIGNED_DOLLAR = r"[−-]?\$"
 _LINE_PATTERNS = [
     ("monthly_service_fee", rf"Monthly Service Fee\s+({_NUM})"),
@@ -621,7 +626,7 @@ _LINE_PATTERNS = [
     ("wildfire_fund_charge",
      rf"Wildfire Fund Charge\s+[\d,]+ kWh x {_SIGNED_DOLLAR}{_NUM}\s+({_NUM})"),
     ("electricity_generation_credit", rf"Electricity Generation Credit\s+({_NUM})"),
-    ("pcia", rf"PCIA \d+\s+[\d,]+ kWh x {_SIGNED_DOLLAR}?({_NUM}\s+{_NUM})"),
+    ("pcia", rf"PCIA \d+\s+[\d,]+ kWh x (?:{_SIGNED_DOLLAR})?({_NUM}\s+{_NUM})"),
     ("incremental_procurement_cost_adjustment",
      rf"Incremental Procurement Cost Adjustment\s+[\d,]+ kWh x {_SIGNED_DOLLAR}{_NUM}\s+({_NUM})"),
     ("economic_development_program_credit",

@@ -18,11 +18,17 @@ WHAT IS BEING GUARDED, and why each case exists:
   (negative) charge. case_charge_lines_accepts_a_minus_sign_printed_before_the_
   dollar_sign proves both sign positions parse to the same magnitude from a
   synthetic fixture; case_the_real_corpus_no_longer_drops_a_negative_pcia_line
-  re-scans every real statement and asserts none of them still drop the line
-  (this household's own bills carry the negative-before-$ form on 9 of 25
-  statements). Neither of the two statements this module actually compares (the
-  2024-06-27 base and 2026-07-02 current) happens to print PCIA in the affected
-  form, so data/bill_decomposition.json is unchanged by the fix — verified by
+  re-scans every real statement and asserts none of them still drop the line.
+  12 of the 25 real statements print PCIA in the negative-before-$ form; 3 of
+  those 12 ALSO hit an unrelated, pre-existing bug (a mid-cycle rate change
+  reprints another line twice within one period with two different values,
+  which charge_lines()'s conflict guard correctly refuses, out of this issue's
+  scope) and so are skipped, leaving 9 statements this case checks the exact
+  recovered value of — see that case's own docstring for the precise count
+  breakdown, independently re-derived from the corpus rather than hardcoded.
+  Neither of the two statements this module actually compares (the 2024-06-27
+  base and 2026-07-02 current) happens to print PCIA in the affected form, so
+  data/bill_decomposition.json is unchanged by the fix — verified by
   regenerating it and diffing against the committed copy.
 
   THE TRAP. The billing-history export reports current_charges of $0.00 for
@@ -219,11 +225,16 @@ def case_charge_lines_accepts_a_minus_sign_printed_before_the_dollar_sign():
     rate line failed to match AT ALL rather than parsing to a wrong value, and
     lines.get(name, 0.0) then silently priced the missing charge at zero.
 
-    This is not a hypothetical: the real 2025-04-02 through 2026-01-06 statements
-    (9 of the 25 on file) print PCIA in exactly this negative-before-$ form, and
-    before this fix charge_lines() returned no 'pcia' key at all for every one of
-    them (see the reproduction below, run against the real corpus, in
-    case_the_real_corpus_no_longer_drops_a_negative_pcia_line).
+    This is not a hypothetical: 12 of the real 25 statements on file print PCIA in
+    exactly this negative-before-$ form (2025-03-04, 04-02, 05-02, 06-03, 07-02,
+    08-01, 09-02, 10-01, 10-31, 12-03, 2026-01-06, 02-02), and before this fix
+    charge_lines() returned no 'pcia' key at all for every one of them (see the
+    reproduction below, run against the real corpus, in
+    case_the_real_corpus_no_longer_drops_a_negative_pcia_line — 9 of those 12 are
+    checked there for their exact recovered value; the other 3 also hit an
+    unrelated, pre-existing bug that makes charge_lines() raise for a different
+    reason before it ever gets to return a pcia value, so they are out of this
+    issue's scope).
 
     Each affected line is checked against a synthetic statement chunk in both the
     negative-before-$ and the plain positive form, asserting the same magnitude
@@ -251,37 +262,78 @@ def case_charge_lines_accepts_a_minus_sign_printed_before_the_dollar_sign():
             "minus prints before or after the $")
 
 
-def case_the_real_corpus_no_longer_drops_a_negative_pcia_line():
-    """Every statement in the corpus, re-scanned: before this fix, the statements
-    that print PCIA in the negative-before-$ form (rates.py documents PCIA as
-    routinely negative) came back with no 'pcia' key from charge_lines() at all —
-    a silent $0, not a parse failure. This asserts the corpus no longer has any
-    such gap: every statement whose text contains a 'PCIA <year> ... kWh x' line
-    yields a numeric pcia value from charge_lines(), and statements that print it
-    negative-before-$ recover the printed negative amount, not None and not 0.0.
+_NEG_PCIA_LINE = re.compile(
+    r"PCIA \d+\s+[\d,]+ kWh x [−-]\$[\d,.]+\s+([−-][\d,.]+)")
 
-    Two statements (2025-03-04, 2026-02-02) print a mid-period TOU-changeover
-    duplicate 'Wildfire Fund Charge' line and one (2025-10-31) carries two billing
-    periods — both raise inside charge_lines() for reasons this issue's scope
-    explicitly excludes (a different, pre-existing bug shape: 'printed with
-    conflicting values', unrelated to the dollar-sign position), so those three are
-    skipped here rather than asserted on."""
+
+def case_the_real_corpus_no_longer_drops_a_negative_pcia_line():
+    """Every statement in the corpus, re-scanned. rates.py documents PCIA as
+    routinely negative, and SDG&E prints that as a minus sign BEFORE the dollar
+    sign ('PCIA 2023 802 kWh x -$.03161 -25.35'). Before this fix, every one of
+    these lines failed to match _LINE_PATTERNS' pcia entry at all, so
+    charge_lines() came back with no 'pcia' key — a silent $0, not a parse
+    failure.
+
+    Ground truth, independently re-derived from the real corpus by this case
+    (not asserted from memory — issue #46's own PR first stated this as '9 of
+    25', which was actually the narrower, different count of statements where
+    charge_lines() *returns a value* rather than the count that *print the
+    form*; this case pins both numbers separately so they cannot be conflated
+    again): 12 of the 25 statements print PCIA in the negative-before-$ form
+    (2025-03-04, 04-02, 05-02, 06-03, 07-02, 08-01, 09-02, 10-01, 10-31, 12-03,
+    2026-01-06, 02-02). Of those 12, 3 (2025-03-04, 2025-10-31, 2026-02-02)
+    ALSO carry an unrelated, pre-existing bug — a mid-cycle rate change
+    reprints 'Wildfire Fund Charge' or 'Non-Bypassable Charges' twice within
+    one period with two different values, which charge_lines()'s conflict
+    guard correctly refuses — so charge_lines() raises for them before it ever
+    reaches the pcia line; fixing that is out of this issue's scope, so those
+    3 are skipped. The remaining 9 are asserted on individually: each must
+    yield a NEGATIVE 'pcia' value from charge_lines() that matches — not just
+    resembles — the actual printed line's own amount, independently re-parsed
+    here rather than by re-using bill_decomposition's own pattern, so this
+    case cannot pass merely because it shares a regex with the code under
+    test. A corpus that quietly rotated to all-positive PCIA would fail the
+    12-count assertion below rather than pass silently."""
     if not B.ELEC_DIR.exists():
         return "SKIP needs the private bill PDF archive"
     known_dual_valued = {"2025-03-04", "2025-10-31", "2026-02-02"}
-    checked = 0
+    negative_form_statements = []
+    any_pcia_checked = 0
+    confirmed_negative = 0
     for stmt in sorted(B.statement_dates()):
-        if stmt in known_dual_valued:
-            continue
         txt = B.statement_text(stmt)
-        if not re.search(r"PCIA \d+\s+[\d,]+ kWh x", txt):
+        neg_match = _NEG_PCIA_LINE.search(txt)
+        if neg_match:
+            negative_form_statements.append(stmt)
+        if not re.search(r"PCIA \d+\s+[\d,]+ kWh x", txt) or stmt in known_dual_valued:
             continue
+        any_pcia_checked += 1
         lines = B.charge_lines(stmt)
         assert "pcia" in lines, f"{stmt}: 'pcia' line present in the text but missing from charge_lines()"
-        assert isinstance(lines["pcia"], float)
-        checked += 1
-    assert checked >= 9, f"expected at least 9 PCIA-bearing statements, checked {checked}"
-    return f"{checked} PCIA-bearing statements all yield a numeric pcia value"
+        assert isinstance(lines["pcia"], float), f"{stmt}: pcia is {type(lines['pcia'])}, not float"
+        if neg_match:
+            printed = float(neg_match.group(1).replace(",", ""))
+            assert lines["pcia"] < 0, (
+                f"{stmt}: prints PCIA negative-before-$ but charge_lines() returned "
+                f"{lines['pcia']}, not a negative value")
+            assert lines["pcia"] == printed, (
+                f"{stmt}: charge_lines() returned {lines['pcia']}, but this case's own "
+                f"independent re-parse of the printed line gives {printed}")
+            confirmed_negative += 1
+    assert len(negative_form_statements) == 12, (
+        f"expected 12 of 25 statements to print the negative-before-$ PCIA form, "
+        f"found {len(negative_form_statements)}: {negative_form_statements}")
+    assert confirmed_negative == 9, (
+        f"expected 9 of the 12 negative-before-$ statements to be checkable here "
+        f"(12 minus the 3 known dual-valued statements out of scope), got "
+        f"{confirmed_negative}")
+    assert any_pcia_checked == 15, (
+        f"expected 15 non-dual-valued PCIA-bearing statements in total (9 "
+        f"negative-before-$ + 6 plain positive), got {any_pcia_checked}")
+    return (f"{confirmed_negative} of {len(negative_form_statements)} negative-before-$ "
+            f"PCIA statements recover their exact printed negative value (the other 3 "
+            f"hit an unrelated, pre-existing duplicate-line bug, out of scope); "
+            f"{any_pcia_checked} PCIA-bearing statements checked in total")
 
 
 # ---------------------------------------------------------------------------
