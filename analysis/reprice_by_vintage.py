@@ -105,6 +105,27 @@ answers issue #30's question -- "how much of the gap is rate vintage" -- but
 see "THE SOURCED-VS-TOTAL CAVEAT" immediately below before treating it as a
 ceiling.
 
+THE SIGN-MISMATCH GUARD (a Codex review finding, pass 3 of 3: a real latent
+structural gap in the algorithm, verified NOT to occur on this dataset, not a
+false alarm and not something this late-stage fix rewrites away). Within one
+(calendar month, season, TOU) bucket, the current-vintage side above nets ALL
+of that bucket's days together and clamps ONCE (`if bucket_net > 0`). The
+own-vintage side (_delivery_and_pcia_kwh, below) instead partitions the SAME
+bucket's days by sourced rate -- one key per distinct historical rate, plus
+one "unpriced" key for days with no sourced rate -- and clamps EACH KEY
+INDEPENDENTLY. Since max(a,0)+max(b,0) != max(a+b,0) whenever a and b have
+opposite signs, IF a bucket's combined-sourced-days net and its unpriced-days
+net ever had opposite signs, the own-vintage side would bill that bucket
+differently than the current-vintage side's single combined clamp would --
+contradicting the "contributes IDENTICALLY to both sides" claim below.
+_delivery_and_pcia_kwh() now VERIFIES this per bucket (raising SystemExit,
+naming the period/month/season/TOU cell and both nets, on any mismatch)
+instead of assuming it. On the real 13-period corpus it passes cleanly for
+every bucket -- confirmed both by an independent check run before writing
+this guard and by the guard itself running as part of every build(). Any
+future re-run against different usage data that DOES trigger a mismatch will
+fail closed rather than silently publish a contaminated delivery_vintage_effect.
+
 THE SOURCED-VS-TOTAL CAVEAT (a Codex review finding: this is a report-wording
 precision issue, not a code bug -- the numbers below were always correct).
 delivery_vintage_effect is a CLEAN comparison, but only over the kWh
@@ -229,9 +250,12 @@ boundary, read at the top of that module -- do not re-derive it here, cite it):
     _delivery_and_pcia_kwh's docstring for how this script handles it: priced
     day-by-day via RateSet.cells() (non-raising), with the unsourceable slice
     substituted at the current-vintage rate (contributing zero to
-    delivery_vintage_effect, not a historical guess) instead of a whole-period
-    rates_history.bill_nem_monthly(..., delivery_only=True) call, which raises
-    on the entire period the instant it meets one such day.
+    delivery_vintage_effect, not a historical guess, PROVIDED that slice's net
+    kWh doesn't have the opposite sign from the same bucket's sourced net kWh
+    -- see "THE SIGN-MISMATCH GUARD" above, verified rather than assumed)
+    instead of a whole-period rates_history.bill_nem_monthly(...,
+    delivery_only=True) call, which raises on the entire period the instant it
+    meets one such day.
   * CEA/CCA generation RATE -- sourceable and PROVEN FLAT, by direct bill
     evidence, for every one of these 13 periods (see "GENERATION RATE VINTAGE
     IS ZERO, BY EVIDENCE" above) -- but the real generation DOLLAR total is
@@ -449,7 +473,7 @@ def _check_slot_coverage(d_full, start, end):
 # ---------------------------------------------------------------------------
 # Step 3c/3d/3e: delivery at both vintages + PCIA's current-vintage net kWh.
 # ---------------------------------------------------------------------------
-def _delivery_and_pcia_kwh(sub):
+def _delivery_and_pcia_kwh(sub, period_label="(unlabeled)"):
     """(delivery_current_vintage_usd, delivery_own_vintage_usd,
     pcia_positive_net_kwh, unpriced_net_kwh, unpriced_days) for one period's
     interval slice `sub`.
@@ -485,6 +509,21 @@ def _delivery_and_pcia_kwh(sub):
     whatever true historical vintage difference existed there (if any) inside
     residual_total instead, where it is reported as not determined rather than
     guessed.
+
+    THE SIGN-MISMATCH GUARD (added after adversarial review pass 3, a real
+    structural finding, not a false alarm): the "contributes IDENTICALLY"
+    claim above is true PROVIDED a bucket's unpriced-days net and its
+    combined-sourced-days net never have opposite signs -- current-vintage
+    clamps the bucket's FULL net in one shot, while own-vintage clamps each
+    key (each sourced rate, plus "unpriced") INDEPENDENTLY, and
+    max(a,0)+max(b,0) != max(a+b,0) when a and b have opposite signs. This
+    function now VERIFIES that per bucket and fails closed (SystemExit, naming
+    the period, month, season, TOU cell, and both nets) rather than assuming
+    it -- turning a structural property that was previously only true by
+    construction on THIS dataset into a checked, tested fact about this run.
+    Verified independently before this guard was added, and by the guard
+    itself on every call since: zero buckets in the real 13-period corpus
+    trigger it.
 
     THE MONTHLY RESTART (fixed after adversarial review pass 1, finding 2):
     NEM 2.0 nets per CALENDAR MONTH, not per ~30-day bill cycle (rates.py's own
@@ -528,7 +567,7 @@ def _delivery_and_pcia_kwh(sub):
     unpriced_kwh = 0.0
     unpriced_days = set()
 
-    for (_ym, seas, p), grp in sub.groupby(["ym", "seas", "p"]):
+    for (ym, seas, p), grp in sub.groupby(["ym", "seas", "p"]):
         season = rates_history._SEASON_FOR_SEAS[seas]
         long_tp = rates_history._LONG_FOR_SHORT[p]
         cur_rate = rates.UDC[seas][p]
@@ -554,6 +593,32 @@ def _delivery_and_pcia_kwh(sub):
             else:
                 key = cv.rate
             own_spans[key] = own_spans.get(key, 0.0) + net_day
+
+        # THE SIGN-MISMATCH GUARD (Codex review pass 3): current-vintage above
+        # clamps this bucket's FULL combined net in ONE shot; own-vintage below
+        # clamps EACH key (each sourced rate, plus "unpriced") INDEPENDENTLY.
+        # max(a,0)+max(b,0) != max(a+b,0) whenever a and b have opposite signs,
+        # so the "unpriced kWh contributes identically to both sides" claim
+        # (this function's own docstring) only holds if the unpriced days' net
+        # and the combined sourced days' net do NOT have opposite signs in this
+        # bucket. VERIFY it -- don't assume it -- and fail closed, naming the
+        # period/month/season/TOU cell and both nets, if it's ever violated.
+        unpriced_net = own_spans.get("unpriced", 0.0)
+        sourced_net = sum(v for k, v in own_spans.items() if k != "unpriced")
+        if unpriced_net != 0.0 and sourced_net != 0.0 and (
+                (unpriced_net > 0) != (sourced_net > 0)):
+            raise SystemExit(
+                f"_delivery_and_pcia_kwh: sign mismatch in period {period_label!r}, "
+                f"bucket (month={ym}, season={season}, TOU={long_tp}): "
+                f"sourced_net={sourced_net:.4f} kWh vs unpriced_net="
+                f"{unpriced_net:.4f} kWh have opposite signs. Independently "
+                "clamping each own-vintage key would then diverge from the "
+                "current-vintage side's single combined clamp "
+                "(max(a,0)+max(b,0) != max(a+b,0) here), contaminating "
+                "delivery_vintage_effect for this bucket. See "
+                "_delivery_and_pcia_kwh's docstring, 'THE SIGN-MISMATCH GUARD'."
+            )
+
         for key, net in own_spans.items():
             if net > 0:
                 if key == "unpriced":
@@ -594,7 +659,7 @@ def _per_period_figures(d, row):
     # NEM 2.0's real monthly-restart netting rule (adversarial review pass 1,
     # finding 2).
     (delivery_current_vintage, delivery_own_vintage, pcia_positive_kwh,
-     unpriced_kwh, unpriced_days) = _delivery_and_pcia_kwh(sub)
+     unpriced_kwh, unpriced_days) = _delivery_and_pcia_kwh(sub, label)
     pcia_current = rates.PCIA * pcia_positive_kwh
 
     # (f) NBC on GROSS imports, never netted -- matches billing_model_nem.bill().

@@ -397,6 +397,70 @@ def case_delivery_and_pcia_kwh_restarts_netting_at_month_boundary():
 
 
 # ---------------------------------------------------------------------------
+# (b2b) THE SIGN-MISMATCH GUARD (adversarial review pass 3, a real latent
+# structural gap, verified NOT to occur on the real dataset but real on a
+# fabricated one). Within one (month, season, TOU) bucket, current-vintage
+# clamps the FULL combined net once; own-vintage clamps each key (sourced
+# rate | "unpriced") independently. If a bucket's sourced-days net and its
+# unpriced-days net have opposite signs, those two clamping strategies
+# diverge -- this test fabricates exactly that using two REAL corpus dates
+# for delivery/winter/off_peak: 2026-02-10 (no bill-sourced rate -- "absent",
+# 2026-01-01..2026-02-26 per data/rate_vintages.csv) and 2026-02-27 (sourced,
+# rate=0.30814, "direct"), both in calendar month 2026-02 so they land in the
+# SAME (ym, seas, p) bucket.
+# ---------------------------------------------------------------------------
+@case
+def case_delivery_and_pcia_kwh_rejects_a_sign_mismatch_between_sourced_and_unpriced():
+    """A large positive net on an unpriced day plus a small negative net on a
+    sourced day, in the same (month, season, TOU) bucket, must raise
+    SystemExit rather than silently clamp each side independently (which
+    would price 50 kWh at the current-vintage fallback rate on the
+    own-vintage side while current-vintage bills only the bucket's true
+    combined net of 45 kWh -- a real, structural divergence, not a false
+    alarm; Codex review pass 3's finding)."""
+    rows = [
+        # 2026-02-10 (unpriced/absent): +50 kWh net import.
+        dict(dt=pd.Timestamp("2026-02-10 07:00"), Consumption=50.0, Generation=0.0,
+            seas="W", p="off", ym=pd.Period("2026-02", "M")),
+        # 2026-02-27 (sourced, rate=0.30814): -5 kWh net export.
+        dict(dt=pd.Timestamp("2026-02-27 07:00"), Consumption=0.0, Generation=5.0,
+            seas="W", p="off", ym=pd.Period("2026-02", "M")),
+    ]
+    sub = pd.DataFrame(rows)
+    try:
+        rbv._delivery_and_pcia_kwh(sub, period_label="fabricated-sign-mismatch")
+        raise AssertionError("expected SystemExit for the opposite-signed "
+                              "sourced/unpriced nets, none was raised")
+    except SystemExit as e:
+        msg = str(e)
+        assert "sign mismatch" in msg, msg
+        assert "fabricated-sign-mismatch" in msg, msg
+        assert "2026-02" in msg, msg
+        assert "winter" in msg, msg
+        assert "off_peak" in msg, msg
+        assert "50.0000" in msg, msg
+        assert "-5.0000" in msg, msg
+        return f"correctly raised: {msg}"
+
+
+@case
+def case_delivery_and_pcia_kwh_accepts_same_signed_sourced_and_unpriced():
+    """The same two dates as above, but with BOTH days net-positive (no sign
+    mismatch), must NOT raise -- confirms the guard is triggered by the sign
+    relationship specifically, not merely by having both a sourced and an
+    unpriced key in the same bucket (that split is normal and expected)."""
+    rows = [
+        dict(dt=pd.Timestamp("2026-02-10 07:00"), Consumption=50.0, Generation=0.0,
+            seas="W", p="off", ym=pd.Period("2026-02", "M")),
+        dict(dt=pd.Timestamp("2026-02-27 07:00"), Consumption=5.0, Generation=0.0,
+            seas="W", p="off", ym=pd.Period("2026-02", "M")),
+    ]
+    sub = pd.DataFrame(rows)
+    result = rbv._delivery_and_pcia_kwh(sub, period_label="fabricated-same-sign")
+    return f"same-signed sourced ({5.0}) and unpriced ({50.0}) nets do not raise: {result}"
+
+
+# ---------------------------------------------------------------------------
 # (b3) _continuous_current_vintage_components() -- fabricated frame, no
 # archive needed. Verifies it reproduces bmn.bill()'s own total exactly (the
 # claim its own docstring makes), and that the per-bill-period-restart
