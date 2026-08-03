@@ -98,7 +98,10 @@ def _toy_frame(start="2025-07-21", ndays=5, night_kw=1.0, day_kw=0.6,
 
 
 # ---------------------------------------------------------------------------
-# (a) _split_floor -- the physical energy-conservation identity
+# (a) _split_floor -- physical allocation, CLAMPED where no solar is metered
+# (PR #77 review, finding 2: an earlier version claimed this was an
+# unconditional identity; it is not -- leftover is zero-clamped wherever
+# Generation == 0, and floor_assumption_violations quantifies the residual)
 # ---------------------------------------------------------------------------
 @case
 def case_split_floor_matches_hand_computation():
@@ -106,44 +109,97 @@ def case_split_floor_matches_hand_computation():
     generation = np.array([0.00, 0.00, 0.05])
     reduce_i, leftover_i, new_c, new_g = QNF._split_floor(consumption, generation, 0.20)
     assert list(reduce_i) == [0.10, 0.20, 0.00]
-    assert list(leftover_i) == [0.10, 0.00, 0.20]
+    # interval 0: consumption (0.10) < floor (0.20) but generation == 0 -- no
+    # solar exists to free, so leftover is clamped to 0, NOT 0.10
+    assert list(leftover_i) == [0.00, 0.00, 0.20]
     assert np.allclose(new_c, [0.00, 0.10, 0.00])
-    assert np.allclose(new_g, [0.10, 0.00, 0.25])
-    return "hand-computed 3-interval split matches _split_floor exactly"
+    assert np.allclose(new_g, [0.00, 0.00, 0.25])
+    return "hand-computed 3-interval split matches _split_floor's clamped behavior exactly"
 
 
 @case
-def case_split_floor_conserves_energy_identity_on_random_data():
+def case_split_floor_conserves_energy_only_where_generation_is_metered():
     rng = np.random.default_rng(7)
     consumption = rng.uniform(0, 2, 500)
     generation = rng.uniform(0, 2, 500)
     floor_kwh = 0.3
     reduce_i, leftover_i, new_c, new_g = QNF._split_floor(consumption, generation, floor_kwh)
-    assert np.allclose(reduce_i + leftover_i, floor_kwh), "reduce + leftover must equal the floor exactly"
+    has_gen = generation > 0
+    # the reduce+leftover==floor identity holds ONLY where generation is
+    # actually metered in that interval
+    assert np.allclose((reduce_i + leftover_i)[has_gen], floor_kwh)
+    # elsewhere (no metered generation), leftover is clamped to zero -- the
+    # split may fall SHORT of the floor, never over it
+    assert np.all(leftover_i[~has_gen] == 0.0)
+    assert np.all((reduce_i + leftover_i) <= floor_kwh + 1e-12)
     assert np.all(reduce_i <= consumption + 1e-12)
     assert np.all(new_c >= -1e-12)
     assert np.allclose(consumption - new_c, reduce_i)
     assert np.allclose(new_g - generation, leftover_i)
-    return "500 random intervals: reduce_from_import + leftover == floor_kwh, energy conserved"
+    return "500 random intervals: reduce+leftover==floor only where generation>0; clamped to <=floor elsewhere"
+
+
+@case
+def case_floor_assumption_violations_matches_hand_computation():
+    """The diagnostic finding 2 asks for: how much energy the constant-floor
+    assumption implies but cannot credit as freed export, quantified in kWh
+    and dollars, not just silently dropped."""
+    d = pd.DataFrame({"seas": ["S", "W"], "p": ["sop", "off"], "hour": [2.0, 20.0]})
+    consumption = np.array([0.10, 0.30])   # both < floor (0.20)
+    generation = np.array([0.00, 0.05])    # first has no metered solar, second does
+    price_map = QNF.price_map_from_rates()
+    v = QNF.floor_assumption_violations(d, consumption, generation, 0.20, price_map)
+    assert v["intervals"] == 1
+    assert v["kwh"] == 0.10
+    # hour 2.0 < 6 -- physically impossible for solar
+    assert v["intervals_physically_impossible_as_solar"] == 1
+    assert v["kwh_physically_impossible_as_solar"] == 0.10
+    want_usd = 0.10 * price_map["S_sop"]["export"]
+    assert v["usd_dropped_at_export_rate"] == round(want_usd, 2)
+    return f"1 violated interval (0.10 kWh, ${v['usd_dropped_at_export_rate']}) matches hand computation"
 
 
 # ---------------------------------------------------------------------------
-# (b) night_floor_series -- full per-night series, EV exclusion (issue AC1)
+# (b) night_floor_series -- full per-night series, high-demand exclusion
+# (issue AC1). Field renamed ev_night -> excluded_high_demand (PR #77 review,
+# finding 4): the gate fires on any high-power interval, not only an EV.
 # ---------------------------------------------------------------------------
 @case
-def case_night_floor_series_isolates_ev_nights_and_reports_every_night():
+def case_night_floor_series_isolates_high_demand_nights_and_reports_every_night():
     d = _toy_frame(ndays=4, night_kw=1.2, day_kw=0.5, ev_night_offsets=(2,))
     daily, stats = QNF.night_floor_series(d)
     assert stats["nights_total"] == 4, "issue AC1: every night in the window must be reported"
-    assert stats["ev_nights"] == 1
+    assert stats["excluded_nights"] == 1
     assert stats["quiet_nights"] == 3
     assert stats["median_kw"] == 1.2
-    ev_rows = [r for r in daily if r["ev_night"]]
-    assert len(ev_rows) == 1 and ev_rows[0]["median_kw"] is None, \
-        "an EV night must be excluded (null), not zeroed or silently averaged in"
-    quiet_rows = [r for r in daily if not r["ev_night"]]
+    assert stats["excluded_night_fraction"] == round(1 / 4, 4)
+    assert "selection_caveat" in stats and "excluded_high_demand" in stats["selection_caveat"]
+    excluded_rows = [r for r in daily if r["excluded_high_demand"]]
+    assert len(excluded_rows) == 1 and excluded_rows[0]["median_kw"] is None, \
+        "an excluded night must be null, not zeroed or silently averaged in"
+    quiet_rows = [r for r in daily if not r["excluded_high_demand"]]
     assert all(r["median_kw"] == 1.2 for r in quiet_rows)
-    return "4-night toy frame: 1 EV night excluded, 3 quiet nights median 1.2 kW, full daily series returned"
+    return "4-night toy frame: 1 high-demand night excluded, 3 quiet nights median 1.2 kW, full daily series returned"
+
+
+@case
+def case_excluded_high_demand_field_name_is_causally_neutral():
+    """Finding 4's actual complaint: the field must not assert a CAUSE (an EV
+    charged) when it only measures an EFFECT (a high-power interval occurred).
+    A non-EV high-demand event (e.g. a dryer) must trip the identical gate,
+    and the row's own keys must carry no EV-specific naming."""
+    d = _toy_frame(ndays=2, night_kw=1.0, day_kw=0.5)
+    # simulate a non-EV high-demand night by directly perturbing one interval,
+    # not via the EV-shaped ev_night_offsets helper
+    night_idx = d.index[(d.hour >= QNF.NIGHT_START_H) & (d.hour < QNF.NIGHT_END_H)]
+    d.loc[night_idx[0], "Consumption"] = 2.5 * 0.25  # a dryer-shaped spike, not an EV
+    daily, stats = QNF.night_floor_series(d)
+    assert stats["excluded_nights"] == 1
+    excluded = [r for r in daily if r["excluded_high_demand"]][0]
+    # the row's OWN keys say WHAT was measured (a high-power interval), never WHY
+    assert set(excluded) == {"date", "excluded_high_demand", "median_kw", "within_night_std_kw"}
+    assert not any("ev" in key.lower() for key in excluded)
+    return "a non-EV high-demand spike trips the same causally-neutral gate as an EV would"
 
 
 @case
@@ -209,51 +265,127 @@ def case_price_method_b_telescopes_exactly():
     return "10-day toy frame: method (b)'s three-bill telescoping identity holds exactly"
 
 
+def _no_flip_leftover_fixture(ndays=20):
+    """A fixture with metered solar (so leftover > 0 somewhere) where EVERY
+    (month, season, period) bucket stays net-POSITIVE both before and after
+    the floor is removed -- ZERO sign flips -- by keeping the 'off' bucket's
+    morning hours (6-10am, no solar) heavily import-dominant so the bucket's
+    MONTHLY TOTAL stays strongly positive even though its afternoon slice
+    (14-16, where solar overlaps) goes locally negative in a few intervals.
+    This is the PR #77 reviewer's own counterexample shape: leftover present,
+    zero flips, and (per case_reconciliation_gap_is_explained_by_pcia_not_
+    sign_flips below) a nonzero gap that only the PCIA mechanism predicts."""
+    dtr = pd.date_range("2025-07-21", periods=96 * ndays, freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["wkend"] = d.dt.dt.date.map(R.off_peak_day)
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    d["ym"] = d.dt.dt.to_period("M")
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+
+    hour = d.hour.values
+    night_mask = (hour >= QNF.NIGHT_START_H) & (hour < QNF.NIGHT_END_H)
+    morning_off_mask = (hour >= 6) & (hour < 10)     # off period, no solar
+    afternoon_off_mask = (hour >= 14) & (hour < 16)  # off period, overlaps solar
+
+    cons_kw = np.full(len(d), 0.5)
+    cons_kw = np.where(night_mask, 2.0, cons_kw)
+    cons_kw = np.where(morning_off_mask, 4.0, cons_kw)
+    cons_kw = np.where(afternoon_off_mask, 0.2, cons_kw)
+    gen_kw = np.where(afternoon_off_mask, 1.5, 0.0)
+
+    d["Consumption"] = cons_kw * 0.25
+    d["Generation"] = gen_kw * 0.25
+    return d
+
+
 @case
-def case_reconciliation_gap_is_near_zero_with_no_sign_flip():
-    """When every (month, season, period) bucket sits far from zero net (here:
-    heavy night-only import, no solar at all, so every bucket nets strongly
-    positive both before and after the floor is removed), method (a)'s
-    per-interval sign assumption and method (b)'s monthly bucket sign AGREE
-    everywhere, so the reconciliation gap must be near zero -- this is the
-    positive control for the reconciliation mechanism the docstring claims."""
-    d = _toy_frame(ndays=20, night_kw=1.0, day_kw=2.0, solar_kw_midday=0.0)
+def case_reconciliation_gap_is_explained_by_pcia_not_sign_flips():
+    """THE discriminating test (PR #77 review, finding 1): falsifies the OLD
+    (wrong) sign-flip-only explanation and confirms the CORRECTED (PCIA)
+    mechanism, the same way a bug fix is proven by reverting and reproducing
+    the original failure.
+
+    Fixture: metered solar present (leftover > 0), but EVERY bucket stays
+    net-positive throughout -- zero sign flips anywhere.
+
+    Under the OLD explanation ("the entire reconciliation gap traces to
+    buckets where the two sign conventions disagree"), zero flips implies the
+    gap should be ~0. It is not: this assertion is the one that would have
+    caught the bug, and it FAILS the old theory outright.
+
+    Under the CORRECTED explanation (gap_decomposition's PCIA effect), the
+    predicted pcia_effect_usd matches the actual gap_usd almost exactly (the
+    sign-flip residual must be ~0 too, since there are no flips to produce
+    one) -- this assertion PASSES."""
+    d = _no_flip_leftover_fixture()
     consumption = d.Consumption.values.astype(float)
     generation = d.Generation.values.astype(float)
+    reduce_i, leftover_i, _, _ = QNF._split_floor(consumption, generation, 0.25)  # 1 kW floor
+    assert leftover_i.sum() > 0, "fixture must actually produce some leftover (displaced export)"
+
     price_map = QNF.price_map_from_rates()
-    reduce_i, leftover_i, _, _ = QNF._split_floor(consumption, generation, 0.25)
     method_a = QNF.price_method_a(d, price_map, reduce_i, leftover_i)
     method_b, new_c, new_g = QNF.price_method_b(d, consumption, generation, reduce_i, leftover_i)
     flips, flipped_kwh = QNF.sign_flip_buckets(d, consumption, generation, new_c, new_g)
-    assert flips == [], f"expected no sign flips with no solar at all, got {flips}"
-    gap_pct = 100.0 * (method_a["total_usd"] - method_b["total_usd"]) / method_b["total_usd"]
-    assert abs(gap_pct) < 0.5, f"gap should be ~0 with no bucket sign flips, got {gap_pct}%"
-    return f"no-solar control: 0 sign flips, gap {gap_pct:.3f}% (near zero, as the mechanism predicts)"
+    assert flips == [], f"fixture must have zero sign flips to discriminate the two theories, got {flips}"
+
+    gap_usd = method_a["total_usd"] - method_b["total_usd"]
+
+    # --- proves the OLD (sign-flip-only) explanation FALSE on this fixture ---
+    old_theory_predicted_gap = 0.0  # "the gap traces ENTIRELY to sign flips"; there are none
+    assert abs(gap_usd - old_theory_predicted_gap) > 0.10, (
+        f"the OLD sign-flip-only explanation predicts gap=0 with zero flips, but the "
+        f"actual gap is ${gap_usd:.2f} -- if this assertion ever fails (gap collapses "
+        "to ~0), the fixture has stopped discriminating between the two theories and "
+        "must be revisited, not the code")
+
+    # --- proves the CORRECTED (PCIA) explanation TRUE on the same fixture ---
+    decomposition = QNF.gap_decomposition(d, consumption, generation, new_c, new_g,
+                                          reduce_i, leftover_i)
+    assert decomposition["leftover_in_still_net_positive_buckets_kwh"] > 0, \
+        "the fixture's whole point is leftover sitting inside a still-net-positive bucket"
+    assert abs(gap_usd - decomposition["pcia_effect_usd"]) < 0.01, (
+        f"the CORRECTED PCIA-based explanation predicts gap=${decomposition['pcia_effect_usd']}, "
+        f"actual gap is ${gap_usd:.2f} -- these must match closely since there are no "
+        "sign flips to contribute a residual")
+    sign_flip_residual = gap_usd - decomposition["pcia_effect_usd"]
+    assert abs(sign_flip_residual) < 0.01, "zero flips must mean ~zero sign-flip residual"
+
+    return (f"zero sign flips, leftover={leftover_i.sum():.1f} kWh, gap=${gap_usd:.2f}: "
+           f"OLD theory predicted $0.00 (falsified), PCIA theory predicted "
+           f"${decomposition['pcia_effect_usd']} (confirmed)")
 
 
 @case
-def case_reconciliation_gap_appears_exactly_when_a_bucket_flips_sign():
-    """The negative control: construct a bucket that nets SLIGHTLY positive
-    before the floor is removed and NEGATIVE after -- sign_flip_buckets must
-    catch it, and the resulting gap must be materially nonzero, tying the
-    docstring's explanation to actual behavior rather than asserting it."""
+def case_sign_flip_residual_tracks_actual_flips():
+    """Complements the discriminating test above: when a bucket's sign DOES
+    flip, sign_flip_residual_usd (gap - pcia_effect) must become the larger,
+    materially nonzero term it is documented to be -- not asserting merely
+    that SOME gap exists (which the PCIA mechanism alone can already produce
+    with zero flips, as the case above shows), but that the RESIDUAL
+    specifically responds to the flip."""
     d = _toy_frame(ndays=10, night_kw=0.1, day_kw=0.3, solar_kw_midday=1.0)
     consumption = d.Consumption.values.astype(float)
     generation = d.Generation.values.astype(float)
-    # this bucket (S/off) starts net-positive by a small margin; removing a
-    # 1 kW floor applied uniformly across all 24 hours pushes it net-negative
-    net_off_before = float((d[d.p == "off"].Consumption - d[d.p == "off"].Generation).sum())
-    assert net_off_before > 0, "fixture must start net-positive in the off bucket to test a flip"
-    price_map = QNF.price_map_from_rates()
     reduce_i, leftover_i, _, _ = QNF._split_floor(consumption, generation, 0.25)  # 1 kW floor
+    price_map = QNF.price_map_from_rates()
     method_a = QNF.price_method_a(d, price_map, reduce_i, leftover_i)
     method_b, new_c, new_g = QNF.price_method_b(d, consumption, generation, reduce_i, leftover_i)
     flips, flipped_kwh = QNF.sign_flip_buckets(d, consumption, generation, new_c, new_g)
     assert len(flips) >= 1, "expected at least one bucket to flip sign in this fixture"
     assert flipped_kwh > 0
+
     gap_usd = method_a["total_usd"] - method_b["total_usd"]
-    assert abs(gap_usd) > 0.001, "a real sign flip must produce a nonzero reconciliation gap"
-    return f"{len(flips)} bucket(s) flipped sign ({flipped_kwh} kWh), gap ${gap_usd:.2f} -- as the mechanism predicts"
+    decomposition = QNF.gap_decomposition(d, consumption, generation, new_c, new_g,
+                                          reduce_i, leftover_i)
+    sign_flip_residual = gap_usd - decomposition["pcia_effect_usd"]
+    assert abs(sign_flip_residual) > 0.01, (
+        "a real sign flip should leave a nonzero residual after subtracting "
+        "the PCIA effect")
+    return (f"{len(flips)} bucket(s) flipped sign ({flipped_kwh} kWh): PCIA effect "
+           f"${decomposition['pcia_effect_usd']}, sign-flip residual "
+           f"${sign_flip_residual:.2f}, total gap ${gap_usd:.2f}")
 
 
 # ---------------------------------------------------------------------------
@@ -439,11 +571,24 @@ def case_artifact_has_all_required_sections():
         assert key in doc, f"missing required section: {key}"
     assert "daily_series" in doc["night_floor"], "issue AC1: full daily series required"
     assert len(doc["night_floor"]["daily_series"]) == doc["night_floor"]["nights_total"]
+    assert "excluded_high_demand" in doc["night_floor"]["daily_series"][0], \
+        "PR #77 review finding 4: field must be the causally-neutral name"
+    assert "ev_night" not in doc["night_floor"]["daily_series"][0]
+    assert "selection_caveat" in doc["night_floor"], "PR #77 review finding 4: exclusion rate must be surfaced"
     assert len(doc["hour_of_day"]["profile"]) == 24, "issue AC1: full 24-hour distribution required"
     assert "avoided_import_usd" in doc["pricing"]["method_a_price_map"], "issue AC3: daytime split required"
     assert "displaced_export_usd" in doc["pricing"]["method_a_price_map"]
     assert "reconciliation" in doc["pricing"], "issue AC2: methods must be reconciled"
-    return "all 7 acceptance-criteria sections present in the committed artifact"
+    assert "gap_decomposition" in doc["pricing"]["reconciliation"], \
+        "PR #77 review finding 1: the corrected PCIA mechanism must be reported"
+    assert "sign_flip_residual_usd" in doc["pricing"]["reconciliation"]
+    assert "scope_of_agreement" in doc["pricing"]["reconciliation"], \
+        "PR #77 review finding 5: what the reconciliation does/does not prove"
+    assert "floor_assumption_violations" in doc["pricing"], \
+        "PR #77 review finding 2: the _split_floor clamp's residual must be quantified"
+    assert "caveat" in doc["battery_interaction"], \
+        "PR #77 review nitpick: the EV-spillover-gate confound must be noted"
+    return "all 7 acceptance-criteria sections present, plus every PR #77 review fix, in the committed artifact"
 
 
 # ---------------------------------------------------------------------------
