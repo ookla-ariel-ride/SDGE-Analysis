@@ -11,6 +11,7 @@ the real path rather than skipping.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_report_tokens.py
 """
+import datetime as dt
 import pathlib
 import sys
 
@@ -326,6 +327,111 @@ def case_no_token_declared_twice():
     names = list(rt.TOKENS)
     assert len(names) == len(set(names)), "TOKENS has a duplicate key (impossible via _tok)"
     return f"{len(names)} distinct token names, none declared twice"
+
+
+# ---------------------------------------------------------------------------
+# Codex review (pass 3), finding 2: _paid_off() used to compare season NAMES
+# as strings ("fall" < "summer" is alphabetically true even though fall
+# comes after summer in the same year), which could report a same-year
+# crossover as already paid off before it had actually happened. Fixed to
+# compare (year, month) numerically. Each case fixes BOTH the crossover
+# ("today" as far as _crossover_season_year is concerned) and the system
+# clock, via monkeypatching, so the scenario is exact and repeatable rather
+# than depending on whatever the real committed artifact's crossover date
+# happens to be relative to whenever the suite runs.
+# ---------------------------------------------------------------------------
+class _patched:
+    """Temporarily replace an attribute on `obj`, restoring it on exit."""
+
+    def __init__(self, obj, name, value):
+        self.obj, self.name, self.value = obj, name, value
+
+    def __enter__(self):
+        self.old = getattr(self.obj, self.name)
+        setattr(self.obj, self.name, self.value)
+        return self.value
+
+    def __exit__(self, *exc):
+        setattr(self.obj, self.name, self.old)
+
+
+def _frozen_today(year, month, day=15):
+    class _FakeDate(dt.date):
+        @classmethod
+        def today(cls):
+            return dt.date(year, month, day)
+    return _FakeDate
+
+
+def _paid_off_for(crossover_year, crossover_month, today_year, today_month):
+    fake_crossover = lambda which: ("fake-season", crossover_year, crossover_month)  # noqa: E731
+    with _patched(rt, "_crossover_season_year", fake_crossover), \
+         _patched(rt.dt, "date", _frozen_today(today_year, today_month)):
+        return rt._paid_off(None)
+
+
+@case
+def case_paid_off_is_false_for_a_crossover_later_in_the_current_year():
+    # crossover in December, "today" in January of the same year -- not yet.
+    assert _paid_off_for(2026, 12, 2026, 1) is False
+    return "a crossover later in the current year is correctly NOT YET paid off"
+
+
+@case
+def case_paid_off_is_true_for_a_crossover_earlier_in_the_current_year():
+    # crossover in January, "today" in December of the same year -- already.
+    assert _paid_off_for(2026, 1, 2026, 12) is True
+    return "a crossover earlier in the current year is correctly already paid off"
+
+
+@case
+def case_paid_off_is_false_for_the_exact_bug_scenario():
+    """The exact case Codex found wrong: crossover in fall (~month 10) of the
+    current year, "today" in summer (~month 7) of the SAME year. String
+    comparison said 'fall' < 'summer' (alphabetically true, f < s) and
+    reported this as already paid off, even though fall is chronologically
+    AFTER summer in the same calendar year -- the crossover had NOT
+    happened yet. Numeric (year, month) comparison must get this right."""
+    assert rt._season_for_month(10) == "fall"
+    assert rt._season_for_month(7) == "summer"
+    assert _paid_off_for(2026, 10, 2026, 7) is False, (
+        "a fall crossover must not be reported as paid off when 'today' is "
+        "only summer of the same year")
+    return "crossover=fall/current year, today=summer/same year: correctly NOT YET paid off"
+
+
+@case
+def case_paid_off_boundary_same_year_same_month_is_not_yet_paid_off():
+    """Boundary case, decided and documented in _paid_off()'s own docstring:
+    a crossover landing in the CURRENT month is NOT reported as paid off.
+    This module's resolution is monthly, not daily, so within the current
+    month there's no way to know whether the crossover fell before or after
+    "today" -- and CLAUDE.md section 0 records an event only once it has
+    definitely happened, not "probably, sometime this month.\""""
+    assert _paid_off_for(2026, 6, 2026, 6) is False
+    return "a crossover in the current month is NOT YET paid off (strict '<', documented choice)"
+
+
+@case
+def case_paid_off_is_true_for_a_crossover_in_a_past_year():
+    assert _paid_off_for(2024, 12, 2026, 1) is True
+    return "a crossover in an earlier year is paid off regardless of season/month"
+
+
+@case
+def case_paid_off_is_false_for_a_crossover_in_a_future_year():
+    assert _paid_off_for(2028, 1, 2026, 12) is False
+    return "a crossover in a later year is not yet paid off regardless of season/month"
+
+
+@case
+def case_crossover_season_year_returns_a_three_tuple_with_a_numeric_month():
+    result = rt._crossover_season_year("gross")
+    assert len(result) == 3, result
+    season, year, month = result
+    assert isinstance(month, int) and 1 <= month <= 12, result
+    assert rt._season_for_month(month) == season, result
+    return f"_crossover_season_year returns (season, year, month) = {result}"
 
 
 def main():

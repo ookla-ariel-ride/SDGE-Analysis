@@ -1085,20 +1085,38 @@ _tok("FIRST_YEAR_VALUE", kind="derived",
 
 
 def _crossover_season_year(which):
+    """(season_label, year, month) for lifetime_payback.json's crossover[which].
+    month is the numeric calendar month (1-12) _fraction_to_month() already
+    computes on the way to the season label -- returned alongside it (not
+    just the label) so callers needing to compare crossover timing against
+    "today" can do it chronologically instead of by comparing season NAMES,
+    which sort alphabetically, not by calendar order (see _paid_off)."""
     c = _json("lifetime_payback.json")["crossover"][which]
     month = _fraction_to_month(c["fraction_through_year"])
-    return _season_for_month(month), c["year"]
+    return _season_for_month(month), c["year"], month
 
 
 _tok("PAYBACK_CROSSOVER_DATE", kind="derived",
-     get=lambda ctx: (lambda s, y: f"{s} {y}")(*_crossover_season_year("gross")),
+     get=lambda ctx: (lambda s, y, m: f"{s} {y}")(*_crossover_season_year("gross")),
      sources=["data/lifetime_payback.json:crossover.gross"])
 
 
 def _paid_off(ctx):
-    season, year = _crossover_season_year("gross")
+    """Whether the crossover has already happened as of the system clock.
+    Compares (year, MONTH) -- both numeric -- never (year, season-name):
+    a Codex review caught the previous version comparing season NAMES as
+    strings when years were equal ("fall" < "summer" is alphabetically TRUE,
+    f < s, even though fall comes AFTER summer in the same calendar year),
+    which could report a same-year crossover as already paid off before it
+    had actually happened. Strict '<': a crossover landing in the CURRENT
+    month is reported as NOT YET paid off -- this module's own resolution is
+    monthly, not daily, so within the current month there is no way to know
+    whether the crossover fell before or after "today", and CLAUDE.md
+    section 0 records an event only after it has definitely happened, never
+    on the strength of "sometime this month, probably.\""""
+    season, year, month = _crossover_season_year("gross")
     today = dt.date.today()
-    return (year, season) < (today.year, _season_for_month(today.month)) or year < today.year
+    return (year, month) < (today.year, today.month)
 
 
 _tok("PAYBACK_STATUS_SHORT", kind="derived",
@@ -1108,14 +1126,14 @@ _tok("PAYBACK_STATUS_SHORT", kind="derived",
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("S11_VERDICT_SHORT", kind="derived",
      get=lambda ctx: "the solar array has already paid for itself" if _paid_off(ctx) else
-     (lambda s, y: f"on pace to pay for itself by {s} {y}")(*_crossover_season_year("gross")),
+     (lambda s, y, m: f"on pace to pay for itself by {s} {y}")(*_crossover_season_year("gross")),
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("PAYBACK_HEADLINE", kind="derived",
-     get=lambda ctx: (lambda s, y: (
+     get=lambda ctx: (lambda s, y, m: (
          f"Paid off — cumulative value crossed the "
          f"${hh1('solar.install_invoice_usd'):,.0f} gross cost in {s} {y}."))(
          *_crossover_season_year("gross")) if _paid_off(ctx) else
-     (lambda s, y: f"On pace to cross the ${hh1('solar.install_invoice_usd'):,.0f} "
+     (lambda s, y, m: f"On pace to cross the ${hh1('solar.install_invoice_usd'):,.0f} "
       f"gross cost by {s} {y}.")(*_crossover_season_year("gross")),
      sources=["data/lifetime_payback.json:crossover.gross",
               "private/household.yaml:solar.install_invoice_usd"])

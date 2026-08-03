@@ -1091,7 +1091,12 @@ def case_find_html_structure_violations_is_the_gate_not_the_numeral_guard():
 def case_review_clause_override_attempt_is_ignored():
     """The provenance review clause can NEVER be filled -- not even via
     --human-answers. A caller sneaking in a "TOKEN:REVIEW_TOOL_1" answer
-    must have it silently ignored (apply_provenance_overrides always wins)."""
+    must have it silently ignored: apply_provenance_overrides() always wins
+    on the token values, AND (since the Codex pass-3 fix) the whole fixed
+    sentence those tokens used to sit in is replaced wholesale before the
+    token-substitution pass ever runs, so there is no {{REVIEW_TOOL_1}}/
+    {{REVIEW_TOOL_2}} placeholder left in the document for a sneaked-in
+    value to fill even in principle."""
     _require_gitleaks()
     _require_household()
     answers = _all_human_answers()
@@ -1108,8 +1113,14 @@ def case_review_clause_override_attempt_is_ignored():
         html = (dest_dir / "index.generated.html").read_text()
         assert "Claude Code (Fable 5)" not in html
         assert "Codex (GPT-5.6 Sol)" not in html
-        assert gr.REVIEW_DISCLAIMER in html
-    return "a sneaked-in human-answers override for the review clause is ignored; the disclaimer wins"
+        # PROVENANCE_SENTENCE_REPLACEMENT itself still contains the literal,
+        # unsubstituted {{GENERATION_TOOL}} placeholder -- by the time it
+        # reaches the FINAL rendered output that token has already been
+        # substituted with the real provider/model, so check for a fixed
+        # substring of the replacement that doesn't include the token.
+        assert "no independent or adversarial review of this specific run has been performed" \
+            in html
+    return "a sneaked-in human-answers override for the review clause is ignored"
 
 
 @case
@@ -1205,10 +1216,69 @@ def case_generated_chart_arrays_match_their_committed_artifacts():
 
 @case
 def case_generated_output_contains_only_report_tokens_style_provenance():
+    """Since the Codex pass-3 fix, the whole fixed review-claim sentence is
+    replaced (rewrite_provenance_sentence) rather than just its two tool-
+    name tokens -- REVIEW_DISCLAIMER (still set by apply_provenance_
+    overrides, as defense in depth) no longer appears in the output at all,
+    because the sentence that used to carry it is gone."""
     html = _generated_html()
     assert "anthropic (claude-fabricated-for-tests)" in html
-    assert gr.REVIEW_DISCLAIMER in html
-    return "the generated provenance sentence names the actual provider/model and the disclaimer"
+    assert gr.REVIEW_DISCLAIMER not in html, (
+        "the old two-token-only fix's placeholder text survived -- the whole sentence "
+        "should have been replaced instead")
+    return "the generated provenance sentence names the actual provider/model"
+
+
+# ---------------------------------------------------------------------------
+# Codex review (pass 3), finding 1: swapping only REVIEW_TOOL_1/REVIEW_TOOL_2
+# for a disclaimer did not neutralize the FIXED SURROUNDING GRAMMAR ("were
+# then independently reviewed... and adversarially reviewed...", "was
+# subsequently re-worked... to incorporate the findings of both reviews"),
+# which independently asserted a review-and-rework process regardless of
+# what the two tokens said. The prior test only checked the two hardcoded
+# tool names were absent -- never the sentence's actual MEANING, which is
+# exactly the gap Codex found.
+# ---------------------------------------------------------------------------
+_REVIEW_CLAIM_PHRASES = [
+    "were then independently reviewed",
+    "adversarially reviewed",
+    "to incorporate the findings of both reviews",
+    "independently reviewed with",
+]
+
+
+@case
+def case_generated_output_never_claims_a_review_or_rework_occurred():
+    html = _generated_html()
+    for phrase in _REVIEW_CLAIM_PHRASES:
+        assert phrase not in html, (
+            f"the generated report claims a review process via {phrase!r}, which for this "
+            "run never happened")
+    assert "no independent or adversarial review of this specific run has been performed" \
+        in html
+    return "the generated report's provenance sentence makes no review/rework claim at all"
+
+
+@case
+def case_rewrite_provenance_sentence_replaces_the_literal_template_text():
+    template_text = rt.TEMPLATE.read_text()
+    assert gr.PROVENANCE_SENTENCE_LITERAL in template_text, (
+        "fixture assumption broken: the literal sentence text no longer matches "
+        "report-template.html verbatim")
+    out = gr.rewrite_provenance_sentence(template_text)
+    assert gr.PROVENANCE_SENTENCE_LITERAL not in out
+    assert gr.PROVENANCE_SENTENCE_REPLACEMENT in out
+    return "rewrite_provenance_sentence() replaces the exact literal sentence from the template"
+
+
+@case
+def case_rewrite_provenance_sentence_fails_closed_if_the_literal_is_missing():
+    try:
+        gr.rewrite_provenance_sentence("<p>no provenance sentence anywhere in here</p>")
+        raise AssertionError("rewrite_provenance_sentence accepted text with no match at all")
+    except SystemExit as e:
+        assert "provenance sentence" in str(e), e
+    return "rewrite_provenance_sentence() fails closed when the literal sentence isn't found"
 
 
 # ---------------------------------------------------------------------------

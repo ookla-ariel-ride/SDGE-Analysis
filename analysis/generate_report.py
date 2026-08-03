@@ -819,12 +819,62 @@ def generate_prose_fragment(block, scope_values, provider, model, env, llm_call)
 # ---------------------------------------------------------------------------
 # Rendering: splice every block's fragment, then one global token pass.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# The provenance sentence (Codex review pass 3, finding 1). report-template.
+# html:641 is FIXED prose, shared verbatim with this repo's own hand-
+# authored index.html, and it must never be edited by this PR (verified
+# byte-identical throughout). That sentence's surrounding GRAMMAR --
+# "were then independently reviewed... and adversarially reviewed...", "was
+# subsequently re-worked... to incorporate the findings of both reviews" --
+# independently asserts a review-and-rework process happened, regardless of
+# what REVIEW_TOOL_1/REVIEW_TOOL_2 resolve to. apply_provenance_overrides()
+# swapping those two tokens for REVIEW_DISCLAIMER neutralizes the TOOL NAMES
+# but not the fixed clauses around them -- a generated report's rendered
+# sentence ended up simultaneously naming a disclaimer and asserting (via
+# that fixed grammar) that a review took place, which for a fork's own run
+# it did not. The only fix that doesn't touch the template is to replace the
+# WHOLE fixed sentence, verbatim-matched first so a future template edit
+# fails closed here instead of silently leaving a false claim in place --
+# the same literal-substring-find-and-replace technique fill_chart_data()
+# already uses for the const D placeholders, applied here instead of via
+# {{TOKEN}} substitution because there is no honest way to fill
+# REVIEW_TOOL_1/REVIEW_TOOL_2 that keeps the surrounding clauses true.
+# ---------------------------------------------------------------------------
+PROVENANCE_SENTENCE_LITERAL = (
+    "<b>How this report was produced:</b> generated with <b>{{GENERATION_TOOL}}</b>; the "
+    "data, methodology, and conclusions were then independently reviewed with "
+    "<b>{{REVIEW_TOOL_1}}</b> and adversarially reviewed with <b>{{REVIEW_TOOL_2}}</b>; the "
+    "analysis was subsequently re-worked in {{GENERATION_TOOL}} to incorporate the findings "
+    "of both reviews.")
+PROVENANCE_SENTENCE_REPLACEMENT = (
+    "<b>How this report was produced:</b> generated with <b>{{GENERATION_TOOL}}</b>, filling "
+    "this template directly from the committed data artifacts via "
+    "<code>analysis/generate_report.py</code>; no independent or adversarial review of this "
+    "specific run has been performed.")
+
+
+def rewrite_provenance_sentence(html):
+    """Replace report-template.html's fixed CLAUDE.md section 11 provenance
+    sentence with an honest one for a generated report -- see the module
+    comment above PROVENANCE_SENTENCE_LITERAL. Fails closed (SystemExit,
+    naming the problem) if the literal sentence is not found verbatim,
+    rather than silently leaving the false review claim in place or
+    guessing at a replacement in the wrong spot."""
+    if PROVENANCE_SENTENCE_LITERAL not in html:
+        raise SystemExit(
+            "generate_report: the CLAUDE.md section 11 provenance sentence was not found "
+            "verbatim in the template (report-template.html's wording changed?) -- refusing "
+            "to guess at a replacement that might leave a false review claim in the output")
+    return html.replace(PROVENANCE_SENTENCE_LITERAL, PROVENANCE_SENTENCE_REPLACEMENT, 1)
+
+
 def render(html, fragments, resolved):
     """fragments: {block_id: html_fragment}. Splices every classified block's
     fragment into its exact comment span (blocks missing from `fragments`
     are left as their original comment -- callers must have already
-    refused to proceed in that case), then substitutes every remaining
-    {{TOKEN}}. Returns (rendered_html, missing_tokens)."""
+    refused to proceed in that case), rewrites the fixed provenance sentence
+    to an honest one (rewrite_provenance_sentence), then substitutes every
+    remaining {{TOKEN}}. Returns (rendered_html, missing_tokens)."""
     blocks = rb.parse_todo_blocks(html)
     out = []
     last = 0
@@ -834,6 +884,7 @@ def render(html, fragments, resolved):
         last = b.end
     out.append(html[last:])
     spliced = fill_chart_data("".join(out))
+    spliced = rewrite_provenance_sentence(spliced)
 
     # The top-of-file authoring-instructions comment (report_blocks.py's own
     # "not a fill-in site" exclusion) is internal guidance for whoever fills
