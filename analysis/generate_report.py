@@ -116,6 +116,7 @@ from html import escape as _html_escape  # `html` is already this module's own
                                           # (render(html, ...), fill_chart_data(html),
                                           # run(..., html=None)) -- imported this way
                                           # to avoid shadowing every one of those.
+from html.parser import HTMLParser as _HTMLParser
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import llm_providers as lp   # noqa: E402
@@ -150,7 +151,11 @@ SYSTEM_PROMPT = (
     "instruction and a list of ALREADY-COMPUTED values you may cite. Rules, "
     "enforced mechanically after you answer:\n"
     "1. Write ONLY the replacement HTML fragment for this one slot -- no "
-    "surrounding HTML, no other slot's content, no <script> or <style>.\n"
+    "surrounding HTML, no other slot's content. The ONLY HTML tags you may "
+    "use are <b> <i> <em> <strong> <code> <sup> <sub>, and <a href=\"#sN\"> "
+    "for an internal section link -- no other tag, no attribute other than "
+    "that one href, no style attribute, no event-handler attribute. Every "
+    "tag you open must be closed.\n"
     "2. Never write a bare digit, and never spell a quantity out in words "
     "either (no 'roughly two-thirds', no 'about forty percent', no 'the "
     "majority', no 'several'). Every quantity must be written as "
@@ -178,16 +183,30 @@ class BlockFailure(Exception):
 # Token resolution, with gaps kept visible rather than raising.
 # ---------------------------------------------------------------------------
 def resolve_tokens_with_gaps():
-    """{name: rendered_string} for every resolvable token, plus the set of
-    names whose kind is 'gap' (report_tokens.KNOWN_GAPS) and so never
-    resolve. Never raises -- gaps are a normal, expected outcome here."""
-    resolved, gaps = {}, set()
+    """{name: rendered_string} for every resolvable token; the set of names
+    whose kind is LITERALLY 'gap' (report_tokens.KNOWN_GAPS) and so never
+    resolve BY DESIGN; and resolve_failures, a list of (name, message) for
+    any OTHER token whose resolution raised SystemExit for a REAL reason --
+    a missing or malformed data/*.json or *.csv, a broken household.yaml
+    path, a future report_tokens.py regression. Only kind == "gap" gets
+    silently folded into `gaps` -- adversarial review found an earlier
+    version of this function caught every SystemExit and treated it as an
+    expected gap regardless of the token's actual kind, which would let a
+    real artifact failure disappear silently instead of blocking the run.
+    Never raises itself: the caller (run()) folds resolve_failures into its
+    own failures list, so a broken token is reported and blocks the write
+    exactly like a failed block, with the run never claiming success while
+    quietly missing required data."""
+    resolved, gaps, resolve_failures = {}, set(), []
     for name, spec in rt.TOKENS.items():
         try:
             resolved[name] = rt.resolve_token(name, spec)
-        except SystemExit:
-            gaps.add(name)
-    return resolved, gaps
+        except SystemExit as e:
+            if spec.get("kind") == "gap":
+                gaps.add(name)
+            else:
+                resolve_failures.append((name, str(e)))
+    return resolved, gaps, resolve_failures
 
 
 def apply_provenance_overrides(resolved, provider, model):
@@ -399,23 +418,161 @@ def _word_number_violations(fragment):
     return violations
 
 
-def find_fragment_violations(fragment):
+# ---------------------------------------------------------------------------
+# HTML-structure validation (Codex review, finding 2): the numeral guard and
+# prose_lint.py check invented QUANTITIES and WRITING STYLE only -- neither
+# looks at HTML structure at all, so "<script>alert(1)</script>" or a tag
+# with an onerror= attribute has zero digits and no banned phrase, passes
+# both checks cleanly, and would be spliced straight into a page meant to be
+# published on GitHub Pages. This is the mechanical gate for that: stdlib
+# html.parser.HTMLParser only (this repo's zero-new-dependencies rule
+# applies here too -- no bleach, no new package), a small allowlist of the
+# INERT INLINE tags this report's own prose actually uses (checked directly
+# against index.html/report-template.html's real usage: <b>, <i>, <em>,
+# <code> appear throughout prose; <strong>/<sup>/<sub> do not appear today
+# but are the same trust class and cost nothing to allow; <a> is used only
+# for internal #sN section links in prose, never an external URL or a
+# javascript:/data: scheme), a narrow per-tag attribute allowlist (nothing
+# but href, and only on <a>), and a same-document-anchor-only rule for that
+# href. Anything else -- <script>, <style>, <iframe>, <object>, <embed>,
+# <form>, <img>, <svg>, <div>, <span>, any on* event-handler attribute on
+# ANY tag, any style attribute, any non-#sN href, or an unbalanced/
+# improperly-nested tag -- is rejected.
+# ---------------------------------------------------------------------------
+ALLOWED_INLINE_TAGS = {
+    "b": frozenset(), "i": frozenset(), "em": frozenset(), "strong": frozenset(),
+    "code": frozenset(), "sup": frozenset(), "sub": frozenset(),
+    "a": frozenset({"href"}),
+}
+_INTERNAL_ANCHOR_HREF_RE = re.compile(r"^#s\d+$")
+# Same shape, NOT anchored -- used by find_fragment_violations to exempt an
+# internal anchor's digit(s) from the numeral guard wherever the substring
+# appears (e.g. inside href="#s3"). Digits INSIDE the section id are not an
+# invented quantity, and find_html_structure_violations already constrains
+# where the anchored, whole-value form may legally appear at all.
+_INTERNAL_ANCHOR_HREF_RE_LOOSE = re.compile(r"#s\d+")
+_URL_SCHEME_RE = re.compile(r"^\s*([a-zA-Z][a-zA-Z0-9+.\-]*):")
+
+
+class _StructureViolation(Exception):
+    def __init__(self, message):
+        self.message = message
+        super().__init__(message)
+
+
+class _FragmentHTMLValidator(_HTMLParser):
+    """Raises _StructureViolation from within a handler on the FIRST problem
+    found -- this is a validator, not an enumerator of every issue, so it
+    short-circuits like a parser error would. `stack` tracks open tags so
+    find_html_structure_violations can additionally check it is EMPTY once
+    parsing finishes (an unclosed <b> at the end of a fragment raises
+    nothing DURING parsing -- HTMLParser is lenient about missing close
+    tags -- so the emptiness check after the fact is what actually catches
+    it)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+
+    def _check_tag(self, tag, attrs):
+        if tag not in ALLOWED_INLINE_TAGS:
+            raise _StructureViolation(f"disallowed HTML tag <{tag}>")
+        allowed_attrs = ALLOWED_INLINE_TAGS[tag]
+        for name, value in attrs:
+            lname = (name or "").lower()
+            if lname.startswith("on"):
+                raise _StructureViolation(
+                    f"<{tag}> carries an event-handler attribute {name!r}")
+            if lname == "style":
+                raise _StructureViolation(f"<{tag}> carries a style attribute")
+            if lname not in allowed_attrs:
+                raise _StructureViolation(f"<{tag}> carries a disallowed attribute {name!r}")
+            if lname == "href":
+                v = value or ""
+                if not _INTERNAL_ANCHOR_HREF_RE.match(v):
+                    raise _StructureViolation(
+                        f"<a href={value!r}> is not a bare internal section anchor "
+                        "(must match ^#s\\d+$)")
+                if _URL_SCHEME_RE.match(v):
+                    raise _StructureViolation(
+                        f"<a href={value!r}> carries a URL scheme, not a bare anchor")
+
+    def handle_starttag(self, tag, attrs):
+        self._check_tag(tag, attrs)
+        self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self._check_tag(tag, attrs)
+        # self-closed (e.g. <a href="#s3"/>) -- nothing left to balance later.
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack[-1] != tag:
+            raise _StructureViolation(
+                f"unbalanced or improperly nested </{tag}> (open tag stack: {self.stack})")
+        self.stack.pop()
+
+
+def find_html_structure_violations(fragment):
+    """List of human-readable violation strings; empty means the fragment's
+    HTML structure is clean. See the module-level comment above
+    ALLOWED_INLINE_TAGS for exactly what is and is not allowed."""
+    validator = _FragmentHTMLValidator()
+    try:
+        validator.feed(fragment)
+        validator.close()
+    except _StructureViolation as e:
+        return [f"HTML structure violation: {e.message}"]
+    if validator.stack:
+        return [f"HTML structure violation: unclosed tag(s) at end of fragment: "
+               f"{validator.stack}"]
+    return []
+
+
+def find_fragment_violations(fragment, allowed_tokens=None):
     """List of human-readable violation strings; empty means the fragment is
     clean. Checks, all independent: an unrecognized {{TOKEN}} reference
-    (whether or not its name contains digits); any digit character outside a
-    valid {{TOKEN}}, a §N reference, or a literal allowlist entry; and any
-    spelled-out number, fraction, or vague quantifier word (see
+    (whether or not its name contains digits); a reference to a token that
+    IS real but outside `allowed_tokens` (see below); any digit character
+    outside a valid {{TOKEN}}, a §N reference, or a literal allowlist entry;
+    any spelled-out number, fraction, or vague quantifier word (see
     _WORD_NUMBER_PATTERNS above) -- a decimal-digit scan alone cannot catch
-    "roughly two-thirds" or "about forty percent"."""
+    "roughly two-thirds" or "about forty percent"; and any HTML-structure
+    violation (see find_html_structure_violations) -- a disallowed tag, a
+    disallowed attribute, an event-handler or style attribute, a non-#sN
+    href, or an unbalanced/improperly-nested tag.
+
+    allowed_tokens: an optional iterable of token names the ORIGINATING
+    BLOCK was actually shown (its own report_blocks.scope_tokens_for_block
+    scope) -- when given, a {{TOKEN}} reference to a real report_tokens.
+    TOKENS name that is NOT in this set is rejected exactly like a reference
+    to a nonexistent token. This is what keeps the per-block sandbox
+    (adversarial review: "the model is handed one TODO block's own scope and
+    nothing else") true of the OUTPUT, not just the prompt -- without it, a
+    fragment could cite any of the 143 tokens in the whole system, not just
+    the ones its own block was given, and it would still resolve in the
+    final render. None (the default) accepts any real token -- used by
+    generic/standalone callers (tests, prose_lint-adjacent tooling) that
+    aren't validating one specific block's own scoped output."""
     violations = []
     safe_spans = []
+    allowed = set(allowed_tokens) if allowed_tokens is not None else None
     for m in _TOKEN_REF_RE.finditer(fragment):
         name = m.group(1)
-        if name in rt.TOKENS:
-            safe_spans.append(m.span())
-        else:
+        if name not in rt.TOKENS:
             violations.append(f"references unknown token {{{{{name}}}}}, not in report_tokens.TOKENS")
+        elif allowed is not None and name not in allowed:
+            violations.append(f"references token {{{{{name}}}}}, a real token but outside "
+                              "this block's own scope")
+        else:
+            safe_spans.append(m.span())
     for m in _SECTION_REF_RE.finditer(fragment):
+        safe_spans.append(m.span())
+    for m in _INTERNAL_ANCHOR_HREF_RE_LOOSE.finditer(fragment):
+        # the digit(s) inside an internal section anchor like #s3 are not an
+        # invented quantity -- they're a section id, and find_html_structure_
+        # violations() already independently constrains WHERE this exact
+        # substring may legally appear (only inside <a href="#sN">, nothing
+        # else) via _INTERNAL_ANCHOR_HREF_RE's anchored, whole-value match.
         safe_spans.append(m.span())
     for literal in NUMERAL_LITERAL_ALLOWLIST:
         start = 0
@@ -434,6 +591,7 @@ def find_fragment_violations(fragment):
         violations.append(f"{len(bad_positions)} bare digit(s) outside any {{{{TOKEN}}}} or "
                           f"§N reference, e.g. near: {ctx}")
     violations.extend(_word_number_violations(fragment))
+    violations.extend(find_html_structure_violations(fragment))
     return violations
 
 
@@ -502,6 +660,28 @@ def load_cache(cache_dir, block_id, key):
     if p.is_file():
         return json.loads(p.read_text())["fragment"]
     return None
+
+
+def load_and_validate_cache(cache_dir, block_id, key, allowed_tokens):
+    """load_cache(), but REVALIDATED against today's rules before being
+    trusted (Codex review, finding 2): a cache entry written before the
+    HTML-structure validator, the word-number patterns, or the per-block
+    scope restriction existed -- or one corrupted on disk -- must never be
+    spliced into the document just because its hash key still happens to
+    match. Runs the exact same checks a fresh fragment has to pass
+    (find_fragment_violations against THIS block's own current scope, plus
+    prose_lint.lint); a fragment that fails either is treated as a cache
+    MISS (returns None) rather than a crash -- the caller regenerates it
+    fresh, exactly like a cold cache, so a stale entry costs one extra call
+    rather than corrupting the output or aborting the run."""
+    fragment = load_cache(cache_dir, block_id, key)
+    if fragment is None:
+        return None
+    problems = (find_fragment_violations(fragment, allowed_tokens=allowed_tokens)
+               + prose_lint.lint(fragment))
+    if problems:
+        return None
+    return fragment
 
 
 def save_cache(cache_dir, block_id, key, fragment):
@@ -589,7 +769,8 @@ def humanize_fragment(block, scope_values, fragment, provider, model, env, llm_c
     normal = NORMAL_FINISH.get(provider, {resp.get("finish_reason")})
     if resp["finish_reason"] not in normal:
         return fragment
-    problems = find_fragment_violations(resp["text"]) + prose_lint.lint(resp["text"])
+    problems = (find_fragment_violations(resp["text"], allowed_tokens=scope_values.keys())
+               + prose_lint.lint(resp["text"]))
     if problems:
         return fragment
     return resp["text"]
@@ -608,7 +789,8 @@ def generate_prose_fragment(block, scope_values, provider, model, env, llm_call)
     user = build_user_prompt(block, scope_values)
     items = build_preflight_items(block, scope_values)
     resp = preflighted_call(llm_call, provider, model, system, user, env, items)
-    problems = find_fragment_violations(resp["text"]) + prose_lint.lint(resp["text"])
+    problems = (find_fragment_violations(resp["text"], allowed_tokens=scope_values.keys())
+               + prose_lint.lint(resp["text"]))
     normal = NORMAL_FINISH.get(provider, {resp.get("finish_reason")})
     if resp["finish_reason"] not in normal:
         problems.append(f"abnormal finish_reason {resp['finish_reason']!r} (expected one of "
@@ -616,13 +798,15 @@ def generate_prose_fragment(block, scope_values, provider, model, env, llm_call)
     if problems:
         correction = ("your previous answer used a bare number or a spelled-out number/"
                      "fraction/vague quantifier outside a {{TOKEN}} reference, an unknown "
-                     f"token, a banned prose construction, or was truncated: {problems}. "
-                     "Rewrite using ONLY {{TOKEN}} syntax for any quantity, and avoid the "
-                     "flagged construction(s).")
+                     "or out-of-scope token, disallowed HTML markup, a banned prose "
+                     f"construction, or was truncated: {problems}. Rewrite using ONLY "
+                     "{{TOKEN}} syntax for any quantity, only the allowed HTML tags, and "
+                     "avoid the flagged construction(s).")
         user2 = build_user_prompt(block, scope_values, correction=correction)
         items2 = build_preflight_items(block, scope_values) + [("todo_text", correction)]
         resp2 = preflighted_call(llm_call, provider, model, system, user2, env, items2)
-        problems2 = find_fragment_violations(resp2["text"]) + prose_lint.lint(resp2["text"])
+        problems2 = (find_fragment_violations(resp2["text"], allowed_tokens=scope_values.keys())
+                    + prose_lint.lint(resp2["text"]))
         if resp2["finish_reason"] not in normal:
             problems2.append(f"abnormal finish_reason {resp2['finish_reason']!r} on retry")
         if problems2:
@@ -728,11 +912,18 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
     if only:
         blocks = [b for b in blocks if b.section == only]
 
-    resolved, gap_names = resolve_tokens_with_gaps()
+    resolved, gap_names, resolve_failures = resolve_tokens_with_gaps()
     resolved = apply_provenance_overrides(resolved, provider, model)
 
     failures = []      # list of (id, kind, reason)
     fragments = {}
+
+    # A token that failed to resolve for a REAL reason (not a documented
+    # KNOWN_GAPS entry) blocks the run exactly like a failed block -- it is
+    # reported by name up front, before any LLM call is made, since it may
+    # be the root cause of several blocks' content being wrong or missing.
+    for name, message in resolve_failures:
+        failures.append((name, "token-resolution-failed", message))
 
     for b in blocks:
         cls = rb.CLASSIFICATION[b.id]
@@ -747,7 +938,7 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
             else:  # prose
                 scope_values = build_scope_values(text, b, resolved, gap_names)
                 key = cache_key(b.id, scope_values, b.text, provider, model)
-                cached = load_cache(cache_dir, b.id, key)
+                cached = load_and_validate_cache(cache_dir, b.id, key, scope_values.keys())
                 if cached is None:
                     if dry_run:
                         # dry-run previews the FIRST attempt's body only (there is
@@ -766,7 +957,7 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
                 if humanize and not dry_run:
                     hkey = cache_key(b.id, scope_values, b.text, provider, model,
                                     humanize=True)
-                    hcached = load_cache(cache_dir, b.id, hkey)
+                    hcached = load_and_validate_cache(cache_dir, b.id, hkey, scope_values.keys())
                     if hcached is None:
                         fragment = humanize_fragment(b, scope_values, fragment, provider,
                                                      model, env, llm_call)

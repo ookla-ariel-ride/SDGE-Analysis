@@ -234,6 +234,171 @@ def case_numeral_guard_still_accepts_clean_prose_with_no_quantity_words():
 
 
 # ---------------------------------------------------------------------------
+# Codex review finding 3: a {{TOKEN}} reference must be inside the
+# ORIGINATING BLOCK's own scope, not just any real token in the whole
+# 143-token system.
+# ---------------------------------------------------------------------------
+@case
+def case_numeral_guard_rejects_a_real_token_outside_the_blocks_own_scope():
+    violations = gr.find_fragment_violations(
+        "{{BEST_PLAN}} vs {{CLEANING_PRICE}}", allowed_tokens={"BEST_PLAN"})
+    assert any("outside this block's own scope" in v for v in violations), violations
+    assert not any("unknown token" in v for v in violations), (
+        "CLEANING_PRICE is a real token -- it must be flagged as out-of-scope, not unknown")
+    return "a real token outside the block's own scope is rejected, distinctly from an unknown one"
+
+
+@case
+def case_numeral_guard_accepts_a_token_that_is_in_the_blocks_own_scope():
+    violations = gr.find_fragment_violations(
+        "{{BEST_PLAN}} vs {{CLEANING_PRICE}}", allowed_tokens={"BEST_PLAN", "CLEANING_PRICE"})
+    assert violations == [], violations
+    return "both tokens are accepted when both are in the block's own scope"
+
+
+@case
+def case_numeral_guard_with_no_allowed_tokens_argument_accepts_any_real_token():
+    """Backward-compatible default: allowed_tokens=None (the default) accepts
+    any real report_tokens.TOKENS name, for standalone/generic callers that
+    aren't validating one specific block's scoped output."""
+    violations = gr.find_fragment_violations("{{BEST_PLAN}} vs {{CLEANING_PRICE}}")
+    assert violations == [], violations
+    return "with no allowed_tokens argument, any real token is accepted (unscoped mode)"
+
+
+# ---------------------------------------------------------------------------
+# Codex review finding 2 (the most important one): a mechanical HTML-
+# structure gate. Neither the numeral guard nor prose_lint.py looked at HTML
+# structure at all, so "<script>...</script>" (zero digits, no banned
+# phrase) passed both cleanly. One case per example the review named,
+# plus the allowlisted-tags-are-fine positive control.
+# ---------------------------------------------------------------------------
+@case
+def case_html_guard_rejects_a_script_tag():
+    violations = gr.find_fragment_violations("<script>alert(document.domain)</script>")
+    assert any("disallowed HTML tag <script>" in v for v in violations), violations
+    return "<script>...</script> is rejected"
+
+
+@case
+def case_html_guard_rejects_an_event_handler_attribute():
+    violations = gr.find_fragment_violations('<b onerror="alert(1)">bold</b>')
+    assert any("event-handler attribute" in v for v in violations), violations
+    return "an onerror= attribute is rejected"
+
+
+@case
+def case_html_guard_rejects_a_javascript_href():
+    violations = gr.find_fragment_violations('<a href="javascript:alert(1)">click</a>')
+    assert any("URL scheme" in v or "internal section anchor" in v for v in violations), violations
+    return "a javascript: href is rejected"
+
+
+@case
+def case_html_guard_rejects_an_external_href():
+    violations = gr.find_fragment_violations('<a href="https://evil.example.com">click</a>')
+    assert any("internal section anchor" in v for v in violations), violations
+    return "an external https:// href is rejected -- only a bare #sN internal anchor is allowed"
+
+
+@case
+def case_html_guard_rejects_an_unbalanced_tag():
+    violations = gr.find_fragment_violations("<b>bold with no closing tag")
+    assert any("unclosed tag" in v or "unbalanced" in v for v in violations), violations
+    return "an unclosed <b> with no matching </b> is rejected"
+
+
+@case
+def case_html_guard_rejects_improperly_nested_tags():
+    violations = gr.find_fragment_violations("<b><i>mismatched</b></i>")
+    assert any("unbalanced or improperly nested" in v for v in violations), violations
+    return "improperly nested <b><i>...</b></i> is rejected"
+
+
+@case
+def case_html_guard_rejects_a_disallowed_tag_even_when_otherwise_inert():
+    for fragment in ('<div>a div</div>', '<span class="pill">a span</span>',
+                     '<img src="x">', '<svg onload="alert(1)"></svg>'):
+        violations = gr.find_fragment_violations(fragment)
+        assert violations, fragment
+    return "div, span, img, and svg are all rejected -- not on the inline allowlist"
+
+
+@case
+def case_html_guard_accepts_the_allowlisted_tags_used_normally():
+    text = ('<b>Plan: stay on {{BEST_PLAN}}</b>, <i>emphasis</i>, <em>emphasis</em>, '
+           '<strong>strong</strong>, <code>rates.py</code>, <sub>sub</sub> and '
+           '<sup>sup</sup>, and see <a href="#s3">§3</a>.')
+    violations = gr.find_fragment_violations(text, allowed_tokens={"BEST_PLAN"})
+    assert violations == [], violations
+    return "b/i/em/strong/code/sub/sup and an internal <a href='#sN'> are all accepted together"
+
+
+@case
+def case_html_guard_runs_as_part_of_find_fragment_violations_not_a_separate_step():
+    """Wired into find_fragment_violations() itself (not a separate check
+    callers have to remember to add), so it participates in the existing
+    retry-once-then-hard-fail flow automatically."""
+    block = rb.parse_todo_blocks()[3]
+    responses = iter([
+        {"text": "<script>alert(1)</script>", "finish_reason": "end_turn", "usage": {}},
+        {"text": SAFE_FRAGMENT, "finish_reason": "end_turn", "usage": {}},
+    ])
+
+    def fake_call(provider, model, system, user, max_tokens, env=None):
+        return next(responses)
+
+    _require_gitleaks()
+    frag = gr.generate_prose_fragment(block, {}, "anthropic", "m", None, fake_call)
+    assert frag == SAFE_FRAGMENT
+    return "a <script> tag on the first attempt triggers the retry, which then succeeds"
+
+
+@case
+def case_stale_cache_entry_with_disallowed_markup_is_revalidated_on_read():
+    """A cache entry written before this fix existed (or corrupted on disk)
+    must never be trusted just because its hash key still matches --
+    load_and_validate_cache() re-runs the full current guard on every read
+    and treats a failure as a cache MISS, not a crash."""
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td)
+        key = gr.cache_key("s0#1", {}, "some block text", "anthropic", "m")
+        gr.save_cache(cache_dir, "s0#1", key, "<script>alert(1)</script>")
+        # A naive load_cache() would return the poisoned fragment as-is.
+        assert gr.load_cache(cache_dir, "s0#1", key) == "<script>alert(1)</script>"
+        # load_and_validate_cache() must refuse to trust it.
+        result = gr.load_and_validate_cache(cache_dir, "s0#1", key, allowed_tokens=set())
+        assert result is None, result
+    return "a stale/tampered cache entry containing disallowed markup is treated as a cache miss"
+
+
+@case
+def case_stale_cache_entry_referencing_an_out_of_scope_token_is_revalidated_on_read():
+    """Same mechanism, for finding 3: a cache entry written before the
+    per-block scope restriction existed could reference a real token that
+    is no longer (or never was) in this block's own scope."""
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td)
+        key = gr.cache_key("s0#1", {}, "some block text", "anthropic", "m")
+        gr.save_cache(cache_dir, "s0#1", key, "{{CLEANING_PRICE}} is cited here.")
+        result = gr.load_and_validate_cache(cache_dir, "s0#1", key,
+                                            allowed_tokens={"BEST_PLAN"})
+        assert result is None, result
+    return "a stale cache entry citing a real but out-of-scope token is treated as a cache miss"
+
+
+@case
+def case_a_clean_valid_cache_entry_is_still_accepted():
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td)
+        key = gr.cache_key("s0#1", {}, "some block text", "anthropic", "m")
+        gr.save_cache(cache_dir, "s0#1", key, SAFE_FRAGMENT)
+        result = gr.load_and_validate_cache(cache_dir, "s0#1", key, allowed_tokens=set())
+        assert result == SAFE_FRAGMENT
+    return "a clean cache entry still passes revalidation and is used normally"
+
+
+# ---------------------------------------------------------------------------
 # Retry-once-then-hard-fail.
 # ---------------------------------------------------------------------------
 @case
@@ -412,7 +577,7 @@ def case_non_retryable_error_raises_immediately_with_no_backoff():
 # ---------------------------------------------------------------------------
 @case
 def case_generation_tool_reflects_the_actual_provider_and_model_used():
-    resolved, gaps = gr.resolve_tokens_with_gaps()
+    resolved, gaps, resolve_failures = gr.resolve_tokens_with_gaps()
     resolved = gr.apply_provenance_overrides(resolved, "openai", "gpt-9-fabricated")
     assert resolved["GENERATION_TOOL"] == "openai (gpt-9-fabricated)"
     return "GENERATION_TOOL reflects the actual provider/model passed to this run"
@@ -420,7 +585,7 @@ def case_generation_tool_reflects_the_actual_provider_and_model_used():
 
 @case
 def case_review_tools_are_always_the_disclaimer_never_the_hardcoded_report_tokens_values():
-    resolved, gaps = gr.resolve_tokens_with_gaps()
+    resolved, gaps, resolve_failures = gr.resolve_tokens_with_gaps()
     original_review_1 = resolved["REVIEW_TOOL_1"]
     overridden = gr.apply_provenance_overrides(resolved, "anthropic", "claude-fabricated")
     assert overridden["REVIEW_TOOL_1"] == gr.REVIEW_DISCLAIMER
@@ -431,6 +596,66 @@ def case_review_tools_are_always_the_disclaimer_never_the_hardcoded_report_token
     assert "Claude Code" not in overridden["REVIEW_TOOL_1"]
     assert "Codex" not in overridden["REVIEW_TOOL_2"]
     return "REVIEW_TOOL_1/2 are always the fixed disclaimer, never report_tokens.py's values"
+
+
+# ---------------------------------------------------------------------------
+# Codex review finding 1: resolve_tokens_with_gaps() used to catch EVERY
+# SystemExit from token resolution and silently fold it into `gaps`,
+# regardless of whether that token's own kind was actually "gap" -- a real
+# failure (a missing/malformed artifact, a broken path) would disappear into
+# the same bucket as a documented, intentional KNOWN_GAPS entry instead of
+# blocking the run.
+# ---------------------------------------------------------------------------
+@case
+def case_resolve_tokens_with_gaps_treats_a_non_gap_failure_as_a_real_failure():
+    original_spec = dict(rt.TOKENS["CLEANING_PRICE"])
+    assert original_spec.get("kind") != "gap", (
+        "fixture assumption broken: CLEANING_PRICE must not already be a documented gap")
+    try:
+        rt.TOKENS["CLEANING_PRICE"] = dict(
+            original_spec, kind="data_json",
+            file="ZZZ_this_artifact_does_not_exist_anywhere.json", path=("x",))
+        resolved, gaps, resolve_failures = gr.resolve_tokens_with_gaps()
+    finally:
+        rt.TOKENS["CLEANING_PRICE"] = original_spec
+    assert "CLEANING_PRICE" not in gaps, (
+        "a real resolution failure (missing artifact) was silently folded into `gaps`, "
+        "the exact bug the fix addresses")
+    assert "CLEANING_PRICE" not in resolved
+    failure_names = [name for name, _ in resolve_failures]
+    assert "CLEANING_PRICE" in failure_names, resolve_failures
+    return "a non-gap token pointing at a missing artifact is reported as a real failure, not a gap"
+
+
+@case
+def case_resolve_tokens_with_gaps_still_treats_a_real_gap_as_a_gap():
+    resolved, gaps, resolve_failures = gr.resolve_tokens_with_gaps()
+    assert "INCENTIVE_STATUS" in gaps, gaps
+    assert not any(name == "INCENTIVE_STATUS" for name, _ in resolve_failures), resolve_failures
+    return "a genuine KNOWN_GAPS token (kind == 'gap') is still folded into `gaps`, not failures"
+
+
+@case
+def case_a_real_token_resolution_failure_blocks_the_full_run():
+    _require_gitleaks()
+    _require_household()
+    original_spec = dict(rt.TOKENS["CLEANING_PRICE"])
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        try:
+            rt.TOKENS["CLEANING_PRICE"] = dict(
+                original_spec, kind="data_json",
+                file="ZZZ_this_artifact_does_not_exist_anywhere.json", path=("x",))
+            r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call())
+        finally:
+            rt.TOKENS["CLEANING_PRICE"] = original_spec
+    assert not r["wrote"], "the run wrote a file despite a real token resolution failure"
+    assert any(f[0] == "CLEANING_PRICE" and f[1] == "token-resolution-failed"
+              for f in r["failures"]), r["failures"]
+    return "a broken (non-gap) token blocks the entire run and is reported by name"
 
 
 # ---------------------------------------------------------------------------
