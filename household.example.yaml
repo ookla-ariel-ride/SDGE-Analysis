@@ -201,6 +201,19 @@ panel:                               # omit only if you don't want a service-hea
                                      # electric circuit in this panel. Derived from the
                                      # private legend and read by no script; a committed
                                      # artifact takes the same fact from appliance_fuels.
+  existing_ac_nameplate_mca_a: 28.0  # [public-ok] the existing A/C or heat pump
+                                     # condenser's OWN nameplate rated-load amps (RLA) or
+                                     # minimum circuit ampacity (MCA) -- read off the
+                                     # outdoor unit's rating plate, NOT the panel. A
+                                     # different fact from the schedule's `A/C`-labelled
+                                     # breaker above: NEC 240.6(A) sizes a breaker up from
+                                     # this figure, so the breaker is routinely larger than
+                                     # what the condenser itself draws. Needed only for a
+                                     # heat pump that REPLACES this circuit (issue #45); set
+                                     # to null if the plate is checked and illegible, or
+                                     # leave the key out if nobody has looked -- the
+                                     # replacement case then reports the credit not
+                                     # determined rather than assuming one.
 
 monitoring:                          # energy-monitoring feeds beyond the utility meter.
                                      # [] if you have none. TIERS ARE PER KEY here, as in

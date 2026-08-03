@@ -831,6 +831,16 @@ privacy: private-only
 privacy_note: "A claim about what one house's circuit legend does not contain, derived from the private-only schedule and read by no script. The same fact is available publicly from appliance_fuels, which is where a committed artifact takes it from. The rule issue #6 settled admits a schedule-derived value only where it is load-bearing and a standard NEC rating; this is neither."
 ```
 
+```yaml
+id: panel_existing_ac_nameplate_mca_a
+question: "What is the existing air conditioner's or heat pump condenser's nameplate rated-load amps (RLA) or minimum circuit ampacity (MCA), in amps?"
+type: number
+required_if: has_new_load_interest
+where: "On the condenser's own rating plate — the outdoor unit, not the panel — usually printed as 'RLA' (rated load amps) or 'MCA' (minimum circuit ampacity) next to the compressor's electrical data. This is a DIFFERENT fact from panel_schedule's `A/C`-labelled entry above: that is the branch breaker's rating, and NEC 240.6(A) sizes a breaker UP from the equipment's own MCA to the next standard rating, so the breaker is routinely larger than what the condenser itself draws. A heat pump that replaces this unit on its own circuit needs the equipment figure, not the breaker's, to take the NEC 220.60 noncoincident credit for the load it removes. Set it to null if you have read the plate and no RLA or MCA figure is legible — that is an answer. Leave the key out entirely if you have not looked; the replacement case then reports itself not determined on the credit rather than assuming one, per CLAUDE.md's evidence rule."
+privacy: public-ok
+privacy_note: "A bare nameplate ampere rating on one piece of HVAC equipment — the same class of fact as solar.kw_ac and charger.kw, both already public-ok, and no more identifying than panel_service_rating_a or the existing_ac_ocpd_a this repo already publishes from the same circuit. analysis/service_headroom.py's heat_pump_replaces_ac case requires it to show the NEC 220.60 credit's arithmetic at all; a private-only tier here would make that arithmetic unpublishable and the case would have nothing to show."
+```
+
 ## E4. Household energy-monitoring feeds ✍️🔒 (optional — a second, independent meter)
 
 A monitoring feed is a second measurement of the same house: a solar platform's production

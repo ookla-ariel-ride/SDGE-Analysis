@@ -4139,6 +4139,22 @@ legend, no script reads either, and the exception above admits a schedule-derive
 where it is load-bearing and a standard rating. The same fact as the second is available
 publicly from `appliance_fuels`, which is where an artifact takes it from.
 
+### 11.3a The condenser nameplate field (issue #45)
+
+`panel.existing_ac_nameplate_mca_a` — the existing air conditioner's or heat pump condenser's
+own nameplate rated-load amps (RLA) or minimum circuit ampacity (MCA), added for the fifth
+`heat_pump_replaces_ac` case (a heat pump REPLACING the existing A/C on its own circuit, rather
+than every other case's ADD). It is `public-ok`, on the same principle 11.3 states rather than
+as an exception to it: it is a bare equipment rating (the same class of fact as `solar.kw_ac`
+and `charger.kw`, both already `public-ok`), it is load-bearing (the case's own NEC 220.60
+noncoincident-credit arithmetic is 125% of it, and AC1/AC2 of the issue require that arithmetic
+shown), and a `private-only` tier here would make the credit unpublishable — the case would
+have nothing to show. This is a DIFFERENT fact from `existing_ac_ocpd_a` (11.3's derived
+exception): that is the branch breaker's rating, read off the schedule; this is the equipment's
+own draw, and NEC 240.6(A) sizes a breaker up from it, so the two numbers routinely differ. The
+case fails closed without it — `not_determined` rather than an assumed credit — per CLAUDE.md
+§0; see `analysis/service_headroom.py`'s `heat_pump_replacement_case()`.
+
 ### 11.4 The monitoring feeds (issue #38)
 
 The `monitoring` list had no field block at all, so none of its keys had a tier and no gate

@@ -121,7 +121,7 @@
     "adjacent_free_pairs": null,
     "full_size_spaces_required": 2,
     "new_2pole_breakers_required": 1,
-    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "note": "This case ADDS equipment beside what is already installed, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on its own circuit needs no new space at all and is scored separately as heat_pump_replaces_ac, which is not blocked by the count below; see noncoincident_loads for the demand-side half of that case.",
     "physical_fit": "fail",
     "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
     "spaces_free": 1,
@@ -156,7 +156,7 @@
     "adjacent_free_pairs": null,
     "full_size_spaces_required": 2,
     "new_2pole_breakers_required": 1,
-    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "note": "This case ADDS equipment beside what is already installed, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on its own circuit needs no new space at all and is scored separately as heat_pump_replaces_ac, which is not blocked by the count below; see noncoincident_loads for the demand-side half of that case.",
     "physical_fit": "fail",
     "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
     "spaces_free": 1,
@@ -191,7 +191,7 @@
     "adjacent_free_pairs": null,
     "full_size_spaces_required": 4,
     "new_2pole_breakers_required": 2,
-    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "note": "This case ADDS equipment beside what is already installed, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on its own circuit needs no new space at all and is scored separately as heat_pump_replaces_ac, which is not blocked by the count below; see noncoincident_loads for the demand-side half of that case.",
     "physical_fit": "fail",
     "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
     "spaces_free": 1,
@@ -226,8 +226,57 @@
     "adjacent_free_pairs": null,
     "full_size_spaces_required": 6,
     "new_2pole_breakers_required": 3,
-    "note": "Every case published here ADDS equipment, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on that circuit is a different configuration and is not modelled here, so nothing in this artifact says what it would need; see noncoincident_loads for the demand-side half of that scenario.",
+    "note": "This case ADDS equipment beside what is already installed, and each added 240 V load -- a heat pump, a second EVSE, a battery -- needs its own 2-pole breaker and therefore two adjacent free spaces. A heat pump that REPLACES the existing A/C on its own circuit needs no new space at all and is scored separately as heat_pump_replaces_ac, which is not blocked by the count below; see noncoincident_loads for the demand-side half of that case.",
     "physical_fit": "fail",
+    "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
+    "spaces_free": 1,
+    "what_would_settle_it": null
+   },
+   "what_would_settle_it": null
+  },
+  {
+   "ampacity_verdict": "pass",
+   "ampacity_verdict_basis": "Three-valued because the gross-load reconstruction is a BOUND wherever an interval's own hour is not point-determined -- inside a producing hour, where hourly production is credited to one quarter-hour, and on every hour the production export does not cover, where only the inverters' AC nameplate bounds it. pass = the case fits even on the conservative upper-bound basis; fail = it does not fit even on the measured, point-determined maximum; not_determined = it fits on one basis and not the other, so the answer lies inside the width of the reconstruction and the data does not decide it. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+   "case": "heat_pump_replaces_ac",
+   "existing_ac_nameplate_basis": "not_recorded",
+   "existing_ac_nameplate_mca_a": null,
+   "existing_ac_nameplate_note": "panel.existing_ac_nameplate_mca_a is ABSENT from the intake: nobody has read the condenser's own nameplate. existing_ac_ocpd_a above is the BREAKER's rating, not the equipment's, and a breaker is sized up from the equipment's minimum circuit ampacity (NEC 240.6(A)), so it is not a substitute reading",
+   "existing_ac_ocpd_a": 40.0,
+   "fixed_added_load_a": 0.0,
+   "noncoincident_credit_bounds_a": {
+    "high": null,
+    "low": 0.0
+   },
+   "note": "NEC 220.60 treats the outgoing A/C and the incoming heat pump as noncoincident -- see noncoincident_loads.the_second_sentence_matters_here. The heat pump MCA is solved for exactly as heat_pump_only does, but against headroom that CREDITS the load this case removes instead of adding a heat pump on top of it.",
+   "remaining_headroom_a": {
+    "assuming_full_credit": {
+     "conservative_basis": null,
+     "measured_basis": null
+    },
+    "conservative_basis": {
+     "binding": 37.0313,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 37.0313,
+     "vs_service_rating": 42.0313
+    },
+    "conservative_basis_is": "the top of the gross-load envelope: the largest upper bound over every 15-minute interval in the window, each interval capped at what the inverters can physically deliver in fifteen minutes. The conservative basis is set by the interval at 2026-07-25 01:15, and its containing hour has NO production measurement behind it: it falls after the last hour the Enphase consumption-CT export measured: the meter window runs on past the end of the production record. The Enphase export stops at 2026-07-24 07:00 while the meter window runs to 2026-07-26 23:45, 64.75 h later. An uncovered hour is bounded by the inverters' AC nameplate alone, so this quarter-hour is credited with 2.3625 kWh of production -- a full quarter-hour at 9.45 kW, at 01:15. Nothing measured that hour, so nothing narrows the cap. What makes the bound loose here is a COVERAGE GAP, not daylight.",
+    "measured_basis": {
+     "binding": 76.4583,
+     "binding_is": "the tightest of the ampacity constraints that apply -- the service rating and the meter socket's continuous rating, both evaluated",
+     "vs_meter_socket": 76.4583,
+     "vs_service_rating": 81.4583
+    },
+    "measured_basis_is": "the point-determined 15-minute maximum, the headline figure"
+   },
+   "remaining_is": "the largest heat-pump MCA that fits assuming the outgoing A/C contributed nothing to the measured peak (no credit); the credit a nameplate reading could add on top of that is not bounded above without panel.existing_ac_nameplate_mca_a, so it is not scored",
+   "rule": "NEC 220.60 -- Noncoincident loads. Where it is unlikely that two or more noncoincident loads will be in use simultaneously, it is permissible to use only the largest load(s) that will be used at one time in calculating the total load of a feeder or service. If a motor or air-conditioning load is part of the noncoincident load and is not the largest of the noncoincident loads, 125 percent of either the motor load or the air-conditioning load, whichever is larger, shall be used in the calculation",
+   "scored": true,
+   "spaces": {
+    "adjacent_free_pairs": null,
+    "full_size_spaces_required": 0,
+    "new_2pole_breakers_required": 0,
+    "note": "This case REUSES the existing 2-pole air-conditioning circuit rather than adding a new one: the heat pump lands on the same two full-size spaces the A/C's breaker already occupies, so it needs no new space and is not blocked by the panel's free-space count.",
+    "physical_fit": "pass",
     "physical_fit_basis": "Three-valued, for the same reason the ampacity verdict is. A 240 V circuit needs two ADJACENT full-size spaces, and the panel schedule records devices and their pole counts, not the slot positions those devices occupy. A count of free spaces can therefore establish a SHORTAGE -- fewer free spaces than the case needs is a fail whatever their arrangement -- but it can never establish a fit, because adjacency is not in the data. `pass` is reserved for a panel whose recorded slot positions show the adjacent pair.",
     "spaces_free": 1,
     "what_would_settle_it": null
@@ -989,7 +1038,7 @@
   "rule": "NEC 220.60 -- Noncoincident loads. Where it is unlikely that two or more noncoincident loads will be in use simultaneously, it is permissible to use only the largest load(s) that will be used at one time in calculating the total load of a feeder or service. If a motor or air-conditioning load is part of the noncoincident load and is not the largest of the noncoincident loads, 125 percent of either the motor load or the air-conditioning load, whichever is larger, shall be used in the calculation",
   "schedule_entries_matching_an_air_conditioning_token": 1,
   "the_second_sentence_matters_here": "NEC 220.60 does not stop at 'count only the largest'. Where a motor or air-conditioning load is one of the noncoincident loads and is NOT the largest of them, the calculation still carries 125% of the larger of the motor or air-conditioning load. A heat pump swapped in for this A/C is exactly that pairing, so the second sentence is part of the rule that applies and is stated with the first.",
-  "why_it_matters": "A heat pump that REPLACES the existing A/C does not add its whole MCA: whatever the A/C was drawing is already inside the measured maximum. The conservative cases above ignore that credit. The replacement configuration itself is not modelled here -- no case in this artifact removes a load."
+  "why_it_matters": "A heat pump that REPLACES the existing A/C does not add its whole MCA: whatever the A/C was drawing is already inside the measured maximum. The conservative cases above ignore that credit, because they ADD a heat pump rather than replace anything. The replacement configuration is scored separately as the heat_pump_replaces_ac case, which applies this credit and needs no new panel space."
  },
  "panel": {
   "battery_breaker_position": null,
