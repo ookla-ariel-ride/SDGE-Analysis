@@ -109,13 +109,6 @@ def template_tokens(html=None):
     return live, comment_only
 
 
-def all_sourceable_tokens(html=None):
-    """Every token report_tokens.py is responsible for: live plus the
-    legitimate comment-only examples."""
-    live, comment_only = template_tokens(html)
-    return live | comment_only
-
-
 # ---------------------------------------------------------------------------
 # Cached loaders for the committed archive.
 # ---------------------------------------------------------------------------
@@ -863,11 +856,6 @@ _tok("BATTERY_PAYBACK_RANGE", kind="derived", get=_payback_range,
      sources=["data/package_results.json:packages.MID"])
 _tok("BATTERY_PAYBACK_EVENING_ONLY", kind="data_json", file="package_results.json",
      path=("packages", "MID", "battery_alone_payback_evening_only_yr"), fmt="yr1")
-
-
-def _battery_marginal_savings(ctx):
-    mid = _json("package_results.json")["packages"]["MID"]
-    return mid["battery_alone_yr"]
 
 
 _tok("BATTERY_MARGINAL_SAVINGS", kind="data_json", file="package_results.json",
