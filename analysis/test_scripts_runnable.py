@@ -52,6 +52,11 @@ MANIFEST = {
     "household.py": "library",
     "privacy_tiers.py": "library",
     "publish.py": "library",
+    "report_tokens.py": "library",
+    "llm_providers.py": "library",
+    "report_blocks.py": "library",
+    "generate_report.py": "library",
+    "prose_lint.py": "library",
     "behavior_rebuild.py": "generator",
     "battery_dispatch_policies.py": "generator",
     "battery_plan_matrix.py": "generator",
@@ -138,7 +143,19 @@ OWNS = {
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
 # its own calendar by design (TECHNICAL.md 3.1/3.2); tou_audit scores alternative
 # day-type rules against the bills on purpose; rates.py is where the rule lives.
-TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py"}
+# report_tokens.py never assigns a timestamp to a period -- it only reads the
+# "on"/"off"/"sop" labels already assigned elsewhere (report_data.json's
+# periods_chart.order, an already-computed artifact) and calls rates.py's own
+# energy()/credit()/allin() with a period letter, so it trips this AST guard's
+# literal-string check without doing the thing the guard exists to catch.
+# report_blocks.py's §13 price-map row builder does exactly the same thing
+# (iterates the same three period-letter constants and calls rates.py's own
+# allin()/credit() with each) for the same reason -- same exemption rationale.
+# generate_report.py's chart-data filler only ASSERTS that report_data.json's
+# own already-computed periods_chart.order equals ["sop","off","on"] before
+# trusting its positional indexing -- reading, not assigning, a label.
+TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py",
+              "report_tokens.py", "report_blocks.py", "generate_report.py"}
 
 ABS_PATH = re.compile(r"""["'](/[A-Za-z0-9_.\-]+/[^"']*)["']""")
 

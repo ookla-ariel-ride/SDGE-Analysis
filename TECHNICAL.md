@@ -3299,6 +3299,106 @@ configuration, so a reader can audit the process or reproduce it:
   behave correctly (`CLAUDE.md`, the cheatsheet, the template, the gates), so the analysis
   is not tied to any one vendor's tooling.
 
+### 8.1 `analysis/generate_report.py` — filling the report without an agent harness (issue #39)
+
+The bullets above describe the tooling used to build THIS repo's own `index.html`. This
+subsection describes a different, later capability: a reader who has cloned the repo, run
+Phases A–C, and regenerated `data/*.json` for their own household can turn those artifacts
+into a finished report with a paid LLM API key and no agentic coding tool at all.
+
+- **Provider abstraction (`analysis/llm_providers.py`).** One chokepoint,
+  `_post_json(url, headers, body)`, built on `urllib.request` alone — zero new dependencies,
+  verified against `requirements.txt` by `test_llm_providers.py`'s own AST walk (no other
+  function in the module may construct a `Request` or call `urlopen`). Three ~40-line
+  adapters (`_call_anthropic`, `_call_openai`, `_call_google`) each build that vendor's own
+  native request shape (Anthropic's Messages API, OpenAI's Chat Completions API, Google's
+  `generateContent`) and normalize the response to `{text, finish_reason, usage}` — never an
+  OpenAI-compatibility shim, since Anthropic's and Google's compat endpoints are second-class
+  and lag on parameters. No dated snapshot model id is hardcoded anywhere:
+  `PROVIDERS[*]["default_model"]` is the literal sentinel `DEFAULT_MODEL_SENTINEL`, and
+  `call()`/`generate_report.py` both fail closed if a real id was never configured;
+  `--list-models` calls each vendor's own model-list endpoint so the id comes from the
+  vendor, not a guess typed into this repo.
+- **Credentials.** A ten-line `KEY=VALUE` parser (`load_env()`) reads a repo-root `.env`
+  (`.env.example` documents `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`) — no
+  `python-dotenv` dependency, no key ever accepted as a CLI argument. Every loaded key value
+  is registered with `_register_secret()`; `_redact()`/`_redact_loaded()` scrub it from every
+  exception message `llm_providers.py` raises, proven by an induced-error test that crafts an
+  HTTP error body echoing a fabricated key and asserts the raised `ProviderError` never
+  contains it.
+- **Egress allowlist (`llm_providers.preflight()`).** The privacy gate for this new network
+  path (`CLAUDE.md` §4): every item contributing to a request body must be one of
+  `data_file` (a git-tracked path under `data/`), `template_file` (`report-template.html`
+  itself), `claude_excerpt` / `todo_text` (caller-asserted literal strings — a TODO block's
+  own instruction text, or a resolved token's rendered value labeled `NAME = value`), or
+  `household_token` (a `(name, value)` pair `preflight()` RE-RESOLVES through
+  `report_tokens.resolve_token()` itself before trusting it, so a stale or tampered value
+  can never reach a request body under that label). `private/household.yaml` is never an
+  eligible `data_file` — its `public-ok` values enter a request only as already-rendered
+  token strings. The assembled request body is then scanned with this repo's own gitleaks
+  rule chain (`.gitleaks.toml`, plus `private/pii-rules.toml` when present) before anything
+  may be sent; a missing or non-functional gitleaks binary fails SAFE (refuses) rather than
+  skipping the scan. `--dry-run` writes every would-be request body under
+  `private/llm_dry_run/` and calls `preflight()` with `dry_run=True`, which returns before
+  any adapter could plausibly be called — so a payload can be inspected, and its cost
+  estimated, before a single API call is spent.
+- **The classification map (`analysis/report_blocks.py`).** Parses every actionable
+  `<!-- TODO ... -->` block out of `report-template.html` (105 of them; the top-of-file
+  authoring-instructions comment is excluded, and `test_report_blocks.py` re-parses the
+  template fresh on every run to prove the map still covers it exactly) and classifies each
+  one `prose` (an LLM writes it, tokens only), `data` (filled mechanically — one table row
+  per plan/policy/year/season, or a vestigial comment already covered by an adjacent
+  `{{TOKEN}}`), or `human` (a fact this pipeline has never measured: a hardware price quote,
+  incentive-program status, or a new statistic — a degradation rate, a regression
+  coefficient — with no `report_tokens.TOKENS` entry at all). `generate_report.py` fails
+  closed on any block the map doesn't cover.
+- **The numeral guard.** `generate_report.py` hands the model ONE `TODO` block's own text
+  plus that block's scoped token values (every token live in its `<h2>` section, union any
+  token its own instruction names) and nothing else — never the surrounding HTML, CSS, or
+  JS. `find_fragment_violations()` then rejects any returned fragment containing a digit that
+  is not inside a `{{TOKEN}}` reference naming a real `report_tokens.TOKENS` entry, or a
+  `§N` section reference; a committed literal allowlist for anything else starts empty and
+  stays that way absent a reviewed, cited exception. A violation — or an abnormal
+  `finish_reason`, or a `prose_lint.py` violation (the mechanical gate for CLAUDE.md's banned
+  constructions: rule-of-three padding, negative parallelism, filler transitions,
+  promotional adjectives, and §9's literal process-narrative ban strings) — earns exactly one
+  corrective retry, then hard-fails that block by name. A failed block is reported, never
+  spliced in partially, and never silently dropped.
+- **Caching and determinism.** Every prose block's accepted fragment is cached under
+  `private/report_cache/`, keyed by a hash of the block id, a prompt-version constant, its
+  exact scoped token VALUES, its own TODO text, the provider, and the model id. Re-running
+  with nothing changed reuses every cache entry (zero new API calls, byte-identical output);
+  changing one artifact value changes the resolved token(s) it feeds and invalidates only the
+  block(s) whose scope named it — both are asserted by call-count in
+  `test_generate_report.py`, not by inspection.
+- **Provenance overrides.** `report_tokens.py`'s `GENERATION_TOOL` / `REVIEW_TOOL_1` /
+  `REVIEW_TOOL_2` are hardcoded to the values `CLAUDE.md` §11 requires for THIS repo's own
+  hand-curated `index.html` ("Claude Cowork (Fable 5)", "Claude Code (Fable 5)", "Codex
+  (GPT-5.6 Sol)"). Using them verbatim in a fork's generated report would be false on two
+  counts — it would name a tool that run never used, and assert an independent and
+  adversarial review that never happened — so `generate_report.py` overrides all three for
+  its own output only: `GENERATION_TOOL` becomes `"{provider} ({model})"`, the actual
+  provider/model that run used; `REVIEW_TOOL_1`/`REVIEW_TOOL_2` become a fixed, digit-free
+  disclaimer that no review is recorded for the run, which is NEVER overridable — not by
+  `--human-answers`, not under any circumstance — because a script cannot verify a review
+  happened and must never assert one it did not perform. `test_generate_report.py` asserts
+  a sneaked-in override attempt for the review clause is ignored and that neither of
+  `report_tokens.py`'s original review-tool strings ever survives into the generated file.
+- **Human-in-the-loop completion and final write.** `human`-classified blocks, and the three
+  `KNOWN_GAPS` tokens (`report_tokens.py`) that appear in LIVE template markup rather than
+  inside a `TODO` comment, are filled only from a caller-supplied `--human-answers` JSON file
+  of literal, operator-researched text — never invented by the script. If any block or gap
+  token is left unresolved, NOTHING is written and the run reports exactly what is missing
+  and exits non-zero. On success, the fully spliced document (including the `<script>`
+  block's `const D` chart-data placeholders, filled mechanically from the same artifacts
+  `test_report_consistency.py` already checks `index.html`'s hand-written arrays against) is
+  staged to a temp file and handed to `analysis/publish.py`'s `promote_set()` as
+  `index.generated.html` — the same crash-consistent, single-writer promotion
+  `battery_plan_matrix.py` and its siblings use for `data/*.json`. `index.html` is never
+  written to; `test_generate_report.py` proves this by running a full generation into a
+  directory holding a copy of the real `index.html` and asserting it comes out
+  byte-unchanged.
+
 ---
 
 ## 9. Bill PDF parsing (`analysis/parse_bills.py`)
