@@ -79,7 +79,12 @@ def _all_human_answers():
     block AND every live KNOWN_GAPS token EXCEPT the provenance review
     clause, which this module refuses to accept an override for at all (see
     case_review_clause_override_attempt_is_ignored below)."""
-    answers = {bid: f"<p>Operator-supplied answer for {bid} (fabricated for this test).</p>"
+    # No <p> wrapper: a human answer replaces a TODO comment's own slot the
+    # same way a prose fragment does (typically already inside a <p>/<li>/
+    # <td> in the template), and <p> is not on the HTML-structure guard's
+    # inline-tag allowlist (see find_html_structure_violations) -- these
+    # fixtures must pass that gate exactly like a real operator answer would.
+    answers = {bid: f"<b>Operator-supplied</b> answer for {bid} (fabricated for this test)."
               for bid in rb.HUMAN_REASONS}
     for name in sorted(rb.LIVE_GAP_TOKENS):
         answers[f"TOKEN:{name}"] = f"(operator-supplied placeholder for {name})"
@@ -659,6 +664,80 @@ def case_a_real_token_resolution_failure_blocks_the_full_run():
 
 
 # ---------------------------------------------------------------------------
+# Codex review (pass 2), finding 1 / issue #66: a --only run leaves every
+# OTHER section's blocks unfilled, and render() splices the full,
+# unfiltered template -- an out-of-scope block's raw <!-- TODO --> comment
+# would land in the output. The guarantee that this never actually happened
+# held only by accident (two KNOWN_GAPS tokens sitting in two different
+# sections). Fix: --only may only be combined with --dry-run; a real
+# (non-dry-run) run with --only is refused outright.
+# ---------------------------------------------------------------------------
+@case
+def case_only_combined_with_dry_run_still_works_exactly_as_before():
+    _require_gitleaks()
+    result = gr.run(provider="anthropic", model="claude-fabricated-for-tests",
+                    dry_run=True, only="s0", human_answers=_all_human_answers())
+    assert result["dry_run"] is True
+    assert not result["wrote"]
+    return "--only combined with --dry-run is unaffected -- still just previews request bodies"
+
+
+@case
+def case_only_without_dry_run_is_refused_naming_both_flags():
+    try:
+        gr.run(provider="anthropic", model="claude-fabricated-for-tests", only="s0")
+        raise AssertionError("run() accepted --only without --dry-run for a real run")
+    except SystemExit as e:
+        assert "--only" in str(e), e
+        assert "--dry-run" in str(e), e
+        assert "s0" in str(e), e
+    return "--only without --dry-run is refused, naming both --only and --dry-run"
+
+
+@case
+def case_only_without_dry_run_is_refused_even_with_no_model_or_provider_given():
+    """The --only guard must fire from the same 'this is a real run' branch
+    as the --model/--provider checks, not bypass them or be bypassed by
+    them -- confirms the check doesn't accidentally depend on model/provider
+    having already been validated first."""
+    try:
+        gr.run(only="s7")
+        raise AssertionError("run() accepted --only with no model, provider, or --dry-run")
+    except SystemExit as e:
+        assert "--model" in str(e) or "--only" in str(e), e
+    return "an --only-only call (no provider/model/dry-run) still fails closed, one way or the other"
+
+
+@case
+def case_full_run_processes_every_single_block_before_reporting_wrote_true():
+    """Codex's own regression test: a full (non --only) run where every
+    in-scope block succeeds must return wrote=True only when EVERY block in
+    the template was actually processed -- checked against report_blocks.
+    CLASSIFICATION's full block count (independent of the current
+    prose/data/human mix), and against the manifest's own blocks_total and
+    empty failures list, not just the boolean."""
+    _require_gitleaks()
+    _require_household()
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call())
+        assert r["wrote"], r["failures"]
+        assert r["failures"] == []
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["blocks_total"] == len(rb.CLASSIFICATION), (
+            manifest["blocks_total"], len(rb.CLASSIFICATION))
+        assert manifest["failures"] == []
+        html_out = (dest_dir / "index.generated.html").read_text()
+        assert "TODO" not in html_out
+        assert "{{" not in html_out
+    return (f"a full run processes all {len(rb.CLASSIFICATION)} template blocks and reports "
+           "wrote=True only once every one of them succeeded")
+
+
+# ---------------------------------------------------------------------------
 # AC (adversarial review finding 1): every REAL call to an LLM -- the first
 # attempt, the corrective retry, and the --humanize pass -- must be preceded
 # by preflight(). Before the fix, generate_prose_fragment's retry and
@@ -718,7 +797,11 @@ def case_preflight_call_count_matches_llm_call_count_with_a_retry_and_humanize_i
     corrective retry (the very first llm_call response fails the numeral
     guard) plus a --humanize pass on every block, then asserts the preflight
     call count equals the llm_call count exactly, not just "preflight was
-    called at least once somewhere"."""
+    called at least once somewhere". Runs the FULL block set, not --only:
+    since issue #66's fix, --only may only be combined with --dry-run (a
+    real run leaves every out-of-scope block's raw TODO comment in the
+    document otherwise), and this test needs a REAL run to exercise
+    preflight()/llm_call() at all."""
     _require_gitleaks()
     _require_household()
     calls = []
@@ -749,15 +832,14 @@ def case_preflight_call_count_matches_llm_call_count_with_a_retry_and_humanize_i
             gr.run(provider="anthropic", model="claude-fabricated-for-tests",
                   human_answers=_all_human_answers(), env={}, cache_dir=cache_dir,
                   dest_dir=dest_dir, manifest_path=manifest_path, llm_call=fake_call,
-                  only="s0", humanize=True)
+                  humanize=True)
         finally:
             gr.lp.preflight = old_preflight
 
-    n_s0_prose = sum(1 for bid, k in rb.CLASSIFICATION.items()
-                     if k == "prose" and bid.startswith("s0#"))
+    n_prose = sum(1 for v in rb.CLASSIFICATION.values() if v == "prose")
     # 1 extra real call for the forced retry on the very first block processed,
     # plus one humanize call per block.
-    expected = n_s0_prose + 1 + n_s0_prose
+    expected = n_prose + 1 + n_prose
     assert len(calls) == expected, (len(calls), expected)
     assert len(preflight_calls) == len(calls), (
         f"preflight() was called {len(preflight_calls)} times but llm_call was called "
@@ -781,12 +863,17 @@ def _run_full(cache_dir, dest_dir, manifest_path, llm_call, human_answers=None,
 
 @case
 def case_humanize_doubles_calls_when_cold_and_reuses_the_cache_when_warm():
-    """--only restricts which blocks are PROCESSED (and cached), not what the
-    final render requires -- a partial run like this one is expected to leave
-    render()'s global token pass unable to resolve the OTHER blocks' own
-    comment-only example tokens, so wrote stays False. That's the correct
-    "never write a partial file" behavior; this case only exercises the call
-    count, via the same run() the full-pipeline cases use elsewhere."""
+    """Runs the FULL block set, not --only: since issue #66's fix, --only
+    may only be combined with --dry-run, and this case needs a real
+    (non-dry-run) run to exercise actual llm_call invocations and their
+    caching. (An earlier version of this test used --only "s0" without
+    --dry-run to keep the case fast, and its docstring incorrectly credited
+    render()'s token-substitution pass with a partial-write guarantee that
+    did not actually exist for that scenario -- see issue #66, filed from
+    adversarial review pass 3. That mechanism, and the misleading docstring
+    claim about it, are both gone now: --only without --dry-run is refused
+    outright, so there is no partial-write scenario left to reason about
+    here at all.)"""
     _require_gitleaks()
     _require_household()
     with tempfile.TemporaryDirectory() as td:
@@ -796,16 +883,17 @@ def case_humanize_doubles_calls_when_cold_and_reuses_the_cache_when_warm():
         manifest_path = pathlib.Path(td) / "manifest.json"
         calls = []
         fake = make_fake_call(calls=calls)
-        n_s0_prose = sum(1 for bid, k in rb.CLASSIFICATION.items()
-                         if k == "prose" and bid.startswith("s0#"))
+        n_prose = sum(1 for v in rb.CLASSIFICATION.values() if v == "prose")
 
-        _run_full(cache_dir, dest_dir, manifest_path, fake, only="s0", humanize=True)
-        assert len(calls) == 2 * n_s0_prose, (len(calls), n_s0_prose)
+        r1 = _run_full(cache_dir, dest_dir, manifest_path, fake, humanize=True)
+        assert r1["wrote"], r1["failures"]
+        assert len(calls) == 2 * n_prose, (len(calls), n_prose)
 
-        _run_full(cache_dir, dest_dir, manifest_path, fake, only="s0", humanize=True)
-        assert len(calls) == 2 * n_s0_prose, "a warm-cache humanize re-run made new calls"
-    return (f"--humanize makes 2 calls per prose block when cold ({2 * n_s0_prose} for "
-           f"{n_s0_prose} s0 blocks) and zero new calls on a warm-cache re-run")
+        r2 = _run_full(cache_dir, dest_dir, manifest_path, fake, humanize=True)
+        assert r2["wrote"], r2["failures"]
+        assert len(calls) == 2 * n_prose, "a warm-cache humanize re-run made new calls"
+    return (f"--humanize makes 2 calls per prose block when cold ({2 * n_prose} for "
+           f"{n_prose} prose blocks) and zero new calls on a warm-cache re-run")
 
 
 @case
@@ -908,6 +996,95 @@ def case_no_human_answer_for_a_human_block_refuses_to_write():
         assert any(f[0] == "s6#8" for f in r["failures"]), r["failures"]
         assert not (dest_dir / "index.generated.html").exists()
     return "a missing human answer for a human-classified block refuses to write anything"
+
+
+# ---------------------------------------------------------------------------
+# Codex review (pass 2), finding 2: a human-supplied --human-answers fragment
+# went straight into `fragments[b.id]` with NO validation at all -- unlike
+# LLM output, which now passes through find_html_structure_violations(). A
+# malformed or careless --human-answers file (a typo, a copy-paste accident,
+# or genuinely untrusted input) could inject <script>, an event-handler
+# attribute, or unbalanced markup with nothing to catch it. Fix: run every
+# human answer through the SAME HTML-structure validator (never the numeral
+# guard -- a human answer is expected to state real, researched figures).
+# ---------------------------------------------------------------------------
+@case
+def case_human_answer_containing_a_script_tag_is_rejected_by_name():
+    _require_gitleaks()
+    _require_household()
+    answers = _all_human_answers()
+    answers["s6#8"] = "<script>alert(document.domain)</script>"
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(),
+                     human_answers=answers)
+        assert not r["wrote"], "a <script>-carrying human answer was accepted"
+        matching = [f for f in r["failures"] if f[0] == "s6#8"]
+        assert matching, r["failures"]
+        assert matching[0][1] == "human-answer-invalid-html", matching
+        assert "script" in matching[0][2].lower(), matching
+        assert not (dest_dir / "index.generated.html").exists()
+    return "a human answer containing <script>...</script> is rejected, naming the block"
+
+
+@case
+def case_human_answer_with_an_event_handler_attribute_is_rejected():
+    _require_gitleaks()
+    _require_household()
+    answers = _all_human_answers()
+    answers["s6#8"] = '<b onerror="alert(1)">Tesla Powerwall 3 quoted at $12,500 installed</b>'
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(),
+                     human_answers=answers)
+        assert not r["wrote"]
+        assert any(f[0] == "s6#8" and f[1] == "human-answer-invalid-html" for f in r["failures"]), (
+            r["failures"])
+    return "a human answer with an onerror= attribute is rejected, even carrying a real quote"
+
+
+@case
+def case_human_answer_with_real_numbers_and_allowlisted_tags_is_accepted():
+    """The point of NOT running human answers through the numeral guard:
+    a human is expected to write down a real, researched figure exactly
+    like this -- '$2,900/yr' here is not invented, it is the operator's own
+    reported quote, which the numeral guard would otherwise have rejected
+    as a bare digit."""
+    _require_gitleaks()
+    _require_household()
+    answers = _all_human_answers()
+    answers["s6#8"] = ("<b>Tesla Powerwall 3</b> quoted at $12,500 installed by two local "
+                       "installers as of this quote; <i>see</i> <a href=\"#s6\">§6</a> for "
+                       "the arbitrage math.")
+    with tempfile.TemporaryDirectory() as td:
+        cache_dir = pathlib.Path(td) / "cache"
+        dest_dir = pathlib.Path(td) / "dest"
+        dest_dir.mkdir()
+        manifest_path = pathlib.Path(td) / "manifest.json"
+        r = _run_full(cache_dir, dest_dir, manifest_path, make_fake_call(),
+                     human_answers=answers)
+        assert r["wrote"], r["failures"]
+        html_out = (dest_dir / "index.generated.html").read_text()
+        assert "$12,500" in html_out
+        assert "quoted at" in html_out
+    return ("a human answer using real dollar figures and only allowlisted inline tags is "
+           "accepted, numbers and all")
+
+
+@case
+def case_find_html_structure_violations_is_the_gate_not_the_numeral_guard():
+    """Direct unit check of the design choice itself: a human answer with a
+    bare digit is NOT what find_html_structure_violations checks -- only
+    the LLM path's find_fragment_violations() cares about that."""
+    answer = "This actually costs $2,900/yr, quoted directly by the installer."
+    assert gr.find_html_structure_violations(answer) == []
+    return "find_html_structure_violations() does not care about bare digits at all"
 
 
 @case

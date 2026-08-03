@@ -904,6 +904,25 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
                              "pass --dry-run to only write request bodies")
         if not provider:
             raise SystemExit("generate_report: --provider is required for a real run")
+        if only:
+            # Codex review (also filed as issue #66): a --only run leaves
+            # every OTHER block's raw <!-- TODO --> comment untouched in the
+            # template, and render() splices fragments.get(b.id, b.full_
+            # comment) for every block in the FULL document -- an out-of-
+            # scope block's literal comment lands in the output. Today that
+            # is always caught anyway, but only because two KNOWN_GAPS
+            # tokens happen to sit in two different sections and no single
+            # --only value spans both, which is an accident of the current
+            # template, not a designed guarantee. --only is for previewing
+            # or debugging ONE section's prompts and cache behavior; it must
+            # never be combined with a real (non-dry-run) write, so this
+            # fails closed rather than depending on that accident holding.
+            raise SystemExit(
+                f"generate_report: --only {only!r} may only be combined with --dry-run -- "
+                "a section-scoped run leaves every OTHER section's TODO blocks unfilled, "
+                "and a real run must never publish a file with unrendered TODO comments "
+                "left in it (see issue #66). Drop --only for a real run, or add --dry-run "
+                "to preview just this section's request bodies.")
     provider = provider or "anthropic"
     model = model or "(dry-run, no model configured)"
 
@@ -932,7 +951,25 @@ def run(*, provider=None, model=None, only=None, resume=False, dry_run=False,
                 fragments[b.id] = rb.DATA_BUILDERS[b.id]()
             elif cls == "human":
                 if b.id in human_answers:
-                    fragments[b.id] = human_answers[b.id]
+                    answer = human_answers[b.id]
+                    # Codex review (pass 2), finding 2: a human-supplied
+                    # answer is expected and allowed to state real,
+                    # researched figures (unlike LLM prose, which is
+                    # distrusted specifically for INVENTING numbers) -- so it
+                    # is never run through the numeral guard or the
+                    # word-number guard. But it is still spliced verbatim
+                    # into a document meant to be published, so it MUST
+                    # still pass the same mechanical HTML-structure gate an
+                    # LLM fragment does: a typo'd, copy-pasted, or genuinely
+                    # untrusted --human-answers file could otherwise inject
+                    # <script>, an event-handler attribute, an external
+                    # link, or unbalanced markup with nothing to catch it.
+                    structure_problems = find_html_structure_violations(answer)
+                    if structure_problems:
+                        failures.append((b.id, "human-answer-invalid-html",
+                                        "; ".join(structure_problems)))
+                    else:
+                        fragments[b.id] = answer
                 else:
                     failures.append((b.id, "human", rb.HUMAN_REASONS[b.id]))
             else:  # prose
@@ -1020,7 +1057,10 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--provider", choices=sorted(lp.PROVIDERS))
     p.add_argument("--model")
-    p.add_argument("--only", help="process only this section id's blocks, e.g. s7")
+    p.add_argument("--only", help="process only this section id's blocks, e.g. s7 -- for "
+                   "previewing/debugging one section's prompts only; must be combined "
+                   "with --dry-run (see issue #66: a real run must never publish a file "
+                   "with every OTHER section's TODO blocks left unrendered)")
     p.add_argument("--resume", action="store_true",
                    help="accepted for CLI compatibility; caching is unconditional "
                         "regardless of this flag (see module docstring)")
