@@ -105,6 +105,36 @@ class _TempCorpus:
         self._tmp.cleanup()
 
 
+CCA_RATES_HEADER = ["statement_date", "period", "season", "tou_period", "kwh",
+                    "rate_usd_per_kwh", "usd", "provider", "authority", "evidence",
+                    "source_pdf", "note"]
+
+
+def _cca_rate_row(period, season, tou_period, rate, authority="charged_tariff"):
+    return ["2026-01-01", period, season, tou_period, 100.0, rate, round(100.0 * rate, 2),
+            "CCA", authority, "direct", "x.pdf", ""]
+
+
+class _TempCCARates:
+    """Context manager patching rbv.CCA_RATES_CSV to a fabricated file,
+    restoring the real (committed) path on exit."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __enter__(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        path = pathlib.Path(self._tmp.name) / "cca_generation_rates.csv"
+        _write_csv(path, CCA_RATES_HEADER, self.rows)
+        self._saved = rbv.CCA_RATES_CSV
+        rbv.CCA_RATES_CSV = path
+        return self
+
+    def __exit__(self, *exc):
+        rbv.CCA_RATES_CSV = self._saved
+        self._tmp.cleanup()
+
+
 # ---------------------------------------------------------------------------
 # (a) Step 1 fail-closed tests -- fabricated CSVs, no private data needed.
 # ---------------------------------------------------------------------------
@@ -281,8 +311,8 @@ def case_delivery_and_pcia_kwh_restarts_netting_at_month_boundary():
             seas="W", p="on", ym=pd.Period("2026-02", "M")),
     ]
     sub = pd.DataFrame(rows)
-    (delivery_current, delivery_own, pcia_kwh, unpriced_kwh, unpriced_days,
-     mechanics_gap) = rbv._delivery_and_pcia_kwh(sub)
+    (delivery_current, delivery_own, pcia_kwh, unpriced_kwh,
+     unpriced_days) = rbv._delivery_and_pcia_kwh(sub)
 
     expected_rate = rbv.rates.UDC["W"]["on"]
     assert abs(delivery_current - 10.0 * expected_rate) < 1e-9, (
@@ -293,48 +323,200 @@ def case_delivery_and_pcia_kwh_restarts_netting_at_month_boundary():
     assert abs(pcia_kwh - 10.0) < 1e-9, (
         "PCIA's positive-net-kWh accumulator must also restart at the month "
         f"boundary (same bug shape): expected 10.0, got {pcia_kwh}")
-
-    # negative_bucket_mechanics_gap_usd (adversarial review pass 2, finding 1:
-    # an earlier version had this backwards -- it stored bmn.bill()'s raw
-    # per-bucket credit contribution instead of the DISAGREEMENT against it).
-    # Derive the expected value by actually CALLING bmn.bill() on February's
-    # row alone, rather than re-deriving the same energy()/credit() formula
-    # written inside _delivery_and_pcia_kwh -- a test that only restates the
-    # implementation's own formula can't catch a sign error in that formula.
-    # bmn.bill() on a single-day, single-month frame also adds one day's BSC
-    # (NBC*gross is 0 here since that row's own Consumption is 0), so subtract
-    # BSC to isolate the bucket's own credit contribution.
-    feb_only = sub[sub.dt.dt.date == dt.date(2026, 2, 1)].copy()
-    bmn_feb_bucket_contribution = rbv.bmn.bill(feb_only) - rbv.bmn.BSC * 1
-    # current_vintage_total contributes ZERO for this negative bucket (the
-    # zero-clamp); the disagreement the diagnostic reports is that zero MINUS
-    # what bmn.bill() actually contributes for the same bucket.
-    expected_gap = 0.0 - bmn_feb_bucket_contribution
-    assert abs(mechanics_gap - expected_gap) < 1e-9, (
-        f"negative_bucket_mechanics_gap_usd={mechanics_gap} does not match "
-        f"the disagreement independently derived from a real bmn.bill() call "
-        f"({expected_gap}) -- check the sign in _delivery_and_pcia_kwh's "
-        "elif bucket_net < 0 branch")
-    assert expected_gap > 0, (
-        "sanity check on the test fixture itself: bmn.bill() credits the "
-        "negative bucket (a real dollar reduction), so 0 minus that "
-        "contribution must be POSITIVE -- if this fails the fixture, not the "
-        "code under test, has a sign error")
+    # February's -10 kWh bucket zero-clamps to $0 here -- this function no
+    # longer tries to quantify the resulting per-bill-period-restart artifact
+    # itself (that moved to the aggregate level -- see
+    # case_continuous_components_sum_to_bmn_bill_total and
+    # case_delivery_pcia_restart_artifact_matches_direct_difference below).
     assert unpriced_kwh == 0.0 and unpriced_days == set()
     return (f"delivery_current_vintage=${delivery_current:.4f} correctly bills only "
             "January's positive bucket after the month restart, not the "
             "merged-to-zero net across the boundary; delivery_own_vintage="
             f"${delivery_own:.4f} sourced from rates_history.py's real historical "
-            f"rate for those same two dates; negative_bucket_mechanics_gap_usd="
-            f"${mechanics_gap:.4f} matches an independent bmn.bill() cross-check")
+            "rate for those same two dates")
+
+
+# ---------------------------------------------------------------------------
+# (b3) _continuous_current_vintage_components() -- fabricated frame, no
+# archive needed. Verifies it reproduces bmn.bill()'s own total exactly (the
+# claim its own docstring makes), and that the per-bill-period-restart
+# artifact this test file's fixture creates matches a hand-independent
+# derivation.
+# ---------------------------------------------------------------------------
+@case
+def case_continuous_components_sum_to_bmn_bill_total():
+    """_continuous_current_vintage_components()'s five components (delivery,
+    generation, pcia, nbc, fixed_charge) must sum EXACTLY to bmn.bill()'s own
+    total for the same frame -- the claim its own docstring makes, verified
+    here rather than assumed. Uses a small multi-month fabricated frame with
+    both positive and negative buckets so PCIA's sign-dependent branch is
+    actually exercised."""
+    rows = [
+        dict(dt=pd.Timestamp("2026-01-15 16:00"), Consumption=12.0, Generation=0.0,
+            seas="W", p="on", ym=pd.Period("2026-01", "M")),
+        dict(dt=pd.Timestamp("2026-01-20 07:00"), Consumption=0.0, Generation=5.0,
+            seas="W", p="off", ym=pd.Period("2026-01", "M")),
+        dict(dt=pd.Timestamp("2026-02-03 16:00"), Consumption=8.0, Generation=2.0,
+            seas="W", p="on", ym=pd.Period("2026-02", "M")),
+        dict(dt=pd.Timestamp("2026-06-10 16:00"), Consumption=20.0, Generation=1.0,
+            seas="S", p="on", ym=pd.Period("2026-06", "M")),
+    ]
+    sub = pd.DataFrame(rows)
+    start, end = dt.date(2026, 1, 15), dt.date(2026, 6, 10)
+    components = rbv._continuous_current_vintage_components(sub, start, end)
+    reconstructed = sum(components.values())
+    direct = rbv.bmn.bill(sub)
+    assert abs(reconstructed - direct) < 1e-9, (
+        f"components sum to {reconstructed} but bmn.bill() gives {direct} on the "
+        "same frame -- _continuous_current_vintage_components() no longer "
+        "reproduces bmn.bill()'s own total")
+    return (f"the five components ({', '.join(f'{k}={v:.4f}' for k, v in components.items())}) "
+            f"sum exactly to bmn.bill()'s own total (${direct:.4f})")
+
+
+@case
+def case_delivery_pcia_restart_artifact_matches_direct_difference():
+    """The per-bill-period-restart artifact _aggregate() computes
+    (delivery_pcia_restart_artifact_usd) must equal the ACTUAL difference
+    between per-period-summed delivery/PCIA and the continuous-window
+    delivery/PCIA totals -- not a per-negative-bucket UDC+CEA formula (the
+    retired negative_bucket_mechanics_gap_usd used that shortcut and
+    overstated the artifact on the real corpus by about $6.66, adversarial
+    review pass 4's finding). Fabricates a period that straddles a month
+    boundary with a sign flip (the same shape as the monthly-restart test
+    above), computes the per-period (restarted) and continuous totals
+    independently, and confirms _aggregate()'s reported artifact matches
+    their direct difference exactly."""
+    rows = [
+        dict(dt=pd.Timestamp("2026-01-31 16:00"), Consumption=10.0, Generation=0.0,
+            seas="W", p="on", ym=pd.Period("2026-01", "M")),
+        dict(dt=pd.Timestamp("2026-02-01 16:00"), Consumption=0.0, Generation=10.0,
+            seas="W", p="on", ym=pd.Period("2026-02", "M")),
+    ]
+    sub = pd.DataFrame(rows)
+    start, end = dt.date(2026, 1, 31), dt.date(2026, 2, 1)
+
+    (delivery_current, _delivery_own, pcia_kwh, _unpriced_kwh,
+     _unpriced_days) = rbv._delivery_and_pcia_kwh(sub)
+    pcia_current = rbv.rates.PCIA * pcia_kwh
+    components = rbv._continuous_current_vintage_components(sub, start, end)
+
+    expected_delivery_artifact = delivery_current - components["delivery"]
+    expected_pcia_artifact = pcia_current - components["pcia"]
+
+    # Now drive the SAME fixture through the real per-period pipeline (one
+    # fabricated bill_periods_electric.csv row spanning the whole fixture as
+    # a single "period") and confirm _aggregate() reports the identical
+    # artifact -- exercising the real code path, not just re-deriving it.
+    row = dict(period="1/31/26 - 2/1/26", start=start, end=end, days=2,
+              net_kwh=0.0, gross_kwh=10.0, sdge_delivery=0.0, cca_generation=0.0,
+              current_charges=0.0, fixed_charge_total=0.0)
+    figures = rbv._per_period_figures(sub, row)
+    per_period = [figures]
+    native = 0.0
+    all_modeled = rbv.bmn.bill(sub)
+    agg = rbv._aggregate(per_period, native, all_modeled, components)
+
+    assert abs(agg["delivery_restart_artifact_usd"] - expected_delivery_artifact) < 1e-9
+    assert abs(agg["pcia_restart_artifact_usd"] - expected_pcia_artifact) < 1e-9
+    assert abs(agg["delivery_pcia_restart_artifact_usd"]
+              - (expected_delivery_artifact + expected_pcia_artifact)) < 1e-9
+    return (f"delivery_pcia_restart_artifact_usd={agg['delivery_pcia_restart_artifact_usd']:.4f} "
+            "matches the direct per-period-vs-continuous difference, computed independently")
+
+
+# ---------------------------------------------------------------------------
+# (b5) _verify_cca_generation_rate_flat() -- the evidence generation_tou_
+# window_effect's construction depends on (a fresh Codex adversarial review
+# of this branch flagged the prior "generation vintage" claim as unsupported).
+# The "passes on the real corpus" case reads the real, committed, PUBLIC
+# data/cca_generation_rates.csv -- no private archive needed. The fail-closed
+# cases patch rbv.CCA_RATES_CSV to fabricated files.
+# ---------------------------------------------------------------------------
+@case
+def case_verify_cca_generation_rate_flat_passes_on_the_real_corpus():
+    """The real committed data/cca_generation_rates.csv, checked against the
+    real 13-period corpus, must show CEA's charged rate flat and equal to
+    rates.CEA for every (season, TOU) cell -- this is the actual evidence
+    generation_tou_window_effect's zero-vintage construction depends on,
+    verified here fresh rather than assumed from cca_rate_extraction.py's own
+    docstring."""
+    periods = rbv._load_periods()
+    rbv._verify_cca_generation_rate_flat(periods)  # must not raise
+    return ("the real 13-period corpus's CEA generation rate is flat and equal "
+            "to rates.CEA for every (season, TOU) cell -- verified against "
+            "data/cca_generation_rates.csv, not assumed")
+
+
+@case
+def case_verify_cca_generation_rate_flat_rejects_a_non_flat_rate():
+    """Two periods billing DIFFERENT rates for the same (season, TOU) cell
+    must SystemExit naming the cell, not silently average or pick one."""
+    p1, p2 = "1/1/26 - 1/30/26", "1/31/26 - 3/1/26"
+    with _TempCCARates([
+        _cca_rate_row(p1, "winter", "on_peak", 0.2443),
+        _cca_rate_row(p2, "winter", "on_peak", 0.2500),  # different!
+    ]):
+        try:
+            rbv._verify_cca_generation_rate_flat(
+                [dict(period=p1), dict(period=p2)])
+            raise AssertionError("expected SystemExit for a non-flat rate")
+        except SystemExit as e:
+            assert "not flat" in str(e) and "winter/on_peak" in str(e), str(e)
+    return "two periods charging different rates for the same cell raise SystemExit naming it"
+
+
+@case
+def case_verify_cca_generation_rate_flat_rejects_a_rate_that_moved_from_current():
+    """A flat rate that does NOT match rates.CEA's current value must
+    SystemExit -- the whole point of the check is confirming equality to
+    CURRENT, not just internal flatness."""
+    p1 = "1/1/26 - 1/30/26"
+    with _TempCCARates([_cca_rate_row(p1, "winter", "on_peak", 0.99999)]):
+        try:
+            rbv._verify_cca_generation_rate_flat([dict(period=p1)])
+            raise AssertionError("expected SystemExit for a rate that differs from current")
+        except SystemExit as e:
+            assert "winter/on_peak" in str(e) and "!=" in str(e), str(e)
+    return "a flat rate that disagrees with rates.CEA's current value raises SystemExit naming it"
+
+
+@case
+def case_verify_cca_generation_rate_flat_rejects_a_missing_period():
+    """A period with no charged_tariff generation rows at all must SystemExit
+    naming it, rather than silently skipping it (which would let a missing
+    period masquerade as 'nothing to check, so it passes')."""
+    p1, p2 = "1/1/26 - 1/30/26", "1/31/26 - 3/1/26"
+    with _TempCCARates([_cca_rate_row(p1, "winter", "on_peak", 0.2443)]):
+        try:
+            rbv._verify_cca_generation_rate_flat(
+                [dict(period=p1), dict(period=p2)])
+            raise AssertionError("expected SystemExit for a period missing from the CSV")
+        except SystemExit as e:
+            assert p2 in str(e), str(e)
+    return "a period with no charged_tariff generation rows raises SystemExit naming it"
 
 
 # ---------------------------------------------------------------------------
 # (c) Step 4 telescoping-identity test -- pure arithmetic, fabricated
 # per-period dollar figures, genuinely exercising _aggregate().
 # ---------------------------------------------------------------------------
-def _fabricated_period(current_vintage_total, own_vintage_total, actual_total):
+def _fabricated_period(delivery_current, delivery_own, pcia, nbc, fixed_charge,
+                       generation, actual_total):
+    """A fully self-consistent fabricated per-period row: current_vintage_total_usd
+    and own_vintage_total_usd are DERIVED from the fine-grained fields (mirroring
+    _per_period_figures's own formula), never chosen independently -- so a test
+    using this helper genuinely exercises _aggregate()'s real per-period-sum
+    logic rather than a hand-picked total that might not correspond to anything
+    _per_period_figures could actually produce."""
+    current_vintage_total = delivery_current + pcia + nbc + fixed_charge + generation
+    own_vintage_total = delivery_own + pcia + nbc + fixed_charge + generation
     return dict(
+        delivery_current_vintage_usd=delivery_current,
+        pcia_usd=pcia,
+        nbc_usd=nbc,
+        fixed_charge_actual_usd=fixed_charge,
+        generation_actual_usd=generation,
         current_vintage_total_usd=current_vintage_total,
         own_vintage_total_usd=own_vintage_total,
         actual_total_usd=actual_total,
@@ -344,44 +526,69 @@ def _fabricated_period(current_vintage_total, own_vintage_total, actual_total):
 
 @case
 def case_aggregate_identity_holds_for_arbitrary_fabricated_numbers():
-    """The 5-term telescoping identity native_window_total + window_effect +
-    generation_and_fixed_charge_vintage_effect + delivery_vintage_effect +
-    residual_total == actual_total_sum must hold EXACTLY regardless of the
-    actual dollar values involved -- it is pure arithmetic given
-    _aggregate()'s own definitions, not a data finding (adversarial review
-    pass 1, finding 1: the ORIGINAL 4-term version conflated window_effect
-    with a mislabeled generation/fixed-charge vintage effect because
-    bill_window_current_vintage_total -- which substitutes real generation and
-    fixed-charge dollars -- was compared directly against native_window_total,
-    which models them instead; this 5-term version inserts
-    bill_window_all_current_vintage_modeled_total as the missing bridge value
-    so window_effect and generation_and_fixed_charge_vintage_effect are each
-    clean, single-purpose differences). Exercised on THREE unrelated,
-    made-up scenarios via the script's own _aggregate() function."""
+    """The 6-term telescoping identity native_window_total + window_effect +
+    generation_tou_window_effect + fixed_charge_vintage_effect +
+    delivery_vintage_effect + residual_total == actual_total_sum must hold
+    EXACTLY regardless of the actual dollar values involved -- it is pure
+    arithmetic given _aggregate()'s own definitions, not a data finding.
+    Exercised on TWO unrelated, made-up scenarios via the script's own
+    _aggregate() function: one where the continuous-window components exactly
+    equal the naive per-period sums (zero restart artifact, zero generation-
+    TOU effect -- the simplest consistent case), and one where they are
+    DELIBERATELY perturbed away from the per-period sums (a nonzero restart
+    artifact AND a nonzero generation-TOU effect), with all_modeled always
+    derived as the sum of the SAME components used elsewhere, never picked
+    independently (that constraint is what the internal 'old_combined
+    reconstruction' cross-check inside _aggregate() enforces -- see
+    case_aggregate_rejects_a_generation_fixed_charge_decomposition_that_
+    doesnt_reconstruct below for what happens when it's violated)."""
     scenarios = [
-        # (native_window_total, all_current_vintage_modeled_total,
-        #  [(current, own, actual), ...])
-        (1000.0, 1050.0,
-         [(100.0, 90.0, 80.0), (200.0, 210.0, 195.0), (50.0, 45.0, 60.0)]),
-        (0.0, 0.0, [(10.0, 10.0, 10.0)]),  # everything equal: every effect zero
-        (-500.0, -480.0,
-         [(300.0, -100.0, 250.0), (75.5, 80.25, 70.0)]),  # negatives allowed
+        dict(native=1000.0, continuous=None, periods=[
+            dict(delivery_current=200.0, delivery_own=190.0, pcia=20.0, nbc=40.0,
+                fixed_charge=45.0, generation=250.0, actual_total=300.0),
+            dict(delivery_current=250.0, delivery_own=245.0, pcia=25.0, nbc=40.0,
+                fixed_charge=45.0, generation=280.0, actual_total=320.0),
+        ]),
+        dict(native=-50.0,
+            continuous=dict(delivery=95.0, generation=110.0, pcia=8.0, nbc=15.0,
+                            fixed_charge=22.0),
+            periods=[
+                dict(delivery_current=100.0, delivery_own=80.0, pcia=10.0, nbc=15.0,
+                    fixed_charge=20.0, generation=90.0, actual_total=150.0),
+            ]),
     ]
-    for native, all_modeled, triples in scenarios:
-        per_period = [_fabricated_period(*t) for t in triples]
-        agg = rbv._aggregate(per_period, native, all_modeled)
-        actual_total_sum = sum(t[2] for t in triples)
+    for sc in scenarios:
+        per_period = [_fabricated_period(**p) for p in sc["periods"]]
+        if sc["continuous"] is None:
+            continuous = dict(
+                delivery=sum(p["delivery_current"] for p in sc["periods"]),
+                generation=sum(p["generation"] for p in sc["periods"]),
+                pcia=sum(p["pcia"] for p in sc["periods"]),
+                nbc=sum(p["nbc"] for p in sc["periods"]),
+                fixed_charge=sum(p["fixed_charge"] for p in sc["periods"]))
+        else:
+            continuous = sc["continuous"]
+        all_modeled = sum(continuous.values())
+        agg = rbv._aggregate(per_period, sc["native"], all_modeled, continuous)
+        actual_total_sum = sum(p["actual_total"] for p in sc["periods"])
         assert abs(agg["actual_total_sum"] - actual_total_sum) < 1e-9
         identity = (agg["native_window_total"] + agg["window_effect"]
-                   + agg["generation_and_fixed_charge_vintage_effect"]
+                   + agg["generation_tou_window_effect"]
+                   + agg["fixed_charge_vintage_effect"]
                    + agg["delivery_vintage_effect"] + agg["residual_total"])
         assert abs(identity - actual_total_sum) < 1e-9, (identity, actual_total_sum)
         assert agg["identity_holds"] is True
         # total_vintage_effect must equal the sum of its two named parts
+        # (generation deliberately excluded)
         assert abs(agg["total_vintage_effect"]
                   - (agg["delivery_vintage_effect"]
-                     + agg["generation_and_fixed_charge_vintage_effect"])) < 1e-9
-    return "the 5-term telescoping identity holds exactly across three unrelated fabricated scenarios"
+                     + agg["fixed_charge_vintage_effect"])) < 1e-9
+        # generation_tou_window_effect must equal its own two named parts
+        assert abs(agg["generation_tou_window_effect"]
+                  - (agg["generation_clean_tou_effect"]
+                     + agg["delivery_pcia_restart_artifact_usd"])) < 1e-9
+    return ("the 6-term telescoping identity holds exactly across two unrelated "
+            "fabricated scenarios (zero-artifact and perturbed-artifact)")
 
 
 @case
@@ -390,14 +597,59 @@ def case_aggregate_rejects_an_inconsistent_residual():
     computed inconsistently with actual_total_usd - own_vintage_total_usd, the
     cross-check between the two routes to residual_total must SystemExit
     rather than silently publish a broken aggregate."""
-    per_period = [dict(current_vintage_total_usd=100.0, own_vintage_total_usd=90.0,
-                       actual_total_usd=80.0, residual_usd=999.0)]  # wrong on purpose
+    per_period = [_fabricated_period(delivery_current=100.0, delivery_own=90.0,
+                                     pcia=10.0, nbc=20.0, fixed_charge=25.0,
+                                     generation=80.0, actual_total=200.0)]
+    per_period[0]["residual_usd"] = 999.0  # wrong on purpose
+    continuous = dict(delivery=100.0, generation=80.0, pcia=10.0, nbc=20.0,
+                      fixed_charge=25.0)
     try:
-        rbv._aggregate(per_period, 1000.0, 1010.0)
+        rbv._aggregate(per_period, 1000.0, sum(continuous.values()), continuous)
         raise AssertionError("expected SystemExit for an inconsistent residual")
     except SystemExit:
         pass
     return "_aggregate() refuses a per-period residual inconsistent with actual - own_vintage"
+
+
+@case
+def case_aggregate_rejects_a_nonzero_nbc_cancellation_diff():
+    """NBC is linear in gross kWh with no bucketing or sign dependence, so the
+    per-period sum and the continuous-window total MUST be identical; a
+    mismatch means the window boundaries or frames have drifted apart, and
+    must SystemExit rather than silently absorb the difference into a vintage
+    term."""
+    per_period = [_fabricated_period(delivery_current=100.0, delivery_own=90.0,
+                                     pcia=10.0, nbc=20.0, fixed_charge=25.0,
+                                     generation=80.0, actual_total=200.0)]
+    continuous = dict(delivery=100.0, generation=80.0, pcia=10.0, nbc=25.0,  # != 20.0
+                      fixed_charge=25.0)
+    try:
+        rbv._aggregate(per_period, 1000.0, sum(continuous.values()), continuous)
+        raise AssertionError("expected SystemExit for a nonzero NBC cancellation diff")
+    except SystemExit as e:
+        assert "NBC does not cancel" in str(e), str(e)
+    return "_aggregate() refuses when NBC does not cancel between the per-period sum and the continuous total"
+
+
+@case
+def case_aggregate_rejects_a_generation_fixed_charge_decomposition_that_doesnt_reconstruct():
+    """If bill_window_all_current_vintage_modeled_total is inconsistent with
+    the SAME continuous_components dict (i.e. not literally their sum),
+    generation_tou_window_effect + fixed_charge_vintage_effect will not
+    reconstruct (current_vintage_total - all_modeled) exactly -- _aggregate()
+    must catch this internally rather than silently publish two terms that
+    don't actually decompose what they claim to."""
+    per_period = [_fabricated_period(delivery_current=100.0, delivery_own=90.0,
+                                     pcia=10.0, nbc=20.0, fixed_charge=25.0,
+                                     generation=80.0, actual_total=200.0)]
+    continuous = dict(delivery=100.0, generation=80.0, pcia=10.0, nbc=20.0,
+                      fixed_charge=25.0)  # sums to 235.0
+    try:
+        rbv._aggregate(per_period, 1000.0, 999.0, continuous)  # all_modeled != 235.0
+        raise AssertionError("expected SystemExit for a non-reconstructing decomposition")
+    except SystemExit as e:
+        assert "does not reconstruct" in str(e), str(e)
+    return "_aggregate() refuses when all_modeled is inconsistent with the continuous components it's built from"
 
 
 # ---------------------------------------------------------------------------
@@ -417,20 +669,40 @@ def case_build_runs_end_to_end_on_the_real_archive_and_the_identity_holds():
     assert abs(result["actual_total_sum"] - 3282.22) < 0.01, result["actual_total_sum"]
     assert len(result["per_period"]) == 13
     identity = (result["native_window_total"] + result["window_effect"]
-               + result["generation_and_fixed_charge_vintage_effect"]
+               + result["generation_tou_window_effect"]
+               + result["fixed_charge_vintage_effect"]
                + result["delivery_vintage_effect"] + result["residual_total"])
     assert abs(identity - result["actual_total_sum"]) < 0.01
     assert abs(result["total_vintage_effect"]
               - (result["delivery_vintage_effect"]
-                 + result["generation_and_fixed_charge_vintage_effect"])) < 0.01
-    # regression guard for the specific bug adversarial review pass 1 found:
-    # window_effect must be small relative to total_vintage_effect on the real
-    # data (the inverted, pre-fix relationship had window >> vintage).
+                 + result["fixed_charge_vintage_effect"])) < 0.01
+    assert abs(result["generation_tou_window_effect"]
+              - (result["generation_clean_tou_effect"]
+                 + result["delivery_pcia_restart_artifact_usd"])) < 0.01
+
+    # regression guard for the bug adversarial review pass 1 found: window_effect
+    # must be small relative to total_vintage_effect on the real data (the
+    # inverted, pre-fix relationship had window >> vintage).
     assert abs(result["window_effect"]) < abs(result["total_vintage_effect"]), (
         "window_effect is no longer smaller than total_vintage_effect on the real "
         "archive -- this is the exact relationship adversarial review pass 1 found "
         "inverted; check bill_window_all_current_vintage_modeled_total's "
         "construction before trusting this result")
+    # regression guard for the bug a fresh Codex review found: total_vintage_effect
+    # (delivery + fixed-charge only) must be small relative to
+    # generation_tou_window_effect on the real data -- the pre-fix version folded
+    # nearly all of generation_tou_window_effect INTO total_vintage_effect,
+    # reporting an unsupported ~20% "rate vintage" headline.
+    assert abs(result["total_vintage_effect"]) < abs(result["generation_tou_window_effect"]), (
+        "total_vintage_effect is no longer smaller than generation_tou_window_effect "
+        "on the real archive -- this is the exact relationship the Codex review found "
+        "inverted (generation miscounted as vintage); check "
+        "_verify_cca_generation_rate_flat()'s evidence and the generation/"
+        "fixed-charge split before trusting this result")
+    # CEA's generation rate vintage is proven zero, by evidence -- confirm build()
+    # actually ran that check (it would have raised otherwise, but assert the
+    # positive claim explicitly here too).
+    assert "generation_rate_vintage_is_zero_by_evidence" in result["notes"]
 
     with tempfile.TemporaryDirectory() as td:
         path = rbv._write(result, td)
@@ -439,13 +711,14 @@ def case_build_runs_end_to_end_on_the_real_archive_and_the_identity_holds():
         assert reloaded["actual_total_sum"] == result["actual_total_sum"]
 
     return (f"build() on the real archive: native ${result['native_window_total']:.2f} "
-            f"+ window ${result['window_effect']:+.2f} + generation/fixed-charge "
-            f"vintage ${result['generation_and_fixed_charge_vintage_effect']:+.2f} "
-            f"+ delivery vintage ${result['delivery_vintage_effect']:+.2f} + residual "
+            f"+ window ${result['window_effect']:+.2f} + generation TOU-window "
+            f"${result['generation_tou_window_effect']:+.2f} + fixed-charge vintage "
+            f"${result['fixed_charge_vintage_effect']:+.2f} + delivery vintage "
+            f"${result['delivery_vintage_effect']:+.2f} + residual "
             f"${result['residual_total']:+.2f} = actual "
-            f"${result['actual_total_sum']:.2f} (total vintage effect "
-            f"${result['total_vintage_effect']:+.2f}); identity holds and the "
-            "artifact write round-trips")
+            f"${result['actual_total_sum']:.2f} (total vintage effect, generation "
+            f"excluded: ${result['total_vintage_effect']:+.2f}); identity holds and "
+            "the artifact write round-trips")
 
 
 @case

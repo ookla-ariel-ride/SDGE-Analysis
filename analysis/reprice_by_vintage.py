@@ -16,12 +16,20 @@ PDFs' own printed rate lines) -- and separates it from a second, previously
 unexamined confound: the two $4,904-vs-$3,282 figures are computed over
 DIFFERENT 365-day windows in the first place.
 
-THE DECOMPOSITION. Five quantities, chained so each is "the previous total plus
-one more correction," landing exactly on the actual bills. (Adversarial review
-pass 1, finding 1: an earlier version of this script had FOUR terms and
-conflated window_effect with a large, mislabeled generation/fixed-charge
-vintage effect -- see "THE BUG THIS FIX ADDRESSES" below for exactly how and
-why. This is the corrected, 5-term version.)
+THE DECOMPOSITION. Six quantities, chained so each is "the previous total plus
+one more correction," landing exactly on the actual bills. (A fresh Codex
+adversarial review of this branch flagged the 5-term version's headline
+total_vintage_effect as unsupported: generation_and_fixed_charge_vintage_
+effect's -$281.59 was being counted almost entirely as "vintage," but
+analysis/cca_rate_extraction.py's own committed data/cca_generation_rates.csv
+independently proves CEA's charged per-TOU generation rate never moved once
+across the whole CCA era and is IDENTICAL to rates.CEA's current table --
+re-verified fresh here, against these specific 13 periods, not assumed from
+that module's docstring (see "GENERATION RATE VINTAGE IS ZERO, BY EVIDENCE"
+below). The true cause of that -$281.59 was almost entirely the SAME
+TOU-window-shape confound this script already named as a residual_total
+candidate, showing up in generation dollars specifically -- now quantified
+instead of "not determined." This is the corrected, 6-term version.)
 
     native_window_total   billing_model_nem's own native rolling window
                            (2025-07-25..2026-07-23), current vintage
@@ -33,98 +41,133 @@ why. This is the corrected, 5-term version.)
                            (2025-06-27..2026-06-26), computed with bmn.bill()'s
                            EXACT SAME current-vintage methodology on BOTH
                            sides -- a clean, same-methodology comparison.
-  + generation_and_fixed_charge_vintage_effect
-                         = bill_window_current_vintage_total
-                             - bill_window_all_current_vintage_modeled_total
-                           the effect of substituting the REAL billed
-                           generation and fixed-charge dollars for bmn.bill()'s
-                           current-vintage MODEL of them (the CEA table
-                           applied to interval kWh; BSC times days), window
-                           held fixed at the bill-aligned one. Mostly, but not
-                           purely, a vintage effect -- see "THE CAVEAT ON
-                           generation_and_fixed_charge_vintage_effect" below.
+  + generation_tou_window_effect
+                         = generation_clean_tou_effect
+                             + delivery_pcia_restart_artifact_usd
+                           NOT a vintage effect -- CEA's charged rate is
+                           proven flat and equal to today's, so there is no
+                           rate-vintage story to tell here. This is instead a
+                           quantified measurement of the TOU-window-shape
+                           confound (rates.period_at()'s CURRENT window shape
+                           applied to historical interval kWh, misclassifying
+                           it between on/off/super-off-peak relative to the
+                           window shape actually in force -- same confound
+                           residual_total's own candidate list already names)
+                           acting on generation dollars specifically, plus a
+                           small folded-in per-bill-period-restart artifact
+                           -- see "GENERATION RATE VINTAGE IS ZERO, BY
+                           EVIDENCE" and "THE RESTART ARTIFACT" below.
+  + fixed_charge_vintage_effect
+                         = fixed_charge_actual_sum - fixed_charge_continuous
+                           genuinely a vintage/regime effect: the historical
+                           flat Monthly Service Fee vs. the current per-day
+                           Base Services Charge -- a real, settled structural
+                           billing change (issue #7), not disputed.
   + delivery_vintage_effect
                          = bill_window_own_vintage_total
                              - bill_window_current_vintage_total
                            the effect of pricing UDC delivery at the vintage
                            actually in force each period, instead of current,
-                           real generation/fixed-charge and window both held
-                           fixed. Cleanly isolated: everything else in the two
-                           totals being differenced is identical.
+                           everything else held fixed. Cleanly isolated:
+                           everything else in the two totals being differenced
+                           is identical.
   + residual_total         = actual_total_sum - bill_window_own_vintage_total
                            whatever is left after every correction above: the
                            real, previously-undecomposed model-vs-bill gap.
   = actual_total_sum       the bills' own accrued current_charges, $3,282.22.
 
-total_vintage_effect (= delivery_vintage_effect +
-generation_and_fixed_charge_vintage_effect) is reported alongside the five
-terms because it is the number that actually answers issue #30's question --
-"how much of the gap is rate vintage" -- combining the one delivery effect
-that rates_history.py can source cleanly with the one that includes generation
-and the fixed charge, caveat and all.
+total_vintage_effect (= delivery_vintage_effect + fixed_charge_vintage_effect
+-- generation deliberately EXCLUDED, per the flatness proof) is reported
+alongside the six terms because it is the number that actually answers issue
+#30's question -- "how much of the gap is rate vintage."
 
-This telescoping sum is a PURE ALGEBRAIC IDENTITY given the five definitions
+This telescoping sum is a PURE ALGEBRAIC IDENTITY given the six definitions
 above (each stage total minus the previous stage total, by construction) --
 build() asserts it to the cent as a sanity check on the arithmetic, not as
 evidence about the household. NOTE ON SIGN: this residual convention (actual
 minus modeled, continuing the same "next stage minus previous stage" pattern
-every other term uses) is the one that makes the five terms telescope to
+every other term uses) is the one that makes the six terms telescope to
 actual_total_sum; a naive reading of "residual = own_vintage_total -
 actual_total" for the running total would NOT telescope (it would double-count
 bill_window_own_vintage_total). Each PER-PERIOD residual uses the same
 actual-minus-modeled convention for exactly this reason, so per-period residuals
 sum to residual_total exactly.
 
-THE BUG THIS FIX ADDRESSES (adversarial review pass 1, finding 1). The
-original 4-term version defined window_effect = bill_window_current_vintage_
-total - native_window_total. That is NOT a clean window comparison, because
-the two sides do not share a methodology for generation and the fixed charge:
-native_window_total (via bmn.bill()) MODELS generation at the current-vintage
-CEA table and the fixed charge at BSC*days; bill_window_current_vintage_total
-SUBSTITUTES the real historical cca_generation and fixed_charge_total dollars
-instead. That substitution is a genuine vintage correction, and it was being
-counted as part of "window_effect" by construction, understating the true
-vintage effect and overstating the true window effect. The fix inserts
-bill_window_all_current_vintage_modeled_total -- the bill-aligned window
-priced with bmn.bill()'s unmodified methodology, nothing substituted -- as the
-missing bridge value, so window_effect compares like with like (modeled vs
-modeled, differing only in which dates are included) and the generation/
-fixed-charge substitution gets its own, correctly-attributed term.
+GENERATION RATE VINTAGE IS ZERO, BY EVIDENCE, NOT ASSUMPTION.
+_verify_cca_generation_rate_flat() reads data/cca_generation_rates.csv (built
+by analysis/cca_rate_extraction.py from every CCA-era bill PDF), filters to
+authority == "charged_tariff" rows for the three real TOU cells (on_peak,
+off_peak, super_off_peak) on exactly these 13 periods, and fails closed
+(SystemExit, naming the offending cell) unless EVERY period is represented and
+EVERY (season, TOU) cell's charged rate is both (a) identical across every
+period that bills it and (b) equal to rates.CEA's current value to 5 decimal
+places. On this corpus it passes cleanly: all 13 periods are covered, and all
+six cells (summer/winter x on/off/sop) charge exactly rates.CEA's current
+values with zero variation. This is why generation_tou_window_effect's
+definition below EXCLUDES a "generation vintage" term entirely -- there is
+direct bill evidence the rate never changed, so pricing generation at
+rates.CEA for the whole window (as bmn.bill() already does) is not a
+current-vintage ASSUMPTION here, it is what CEA actually, verifiably charged
+throughout. Whatever gap remains between the real cca_generation dollars and
+that rates.CEA-priced model is therefore NOT a rate effect; see below for what
+it actually is. If a future regeneration of data/cca_generation_rates.csv
+ever shows a rate change, this check fails closed and generation_tou_window_
+effect's construction must be revisited (it would then need a real generation
+rate-vintage term, which does not exist today because the evidence says there
+is nothing to price).
 
-THE CAVEAT ON generation_and_fixed_charge_vintage_effect. This term is mostly,
-but not purely, a vintage effect, for the same reason PCIA/NBC vintage cannot
-be cleanly isolated (see below): rates_history.py cannot source a historical
-per-TOU CCA generation rate on any CCA-era date (the trust boundary below), so
-there is no "own-vintage generation" figure to difference against a "current-
-vintage generation" figure the way delivery_vintage_effect does. What this
-term ACTUALLY differences is bill_window_current_vintage_total (delivery+PCIA
-computed by _delivery_and_pcia_kwh, called separately PER BILL PERIOD and
-summed) against bill_window_all_current_vintage_modeled_total (bmn.bill()
-called ONCE on the whole bill-aligned window as a continuous frame). Real
-generation and fixed-charge substitution is the dominant component of the gap
-between these two totals, but they also disagree on a second, smaller,
-mechanical effect (adversarial review pass 3, finding 1 -- corrected here
-after an earlier version of this docstring misattributed the cause): bill
-periods do not align with calendar-month boundaries, so a calendar month that
-is net-positive OVERALL can be split at a bill-period boundary into two
+generation_clean_tou_effect (= generation_actual_sum - the continuous-window,
+current-vintage-priced CEA generation total, computed by
+_continuous_current_vintage_components()) is the properly isolated TOU-window
+effect on generation dollars: interval kWh gets bucketed into on/off/super-
+off-peak using rates.period_at()'s CURRENT window shape (billing_model_nem.
+load(), applied uniformly to every historical date -- the SAME limitation
+_residual_concentration_note documents for delivery/PCIA/NBC), so kWh that was
+actually billed in one TOU bucket under the window shape in force at the time
+can be modeled in a DIFFERENT bucket here. Since CEA's on/off/sop rates differ
+by roughly $0.11-0.47/kWh, even a modest amount of reclassified kWh produces a
+real dollar gap -- quantified, not "not determined," now that generation's
+rate vintage is proven zero. generation_clean_tou_effect ALSO absorbs two
+smaller, disclosed components: (1) real generation-side dollars this script
+never models at all -- CEA's flat "Clean Impact Plus" product adder
+(~$0.001/kWh) and a per-period state surcharge tax, together roughly $17
+across the window (data/cca_generation_rates.csv's own clean_impact_plus and
+charged_fee rows) -- and (2) ordinary rounding. Both are small next to the
+TOU-window effect and are named rather than silently absorbed.
+
+THE RESTART ARTIFACT (delivery_pcia_restart_artifact_usd). delivery_current_
+vintage and pcia_current (used in bill_window_current_vintage_total) are
+computed by _delivery_and_pcia_kwh(), called separately PER BILL PERIOD and
+summed; bill_window_all_current_vintage_modeled_total is bmn.bill() called
+ONCE on the whole bill-aligned window as a continuous frame. Bill periods do
+not align with calendar-month boundaries, so a calendar month that is
+net-positive OVERALL can be split at a bill-period boundary into two
 per-period fragments where one fragment alone is net-negative;
-_delivery_and_pcia_kwh, called separately per period, sees only that fragment
-and zero-clamps it (as it must, for delivery_vintage_effect to compare like
-with like -- see below), losing a netting offset the SAME month would keep if
-priced continuously the way bmn.bill() actually is. This is NOT a case of
-bmn.bill()'s real invocation crediting a bucket this script zero-clamps
-instead -- verified directly: calling _delivery_and_pcia_kwh on the bill-
-aligned window as ONE continuous frame (matching bmn.bill()'s real scope)
-returns a mechanics gap of exactly $0.00, because no bucket is genuinely
-net-negative anywhere in the continuous window; every occurrence this script
-finds is an artifact of its own per-bill-period restart. build() computes and
-reports negative_bucket_mechanics_gap_usd (summed from every period's own
-_delivery_and_pcia_kwh call) specifically so this second component is
-quantified, not just gestured at -- see the notes field. delivery_vintage_effect
-is unaffected: both its sides (delivery_own_vintage and
-delivery_current_vintage) come from the SAME per-bill-period-restarted calls,
-so any phantom negative fragment zero-clamps identically on both sides and
-cancels out of their difference.
+_delivery_and_pcia_kwh, seeing only that fragment, zero-clamps it (as it must,
+for delivery_vintage_effect to compare like with like -- see below), losing a
+netting offset the SAME month would keep if priced continuously the way
+bmn.bill() actually is. This is NOT bmn.bill()'s real invocation crediting a
+bucket this script zero-clamps instead: verified directly, calling
+_delivery_and_pcia_kwh on the bill-aligned window as ONE continuous frame
+returns zero net-negative buckets, so bmn.bill() never reaches its credit()
+branch for any of them -- every occurrence this script finds is an artifact of
+its own per-bill-period restart. delivery_pcia_restart_artifact_usd =
+(delivery_current_vintage_sum - the continuous-window delivery total) +
+(pcia_current_sum - the continuous-window PCIA total), computed in build()
+from _continuous_current_vintage_components()'s clean, whole-window
+delivery/PCIA totals -- NOT from a per-negative-bucket UDC+CEA formula (an
+earlier version of this diagnostic, negative_bucket_mechanics_gap_usd, used
+exactly that formula and OVERSTATED this artifact by about $6.66, because
+folding CEA into a "credit-rate" placeholder double-counts part of the
+generation effect that generation_clean_tou_effect now cleanly owns; that
+diagnostic is retired). This artifact folds into generation_tou_window_effect
+(NOT fixed_charge_vintage_effect, which is a clean real-vs-modeled
+substitution with no bill-period-vs-continuous scope sensitivity at all,
+since BSC*days is linear in day-count and has no sign-dependent bucketing).
+delivery_vintage_effect is unaffected: both its sides (delivery_own_vintage
+and delivery_current_vintage) come from the SAME per-bill-period-restarted
+calls, so any phantom negative fragment zero-clamps identically on both sides
+and cancels out of their difference.
 
 WHAT CAN AND CANNOT BE REPRICED AT ITS OWN VINTAGE (the rates_history.py trust
 boundary, read at the top of that module -- do not re-derive it here, cite it):
@@ -142,17 +185,14 @@ boundary, read at the top of that module -- do not re-derive it here, cite it):
     delivery_vintage_effect, not a historical guess) instead of a whole-period
     rates_history.bill_nem_monthly(..., delivery_only=True) call, which raises
     on the entire period the instant it meets one such day.
-  * CEA/CCA generation -- NOT sourceable on any of these 13 periods: they are
-    all CCA-billed (12/27/24 onward), and on a CCA date the printed generation
-    TOU table is SDG&E's bundled-generation comparison, not the CCA's charged
-    tariff (RateSet.generation / RateSet.cca_generation both refuse). Per issue
-    #30 AC4, this is handled by an EXPLICITLY SEPARATE supply treatment: the
-    real billed cca_generation dollar amount (bill_periods_electric.csv) is
-    substituted directly, identically in both the current-vintage and
-    own-vintage totals, so it cancels out of delivery_vintage_effect by
-    construction (it CANNOT cancel out of generation_and_fixed_charge_vintage_
-    effect -- that term exists precisely to hold the generation/fixed-charge
-    substitution, caveat and all).
+  * CEA/CCA generation RATE -- sourceable and PROVEN FLAT, by direct bill
+    evidence, for every one of these 13 periods (see "GENERATION RATE VINTAGE
+    IS ZERO, BY EVIDENCE" above) -- but the real generation DOLLAR total is
+    still substituted directly (bill_periods_electric.csv's cca_generation),
+    identically in both the current-vintage and own-vintage totals, so it
+    cancels out of delivery_vintage_effect by construction. The gap between
+    that real total and a current-vintage CEA model of it is
+    generation_tou_window_effect, not a vintage effect.
   * PCIA, NBC -- genuinely not sourceable historically at all (no committed
     artifact carries the historical PCIA or non-bypassable-charge line); held
     at the current rates.py vintage in BOTH the current-vintage and own-vintage
@@ -160,8 +200,9 @@ boundary, read at the top of that module -- do not re-derive it here, cite it):
     out of every vintage term and cannot explain any of them, but they CAN be
     part of residual_total (see notes field for what this implies).
   * Base Services Charge / Monthly Service Fee -- the real billed
-    fixed_charge_total is substituted directly (real, not modeled), same
-    reasoning as generation.
+    fixed_charge_total is substituted directly (real, not modeled); the gap
+    against a continuous-window BSC model of it IS fixed_charge_vintage_effect
+    -- a genuine, settled vintage/regime change (issue #7), unlike generation.
 
 Run from a directory containing usage.csv (the private/verify sandbox
 convention). Writes data/reprice_by_vintage.json directly (found via the
@@ -342,8 +383,8 @@ def _check_coverage(available_dates, periods):
 # ---------------------------------------------------------------------------
 def _delivery_and_pcia_kwh(sub):
     """(delivery_current_vintage_usd, delivery_own_vintage_usd,
-    pcia_positive_net_kwh, unpriced_net_kwh, unpriced_days,
-    negative_bucket_mechanics_gap_usd) for one period's interval slice `sub`.
+    pcia_positive_net_kwh, unpriced_net_kwh, unpriced_days) for one period's
+    interval slice `sub`.
 
     DEVIATION FROM THE LITERAL DESIGN (flagged, not hidden -- see the module
     docstring and the delivered report): design step 3c calls
@@ -400,75 +441,24 @@ def _delivery_and_pcia_kwh(sub):
     unpriced) in one shot, exactly as design step 3d describes. PCIA's
     positive-net-kWh accumulator uses that same full per-bucket net (design
     step 3e: "same grouping as (d)"), independent of the own/current-vintage
-    delivery split entirely.
-
-    NEGATIVE-BUCKET MECHANICS GAP (diagnostic for issue #30's Bug 1 fix). A
-    net-negative (month, season, TOU) bucket contributes ZERO here (matching
-    rates_history.py's own "in-period exports settle at true-up" convention,
-    which delivery_own_vintage is built on -- both current- and own-vintage
-    delivery must use the SAME negative-bucket convention for
-    delivery_vintage_effect to compare like with like).
-
-    THE CAUSE IS NOT "bmn.bill() credits a bucket this function zero-clamps"
-    (adversarial review pass 3, finding 1: an earlier version of this
-    docstring said exactly that, and it is wrong about the mechanism, even
-    though the dollar figure it produces is correct). bmn.bill()'s REAL
-    invocation, inside _bill_window_all_current_vintage_modeled(), runs on the
-    WHOLE bill-aligned window as one continuous frame -- and on this
-    household's data, no (calendar month, season, TOU) bucket is genuinely
-    net-negative anywhere in that continuous scope: calling THIS function on
-    the continuous window (one frame spanning periods[0].start..periods[-1].end,
-    not summed per bill period) returns a mechanics gap of EXACTLY $0.00 (this
-    is a checkable fact, not an assumption -- run it yourself). bmn.bill()
-    never reaches its credit() branch for any of these buckets, because
-    there is nothing to reach it for.
-
-    What actually happens is narrower: bill periods do not align with
-    calendar-month boundaries, and this function is called separately PER BILL
-    PERIOD (build() sums its per-period results into
-    bill_window_current_vintage_total, never calling it on the continuous
-    window). A calendar month that is net-positive OVERALL, when split at a
-    bill-period boundary into two per-period fragments, can have one fragment
-    individually net-negative even though the whole month is not -- and this
-    function, seeing only that fragment (never the whole month, since each
-    call is scoped to one bill period's own dates), zero-clamps it. The value
-    returned here is what THIS function's own accumulator would have credited
-    (at UDC+CEA, the credit() rate) for every such fragment, across every bill
-    period -- a measure of the SIZE of the per-bill-period-restart artifact,
-    not of a real negative NEM bucket bmn.bill() prices differently. Restarting
-    at bill-period boundaries is still the correct scope for
-    current_vintage_total and delivery_own_vintage (a real statement settles
-    NEM only over its own printed dates -- see the monthly-restart note above),
-    so this artifact is an unavoidable side effect of computing per-period
-    totals that are later compared against a continuous-window reference, not
-    a bug to fix here; it is reported so the caveat on
-    generation_and_fixed_charge_vintage_effect is quantified, not asserted.
-
-    delivery_vintage_effect is NOT affected by this scope difference: both
-    delivery_own_vintage and delivery_current_vintage are computed by THIS
-    SAME function, with the SAME per-bill-period restart, so any phantom
-    negative fragment is zero-clamped identically on both sides and cancels
-    out of their difference exactly like the unpriced-delivery slice does.
-
-    SIGN, stated explicitly because it is easy to get backwards (adversarial
-    review pass 2, finding 1 -- an earlier, separate issue from the causal one
-    above, already fixed): this function's own accumulator contributes ZERO
-    for a negative fragment;
-    what it WOULD have credited there is net*(UDC+CEA) (negative, since
-    net<0), so the disagreement this diagnostic reports is 0 - net*(UDC+CEA) =
-    -net*(UDC+CEA), summed over every such fragment, at current-vintage rates.
-    A POSITIVE return value means the sum of per-period zero-clamping made
-    bill_window_current_vintage_total HIGHER than a continuous-window
-    computation would have been, for this mechanical reason alone --
-    consistent with generation_and_fixed_charge_vintage_effect
-    (current_vintage_total minus the all-current-vintage-modeled total) being
-    pushed upward (less negative, or more positive) by this same amount."""
+    delivery split entirely. A net-negative (month, season, TOU) bucket
+    contributes ZERO to both accumulators (matching rates_history.py's own
+    "in-period exports settle at true-up" convention, which delivery_own_
+    vintage is built on -- both current- and own-vintage delivery must use the
+    SAME negative-bucket convention for delivery_vintage_effect to compare
+    like with like). The per-bill-period restart this creates, and how it is
+    quantified and attributed, is handled at the aggregate level -- see
+    _continuous_current_vintage_components() and the module docstring's "THE
+    RESTART ARTIFACT" section, not here: an earlier version of this function
+    tried to quantify it locally, per negative bucket, using a UDC+CEA
+    "credit-rate" placeholder, and that placeholder OVERSTATED the artifact by
+    conflating part of generation's own (now separately, cleanly handled)
+    effect into it -- retired in favor of the aggregate-level computation."""
     delivery_current_vintage = 0.0
     delivery_own_vintage = 0.0
     pcia_positive_kwh = 0.0
     unpriced_kwh = 0.0
     unpriced_days = set()
-    negative_bucket_mechanics_gap_usd = 0.0
 
     for (_ym, seas, p), grp in sub.groupby(["ym", "seas", "p"]):
         season = rates_history._SEASON_FOR_SEAS[seas]
@@ -481,15 +471,6 @@ def _delivery_and_pcia_kwh(sub):
         if bucket_net > 0:
             delivery_current_vintage += bucket_net * cur_rate
             pcia_positive_kwh += bucket_net
-        elif bucket_net < 0:
-            # disagreement = current_vintage_total's contribution (0) minus
-            # bmn.bill()'s real-credit contribution (net*(UDC+CEA)) -- i.e.
-            # the NEGATION of bmn.bill()'s own per-bucket credit term, not the
-            # credit term itself (adversarial review pass 2, finding 1: an
-            # earlier version stored bmn.bill()'s raw credit contribution
-            # here, sign and all, rather than the disagreement it was
-            # documented as).
-            negative_bucket_mechanics_gap_usd += -bucket_net * (cur_rate + rates.CEA[seas][p])
 
         # own vintage: bucket by (sourced rate | "unpriced, current-rate
         # fallback") across calendar days WITHIN this (month, season, TOU)
@@ -514,7 +495,7 @@ def _delivery_and_pcia_kwh(sub):
                     delivery_own_vintage += net * key
 
     return (delivery_current_vintage, delivery_own_vintage, pcia_positive_kwh,
-            unpriced_kwh, unpriced_days, negative_bucket_mechanics_gap_usd)
+            unpriced_kwh, unpriced_days)
 
 
 # ---------------------------------------------------------------------------
@@ -545,8 +526,7 @@ def _per_period_figures(d, row):
     # NEM 2.0's real monthly-restart netting rule (adversarial review pass 1,
     # finding 2).
     (delivery_current_vintage, delivery_own_vintage, pcia_positive_kwh,
-     unpriced_kwh, unpriced_days,
-     negative_bucket_mechanics_gap_usd) = _delivery_and_pcia_kwh(sub)
+     unpriced_kwh, unpriced_days) = _delivery_and_pcia_kwh(sub)
     pcia_current = rates.PCIA * pcia_positive_kwh
 
     # (f) NBC on GROSS imports, never netted -- matches billing_model_nem.bill().
@@ -597,7 +577,6 @@ def _per_period_figures(d, row):
         residual_usd=residual,
         unpriced_delivery_kwh=unpriced_kwh,
         unpriced_delivery_days=len(unpriced_days),
-        negative_bucket_mechanics_gap_usd=negative_bucket_mechanics_gap_usd,
     )
 
 
@@ -634,37 +613,225 @@ def _bill_window_all_current_vintage_modeled(d_full, start, end):
     return bmn.bill(sub)
 
 
+def _continuous_current_vintage_components(d_full, start, end):
+    """{delivery, generation, pcia, nbc, fixed_charge}: billing_model_nem.
+    bill()'s own per-bucket formula, decomposed into its five dollar
+    components, computed in ONE continuous pass over the bill-aligned window
+    (start..end inclusive) -- the SAME scope bmn.bill() itself uses, no
+    per-bill-period restart at all.
+
+    Delivery (UDC) and generation (CEA) are SIGN-INVARIANT in bmn.bill()'s own
+    formula: energy(s,p) = UDC+CEA+PCIA and credit(s,p) = UDC+CEA both include
+    UDC and CEA identically regardless of the bucket's net sign, so summing
+    net*UDC[s][p] and net*CEA[s][p] unconditionally over every (month, season,
+    TOU) bucket reproduces bmn.bill()'s own delivery and generation dollars
+    exactly -- with NO sensitivity to how the window gets sliced into pieces
+    (a per-bill-period sum of this same unconditional formula would give the
+    IDENTICAL number, since summing net*rate over sub-periods of a bucket
+    equals summing it over the whole bucket -- linearity, not a per-period
+    restart artifact). PCIA is the one component bmn.bill() prices only on
+    net>=0 buckets, matching its own documented mechanic -- so PCIA (like
+    delivery in _delivery_and_pcia_kwh, for the same underlying reason) IS
+    sensitive to how the window is sliced, which is exactly why delivery_pcia_
+    restart_artifact_usd exists (module docstring, "THE RESTART ARTIFACT").
+    NBC and the fixed charge (BSC*days) don't depend on TOU buckets at all.
+
+    Summing these five components exactly reproduces bmn.bill()'s own total
+    for the same frame -- verified by
+    case_continuous_components_sum_to_bmn_bill_total in the test suite, not
+    merely assumed."""
+    sub = d_full[(d_full.dt.dt.date >= start) & (d_full.dt.dt.date <= end)].copy()
+    delivery = generation = pcia = nbc = fixed_charge = 0.0
+    for _ym, m in sub.groupby("ym"):
+        fixed_charge += m.dt.dt.date.nunique() * rates.BSC
+        nbc += float(m["Consumption"].sum()) * rates.NBC
+        # rates.py's own short period labels, read off its own rate table
+        # rather than re-declared here: the TOU-label AST guard in
+        # test_scripts_runnable.py treats a private copy of the short trio as
+        # a reimplemented window rule (same convention rates_history.py's own
+        # _SHORT uses, and for the same reason).
+        for s in ("S", "W"):
+            for p in rates_history._SHORT:
+                grp = m[(m.seas == s) & (m.p == p)]
+                net = float(grp["Consumption"].sum() - grp["Generation"].sum())
+                delivery += net * rates.UDC[s][p]
+                generation += net * rates.CEA[s][p]
+                pcia += max(net, 0.0) * rates.PCIA
+    return dict(delivery=delivery, generation=generation, pcia=pcia, nbc=nbc,
+               fixed_charge=fixed_charge)
+
+
+CCA_RATES_CSV = DATA / "cca_generation_rates.csv"
+
+
+def _verify_cca_generation_rate_flat(periods):
+    """Confirm, ON THE DATA, that CEA's own charged per-TOU generation rate is
+    flat across every one of these 13 periods AND identical to rates.CEA's
+    current table -- the evidence generation_tou_window_effect's construction
+    depends on (a fresh Codex adversarial review flagged the prior version's
+    generation_and_fixed_charge_vintage_effect as an unsupported "vintage"
+    claim; analysis/cca_rate_extraction.py's own docstring already argues
+    CEA's rate never moved across the whole CCA era, but this function
+    verifies that claim FRESH, against these specific 13 periods, rather than
+    trusting the docstring's corpus-wide claim to cover them without checking).
+
+    Reads data/cca_generation_rates.csv, filters to authority == "charged_
+    tariff" rows for the three real TOU cells (on_peak, off_peak, super_off_
+    peak) on exactly these 13 periods, and fails closed (SystemExit, naming
+    the offending period or cell) unless:
+      (a) every one of the 13 periods is represented, and
+      (b) every (season, TOU) cell's charged rate is IDENTICAL across every
+          period that bills it, and
+      (c) that flat rate equals rates.CEA's current value to 5 decimal places.
+
+    If a future regeneration of data/cca_generation_rates.csv ever shows CEA's
+    rate moving, this fails closed rather than silently continuing to treat
+    generation as having zero rate-vintage effect -- generation_tou_window_
+    effect's construction would then need a real generation rate-vintage term,
+    which this script does not compute today because the evidence says there
+    is nothing to price."""
+    if not CCA_RATES_CSV.exists():
+        raise SystemExit(f"reprice_by_vintage: missing {CCA_RATES_CSV}")
+    rows = list(csv.DictReader(open(CCA_RATES_CSV, newline="")))
+    our_periods = {p["period"] for p in periods}
+    tariff_rows = [r for r in rows
+                  if r["authority"] == "charged_tariff"
+                  and r["tou_period"] in ("on_peak", "off_peak", "super_off_peak")
+                  and r["period"] in our_periods]
+    found_periods = {r["period"] for r in tariff_rows}
+    missing = sorted(our_periods - found_periods)
+    if missing:
+        raise SystemExit(
+            f"reprice_by_vintage: {CCA_RATES_CSV} has no charged_tariff generation "
+            f"rows for period(s) {missing} -- generation_tou_window_effect's "
+            "construction assumes CEA's rate is sourceable and flat for every one "
+            "of the 13 periods; cannot verify that here, refusing to assume it")
+    _SEASON_SHORT = {"summer": "S", "winter": "W"}
+    # Inverted from rates_history's own long-for-short mapping rather than a
+    # fresh {"on_peak": "on", ...} literal here: the TOU-label AST guard in
+    # test_scripts_runnable.py treats a private copy of the short trio as a
+    # reimplemented window rule (same reason _continuous_current_vintage_
+    # components() reads the trio off rates_history._SHORT instead).
+    _TOU_SHORT = {long: short for short, long in rates_history._LONG_FOR_SHORT.items()}
+    seen = {}
+    for r in tariff_rows:
+        key = (r["season"], r["tou_period"])
+        seen.setdefault(key, set()).add(round(float(r["rate_usd_per_kwh"]), 5))
+    problems = []
+    for (season, tou), rates_seen in sorted(seen.items()):
+        if len(rates_seen) != 1:
+            problems.append(f"{season}/{tou}: not flat across the 13 periods: "
+                            f"{sorted(rates_seen)}")
+            continue
+        observed = next(iter(rates_seen))
+        current = rates.CEA[_SEASON_SHORT[season]][_TOU_SHORT[tou]]
+        if abs(observed - current) > 1e-5:
+            problems.append(f"{season}/{tou}: charged {observed:.5f} != current "
+                            f"rates.CEA {current:.5f}")
+    if problems:
+        raise SystemExit(
+            "reprice_by_vintage: CEA generation-rate flatness/equality check FAILED "
+            "-- generation_tou_window_effect's construction assumes CEA's charged "
+            "rate is flat and equal to today's rates.CEA table; it is not, for:\n  "
+            + "\n  ".join(problems))
+
+
 # ---------------------------------------------------------------------------
 # Step 4: pure aggregation + the telescoping identity check -- kept free of
 # usage.csv/rates_history so it is directly testable on fabricated per-period
 # figures.
 # ---------------------------------------------------------------------------
 def _aggregate(per_period, native_window_total,
-               bill_window_all_current_vintage_modeled_total):
+               bill_window_all_current_vintage_modeled_total,
+               continuous_components):
     bill_window_current_vintage_total = sum(p["current_vintage_total_usd"] for p in per_period)
     bill_window_own_vintage_total = sum(p["own_vintage_total_usd"] for p in per_period)
     actual_total_sum = sum(p["actual_total_usd"] for p in per_period)
     residual_total = sum(p["residual_usd"] for p in per_period)
 
+    delivery_current_sum = sum(p["delivery_current_vintage_usd"] for p in per_period)
+    pcia_current_sum = sum(p["pcia_usd"] for p in per_period)
+    nbc_current_sum = sum(p["nbc_usd"] for p in per_period)
+    fixed_charge_actual_sum = sum(p["fixed_charge_actual_usd"] for p in per_period)
+    generation_actual_sum = sum(p["generation_actual_usd"] for p in per_period)
+
     # window_effect: native window -> bill-aligned window, BOTH sides modeled
     # by bmn.bill()'s own unmodified methodology -- a clean, same-methodology
     # comparison (adversarial review pass 1, finding 1's fix).
     window_effect = bill_window_all_current_vintage_modeled_total - native_window_total
-    # generation_and_fixed_charge_vintage_effect: substituting the REAL billed
-    # generation and fixed-charge dollars for bmn.bill()'s current-vintage
-    # MODEL of them (CEA table on interval kWh; BSC*days), window held fixed.
-    # See _build_notes' caveat on this term -- it is mostly, but not purely, a
-    # vintage effect (module docstring, "THE DECOMPOSITION").
-    generation_and_fixed_charge_vintage_effect = (
-        bill_window_current_vintage_total - bill_window_all_current_vintage_modeled_total)
+
+    # NBC must cancel exactly between the per-period sum and the continuous
+    # total: NBC is linear in gross kWh with no bucketing/sign dependence at
+    # all, so the two computations are the SAME sum sliced two different
+    # ways. A nonzero difference means something upstream is broken (a period
+    # boundary mismatch, a filtering bug), not a real effect -- fail closed
+    # rather than silently absorb it into a vintage term.
+    nbc_diff = nbc_current_sum - continuous_components["nbc"]
+    if abs(nbc_diff) > 0.005:
+        raise SystemExit(
+            "reprice_by_vintage: NBC does not cancel between the per-period sum "
+            f"(${nbc_current_sum:.2f}) and the continuous-window total "
+            f"(${continuous_components['nbc']:.2f}) -- NBC has no bucketing or "
+            "sign dependence, so these must be identical; the window boundaries "
+            "or the per-period/continuous frames have drifted apart")
+
+    # fixed_charge_vintage_effect: real billed fixed-charge dollars vs.
+    # bmn.bill()'s continuous-window BSC*days model. Clean: BSC is linear in
+    # day-count, no sign/bucket dependence, so this has no restart-scope
+    # sensitivity at all (module docstring, "THE RESTART ARTIFACT").
+    fixed_charge_vintage_effect = fixed_charge_actual_sum - continuous_components["fixed_charge"]
+
+    # generation_clean_tou_effect: real billed generation dollars vs.
+    # bmn.bill()'s continuous-window CEA-priced model -- the properly isolated
+    # TOU-window-shape effect on generation (module docstring, "GENERATION
+    # RATE VINTAGE IS ZERO, BY EVIDENCE"). Diagnostic, reported for
+    # transparency; NOT itself one of the six identity terms.
+    generation_clean_tou_effect = generation_actual_sum - continuous_components["generation"]
+
+    # delivery_pcia_restart_artifact_usd: the per-bill-period-restart artifact
+    # (module docstring, "THE RESTART ARTIFACT"), computed as the ACTUAL
+    # difference between the per-period-summed and continuous-window totals
+    # for delivery and PCIA -- not reconstructed from a per-negative-bucket
+    # formula (the retired negative_bucket_mechanics_gap_usd did that, and
+    # overstated this artifact by conflating part of generation's own effect
+    # into it).
+    delivery_restart_artifact = delivery_current_sum - continuous_components["delivery"]
+    pcia_restart_artifact = pcia_current_sum - continuous_components["pcia"]
+    delivery_pcia_restart_artifact = delivery_restart_artifact + pcia_restart_artifact
+
+    # generation_tou_window_effect: the term used in the identity. Equal to
+    # generation_clean_tou_effect PLUS the restart artifact, by construction
+    # -- this is what makes generation_tou_window_effect + fixed_charge_
+    # vintage_effect reconstruct (current_vintage_total - all_modeled) EXACTLY
+    # (asserted below), which is what the 6-term identity requires.
+    generation_tou_window_effect = generation_clean_tou_effect + delivery_pcia_restart_artifact
+
+    # Internal cross-check: the two new terms must decompose the OLD combined
+    # quantity (current_vintage_total - all_modeled) exactly, with nothing
+    # left over -- a more specific diagnostic than waiting for the final
+    # 6-term identity check below to catch the same bug less legibly.
+    old_combined = bill_window_current_vintage_total - bill_window_all_current_vintage_modeled_total
+    reconstructed = generation_tou_window_effect + fixed_charge_vintage_effect
+    if abs(reconstructed - old_combined) > 0.005:
+        raise SystemExit(
+            "reprice_by_vintage: generation_tou_window_effect + fixed_charge_"
+            f"vintage_effect (${reconstructed:.2f}) does not reconstruct "
+            f"current_vintage_total - bill_window_all_current_vintage_modeled_total "
+            f"(${old_combined:.2f}) -- the generation/fixed-charge decomposition is "
+            "inconsistent with its own inputs")
+
     # delivery_vintage_effect: own-vintage UDC vs current-vintage UDC, real
     # generation/fixed-charge held fixed on both sides (cancels out).
     delivery_vintage_effect = bill_window_own_vintage_total - bill_window_current_vintage_total
-    total_vintage_effect = delivery_vintage_effect + generation_and_fixed_charge_vintage_effect
+    # generation excluded, per the flatness proof (module docstring).
+    total_vintage_effect = delivery_vintage_effect + fixed_charge_vintage_effect
+
     # residual_total, defined above as the sum of the (actual - own_vintage)
     # per-period residuals, is ALSO exactly actual_total_sum -
     # bill_window_own_vintage_total (same telescoping convention) -- assert
-    # the two routes to it agree before trusting either.
+    # the two routes to it agree before trusting either. Unaffected by the
+    # generation/fixed-charge restructuring above: it never depended on how
+    # (current_vintage_total - all_modeled) gets further decomposed.
     residual_total_direct = actual_total_sum - bill_window_own_vintage_total
     if abs(residual_total - residual_total_direct) > 0.005:
         raise SystemExit(
@@ -673,22 +840,26 @@ def _aggregate(per_period, native_window_total,
             f"bill_window_own_vintage_total (${residual_total_direct:.2f}) -- "
             "per-period arithmetic is inconsistent with the aggregate")
 
-    identity_lhs = (native_window_total + window_effect
-                    + generation_and_fixed_charge_vintage_effect
-                    + delivery_vintage_effect + residual_total)
+    identity_lhs = (native_window_total + window_effect + generation_tou_window_effect
+                    + fixed_charge_vintage_effect + delivery_vintage_effect + residual_total)
     if abs(identity_lhs - actual_total_sum) > 0.005:
         raise SystemExit(
             "reprice_by_vintage: the telescoping identity native_window_total + "
-            "window_effect + generation_and_fixed_charge_vintage_effect + "
-            "delivery_vintage_effect + residual_total == actual_total_sum does not "
-            f"hold: {identity_lhs:.2f} != {actual_total_sum:.2f} -- this is pure "
-            "arithmetic and must be exact; an aggregation bug, not a data finding")
+            "window_effect + generation_tou_window_effect + fixed_charge_vintage_"
+            "effect + delivery_vintage_effect + residual_total == actual_total_sum "
+            f"does not hold: {identity_lhs:.2f} != {actual_total_sum:.2f} -- this is "
+            "pure arithmetic and must be exact; an aggregation bug, not a data finding")
 
     return dict(
         native_window_total=native_window_total,
         bill_window_all_current_vintage_modeled_total=bill_window_all_current_vintage_modeled_total,
         window_effect=window_effect,
-        generation_and_fixed_charge_vintage_effect=generation_and_fixed_charge_vintage_effect,
+        generation_tou_window_effect=generation_tou_window_effect,
+        generation_clean_tou_effect=generation_clean_tou_effect,
+        delivery_pcia_restart_artifact_usd=delivery_pcia_restart_artifact,
+        delivery_restart_artifact_usd=delivery_restart_artifact,
+        pcia_restart_artifact_usd=pcia_restart_artifact,
+        fixed_charge_vintage_effect=fixed_charge_vintage_effect,
         delivery_vintage_effect=delivery_vintage_effect,
         total_vintage_effect=total_vintage_effect,
         residual_total=residual_total,
@@ -792,34 +963,130 @@ def _residual_concentration_note(per_period):
     )
 
 
-def _build_notes(per_period, residual_total, generation_and_fixed_charge_vintage_effect):
+def _generation_side_fees_usd(per_period):
+    """Real generation-side dollars data/cca_generation_rates.csv carries that
+    neither generation_clean_tou_effect's CEA-table model nor any other term
+    in this script prices: CEA's flat "Clean Impact Plus" product adder
+    (tou_period == "clean_impact_plus") and the per-period state surcharge tax
+    (authority == "charged_fee"), summed over the 13 periods in scope. A small,
+    disclosed component of generation_clean_tou_effect, not folded in silently."""
+    our_periods = {p["period"] for p in per_period}
+    rows = [r for r in csv.DictReader(open(CCA_RATES_CSV, newline=""))
+           if r["period"] in our_periods
+           and (r["tou_period"] == "clean_impact_plus" or r["authority"] == "charged_fee")]
+    return sum(float(r["usd"]) for r in rows)
+
+
+def _build_notes(per_period, agg):
     kwh = _kwh_reconciliation_notes(per_period)
     total_unpriced_kwh = sum(p["unpriced_delivery_kwh"] for p in per_period)
     total_unpriced_days = sum(p["unpriced_delivery_days"] for p in per_period)
-    total_mechanics_gap = sum(p["negative_bucket_mechanics_gap_usd"] for p in per_period)
+    residual_total = agg["residual_total"]
+    generation_tou_window_effect = agg["generation_tou_window_effect"]
+    generation_clean_tou_effect = agg["generation_clean_tou_effect"]
+    delivery_pcia_restart_artifact = agg["delivery_pcia_restart_artifact_usd"]
+    fixed_charge_vintage_effect = agg["fixed_charge_vintage_effect"]
+    generation_side_fees = _generation_side_fees_usd(per_period)
     material = abs(residual_total) >= 5.0
+
     return dict(
-        pcia_nbc_generation_vintage_limitation=(
+        generation_rate_vintage_is_zero_by_evidence=(
+            "_verify_cca_generation_rate_flat() confirmed, against data/"
+            "cca_generation_rates.csv (built by analysis/cca_rate_extraction.py "
+            "from every CCA-era bill PDF), that CEA's charged per-TOU generation "
+            "rate is flat across all 13 periods in this corpus AND identical to "
+            "rates.CEA's current table for every one of the six (season, TOU) "
+            "cells, to 5 decimal places -- direct bill evidence, not an assumption "
+            "carried over from that module's own docstring. There is therefore NO "
+            "generation rate-vintage term in this decomposition: CEA charged "
+            "exactly today's rate throughout the analysis year, so pricing "
+            "generation at rates.CEA for the whole window is not a current-vintage "
+            "modeling choice here, it is what was actually charged. If a future "
+            "regeneration of data/cca_generation_rates.csv ever shows this rate "
+            "moving, build() fails closed rather than silently continuing to "
+            "assume zero generation-vintage effect."),
+        generation_tou_window_effect_explanation=(
+            f"generation_tou_window_effect (${generation_tou_window_effect:+.2f}) is "
+            "NOT a vintage effect (see generation_rate_vintage_is_zero_by_evidence) "
+            "-- it is a quantified measurement of the SAME TOU-window-shape "
+            "confound this script's residual_concentration note already documents "
+            "for delivery/PCIA/NBC, now determined for generation dollars "
+            "specifically instead of folded into 'not determined.' "
+            "billing_model_nem.load() assigns every historical 15-minute interval's "
+            "TOU period via rates.period_at()'s CURRENT window shape, applied "
+            "uniformly to every historical date; the real statements billed "
+            "generation against kWh bucketed by whichever window shape was "
+            "actually in force on each date. Since CEA's on/off/sop rates differ "
+            "by roughly $0.11-0.47/kWh, reclassified kWh produces a real dollar "
+            f"gap: generation_clean_tou_effect (${generation_clean_tou_effect:+.2f}) "
+            "is real billed generation dollars minus the continuous-window, "
+            "current-vintage-priced CEA model of them "
+            "(_continuous_current_vintage_components()). This figure also "
+            "carries, disclosed here rather than folded in silently: (1) "
+            f"${generation_side_fees:.2f} of real generation-side dollars this "
+            "script never models at all -- CEA's flat per-kWh 'Clean Impact Plus' "
+            "product adder and the per-period state surcharge tax, both real bill "
+            "lines (data/cca_generation_rates.csv's own clean_impact_plus and "
+            "charged_fee rows) -- and (2) ordinary rounding. "
+            f"generation_tou_window_effect adds delivery_pcia_restart_artifact_usd "
+            f"(${delivery_pcia_restart_artifact:+.2f}) on top of "
+            "generation_clean_tou_effect -- see delivery_pcia_restart_artifact_usd's "
+            "own note for what that is and why it lands here rather than in "
+            "fixed_charge_vintage_effect."),
+        delivery_pcia_restart_artifact_usd_explanation=(
+            f"${delivery_pcia_restart_artifact:+.2f} "
+            "(delivery ${:+.2f}, PCIA ${:+.2f}) is the per-bill-period-restart "
+            "artifact (module docstring, 'THE RESTART ARTIFACT'): "
+            "delivery_current_vintage and pcia_current are computed by "
+            "_delivery_and_pcia_kwh(), called separately PER BILL PERIOD and "
+            "summed; bill_window_all_current_vintage_modeled_total prices the "
+            "same window CONTINUOUSLY (one bmn.bill() call). Bill periods don't "
+            "align with calendar-month boundaries, so a calendar month that nets "
+            "positive OVERALL can split at a bill-period boundary into a "
+            "negative-looking fragment that this script's own zero-clamp drops -- "
+            "verified directly: _delivery_and_pcia_kwh() on the bill-aligned "
+            "window as ONE continuous frame finds ZERO net-negative buckets, so "
+            "bmn.bill() never actually credits any of them; every occurrence this "
+            "script finds is an artifact of its own per-bill-period restart, not a "
+            "real NEM credit bmn.bill() applies differently. This artifact folds "
+            "into generation_tou_window_effect (not fixed_charge_vintage_effect, "
+            "which has no restart-scope sensitivity at all: BSC*days is linear in "
+            "day-count). An earlier diagnostic (negative_bucket_mechanics_gap_usd, "
+            "retired) tried to compute this per negative bucket using a UDC+CEA "
+            "'credit-rate' placeholder and OVERSTATED it by about $6.66 by folding "
+            "in part of generation's own effect; this figure is instead the direct, "
+            "actual difference between the per-period-summed and continuous-window "
+            "delivery/PCIA totals. delivery_vintage_effect is NOT affected: both "
+            "its sides come from the SAME per-bill-period-restarted calls, so this "
+            "artifact cancels out of their difference."
+        ).format(agg["delivery_restart_artifact_usd"], agg["pcia_restart_artifact_usd"]),
+        fixed_charge_vintage_note=(
+            f"fixed_charge_vintage_effect (${fixed_charge_vintage_effect:+.2f}) is "
+            "genuinely a vintage/regime effect, not disputed: the real billed "
+            "fixed charge (Monthly Service Fee before 2025-10-01, Base Services "
+            "Charge from then on -- both from bill_periods_electric.csv's "
+            "fixed_charge_total) minus a continuous-window model of BSC*days at "
+            "today's rate. SDG&E's fixed-charge structure genuinely changed "
+            "(settled, issue #7, CPUC Resolution E-5355), so this is a real "
+            "structural billing difference, cleanly isolated with no restart-scope "
+            "sensitivity (BSC*days is linear in day-count)."),
+        pcia_nbc_vintage_limitation=(
             "rates_history.py can source the UDC delivery tariff actually in force "
             "on any historical date in the bill corpus (bill_tou_detail.csv's "
-            "printed 'Rate/kWh' lines), but it cannot source historical PCIA, "
-            "non-bypassable-charge (NBC), or CCA/CEA generation rates -- no "
-            "committed artifact carries any of the three (rates_history.py's own "
-            "module docstring; RateSet.pcia/.nbc/.cca_generation all refuse for "
-            "this reason). PCIA and NBC are held at the current rates.py vintage in "
-            "current_vintage_total, own_vintage_total AND bill_window_all_current_"
-            "vintage_modeled_total alike, so they cancel out of every vintage term "
-            "(delivery_vintage_effect and generation_and_fixed_charge_vintage_effect "
-            "both) and cannot explain either. All 13 corpus periods are CCA-billed, "
-            "so generation is instead substituted from the real billed "
-            "cca_generation dollar figure (issue #30 AC4's 'explicitly separate "
-            "supply treatment') everywhere this script computes a vintage-current "
-            "total that isn't bmn.bill()'s own model -- see generation_and_fixed_"
-            "charge_vintage_caveat for where that substitution DOES show up. PCIA "
-            "and NBC CAN still be part of residual_total: if the actual historical "
-            "PCIA/NBC rates differed from what is substituted here, that difference "
-            "would show up in residual_total with no way for this script to "
-            "separate it from a genuine model-vs-bill mechanics gap."
+            "printed 'Rate/kWh' lines), but it cannot source historical PCIA or "
+            "non-bypassable-charge (NBC) rates -- no committed artifact carries "
+            "either (rates_history.py's own module docstring; RateSet.pcia/.nbc "
+            "both refuse for this reason). Unlike generation (see "
+            "generation_rate_vintage_is_zero_by_evidence), there is no independent "
+            "evidence PCIA or NBC stayed flat -- they are simply held at the "
+            "current rates.py vintage in current_vintage_total, own_vintage_total "
+            "AND bill_window_all_current_vintage_modeled_total alike, so they "
+            "cancel out of every vintage term (delivery_vintage_effect, "
+            "generation_tou_window_effect, fixed_charge_vintage_effect, all three) "
+            "and cannot explain any of them. If the actual historical PCIA/NBC "
+            "rates differed from what is substituted here, that difference shows "
+            "up in residual_total with no way for this script to separate it from "
+            "a genuine model-vs-bill mechanics gap."
             + (" Given residual_total is not close to zero, this is one of three "
                "candidate contributors to it (see unpriced_delivery_limitation and "
                "residual_concentration for the other two)."
@@ -827,50 +1094,6 @@ def _build_notes(per_period, residual_total, generation_and_fixed_charge_vintage
                " residual_total is small enough here that this limitation is "
                "largely academic for this dataset, but it remains structurally "
                "unresolved.")),
-        generation_and_fixed_charge_vintage_caveat=(
-            "generation_and_fixed_charge_vintage_effect is mostly, but not purely, "
-            "a vintage effect. It differences bill_window_current_vintage_total "
-            "(real billed generation and fixed-charge dollars substituted; delivery "
-            "and PCIA computed by _delivery_and_pcia_kwh called separately PER BILL "
-            "PERIOD and summed) against bill_window_all_current_vintage_modeled_"
-            "total (billing_model_nem.bill() called ONCE on the whole bill-aligned "
-            "window as a continuous frame). Those two totals disagree on a second, "
-            "smaller, MECHANICAL effect having nothing to do with generation or the "
-            "fixed charge: bill periods do not align with calendar-month "
-            "boundaries, so a calendar month that is net-positive OVERALL can be "
-            "split at a bill-period boundary into two per-period fragments where "
-            "one fragment alone is net-negative; computed per period (as "
-            "bill_window_current_vintage_total is), that fragment zero-clamps to "
-            "$0, losing a netting offset the same month would keep if priced "
-            "continuously the way bmn.bill() actually is. This is NOT bmn.bill()'s "
-            "real invocation crediting a bucket this script zero-clamps instead -- "
-            "verified directly: calling _delivery_and_pcia_kwh on the bill-aligned "
-            "window as ONE continuous frame returns a mechanics gap of exactly "
-            "$0.00, because no bucket is genuinely net-negative anywhere in the "
-            "continuous window bmn.bill() actually sees; every occurrence this "
-            "script finds is an artifact of its own per-bill-period restart, not a "
-            "real NEM credit bmn.bill() applies differently. "
-            f"negative_bucket_mechanics_gap_usd = ${total_mechanics_gap:.2f} is "
-            "exactly the size of that restart artifact, summed over every bill "
-            "period's own _delivery_and_pcia_kwh call, so it is quantified rather "
-            "than merely asserted. Against a generation_and_fixed_charge_vintage_"
-            f"effect of ${generation_and_fixed_charge_vintage_effect:.2f}, the "
-            "mechanics gap is "
-            + (f"{abs(100.0 * total_mechanics_gap / generation_and_fixed_charge_vintage_effect):.1f}% "
-               "of the term's own size -- material enough that this term should be "
-               "read as 'mostly generation/fixed-charge vintage, with a real, "
-               "quantified per-bill-period-restart contribution,' not as a pure "
-               "vintage measurement."
-               if generation_and_fixed_charge_vintage_effect else
-               "not meaningfully comparable (the term itself is at or near zero).")
-            + " total_vintage_effect therefore carries the same caveat: it is the "
-            "right combined number to answer 'how much of the gap is rate vintage,' "
-            "but it is not as cleanly isolated as delivery_vintage_effect alone. "
-            "delivery_vintage_effect itself is NOT affected by this per-period-vs-"
-            "continuous scope difference: both delivery_own_vintage and "
-            "delivery_current_vintage come from the SAME per-bill-period-restarted "
-            "calls, so any phantom negative fragment zero-clamps identically on "
-            "both sides and cancels out of their difference."),
         unpriced_delivery_limitation=(
             "delivery/off_peak (both seasons) is unsourceable on "
             f"{total_unpriced_days} calendar-day(s) across the 13-period corpus "
@@ -887,8 +1110,8 @@ def _build_notes(per_period, residual_total, generation_and_fixed_charge_vintage
             "residual_total instead, indistinguishable there from a real "
             "model-vs-bill mechanics gap."
             + (" Given residual_total is not close to zero, this is one of three "
-               "candidate contributors to it (see pcia_nbc_generation_vintage_"
-               "limitation and residual_concentration for the other two)."
+               "candidate contributors to it (see pcia_nbc_vintage_limitation and "
+               "residual_concentration for the other two)."
                if material else
                " residual_total is small enough here that this limitation is "
                "largely academic for this dataset, but it remains structurally "
@@ -896,10 +1119,12 @@ def _build_notes(per_period, residual_total, generation_and_fixed_charge_vintage
         residual_concentration=_residual_concentration_note(per_period),
         kwh_reconciliation=kwh,
         out_of_scope=(
-            "Sourcing historical PCIA/NBC/CCA-generation rates by any means beyond "
-            "what rates_history.py already provides is out of scope for this "
-            "script (issue #27, 'independent oracle for historical rate "
-            "vintages')."),
+            "Sourcing historical PCIA/NBC rates by any means beyond what "
+            "rates_history.py already provides is out of scope for this script "
+            "(issue #27, 'independent oracle for historical rate vintages'). "
+            "CEA generation rate vintage is NOT in this category any more -- it "
+            "is determined, by direct evidence, to be zero (see "
+            "generation_rate_vintage_is_zero_by_evidence)."),
     )
 
 
@@ -908,6 +1133,7 @@ def _build_notes(per_period, residual_total, generation_and_fixed_charge_vintage
 # ---------------------------------------------------------------------------
 def build():
     periods = _load_periods()
+    _verify_cca_generation_rate_flat(periods)
     d = bmn.load()
 
     available_dates = set(d.dt.dt.date)
@@ -917,10 +1143,12 @@ def build():
     native_window_total = _native_window_total(d)
     bill_window_all_current_vintage_modeled_total = _bill_window_all_current_vintage_modeled(
         d, periods[0]["start"], periods[-1]["end"])
+    continuous_components = _continuous_current_vintage_components(
+        d, periods[0]["start"], periods[-1]["end"])
     agg = _aggregate(per_period, native_window_total,
-                     bill_window_all_current_vintage_modeled_total)
-    notes = _build_notes(per_period, agg["residual_total"],
-                         agg["generation_and_fixed_charge_vintage_effect"])
+                     bill_window_all_current_vintage_modeled_total,
+                     continuous_components)
+    notes = _build_notes(per_period, agg)
 
     return dict(
         meta=dict(
@@ -938,6 +1166,9 @@ def build():
                 "analysis/rates.py (current-vintage UDC/PCIA/NBC constants)",
                 "analysis/billing_model_nem.py (native rolling-window model and "
                 "current-vintage modeled reference, reused read-only)",
+                "analysis/cca_rate_extraction.py -> data/cca_generation_rates.csv "
+                "(CEA's own charged per-TOU generation rate, verified flat and "
+                "equal to current)",
                 "private raw Green Button 15-min export (usage.csv)",
             ],
         ),
@@ -945,8 +1176,12 @@ def build():
         bill_window_all_current_vintage_modeled_total=(
             agg["bill_window_all_current_vintage_modeled_total"]),
         window_effect=agg["window_effect"],
-        generation_and_fixed_charge_vintage_effect=(
-            agg["generation_and_fixed_charge_vintage_effect"]),
+        generation_tou_window_effect=agg["generation_tou_window_effect"],
+        generation_clean_tou_effect=agg["generation_clean_tou_effect"],
+        delivery_pcia_restart_artifact_usd=agg["delivery_pcia_restart_artifact_usd"],
+        delivery_restart_artifact_usd=agg["delivery_restart_artifact_usd"],
+        pcia_restart_artifact_usd=agg["pcia_restart_artifact_usd"],
+        fixed_charge_vintage_effect=agg["fixed_charge_vintage_effect"],
         delivery_vintage_effect=agg["delivery_vintage_effect"],
         total_vintage_effect=agg["total_vintage_effect"],
         residual_total=agg["residual_total"],
@@ -981,11 +1216,12 @@ def main():
     path = _write(result, DATA)
     print(f"native window total (current vintage, modeled):        ${result['native_window_total']:.2f}")
     print(f"  + window effect (bill-aligned window, modeled both):   ${result['window_effect']:+.2f}")
-    print(f"  + generation/fixed-charge vintage effect (see caveat): ${result['generation_and_fixed_charge_vintage_effect']:+.2f}")
+    print(f"  + generation TOU-window effect (NOT vintage; see notes): ${result['generation_tou_window_effect']:+.2f}")
+    print(f"  + fixed-charge vintage effect (regime change):         ${result['fixed_charge_vintage_effect']:+.2f}")
     print(f"  + delivery vintage effect (own historical rate):       ${result['delivery_vintage_effect']:+.2f}")
     print(f"  + residual (not determined further):                   ${result['residual_total']:+.2f}")
     print(f"  = actual billed total:                                ${result['actual_total_sum']:.2f}")
-    print(f"total vintage effect (delivery + generation/fixed-charge): "
+    print(f"total vintage effect (delivery + fixed-charge, generation excluded): "
           f"${result['total_vintage_effect']:+.2f}")
     print(f"identity check: {result['identity_check_usd']:.4f} vs "
           f"{result['actual_total_sum']:.4f} (holds={result['identity_holds']})")

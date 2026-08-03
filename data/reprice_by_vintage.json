@@ -15,20 +15,26 @@
    "analysis/rates_history.py (historical UDC delivery tariff, delivery_only)",
    "analysis/rates.py (current-vintage UDC/PCIA/NBC constants)",
    "analysis/billing_model_nem.py (native rolling-window model and current-vintage modeled reference, reused read-only)",
+   "analysis/cca_rate_extraction.py -> data/cca_generation_rates.csv (CEA's own charged per-TOU generation rate, verified flat and equal to current)",
    "private raw Green Button 15-min export (usage.csv)"
   ]
  },
  "native_window_total": 4904.127823300001,
  "bill_window_all_current_vintage_modeled_total": 4850.004364700003,
  "window_effect": -54.12345859999823,
- "generation_and_fixed_charge_vintage_effect": -281.591254400003,
+ "generation_tou_window_effect": -256.08930440000006,
+ "generation_clean_tou_effect": -273.50291590000006,
+ "delivery_pcia_restart_artifact_usd": 17.413611500000002,
+ "delivery_restart_artifact_usd": 15.961716300000035,
+ "pcia_restart_artifact_usd": 1.4518951999999672,
+ "fixed_charge_vintage_effect": -25.501949999999965,
  "delivery_vintage_effect": -47.38840419999906,
- "total_vintage_effect": -328.97965860000204,
+ "total_vintage_effect": -72.89035419999902,
  "residual_total": -1238.8047060999997,
  "actual_total_sum": 3282.2199999999993,
  "bill_window_current_vintage_total": 4568.4131103,
  "bill_window_own_vintage_total": 4521.024706100001,
- "identity_check_usd": 3282.220000000001,
+ "identity_check_usd": 3282.220000000004,
  "identity_holds": true,
  "per_period": [
   {
@@ -54,8 +60,7 @@
    "delivery_vintage_effect_usd": -2.857459849999998,
    "residual_usd": -149.39622375,
    "unpriced_delivery_kwh": 53.84,
-   "unpriced_delivery_days": 32,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 32
   },
   {
    "period": "7/29/25 - 8/26/25",
@@ -80,8 +85,7 @@
    "delivery_vintage_effect_usd": -4.508394199999884,
    "residual_usd": -152.1460798500001,
    "unpriced_delivery_kwh": 138.38000000000005,
-   "unpriced_delivery_days": 29,
-   "negative_bucket_mechanics_gap_usd": 2.0456854
+   "unpriced_delivery_days": 29
   },
   {
    "period": "8/27/25 - 9/25/25",
@@ -106,8 +110,7 @@
    "delivery_vintage_effect_usd": -5.757010200000082,
    "residual_usd": -187.56906735,
    "unpriced_delivery_kwh": 269.455,
-   "unpriced_delivery_days": 30,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 30
   },
   {
    "period": "9/26/25 - 9/30/25",
@@ -132,8 +135,7 @@
    "delivery_vintage_effect_usd": -0.7408592000000027,
    "residual_usd": -19.014854250000006,
    "unpriced_delivery_kwh": 25.395000000000007,
-   "unpriced_delivery_days": 5,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 5
   },
   {
    "period": "10/1/25 - 10/27/25",
@@ -158,8 +160,7 @@
    "delivery_vintage_effect_usd": -5.555958400000009,
    "residual_usd": -177.74260369999996,
    "unpriced_delivery_kwh": 188.73000000000002,
-   "unpriced_delivery_days": 27,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 27
   },
   {
    "period": "10/28/25 - 11/25/25",
@@ -184,8 +185,7 @@
    "delivery_vintage_effect_usd": -7.457730550000065,
    "residual_usd": -172.12922149999997,
    "unpriced_delivery_kwh": 128.68500000000003,
-   "unpriced_delivery_days": 29,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 29
   },
   {
    "period": "11/26/25 - 12/26/25",
@@ -210,8 +210,7 @@
    "delivery_vintage_effect_usd": -7.147853399999974,
    "residual_usd": -174.8681957,
    "unpriced_delivery_kwh": 155.195,
-   "unpriced_delivery_days": 31,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 31
   },
   {
    "period": "12/27/25 - 1/27/26",
@@ -236,8 +235,7 @@
    "delivery_vintage_effect_usd": -5.628916400000037,
    "residual_usd": -89.07877029999997,
    "unpriced_delivery_kwh": 156.46499999999997,
-   "unpriced_delivery_days": 27,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 27
   },
   {
    "period": "1/28/26 - 2/26/26",
@@ -262,8 +260,7 @@
    "delivery_vintage_effect_usd": -3.7050887999999986,
    "residual_usd": -103.37907310000003,
    "unpriced_delivery_kwh": 52.17499999999999,
-   "unpriced_delivery_days": 30,
-   "negative_bucket_mechanics_gap_usd": 0.0
+   "unpriced_delivery_days": 30
   },
   {
    "period": "2/27/26 - 3/27/26",
@@ -288,8 +285,7 @@
    "delivery_vintage_effect_usd": -3.369851100000062,
    "residual_usd": -5.752573199999972,
    "unpriced_delivery_kwh": 0.0,
-   "unpriced_delivery_days": 0,
-   "negative_bucket_mechanics_gap_usd": 3.3503106000000007
+   "unpriced_delivery_days": 0
   },
   {
    "period": "3/28/26 - 4/28/26",
@@ -314,8 +310,7 @@
    "delivery_vintage_effect_usd": -0.6592820999999844,
    "residual_usd": -1.6179300000000012,
    "unpriced_delivery_kwh": 0.0,
-   "unpriced_delivery_days": 4,
-   "negative_bucket_mechanics_gap_usd": 4.336386599999999
+   "unpriced_delivery_days": 4
   },
   {
    "period": "4/29/26 - 5/28/26",
@@ -340,8 +335,7 @@
    "delivery_vintage_effect_usd": 0.0,
    "residual_usd": -3.7276676999999836,
    "unpriced_delivery_kwh": 0.0,
-   "unpriced_delivery_days": 0,
-   "negative_bucket_mechanics_gap_usd": 7.6444368
+   "unpriced_delivery_days": 0
   },
   {
    "period": "5/29/26 - 6/26/26",
@@ -366,14 +360,16 @@
    "delivery_vintage_effect_usd": 0.0,
    "residual_usd": -2.382445700000005,
    "unpriced_delivery_kwh": 0.0,
-   "unpriced_delivery_days": 3,
-   "negative_bucket_mechanics_gap_usd": 6.695925600000001
+   "unpriced_delivery_days": 3
   }
  ],
  "notes": {
-  "pcia_nbc_generation_vintage_limitation": "rates_history.py can source the UDC delivery tariff actually in force on any historical date in the bill corpus (bill_tou_detail.csv's printed 'Rate/kWh' lines), but it cannot source historical PCIA, non-bypassable-charge (NBC), or CCA/CEA generation rates -- no committed artifact carries any of the three (rates_history.py's own module docstring; RateSet.pcia/.nbc/.cca_generation all refuse for this reason). PCIA and NBC are held at the current rates.py vintage in current_vintage_total, own_vintage_total AND bill_window_all_current_vintage_modeled_total alike, so they cancel out of every vintage term (delivery_vintage_effect and generation_and_fixed_charge_vintage_effect both) and cannot explain either. All 13 corpus periods are CCA-billed, so generation is instead substituted from the real billed cca_generation dollar figure (issue #30 AC4's 'explicitly separate supply treatment') everywhere this script computes a vintage-current total that isn't bmn.bill()'s own model -- see generation_and_fixed_charge_vintage_caveat for where that substitution DOES show up. PCIA and NBC CAN still be part of residual_total: if the actual historical PCIA/NBC rates differed from what is substituted here, that difference would show up in residual_total with no way for this script to separate it from a genuine model-vs-bill mechanics gap. Given residual_total is not close to zero, this is one of three candidate contributors to it (see unpriced_delivery_limitation and residual_concentration for the other two).",
-  "generation_and_fixed_charge_vintage_caveat": "generation_and_fixed_charge_vintage_effect is mostly, but not purely, a vintage effect. It differences bill_window_current_vintage_total (real billed generation and fixed-charge dollars substituted; delivery and PCIA computed by _delivery_and_pcia_kwh called separately PER BILL PERIOD and summed) against bill_window_all_current_vintage_modeled_total (billing_model_nem.bill() called ONCE on the whole bill-aligned window as a continuous frame). Those two totals disagree on a second, smaller, MECHANICAL effect having nothing to do with generation or the fixed charge: bill periods do not align with calendar-month boundaries, so a calendar month that is net-positive OVERALL can be split at a bill-period boundary into two per-period fragments where one fragment alone is net-negative; computed per period (as bill_window_current_vintage_total is), that fragment zero-clamps to $0, losing a netting offset the same month would keep if priced continuously the way bmn.bill() actually is. This is NOT bmn.bill()'s real invocation crediting a bucket this script zero-clamps instead -- verified directly: calling _delivery_and_pcia_kwh on the bill-aligned window as ONE continuous frame returns a mechanics gap of exactly $0.00, because no bucket is genuinely net-negative anywhere in the continuous window bmn.bill() actually sees; every occurrence this script finds is an artifact of its own per-bill-period restart, not a real NEM credit bmn.bill() applies differently. negative_bucket_mechanics_gap_usd = $24.07 is exactly the size of that restart artifact, summed over every bill period's own _delivery_and_pcia_kwh call, so it is quantified rather than merely asserted. Against a generation_and_fixed_charge_vintage_effect of $-281.59, the mechanics gap is 8.5% of the term's own size -- material enough that this term should be read as 'mostly generation/fixed-charge vintage, with a real, quantified per-bill-period-restart contribution,' not as a pure vintage measurement. total_vintage_effect therefore carries the same caveat: it is the right combined number to answer 'how much of the gap is rate vintage,' but it is not as cleanly isolated as delivery_vintage_effect alone. delivery_vintage_effect itself is NOT affected by this per-period-vs-continuous scope difference: both delivery_own_vintage and delivery_current_vintage come from the SAME per-bill-period-restarted calls, so any phantom negative fragment zero-clamps identically on both sides and cancels out of their difference.",
-  "unpriced_delivery_limitation": "delivery/off_peak (both seasons) is unsourceable on 247 calendar-day(s) across the 13-period corpus (totaling 1168.3 net kWh at current-vintage rates) because no statement in the whole bill corpus ever printed a positive off-peak delivery kWh line there -- this household net-exported during those specific hours until a recent shift (see _delivery_and_pcia_kwh's docstring and data/rate_vintages.csv's 'absent' delivery/off_peak spans). That energy is priced at the current-vintage rate on BOTH sides of delivery_vintage_effect (the only rate this repo has any evidence for there), so it contributes zero to delivery_vintage_effect by construction, but any genuine historical difference for that specific slice is absorbed into residual_total instead, indistinguishable there from a real model-vs-bill mechanics gap. Given residual_total is not close to zero, this is one of three candidate contributors to it (see pcia_nbc_generation_vintage_limitation and residual_concentration for the other two).",
+  "generation_rate_vintage_is_zero_by_evidence": "_verify_cca_generation_rate_flat() confirmed, against data/cca_generation_rates.csv (built by analysis/cca_rate_extraction.py from every CCA-era bill PDF), that CEA's charged per-TOU generation rate is flat across all 13 periods in this corpus AND identical to rates.CEA's current table for every one of the six (season, TOU) cells, to 5 decimal places -- direct bill evidence, not an assumption carried over from that module's own docstring. There is therefore NO generation rate-vintage term in this decomposition: CEA charged exactly today's rate throughout the analysis year, so pricing generation at rates.CEA for the whole window is not a current-vintage modeling choice here, it is what was actually charged. If a future regeneration of data/cca_generation_rates.csv ever shows this rate moving, build() fails closed rather than silently continuing to assume zero generation-vintage effect.",
+  "generation_tou_window_effect_explanation": "generation_tou_window_effect ($-256.09) is NOT a vintage effect (see generation_rate_vintage_is_zero_by_evidence) -- it is a quantified measurement of the SAME TOU-window-shape confound this script's residual_concentration note already documents for delivery/PCIA/NBC, now determined for generation dollars specifically instead of folded into 'not determined.' billing_model_nem.load() assigns every historical 15-minute interval's TOU period via rates.period_at()'s CURRENT window shape, applied uniformly to every historical date; the real statements billed generation against kWh bucketed by whichever window shape was actually in force on each date. Since CEA's on/off/sop rates differ by roughly $0.11-0.47/kWh, reclassified kWh produces a real dollar gap: generation_clean_tou_effect ($-273.50) is real billed generation dollars minus the continuous-window, current-vintage-priced CEA model of them (_continuous_current_vintage_components()). This figure also carries, disclosed here rather than folded in silently: (1) $17.03 of real generation-side dollars this script never models at all -- CEA's flat per-kWh 'Clean Impact Plus' product adder and the per-period state surcharge tax, both real bill lines (data/cca_generation_rates.csv's own clean_impact_plus and charged_fee rows) -- and (2) ordinary rounding. generation_tou_window_effect adds delivery_pcia_restart_artifact_usd ($+17.41) on top of generation_clean_tou_effect -- see delivery_pcia_restart_artifact_usd's own note for what that is and why it lands here rather than in fixed_charge_vintage_effect.",
+  "delivery_pcia_restart_artifact_usd_explanation": "$+17.41 (delivery $+15.96, PCIA $+1.45) is the per-bill-period-restart artifact (module docstring, 'THE RESTART ARTIFACT'): delivery_current_vintage and pcia_current are computed by _delivery_and_pcia_kwh(), called separately PER BILL PERIOD and summed; bill_window_all_current_vintage_modeled_total prices the same window CONTINUOUSLY (one bmn.bill() call). Bill periods don't align with calendar-month boundaries, so a calendar month that nets positive OVERALL can split at a bill-period boundary into a negative-looking fragment that this script's own zero-clamp drops -- verified directly: _delivery_and_pcia_kwh() on the bill-aligned window as ONE continuous frame finds ZERO net-negative buckets, so bmn.bill() never actually credits any of them; every occurrence this script finds is an artifact of its own per-bill-period restart, not a real NEM credit bmn.bill() applies differently. This artifact folds into generation_tou_window_effect (not fixed_charge_vintage_effect, which has no restart-scope sensitivity at all: BSC*days is linear in day-count). An earlier diagnostic (negative_bucket_mechanics_gap_usd, retired) tried to compute this per negative bucket using a UDC+CEA 'credit-rate' placeholder and OVERSTATED it by about $6.66 by folding in part of generation's own effect; this figure is instead the direct, actual difference between the per-period-summed and continuous-window delivery/PCIA totals. delivery_vintage_effect is NOT affected: both its sides come from the SAME per-bill-period-restarted calls, so this artifact cancels out of their difference.",
+  "fixed_charge_vintage_note": "fixed_charge_vintage_effect ($-25.50) is genuinely a vintage/regime effect, not disputed: the real billed fixed charge (Monthly Service Fee before 2025-10-01, Base Services Charge from then on -- both from bill_periods_electric.csv's fixed_charge_total) minus a continuous-window model of BSC*days at today's rate. SDG&E's fixed-charge structure genuinely changed (settled, issue #7, CPUC Resolution E-5355), so this is a real structural billing difference, cleanly isolated with no restart-scope sensitivity (BSC*days is linear in day-count).",
+  "pcia_nbc_vintage_limitation": "rates_history.py can source the UDC delivery tariff actually in force on any historical date in the bill corpus (bill_tou_detail.csv's printed 'Rate/kWh' lines), but it cannot source historical PCIA or non-bypassable-charge (NBC) rates -- no committed artifact carries either (rates_history.py's own module docstring; RateSet.pcia/.nbc both refuse for this reason). Unlike generation (see generation_rate_vintage_is_zero_by_evidence), there is no independent evidence PCIA or NBC stayed flat -- they are simply held at the current rates.py vintage in current_vintage_total, own_vintage_total AND bill_window_all_current_vintage_modeled_total alike, so they cancel out of every vintage term (delivery_vintage_effect, generation_tou_window_effect, fixed_charge_vintage_effect, all three) and cannot explain any of them. If the actual historical PCIA/NBC rates differed from what is substituted here, that difference shows up in residual_total with no way for this script to separate it from a genuine model-vs-bill mechanics gap. Given residual_total is not close to zero, this is one of three candidate contributors to it (see unpriced_delivery_limitation and residual_concentration for the other two).",
+  "unpriced_delivery_limitation": "delivery/off_peak (both seasons) is unsourceable on 247 calendar-day(s) across the 13-period corpus (totaling 1168.3 net kWh at current-vintage rates) because no statement in the whole bill corpus ever printed a positive off-peak delivery kWh line there -- this household net-exported during those specific hours until a recent shift (see _delivery_and_pcia_kwh's docstring and data/rate_vintages.csv's 'absent' delivery/off_peak spans). That energy is priced at the current-vintage rate on BOTH sides of delivery_vintage_effect (the only rate this repo has any evidence for there), so it contributes zero to delivery_vintage_effect by construction, but any genuine historical difference for that specific slice is absorbed into residual_total instead, indistinguishable there from a real model-vs-bill mechanics gap. Given residual_total is not close to zero, this is one of three candidate contributors to it (see pcia_nbc_vintage_limitation and residual_concentration for the other two).",
   "residual_concentration": {
    "window_change_date": "2026-03-01",
    "periods_ending_before": [
@@ -408,6 +404,6 @@
    "material": false,
    "verdict": "every period's interval-derived gross kWh agrees with the bill's own gross_kwh to within 0.93% (worst period) -- small enough that metering/window-slicing is NOT a material contributor to residual_total, which strengthens (without proving) this artifact's other named candidates (pcia_nbc_generation_vintage_limitation, unpriced_delivery_limitation, residual_concentration) as the more likely explanations"
   },
-  "out_of_scope": "Sourcing historical PCIA/NBC/CCA-generation rates by any means beyond what rates_history.py already provides is out of scope for this script (issue #27, 'independent oracle for historical rate vintages')."
+  "out_of_scope": "Sourcing historical PCIA/NBC rates by any means beyond what rates_history.py already provides is out of scope for this script (issue #27, 'independent oracle for historical rate vintages'). CEA generation rate vintage is NOT in this category any more -- it is determined, by direct evidence, to be zero (see generation_rate_vintage_is_zero_by_evidence)."
  }
 }
