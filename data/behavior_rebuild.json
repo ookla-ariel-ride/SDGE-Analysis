@@ -61,7 +61,7 @@
   }
  },
  "battery": {
-  "spec": "13.5 kWh usable, 11.5 kW, 90% RTE, export-charge + overnight SOP top-up, on-peak discharge",
+  "spec": "13.5 kWh usable, 11.5 kW discharge / 5 kW charge (Tesla's own datasheet, issue #40), 90% RTE, export-charge + overnight SOP top-up, on-peak discharge",
   "marginal_on_baseline": 1887.46,
   "marginal_after_scenario_a": 1752.66,
   "double_count_avoided": 134.8

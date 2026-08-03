@@ -7,9 +7,10 @@ that is worth serving. Non-super-off-peak imports price at 51-87c, so the price-
 policy discharges against ALL of them; super-off-peak imports (12.5c) are never served.
 
 Three policies x two configurations (13.5 kWh Powerwall 3 / 27 kWh PW3+Expansion,
-both 11.5 kW continuous discharge / 5 kW continuous charge -- Tesla's own
-datasheet, see research/battery-research-notes.md -- 90% round-trip split as
-sqrt-eta per direction):
+both 11.5 kW continuous discharge -- but DIFFERENT continuous charge rates: 5 kW
+for the bare 13.5 kWh unit, 8 kW for the 27 kWh with-expansion unit -- Tesla's
+own datasheet, see research/battery-research-notes.md -- 90% round-trip split
+as sqrt-eta per direction):
   evening  discharge 16-21h only; overnight grid top-up to 60% capacity
   twowin   + 6-9am house load
   greedy   price-aware: any non-super-off-peak import; top-up toward full in any
@@ -72,21 +73,39 @@ import rates as R
 
 ETA = np.sqrt(0.90); PWRQ = 11.5 / 4
 
-# Real, cited Maximum Continuous Charge Power for a single Powerwall 3 unit
-# (issue #40) -- 5 kW AC, vs. the 11.5 kW continuous DISCHARGE rating (PWRQ
-# above). Tesla's own official 2025 Powerwall 3 Datasheet, canonical URL
+# Real, cited Maximum Continuous Charge Power for a BARE single Powerwall 3
+# unit, no expansions (issue #40) -- 5 kW AC, vs. the 11.5 kW continuous
+# DISCHARGE rating (PWRQ above), which is the SAME for bare and
+# with-expansion configurations (discharge is not re-rated by adding
+# expansion capacity). Tesla's own official 2025 Powerwall 3 Datasheet,
+# canonical URL
 # https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf
 # (retrieved 2026-08-03 via a third-party mirror; see research/battery-
-# research-notes.md for the full citation). Applies to BOTH the base 13.5
-# kWh unit and the PW3+Expansion 27 kWh configuration -- the expansion pack
-# "shares [the base unit's] inverter" (same research notes), so the charge
-# port and its rating are unchanged by adding expansion capacity. Used below
-# as the production default for every run_batt() call that models this
-# household's real Powerwall 3-family hardware; run_batt() itself keeps
+# research-notes.md for the full citation). Applies ONLY to the base 13.5
+# kWh unit with NO expansion packs -- see CHARGE_KW_WITH_EXPANSION
+# immediately below for the 27 kWh (PW3 + 1 Expansion) configuration, which
+# the SAME datasheet gives a materially higher, separately cited charge
+# rating for (corrected: an earlier version of this constant incorrectly
+# claimed the expansion pack "shares the base unit's inverter" and applied
+# this bare-unit figure to the expansion configuration too, contradicting
+# the very datasheet split research/battery-research-notes.md already
+# recorded -- Codex adversarial review caught this). Used below as the
+# production default for every run_batt() call that models this
+# household's real bare-unit Powerwall 3 hardware; run_batt() itself keeps
 # charge_kw=None as its own general-purpose default so it stays usable as a
 # reusable primitive at other, uncited capacities/powers (battery_sizing_
 # curve.py's sweep).
 CHARGE_KW = 5.0
+
+# Real, cited Maximum Continuous Charge Power for a Powerwall 3 WITH UP TO 3
+# EXPANSION UNITS (issue #40 correction) -- 8 kW AC, 33.3 A, from the SAME
+# Tesla datasheet cited above (see research/battery-research-notes.md: "PW3
+# with up to 3 Expansion units, 33.3 A / 8 kW"). This household's 27 kWh
+# "PW3 + 1 Expansion" configuration has one expansion pack, which is within
+# this "up to 3" bracket, so it takes this figure, NOT the bare-unit
+# CHARGE_KW above. The discharge rating (11.5 kW) is unchanged by adding
+# expansion capacity, so only the charge constant differs by configuration.
+CHARGE_KW_WITH_EXPANSION = 8.0
 
 def run_batt(d, imp0, gen0, cap, policy, power_kw=11.5, charge_kw=None, soc0=None):
     """power_kw is the discharge cap; charge_kw is the charge cap (solar-surplus
@@ -167,17 +186,22 @@ if __name__ == "__main__":
     inp["note"] = ("canonical rates.period_at assignment, including the eight "
                    "bill-confirmed tariff holidays as weekend days")
     out["inputs"] = inp
-    for cap, name in [(13.5, "pw3"), (27.0, "pw3x")]:
+    # charge_kw is BARE-UNIT 5 kW for the 13.5 kWh "pw3" config, WITH-EXPANSION
+    # 8 kW for the 27 kWh "pw3x" (PW3 + 1 Expansion) config -- issue #40
+    # correction: these are genuinely different, cited datasheet figures, not
+    # one number applied uniformly across configurations.
+    for cap, name, chg_kw in [(13.5, "pw3", CHARGE_KW), (27.0, "pw3x", CHARGE_KW_WITH_EXPANSION)]:
         row = {}
         for pol in ("evening", "twowin", "greedy"):
-            i2, e2, served, thru = run_batt(d, imp0, gen0, cap, pol, charge_kw=CHARGE_KW)
+            i2, e2, served, thru = run_batt(d, imp0, gen0, cap, pol, charge_kw=chg_kw)
             row[pol] = {"save": round(base - billed(d, i2, e2)),
                         "kwh_served": round(served),
                         "cycles_per_day": round(thru / cap / 365, 2)}
-        i2, e2, _, _ = run_batt(d, imp0, gen0, cap, "greedy", charge_kw=CHARGE_KW)
+        i2, e2, _, _ = run_batt(d, imp0, gen0, cap, "greedy", charge_kw=chg_kw)
         row["greedy_profile_S"] = summer_profile(d, i2)
         f = d.copy(); f["gi"] = i2
         row["onpeak_after_greedy"] = round(f[(f.hour >= 16) & (f.hour < 21)].gi.sum())
+        row["charge_kw"] = chg_kw
         out[name] = row
         print(name, {k: v for k, v in row.items() if isinstance(v, dict)})
     # post-behavior integrated package (EV shift scenario a, then battery)
@@ -186,17 +210,24 @@ if __name__ == "__main__":
     imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
     b_sh = billed(d, imp_sh, gen0)
     pb = {"behavior_save": round(base - b_sh), "kwh_moved": round(moved)}
-    for cap, name in [(13.5, "mid"), (27.0, "high")]:
-        i3, e3, _, _ = run_batt(d, imp_sh, gen0, cap, "greedy", charge_kw=CHARGE_KW)
+    for cap, name, chg_kw in [(13.5, "mid", CHARGE_KW), (27.0, "high", CHARGE_KW_WITH_EXPANSION)]:
+        i3, e3, _, _ = run_batt(d, imp_sh, gen0, cap, "greedy", charge_kw=chg_kw)
         b2 = billed(d, i3, e3)
         pb[name] = {"battery_marginal": round(b_sh - b2),
-                    "combined_save": round(base - b2), "bill": round(b2)}
+                    "combined_save": round(base - b2), "bill": round(b2),
+                    "charge_kw": chg_kw}
     out["post_behavior"] = pb
     out["escalation_greedy_pw3_post_behavior"] = escalation(pb["mid"]["battery_marginal"])
     out["escalation_note"] = "seeded from the post-EV-fix battery marginal (the decision-relevant figure)"
     out["notes"] = {"engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
                     "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
-                    "rte": 0.9, "power_kw": 11.5, "charge_kw": CHARGE_KW,
+                    "rte": 0.9, "power_kw": 11.5,
+                    "charge_kw_bare_unit": CHARGE_KW,
+                    "charge_kw_with_expansion": CHARGE_KW_WITH_EXPANSION,
+                    "charge_kw_note": ("13.5 kWh pw3/mid configs use the bare-unit charge "
+                                       "rate; 27 kWh pw3x/high configs use the with-"
+                                       "expansion rate -- see CHARGE_KW/"
+                                       "CHARGE_KW_WITH_EXPANSION in this module"),
                     "requires": "multi-window time-based control"}
     json.dump(out, open("battery_dispatch_policies.json", "w"), indent=1)
     print("post_behavior:", pb)

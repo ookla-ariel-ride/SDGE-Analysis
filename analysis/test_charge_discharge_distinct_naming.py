@@ -40,6 +40,7 @@ _hh._cache = None
 
 import rates as R                    # noqa: E402
 import behavior_rebuild as br        # noqa: E402
+import battery_dispatch_policies as bdp  # noqa: E402
 
 EPS = 1e-6
 CASES = []
@@ -121,6 +122,66 @@ def case_behavior_rebuild_battery_sim_threads_a_distinct_charge_kw():
 
 
 @case
+def case_battery_dispatch_policies_bare_and_expansion_constants_are_correct_and_distinct():
+    """issue #40 Finding 1 (Codex adversarial review, confirmed HIGH severity):
+    an earlier version applied battery_dispatch_policies.CHARGE_KW (the
+    bare-13.5kWh-unit rate, 5 kW) uniformly to BOTH the 13.5 kWh 'pw3' config
+    AND the 27 kWh 'pw3x' (PW3 + Expansion) config, contradicting the
+    module's own citation in research/battery-research-notes.md, which
+    records 8 kW for a Powerwall 3 with up to 3 expansion packs. This pins
+    the two constants to their cited values and confirms they are genuinely
+    distinct, not the same float under two names."""
+    assert bdp.CHARGE_KW == 5.0
+    assert bdp.CHARGE_KW_WITH_EXPANSION == 8.0
+    assert bdp.CHARGE_KW != bdp.CHARGE_KW_WITH_EXPANSION
+    return "CHARGE_KW (5.0, bare unit) and CHARGE_KW_WITH_EXPANSION (8.0) are distinct"
+
+
+@case
+def case_battery_dispatch_policies_expansion_rate_is_behaviorally_wired_not_cosmetic():
+    """Proves CHARGE_KW_WITH_EXPANSION actually gates run_batt's charging
+    branches at the 27 kWh capacity, rather than existing only as an unused
+    constant. Single interval, empty battery, solar surplus well above both
+    5 kW and 8 kW isolates the per-interval charging RATE (same isolation
+    technique as _single_interval_frame's other uses in this file)."""
+    d = _single_interval_frame()
+    imp0 = np.array([0.0])
+    gen0 = np.array([10.0])
+    i_bare, e_bare, _, thru_bare = bdp.run_batt(d, imp0, gen0, 27.0, "greedy",
+                                                 charge_kw=bdp.CHARGE_KW)
+    i_exp, e_exp, _, thru_exp = bdp.run_batt(d, imp0, gen0, 27.0, "greedy",
+                                              charge_kw=bdp.CHARGE_KW_WITH_EXPANSION)
+    assert thru_exp > thru_bare + EPS, (
+        f"the wider 8 kW expansion charge cap must charge MORE from the same "
+        f"solar surplus in one interval than the tighter 5 kW bare-unit cap "
+        f"({thru_exp} vs {thru_bare})")
+    return "CHARGE_KW_WITH_EXPANSION charges more per interval than CHARGE_KW at 27 kWh -- behaviorally real"
+
+
+@case
+def case_committed_dispatch_artifact_pw3x_and_high_use_the_expansion_constant():
+    """Regression guard on the committed data/battery_dispatch_policies.json
+    itself (both battery_dispatch_policies.py's dispatch-policy block and its
+    post_behavior package block persist their own charge_kw per row): the 27
+    kWh pw3/high rows must carry CHARGE_KW_WITH_EXPANSION (8.0), and the 13.5
+    kWh pw3/mid rows must carry CHARGE_KW (5.0) -- a silent revert to the
+    uniform-bare-unit bug would flip the pw3x/high value back to 5.0 here
+    even if every other field looked plausible."""
+    artifact = ROOT / "data" / "battery_dispatch_policies.json"
+    if not artifact.is_file():
+        raise SkipCase(f"{artifact} not present")
+    import json
+    data = json.loads(artifact.read_text())
+    assert data["pw3"]["charge_kw"] == bdp.CHARGE_KW
+    assert data["pw3x"]["charge_kw"] == bdp.CHARGE_KW_WITH_EXPANSION
+    assert data["post_behavior"]["mid"]["charge_kw"] == bdp.CHARGE_KW
+    assert data["post_behavior"]["high"]["charge_kw"] == bdp.CHARGE_KW_WITH_EXPANSION
+    assert data["notes"]["charge_kw_bare_unit"] == bdp.CHARGE_KW
+    assert data["notes"]["charge_kw_with_expansion"] == bdp.CHARGE_KW_WITH_EXPANSION
+    return "committed artifact's pw3x/high rows use CHARGE_KW_WITH_EXPANSION, pw3/mid use CHARGE_KW"
+
+
+@case
 def case_battery_backup_sims_sim_threads_a_distinct_charge_pwr():
     """battery_backup_sims.sim's charge_pwr must be separate from its
     discharge-direction `pwr` argument, default to None (reuse pwr), and
@@ -144,6 +205,36 @@ def case_battery_backup_sims_sim_threads_a_distinct_charge_pwr():
         r_sym["net_annual_savings"], r_asym["net_annual_savings"])
     assert r_sym["power_kw"] == 11.5, "sim's own power_kw field must report discharge, unaffected by charge_pwr"
     return "battery_backup_sims.sim threads a distinct charge_pwr, separate from its discharge pwr"
+
+
+@case
+def case_battery_backup_sims_configs_pair_the_27kwh_entry_with_the_expansion_rate():
+    """issue #40 Finding 1 sweep: battery_backup_sims.py's own `configs` list
+    had the SAME uniform-bare-unit-rate bug as battery_dispatch_policies.py --
+    its 'PW3 + 1 Expansion' (27.0 kWh) row was wired to CHARGE_KW_PW3 (5.0)
+    instead of a separately cited with-expansion rate. Fixed by adding
+    CHARGE_KW_PW3_WITH_EXPANSION (8.0) and re-pairing the configs list. This
+    checks the actual list entry, not just that both constants exist,
+    against exactly the failure mode Codex's review caught: a config that
+    LOOKS fixed (a second constant exists) but still points the 27 kWh row
+    at the old one."""
+    bbs = _import_eager_script_module("battery_backup_sims")
+    assert bbs.CHARGE_KW_PW3 == 5.0
+    assert bbs.CHARGE_KW_PW3_WITH_EXPANSION == 8.0
+    assert bbs.CHARGE_KW_PW3 != bbs.CHARGE_KW_PW3_WITH_EXPANSION
+
+    bare_entries = [c for c in bbs.configs if c[0] == 13.5]
+    exp_entries = [c for c in bbs.configs if c[0] == 27.0]
+    assert bare_entries, "configs must include the bare 13.5 kWh Powerwall 3"
+    assert exp_entries, "configs must include the 27.0 kWh PW3 + Expansion config"
+    for cap, power, name, charge_pwr in bare_entries:
+        assert charge_pwr == bbs.CHARGE_KW_PW3, \
+            f"13.5 kWh config {name!r} must use CHARGE_KW_PW3 (5.0), got {charge_pwr}"
+    for cap, power, name, charge_pwr in exp_entries:
+        assert charge_pwr == bbs.CHARGE_KW_PW3_WITH_EXPANSION, \
+            f"27.0 kWh config {name!r} must use CHARGE_KW_PW3_WITH_EXPANSION " \
+            f"(8.0), not the bare-unit rate -- got {charge_pwr}"
+    return "battery_backup_sims.configs pairs the 27 kWh 'PW3 + 1 Expansion' row with CHARGE_KW_PW3_WITH_EXPANSION"
 
 
 @case

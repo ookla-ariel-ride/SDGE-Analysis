@@ -49,38 +49,39 @@
    1.92,
    1.82
   ],
-  "onpeak_after_greedy": 870
+  "onpeak_after_greedy": 870,
+  "charge_kw": 5.0
  },
  "pw3x": {
   "evening": {
-   "save": 2064,
+   "save": 2067,
    "kwh_served": 3695,
    "cycles_per_day": 0.39
   },
   "twowin": {
-   "save": 2291,
+   "save": 2298,
    "kwh_served": 4336,
    "cycles_per_day": 0.46
   },
   "greedy": {
-   "save": 2794,
+   "save": 2795,
    "kwh_served": 5580,
    "cycles_per_day": 0.6
   },
   "greedy_profile_S": [
-   15.75,
-   14.39,
-   10.81,
-   5.55,
-   3.93,
-   5.63,
+   18.63,
+   15.97,
+   9.47,
+   4.05,
+   2.83,
+   5.1,
    2.56,
    2.74,
    1.81,
    1.02,
-   0.7,
-   0.76,
-   0.55,
+   0.71,
+   0.77,
+   0.56,
    0.39,
    0.06,
    0.32,
@@ -93,7 +94,8 @@
    1.47,
    1.3
   ],
-  "onpeak_after_greedy": 329
+  "onpeak_after_greedy": 329,
+  "charge_kw": 8.0
  },
  "post_behavior": {
   "behavior_save": 1221,
@@ -101,12 +103,14 @@
   "mid": {
    "battery_marginal": 2238,
    "combined_save": 3459,
-   "bill": 1445
+   "bill": 1445,
+   "charge_kw": 5.0
   },
   "high": {
    "battery_marginal": 2454,
    "combined_save": 3675,
-   "bill": 1229
+   "bill": 1229,
+   "charge_kw": 8.0
   }
  },
  "escalation_greedy_pw3_post_behavior": {
@@ -133,7 +137,9 @@
   "ev_exclusion": ">=2.5 kW outside on-peak = EV spillover, never battery-served",
   "rte": 0.9,
   "power_kw": 11.5,
-  "charge_kw": 5.0,
+  "charge_kw_bare_unit": 5.0,
+  "charge_kw_with_expansion": 8.0,
+  "charge_kw_note": "13.5 kWh pw3/mid configs use the bare-unit charge rate; 27 kWh pw3x/high configs use the with-expansion rate -- see CHARGE_KW/CHARGE_KW_WITH_EXPANSION in this module",
   "requires": "multi-window time-based control"
  }
 }

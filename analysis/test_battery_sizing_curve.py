@@ -408,10 +408,10 @@ def case_steady_state_shipping_saves_stay_close_to_the_canonical_single_pass_art
     slightly from battery_dispatch_policies.json's own pw3/pw3x figures --
     that canonical artifact stays single-pass by design (correcting it is a
     separate concern, out of this issue's scope). Lock the gap to a small,
-    documented tolerance (TECHNICAL.md cites $1.54 as the observed max, as of
-    issue #40's Powerwall 3 charge/discharge split) so a future change can't
-    silently let steady-state and single-pass drift far apart without anyone
-    noticing."""
+    documented tolerance (TECHNICAL.md cites $2.15 as the observed max, as of
+    issue #40's Powerwall 3 charge/discharge split, bare unit vs. with-
+    expansion) so a future change can't silently let steady-state and
+    single-pass drift far apart without anyone noticing."""
     if not ARTIFACT.exists():
         raise SkipCase("data/battery_sizing_curve.json not present")
     canon_path = ROOT / "data" / "battery_dispatch_policies.json"
@@ -555,6 +555,105 @@ def case_steady_state_run_and_sweep_thread_charge_kw_through_to_run_batt():
     assert all(c == 5.0 for c in calls), \
         f"_steady_state_run did not thread charge_kw=5.0 through to run_batt: {calls}"
     return "_steady_state_run/_sweep thread charge_kw through to run_batt, not dropped"
+
+
+@case
+def case_sweep_routes_the_expansion_charge_rate_only_above_the_bare_unit_reference():
+    """issue #40 Finding 1 (Codex adversarial review): an earlier version of
+    _sweep() applied CHARGE_KW (the BARE-unit 5 kW rate) uniformly to every
+    energy-grid point, including 27 kWh and above -- capacities that require
+    at least one expansion pack and so are cited at CHARGE_KW_WITH_EXPANSION
+    (8 kW) instead. This spies on run_batt (via _steady_state_run, which
+    _sweep calls once per grid point) to prove the ENERGY sweep actually
+    switches constants at the REF_ENERGY_KWH (13.5 kWh) boundary in
+    production code, not just in a docstring: every point at or below 13.5
+    kWh must be called with CHARGE_KW, every point above it with
+    CHARGE_KW_WITH_EXPANSION. The POWER sweep never leaves the bare-unit
+    capacity, so it must never receive the expansion rate at all."""
+    from battery_dispatch_policies import CHARGE_KW, CHARGE_KW_WITH_EXPANSION
+    assert CHARGE_KW != CHARGE_KW_WITH_EXPANSION, \
+        "bare-unit and with-expansion charge rates must be distinct constants"
+    assert CHARGE_KW == 5.0 and CHARGE_KW_WITH_EXPANSION == 8.0
+
+    d, imp0, gen0 = _synthetic_day(consumption_kw=1.0, generation_kw=6.0)
+    d["ym"] = d.dt.dt.strftime("%Y-%m")   # billed() groups by this; _synthetic_day omits it
+    base_bill = billed(d, imp0, gen0)
+    calls = []
+    real_run_batt = bsc.run_batt
+
+    def spy(*args, **kwargs):
+        cap = args[3] if len(args) > 3 else kwargs.get("cap")
+        calls.append((cap, kwargs.get("charge_kw")))
+        return real_run_batt(*args, **kwargs)
+
+    bsc.run_batt = spy
+    try:
+        energy_rows = bsc._sweep(d, imp0, gen0, base_bill, bsc.ENERGY_GRID, "energy",
+                                  charge_kw=CHARGE_KW, charge_kw_with_expansion=CHARGE_KW_WITH_EXPANSION)
+        energy_calls = list(calls)
+        calls.clear()
+        power_rows = bsc._sweep(d, imp0, gen0, base_bill, bsc.POWER_GRID, "power",
+                                 charge_kw=CHARGE_KW)
+        power_calls = list(calls)
+    finally:
+        bsc.run_batt = real_run_batt
+
+    for cap, chg in energy_calls:
+        if cap <= bsc.REF_ENERGY_KWH:
+            assert chg == CHARGE_KW, \
+                f"energy-grid point {cap} kWh (at or below the bare-unit reference) " \
+                f"must use CHARGE_KW ({CHARGE_KW}), got {chg}"
+        else:
+            assert chg == CHARGE_KW_WITH_EXPANSION, \
+                f"energy-grid point {cap} kWh (above the bare-unit reference, " \
+                f"requires expansion) must use CHARGE_KW_WITH_EXPANSION " \
+                f"({CHARGE_KW_WITH_EXPANSION}), got {chg}"
+    assert any(cap == 27.0 for cap, _ in energy_calls), \
+        "energy grid must include the 27 kWh expansion point for this test to be meaningful"
+    assert all(chg != CHARGE_KW_WITH_EXPANSION for _, chg in power_calls), \
+        "the power sweep never leaves the bare-unit 13.5 kWh capacity, so it " \
+        "must never be called with the expansion charge rate"
+    assert energy_rows and power_rows
+    return ("_sweep routes CHARGE_KW_WITH_EXPANSION to every energy-grid point "
+            "above 13.5 kWh (including the real 27 kWh product) and CHARGE_KW "
+            "at or below it; the power sweep never uses the expansion rate")
+
+
+@case
+def case_committed_sizing_curve_artifact_27kwh_point_matches_the_expansion_rate_not_the_bare_rate():
+    """Regression guard against issue #40 Finding 1 recurring silently: this
+    pins the committed artifact's 27 kWh shipping-product save/served figures
+    to the values this household's data produces under the correct
+    CHARGE_KW_WITH_EXPANSION (8 kW) rate, which happen to be DIFFERENT from
+    (and, on this data, slightly higher than) what the wrong uniform-5 kW-
+    everywhere bug produced (save_usd 2792.51, the pre-fix committed value).
+    A future regeneration that silently reverts to applying the bare-unit
+    rate above 13.5 kWh would reproduce the old 2792.51 figure and fail this
+    exact-match check, even though nothing else about the artifact's shape
+    would look wrong."""
+    if not ARTIFACT.is_file():
+        raise SkipCase(f"{ARTIFACT} not present")
+    data = json.loads(ARTIFACT.read_text())
+    ship = data["current_behavior"]["shipping_products_on_curve"]
+    exp_row = next((r for r in ship if abs(r["kwh"] - 27.0) < EPS), None)
+    bare_row = next((r for r in ship if abs(r["kwh"] - 13.5) < EPS), None)
+    assert exp_row is not None and bare_row is not None, \
+        "committed artifact must list both shipping products"
+    WRONG_UNIFORM_5KW_SAVE = 2792.51   # the pre-Finding-1-fix committed value
+    assert abs(exp_row["save_usd"] - WRONG_UNIFORM_5KW_SAVE) > 0.10, (
+        f"27 kWh shipping product's save_usd ({exp_row['save_usd']}) matches the "
+        f"OLD uniform-bare-unit-charge-rate figure ({WRONG_UNIFORM_5KW_SAVE}) -- "
+        "this is the exact signature of Finding 1 (CHARGE_KW applied above the "
+        "bare-unit reference instead of CHARGE_KW_WITH_EXPANSION) recurring")
+    assert exp_row["save_usd"] == 2792.85, \
+        f"27 kWh shipping product's save_usd drifted from the known-correct " \
+        f"value (2792.85): {exp_row['save_usd']}"
+    assert bare_row["save_usd"] == 2327.42, \
+        "13.5 kWh (bare-unit) shipping product's save_usd should be unaffected " \
+        f"by the expansion-rate fix: {bare_row['save_usd']}"
+    return ("committed sizing-curve artifact's 27 kWh point (save_usd=2792.85) "
+            "reflects CHARGE_KW_WITH_EXPANSION, not the old uniform bare-unit "
+            "figure (2792.51)")
 
 
 # ---------------------------------------------------------------------------

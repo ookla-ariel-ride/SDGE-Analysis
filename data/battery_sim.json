@@ -54,9 +54,9 @@
   "usable_kwh": 27.0,
   "power_kw": 11.5,
   "onpeak_offset_value": 2713,
-  "forgone_export_credits": 528,
+  "forgone_export_credits": 526,
   "grid_charge_cost": 134,
-  "net_annual_savings": 2051,
+  "net_annual_savings": 2054,
   "equiv_full_cycles": 136
  }
 ]

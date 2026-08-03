@@ -13,20 +13,27 @@ netting, NBC on gross imports) and the same EV-spillover exclusion rule
 (>=2.5 kW outside on-peak is never battery-served) at every grid point.
 
 CHARGE vs. DISCHARGE power (issue #40): Tesla's own datasheet gives the
-Powerwall 3 a DIFFERENT continuous charge rating (5 kW) from its continuous
-discharge rating (11.5 kW, REF_POWER_KW below) -- see research/battery-
-research-notes.md. The ENERGY sweep holds discharge power at REF_POWER_KW
-(11.5 kW) at every capacity, so every point on it is genuinely this
-household's real Powerwall-3-family hardware (expansion units share the base
-unit's inverter and charge port, per the same research notes) and uses the
-real 5 kW charge cap throughout. The POWER sweep instead VARIES the
-discharge rating itself (5-15 kW) to ask "what if this hardware could
-discharge faster or slower" -- only its OWN REF_POWER_KW=11.5 grid point is
-the real, cited Powerwall 3; the other points are hypothetical inverters
-with no cited charge rating of their own, so the 5 kW charge cap is applied
-ONLY at that one real point on the power sweep, not assumed for the others
-(inventing a charge rating for a hypothetical 5 kW or 15 kW discharge unit
-would violate CLAUDE.md's no-invented-rate rule).
+Powerwall 3 DIFFERENT continuous charge ratings from its continuous
+discharge rating (11.5 kW, REF_POWER_KW below, unchanged by adding
+expansion capacity) -- see research/battery-research-notes.md. Charge is
+NOT uniform across capacities, though: a BARE single unit (<=13.5 kWh, no
+expansion) charges at 5 kW; a unit WITH UP TO 3 EXPANSION packs (>13.5 kWh
+-- any expansion at all re-rates the charge port) charges at 8 kW. An
+earlier version of this script applied the bare-unit 5 kW figure to EVERY
+energy-grid point, including 27 kWh (one expansion pack) and beyond,
+contradicting the very datasheet split these research notes record (Codex
+adversarial review caught this). The ENERGY sweep holds discharge power at
+REF_POWER_KW (11.5 kW) at every capacity, so every point on it is genuinely
+this household's real Powerwall-3-family hardware, and now uses the correct
+charge cap PER POINT: 5 kW at and below the bare unit's 13.5 kWh, 8 kW
+above it. The POWER sweep instead VARIES the discharge rating itself
+(5-15 kW) at a FIXED 13.5 kWh (bare-unit) capacity to ask "what if this
+hardware could discharge faster or slower" -- only its OWN REF_POWER_KW=11.5
+grid point is the real, cited Powerwall 3; the other points are hypothetical
+inverters with no cited charge rating of their own, so the 5 kW bare-unit
+charge cap is applied ONLY at that one real point on the power sweep, not
+assumed for the others (inventing a charge rating for a hypothetical 5 kW or
+15 kW discharge unit would violate CLAUDE.md's no-invented-rate rule).
 
 Both shipping configs' own capacity/power (13.5 kWh, 27 kWh, 11.5 kW) are added
 to the grids exactly, not interpolated, so they are genuinely ON the swept
@@ -76,7 +83,7 @@ import os
 import numpy as np
 
 import behavior_rebuild as br
-from battery_dispatch_policies import billed, run_batt, CHARGE_KW
+from battery_dispatch_policies import billed, run_batt, CHARGE_KW, CHARGE_KW_WITH_EXPANSION
 
 ENERGY_GRID = sorted({5, 10, 13.5, 15, 20, 25, 27, 30, 35, 40})
 POWER_GRID = sorted({5.0, 7.5, 10.0, 11.5, 12.5, 15.0})
@@ -184,24 +191,38 @@ def _steady_state_run(d, imp0, gen0, cap, power, policy="greedy", charge_kw=None
         f"-- last diff {soc_final - soc0:.4f} kWh")
 
 
-def _sweep(d, imp0, gen0, base_bill, grid, dim, charge_kw=None):
+def _sweep(d, imp0, gen0, base_bill, grid, dim, charge_kw=None, charge_kw_with_expansion=None):
     """dim: 'energy' sweeps ENERGY_GRID at REF_POWER_KW; 'power' sweeps
     POWER_GRID at REF_ENERGY_KWH. Returns one row per grid point.
 
-    charge_kw (issue #40) is applied differently per dimension, per the
-    module docstring's CHARGE vs. DISCHARGE section: the ENERGY sweep holds
-    discharge power at REF_POWER_KW throughout, so every point is real cited
-    Powerwall-3-family hardware and gets charge_kw at every point; the POWER
-    sweep varies the discharge rating itself, so charge_kw is applied ONLY
-    at its REF_POWER_KW grid point (the one real, cited Powerwall 3) --
-    every other power-sweep point is a hypothetical inverter with no cited
-    charge rating and stays symmetric (charge_kw=None) rather than
-    inventing one. Default None preserves the prior symmetric-power
-    behavior exactly at every point on both sweeps."""
+    charge_kw/charge_kw_with_expansion (issue #40) are applied differently
+    per dimension, per the module docstring's CHARGE vs. DISCHARGE section:
+    the ENERGY sweep holds discharge power at REF_POWER_KW throughout, so
+    every point is real cited Powerwall-3-family hardware, but capacity
+    ABOVE the bare unit's 13.5 kWh means at least one expansion pack is
+    present -- issue #40 correction: an earlier version applied charge_kw
+    (the BARE-unit rate) uniformly to every energy-grid point, including
+    27 kWh and above, contradicting the with-expansion rate the datasheet
+    actually gives for those capacities. Now: points at or below
+    REF_ENERGY_KWH (13.5, the bare unit) get charge_kw; points above it
+    (any expansion) get charge_kw_with_expansion when given. The POWER
+    sweep varies the discharge rating itself at a FIXED 13.5 kWh (bare-unit)
+    capacity, so charge_kw is applied ONLY at its REF_POWER_KW grid point
+    (the one real, cited Powerwall 3) -- every other power-sweep point is a
+    hypothetical inverter with no cited charge rating and stays symmetric
+    (charge_kw=None) rather than inventing one; charge_kw_with_expansion
+    never applies on this dimension, since capacity never leaves the bare
+    unit's 13.5 kWh there. Both default to None, preserving the prior
+    symmetric-power behavior exactly at every point on both sweeps."""
     rows = []
     for x in grid:
         cap, power = (x, REF_POWER_KW) if dim == "energy" else (REF_ENERGY_KWH, x)
-        point_charge_kw = charge_kw if (dim == "energy" or power == REF_POWER_KW) else None
+        if dim == "energy":
+            point_charge_kw = (charge_kw_with_expansion
+                               if (cap > REF_ENERGY_KWH and charge_kw_with_expansion is not None)
+                               else charge_kw)
+        else:
+            point_charge_kw = charge_kw if power == REF_POWER_KW else None
         imp2, exp2, served, thru, soc0, soc_final, iters = _steady_state_run(
             d, imp0, gen0, cap, power, charge_kw=point_charge_kw)
         _check_conservation(d, imp0, gen0, imp2, exp2, served, thru, cap)
@@ -320,7 +341,8 @@ def _local_elasticity(rows, key, ref_value):
 
 def _scenario(d, imp0, gen0, label):
     base_bill = billed(d, imp0, gen0)
-    energy_rows = _sweep(d, imp0, gen0, base_bill, ENERGY_GRID, "energy", charge_kw=CHARGE_KW)
+    energy_rows = _sweep(d, imp0, gen0, base_bill, ENERGY_GRID, "energy", charge_kw=CHARGE_KW,
+                        charge_kw_with_expansion=CHARGE_KW_WITH_EXPANSION)
     power_rows = _sweep(d, imp0, gen0, base_bill, POWER_GRID, "power", charge_kw=CHARGE_KW)
     e_marg = _marginal(energy_rows, "kwh")
     p_marg = _marginal(power_rows, "kw")

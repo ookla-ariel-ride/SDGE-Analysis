@@ -544,15 +544,22 @@ def main():
     sd["house_kwh_moved"] = round(movedD_house, 1)
     results["scenarios"]["d"] = sd
 
-    # battery marginal: on baseline (for reference) and after scenario (a)
-    bi, be = battery_sim(d, d.imp.values.copy(), d.exp.values.copy())
+    # battery marginal: on baseline (for reference) and after scenario (a). Both
+    # calls are the bare 13.5 kWh unit (no expansion), so BATT_CHARGE_KW (5 kW)
+    # applies -- issue #40 sweep: this section has no downstream reader
+    # (behavior_rebuild.json's own committed "battery" block is not consumed
+    # by any other script or cited in the report; package_results.py reads
+    # battery_dispatch_policies.json's pw3.greedy.save instead), but it is
+    # fixed here anyway for the same reason every other bare-unit call is.
+    bi, be = battery_sim(d, d.imp.values.copy(), d.exp.values.copy(), charge_kw=BATT_CHARGE_KW)
     f = d.copy(); f["imp"], f["exp"] = bi, be
     batt_alone = base_bill - bill(f)
 
-    SPEC = ("13.5 kWh usable, 11.5 kW, 90% RTE, export-charge + overnight SOP "
+    SPEC = ("13.5 kWh usable, 11.5 kW discharge / 5 kW charge (Tesla's own "
+            "datasheet, issue #40), 90% RTE, export-charge + overnight SOP "
             "top-up, on-peak discharge")
     if EV_ANALYSIS:
-        bi2, be2 = battery_sim(d, impA, d.exp.values.copy())
+        bi2, be2 = battery_sim(d, impA, d.exp.values.copy(), charge_kw=BATT_CHARGE_KW)
         f2 = d.copy(); f2["imp"], f2["exp"] = bi2, be2
         batt_after_a = a["bill"] - bill(f2)
 
