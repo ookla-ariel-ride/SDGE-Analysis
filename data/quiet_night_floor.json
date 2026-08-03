@@ -1,0 +1,2637 @@
+{
+ "method": "Price the always-on load (issue #17): what does the quiet-night floor cost,\nand what is cutting it worth?",
+ "window": {
+  "start": "2025-07-24",
+  "end": "2026-07-24"
+ },
+ "night_floor": {
+  "nights_total": 365,
+  "quiet_nights": 43,
+  "excluded_nights": 322,
+  "excluded_night_fraction": 0.8822,
+  "median_kw": 1.03,
+  "p10_kw": 0.822,
+  "p90_kw": 1.36,
+  "cycling_within_night_std_kw_median": 0.1387,
+  "monthly_median_kw": {
+   "1": 1.06,
+   "2": 1.21,
+   "3": 0.98,
+   "4": 1.02,
+   "5": 0.845,
+   "6": 1.025,
+   "7": 1.04,
+   "8": 1.18,
+   "9": 1.37,
+   "10": 1.37,
+   "11": 0.99,
+   "12": 1.14
+  },
+  "window_hours": [
+   1.0,
+   5.0
+  ],
+  "exclusion_gate_kw": 2.0,
+  "selection_caveat": "the floor is measured on the subsample of nights whose 1-5am window never crossed the exclusion gate -- an 88.2% exclusion rate (PR #77 review, finding 4). 'excluded_high_demand' names the MEASURED behavior (a high-power interval occurred), not a cause: an EV charging session is the obvious candidate on this household (see confidence_labels.load_cause), but a dryer, a heat-pump defrost cycle, or a well pump would trip the identical gate. Report the exclusion rate alongside the floor figure rather than treating the kept ~11.8% as the whole story.",
+  "daily_series": [
+   {
+    "date": "2025-07-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-07-31",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-22",
+    "excluded_high_demand": false,
+    "median_kw": 1.18,
+    "within_night_std_kw": 0.0335
+   },
+   {
+    "date": "2025-08-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-08-31",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-09-29",
+    "excluded_high_demand": false,
+    "median_kw": 1.37,
+    "within_night_std_kw": 0.1391
+   },
+   {
+    "date": "2025-09-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-12",
+    "excluded_high_demand": false,
+    "median_kw": 1.1,
+    "within_night_std_kw": 0.0992
+   },
+   {
+    "date": "2025-10-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-27",
+    "excluded_high_demand": false,
+    "median_kw": 1.47,
+    "within_night_std_kw": 0.1357
+   },
+   {
+    "date": "2025-10-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-10-31",
+    "excluded_high_demand": false,
+    "median_kw": 1.37,
+    "within_night_std_kw": 0.045
+   },
+   {
+    "date": "2025-11-01",
+    "excluded_high_demand": false,
+    "median_kw": 1.01,
+    "within_night_std_kw": 0.0538
+   },
+   {
+    "date": "2025-11-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-04",
+    "excluded_high_demand": false,
+    "median_kw": 0.98,
+    "within_night_std_kw": 0.0995
+   },
+   {
+    "date": "2025-11-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-07",
+    "excluded_high_demand": false,
+    "median_kw": 1.02,
+    "within_night_std_kw": 0.0808
+   },
+   {
+    "date": "2025-11-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-09",
+    "excluded_high_demand": false,
+    "median_kw": 0.98,
+    "within_night_std_kw": 0.0519
+   },
+   {
+    "date": "2025-11-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-13",
+    "excluded_high_demand": false,
+    "median_kw": 1.0,
+    "within_night_std_kw": 0.1968
+   },
+   {
+    "date": "2025-11-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-22",
+    "excluded_high_demand": false,
+    "median_kw": 0.75,
+    "within_night_std_kw": 0.1885
+   },
+   {
+    "date": "2025-11-23",
+    "excluded_high_demand": false,
+    "median_kw": 0.68,
+    "within_night_std_kw": 0.1387
+   },
+   {
+    "date": "2025-11-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-11-29",
+    "excluded_high_demand": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.1871
+   },
+   {
+    "date": "2025-11-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-14",
+    "excluded_high_demand": false,
+    "median_kw": 0.92,
+    "within_night_std_kw": 0.0477
+   },
+   {
+    "date": "2025-12-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-27",
+    "excluded_high_demand": false,
+    "median_kw": 1.36,
+    "within_night_std_kw": 0.1362
+   },
+   {
+    "date": "2025-12-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2025-12-31",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-03",
+    "excluded_high_demand": false,
+    "median_kw": 1.17,
+    "within_night_std_kw": 0.1669
+   },
+   {
+    "date": "2026-01-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-06",
+    "excluded_high_demand": false,
+    "median_kw": 1.06,
+    "within_night_std_kw": 0.0322
+   },
+   {
+    "date": "2026-01-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-08",
+    "excluded_high_demand": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.2201
+   },
+   {
+    "date": "2026-01-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-13",
+    "excluded_high_demand": false,
+    "median_kw": 1.42,
+    "within_night_std_kw": 0.106
+   },
+   {
+    "date": "2026-01-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-18",
+    "excluded_high_demand": false,
+    "median_kw": 0.74,
+    "within_night_std_kw": 0.1726
+   },
+   {
+    "date": "2026-01-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-01-31",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-21",
+    "excluded_high_demand": false,
+    "median_kw": 1.32,
+    "within_night_std_kw": 0.1702
+   },
+   {
+    "date": "2026-02-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-24",
+    "excluded_high_demand": false,
+    "median_kw": 1.1,
+    "within_night_std_kw": 0.1656
+   },
+   {
+    "date": "2026-02-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-02-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-12",
+    "excluded_high_demand": false,
+    "median_kw": 0.77,
+    "within_night_std_kw": 0.0743
+   },
+   {
+    "date": "2026-03-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-18",
+    "excluded_high_demand": false,
+    "median_kw": 1.04,
+    "within_night_std_kw": 0.2077
+   },
+   {
+    "date": "2026-03-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-03-31",
+    "excluded_high_demand": false,
+    "median_kw": 0.98,
+    "within_night_std_kw": 0.296
+   },
+   {
+    "date": "2026-04-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-04",
+    "excluded_high_demand": false,
+    "median_kw": 1.08,
+    "within_night_std_kw": 0.1929
+   },
+   {
+    "date": "2026-04-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-12",
+    "excluded_high_demand": false,
+    "median_kw": 1.02,
+    "within_night_std_kw": 0.0332
+   },
+   {
+    "date": "2026-04-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-19",
+    "excluded_high_demand": false,
+    "median_kw": 0.82,
+    "within_night_std_kw": 0.0343
+   },
+   {
+    "date": "2026-04-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-25",
+    "excluded_high_demand": false,
+    "median_kw": 1.36,
+    "within_night_std_kw": 0.1167
+   },
+   {
+    "date": "2026-04-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-28",
+    "excluded_high_demand": false,
+    "median_kw": 1.0,
+    "within_night_std_kw": 0.1459
+   },
+   {
+    "date": "2026-04-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-04-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-08",
+    "excluded_high_demand": false,
+    "median_kw": 0.84,
+    "within_night_std_kw": 0.0761
+   },
+   {
+    "date": "2026-05-09",
+    "excluded_high_demand": false,
+    "median_kw": 0.84,
+    "within_night_std_kw": 0.0296
+   },
+   {
+    "date": "2026-05-10",
+    "excluded_high_demand": false,
+    "median_kw": 0.85,
+    "within_night_std_kw": 0.0369
+   },
+   {
+    "date": "2026-05-11",
+    "excluded_high_demand": false,
+    "median_kw": 0.84,
+    "within_night_std_kw": 0.0538
+   },
+   {
+    "date": "2026-05-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-24",
+    "excluded_high_demand": false,
+    "median_kw": 1.12,
+    "within_night_std_kw": 0.1694
+   },
+   {
+    "date": "2026-05-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-05-31",
+    "excluded_high_demand": false,
+    "median_kw": 1.01,
+    "within_night_std_kw": 0.2244
+   },
+   {
+    "date": "2026-06-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-04",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-05",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-06",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-08",
+    "excluded_high_demand": false,
+    "median_kw": 1.02,
+    "within_night_std_kw": 0.2354
+   },
+   {
+    "date": "2026-06-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-15",
+    "excluded_high_demand": false,
+    "median_kw": 1.05,
+    "within_night_std_kw": 0.1426
+   },
+   {
+    "date": "2026-06-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-20",
+    "excluded_high_demand": false,
+    "median_kw": 0.83,
+    "within_night_std_kw": 0.0291
+   },
+   {
+    "date": "2026-06-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-23",
+    "excluded_high_demand": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.2086
+   },
+   {
+    "date": "2026-06-24",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-25",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-26",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-27",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-28",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-29",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-06-30",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-01",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-02",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-03",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-04",
+    "excluded_high_demand": false,
+    "median_kw": 1.04,
+    "within_night_std_kw": 0.1615
+   },
+   {
+    "date": "2026-07-05",
+    "excluded_high_demand": false,
+    "median_kw": 1.03,
+    "within_night_std_kw": 0.1708
+   },
+   {
+    "date": "2026-07-06",
+    "excluded_high_demand": false,
+    "median_kw": 1.05,
+    "within_night_std_kw": 0.1705
+   },
+   {
+    "date": "2026-07-07",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-08",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-09",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-10",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-11",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-12",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-13",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-14",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-15",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-16",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-17",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-18",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-19",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-20",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-21",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-22",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   },
+   {
+    "date": "2026-07-23",
+    "excluded_high_demand": true,
+    "median_kw": null,
+    "within_night_std_kw": null
+   }
+  ],
+  "cross_check_extra_results_json": {
+   "published_median_kw": 1.025,
+   "this_run_median_kw": 1.03,
+   "gap_kw": 0.005,
+   "published_quiet_nights": 44,
+   "this_run_quiet_nights": 43,
+   "note": "published in data/extra_results.json's phantom key, an in-session computation with no committed generator (TECHNICAL.md 3.11); this script re-measures independently, with its own independently-designed per-night rule (see night_floor.selection_caveat and the module docstring), rather than reading that figure as an input"
+  }
+ },
+ "hour_of_day": {
+  "profile": [
+   {
+    "hour": 0,
+    "p10_kw": 1.341,
+    "median_kw": 12.348,
+    "p90_kw": 12.986
+   },
+   {
+    "hour": 1,
+    "p10_kw": 1.077,
+    "median_kw": 12.494,
+    "p90_kw": 12.969
+   },
+   {
+    "hour": 2,
+    "p10_kw": 1.0054,
+    "median_kw": 7.178,
+    "p90_kw": 12.6276
+   },
+   {
+    "hour": 3,
+    "p10_kw": 0.9768,
+    "median_kw": 1.314,
+    "p90_kw": 9.0396
+   },
+   {
+    "hour": 4,
+    "p10_kw": 1.0024,
+    "median_kw": 1.528,
+    "p90_kw": 3.899
+   },
+   {
+    "hour": 5,
+    "p10_kw": 1.0272,
+    "median_kw": 1.773,
+    "p90_kw": 11.1242
+   },
+   {
+    "hour": 6,
+    "p10_kw": 1.0634,
+    "median_kw": 1.746,
+    "p90_kw": 8.8522
+   },
+   {
+    "hour": 7,
+    "p10_kw": 1.0664,
+    "median_kw": 1.82,
+    "p90_kw": 8.2168
+   },
+   {
+    "hour": 8,
+    "p10_kw": 0.9818,
+    "median_kw": 1.543,
+    "p90_kw": 7.823
+   },
+   {
+    "hour": 9,
+    "p10_kw": 0.9588,
+    "median_kw": 1.402,
+    "p90_kw": 4.059
+   },
+   {
+    "hour": 10,
+    "p10_kw": 0.9468,
+    "median_kw": 1.455,
+    "p90_kw": 4.3996
+   },
+   {
+    "hour": 11,
+    "p10_kw": 0.948,
+    "median_kw": 1.458,
+    "p90_kw": 5.2574
+   },
+   {
+    "hour": 12,
+    "p10_kw": 0.946,
+    "median_kw": 1.411,
+    "p90_kw": 5.0316
+   },
+   {
+    "hour": 13,
+    "p10_kw": 0.9414,
+    "median_kw": 1.437,
+    "p90_kw": 5.036
+   },
+   {
+    "hour": 14,
+    "p10_kw": 0.921,
+    "median_kw": 1.298,
+    "p90_kw": 4.1726
+   },
+   {
+    "hour": 15,
+    "p10_kw": 0.9384,
+    "median_kw": 1.549,
+    "p90_kw": 4.8566
+   },
+   {
+    "hour": 16,
+    "p10_kw": 0.954,
+    "median_kw": 1.778,
+    "p90_kw": 5.138
+   },
+   {
+    "hour": 17,
+    "p10_kw": 1.0124,
+    "median_kw": 1.919,
+    "p90_kw": 5.2164
+   },
+   {
+    "hour": 18,
+    "p10_kw": 1.0038,
+    "median_kw": 1.727,
+    "p90_kw": 4.9618
+   },
+   {
+    "hour": 19,
+    "p10_kw": 1.0504,
+    "median_kw": 1.813,
+    "p90_kw": 4.92
+   },
+   {
+    "hour": 20,
+    "p10_kw": 1.1488,
+    "median_kw": 2.066,
+    "p90_kw": 5.1052
+   },
+   {
+    "hour": 21,
+    "p10_kw": 1.047,
+    "median_kw": 1.358,
+    "p90_kw": 3.1724
+   },
+   {
+    "hour": 22,
+    "p10_kw": 0.9938,
+    "median_kw": 1.255,
+    "p90_kw": 2.7008
+   },
+   {
+    "hour": 23,
+    "p10_kw": 0.981,
+    "median_kw": 1.2,
+    "p90_kw": 2.6772
+   }
+  ],
+  "source": "Enphase SAM 8760 whole-home consumption (samA.csv/samB.csv)",
+  "midday_10to14_p10_kw": 0.9455,
+  "sam_night_1to5_median_kw_for_reference_only": 5.6285,
+  "note": "the midday p10 (a low percentile of whole-home consumption when solar is most abundant) is the day-side analog of the night-import floor, and is the ONLY figure here used as corroboration; the two independent instruments agreeing supports (but does not prove) that the load runs continuously rather than only at night. sam_night_1to5_median_kw_for_reference_only is the SAME SAM instrument's own 1-5am median, shown for reference only (PR #77 review nitpick: an earlier version placed this next to the corroboration note in a way that could be misread as a second, independent corroborating figure -- it is not; it is just the SAM meter's own night reading, not a cross-instrument comparison)."
+ },
+ "pricing": {
+  "floor_kw_priced": 1.03,
+  "floor_kw_basis": "the measured quiet-night median import power (night_floor.median_kw), applied as a constant across all 8,760 hours of the year -- see confidence_labels.pricing",
+  "price_map_source": "rates.allin()/rates.credit(), cross-checked against the committed data/extra_results.json price_map (issue #17's cited source) to within $0.0005/kWh",
+  "price_map": {
+   "S_on": {
+    "import": 0.8681,
+    "export": 0.8189
+   },
+   "S_off": {
+    "import": 0.5111,
+    "export": 0.4618
+   },
+   "S_sop": {
+    "import": 0.125,
+    "export": 0.0757
+   },
+   "W_on": {
+    "import": 0.6053,
+    "export": 0.556
+   },
+   "W_off": {
+    "import": 0.5188,
+    "export": 0.4696
+   },
+   "W_sop": {
+    "import": 0.1272,
+    "export": 0.0779
+   }
+  },
+  "method_a_price_map": {
+   "avoided_import_usd": 2389.01,
+   "displaced_export_usd": 767.88,
+   "total_usd": 3156.89
+  },
+  "method_b_rebill": {
+   "baseline_bill_usd": 4904.13,
+   "counterfactual_bill_usd": 1707.85,
+   "avoided_import_usd": 2373.2,
+   "displaced_export_usd": 823.07,
+   "total_usd": 3196.27
+  },
+  "floor_assumption_violations": {
+   "intervals": 4221,
+   "intervals_physically_impossible_as_solar": 2234,
+   "kwh": 219.48,
+   "kwh_physically_impossible_as_solar": 51.99,
+   "usd_dropped_at_export_rate": 85.52,
+   "note": "intervals where Consumption < floor and Generation == 0 in the SAME interval -- the constant-floor assumption implies more energy than this interval's metered import or solar can account for. _split_floor DROPS this shortfall rather than crediting it as freed export, so every pricing figure built from this split is conservative by roughly usd_dropped_at_export_rate, not inflated by it. The physically_impossible_as_solar counts (before 6am or after 7pm, when solar cannot exist) confirm the shortfall is a real limit of assuming a constant floor, not merely daytime self-consumption timing noise."
+  },
+  "reconciliation": {
+   "gap_usd": -39.38,
+   "gap_pct": -1.23,
+   "avoided_import_gap_usd": 15.81,
+   "displaced_export_gap_usd": -55.19,
+   "gap_decomposition": {
+    "leftover_in_still_net_positive_buckets_kwh": 1736.21,
+    "reduce_in_still_net_negative_buckets_kwh": 41.46,
+    "pcia_usd_per_kwh": 0.02828,
+    "pcia_effect_usd": -47.93,
+    "formula": "pcia_effect_usd = -PCIA * leftover_in_still_net_positive_buckets_kwh + PCIA * reduce_in_still_net_negative_buckets_kwh"
+   },
+   "sign_flip_residual_usd": 8.55,
+   "sign_flip_buckets": [
+    {
+     "year_month": "2025-08",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 204.15,
+     "counterfactual_net_kwh": -36.06
+    },
+    {
+     "year_month": "2025-09",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 229.08,
+     "counterfactual_net_kwh": -5.67
+    },
+    {
+     "year_month": "2025-10",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 220.76,
+     "counterfactual_net_kwh": -28.12
+    },
+    {
+     "year_month": "2025-11",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 105.56,
+     "counterfactual_net_kwh": -112.46
+    },
+    {
+     "year_month": "2025-12",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 214.84,
+     "counterfactual_net_kwh": -26.15
+    },
+    {
+     "year_month": "2026-01",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 169.47,
+     "counterfactual_net_kwh": -67.91
+    },
+    {
+     "year_month": "2026-02",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 32.03,
+     "counterfactual_net_kwh": -183.48
+    },
+    {
+     "year_month": "2026-03",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 100.5,
+     "counterfactual_net_kwh": -142.42
+    },
+    {
+     "year_month": "2026-04",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 11.38,
+     "counterfactual_net_kwh": -226.58
+    },
+    {
+     "year_month": "2026-05",
+     "season": "W",
+     "period": "off",
+     "baseline_net_kwh": 22.77,
+     "counterfactual_net_kwh": -208.52
+    },
+    {
+     "year_month": "2026-06",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 154.02,
+     "counterfactual_net_kwh": -83.88
+    },
+    {
+     "year_month": "2026-07",
+     "season": "S",
+     "period": "off",
+     "baseline_net_kwh": 65.94,
+     "counterfactual_net_kwh": -115.4
+    }
+   ],
+   "sign_flip_buckets_kwh": 1530.5,
+   "explanation": "the PRIMARY mechanism is PCIA (rates.PCIA, $0.02828/kWh) being priced differently by the two methods inside buckets whose net sign does NOT change: method (a)'s flat price_map prices every leftover (displaced-export) kWh at the plain export credit rate and every reduce (avoided-import) kWh at the full import rate, regardless of whether that (month, season, period) bucket is a net importer or net exporter for the month; method (b)'s monthly netting instead prices the marginal kWh at whatever the BUCKET's own net sign implies, which folds PCIA into a leftover kWh sitting inside an already net-positive bucket (undervalued by method (a), -PCIA/kWh) and strips PCIA from a reduce kWh sitting inside an already net-negative bucket (overvalued by method (a), +PCIA/kWh) -- see gap_decomposition for the exact kWh on each side and CLAUDE.md section 0. This pcia_effect_usd accounts for $-47.93 of the $-39.38 total gap. The SECONDARY, smaller contributor is the sign_flip_residual_usd ($8.55): buckets where the aggregate net sign genuinely flips between the billed year and the counterfactual are nonlinear and not decomposed further -- see sign_flip_buckets for exactly which 12 bucket(s), totalling 1530.5 kWh, those are. An earlier version of this module and artifact named sign flips as the SOLE cause of this gap; an independent review (PR #77) showed that explanation was wrong -- the sign-flip term alone is smaller than the total gap and can carry the opposite sign -- and this explanation replaces it, verified against a fixture with zero sign flips and a nonzero gap the PCIA mechanism alone predicts (test_quiet_night_floor.case_reconciliation_gap_is_explained_by_pcia_not_sign_flips).",
+   "scope_of_agreement": "what this reconciliation does and does not prove: both methods start from the IDENTICAL _split_floor allocation and draw every rate constant from the SAME rates.py module, so their agreement (or this small, now-explained gap) validates only the NETTING/AGGREGATION treatment (monthly re-bill vs. flat per-interval pricing) -- it does not independently validate the rate constants themselves (both methods would inherit an error in rates.py identically) and it does NOT validate the physical floor-allocation model in _split_floor, which pricing.floor_assumption_violations shows is where a larger, separately-quantified limitation actually lives."
+  }
+ },
+ "sensitivity_per_100w": {
+  "basis": "method b (full monthly re-bill) at 100 W steps from 100 to 1200 W",
+  "steps": [
+   {
+    "reduction_w": 100,
+    "annual_savings_usd": 323.16,
+    "marginal_usd_per_100w": 323.16
+   },
+   {
+    "reduction_w": 200,
+    "annual_savings_usd": 644.29,
+    "marginal_usd_per_100w": 321.13
+   },
+   {
+    "reduction_w": 300,
+    "annual_savings_usd": 964.03,
+    "marginal_usd_per_100w": 319.74
+   },
+   {
+    "reduction_w": 400,
+    "annual_savings_usd": 1282.05,
+    "marginal_usd_per_100w": 318.03
+   },
+   {
+    "reduction_w": 500,
+    "annual_savings_usd": 1597.06,
+    "marginal_usd_per_100w": 315.01
+   },
+   {
+    "reduction_w": 600,
+    "annual_savings_usd": 1909.37,
+    "marginal_usd_per_100w": 312.31
+   },
+   {
+    "reduction_w": 700,
+    "annual_savings_usd": 2219.01,
+    "marginal_usd_per_100w": 309.64
+   },
+   {
+    "reduction_w": 800,
+    "annual_savings_usd": 2524.46,
+    "marginal_usd_per_100w": 305.45
+   },
+   {
+    "reduction_w": 900,
+    "annual_savings_usd": 2823.94,
+    "marginal_usd_per_100w": 299.49
+   },
+   {
+    "reduction_w": 1000,
+    "annual_savings_usd": 3113.07,
+    "marginal_usd_per_100w": 289.13
+   },
+   {
+    "reduction_w": 1100,
+    "annual_savings_usd": 3382.28,
+    "marginal_usd_per_100w": 269.21
+   },
+   {
+    "reduction_w": 1200,
+    "annual_savings_usd": 3631.31,
+    "marginal_usd_per_100w": 249.03
+   }
+  ],
+  "usd_per_100w_at_current_floor": {
+   "floor_w_used": 1000,
+   "value_usd": 289.13,
+   "note": "the marginal $/100W at the sensitivity step nearest the measured floor (1030 W rounds to the 1000 W step) -- an estimate of the rate a household near this floor level should expect per additional 100 W removed, not the exact marginal at the household's own precise wattage (PR #77 review nitpick: an earlier version of this note claimed this was exactly 'the next 100W', which overstated the precision of a value read off a 100 W grid rather than computed at the household's own exact floor level)"
+  },
+  "usd_per_100w_general_average": {
+   "value_usd": 303.76,
+   "note": "linear-fit slope across the full 100-1200 W range -- a general marginal rate, not specific to the current floor level"
+  },
+  "linearity_note": "max deviation from the linear fit is $73.89 (2.03% of total savings at 1200 W) across the tested range -- measurably nonlinear; see sign_flip_buckets for why"
+ },
+ "battery_interaction": {
+  "config": "13.5 kWh Powerwall 3 (bare unit), greedy policy, raw measured year (no EV-shift behavior model stacked on top -- isolates the floor's own effect on the battery)",
+  "baseline_battery_marginal_usd": 2327.42,
+  "reduced_floor_battery_marginal_usd": 1286.14,
+  "delta_usd": -1041.28,
+  "delta_pct": -44.74,
+  "direction": "removing the floor SHRINKS the battery's own marginal saving: the floor persists into the 4-9pm on-peak window the battery discharges into, so a smaller floor leaves less expensive import for the battery to displace",
+  "caveat": "small confound (PR #77 review nitpick): run_batt's greedy EV-spillover gate (kw = imp*4 >= 2.5 kW is treated as non-battery-servable house/EV load) is evaluated on EACH series' OWN import values, so some intervals become servable ONLY in the floor-removed counterfactual purely because subtracting the floor pushed their import under 2.5 kW -- not because of any real behavioral change. Freezing the gate on the baseline series instead moves this delta by roughly $26/yr in the conservative direction (a smaller magnitude reduction in the battery's marginal saving); not corrected here since the gate is run_batt's own shared, unmodified logic."
+ },
+ "confidence_labels": {
+  "load_magnitude": "measured -- night_floor is read directly from 15-minute Green Button import data (no solar to mask it); hour_of_day is read directly from the Enphase SAM 8760 whole-home consumption meter, an independent instrument that sees self-consumed solar and so is the only one that can see a daytime floor",
+  "load_cause": "attested, not measured -- the owner identifies the floor as home-lab computer systems (report prose, index.html section 13; NOT independently recorded in any structured data file or TECHNICAL.md -- corrected citation, PR #77 review finding 3 caught an earlier version wrongly pointing this at TECHNICAL.md 3.11, which contains no such attribution either); this script does not verify that with a plug-meter study or device-level monitoring, and reports the load's cost regardless of cause",
+  "pricing": "modeled -- both pricing methods apply the measured floor_kw as a CONSTANT across all 8,760 hours of the year, an assumption (continuous compute load) that is plausible but not separately verified outside the measured 1-5am night window and the SAM hour-of-day cross-check",
+  "battery_interaction": "modeled -- battery_dispatch_policies.run_batt, the same engine behind every published battery figure in this repo, applied to a counterfactual load series"
+ },
+ "notes": {
+  "engine": "rates.bill_nem (monthly per-period NEM netting, NBC on gross imports)",
+  "quiet_night_method": "a NEW, independently-designed per-night rule (PR #77 review, finding 3 -- an earlier version wrongly cited this as inherited from TECHNICAL.md 3.11, which documents no extraction rule at all, only the phantom key's result values): 1-5am median import power per calendar night, excluding any night whose max 1-5am power >= 2 kW. This per-night rule is NOT the same as TECHNICAL.md 3.5 item 2's existing per-INTERVAL rule (deep_analyses.py: 3-5am window, Consumption <= 0.5 kWh per interval, 25th percentile) -- a per-interval filter can admit a night with a brief high-demand spike as 'quiet' as long as its OTHER intervals stay low, letting spillover contaminate the aggregate; a per-night gate excludes the WHOLE night once any interval in it crosses the threshold, which is the more appropriate shape for isolating an all-night continuous floor. The resulting per-night median/p10/p90 matches the phantom key's own values closely (see night_floor.cross_check_extra_results_json) even though this script is the first committed generator for either rule."
+ }
+}

@@ -3172,6 +3172,118 @@ versions of this decomposition).
 
 ---
 
+### 3.28 `analysis/quiet_night_floor.py` — pricing the always-on load (`data/quiet_night_floor.json`)
+
+**Purpose (issue #17).** §3.11's `phantom` key reports a ~1 kW overnight import floor and
+DE-PRIORITIZES it: the owner identifies the cause as home-lab compute (report prose,
+index.html §13 — not independently recorded in any structured data file or in this
+document), so the floor is never costed. This script re-measures the floor directly from
+interval data (not by reading `phantom`'s hand-recorded numbers), prices it two independent
+ways, and reconciles them.
+
+**Measurement (issue AC1).** `night_floor_series()` computes a NEW, independently-designed
+per-night rule — for each calendar night, the median 1-5am import power, EXCLUDING any
+night whose max 1-5am power reaches `HIGH_DEMAND_GATE_KW` (2 kW) entirely (not zeroed, not
+averaged in). This is deliberately NOT the existing per-interval rule in §3.5 item 2
+(`deep_analyses.py`: 3-5am window, `Consumption <= 0.5` kWh per interval, 25th percentile) —
+a per-interval filter can admit a night with a brief high-demand spike as "quiet" so long as
+its other intervals stay low, letting spillover contaminate the aggregate; a per-night gate
+excludes the whole night once any interval in it crosses the threshold, the more appropriate
+shape for isolating an ALL-NIGHT continuous floor. The field is named `excluded_high_demand`,
+not `ev_night`: a dryer, a heat-pump defrost cycle, or a well pump trips the identical gate,
+and on this household's real data the gate excludes ~88% of nights (322 of 365) — reported
+explicitly as `night_floor.selection_caveat` rather than left implicit. The kept measurement
+(43 quiet nights, median 1.03 kW) agrees closely with `phantom`'s own hand-computed figures
+(44 nights, 1.025 kW), even though this script is the first committed generator for either
+rule. `hour_of_day_profile()` is a SEPARATE, independently-instrumented 24-hour distribution
+(p10/median/p90 of Enphase SAM 8760 whole-home consumption by hour) — the only signal that
+can see the floor persisting through daylight, where an import-only measurement reads near
+zero because solar is covering it.
+
+**Physical floor-removal model (`_split_floor`).** A constant `floor_kw` is subtracted from
+every 15-minute interval; energy that cannot reduce measured import (because solar was
+already covering it) flows to increased export ONLY in an interval that actually has metered
+generation there. Where `Consumption < floor` and `Generation == 0` in the SAME interval,
+crediting the shortfall as freed export would invent energy that was never metered, so it is
+DROPPED (clamped to zero), not credited — `floor_assumption_violations()` quantifies the
+residual (on the real measured year: 4,221 intervals, 219.5 kWh, 2,234 of them before 6am or
+after 7pm where solar is physically impossible, ~$85.52/yr dropped at the export rate),
+making every pricing figure below conservative by roughly that amount rather than inflated by
+it. (Correction: an earlier version of this module described the split as an unconditional
+identity; an independent review, PR #77, found this false and the fix above followed.)
+
+**Two pricing methods, reconciled (issue AC2/AC3).** Both price the identical `_split_floor`
+allocation: (a) `price_method_a` multiplies each interval's `reduce_from_import`/`leftover`
+by `rates.allin()`/`rates.credit()` for that interval's own season/period, with no monthly
+aggregation; (b) `price_method_b` re-bills the counterfactual year with `rates.bill_nem`
+(the canonical monthly-netting engine) and differences three billed series (baseline, import
+reduced only, import reduced AND export increased) to isolate the avoided-import and
+displaced-export channels exactly as the engine would price them. Both report
+`avoided_import_usd` and `displaced_export_usd` separately, never pre-summed (CLAUDE.md
+§1b) — on the real measured year, ~73% of the floor's cost is avoided grid import and ~27%
+is displaced solar export credit, priced at very different marginal rates.
+
+**Reconciliation (`gap_decomposition`).** The two methods disagree by a small, fully
+explained amount (-1.23% on the real measured year). The PRIMARY mechanism is PCIA
+(`rates.PCIA`, $0.02828/kWh) being priced differently inside a (year-month, season, period)
+bucket whose net sign does NOT change: monthly netting values an extra exported kWh sitting
+inside an already net-positive bucket at the full retail energy rate (credit + PCIA, since it
+is really just offsetting more of the same net-positive import), while method (a)'s flat
+price_map always prices a "leftover" kWh at the plain export credit rate — undervaluing it by
+PCIA/kWh. The symmetric case (an avoided-import kWh inside an already net-negative bucket)
+overvalues by PCIA/kWh in the opposite direction. `sign_flip_buckets` — buckets whose
+aggregate sign genuinely flips between the billed year and the counterfactual — is a smaller,
+SECONDARY contributor, reported as `sign_flip_residual_usd` (gap minus the PCIA effect).
+**Correction:** an earlier version of this module and its artifact named sign flips as the
+SOLE cause of the gap. An independent review (PR #77) built a counterexample (metered solar,
+zero sign flips anywhere, a real nonzero gap) that the sign-flip-only story predicts as ~$0
+and the PCIA mechanism predicts correctly — proving the original explanation false. The fix
+is verified by `test_quiet_night_floor.case_reconciliation_gap_is_explained_by_pcia_not_
+sign_flips`, which asserts BOTH that the old theory's prediction misses (falsifying it) and
+that the corrected theory's prediction matches closely (confirming it) on the same fixture.
+`pricing.reconciliation.scope_of_agreement` states plainly what this reconciliation does and
+does not prove: it validates the NETTING/AGGREGATION treatment only (both methods share the
+identical `_split_floor` allocation and the identical `rates.py` constants), not the rate
+constants themselves and not the physical floor-allocation model, where the larger,
+separately-quantified `floor_assumption_violations` limitation actually lives.
+
+**Sensitivity (issue AC4, `sensitivity_per_100w`).** Re-bills (method b) at 100 W steps from
+100 to 1,200 W (`MAX_REDUCTION_W`) and reports both the marginal $/100W at the sensitivity
+step nearest the currently-measured floor and the general linear-fit slope across the whole
+range, stating explicitly which is which and how far the removal is from being perfectly
+linear (a bucket sign flip inside the tested range would show up as measurable nonlinearity).
+
+**Battery interaction (issue AC5, `battery_interaction`).** Re-runs
+`battery_dispatch_policies.run_batt` (same greedy policy, same Powerwall 3 config, the same
+steady-state SOC convergence §3.24 established) on the baseline and floor-removed series,
+isolating the floor's own effect (no EV-shift behavior model stacked on top). On the real
+measured year, removing the ~1 kW floor cuts the battery's own marginal saving by roughly
+45% — the floor persists into the 4-9pm on-peak window the battery discharges into, so a
+smaller floor leaves less expensive import for the battery to displace. Reported with a
+noted, uncorrected confound: `run_batt`'s greedy EV-spillover gate is evaluated on each
+series' own import values, so a small amount of energy becomes servable only in the
+counterfactual purely because the floor's removal pushed it under the gate threshold, not
+because of any real behavioral change (~$26/yr in the conservative direction on the real
+year).
+
+**Confidence labels (issue AC6).** `confidence_labels()` keeps the measured LOAD (two
+independent instruments: 15-minute import data and the SAM whole-home meter) separate from
+the attested CAUSE (owner's word only, report prose — not independently verified with a
+plug-meter study), and separately labels the pricing and battery-interaction sections as
+modeled (both assume the measured floor magnitude holds constant across all 8,760 hours of
+the year).
+
+**Reproduction.** `price_map_from_rates()` computes the price map straight from `rates.py`
+(the canonical module) and cross-checks it against the committed `data/extra_results.json ->
+price_map` the issue cites, to the cent — never reading that artifact as the operative rate
+source. `quiet_night_floor.json` is written directly to `data/` (repo-root discovery, atomic
+tmp-then-replace, the same convention §3.24/§3.27 use); `test_quiet_night_floor.py` covers
+the night-floor extraction, both pricing methods individually, the reconciliation (including
+the falsifying test above), the sensitivity calculation, the confidence-label distinction,
+and byte-identical artifact regeneration.
+
+---
+
 ## 4. Battery simulation methodology
 
 **Arbitrage dispatch (identical greedy policy in `battery_backup_sims.py`, `package_sims.py` (REMOVED — superseded by the integrated pipeline),
