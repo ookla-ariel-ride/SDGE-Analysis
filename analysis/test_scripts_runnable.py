@@ -159,6 +159,15 @@ TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py",
 
 ABS_PATH = re.compile(r"""["'](/[A-Za-z0-9_.\-]+/[^"']*)["']""")
 
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
+
+
+class SkipCase(Exception):
+    """Typed skip signal (matching test_parse_bills.py's convention, issue #44
+    AC4) -- a case raises this instead of returning a "SKIP ..."-prefixed
+    string, so a case that legitimately returns a message starting with those
+    five letters can never be silently miscounted as skipped."""
+
 
 def _scripts():
     return sorted(f for f in ANALYSIS.glob("*.py") if not f.name.startswith("test_"))
@@ -381,6 +390,40 @@ NEEDS_PRIVATE_ARCHIVE = {
     "reprice_by_vintage.py": ("the raw Green Button export (usage.csv, via "
                               "billing_model_nem.load()) for the interval data it reconciles "
                               "against the 13-period bill corpus"),
+}
+
+# Generators listed above that nonetheless run END TO END IN CI -- just not
+# through the shared Green-Button-only synthetic fixture below, which is not
+# shaped for what they specifically need (a SAM-8760 pair, a bill-PDF-shaped
+# corpus, a promoted dispatch artifact, a monitoring production history, ...).
+# Each has its own dedicated test_<name>.py building a fixture shaped for
+# that need, registered as its own step in .github/workflows/tests.yml. Named
+# here (rather than left implicit) so the real-archive skip message below can
+# state, generator by generator, whether "not verified by THIS case" means
+# "not verified anywhere in CI" or "verified by a different CI job" (issue
+# #44 AC1: every NEEDS_PRIVATE_ARCHIVE generator is either exercised end to
+# end in CI, or CI states explicitly it was not verified and why).
+# battery_plan_matrix.py is the one deliberate exception: its own fail-closed
+# tie-out against battery_dispatch_policies.json means synthetic inputs must
+# diverge and trip it (see its entry above) -- there is no fixture that could
+# exercise it in CI without defeating the check it exists to make, so it is
+# the one generator genuinely NOT verified anywhere in CI, documented as such.
+VERIFIED_ELSEWHERE_IN_CI = {
+    "parse_bills.py": "test_parse_bills.py",
+    "bill_decomposition.py": "test_bill_decomposition.py",
+    "extended_findings.py": "test_extended_findings.py",
+    "lifetime_payback.py": "test_lifetime_payback.py",
+    "soiling_analysis.py": "test_soiling_analysis.py",
+    "deep_analyses.py": "test_deep_analyses.py",
+    "battery_backup_sims.py": "test_battery_backup_sims.py",
+    "service_headroom.py": "test_service_headroom.py",
+    "irreducible_bill.py": "test_irreducible_bill.py",
+    "carbon_dispatch_tradeoff.py": "test_carbon_dispatch_tradeoff.py",
+    "cca_rate_extraction.py": "test_cca_rate_extraction.py",
+    "cca_bundled_counterfactual.py": "test_cca_bundled_counterfactual.py",
+    "uncertainty_propagation.py": "test_uncertainty_propagation.py",
+    "gross_import_decomposition.py": "test_gross_import_decomposition.py",
+    "reprice_by_vintage.py": "test_reprice_by_vintage.py",
 }
 
 # The fixture window is DERIVED from the pipeline's anchor date so re-pointing
@@ -649,11 +692,26 @@ def case_generators_run_on_the_real_archive():
     usage = SANDBOX / "usage.csv"
     if not usage.exists():
         # Skipping here is legitimate: these generators need raw private inputs
-        # that have no synthetic stand-in. The CI guarantee does not rest on this
-        # case -- case_generators_run_on_synthetic_inputs has no skip path at all,
-        # so something always executes wherever this suite runs.
-        return ("SKIP generators needing the private archive (" +
-                ", ".join(sorted(NEEDS_PRIVATE_ARCHIVE)) + ")")
+        # that have no synthetic stand-in FOR THIS SUITE'S shared fixture. The CI
+        # guarantee does not rest on this one case -- case_generators_run_on_
+        # synthetic_inputs has no skip path at all, so something always executes
+        # wherever this suite runs -- but issue #44 AC1 asks for more than that:
+        # every one of these generators must be named as either verified by a
+        # DIFFERENT CI job (VERIFIED_ELSEWHERE_IN_CI), or genuinely unverified
+        # anywhere in CI, with why, stated per generator rather than lumped into
+        # one bare name list.
+        lines = []
+        for name in sorted(NEEDS_PRIVATE_ARCHIVE):
+            reason = NEEDS_PRIVATE_ARCHIVE[name]
+            elsewhere = VERIFIED_ELSEWHERE_IN_CI.get(name)
+            if elsewhere:
+                lines.append(f"  {name}: verified end to end in CI by {elsewhere} "
+                            f"instead (this case's own real-archive run needs {reason})")
+            else:
+                lines.append(f"  {name}: NOT verified end to end anywhere in CI "
+                            f"-- needs {reason}")
+        raise SkipCase("generators needing the private archive, and why "
+                       "(none of these run in THIS case in CI):\n" + "\n".join(lines))
     def inspect(tmp):
         """The section 9 gate, folded in: on the real inputs every owned artifact
         must reproduce the committed copy byte-for-byte."""
@@ -675,6 +733,34 @@ def case_generators_run_on_the_real_archive():
     n = len(NEEDS_PRIVATE_ARCHIVE) + len(CI_RUNNABLE)
     return (f"all {n} generators execute against the real inputs and every owned "
             "artifact reproduces the committed copy byte-for-byte")
+
+
+def case_verified_elsewhere_mapping_is_real_and_wired_into_ci():
+    """VERIFIED_ELSEWHERE_IN_CI is a claim about what actually runs in CI --
+    check it mechanically rather than trust the dict. Each entry's test file
+    must exist, and must be registered as its own step in
+    .github/workflows/tests.yml, or the "verified end to end in CI by ..."
+    message above would itself be exactly the kind of guard that reports
+    success without checking anything (issue #44's founding complaint)."""
+    unknown = set(VERIFIED_ELSEWHERE_IN_CI) - set(NEEDS_PRIVATE_ARCHIVE)
+    assert not unknown, f"VERIFIED_ELSEWHERE_IN_CI names non-archive generators: {unknown}"
+    assert CI_WORKFLOW.is_file(), f"{CI_WORKFLOW} not found"
+    workflow_src = CI_WORKFLOW.read_text()
+    missing_file, missing_step = [], []
+    for name, test_file in VERIFIED_ELSEWHERE_IN_CI.items():
+        if not (ANALYSIS / test_file).is_file():
+            missing_file.append(test_file)
+        if f"python analysis/{test_file}" not in workflow_src:
+            missing_step.append(test_file)
+    assert not missing_file, f"VERIFIED_ELSEWHERE_IN_CI names test files that don't exist: {missing_file}"
+    assert not missing_step, (
+        f"VERIFIED_ELSEWHERE_IN_CI names test files with no CI step in "
+        f"{CI_WORKFLOW.name}: {missing_step}")
+    undeclared = set(NEEDS_PRIVATE_ARCHIVE) - set(VERIFIED_ELSEWHERE_IN_CI)
+    return (f"{len(VERIFIED_ELSEWHERE_IN_CI)} of {len(NEEDS_PRIVATE_ARCHIVE)} "
+            "NEEDS_PRIVATE_ARCHIVE generators are verified end to end by a real, "
+            f"CI-wired test file; {len(undeclared)} ({', '.join(sorted(undeclared))}) "
+            "are documented as genuinely unverified in CI")
 
 
 def case_the_ci_tier_cannot_skip():
@@ -790,6 +876,7 @@ CASES = [
     case_missing_day_fails_the_chart_generator,
     case_small_charger_refuses_ev_discrimination,
     case_publication_failure_leaves_artifacts_untouched,
+    case_verified_elsewhere_mapping_is_real_and_wired_into_ci,
     case_generators_run_on_the_real_archive,
 ]
 
@@ -799,12 +886,11 @@ def main():
     for case in CASES:
         try:
             msg = case()
-            if msg.startswith("SKIP"):
-                print(f"SKIP  {msg[5:]}")
-                skipped += 1
-            else:
-                print(f"PASS  {msg}")
-                ran += 1
+            print(f"PASS  {msg}")
+            ran += 1
+        except SkipCase as e:
+            print(f"SKIP  {case.__name__} ({e})")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL  {case.__name__}: {e}")
             failures += 1

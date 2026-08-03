@@ -28,7 +28,9 @@ for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_rates_history test_tou_spread test_scripts_runnable test_nem3_grandfathering \
          test_dsgs_vpp_backtest test_cca_rate_extraction test_cca_bundled_counterfactual \
          test_battery_sizing_curve test_perfect_foresight_dispatch test_tou_structure_stress \
-         test_gross_import_decomposition test_reprice_by_vintage test_report_tokens \
+         test_gross_import_decomposition test_reprice_by_vintage test_uncertainty_propagation \
+         test_battery_backup_sims test_deep_analyses test_lifetime_payback test_soiling_analysis \
+         test_extended_findings test_report_tokens \
          test_llm_providers test_egress_preflight test_report_blocks test_prose_lint \
          test_generate_report; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null

@@ -3339,6 +3339,62 @@ and 14-day-cap assumptions (§4); `deep_analyses.py` reads `base_save` from
 `battery_dispatch_policies.json` (`post_behavior.mid.battery_marginal`) — rerun order matters
 (§7): regenerate the dispatch artifact before the Monte Carlo.
 
+**6.7 What CI actually verifies, and what stays local-only (issue #44).** A green CI badge on
+a pull request is a claim about a specific, checkable set of properties — recorded here so the
+badge stops implying more coverage than it has. `analysis/test_scripts_runnable.py` classifies
+every generator into exactly one of three tiers, and the case-by-case tier assignment
+(`CI_RUNNABLE` / `NEEDS_PRIVATE_ARCHIVE`, plus `VERIFIED_ELSEWHERE_IN_CI` for the second tier)
+is itself guarded (`case_every_generator_is_covered_by_one_of_the_two_tiers`,
+`case_verified_elsewhere_mapping_is_real_and_wired_into_ci`), so this can't silently drift from
+the code:
+
+- **`CI_RUNNABLE` (15 generators)** — `behavior_rebuild.py`, `battery_dispatch_policies.py`,
+  `package_results.py`, `report_data.py`, `analyze.py`, `analyze_norelief.py`,
+  `carbon_fullyear.py`, `tou_audit.py`, `rates_history.py`, `tou_spread.py`,
+  `nem3_grandfathering.py`, `dsgs_vpp_backtest.py`, `battery_sizing_curve.py`,
+  `perfect_foresight_dispatch.py`, `tou_structure_stress.py` — run end to end in CI against a
+  synthetic Green Button export shaped by `test_scripts_runnable.py`'s own fixture (a real
+  household file only has to look like this, not be it: 96-slot/DST-adjusted days, an EV
+  session signature, a solar shape). **CI verifies their main computational path directly**,
+  with no skip path at all (`case_the_ci_tier_cannot_skip`).
+- **`NEEDS_PRIVATE_ARCHIVE` (16 generators)** need an input that shared fixture cannot supply
+  (a bill-PDF corpus, a SAM-8760 pair, a monitoring production history, or a fail-closed
+  tie-out against a real-year-derived committed artifact that a synthetic run must legitimately
+  fail). Before issue #44, CI's only exercise of these was `test_scripts_runnable.py`'s own
+  real-archive case, which skips entirely on a runner (no `private/`) — so a defect in, say,
+  `service_headroom.py`'s `build()` could pass every CI check (demonstrated: a 10% error
+  injected into `build()` on a fresh archive-less checkout still reported 78/81 passed, 3
+  skipped, exit 0). Of the 16:
+  - **15 are verified end to end by their OWN dedicated CI-wired test file**
+    (`VERIFIED_ELSEWHERE_IN_CI` in `test_scripts_runnable.py`), each building a fixture shaped
+    for what that generator specifically needs and running the real generator against it —
+    `test_parse_bills.py`, `test_bill_decomposition.py`, `test_irreducible_bill.py`,
+    `test_cca_rate_extraction.py`, `test_cca_bundled_counterfactual.py`,
+    `test_service_headroom.py`, `test_carbon_dispatch_tradeoff.py`,
+    `test_uncertainty_propagation.py`, `test_gross_import_decomposition.py`,
+    `test_reprice_by_vintage.py` (pre-existing), plus `test_battery_backup_sims.py`,
+    `test_deep_analyses.py`, `test_lifetime_payback.py`, `test_soiling_analysis.py`,
+    `test_extended_findings.py` (added for issue #44). Each of the five added files was
+    validated by deliberate fault injection — a small arithmetic defect planted in a scratch
+    copy of the generator's main path was confirmed to turn that test red, then reverted and
+    confirmed green again — not just asserted to work.
+  - **1 (`battery_plan_matrix.py`) is documented as genuinely unverified anywhere in CI**: its
+    fail-closed tie-out compares its own output against `battery_dispatch_policies.json`, which
+    is built from the real year, so any synthetic input must legitimately diverge and trip it —
+    a fixture that let it pass would defeat the check it exists to make. The real-archive skip
+    message in `test_scripts_runnable.py` states this per generator, not as a bare name list.
+- **The real-archive byte-tie-out itself** (`case_generators_run_on_the_real_archive`: every
+  `NEEDS_PRIVATE_ARCHIVE` and `CI_RUNNABLE` generator reproduces its committed artifact
+  byte-for-byte against the actual private data) is **local-only** — CI runners never have
+  `private/`, so this case always skips there. It is the strongest single check in the suite
+  (it is literally the CLAUDE.md §9 regeneration gate folded in) and must be run manually
+  (`./.venv/bin/python analysis/test_scripts_runnable.py` from the `private/verify` sandbox,
+  or from a checkout with `private/` staged) before trusting a change to any generator.
+
+In short: CI now either runs a generator's real logic against real or fixture-shaped data, or
+says explicitly which generator it didn't and why — never a guard that reports success without
+checking anything, and never a passing summary that silently skips its strongest case.
+
 ---
 
 ## 7. Reproduction checklist
