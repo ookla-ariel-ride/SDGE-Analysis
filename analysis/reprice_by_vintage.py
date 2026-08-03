@@ -16,9 +16,9 @@ PDFs' own printed rate lines) -- and separates it from a second, previously
 unexamined confound: the two $4,904-vs-$3,282 figures are computed over
 DIFFERENT 365-day windows in the first place.
 
-THE DECOMPOSITION. Six quantities, chained so each is "the previous total plus
-one more correction," landing exactly on the actual bills. (A fresh Codex
-adversarial review of this branch flagged the 5-term version's headline
+THE DECOMPOSITION. Eight quantities, chained so each is "the previous total
+plus one more correction," landing exactly on the actual bills. (A fresh
+Codex adversarial review of this branch flagged the 5-term version's headline
 total_vintage_effect as unsupported: generation_and_fixed_charge_vintage_
 effect's -$281.59 was being counted almost entirely as "vintage," but
 analysis/cca_rate_extraction.py's own committed data/cca_generation_rates.csv
@@ -29,7 +29,16 @@ that module's docstring (see "GENERATION RATE VINTAGE IS ZERO, BY EVIDENCE"
 below). The true cause of that -$281.59 was almost entirely the SAME
 TOU-window-shape confound this script already named as a residual_total
 candidate, showing up in generation dollars specifically -- now quantified
-instead of "not determined." This is the corrected, 6-term version.)
+instead of "not determined." A SECOND Codex review pass then found that the
+6-term version's generation_tou_window_effect was still not purely a
+window-shape effect: it silently carried two real, small, unmodeled
+generation-side line items -- CEA's "Clean Impact Plus" (CIP) per-kWh product
+adder and a per-period state surcharge tax -- that have no rates.py
+counterpart at all, so they cannot support a vintage OR a window-shape claim;
+they are just real money bmn.bill()'s model never counts, in every year. Both
+are now separated into their own terms (cip_adder_usd, state_surcharge_tax_
+usd), narrowing generation_tou_window_effect to what the TOU-window-shape
+confound can actually support. This is the corrected, 8-term version.)
 
     native_window_total   billing_model_nem's own native rolling window
                            (2025-07-25..2026-07-23), current vintage
@@ -56,7 +65,16 @@ instead of "not determined." This is the corrected, 6-term version.)
                            acting on generation dollars specifically, plus a
                            small folded-in per-bill-period-restart artifact
                            -- see "GENERATION RATE VINTAGE IS ZERO, BY
-                           EVIDENCE" and "THE RESTART ARTIFACT" below.
+                           EVIDENCE" and "THE RESTART ARTIFACT" below. The CIP
+                           adder and the state surcharge tax are DELIBERATELY
+                           EXCLUDED from this term (see the next two).
+  + cip_adder_usd          real, directly-billed CEA "Clean Impact Plus"
+                           per-kWh product adder -- no rates.py counterpart at
+                           all, so neither a vintage nor a window-shape claim
+                           applies; just real money the model never counts.
+  + state_surcharge_tax_usd real, directly-billed per-period state surcharge
+                           tax -- a flat dollar fee, no per-kWh rate, same
+                           reasoning as the CIP adder.
   + fixed_charge_vintage_effect
                          = fixed_charge_actual_sum - fixed_charge_continuous
                            genuinely a vintage/regime effect: the historical
@@ -70,23 +88,45 @@ instead of "not determined." This is the corrected, 6-term version.)
                            actually in force each period, instead of current,
                            everything else held fixed. Cleanly isolated:
                            everything else in the two totals being differenced
-                           is identical.
+                           is identical -- BUT see "THE SOURCED-VS-TOTAL
+                           CAVEAT" below: this cleanliness covers only the kWh
+                           rates_history.py can actually source a historical
+                           rate for.
   + residual_total         = actual_total_sum - bill_window_own_vintage_total
                            whatever is left after every correction above: the
                            real, previously-undecomposed model-vs-bill gap.
   = actual_total_sum       the bills' own accrued current_charges, $3,282.22.
 
 total_vintage_effect (= delivery_vintage_effect + fixed_charge_vintage_effect
--- generation deliberately EXCLUDED, per the flatness proof) is reported
-alongside the six terms because it is the number that actually answers issue
-#30's question -- "how much of the gap is rate vintage."
+-- generation, the CIP adder, and the state surcharge tax all deliberately
+EXCLUDED, per the flatness proof and the "no rates.py counterpart" reasoning
+above) is reported alongside the eight terms because it is the number that
+answers issue #30's question -- "how much of the gap is rate vintage" -- but
+see "THE SOURCED-VS-TOTAL CAVEAT" immediately below before treating it as a
+ceiling.
 
-This telescoping sum is a PURE ALGEBRAIC IDENTITY given the six definitions
+THE SOURCED-VS-TOTAL CAVEAT (a Codex review finding: this is a report-wording
+precision issue, not a code bug -- the numbers below were always correct).
+delivery_vintage_effect is a CLEAN comparison, but only over the kWh
+rates_history.py can actually source a historical delivery rate for.
+unpriced_delivery_limitation (see notes) already discloses that 1,168.3 kWh
+across 247 days -- the off-peak delivery bucket this household net-exported
+through for most of the analysis year -- has NO sourced historical rate at
+all, and that slice's own vintage effect is therefore folded into
+residual_total, indistinguishable there from a genuine model-vs-bill
+mechanics gap. total_vintage_effect is consequently the SOURCED, MEASURABLE
+portion of rate vintage, not a ceiling on the true total: if that unpriced
+slice's real historical delivery rate differed materially from today's, the
+true total vintage effect could be somewhat larger than total_vintage_effect
+reports. Any report text quoting total_vintage_effect as a percentage of the
+gap must say so.
+
+This telescoping sum is a PURE ALGEBRAIC IDENTITY given the eight definitions
 above (each stage total minus the previous stage total, by construction) --
 build() asserts it to the cent as a sanity check on the arithmetic, not as
 evidence about the household. NOTE ON SIGN: this residual convention (actual
 minus modeled, continuing the same "next stage minus previous stage" pattern
-every other term uses) is the one that makes the six terms telescope to
+every other term uses) is the one that makes the eight terms telescope to
 actual_total_sum; a naive reading of "residual = own_vintage_total -
 actual_total" for the running total would NOT telescope (it would double-count
 bill_window_own_vintage_total). Each PER-PERIOD residual uses the same
@@ -116,24 +156,31 @@ effect's construction must be revisited (it would then need a real generation
 rate-vintage term, which does not exist today because the evidence says there
 is nothing to price).
 
-generation_clean_tou_effect (= generation_actual_sum - the continuous-window,
-current-vintage-priced CEA generation total, computed by
-_continuous_current_vintage_components()) is the properly isolated TOU-window
-effect on generation dollars: interval kWh gets bucketed into on/off/super-
-off-peak using rates.period_at()'s CURRENT window shape (billing_model_nem.
-load(), applied uniformly to every historical date -- the SAME limitation
-_residual_concentration_note documents for delivery/PCIA/NBC), so kWh that was
-actually billed in one TOU bucket under the window shape in force at the time
-can be modeled in a DIFFERENT bucket here. Since CEA's on/off/sop rates differ
-by roughly $0.11-0.47/kWh, even a modest amount of reclassified kWh produces a
-real dollar gap -- quantified, not "not determined," now that generation's
-rate vintage is proven zero. generation_clean_tou_effect ALSO absorbs two
-smaller, disclosed components: (1) real generation-side dollars this script
-never models at all -- CEA's flat "Clean Impact Plus" product adder
-(~$0.001/kWh) and a per-period state surcharge tax, together roughly $17
-across the window (data/cca_generation_rates.csv's own clean_impact_plus and
-charged_fee rows) -- and (2) ordinary rounding. Both are small next to the
-TOU-window effect and are named rather than silently absorbed.
+generation_clean_tou_effect (= generation_tou_actual_sum - the continuous-
+window, current-vintage-priced CEA generation total, computed by
+_continuous_current_vintage_components()) is the properly, PURELY isolated
+TOU-window effect on generation dollars: interval kWh gets bucketed into
+on/off/super-off-peak using rates.period_at()'s CURRENT window shape
+(billing_model_nem.load(), applied uniformly to every historical date -- the
+SAME limitation _residual_concentration_note documents for delivery/PCIA/NBC),
+so kWh that was actually billed in one TOU bucket under the window shape in
+force at the time can be modeled in a DIFFERENT bucket here. Since CEA's
+on/off/sop rates differ by roughly $0.11-0.47/kWh, even a modest amount of
+reclassified kWh produces a real dollar gap -- quantified, not "not
+determined," now that generation's rate vintage is proven zero.
+generation_tou_actual_sum (= generation_actual_sum - cip_adder_usd -
+state_surcharge_tax_usd) is the real billed generation dollars with the two
+known, real, non-modeled line items subtracted out FIRST (a second Codex
+review finding: an earlier version of this computation compared the FULL real
+generation total, CIP and the surcharge tax included, against the TOU-only
+model, silently folding two real-but-unmodeled line items into a figure
+reported as a pure TOU-window-shape effect). What remains in generation_
+clean_tou_effect after that subtraction is believed to be predominantly the
+TOU-window-shape confound plus ordinary rounding; _verify_and_compute_
+generation_side_fees() independently confirms, for every period, that the
+three real TOU-cell dollars plus the CIP adder plus the surcharge tax
+reconstruct the real cca_generation figure to the cent, so no OTHER
+generation-side line item is hiding in this figure.
 
 THE RESTART ARTIFACT (delivery_pcia_restart_artifact_usd). delivery_current_
 vintage and pcia_current (used in bill_window_current_vintage_total) are
@@ -191,8 +238,11 @@ boundary, read at the top of that module -- do not re-derive it here, cite it):
     still substituted directly (bill_periods_electric.csv's cca_generation),
     identically in both the current-vintage and own-vintage totals, so it
     cancels out of delivery_vintage_effect by construction. The gap between
-    that real total and a current-vintage CEA model of it is
-    generation_tou_window_effect, not a vintage effect.
+    that real total and a current-vintage CEA model of it splits into THREE
+    terms, none of them a vintage effect: generation_tou_window_effect (the
+    TOU-window-shape confound plus the restart artifact), cip_adder_usd, and
+    state_surcharge_tax_usd (the latter two: real, unmodeled line items with
+    no rates.py counterpart at all).
   * PCIA, NBC -- genuinely not sourceable historically at all (no committed
     artifact carries the historical PCIA or non-bypassable-charge line); held
     at the current rates.py vintage in BOTH the current-vintage and own-vintage
@@ -376,6 +426,24 @@ def _check_coverage(available_dates, periods):
             "reprice_by_vintage: usage.csv does not fully cover the 13-period bill "
             "window -- cannot reprice on partial data. Uncoverable periods:\n  "
             + "\n  ".join(problems))
+
+
+def _check_slot_coverage(d_full, start, end):
+    """Fail closed on 15-minute SLOT-level gaps within the bill-aligned window,
+    not just calendar-date presence (a Codex review finding: _check_coverage()
+    above only confirms each date appears at least once in the frame -- a
+    badly truncated day, e.g. one interval reading instead of 96, would pass
+    that check and silently understate every kWh sum downstream). Delegates to
+    rates.validate_interval_coverage(), the SAME slot-completeness check
+    _native_window_total() already applies to the native window -- this
+    closes the exact inconsistency the review named: a stronger check this
+    script already has and uses elsewhere wasn't applied to the bill-aligned
+    window too. Called ONCE on the whole contiguous bill-aligned window
+    (start..end, inclusive) rather than per period, since _load_periods()
+    already proves the 13 periods tile it with no gap or overlap."""
+    sub = d_full[(d_full.dt.dt.date >= start) & (d_full.dt.dt.date <= end)]
+    rates.validate_interval_coverage(
+        zip(sub.dt.dt.date, sub.dt.dt.hour + sub.dt.dt.minute / 60), start, end)
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +804,106 @@ def _verify_cca_generation_rate_flat(periods):
             + "\n  ".join(problems))
 
 
+def _verify_and_compute_generation_side_fees(periods):
+    """(cip_adder_usd, state_surcharge_tax_usd): two REAL, directly-billed
+    generation-side dollar totals data/cca_generation_rates.csv carries that
+    bmn.bill()'s current-vintage CEA-table model has NO line for at all
+    (a Codex review finding: an earlier version of this script folded both
+    into generation_tou_window_effect, silently mislabeling them as part of
+    the TOU-window-shape confound when they are neither modeled, vintage, nor
+    window-shape effects -- they are simply real money the model structurally
+    never counts, in every year, regardless of vintage or window):
+      * CIP -- CEA's flat "Clean Impact Plus" per-kWh product adder
+        (tou_period == "clean_impact_plus", authority == "charged_tariff").
+        Unlike core CEA generation, rates.py has NO current-vintage line for
+        this at all, so there is nothing to compare it against for a
+        "vintage" claim -- but its own rate IS verified flat across the 13
+        periods (the same way core CEA generation is verified flat, not
+        assumed), which is the evidence for calling its own vintage effect
+        essentially zero.
+      * the state surcharge tax (tou_period == "state_surcharge_tax",
+        authority == "charged_fee") -- a flat PER-PERIOD DOLLAR fee, not a
+        per-kWh rate at all (no kwh/rate_usd_per_kwh columns), so there is no
+        rate to check for flatness; it is simply summed as printed.
+
+    Both are also verified, per period, to reconstruct bill_periods_electric.
+    csv's own cca_generation figure exactly (to the cent) together with the
+    three real TOU-cell dollars -- confirming these five line items are the
+    COMPLETE real generation charge, not an assumption carried over from
+    cca_generation_rates.csv's own total_printed row (which already asserts
+    this in its note field; this re-derives it independently). Fails closed,
+    naming the offender, on any gap: a missing period, a non-flat CIP rate, or
+    a period whose real cca_generation isn't fully accounted for by these five
+    line items (which would mean some OTHER generation-side charge exists that
+    this script does not know about)."""
+    if not CCA_RATES_CSV.exists():
+        raise SystemExit(f"reprice_by_vintage: missing {CCA_RATES_CSV}")
+    rows = list(csv.DictReader(open(CCA_RATES_CSV, newline="")))
+    our_periods = {p["period"] for p in periods}
+    cca_by_period = {p["period"]: p["cca_generation"] for p in periods}
+
+    cip_rows = [r for r in rows if r["period"] in our_periods
+               and r["tou_period"] == "clean_impact_plus"
+               and r["authority"] == "charged_tariff"]
+    surcharge_rows = [r for r in rows if r["period"] in our_periods
+                     and r["tou_period"] == "state_surcharge_tax"
+                     and r["authority"] == "charged_fee"]
+    tariff_rows = [r for r in rows if r["period"] in our_periods
+                  and r["authority"] == "charged_tariff"
+                  and r["tou_period"] in ("on_peak", "off_peak", "super_off_peak")]
+
+    missing_cip = sorted(our_periods - {r["period"] for r in cip_rows})
+    if missing_cip:
+        raise SystemExit(
+            f"reprice_by_vintage: {CCA_RATES_CSV} has no clean_impact_plus row for "
+            f"period(s) {missing_cip} -- cip_adder_usd's construction assumes every "
+            "one of the 13 periods carries this line item; cannot verify that here, "
+            "refusing to assume it")
+    missing_surcharge = sorted(our_periods - {r["period"] for r in surcharge_rows})
+    if missing_surcharge:
+        raise SystemExit(
+            f"reprice_by_vintage: {CCA_RATES_CSV} has no state_surcharge_tax row for "
+            f"period(s) {missing_surcharge} -- state_surcharge_tax_usd's construction "
+            "assumes every one of the 13 periods carries this line item; cannot "
+            "verify that here, refusing to assume it")
+
+    cip_rates_seen = {round(float(r["rate_usd_per_kwh"]), 5) for r in cip_rows}
+    if len(cip_rates_seen) != 1:
+        raise SystemExit(
+            "reprice_by_vintage: CEA's Clean Impact Plus product adder rate is NOT "
+            f"flat across the 13 periods: {sorted(cip_rates_seen)} -- reporting "
+            "cip_adder_usd as a real dollar total does not depend on this, but the "
+            "notes' 'essentially zero vintage effect' claim does; refusing to make "
+            "that claim without checking")
+
+    cip_adder_usd = sum(float(r["usd"]) for r in cip_rows)
+    state_surcharge_tax_usd = sum(float(r["usd"]) for r in surcharge_rows)
+
+    tou_by_period = {}
+    for r in tariff_rows:
+        tou_by_period[r["period"]] = tou_by_period.get(r["period"], 0.0) + float(r["usd"])
+    cip_by_period = {r["period"]: float(r["usd"]) for r in cip_rows}
+    surcharge_by_period = {r["period"]: float(r["usd"]) for r in surcharge_rows}
+    problems = []
+    for period in sorted(our_periods):
+        reconstructed = (tou_by_period.get(period, 0.0) + cip_by_period[period]
+                        + surcharge_by_period[period])
+        real = cca_by_period[period]
+        if abs(reconstructed - real) > 0.005:
+            problems.append(f"{period}: TOU+CIP+surcharge=${reconstructed:.2f} != "
+                            f"real cca_generation=${real:.2f}")
+    if problems:
+        raise SystemExit(
+            "reprice_by_vintage: data/cca_generation_rates.csv's line items do not "
+            "reconstruct bill_periods_electric.csv's real cca_generation to the "
+            "cent for:\n  " + "\n  ".join(problems) + "\n-- some generation-side "
+            "charge is not accounted for by the TOU cells, the CIP adder, and the "
+            "state surcharge tax; refusing to build cip_adder_usd/state_surcharge_"
+            "tax_usd from an incomplete decomposition")
+
+    return cip_adder_usd, state_surcharge_tax_usd
+
+
 # ---------------------------------------------------------------------------
 # Step 4: pure aggregation + the telescoping identity check -- kept free of
 # usage.csv/rates_history so it is directly testable on fabricated per-period
@@ -743,7 +911,7 @@ def _verify_cca_generation_rate_flat(periods):
 # ---------------------------------------------------------------------------
 def _aggregate(per_period, native_window_total,
                bill_window_all_current_vintage_modeled_total,
-               continuous_components):
+               continuous_components, cip_adder_usd, state_surcharge_tax_usd):
     bill_window_current_vintage_total = sum(p["current_vintage_total_usd"] for p in per_period)
     bill_window_own_vintage_total = sum(p["own_vintage_total_usd"] for p in per_period)
     actual_total_sum = sum(p["actual_total_usd"] for p in per_period)
@@ -781,12 +949,22 @@ def _aggregate(per_period, native_window_total,
     # sensitivity at all (module docstring, "THE RESTART ARTIFACT").
     fixed_charge_vintage_effect = fixed_charge_actual_sum - continuous_components["fixed_charge"]
 
-    # generation_clean_tou_effect: real billed generation dollars vs.
-    # bmn.bill()'s continuous-window CEA-priced model -- the properly isolated
-    # TOU-window-shape effect on generation (module docstring, "GENERATION
-    # RATE VINTAGE IS ZERO, BY EVIDENCE"). Diagnostic, reported for
-    # transparency; NOT itself one of the six identity terms.
-    generation_clean_tou_effect = generation_actual_sum - continuous_components["generation"]
+    # generation_tou_actual_sum: the real billed generation dollars with the
+    # two known, real, non-modeled line items (CIP adder, state surcharge tax)
+    # subtracted out FIRST -- what's left is purely the real TOU-cell dollars,
+    # the only piece bmn.bill()'s CEA-table model has any counterpart for at
+    # all (a Codex review finding: an earlier version compared the FULL real
+    # generation total, CIP and surcharge included, against the TOU-only
+    # model, silently folding two real-but-unmodeled line items into what was
+    # billed as a pure "TOU-window-shape" effect).
+    generation_tou_actual_sum = generation_actual_sum - cip_adder_usd - state_surcharge_tax_usd
+
+    # generation_clean_tou_effect: real TOU-only generation dollars vs.
+    # bmn.bill()'s continuous-window CEA-priced model -- NOW the properly,
+    # PURELY isolated TOU-window-shape effect on generation (module
+    # docstring, "GENERATION RATE VINTAGE IS ZERO, BY EVIDENCE"). Diagnostic,
+    # reported for transparency; NOT itself one of the identity terms.
+    generation_clean_tou_effect = generation_tou_actual_sum - continuous_components["generation"]
 
     # delivery_pcia_restart_artifact_usd: the per-bill-period-restart artifact
     # (module docstring, "THE RESTART ARTIFACT"), computed as the ACTUAL
@@ -801,29 +979,38 @@ def _aggregate(per_period, native_window_total,
 
     # generation_tou_window_effect: the term used in the identity. Equal to
     # generation_clean_tou_effect PLUS the restart artifact, by construction
-    # -- this is what makes generation_tou_window_effect + fixed_charge_
-    # vintage_effect reconstruct (current_vintage_total - all_modeled) EXACTLY
-    # (asserted below), which is what the 6-term identity requires.
+    # -- this is what makes generation_tou_window_effect + cip_adder_usd +
+    # state_surcharge_tax_usd + fixed_charge_vintage_effect reconstruct
+    # (current_vintage_total - all_modeled) EXACTLY (asserted below), which is
+    # what the 8-term identity requires. It no longer contains CIP or the
+    # surcharge tax at all -- both are now their own separate, fully-known,
+    # non-vintage, non-window-shape terms.
     generation_tou_window_effect = generation_clean_tou_effect + delivery_pcia_restart_artifact
 
-    # Internal cross-check: the two new terms must decompose the OLD combined
-    # quantity (current_vintage_total - all_modeled) exactly, with nothing
-    # left over -- a more specific diagnostic than waiting for the final
-    # 6-term identity check below to catch the same bug less legibly.
+    # Internal cross-check: the four new/separated terms must decompose the
+    # OLD combined quantity (current_vintage_total - all_modeled) exactly,
+    # with nothing left over -- a more specific diagnostic than waiting for
+    # the final 8-term identity check below to catch the same bug less
+    # legibly.
     old_combined = bill_window_current_vintage_total - bill_window_all_current_vintage_modeled_total
-    reconstructed = generation_tou_window_effect + fixed_charge_vintage_effect
+    reconstructed = (generation_tou_window_effect + cip_adder_usd + state_surcharge_tax_usd
+                     + fixed_charge_vintage_effect)
     if abs(reconstructed - old_combined) > 0.005:
         raise SystemExit(
-            "reprice_by_vintage: generation_tou_window_effect + fixed_charge_"
-            f"vintage_effect (${reconstructed:.2f}) does not reconstruct "
-            f"current_vintage_total - bill_window_all_current_vintage_modeled_total "
-            f"(${old_combined:.2f}) -- the generation/fixed-charge decomposition is "
-            "inconsistent with its own inputs")
+            "reprice_by_vintage: generation_tou_window_effect + cip_adder_usd + "
+            f"state_surcharge_tax_usd + fixed_charge_vintage_effect (${reconstructed:.2f}) "
+            "does not reconstruct current_vintage_total - bill_window_all_current_"
+            f"vintage_modeled_total (${old_combined:.2f}) -- the generation/fixed-"
+            "charge decomposition is inconsistent with its own inputs")
 
     # delivery_vintage_effect: own-vintage UDC vs current-vintage UDC, real
     # generation/fixed-charge held fixed on both sides (cancels out).
     delivery_vintage_effect = bill_window_own_vintage_total - bill_window_current_vintage_total
-    # generation excluded, per the flatness proof (module docstring).
+    # generation excluded, per the flatness proof (module docstring); CIP and
+    # the state surcharge tax excluded too -- neither has a rates.py
+    # counterpart to compare against, so neither can support a vintage claim
+    # at all (they are simply real, always-present money the model never
+    # counts, not a "changed over time" story).
     total_vintage_effect = delivery_vintage_effect + fixed_charge_vintage_effect
 
     # residual_total, defined above as the sum of the (actual - own_vintage)
@@ -841,14 +1028,16 @@ def _aggregate(per_period, native_window_total,
             "per-period arithmetic is inconsistent with the aggregate")
 
     identity_lhs = (native_window_total + window_effect + generation_tou_window_effect
-                    + fixed_charge_vintage_effect + delivery_vintage_effect + residual_total)
+                    + cip_adder_usd + state_surcharge_tax_usd + fixed_charge_vintage_effect
+                    + delivery_vintage_effect + residual_total)
     if abs(identity_lhs - actual_total_sum) > 0.005:
         raise SystemExit(
             "reprice_by_vintage: the telescoping identity native_window_total + "
-            "window_effect + generation_tou_window_effect + fixed_charge_vintage_"
-            "effect + delivery_vintage_effect + residual_total == actual_total_sum "
-            f"does not hold: {identity_lhs:.2f} != {actual_total_sum:.2f} -- this is "
-            "pure arithmetic and must be exact; an aggregation bug, not a data finding")
+            "window_effect + generation_tou_window_effect + cip_adder_usd + "
+            "state_surcharge_tax_usd + fixed_charge_vintage_effect + "
+            "delivery_vintage_effect + residual_total == actual_total_sum does not "
+            f"hold: {identity_lhs:.2f} != {actual_total_sum:.2f} -- this is pure "
+            "arithmetic and must be exact; an aggregation bug, not a data finding")
 
     return dict(
         native_window_total=native_window_total,
@@ -859,6 +1048,8 @@ def _aggregate(per_period, native_window_total,
         delivery_pcia_restart_artifact_usd=delivery_pcia_restart_artifact,
         delivery_restart_artifact_usd=delivery_restart_artifact,
         pcia_restart_artifact_usd=pcia_restart_artifact,
+        cip_adder_usd=cip_adder_usd,
+        state_surcharge_tax_usd=state_surcharge_tax_usd,
         fixed_charge_vintage_effect=fixed_charge_vintage_effect,
         delivery_vintage_effect=delivery_vintage_effect,
         total_vintage_effect=total_vintage_effect,
@@ -963,20 +1154,6 @@ def _residual_concentration_note(per_period):
     )
 
 
-def _generation_side_fees_usd(per_period):
-    """Real generation-side dollars data/cca_generation_rates.csv carries that
-    neither generation_clean_tou_effect's CEA-table model nor any other term
-    in this script prices: CEA's flat "Clean Impact Plus" product adder
-    (tou_period == "clean_impact_plus") and the per-period state surcharge tax
-    (authority == "charged_fee"), summed over the 13 periods in scope. A small,
-    disclosed component of generation_clean_tou_effect, not folded in silently."""
-    our_periods = {p["period"] for p in per_period}
-    rows = [r for r in csv.DictReader(open(CCA_RATES_CSV, newline=""))
-           if r["period"] in our_periods
-           and (r["tou_period"] == "clean_impact_plus" or r["authority"] == "charged_fee")]
-    return sum(float(r["usd"]) for r in rows)
-
-
 def _build_notes(per_period, agg):
     kwh = _kwh_reconciliation_notes(per_period)
     total_unpriced_kwh = sum(p["unpriced_delivery_kwh"] for p in per_period)
@@ -986,7 +1163,8 @@ def _build_notes(per_period, agg):
     generation_clean_tou_effect = agg["generation_clean_tou_effect"]
     delivery_pcia_restart_artifact = agg["delivery_pcia_restart_artifact_usd"]
     fixed_charge_vintage_effect = agg["fixed_charge_vintage_effect"]
-    generation_side_fees = _generation_side_fees_usd(per_period)
+    cip_adder_usd = agg["cip_adder_usd"]
+    state_surcharge_tax_usd = agg["state_surcharge_tax_usd"]
     material = abs(residual_total) >= 5.0
 
     return dict(
@@ -1019,20 +1197,49 @@ def _build_notes(per_period, agg):
             "actually in force on each date. Since CEA's on/off/sop rates differ "
             "by roughly $0.11-0.47/kWh, reclassified kWh produces a real dollar "
             f"gap: generation_clean_tou_effect (${generation_clean_tou_effect:+.2f}) "
-            "is real billed generation dollars minus the continuous-window, "
-            "current-vintage-priced CEA model of them "
-            "(_continuous_current_vintage_components()). This figure also "
-            "carries, disclosed here rather than folded in silently: (1) "
-            f"${generation_side_fees:.2f} of real generation-side dollars this "
-            "script never models at all -- CEA's flat per-kWh 'Clean Impact Plus' "
-            "product adder and the per-period state surcharge tax, both real bill "
-            "lines (data/cca_generation_rates.csv's own clean_impact_plus and "
-            "charged_fee rows) -- and (2) ordinary rounding. "
+            "is real billed TOU-cell generation dollars ONLY -- the CIP adder and "
+            "the state surcharge tax are subtracted out first (see cip_adder_usd_"
+            "explanation and state_surcharge_tax_usd_explanation; a Codex review "
+            "finding: an earlier version of this script compared the FULL real "
+            "generation total, both adders included, against the TOU-only model, "
+            "silently folding two real-but-unmodeled line items into a figure "
+            "billed as a pure TOU-window-shape effect) -- minus the continuous-"
+            "window, current-vintage-priced CEA model of them "
+            "(_continuous_current_vintage_components()). "
             f"generation_tou_window_effect adds delivery_pcia_restart_artifact_usd "
             f"(${delivery_pcia_restart_artifact:+.2f}) on top of "
             "generation_clean_tou_effect -- see delivery_pcia_restart_artifact_usd's "
             "own note for what that is and why it lands here rather than in "
-            "fixed_charge_vintage_effect."),
+            "fixed_charge_vintage_effect. What remains in generation_clean_tou_"
+            "effect after separating the two known adders is believed to be "
+            "predominantly the TOU-window-shape confound plus ordinary rounding; "
+            "data/cca_generation_rates.csv's own per-period reconciliation "
+            "(TOU + CIP + surcharge == real cca_generation, to the cent, verified "
+            "by _verify_and_compute_generation_side_fees()) confirms no OTHER "
+            "generation-side line item is hiding in it."),
+        cip_adder_usd_explanation=(
+            f"${cip_adder_usd:.2f} is CEA's real, directly-billed 'Clean Impact "
+            "Plus' per-kWh product adder (data/cca_generation_rates.csv's "
+            "clean_impact_plus rows), separated out of generation_tou_window_"
+            "effect because it is neither a vintage effect nor a TOU-window-shape "
+            "effect: rates.py's CEA table has no line for it at all, so there is "
+            "nothing to compare it against for either claim -- it is simply real "
+            "money bmn.bill()'s current-vintage model structurally never counts, "
+            "in every year, regardless of vintage or window. Its own rate "
+            "(_verify_and_compute_generation_side_fees()) is verified flat at "
+            "$0.001/kWh across all 13 periods, which is the evidence for calling "
+            "its OWN vintage effect essentially zero -- unlike PCIA/NBC, this "
+            "isn't assumed."),
+        state_surcharge_tax_usd_explanation=(
+            f"${state_surcharge_tax_usd:.2f} is a real, directly-billed per-period "
+            "state surcharge tax (data/cca_generation_rates.csv's "
+            "state_surcharge_tax rows, authority == charged_fee) -- a flat DOLLAR "
+            "fee with no per-kWh rate at all (no kwh or rate_usd_per_kwh columns), "
+            "so no flatness or vintage question even applies to it; it is simply "
+            "summed as printed. Separated out of generation_tou_window_effect for "
+            "the same reason as the CIP adder: rates.py has no counterpart line "
+            "for it, so it cannot be a vintage or window-shape effect, only real, "
+            "always-present money the model never counts."),
         delivery_pcia_restart_artifact_usd_explanation=(
             f"${delivery_pcia_restart_artifact:+.2f} "
             "(delivery ${:+.2f}, PCIA ${:+.2f}) is the per-bill-period-restart "
@@ -1081,7 +1288,7 @@ def _build_notes(per_period, agg):
             "evidence PCIA or NBC stayed flat -- they are simply held at the "
             "current rates.py vintage in current_vintage_total, own_vintage_total "
             "AND bill_window_all_current_vintage_modeled_total alike, so they "
-            "cancel out of every vintage term (delivery_vintage_effect, "
+            "cancel out of every one of these totals (delivery_vintage_effect, "
             "generation_tou_window_effect, fixed_charge_vintage_effect, all three) "
             "and cannot explain any of them. If the actual historical PCIA/NBC "
             "rates differed from what is substituted here, that difference shows "
@@ -1138,6 +1345,9 @@ def build():
 
     available_dates = set(d.dt.dt.date)
     _check_coverage(available_dates, periods)
+    _check_slot_coverage(d, periods[0]["start"], periods[-1]["end"])
+
+    cip_adder_usd, state_surcharge_tax_usd = _verify_and_compute_generation_side_fees(periods)
 
     per_period = [_per_period_figures(d, row) for row in periods]
     native_window_total = _native_window_total(d)
@@ -1147,7 +1357,7 @@ def build():
         d, periods[0]["start"], periods[-1]["end"])
     agg = _aggregate(per_period, native_window_total,
                      bill_window_all_current_vintage_modeled_total,
-                     continuous_components)
+                     continuous_components, cip_adder_usd, state_surcharge_tax_usd)
     notes = _build_notes(per_period, agg)
 
     return dict(
@@ -1181,6 +1391,8 @@ def build():
         delivery_pcia_restart_artifact_usd=agg["delivery_pcia_restart_artifact_usd"],
         delivery_restart_artifact_usd=agg["delivery_restart_artifact_usd"],
         pcia_restart_artifact_usd=agg["pcia_restart_artifact_usd"],
+        cip_adder_usd=agg["cip_adder_usd"],
+        state_surcharge_tax_usd=agg["state_surcharge_tax_usd"],
         fixed_charge_vintage_effect=agg["fixed_charge_vintage_effect"],
         delivery_vintage_effect=agg["delivery_vintage_effect"],
         total_vintage_effect=agg["total_vintage_effect"],
@@ -1217,11 +1429,13 @@ def main():
     print(f"native window total (current vintage, modeled):        ${result['native_window_total']:.2f}")
     print(f"  + window effect (bill-aligned window, modeled both):   ${result['window_effect']:+.2f}")
     print(f"  + generation TOU-window effect (NOT vintage; see notes): ${result['generation_tou_window_effect']:+.2f}")
+    print(f"  + CIP adder (real, unmodeled, not vintage):            ${result['cip_adder_usd']:+.2f}")
+    print(f"  + state surcharge tax (real, unmodeled, not vintage):  ${result['state_surcharge_tax_usd']:+.2f}")
     print(f"  + fixed-charge vintage effect (regime change):         ${result['fixed_charge_vintage_effect']:+.2f}")
     print(f"  + delivery vintage effect (own historical rate):       ${result['delivery_vintage_effect']:+.2f}")
     print(f"  + residual (not determined further):                   ${result['residual_total']:+.2f}")
     print(f"  = actual billed total:                                ${result['actual_total_sum']:.2f}")
-    print(f"total vintage effect (delivery + fixed-charge, generation excluded): "
+    print(f"total vintage effect (delivery + fixed-charge, generation/CIP/surcharge excluded): "
           f"${result['total_vintage_effect']:+.2f}")
     print(f"identity check: {result['identity_check_usd']:.4f} vs "
           f"{result['actual_total_sum']:.4f} (holds={result['identity_holds']})")

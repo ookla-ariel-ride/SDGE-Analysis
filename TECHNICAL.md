@@ -2848,39 +2848,47 @@ date, sourced from the bill PDFs' own printed rate lines), and separates it from
 previously unexamined confound: the $4,904 and $3,282.22 figures were never computed over the same
 365-day window in the first place.
 
-**The decomposition.** Six terms, each "the previous total plus one correction," landing exactly
-on the actual bills — a pure algebraic identity by construction, asserted to the cent. (Two earlier
-versions of this decomposition had bugs adversarial review caught. A 4-term version conflated
-`window_effect` with a large, mislabeled generation/fixed-charge vintage effect, because its two
-sides did not share a methodology for generation and the fixed charge — fixed by inserting
+**The decomposition.** Eight terms, each "the previous total plus one correction," landing exactly
+on the actual bills — a pure algebraic identity by construction, asserted to the cent. (Three
+earlier versions of this decomposition had bugs adversarial review caught. A 4-term version
+conflated `window_effect` with a large, mislabeled generation/fixed-charge vintage effect, because
+its two sides did not share a methodology for generation and the fixed charge — fixed by inserting
 `bill_window_all_current_vintage_modeled_total`, the bill-aligned window priced with
 `billing_model_nem.bill()`'s own unmodified methodology, as a bridge value. A 5-term version then
-counted nearly all of that vintage-looking gap as real "generation vintage" — but a fresh Codex
+counted nearly all of that vintage-looking gap as real "generation vintage" — but a Codex
 adversarial review flagged this as unsupported, and it was: `analysis/cca_rate_extraction.py`'s own
 committed `data/cca_generation_rates.csv` proves CEA's charged per-TOU generation rate never moved
 once across the whole CCA era and is IDENTICAL to `rates.CEA`'s current table, re-verified here
-against these specific 13 periods rather than assumed from that module's docstring. The true cause
-of the "generation vintage" gap is almost entirely the SAME TOU-window-shape confound this script
-already named as a `residual_total` candidate, now quantified for generation dollars specifically
-instead of folded into "not determined." This is the corrected, 6-term version.)
+against these specific 13 periods rather than assumed from that module's docstring — the true cause
+was almost entirely the SAME TOU-window-shape confound this script already named as a
+`residual_total` candidate, now quantified for generation dollars specifically. A 6-term version
+then still silently carried two small, real, unmodeled generation-side line items — CEA's "Clean
+Impact Plus" (CIP) per-kWh product adder and a per-period state surcharge tax — inside
+`generation_tou_window_effect`, mislabeling real money with no `rates.py` counterpart at all as part
+of the TOU-window-shape effect; a second Codex review pass caught this too. Both are now separated
+into their own terms. This is the corrected, 8-term version.)
 
 ```
 $4,904.13   native_window_total              billing_model_nem's own window, current vintage,
                                              modeled
   + $-54.12    window_effect                   bill-aligned window vs. native window, BOTH SIDES
                                              modeled the same way
-  + $-256.09   generation_tou_window_effect    NOT a vintage effect (CEA's rate is proven flat and
+  + $-273.12   generation_tou_window_effect    NOT a vintage effect (CEA's rate is proven flat and
                                              equal to current) -- the TOU-window-shape confound,
                                              quantified for generation dollars (see below)
+  + $+13.09    cip_adder_usd                   real, unmodeled CEA product adder -- no rates.py
+                                             counterpart, so neither vintage nor window-shape
+  + $+3.94     state_surcharge_tax_usd         real, unmodeled per-period state tax -- same
+                                             reasoning as the CIP adder
   + $-25.50    fixed_charge_vintage_effect     genuinely a vintage/regime effect: flat Monthly
                                              Service Fee vs. today's per-day Base Services Charge
   + $-47.39    delivery_vintage_effect         UDC delivery at its own historical vintage vs.
-                                             current
+                                             current (SOURCED portion only -- see caveat below)
   + $-1,238.80 residual_total                  whatever is left -- the real, previously
                                              undecomposed gap
   = $3,282.22  actual_total_sum                the bills' own accrued current_charges
 
-  total_vintage_effect (delivery + fixed-charge; generation EXCLUDED) = $-72.89
+  total_vintage_effect (delivery + fixed-charge; generation/CIP/surcharge EXCLUDED) = $-72.89
 ```
 
 **Generation rate vintage is zero, by evidence, not assumption.**
@@ -2892,29 +2900,39 @@ exceptions, all 13 periods covered. `build()` runs this check and fails closed i
 regeneration of the corpus ever shows the rate moving. There is therefore no "generation vintage"
 term in this decomposition — CEA charged exactly today's rate throughout the analysis year.
 
-**Rate vintage (delivery + fixed-charge) is a small, single-digit-percent effect — not the ~20% a
-buggy intermediate version reported.** `total_vintage_effect` is **-$72.89, about 4.5% of the
-$1,621.91 gap**. `delivery_vintage_effect` alone — the cleanly isolated piece, own-vintage UDC vs.
-current, everything else held fixed — is **-$47.39 (about 2.9%)**, confirming issue #3's finding
-(delivery price level barely moved) at the scale of the whole year. `fixed_charge_vintage_effect`
+**The sourced-vs-total caveat (a Codex review finding: report-wording precision, not a code bug —
+these numbers were always correct).** `total_vintage_effect` is **-$72.89, about 4.5% of the
+$1,621.91 gap** — but this is the SOURCED, MEASURABLE portion of rate vintage, not a ceiling on the
+true total. `delivery_vintage_effect` is a clean comparison only over the kWh `rates_history.py` can
+actually source a historical delivery rate for; **1,168.3 kWh across 247 days** (the off-peak
+delivery bucket this household net-exported through for most of the analysis year) has no sourced
+historical rate at all, and that slice's own vintage effect — genuinely unknown, not zero by
+evidence the way generation's is — is folded into `residual_total` instead, indistinguishable there
+from a genuine model-vs-bill mechanics gap (already the second candidate below, both before and
+after this wording fix). If that unpriced slice's real historical rate differed materially from
+today's, the true total vintage effect could be somewhat larger than 4.5%. `delivery_vintage_effect`
+alone is **-$47.39 (about 2.9%)**, still confirming issue #3's finding (delivery price level barely
+moved) at the scale of the whole year, for the portion it can measure. `fixed_charge_vintage_effect`
 is **-$25.50 (about 1.6%)**, a genuine, undisputed structural change (Monthly Service Fee → Base
-Services Charge, October 2025, issue #7).
+Services Charge, October 2025, issue #7) with no sourcing gap at all (it's a real, fully known
+dollar figure on both sides).
 
-**`generation_tou_window_effect` (-$256.09, about 15.8% of the gap) is the term a fresh Codex
-review corrected.** It differences `bill_window_current_vintage_total` (delivery + PCIA computed by
-`_delivery_and_pcia_kwh()`, called separately PER BILL PERIOD and summed) against
+**`generation_tou_window_effect` (-$273.12, about 16.8% of the gap) is the term a fresh Codex
+review corrected TWICE.** It differences `bill_window_current_vintage_total` (delivery + PCIA
+computed by `_delivery_and_pcia_kwh()`, called separately PER BILL PERIOD and summed) against
 `bill_window_all_current_vintage_modeled_total` (`billing_model_nem.bill()` called ONCE on the whole
-bill-aligned window as a continuous frame), MINUS the clean `fixed_charge_vintage_effect` above.
-It splits into two named, quantified pieces:
-- `generation_clean_tou_effect` (**-$273.50**): real billed generation dollars minus a
-  continuous-window, current-vintage CEA model of them. `billing_model_nem.load()` assigns every
-  historical interval's TOU period via `rates.period_at()`'s CURRENT window shape, applied
-  uniformly to every historical date; the real statements billed generation against kWh bucketed by
-  whichever window shape was actually in force at the time. Since CEA's on/off/sop rates differ by
-  roughly $0.11-0.47/kWh, reclassified kWh produces a real dollar gap. This figure also carries
-  ~$17.03 of real generation-side dollars never modeled at all (CEA's flat "Clean Impact Plus"
-  product adder plus a per-period state surcharge tax, both real bill lines in
-  `data/cca_generation_rates.csv`) and ordinary rounding — both small and disclosed, not hidden.
+bill-aligned window as a continuous frame), MINUS `fixed_charge_vintage_effect`, `cip_adder_usd`, and
+`state_surcharge_tax_usd`. It splits into two named, quantified pieces:
+- `generation_clean_tou_effect` (**-$290.53**): real billed generation dollars, with the CIP adder
+  and the state surcharge tax subtracted out FIRST (see below), minus a continuous-window,
+  current-vintage CEA model of the remainder. `billing_model_nem.load()` assigns every historical
+  interval's TOU period via `rates.period_at()`'s CURRENT window shape, applied uniformly to every
+  historical date; the real statements billed generation against kWh bucketed by whichever window
+  shape was actually in force at the time. Since CEA's on/off/sop rates differ by roughly
+  $0.11-0.47/kWh, reclassified kWh produces a real dollar gap. `_verify_and_compute_generation_side_
+  fees()` independently confirms, for every period, that the three real TOU-cell dollars plus CIP
+  plus the surcharge tax reconstruct the real `cca_generation` figure to the cent — nothing else is
+  hiding in this figure beyond the TOU-window-shape confound and ordinary rounding.
 - `delivery_pcia_restart_artifact_usd` (**+$17.41**, split $15.96 delivery / $1.45 PCIA): a
   per-bill-period-restart artifact. Bill periods don't align with calendar-month boundaries, so a
   calendar month that nets positive OVERALL can split at a bill-period boundary into a
@@ -2928,6 +2946,18 @@ It splits into two named, quantified pieces:
   per-period-summed and continuous-window delivery/PCIA totals. `delivery_vintage_effect` is
   unaffected: both its sides come from the SAME per-bill-period-restarted calls, so this artifact
   cancels out of their difference.
+
+**`cip_adder_usd` (+$13.09) and `state_surcharge_tax_usd` (+$3.94) are real, fully known, and not a
+vintage or window-shape effect at all.** Both are directly billed line items in
+`data/cca_generation_rates.csv` (the `clean_impact_plus` and `state_surcharge_tax` rows) with NO
+counterpart anywhere in `rates.py`'s current-vintage table — there is nothing to compare either
+against for a vintage claim, and neither depends on how interval kWh gets bucketed into TOU periods,
+so there is no window-shape claim either. They are simply real money `billing_model_nem.bill()`'s
+model structurally never counts, in every year, regardless of vintage or window.
+`_verify_and_compute_generation_side_fees()` verifies CIP's own rate is flat at $0.001/kWh across
+all 13 periods (the evidence for calling its own vintage effect essentially zero, the same rigor
+applied to core CEA generation) — the state surcharge tax has no rate at all (a flat per-period
+dollar fee), so no flatness question even applies to it.
 
 **The residual is the dominant term, and it is NOT determined by this script — with one strong,
 unproven lead.** `residual_total` is **-$1,238.80, about 76.4% of the gap** — unchanged by the
@@ -2982,21 +3012,29 @@ cwd-then-promote pattern some other generators use) and `NEEDS_PRIVATE_ARCHIVE` 
 via `billing_model_nem.load()` for the interval reconciliation). Also added to
 `analysis/check_coverage.sh`'s suite and generator lists. **Run** from `private/verify` per the
 standard sandbox; writes `data/reprice_by_vintage.json` directly (no manual promotion step).
-Tests: `analysis/test_reprice_by_vintage.py` (21 cases) — fabricated-CSV cases for every Step 1
+Tests: `analysis/test_reprice_by_vintage.py` (28 cases) — fabricated-CSV cases for every Step 1
 fail-closed assertion (CCA-provider boundary, period-set cross-check, current_charges arithmetic,
-365-day sum, period contiguity), a fabricated-frame case for the interval-coverage gap, a
-fabricated-frame unit test pinning `_delivery_and_pcia_kwh()`'s calendar-month netting restart
-exactly, a case confirming `_continuous_current_vintage_components()`'s five components sum exactly
-to `bmn.bill()`'s own total, a case confirming the restart artifact matches a direct, independent
+365-day sum, period contiguity), a fabricated-frame case for the date-level interval-coverage gap
+plus a separate pair of cases for `_check_slot_coverage()`'s stricter 15-minute SLOT-level check
+(one fabricating a truncated day that passes the date-only `_check_coverage()` but is correctly
+rejected by the slot-level check, one confirming full slot coverage passes), a fabricated-frame
+unit test pinning `_delivery_and_pcia_kwh()`'s calendar-month netting restart exactly, a case
+confirming `_continuous_current_vintage_components()`'s five components sum exactly to
+`bmn.bill()`'s own total, a case confirming the restart artifact matches a direct, independent
 per-period-vs-continuous difference (not a per-negative-bucket formula), four cases for
 `_verify_cca_generation_rate_flat()`'s fail-closed checks (including one that runs against the REAL
-committed `data/cca_generation_rates.csv`, no private archive needed), a pure-arithmetic case
-exercising `_aggregate()`'s own 6-term telescoping identity on two unrelated fabricated scenarios,
-two cases for `_aggregate()`'s internal consistency cross-checks (NBC cancellation, the generation/
-fixed-charge reconstruction), and end-to-end cases against the real staged archive asserting the
-identity holds, the artifact write round-trips, and both `window_effect < total_vintage_effect` and
-`total_vintage_effect < generation_tou_window_effect` (regression guards against the two inverted
-relationships adversarial review found across the two prior versions of this decomposition).
+committed `data/cca_generation_rates.csv`, no private archive needed), five cases for
+`_verify_and_compute_generation_side_fees()` (real-corpus totals for `cip_adder_usd` and
+`state_surcharge_tax_usd` pinned to the cent, a non-flat CIP rate rejected, a missing CIP row
+rejected, a missing surcharge row rejected, a per-period reconciliation mismatch rejected), a
+pure-arithmetic case exercising `_aggregate()`'s own 8-term telescoping identity on two unrelated
+fabricated scenarios (one zero-fee, one with nonzero CIP/surcharge values), two cases for
+`_aggregate()`'s internal consistency cross-checks (NBC cancellation, the generation/fixed-charge
+reconstruction), and end-to-end cases against the real staged archive asserting the identity holds,
+the artifact write round-trips, both new fee fields land in a plausible range, and both
+`window_effect < total_vintage_effect` and `total_vintage_effect < generation_tou_window_effect`
+(regression guards against the two inverted relationships adversarial review found across earlier
+versions of this decomposition).
 
 ---
 
@@ -3114,21 +3152,30 @@ found the claim doesn't hold (delivery price level barely moved while its shape 
 and §3.27 (`analysis/reprice_by_vintage.py`, issue #30) now measures it properly, over all 13
 billing periods, against the actual UDC delivery tariff in force each period and the real fixed
 charge, cleanly separated from CEA generation. The result: rate vintage (delivery + fixed charge)
-explains **-$73 of the gap (about 4.5%)** — genuinely small, confirming issue #3's finding at the
-scale of the whole year. A second, previously unexamined confound — the native model's rolling
-window (2025-07-24 minus 365 days) and the bill-aligned window (2025-06-27..2026-06-26) are not the
-same 365 days — explains only **-$54 (about 3.3%)**, once compared on a like-for-like modeled
-basis. The largest correction is neither of those: **generation_tou_window_effect, -$256 (about
-15.8%)**, is NOT a vintage effect — `data/cca_generation_rates.csv` proves CEA's charged generation
-rate never moved and equals today's rate exactly, on every one of these 13 periods — it is the same
-TOU-window-shape confound the model already carries for delivery, now quantified for generation
-dollars specifically instead of left undetermined. (An earlier version of this section attributed
-nearly all of the gap to "rate vintage" at ~20%; that intermediate figure double-counted this
-TOU-window effect as vintage and has been corrected.) The remaining **-$1,239 (about 76.4%)** is
-the real, still-undecomposed model-vs-bill gap; §3.27 names three non-exclusive candidates
-(unsourceable historical PCIA/NBC vintage, an off-peak delivery bucket this household net-exported
-through for most of the analysis year and so never has a historical rate for, and the same
-TOU-window-shape limitation acting on delivery/PCIA/NBC) without ruling any in or out. Consequence
+explains **-$73 of the SOURCED gap (about 4.5%)** — genuinely small, confirming issue #3's finding
+at the scale of the whole year, for the portion `rates_history.py` can actually price. This is a
+measured floor, not a ceiling: 1,168.3 kWh across 247 days of off-peak delivery has no sourced
+historical rate at all and folds into the residual below, so the true total vintage effect could be
+somewhat larger than 4.5% (§3.27's sourced-vs-total caveat). A second, previously unexamined
+confound — the native model's rolling window (2025-07-24 minus 365 days) and the bill-aligned window
+(2025-06-27..2026-06-26) are not the same 365 days — explains only **-$54 (about 3.3%)**, once
+compared on a like-for-like modeled basis. The largest correction is neither of those:
+**generation_tou_window_effect, -$273 (about 16.8%)**, is NOT a vintage effect —
+`data/cca_generation_rates.csv` proves CEA's charged generation rate never moved and equals today's
+rate exactly, on every one of these 13 periods — it is the same TOU-window-shape confound the model
+already carries for delivery, now quantified for generation dollars specifically instead of left
+undetermined, with two small real-but-unmodeled generation-side fees (CEA's "Clean Impact Plus"
+product adder, **+$13 or 0.8%**, and a per-period state surcharge tax, **+$4 or 0.2%**) separated
+out into their own terms rather than folded silently into the window-shape figure. (Two earlier
+versions of this section made progressively narrower versions of the same mistake: one attributed
+nearly all of the gap to "rate vintage" at ~20%, double-counting the TOU-window effect as vintage;
+a later one corrected that but still let the CIP adder and surcharge tax ride inside
+`generation_tou_window_effect` as if they were part of the window-shape story. Both have been
+corrected.) The remaining **-$1,239 (about 76.4%)** is the real, still-undecomposed model-vs-bill
+gap; §3.27 names three non-exclusive candidates (unsourceable historical PCIA/NBC vintage, an
+off-peak delivery bucket this household net-exported through for most of the analysis year and so
+never has a historical rate for, and the same TOU-window-shape limitation acting on
+delivery/PCIA/NBC) without ruling any in or out. Consequence
 adopted throughout, unchanged: absolute dollars are anchored to actual bills; the model is trusted
 for **rankings and deltas** (savings), which are driven by on-peak arbitrage priced identically in
 every variant.

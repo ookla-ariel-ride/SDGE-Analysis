@@ -115,6 +115,21 @@ def _cca_rate_row(period, season, tou_period, rate, authority="charged_tariff"):
             "CCA", authority, "direct", "x.pdf", ""]
 
 
+def _cip_row(period, kwh, rate=0.001):
+    """A clean_impact_plus row, matching the real CSV's shape: season is
+    blank (it's not a TOU cell), authority is charged_tariff (it IS a real
+    per-kWh rate, just one with no rates.py counterpart)."""
+    return ["2026-01-01", period, "", "clean_impact_plus", kwh, rate,
+            round(kwh * rate, 2), "CCA", "charged_tariff", "direct", "x.pdf", ""]
+
+
+def _surcharge_row(period, usd):
+    """A state_surcharge_tax row: a flat dollar fee, no kwh or rate at all,
+    matching the real CSV's shape exactly."""
+    return ["2026-01-01", period, "", "state_surcharge_tax", "", "", usd,
+            "CCA", "charged_fee", "direct", "x.pdf", ""]
+
+
 class _TempCCARates:
     """Context manager patching rbv.CCA_RATES_CSV to a fabricated file,
     restoring the real (committed) path on exit."""
@@ -282,6 +297,51 @@ def case_check_coverage_accepts_full_coverage():
     return "full coverage of a fabricated period does not raise"
 
 
+@case
+def case_check_slot_coverage_rejects_a_truncated_day_that_passes_the_date_only_check():
+    """A Codex review finding: _check_coverage() only confirms each calendar
+    date appears AT LEAST ONCE -- a day truncated to a single 15-minute
+    reading (instead of the full 96) would pass it silently and understate
+    every kWh sum downstream. _check_slot_coverage() (added for this finding,
+    delegating to rates.validate_interval_coverage() -- the SAME slot-level
+    check _native_window_total() already applies to the native window) must
+    catch what _check_coverage() cannot."""
+    d0 = dt.date(2026, 1, 1)
+    d1 = dt.date(2026, 1, 2)
+    rows = [dict(dt=pd.Timestamp(d0) + pd.Timedelta(minutes=15 * i),
+                Consumption=1.0, Generation=0.0, seas="W", p="off",
+                ym=pd.Period("2026-01", "M"))
+           for i in range(96)]  # d0: a COMPLETE day, all 96 slots
+    rows.append(dict(dt=pd.Timestamp(d1) + pd.Timedelta(hours=12),
+                     Consumption=1.0, Generation=0.0, seas="W", p="off",
+                     ym=pd.Period("2026-01", "M")))  # d1: truncated to 1 of 96 slots
+    sub = pd.DataFrame(rows)
+
+    available_dates = set(sub.dt.dt.date)
+    period = dict(period="1/1/26 - 1/2/26", start=d0, end=d1)
+    rbv._check_coverage(available_dates, [period])  # must NOT raise: both dates present
+
+    try:
+        rbv._check_slot_coverage(sub, d0, d1)
+        raise AssertionError("expected SystemExit for a truncated day")
+    except SystemExit as e:
+        assert "2026-01-02" in str(e), str(e)
+    return ("a day truncated to 1 of 96 slots passes _check_coverage's date-only "
+            "check but is caught by _check_slot_coverage's slot-level check")
+
+
+@case
+def case_check_slot_coverage_accepts_full_slot_coverage():
+    d0 = dt.date(2026, 1, 1)
+    rows = [dict(dt=pd.Timestamp(d0) + pd.Timedelta(minutes=15 * i),
+                Consumption=1.0, Generation=0.0, seas="W", p="off",
+                ym=pd.Period("2026-01", "M"))
+           for i in range(96)]
+    sub = pd.DataFrame(rows)
+    rbv._check_slot_coverage(sub, d0, d0)  # must not raise
+    return "a fully slot-covered single day does not raise"
+
+
 # ---------------------------------------------------------------------------
 # (b2) Bug 2 (adversarial review pass 1, finding 2): NEM 2.0 nets per
 # CALENDAR MONTH, restarting at every month boundary -- not over a whole
@@ -415,7 +475,7 @@ def case_delivery_pcia_restart_artifact_matches_direct_difference():
     per_period = [figures]
     native = 0.0
     all_modeled = rbv.bmn.bill(sub)
-    agg = rbv._aggregate(per_period, native, all_modeled, components)
+    agg = rbv._aggregate(per_period, native, all_modeled, components, 0.0, 0.0)
 
     assert abs(agg["delivery_restart_artifact_usd"] - expected_delivery_artifact) < 1e-9
     assert abs(agg["pcia_restart_artifact_usd"] - expected_pcia_artifact) < 1e-9
@@ -498,6 +558,112 @@ def case_verify_cca_generation_rate_flat_rejects_a_missing_period():
 
 
 # ---------------------------------------------------------------------------
+# (b6) _verify_and_compute_generation_side_fees() -- the CIP adder and state
+# surcharge tax separation (a Codex review finding: an earlier version folded
+# both into generation_tou_window_effect, silently mislabeling real,
+# unmodeled, non-vintage dollars as part of the TOU-window-shape confound).
+# ---------------------------------------------------------------------------
+def _fee_period(period, cca_generation):
+    return dict(period=period, cca_generation=cca_generation)
+
+
+@case
+def case_verify_and_compute_generation_side_fees_passes_on_the_real_corpus():
+    """The real committed data/cca_generation_rates.csv, checked against the
+    real 13-period corpus, must show CIP's rate flat, every period fully
+    represented, and every period's TOU+CIP+surcharge dollars reconstructing
+    the real cca_generation figure to the cent -- verified here fresh, not
+    assumed. Also pins the two real dollar totals so a future regeneration
+    that silently changes them is caught."""
+    periods = rbv._load_periods()
+    cip_adder_usd, state_surcharge_tax_usd = rbv._verify_and_compute_generation_side_fees(periods)
+    assert abs(cip_adder_usd - 13.09) < 0.01, cip_adder_usd
+    assert abs(state_surcharge_tax_usd - 3.94) < 0.01, state_surcharge_tax_usd
+    return (f"the real 13-period corpus's CIP adder (${cip_adder_usd:.2f}) and state "
+            f"surcharge tax (${state_surcharge_tax_usd:.2f}) are both verified and "
+            "match the known real totals")
+
+
+@case
+def case_verify_and_compute_generation_side_fees_rejects_a_non_flat_cip_rate():
+    """Two periods billing DIFFERENT CIP rates must SystemExit -- the
+    'essentially zero vintage effect' claim for CIP depends on this."""
+    p1, p2 = "1/1/26 - 1/30/26", "1/31/26 - 3/1/26"
+    with _TempCCARates([
+        _cca_rate_row(p1, "winter", "on_peak", 0.2443),
+        _cca_rate_row(p2, "winter", "on_peak", 0.2443),
+        _cip_row(p1, kwh=100.0, rate=0.001),
+        _cip_row(p2, kwh=100.0, rate=0.002),  # different!
+        _surcharge_row(p1, 0.05), _surcharge_row(p2, 0.05),
+    ]):
+        try:
+            rbv._verify_and_compute_generation_side_fees(
+                [_fee_period(p1, 24.48), _fee_period(p2, 24.68)])
+            raise AssertionError("expected SystemExit for a non-flat CIP rate")
+        except SystemExit as e:
+            assert "NOT flat" in str(e), str(e)
+    return "two periods charging different CIP rates raise SystemExit"
+
+
+@case
+def case_verify_and_compute_generation_side_fees_rejects_a_missing_cip_row():
+    p1, p2 = "1/1/26 - 1/30/26", "1/31/26 - 3/1/26"
+    with _TempCCARates([
+        _cca_rate_row(p1, "winter", "on_peak", 0.2443),
+        _cca_rate_row(p2, "winter", "on_peak", 0.2443),
+        _cip_row(p1, kwh=100.0),  # p2 has no CIP row at all
+        _surcharge_row(p1, 0.05), _surcharge_row(p2, 0.05),
+    ]):
+        try:
+            rbv._verify_and_compute_generation_side_fees(
+                [_fee_period(p1, 24.53), _fee_period(p2, 24.48)])
+            raise AssertionError("expected SystemExit for a missing CIP row")
+        except SystemExit as e:
+            assert p2 in str(e), str(e)
+    return "a period missing its clean_impact_plus row raises SystemExit naming it"
+
+
+@case
+def case_verify_and_compute_generation_side_fees_rejects_a_missing_surcharge_row():
+    p1, p2 = "1/1/26 - 1/30/26", "1/31/26 - 3/1/26"
+    with _TempCCARates([
+        _cca_rate_row(p1, "winter", "on_peak", 0.2443),
+        _cca_rate_row(p2, "winter", "on_peak", 0.2443),
+        _cip_row(p1, kwh=100.0), _cip_row(p2, kwh=100.0),
+        _surcharge_row(p1, 0.05),  # p2 has no surcharge row at all
+    ]):
+        try:
+            rbv._verify_and_compute_generation_side_fees(
+                [_fee_period(p1, 24.53), _fee_period(p2, 24.53)])
+            raise AssertionError("expected SystemExit for a missing surcharge row")
+        except SystemExit as e:
+            assert p2 in str(e), str(e)
+    return "a period missing its state_surcharge_tax row raises SystemExit naming it"
+
+
+@case
+def case_verify_and_compute_generation_side_fees_rejects_a_reconciliation_mismatch():
+    """If TOU + CIP + surcharge dollars don't reconstruct the real
+    cca_generation figure to the cent, some generation-side charge is not
+    accounted for -- must SystemExit rather than silently publish an
+    incomplete decomposition."""
+    p1 = "1/1/26 - 1/30/26"
+    with _TempCCARates([
+        _cca_rate_row(p1, "winter", "on_peak", 0.2443),  # 100 kWh -> $24.43
+        _cip_row(p1, kwh=100.0),                          # -> $0.10
+        _surcharge_row(p1, 0.05),                         # -> $0.05
+    ]):
+        # real total should be 24.43+0.10+0.05=24.58; fabricate a DIFFERENT
+        # real cca_generation so the reconstruction fails.
+        try:
+            rbv._verify_and_compute_generation_side_fees([_fee_period(p1, 99.99)])
+            raise AssertionError("expected SystemExit for a reconciliation mismatch")
+        except SystemExit as e:
+            assert p1 in str(e), str(e)
+    return "a period whose line items don't reconstruct its real cca_generation raises SystemExit naming it"
+
+
+# ---------------------------------------------------------------------------
 # (c) Step 4 telescoping-identity test -- pure arithmetic, fabricated
 # per-period dollar figures, genuinely exercising _aggregate().
 # ---------------------------------------------------------------------------
@@ -526,30 +692,32 @@ def _fabricated_period(delivery_current, delivery_own, pcia, nbc, fixed_charge,
 
 @case
 def case_aggregate_identity_holds_for_arbitrary_fabricated_numbers():
-    """The 6-term telescoping identity native_window_total + window_effect +
-    generation_tou_window_effect + fixed_charge_vintage_effect +
-    delivery_vintage_effect + residual_total == actual_total_sum must hold
-    EXACTLY regardless of the actual dollar values involved -- it is pure
-    arithmetic given _aggregate()'s own definitions, not a data finding.
-    Exercised on TWO unrelated, made-up scenarios via the script's own
-    _aggregate() function: one where the continuous-window components exactly
-    equal the naive per-period sums (zero restart artifact, zero generation-
-    TOU effect -- the simplest consistent case), and one where they are
+    """The 8-term telescoping identity native_window_total + window_effect +
+    generation_tou_window_effect + cip_adder_usd + state_surcharge_tax_usd +
+    fixed_charge_vintage_effect + delivery_vintage_effect + residual_total ==
+    actual_total_sum must hold EXACTLY regardless of the actual dollar values
+    involved -- it is pure arithmetic given _aggregate()'s own definitions,
+    not a data finding. Exercised on TWO unrelated, made-up scenarios via the
+    script's own _aggregate() function: one where the continuous-window
+    components exactly equal the naive per-period sums (zero restart
+    artifact, zero generation-TOU effect -- the simplest consistent case) and
+    CIP/surcharge are zero, and one where the continuous components are
     DELIBERATELY perturbed away from the per-period sums (a nonzero restart
-    artifact AND a nonzero generation-TOU effect), with all_modeled always
-    derived as the sum of the SAME components used elsewhere, never picked
-    independently (that constraint is what the internal 'old_combined
-    reconstruction' cross-check inside _aggregate() enforces -- see
+    artifact AND a nonzero generation-TOU effect) AND CIP/surcharge are
+    nonzero, with all_modeled always derived as the sum of the SAME
+    components used elsewhere, never picked independently (that constraint is
+    what the internal 'old_combined reconstruction' cross-check inside
+    _aggregate() enforces -- see
     case_aggregate_rejects_a_generation_fixed_charge_decomposition_that_
     doesnt_reconstruct below for what happens when it's violated)."""
     scenarios = [
-        dict(native=1000.0, continuous=None, periods=[
+        dict(native=1000.0, continuous=None, cip=0.0, surcharge=0.0, periods=[
             dict(delivery_current=200.0, delivery_own=190.0, pcia=20.0, nbc=40.0,
                 fixed_charge=45.0, generation=250.0, actual_total=300.0),
             dict(delivery_current=250.0, delivery_own=245.0, pcia=25.0, nbc=40.0,
                 fixed_charge=45.0, generation=280.0, actual_total=320.0),
         ]),
-        dict(native=-50.0,
+        dict(native=-50.0, cip=5.0, surcharge=2.0,
             continuous=dict(delivery=95.0, generation=110.0, pcia=8.0, nbc=15.0,
                             fixed_charge=22.0),
             periods=[
@@ -569,26 +737,32 @@ def case_aggregate_identity_holds_for_arbitrary_fabricated_numbers():
         else:
             continuous = sc["continuous"]
         all_modeled = sum(continuous.values())
-        agg = rbv._aggregate(per_period, sc["native"], all_modeled, continuous)
+        agg = rbv._aggregate(per_period, sc["native"], all_modeled, continuous,
+                             sc["cip"], sc["surcharge"])
         actual_total_sum = sum(p["actual_total"] for p in sc["periods"])
         assert abs(agg["actual_total_sum"] - actual_total_sum) < 1e-9
         identity = (agg["native_window_total"] + agg["window_effect"]
                    + agg["generation_tou_window_effect"]
+                   + agg["cip_adder_usd"] + agg["state_surcharge_tax_usd"]
                    + agg["fixed_charge_vintage_effect"]
                    + agg["delivery_vintage_effect"] + agg["residual_total"])
         assert abs(identity - actual_total_sum) < 1e-9, (identity, actual_total_sum)
         assert agg["identity_holds"] is True
+        assert agg["cip_adder_usd"] == sc["cip"]
+        assert agg["state_surcharge_tax_usd"] == sc["surcharge"]
         # total_vintage_effect must equal the sum of its two named parts
-        # (generation deliberately excluded)
+        # (generation, CIP and the surcharge tax deliberately excluded)
         assert abs(agg["total_vintage_effect"]
                   - (agg["delivery_vintage_effect"]
                      + agg["fixed_charge_vintage_effect"])) < 1e-9
         # generation_tou_window_effect must equal its own two named parts
+        # (CIP and the surcharge are NOT part of it -- they're already
+        # subtracted out before generation_clean_tou_effect is computed)
         assert abs(agg["generation_tou_window_effect"]
                   - (agg["generation_clean_tou_effect"]
                      + agg["delivery_pcia_restart_artifact_usd"])) < 1e-9
-    return ("the 6-term telescoping identity holds exactly across two unrelated "
-            "fabricated scenarios (zero-artifact and perturbed-artifact)")
+    return ("the 8-term telescoping identity holds exactly across two unrelated "
+            "fabricated scenarios (zero-fee and nonzero-fee/perturbed-artifact)")
 
 
 @case
@@ -604,7 +778,7 @@ def case_aggregate_rejects_an_inconsistent_residual():
     continuous = dict(delivery=100.0, generation=80.0, pcia=10.0, nbc=20.0,
                       fixed_charge=25.0)
     try:
-        rbv._aggregate(per_period, 1000.0, sum(continuous.values()), continuous)
+        rbv._aggregate(per_period, 1000.0, sum(continuous.values()), continuous, 0.0, 0.0)
         raise AssertionError("expected SystemExit for an inconsistent residual")
     except SystemExit:
         pass
@@ -624,7 +798,7 @@ def case_aggregate_rejects_a_nonzero_nbc_cancellation_diff():
     continuous = dict(delivery=100.0, generation=80.0, pcia=10.0, nbc=25.0,  # != 20.0
                       fixed_charge=25.0)
     try:
-        rbv._aggregate(per_period, 1000.0, sum(continuous.values()), continuous)
+        rbv._aggregate(per_period, 1000.0, sum(continuous.values()), continuous, 0.0, 0.0)
         raise AssertionError("expected SystemExit for a nonzero NBC cancellation diff")
     except SystemExit as e:
         assert "NBC does not cancel" in str(e), str(e)
@@ -645,7 +819,7 @@ def case_aggregate_rejects_a_generation_fixed_charge_decomposition_that_doesnt_r
     continuous = dict(delivery=100.0, generation=80.0, pcia=10.0, nbc=20.0,
                       fixed_charge=25.0)  # sums to 235.0
     try:
-        rbv._aggregate(per_period, 1000.0, 999.0, continuous)  # all_modeled != 235.0
+        rbv._aggregate(per_period, 1000.0, 999.0, continuous, 0.0, 0.0)  # all_modeled != 235.0
         raise AssertionError("expected SystemExit for a non-reconstructing decomposition")
     except SystemExit as e:
         assert "does not reconstruct" in str(e), str(e)
@@ -670,6 +844,7 @@ def case_build_runs_end_to_end_on_the_real_archive_and_the_identity_holds():
     assert len(result["per_period"]) == 13
     identity = (result["native_window_total"] + result["window_effect"]
                + result["generation_tou_window_effect"]
+               + result["cip_adder_usd"] + result["state_surcharge_tax_usd"]
                + result["fixed_charge_vintage_effect"]
                + result["delivery_vintage_effect"] + result["residual_total"])
     assert abs(identity - result["actual_total_sum"]) < 0.01
@@ -679,6 +854,11 @@ def case_build_runs_end_to_end_on_the_real_archive_and_the_identity_holds():
     assert abs(result["generation_tou_window_effect"]
               - (result["generation_clean_tou_effect"]
                  + result["delivery_pcia_restart_artifact_usd"])) < 0.01
+    # CIP and the surcharge tax are real, known, small, and POSITIVE (real
+    # charges the model never counts) -- sanity-bound them rather than just
+    # trusting whatever build() produces.
+    assert 0 < result["cip_adder_usd"] < 50, result["cip_adder_usd"]
+    assert 0 < result["state_surcharge_tax_usd"] < 50, result["state_surcharge_tax_usd"]
 
     # regression guard for the bug adversarial review pass 1 found: window_effect
     # must be small relative to total_vintage_effect on the real data (the
@@ -703,6 +883,8 @@ def case_build_runs_end_to_end_on_the_real_archive_and_the_identity_holds():
     # actually ran that check (it would have raised otherwise, but assert the
     # positive claim explicitly here too).
     assert "generation_rate_vintage_is_zero_by_evidence" in result["notes"]
+    assert "cip_adder_usd_explanation" in result["notes"]
+    assert "state_surcharge_tax_usd_explanation" in result["notes"]
 
     with tempfile.TemporaryDirectory() as td:
         path = rbv._write(result, td)
@@ -712,13 +894,15 @@ def case_build_runs_end_to_end_on_the_real_archive_and_the_identity_holds():
 
     return (f"build() on the real archive: native ${result['native_window_total']:.2f} "
             f"+ window ${result['window_effect']:+.2f} + generation TOU-window "
-            f"${result['generation_tou_window_effect']:+.2f} + fixed-charge vintage "
+            f"${result['generation_tou_window_effect']:+.2f} + CIP adder "
+            f"${result['cip_adder_usd']:+.2f} + surcharge tax "
+            f"${result['state_surcharge_tax_usd']:+.2f} + fixed-charge vintage "
             f"${result['fixed_charge_vintage_effect']:+.2f} + delivery vintage "
             f"${result['delivery_vintage_effect']:+.2f} + residual "
             f"${result['residual_total']:+.2f} = actual "
-            f"${result['actual_total_sum']:.2f} (total vintage effect, generation "
-            f"excluded: ${result['total_vintage_effect']:+.2f}); identity holds and "
-            "the artifact write round-trips")
+            f"${result['actual_total_sum']:.2f} (total vintage effect, generation/"
+            f"CIP/surcharge excluded: ${result['total_vintage_effect']:+.2f}); "
+            "identity holds and the artifact write round-trips")
 
 
 @case
