@@ -107,7 +107,7 @@ address, and account/meter numbers (see `CLAUDE.md` §4 for the format and the r
 It stays local; the pre-commit hook picks it up automatically and blocks any commit
 containing those values.
 
-**3 · Run the analysis.** Two routes:
+**3 · Run the analysis.** Three routes:
 - **AI route (how this repo was built):** paste [`reusable-prompt.md`](reusable-prompt.md)
   into a Claude Cowork or Claude Code session and hand it your gathered files. `CLAUDE.md` is
   the operating manual the agent follows; `report-template.html` is the report shell it fills.
@@ -130,6 +130,28 @@ containing those values.
   `carbon_fullyear.py`, plus `soiling_analysis.py`, `billing_model_nem.py`, and
   `lifetime_payback.py` as applicable); then fill `report-template.html`'s `{{TOKEN}}`s from
   your regenerated `data/*.json`.
+- **Your-own-LLM-key route (no agentic coding tool required):** once `data/*.json` is
+  regenerated, `analysis/generate_report.py` fills `report-template.html` and writes
+  `index.generated.html` using a paid API key you already have — Anthropic, OpenAI, or
+  Google Gemini — instead of an agent harness. Copy `.env.example` to `.env` and add the one
+  key you plan to use (never committed; never passed as a CLI argument). Run
+  `./.venv/bin/python analysis/generate_report.py --dry-run` first to see every request body
+  it would send, written under `private/llm_dry_run/`, with zero sockets opened and zero cost.
+  A real run needs `--provider` and `--model` (`--list-models` calls the vendor's own
+  model-list endpoint so you never type a stale snapshot id). The model is handed one
+  `TODO` block at a time and returns prose for that block only — it never sees the
+  surrounding HTML — and every returned fragment is rejected if it contains a bare digit
+  outside a `{{TOKEN}}` or `§N` reference, so it cannot invent a figure. A committed
+  classification map (`analysis/report_blocks.py`) marks every block `prose` (LLM-written),
+  `data` (filled mechanically from an artifact, e.g. one table row per plan), or `human`
+  (hardware price quotes, incentive-program status, and the provenance note's review claim —
+  things this pipeline has never measured and never will invent); pass researched answers for
+  the `human` blocks with `--human-answers your-answers.json`. The run refuses to write
+  anything while any block is unresolved, and successful blocks are cached under
+  `private/report_cache/` so a re-run with nothing changed makes zero new API calls.
+  `--humanize` adds an optional second de-AI-writing rewrite pass per block; a rewrite that
+  doesn't clear the same checks silently falls back to the original rather than failing the
+  run. See `TECHNICAL.md` §8 for the full provider/egress design.
 
 **4 · Validate before you trust it.** The gates in `CLAUDE.md` §9, in order: your billing
 model must reproduce your actual bills before you quote any absolute dollar; every committed

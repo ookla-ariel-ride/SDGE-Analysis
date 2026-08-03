@@ -39,6 +39,9 @@ enphase_sam8760*.csv
 *api_key*
 .env
 .env.*
+# ...except the committed placeholder template itself (documents the variable
+# names; no real value ever goes in this file — see analysis/llm_providers.py).
+!.env.example
 
 # OS noise
 .DS_Store
