@@ -338,19 +338,31 @@ NUMERAL_LITERAL_ALLOWLIST = frozenset()
 #     (an ordinal referring to LOW/MID/HIGH) is not flagged; "roughly a third
 #     of imports" and "two-thirds of production" are. "half" has no common
 #     non-quantity reading in this report's prose, so it is flagged bare.
-#   - Vague quantifiers ("roughly", "majority", "several", "a few", "most of",
-#     "many of", ...) are treated as HARD violations, not soft warnings,
-#     matching this repo's consistent fail-closed bias elsewhere (KNOWN_GAPS,
-#     human-block blocking, egress preflight's fail-safe-on-no-gitleaks) --
-#     "most of the on-peak imports" is exactly the kind of claim
-#     ONPEAK_IMPORT_SHARE_PCT should express as a token instead. This trades
-#     a higher false-positive/retry rate for never silently publishing an
-#     unbacked quantity claim.
+#   - Vague quantifiers ("roughly", "majority", "several", "a few", "most",
+#     "many", "much", "handful", "fraction", "bulk", "countless", ...) are
+#     treated as HARD violations, not soft warnings, matching this repo's
+#     consistent fail-closed bias elsewhere (KNOWN_GAPS, human-block
+#     blocking, egress preflight's fail-safe-on-no-gitleaks) -- "most of the
+#     on-peak imports" is exactly the kind of claim ONPEAK_IMPORT_SHARE_PCT
+#     should express as a token instead. This trades a higher false-positive/
+#     retry rate for never silently publishing an unbacked quantity claim.
+#     "most"/"many" match STANDALONE, not gated on a following "of" -- a
+#     second adversarial review pass found that dropping "of" ("most on-peak
+#     imports happen in the evening") defeated the original of-gated pattern
+#     entirely, and that construction is at least as natural as the gated
+#     one, not just an adversarial trick.
+#   - Multiplier words ("doubles", "triples", "twice") are their own class:
+#     "the battery doubles the savings" and "twice as much power is
+#     exported" state an invented multiplicative fact exactly like a
+#     spelled-out number would.
 _CARDINAL_WORDS = ("two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
                    "thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
                    "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
                    "hundred|thousand|million|billion")
 _FRACTION_ORDINAL_WORDS = "third|quarter|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+_VAGUE_QUANTIFIER_WORDS = ("roughly|approximately|nearly|majority|several|dozens|numerous|"
+                          "most|many|much|handful|fraction|bulk|countless")
+_MULTIPLIER_WORDS = "quadruple(?:s|d)?|triple(?:s|d)?|double(?:s|d)?|twice"
 
 _WORD_NUMBER_PATTERNS = [
     (re.compile(r"\b(" + _CARDINAL_WORDS + r")\b", re.I), "spelled-out cardinal number"),
@@ -359,10 +371,9 @@ _WORD_NUMBER_PATTERNS = [
                + r")s?\b", re.I), "spelled-out fraction"),
     (re.compile(r"\b(" + _FRACTION_ORDINAL_WORDS + r")s?\s+(of|the)\b", re.I),
      "spelled-out fraction"),
-    (re.compile(r"\b(roughly|approximately|nearly|majority|several|dozens|numerous)\b",
-               re.I), "vague quantifier"),
+    (re.compile(r"\b(" + _VAGUE_QUANTIFIER_WORDS + r")\b", re.I), "vague quantifier"),
     (re.compile(r"\ba\s+few\b", re.I), "vague quantifier ('a few')"),
-    (re.compile(r"\b(most|many)\s+of\b", re.I), "vague quantifier"),
+    (re.compile(r"\b(" + _MULTIPLIER_WORDS + r")\b", re.I), "multiplier word"),
 ]
 
 
@@ -510,15 +521,24 @@ def call_with_backoff(llm_call, provider, model, system, user, env,
 
 
 def preflighted_call(llm_call, provider, model, system, user, env, items):
-    """THE single chokepoint for every real (non-dry-run) call to an LLM
-    anywhere in this module: always runs llm_providers.preflight() against
+    """THE single chokepoint for every real call that sends a REQUEST BODY --
+    i.e. every prose-generation attempt (first try and corrective retry) and
+    every --humanize rewrite: always runs llm_providers.preflight() against
     the EXACT body about to be sent, then (only if that succeeds) makes the
-    call via call_with_backoff(). No other function may call llm_call or
-    call_with_backoff for a real request -- test_generate_report.py's AST
+    call via call_with_backoff(). No other function building a request body
+    may call llm_call or call_with_backoff -- test_generate_report.py's AST
     guard (case_preflighted_call_is_the_only_real_call_site) enforces this
     the same way llm_providers.py's own _post_json chokepoint is enforced,
     after an adversarial review found the corrective-retry and --humanize
-    call sites bypassing preflight() entirely."""
+    call sites bypassing preflight() entirely.
+
+    NOT covered, intentionally: --list-models (main()'s own branch calls
+    llm_providers.list_models() directly). That is a bodyless GET against a
+    vendor's model-list endpoint -- there is no request body for preflight()
+    to scan or allowlist-check, so routing it through this chokepoint would
+    be a no-op wrapper, not a safety property. This function's guarantee is
+    "every real call that sends a body is preflighted," not "every network
+    call this module ever makes.\""""
     body_text = json.dumps({"system": system, "user": user})
     lp.preflight(items, body_text, dry_run=False)
     return call_with_backoff(llm_call, provider, model, system, user, env)

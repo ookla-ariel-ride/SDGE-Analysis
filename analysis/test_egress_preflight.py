@@ -321,6 +321,29 @@ def case_gitleaks_scan_fails_safe_when_the_binary_cannot_be_run():
 
 
 @case
+def case_gitleaks_scan_fails_safe_on_a_completely_unexpected_exception():
+    """Pass-2 adversarial review finding 4: TimeoutExpired/OSError were the
+    only two exception types _gitleaks_scan() caught; anything else would
+    have propagated uncaught and crashed the run instead of failing safe.
+    Reproduces a third, arbitrary exception type to prove the broadened
+    except clause converts it to EgressRefused with the type name preserved,
+    not a bare pass-through crash."""
+    def fake_run(*a, **kw):
+        raise ValueError("something in gitleaks scanning broke in a way nobody anticipated")
+
+    with _patched(shutil, "which", lambda name: "/usr/bin/gitleaks"), \
+         _patched(subprocess, "run", fake_run):
+        try:
+            lp.preflight([], "clean text")
+            raise AssertionError("preflight() sent a body after a completely unexpected "
+                                 "exception from the gitleaks scan")
+        except lp.EgressRefused as e:
+            assert "gitleaks scan failed unexpectedly" in str(e), e
+            assert "ValueError" in str(e), e
+    return "preflight() refuses (fails safe) on an exception type it never anticipated"
+
+
+@case
 def case_gitleaks_scan_fails_safe_on_an_unexpected_exit_code():
     class _FakeResult:
         returncode = 2

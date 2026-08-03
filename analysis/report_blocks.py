@@ -76,6 +76,7 @@ LIVE GAP TOKENS
   publish, rather than crashing on the first resolve_token() call.
 """
 import datetime as dt
+import html as _html
 import pathlib
 import re
 import sys
@@ -423,6 +424,26 @@ def _num2(v):
     return f"{v:,.2f}"
 
 
+def _esc(value):
+    """HTML-escape one ARTIFACT-DERIVED free-text cell value (a plan name, a
+    battery config name, an escalation-rate key) before splicing it into a
+    row. Mirrors generate_report.py's render()-time html.escape() on
+    {{TOKEN}} values -- an adversarial review found this module's own row
+    builders had no equivalent, even though they build raw HTML via f-string
+    interpolation exactly like render()'s substitution does. Applied ONLY to
+    values that come from a committed data/*.json or *.csv file; hardcoded
+    Python string-literal labels this module declares itself (e.g.
+    _DISPATCH_POLICY_LABELS, _ENDURANCE_LABELS, _SEASON_LABEL/_PERIOD_LABEL)
+    are trusted source code, not runtime data, and are NOT escaped here --
+    _ENDURANCE_LABELS specifically contains an intentional literal
+    "&times;" HTML entity that blanket-escaping would corrupt into
+    "&amp;times;". Numeric values formatted by _usd0/_usd3/_num1/_num2 are
+    plain digit/currency strings that cannot contain an HTML metacharacter,
+    so they are left as-is too (escaping them would be a harmless no-op, not
+    a bug, but this keeps the "why is this one escaped" reasoning legible)."""
+    return _html.escape(str(value), quote=True)
+
+
 def _empty():
     return ""
 
@@ -447,7 +468,7 @@ def _s3_plan_rows():
     for p in others:
         cea = float(by_plan[p]["CEA"]["total"])
         sdge = float(by_plan[p]["SDGE"]["total"])
-        out.append(f"<tr><td>{p}</td><td>{_usd0(cea)}</td><td>{_usd0(sdge)}</td>"
+        out.append(f"<tr><td>{_esc(p)}</td><td>{_usd0(cea)}</td><td>{_usd0(sdge)}</td>"
                    f"<td>{_usd0_signed(cea - current_cea)}</td><td>&mdash;</td></tr>")
     return "\n".join(out)
 
@@ -460,7 +481,7 @@ def _s4_battery_plan_rows():
     out = []
     for p in others:
         d = plans[p]
-        out.append(f"<tr><td>{p}</td><td>{_usd0(d['no_battery'])}</td>"
+        out.append(f"<tr><td>{_esc(p)}</td><td>{_usd0(d['no_battery'])}</td>"
                    f"<td>{_usd0(d['with_battery'])}</td>"
                    f"<td>{_usd0(d['battery_value'])}/yr</td></tr>")
     return "\n".join(out)
@@ -472,7 +493,7 @@ def _s6_arbitrage_rows():
     for r in rows:
         if r["config"] == "1x Tesla Powerwall 3":
             continue
-        out.append(f"<tr><td>{r['config']}</td>"
+        out.append(f"<tr><td>{_esc(r['config'])}</td>"
                    f"<td>{_num1(r['usable_kwh'])} / {_num1(r['power_kw'])}</td>"
                    f"<td>{_usd0(r['net_annual_savings'])}</td><td>&mdash;</td></tr>")
     return "\n".join(out)
@@ -558,7 +579,7 @@ def _s13_escalation_rows():
     for k in order:
         r = ladder[k]
         sign = "+" if r["npv10"] >= 0 else "-"
-        out.append(f"<tr><td>{k}/yr</td><td>{r['payback']:.1f} yr</td>"
+        out.append(f"<tr><td>{_esc(k)}/yr</td><td>{r['payback']:.1f} yr</td>"
                    f"<td>{sign}${abs(r['npv10']):,}</td></tr>")
     return "\n".join(out)
 

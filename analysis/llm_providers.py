@@ -533,6 +533,17 @@ def _gitleaks_scan(text):
         except OSError as e:
             raise EgressRefused(
                 f"gitleaks scan failed to run: {e} -- refusing to send unscanned") from None
+        except Exception as e:  # noqa: BLE001 -- deliberately broad: this is a
+            # security-relevant scan, so ANY unexpected failure here must fail
+            # SAFE (refuse to send) rather than let a bare exception crash the
+            # whole run with the body already staged. The exception type and
+            # message are preserved in the EgressRefused text (and _redact_
+            # loaded()-scrubbed) precisely so this doesn't mask a real bug
+            # during development -- it converts a crash into a refusal with
+            # the same diagnostic still visible, never a silent pass-through.
+            raise EgressRefused(
+                f"gitleaks scan failed unexpectedly ({type(e).__name__}: "
+                f"{_redact_loaded(str(e))}) -- refusing to send unscanned") from None
     finally:
         try:
             os.remove(tmp_name)

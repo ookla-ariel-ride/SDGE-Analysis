@@ -172,6 +172,52 @@ def case_row_builders_produce_at_least_one_row_against_the_real_archive():
     return f"all {len(_ROW_BUILDER_IDS)} row-builder blocks produce real table rows"
 
 
+# ---------------------------------------------------------------------------
+# AC (adversarial review pass 2, finding 2): a row builder's ARTIFACT-DERIVED
+# free-text cell (a plan name, a battery-config name) must be HTML-escaped,
+# matching the same principle generate_report.py's render() already applies
+# to {{TOKEN}} substitution. Not exploitable with today's committed data
+# (real plan/config names never contain markup) -- this fabricates an evil
+# value via monkeypatching report_tokens.py's own cached loaders (the same
+# functions report_blocks.py's row builders call) rather than editing a
+# committed artifact, and restores the real loader afterward either way.
+# ---------------------------------------------------------------------------
+@case
+def case_row_builders_escape_artifact_derived_free_text():
+    evil = "<script>alert(1)</script> & Co"
+    original_json = rt._json
+
+    def fake_json(name):
+        if name == "battery_sim.json":
+            real = original_json(name)
+            fabricated = [dict(r, config=evil) for r in real
+                         if r["config"] != "1x Tesla Powerwall 3"]
+            return fabricated[:1]
+        return original_json(name)
+
+    rt._json = fake_json
+    try:
+        out = rb.DATA_BUILDERS["s6#2"]()
+    finally:
+        rt._json = original_json
+    assert "<script>alert(1)</script>" not in out, out
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in out, out
+    assert "&amp; Co" in out, out
+    return "s6#2's row builder (battery_sim.json config names) HTML-escapes a fabricated evil value"
+
+
+@case
+def case_hardcoded_endurance_labels_are_not_double_escaped():
+    """_ENDURANCE_LABELS is a hardcoded Python dict (trusted source, not
+    artifact data) that intentionally contains a literal '&times;' entity --
+    _esc() must never be applied to it, or blanket-escaping would corrupt it
+    into '&amp;times;'."""
+    out = rb.DATA_BUILDERS["s6#7"]()
+    assert "&times;" in out, out
+    assert "&amp;times;" not in out, out
+    return "the hardcoded '&times;' entity in _ENDURANCE_LABELS survives un-double-escaped"
+
+
 @case
 def case_vestigial_blocks_resolve_to_empty_string():
     vestigial = {"top#1", "top#2", "top#3", "s9#1", "s12#1", "s13#1", "s15#1", "s14#15"}

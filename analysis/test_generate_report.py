@@ -147,6 +147,42 @@ def case_numeral_guard_rejects_vague_quantifiers():
     return "vague quantifiers ('most of', 'several', 'majority') are rejected"
 
 
+# ---------------------------------------------------------------------------
+# Adversarial review pass 2, finding 1: "most"/"many" gated on a following
+# "of" missed the equally-natural ungated phrasing entirely, and multiplier
+# words ("doubles", "triples", "twice") and several more vague-quantifier
+# words weren't covered at all. One case per exact phrase the reviewer used.
+# ---------------------------------------------------------------------------
+@case
+def case_numeral_guard_rejects_most_many_without_a_following_of():
+    for text in ("most on-peak imports happen in the evening",
+                "many households export more than they import"):
+        violations = gr.find_fragment_violations(text)
+        assert violations, (text, violations)
+    return "'most'/'many' are rejected even without a following 'of'"
+
+
+@case
+def case_numeral_guard_rejects_multiplier_words():
+    for text in ("the battery doubles the savings",
+                "this triples the effective capacity",
+                "twice as much power is exported"):
+        violations = gr.find_fragment_violations(text)
+        assert violations, (text, violations)
+    return "multiplier words ('doubles', 'triples', 'twice') are rejected"
+
+
+@case
+def case_numeral_guard_rejects_additional_vague_quantifier_words():
+    for text in ("a handful of days drove the annual total",
+                "a tiny fraction of exports are curtailed",
+                "the bulk of savings come from behavior change",
+                "countless factors affect the outcome"):
+        violations = gr.find_fragment_violations(text)
+        assert violations, (text, violations)
+    return "'handful', 'fraction', 'bulk', and 'countless' are all rejected"
+
+
 @case
 def case_numeral_guard_does_not_flag_an_ordinal_used_as_a_rank_not_a_quantity():
     """The reviewer's own named false-positive risk: 'third' as an ordinal
