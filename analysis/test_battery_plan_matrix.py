@@ -92,49 +92,62 @@ print(json.dumps({{"imp_b": [float(x) for x in imp_b], "exp_b": [float(x) for x 
 """
 
 
+def _independent_ref_and_dispatch(tmp):
+    """Steps shared by every case below: an INDEPENDENTLY computed no-battery
+    reference per plan (promoted into throwaway data/plan_results.csv, the
+    generator's own no-battery tie-out target) and the matching EV-TOU-5
+    with-battery figure from the same dispatch trace -- everything the
+    canonical-crosscheck tie-out target needs, before a case decides WHERE to
+    place the battery_dispatch_policies.json artifact (issue #29: current-run
+    copy, committed copy, both, or a broken one)."""
+    r1 = subprocess.run([sys.executable, "-c", _LOAD_PROBE.format(tmp=str(tmp))],
+                        cwd=tmp, capture_output=True, text=True, timeout=300)
+    assert r1.returncode == 0, f"load probe failed: {r1.stderr[-2000:]}"
+    f = json.loads(r1.stdout)
+    seas, per = np.array(f["seas"]), np.array(f["per"])
+    imp0, gen0 = np.array(f["imp"]), np.array(f["exp"])
+    ref = {p: _ref_bill(p, seas, per, imp0, gen0) for p in _PLANS}
+
+    (tmp / "data" / "plan_results.csv").write_text(
+        "provider,plan,total\n" +
+        "".join(f"CEA,{p},{v:.6f}\n" for p, v in ref.items()))
+
+    r2 = subprocess.run([sys.executable, "-c", _DISPATCH_PROBE.format(tmp=str(tmp))],
+                        cwd=tmp, capture_output=True, text=True, timeout=300)
+    assert r2.returncode == 0, f"dispatch probe failed: {r2.stderr[-2000:]}"
+    b = json.loads(r2.stdout)
+    imp_b, exp_b = np.array(b["imp_b"]), np.array(b["exp_b"])
+    with_b5 = _ref_bill("EV-TOU-5", seas, per, imp_b, exp_b)
+    exp_battery_value = round(ref["EV-TOU-5"] - with_b5)
+    return ref, with_b5, exp_battery_value
+
+
 def case_battery_plan_matrix_end_to_end_on_a_synthetic_house():
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         TSR._build_throwaway_root(tmp, synthetic=True)
-
-        r1 = subprocess.run([sys.executable, "-c", _LOAD_PROBE.format(tmp=str(tmp))],
-                            cwd=tmp, capture_output=True, text=True, timeout=300)
-        assert r1.returncode == 0, f"load probe failed: {r1.stderr[-2000:]}"
-        f = json.loads(r1.stdout)
-        seas, per = np.array(f["seas"]), np.array(f["per"])
-        imp0, gen0 = np.array(f["imp"]), np.array(f["exp"])
-        ref = {p: _ref_bill(p, seas, per, imp0, gen0) for p in _PLANS}
-
-        # Step 1: promote an INDEPENDENTLY computed reference into the
-        # throwaway data/ as the no-battery tie-out target -- satisfied for
-        # real (the generator's own bill_plan() must reproduce it), not
-        # neutered by writing whatever the generator itself would compute.
-        (tmp / "data" / "plan_results.csv").write_text(
-            "provider,plan,total\n" +
-            "".join(f"CEA,{p},{v:.6f}\n" for p, v in ref.items()))
-
-        r2 = subprocess.run([sys.executable, "-c", _DISPATCH_PROBE.format(tmp=str(tmp))],
-                            cwd=tmp, capture_output=True, text=True, timeout=300)
-        assert r2.returncode == 0, f"dispatch probe failed: {r2.stderr[-2000:]}"
-        b = json.loads(r2.stdout)
-        imp_b, exp_b = np.array(b["imp_b"]), np.array(b["exp_b"])
-        with_b5 = _ref_bill("EV-TOU-5", seas, per, imp_b, exp_b)
-        exp_battery_value = {"EV-TOU-5": round(ref["EV-TOU-5"] - with_b5)}
+        ref, with_b5, exp_battery_value = _independent_ref_and_dispatch(tmp)
 
         # Step 2: the canonical-crosscheck tie-out target, from the SAME
         # independently-computed dispatch trace and formula -- this proves
         # battery_plan_matrix.py's OWN tie-out logic and bill_plan()
         # arithmetic (which the mutation test below targets), not
         # battery_dispatch_policies.py's canonical bill_nem engine, which is
-        # already covered separately in CI_RUNNABLE.
+        # already covered separately in CI_RUNNABLE. Placed ONLY in the
+        # committed data/ directory, with no current-run copy in the CWD --
+        # issue #29's fallback path (no current-run copy -> the committed
+        # copy is used, with a NOTICE) -- since this case never runs
+        # battery_dispatch_policies.py itself.
         (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
-            "pw3": {"greedy": {"save": exp_battery_value["EV-TOU-5"]}},
+            "pw3": {"greedy": {"save": exp_battery_value}},
             "baseline_bill_current_rates": round(ref["EV-TOU-5"]),
         }))
 
         r3 = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
                             capture_output=True, text=True, timeout=600)
         assert r3.returncode == 0, f"battery_plan_matrix.py failed: {r3.stderr[-2000:]}"
+        assert "NOTICE: no current-run battery_dispatch_policies.json" in r3.stdout, r3.stdout
+        assert "canonical crosscheck read from the committed" in r3.stdout, r3.stdout
         out = json.loads((tmp / "data" / "battery_plan_matrix.json").read_text())
 
     for plan in _PLANS:
@@ -142,18 +155,99 @@ def case_battery_plan_matrix_end_to_end_on_a_synthetic_house():
         assert abs(got["no_battery"] - round(ref[plan])) <= 1, (plan, got, ref[plan])
     got5 = out["plans"]["EV-TOU-5"]
     assert abs(got5["with_battery"] - round(with_b5)) <= 1, (got5, with_b5)
-    assert abs(got5["battery_value"] - exp_battery_value["EV-TOU-5"]) <= 2, (
+    assert abs(got5["battery_value"] - exp_battery_value) <= 2, (
         got5, exp_battery_value)
     cx = out["canonical_crosscheck_ev_tou_5"]
-    assert cx["battery_value"] == exp_battery_value["EV-TOU-5"], cx
+    assert cx["battery_value"] == exp_battery_value, cx
     assert json.dumps(out), "battery_plan_matrix.json is not JSON-serializable"
     return ("battery_plan_matrix.py runs end to end on a synthetic house with "
             "both fail-closed tie-outs satisfied by an independently computed "
-            "reference (not neutered), and its no-battery/with-battery/"
-            "battery-value figures for all 3 plans match that reference")
+            "reference (not neutered), its no-battery/with-battery/"
+            "battery-value figures for all 3 plans match that reference, and "
+            "it falls back to the committed dispatch artifact (with a "
+            "NOTICE) when no current-run copy exists")
 
 
-CASES = [case_battery_plan_matrix_end_to_end_on_a_synthetic_house]
+def case_disagreeing_current_run_dispatch_artifact_wins_and_is_announced():
+    """issue #29: a current-run battery_dispatch_policies.json in the CWD
+    that DISAGREES with the committed data/ copy must win (this run's
+    figures, not the stale committed ones) and the mismatch must be
+    announced loudly, not resolved in silence."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        TSR._build_throwaway_root(tmp, synthetic=True)
+        ref, with_b5, exp_battery_value = _independent_ref_and_dispatch(tmp)
+
+        # committed copy: a stale, DIFFERENT run
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
+            "pw3": {"greedy": {"save": exp_battery_value + 500}},
+            "baseline_bill_current_rates": round(ref["EV-TOU-5"]) + 500,
+        }))
+        # current-run copy: the correct figures for THIS run, matching what
+        # the generator will itself compute, so the crosscheck assertion
+        # passes using the (correct) current-run copy
+        (tmp / "battery_dispatch_policies.json").write_text(json.dumps({
+            "pw3": {"greedy": {"save": exp_battery_value}},
+            "baseline_bill_current_rates": round(ref["EV-TOU-5"]),
+        }))
+
+        r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, f"battery_plan_matrix.py failed: {r.stderr[-2000:]}"
+        assert "STALE COMMITTED ARTIFACT" in r.stdout, r.stdout
+        assert "this run's battery_dispatch_policies.json differs" in r.stdout, r.stdout
+        out = json.loads((tmp / "data" / "battery_plan_matrix.json").read_text())
+
+    cx = out["canonical_crosscheck_ev_tou_5"]
+    assert cx["battery_value"] == exp_battery_value, (
+        "canonical crosscheck used the stale committed value instead of "
+        "this run's", cx)
+    assert cx["no_battery"] == round(ref["EV-TOU-5"]), cx
+    return ("battery_plan_matrix.py prefers a disagreeing current-run copy "
+            "of battery_dispatch_policies.json over the committed one, and "
+            "announces the mismatch loudly rather than resolving it in "
+            "silence")
+
+
+def case_malformed_current_run_dispatch_artifact_fails_closed():
+    """A current-run battery_dispatch_policies.json that exists but is not
+    valid JSON must ABORT the run, never silently fall back to the committed
+    copy -- that is exactly how a stale figure would get published under a
+    citation that looks current."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        TSR._build_throwaway_root(tmp, synthetic=True)
+        ref, with_b5, exp_battery_value = _independent_ref_and_dispatch(tmp)
+
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(json.dumps({
+            "pw3": {"greedy": {"save": exp_battery_value}},
+            "baseline_bill_current_rates": round(ref["EV-TOU-5"]),
+        }))
+        (tmp / "battery_dispatch_policies.json").write_text("{not valid json")
+
+        # _build_throwaway_root already staged the REAL repo's committed
+        # battery_plan_matrix.json into tmp/data/ -- remove it so a clean
+        # absence, not an unchanged pre-existing file, is what proves nothing
+        # was written by this (expected-to-fail) run.
+        (tmp / "data" / "battery_plan_matrix.json").unlink(missing_ok=True)
+
+        r = subprocess.run([sys.executable, "battery_plan_matrix.py"], cwd=tmp,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode != 0, "battery_plan_matrix.py did not fail on a malformed artifact"
+        assert "cannot parse the dispatch artifact" in r.stderr, r.stderr
+        assert "will not fall back past a broken artifact" in r.stderr, r.stderr
+        assert not (tmp / "data" / "battery_plan_matrix.json").exists(), (
+            "battery_plan_matrix.json was written despite the fail-closed abort")
+    return ("battery_plan_matrix.py fails closed on a malformed current-run "
+            "copy of battery_dispatch_policies.json instead of silently "
+            "falling back to the committed one")
+
+
+CASES = [
+    case_battery_plan_matrix_end_to_end_on_a_synthetic_house,
+    case_disagreeing_current_run_dispatch_artifact_wins_and_is_announced,
+    case_malformed_current_run_dispatch_artifact_fails_closed,
+]
 
 
 def main():

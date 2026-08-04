@@ -21,7 +21,17 @@ the same canonical rule the published EV-TOU-5 economics use, so the two bases
 now agree on which days take weekend windows; what still separates this column
 from the canonical figures is the rate basis (published tables here, bill-derived
 there). Both are recorded in the artifact (canonical_crosscheck, asserted against
-the committed dispatch artifact).
+the resolved dispatch artifact — see ORDERING CONTRACT below).
+
+ORDERING CONTRACT (this script runs AFTER the dispatch generator):
+  battery_dispatch_policies.py  ->  battery_plan_matrix.py, in the SAME working
+  directory. The canonical crosscheck below cites battery_dispatch_policies.json,
+  which battery_dispatch_policies.py writes into the WORKING DIRECTORY;
+  data/battery_dispatch_policies.json is only the last PROMOTED run. So that
+  artifact is read whole from this run's copy when one is there, from the
+  committed copy otherwise, and a disagreement between the two is announced
+  loudly rather than resolved in silence (see _resolve_dispatch_artifact).
+  CLAUDE.md's section 9 regeneration gate already runs the pair in this order.
 
 Output: data/battery_plan_matrix.json (repo-root resolved, so the
 private/verify sandbox pattern needs no path edits).
@@ -29,6 +39,7 @@ private/verify sandbox pattern needs no path edits).
 import datetime as dt
 import json
 import os
+import pathlib
 
 import numpy as np
 import pandas as pd
@@ -64,6 +75,91 @@ def repo_root():
                 return p
             p = os.path.dirname(p)
     raise SystemExit("repo root not found (data/plan_results.csv)")
+
+
+DISPATCH_JSON = "battery_dispatch_policies.json"  # written to the CWD by battery_dispatch_policies.py
+
+
+def _read_dispatch_json(path):
+    """Parse one battery_dispatch_policies.json whole.
+
+    Fail-closed: a malformed or unreadable copy is an ERROR, never a licence
+    to fall back to the other one — falling back past a broken artifact is
+    how a stale figure gets published under a citation that looks current.
+    """
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError) as e:
+        raise SystemExit(
+            f"{path}: cannot parse the dispatch artifact ({type(e).__name__}: "
+            f"{e}). Regenerate it with battery_dispatch_policies.py; this "
+            "script will not fall back past a broken artifact.")
+
+
+def _resolve_dispatch_artifact(root):
+    """Read battery_dispatch_policies.json whole for the canonical crosscheck
+    below, preferring THIS run's copy in the CWD over the committed data/
+    copy (same convention as carbon_fullyear.py's _scenario_a_saved /
+    deep_analyses.py's _base_save, generalized to a whole-document read since
+    the crosscheck needs two fields, no_battery and battery_value, not one
+    scalar).
+
+    NOTE: this is unrelated to analysis/extended_findings.py:216, which reads
+    the SAME filename but DELIBERATELY always from data/ — that script is a
+    consistency gate asserting the committed artifact agrees with what it
+    just computed, so it must never prefer a current-run copy. This script
+    has no such gate role for battery_dispatch_policies.json; it only wants
+    the freshest figure for its own crosscheck, so it follows the normal
+    current-run-preferred convention instead.
+
+    Resolution order:
+      1. current-run copy in the CWD (battery_dispatch_policies.py's
+         product) — used when present;
+      2. committed data/ copy — used only when there is no current-run copy,
+         with a NOTICE saying so;
+      3. both present and DISAGREEING — this run's copy wins, and the
+         mismatch is announced loudly: the committed copy is stale relative
+         to this run, and the section 9 regeneration gate will fail until it
+         is promoted.
+    """
+    run = pathlib.Path.cwd() / DISPATCH_JSON
+    committed = pathlib.Path(root) / "data" / DISPATCH_JSON
+    if not run.exists():
+        if not committed.exists():
+            raise SystemExit(
+                f"no {DISPATCH_JSON} artifact: neither a current-run {run} "
+                f"nor the committed {committed} exists. Run "
+                "battery_dispatch_policies.py in this working directory "
+                "first (see the ordering contract above).")
+        v = _read_dispatch_json(committed)
+        print(f"NOTICE: no current-run {DISPATCH_JSON} in {pathlib.Path.cwd()}; "
+              f"canonical crosscheck read from the committed {committed}. If "
+              "this run's dispatch inputs changed, run "
+              "battery_dispatch_policies.py here FIRST.")
+        return v
+    v = _read_dispatch_json(run)
+    if committed.exists() and run.samefile(committed):
+        print(f"NOTICE: canonical crosscheck read from {run} (the working "
+              "directory IS the committed data/ directory).")
+        return v
+    if not committed.exists():
+        print(f"NOTICE: canonical crosscheck read from this run's {run} (no "
+              f"committed {committed} to compare against).")
+        return v
+    c = _read_dispatch_json(committed)
+    if c == v:
+        print(f"NOTICE: canonical crosscheck read from this run's {run} "
+              f"(agrees with the committed {committed}).")
+        return v
+    bar = "!" * 72
+    print(bar)
+    print(f"NOTICE -- STALE COMMITTED ARTIFACT: this run's {DISPATCH_JSON} "
+          f"differs from the committed {committed}.")
+    print(f"  Using THIS RUN's {run}. The committed copy has not been "
+          "promoted; CLAUDE.md's section 9 gate will fail until it is.")
+    print(bar)
+    return v
 
 
 # Holiday calendar comes from rates.off_peak_day (the canonical, bill-confirmed
@@ -112,7 +208,7 @@ if __name__ == "__main__":
 
     # cross-check the EV-TOU-5 column against the canonical-engine artifact: the
     # table-rate battery value must agree with the published canonical figure to ~$100
-    canon = json.load(open(os.path.join(root, "data", "battery_dispatch_policies.json")))
+    canon = _resolve_dispatch_artifact(root)
     assert abs(plans["EV-TOU-5"]["battery_value"] - canon["pw3"]["greedy"]["save"]) < 100, \
         "EV-TOU-5 battery value diverged from the canonical dispatch artifact"
     out = {

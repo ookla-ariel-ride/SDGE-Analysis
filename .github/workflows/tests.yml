@@ -75,6 +75,8 @@ jobs:
         run: python analysis/test_tou_structure_stress.py
       - name: analysis scripts runnable or explicitly retired
         run: python analysis/test_scripts_runnable.py
+      - name: package_results upstream-artifact resolution guard tests
+        run: python analysis/test_package_results.py
       - name: carbon raw-cache and fail-closed branches
         run: python analysis/test_carbon_fullyear.py
       - name: carbon-vs-cost dispatch tradeoff guard tests
