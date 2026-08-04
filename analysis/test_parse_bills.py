@@ -284,6 +284,54 @@ def case_common_mode_rate_misread_caught_by_charge_crossfoot(tmp):
             + r.stderr.strip().splitlines()[-1])
 
 
+def case_charge_line_missing_fails_closed(tmp):
+    """Issue #27 review: the cross-foot's OWN precondition -- a printed
+    '[N Days ]Charge $a + $b + $c = total' line after every Rate/kWh row -- is
+    itself a new fail-closed branch this PR added. Prove it actually fires
+    rather than trusting the raise is reachable: break the regex that finds
+    the charge line (a bill-layout-changed scenario, the same shape as
+    case_tou_headers_stop_matching two cases up) and confirm the parser
+    refuses naming the missing line, not a downstream crash."""
+    src = (tmp / "analysis" / "parse_bills.py").read_text()
+    needle = r"Charge\s*\$("
+    assert src.count(needle) == 1, "test needs updating: charge-line anchor not found once"
+    broken = src.replace(needle, r"ChargeRENAMED\s*\$(", 1)
+    assert broken != src, "test needs updating: patch did not apply"
+    (tmp / "analysis" / "parse_bills.py").write_text(broken)
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted a corpus with no charge line at all"
+    assert "no '[N Days ]Charge $a + $b + $c = total' line" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "charge line missing after a Rate/kWh row -> exits, artifacts untouched"
+
+
+def case_charge_line_internal_crossfoot_fails_closed(tmp):
+    """Issue #27 review: the charge line's OWN internal identity (its three
+    printed dollar amounts must sum to its own printed total) is a second new
+    fail-closed branch this PR added, independent of the rate x kWh
+    cross-foot the other test exercises. Simulate a misaligned column read
+    (the printed $a/$b/$c parsed correctly but summing wrong, e.g. a
+    misplaced decimal) and confirm the parser refuses on the internal
+    identity, not the rate cross-foot."""
+    src = (tmp / "analysis" / "parse_bills.py").read_text()
+    needle = "            charges = [_f(c_row.group(i)) for i in (2, 3, 4)]"
+    assert needle in src, "test needs updating: charges extraction line not found"
+    patched = src.replace(
+        needle,
+        needle + "\n            charges[0] += 1.0  # simulated column misalignment"
+                  " (issue #27 review)",
+        1)
+    assert patched != src, "test needs updating: patch did not apply"
+    (tmp / "analysis" / "parse_bills.py").write_text(patched)
+    r = _run(tmp)
+    assert r.returncode != 0, "parser accepted a corpus whose charge line doesn't sum"
+    assert "misaligned or misread" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return ("charge line's own $a+$b+$c disagrees with its printed total -> "
+            "exits on the internal cross-foot, artifacts untouched")
+
+
 def case_missing_household_yaml_fails(tmp):
     """parse_bills now REQUIRES the intake yaml (household.has_gas): without it the
     loader must fail closed pointing at the intake interview, touching nothing."""
@@ -763,6 +811,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
                 case_tou_headers_stop_matching,
                 case_common_mode_rate_misread_caught_by_charge_crossfoot,
+                case_charge_line_missing_fails_closed,
+                case_charge_line_internal_crossfoot_fails_closed,
                 case_missing_household_yaml_fails,
                 case_gas_flag_true_missing_dir_fails,
                 case_gas_flag_true_empty_dir_fails,
