@@ -19,9 +19,13 @@ ORDERING CONTRACT (this script runs THIRD):
   reports from those two artifacts (see above) rather than computing anything
   itself, each one is read whole from this run's copy when one is there, from
   the committed copy otherwise, and a disagreement between the two is announced
-  loudly rather than resolved in silence (see _resolve_artifact). CLAUDE.md's
-  section 9 regeneration gate already runs behavior_rebuild.py and
-  battery_dispatch_policies.py before this script.
+  loudly rather than resolved in silence (see _resolve_artifact). Both artifacts
+  must come from the SAME cohort, though: a current-run copy of only ONE of the
+  two is refused rather than silently paired with the OTHER'S possibly-stale
+  committed copy (see _check_cohort) — resolving each artifact's OWN staleness
+  independently is not the same question as whether the two artifacts agree on
+  which run they represent. CLAUDE.md's section 9 regeneration gate already runs
+  behavior_rebuild.py and battery_dispatch_policies.py before this script.
 
 Run AFTER behavior_rebuild.py and battery_dispatch_policies.py.
 """
@@ -131,6 +135,40 @@ def _resolve_artifact(name, generator):
     return v
 
 
+def _check_cohort(specs):
+    """Both upstream artifacts must come from the SAME run, never one current-run
+    copy blended with the OTHER's stale, committed copy.
+
+    _resolve_artifact() picks a source per artifact independently. That is
+    correct for staleness (this run's copy vs. the promoted one, same
+    artifact), but composing a current-run behavior_rebuild.json with a
+    committed battery_dispatch_policies.json left over from an EARLIER
+    session (or vice versa) would silently blend two different runs into one
+    package figure and still exit 0 — the disagreement notice in
+    _resolve_artifact only ever compares an artifact against its OWN prior
+    copy, never against the other artifact's provenance. Fail closed instead:
+    if exactly one of the two has a current-run copy in the CWD, the cohort
+    is mixed and this script refuses rather than guessing which run to
+    trust."""
+    cwd = pathlib.Path.cwd()
+    present = {name: (cwd / name).exists() for name, _ in specs}
+    if len(set(present.values())) > 1:
+        have = [n for n, p in present.items() if p]
+        missing = [n for n, p in present.items() if not p]
+        gens = dict(specs)
+        raise SystemExit(
+            f"mixed-source upstream artifacts: a current-run copy of "
+            f"{', '.join(have)} exists in {cwd}, but {', '.join(missing)} "
+            "does not. Composing one current-run artifact with the OTHER's "
+            "committed (possibly stale) copy would silently blend two "
+            "different runs into one package figure. Run "
+            f"{', '.join(gens[n] for n in missing)} in this working "
+            "directory too before package_results.py (see the ordering "
+            "contract above), or remove the stray current-run copy if it's "
+            "left over from an unrelated session.")
+
+
+_check_cohort([(BEHAVIOR_JSON, "behavior_rebuild.py"), (DISPATCH_JSON, "battery_dispatch_policies.py")])
 br = _resolve_artifact(BEHAVIOR_JSON, "behavior_rebuild.py")
 bp = _resolve_artifact(DISPATCH_JSON, "battery_dispatch_policies.py")
 

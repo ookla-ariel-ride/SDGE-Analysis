@@ -156,8 +156,11 @@ def case_malformed_current_run_copy_fails_closed():
             _behavior_json(**BASE_BEHAVIOR))
         (tmp / "data" / "battery_dispatch_policies.json").write_text(
             _dispatch_json(**BASE_DISPATCH))
-        # a present-but-broken current-run copy
+        # a present-but-broken current-run copy, paired with a VALID current-run
+        # copy of the other artifact so the cohort check (issue #29 review) does
+        # not itself abort first -- this case targets the malformed-JSON path.
         (tmp / "behavior_rebuild.json").write_text("{not valid json")
+        (tmp / "battery_dispatch_policies.json").write_text(_dispatch_json(**BASE_DISPATCH))
 
         r = _run(tmp)
         assert r.returncode != 0, "package_results.py did not fail on a malformed artifact"
@@ -167,6 +170,52 @@ def case_malformed_current_run_copy_fails_closed():
             "package_results.json was written despite the fail-closed abort")
     return ("package_results.py fails closed on a malformed current-run "
             "copy instead of silently falling back to the committed one")
+
+
+def case_mixed_source_cohort_fails_closed():
+    """A current-run copy of ONE upstream artifact exists but not the other --
+    composing it with the OTHER's committed (possibly stale, possibly from an
+    unrelated earlier session) copy would silently blend two different runs
+    into one package figure while still exiting 0. Must fail closed naming
+    which artifact is missing, for BOTH directions (behavior-only,
+    dispatch-only)."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _build_root(pathlib.Path(td))
+        (tmp / "data" / "behavior_rebuild.json").write_text(
+            _behavior_json(**BASE_BEHAVIOR))
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_json(**BASE_DISPATCH))
+        # only a current-run behavior_rebuild.json -- no current-run dispatch copy
+        (tmp / "behavior_rebuild.json").write_text(
+            _behavior_json(**dict(BASE_BEHAVIOR, model_bill=5200)))
+
+        r = _run(tmp)
+        assert r.returncode != 0, "package_results.py accepted a mixed-source cohort"
+        assert "mixed-source upstream artifacts" in r.stderr, r.stderr
+        assert "battery_dispatch_policies.json does not" in r.stderr, r.stderr
+        assert not (tmp / "data" / "package_results.json").exists(), (
+            "package_results.json was written despite the mixed-source abort")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _build_root(pathlib.Path(td))
+        (tmp / "data" / "behavior_rebuild.json").write_text(
+            _behavior_json(**BASE_BEHAVIOR))
+        (tmp / "data" / "battery_dispatch_policies.json").write_text(
+            _dispatch_json(**BASE_DISPATCH))
+        # only a current-run dispatch copy -- no current-run behavior copy
+        (tmp / "battery_dispatch_policies.json").write_text(
+            _dispatch_json(**dict(BASE_DISPATCH, greedy_save=2600)))
+
+        r = _run(tmp)
+        assert r.returncode != 0, "package_results.py accepted a mixed-source cohort"
+        assert "mixed-source upstream artifacts" in r.stderr, r.stderr
+        assert "behavior_rebuild.json does not" in r.stderr, r.stderr
+        assert not (tmp / "data" / "package_results.json").exists(), (
+            "package_results.json was written despite the mixed-source abort")
+    return ("package_results.py refuses a mixed-source cohort (a current-run "
+            "copy of only ONE upstream artifact) in both directions, naming "
+            "the missing artifact, rather than silently blending a current "
+            "run with the other artifact's committed copy")
 
 
 def case_neither_copy_exists_fails_closed_with_a_clear_message():
@@ -188,6 +237,7 @@ CASES = [
     case_no_current_run_copy_falls_back_to_committed_with_a_notice,
     case_disagreeing_current_run_copy_wins_and_is_announced_loudly,
     case_malformed_current_run_copy_fails_closed,
+    case_mixed_source_cohort_fails_closed,
     case_neither_copy_exists_fails_closed_with_a_clear_message,
 ]
 
