@@ -105,6 +105,19 @@ def _resolve_dispatch_artifact(root):
     the crosscheck needs two fields, no_battery and battery_value, not one
     scalar).
 
+    Returns (value, source) -- source is a STABLE, machine-independent label
+    for which copy this run's figures came from ("battery_dispatch_policies.json
+    (this run's copy)" vs. "data/battery_dispatch_policies.json (committed)"),
+    NOT always the latter: once a current-run copy can win (the whole point
+    of this resolver), the published canonical_crosscheck.basis field must
+    say so, or the artifact misstates its own provenance in exactly the
+    scenario this resolver was built to handle (a current-run copy diverging
+    from a stale committed one) -- caught in Codex review. The label is
+    deliberately NOT the resolved absolute path: that would bake this
+    machine's own working-directory location into a committed artifact,
+    breaking the section 9 byte-identical-regeneration gate the moment two
+    different checkouts ran it from different paths.
+
     NOTE: this is unrelated to analysis/extended_findings.py:216, which reads
     the SAME filename but DELIBERATELY always from data/ — that script is a
     consistency gate asserting the committed artifact agrees with what it
@@ -137,21 +150,21 @@ def _resolve_dispatch_artifact(root):
               f"canonical crosscheck read from the committed {committed}. If "
               "this run's dispatch inputs changed, run "
               "battery_dispatch_policies.py here FIRST.")
-        return v
+        return v, "data/battery_dispatch_policies.json (committed)"
     v = _read_dispatch_json(run)
     if committed.exists() and run.samefile(committed):
         print(f"NOTICE: canonical crosscheck read from {run} (the working "
               "directory IS the committed data/ directory).")
-        return v
+        return v, "data/battery_dispatch_policies.json (this run's copy; CWD is data/)"
     if not committed.exists():
         print(f"NOTICE: canonical crosscheck read from this run's {run} (no "
               f"committed {committed} to compare against).")
-        return v
+        return v, "battery_dispatch_policies.json (this run's copy)"
     c = _read_dispatch_json(committed)
     if c == v:
         print(f"NOTICE: canonical crosscheck read from this run's {run} "
               f"(agrees with the committed {committed}).")
-        return v
+        return v, "battery_dispatch_policies.json (this run's copy, agrees with data/battery_dispatch_policies.json)"
     bar = "!" * 72
     print(bar)
     print(f"NOTICE -- STALE COMMITTED ARTIFACT: this run's {DISPATCH_JSON} "
@@ -159,7 +172,7 @@ def _resolve_dispatch_artifact(root):
     print(f"  Using THIS RUN's {run}. The committed copy has not been "
           "promoted; CLAUDE.md's section 9 gate will fail until it is.")
     print(bar)
-    return v
+    return v, "battery_dispatch_policies.json (this run's copy; committed data/battery_dispatch_policies.json is STALE)"
 
 
 # Holiday calendar comes from rates.off_peak_day (the canonical, bill-confirmed
@@ -208,7 +221,7 @@ if __name__ == "__main__":
 
     # cross-check the EV-TOU-5 column against the canonical-engine artifact: the
     # table-rate battery value must agree with the published canonical figure to ~$100
-    canon = _resolve_dispatch_artifact(root)
+    canon, canon_source = _resolve_dispatch_artifact(root)
     assert abs(plans["EV-TOU-5"]["battery_value"] - canon["pw3"]["greedy"]["save"]) < 100, \
         "EV-TOU-5 battery value diverged from the canonical dispatch artifact"
     out = {
@@ -227,9 +240,9 @@ if __name__ == "__main__":
         "canonical_crosscheck_ev_tou_5": {
             "no_battery": canon["baseline_bill_current_rates"],
             "battery_value": canon["pw3"]["greedy"]["save"],
-            "basis": ("data/battery_dispatch_policies.json — bill-derived rates, "
-                      "rates.bill_nem monthly NEM netting, canonical holiday rule; "
-                      "the published EV-TOU-5 battery economics")},
+            "basis": (f"{canon_source} — bill-derived rates, rates.bill_nem monthly "
+                      "NEM netting, canonical holiday rule; the published EV-TOU-5 "
+                      "battery economics")},
     }
     tmp = os.path.join(root, "data", "battery_plan_matrix.json.tmp")
     with open(tmp, "w") as fh:
