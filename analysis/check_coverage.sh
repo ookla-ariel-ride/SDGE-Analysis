@@ -30,7 +30,7 @@ for t in test_rates test_report_consistency test_tou_audit test_parse_bills \
          test_battery_sizing_curve test_perfect_foresight_dispatch test_tou_structure_stress \
          test_gross_import_decomposition test_reprice_by_vintage test_uncertainty_propagation \
          test_battery_backup_sims test_deep_analyses test_lifetime_payback test_soiling_analysis \
-         test_extended_findings test_battery_plan_matrix test_report_tokens \
+         test_extended_findings test_battery_plan_matrix test_package_results test_report_tokens \
          test_llm_providers test_egress_preflight test_report_blocks test_prose_lint \
          test_generate_report test_quiet_night_floor; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "analysis/$t.py" >/dev/null

@@ -23,6 +23,6 @@
  "canonical_crosscheck_ev_tou_5": {
   "no_battery": 4904,
   "battery_value": 2328,
-  "basis": "data/battery_dispatch_policies.json \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, canonical holiday rule; the published EV-TOU-5 battery economics"
+  "basis": "battery_dispatch_policies.json (this run's copy, agrees with data/battery_dispatch_policies.json) \u2014 bill-derived rates, rates.bill_nem monthly NEM netting, canonical holiday rule; the published EV-TOU-5 battery economics"
  }
 }
