@@ -24,8 +24,17 @@ ORDERING CONTRACT (this script runs THIRD):
   two is refused rather than silently paired with the OTHER'S possibly-stale
   committed copy (see _check_cohort) — resolving each artifact's OWN staleness
   independently is not the same question as whether the two artifacts agree on
-  which run they represent. CLAUDE.md's section 9 regeneration gate already runs
-  behavior_rebuild.py and battery_dispatch_policies.py before this script.
+  which run they represent. KNOWN LIMITATION: _check_cohort only checks file
+  CO-PRESENCE, not true provenance -- a private/verify/ sandbox reused across
+  sessions (CLAUDE.md's own documented pattern) could hold a current-run
+  battery_dispatch_policies.json from THIS session alongside a leftover
+  behavior_rebuild.json from an EARLIER one; both would read as "present" and
+  the cohort check would pass despite representing different runs. Closing
+  that gap needs a shared run identifier written by behavior_rebuild.py and
+  battery_dispatch_policies.py themselves (both outside this script's own
+  file boundary) -- filed as a follow-up rather than expanded into here.
+  CLAUDE.md's section 9 regeneration gate already runs behavior_rebuild.py
+  and battery_dispatch_policies.py before this script.
 
 Run AFTER behavior_rebuild.py and battery_dispatch_policies.py.
 """
@@ -149,7 +158,14 @@ def _check_cohort(specs):
     copy, never against the other artifact's provenance. Fail closed instead:
     if exactly one of the two has a current-run copy in the CWD, the cohort
     is mixed and this script refuses rather than guessing which run to
-    trust."""
+    trust.
+
+    KNOWN LIMITATION: this checks CO-PRESENCE, not provenance. Two files
+    that are both present could still be from different sessions in a
+    persistent private/verify/ sandbox (one just regenerated, the other a
+    leftover). Closing that fully needs a shared run identifier the two
+    upstream generators don't currently write -- out of this script's own
+    file boundary; see the module docstring."""
     cwd = pathlib.Path.cwd()
     present = {name: (cwd / name).exists() for name, _ in specs}
     if len(set(present.values())) > 1:
