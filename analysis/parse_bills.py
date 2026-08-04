@@ -91,6 +91,43 @@ FAIL-CLOSED
     Every period must yield the required fields. A statement that parses to a missing
     period, day count, usage figure, or charge total raises SystemExit rather than
     emitting a zero — a silently-zeroed row would corrupt every downstream sum.
+
+CHARGE-LINE CROSS-FOOT (issue #27, chosen over the other two options there)
+    rates_history.py's holdout gate corroborates a printed rate_per_kwh line by
+    checking whether OTHER statements' rate_per_kwh lines agree — so a parser
+    regression that shifts every occurrence of one repeated historical rate by the
+    same amount is invisible to it: the held-out line and both flanking witnesses
+    would all carry the identical wrong value and agree with each other (rates_
+    history.py's module docstring names this gap explicitly). That check cannot see
+    the bug because it never leaves the rate_per_kwh column.
+    This module closes that gap upstream, where the raw bill text is still available:
+    every TOU block's "[N Days ]Charge $a + $b + $c = total" line prints SDG&E's own
+    per-TOU-period dollar amount, INDEPENDENTLY of the Rate/kWh row two lines above it
+    (different regex anchor, different printed line on the bill). Before a row is
+    appended, kWh x the extracted rate_per_kwh is cross-footed against that printed
+    charge (CHARGE_CROSSFOOT_TOLERANCE_USD, measured empirically at $0.01, against an
+    observed corpus-wide maximum residual of $0.005 from cent rounding on each side).
+    A rate misread — however many statements repeat it — fails this cross-foot on
+    EVERY statement that prints it, independent of what any other statement says,
+    because each one is checked against its own printed dollar figure rather than
+    against a neighbor's rate. This is verified to actually catch the failure mode:
+    test_parse_bills.py's case injects a uniform rate_per_kwh shift into every
+    occurrence of one repeated vintage (the delivery/summer/on_peak $0.26438 rate
+    printed on five 2024 statements) and confirms the parser now refuses, naming the
+    file, period, cell and residual — the exact scenario rates_history.py's holdout
+    gate is structurally unable to catch. No hand-transcribed rate is introduced
+    anywhere in this check: both sides of the cross-foot are read off the same PDF
+    the rate itself came from (issue #2 requirement 1 stands).
+    The other two options considered (see issue #27) were: (1) a second independent
+    extraction of rate_per_kwh via charge/kWh on the SAME line — rejected, because
+    the charge-line cross-foot below is strictly more informative (it is a genuine
+    THIRD number, not a re-derivation of the same two numbers already read), is
+    already available with no new PDF anchor, and needs no committed-artifact schema
+    change; (3) documenting the gap and doing nothing — rejected, because option 2
+    turned out to be fully available on this corpus (all 26 statements, all 72 TOU
+    blocks print a parseable charge line, verified against the raw PDFs) at low
+    implementation cost, so accepting the blind spot would have been leaving real,
+    cheap protection on the table.
 """
 import contextlib
 import fcntl
@@ -162,6 +199,14 @@ SUMMARY_STATEMENTS_GAS = [
 # Two quirks of the printed numbers: negatives use U+2212 MINUS SIGN rather than an
 # ASCII hyphen, and rates are printed without a leading zero ("$.04013").
 _NUM = r"[−-]?(?:[\d,]*\.\d+|[\d,]+)"
+
+# The charge-line cross-foot's tolerance (issue #27): kWh x printed Rate/kWh vs the
+# statement's own printed per-TOU-period charge. Both sides are rounded to the cent
+# independently before printing, so a clean statement can differ by up to half a
+# cent; measured empirically across the full corpus (26 statements, 72 TOU blocks)
+# the observed maximum residual is $0.005 exactly. Set with headroom above that
+# measured ceiling, not guessed.
+CHARGE_CROSSFOOT_TOLERANCE_USD = 0.01
 
 
 def _f(s):
@@ -327,16 +372,64 @@ def parse_electric(path):
             key = (section, season)
             segment = seg_seen.get(key, 0)
             seg_seen[key] = segment + 1
-            # "<N> Days Charge $a + $b + $c = total" follows the rate row; it is absent
-            # on bills whose period is not split, where the segment covers every day.
-            dm = re.search(r"(\d+)\s*Days Charge", win[r_row.end():])
-            seg_days = int(dm.group(1)) if dm else days
+            # "[<N> Days ]Charge $a + $b + $c = total" follows the rate row: the day
+            # count is absent on bills whose period is not split, where the segment
+            # covers every day, but the three dollar amounts are always printed (26/26
+            # statements, all 72 TOU blocks, verified against the raw corpus — issue
+            # #27). $a/$b/$c are SDG&E's own on/off/super-off-peak dollar totals for
+            # this segment, printed independently of the Rate/kWh row above (a
+            # different number, on a different line) — see CROSS-FOOT below.
+            c_row = re.search(
+                r"(?:(\d+)\s*Days\s*)?Charge\s*\$(" + _NUM + r")\s*\+\s*\$(" + _NUM +
+                r")\s*\+\s*\$(" + _NUM + r")\s*=\s*(" + _NUM + r")", win[r_row.end():])
+            if not c_row:
+                raise SystemExit(
+                    f"{path.name} [{period}]: no '[N Days ]Charge $a + $b + $c = "
+                    f"total' line after the {h.group(1)} USAGE Rate/kWh row — bill "
+                    f"layout changed; see the applicability envelope in the module "
+                    f"docstring.")
+            seg_days = int(c_row.group(1)) if c_row.group(1) else days
+            charges = [_f(c_row.group(i)) for i in (2, 3, 4)]
+            printed_total = _f(c_row.group(5))
+            if abs(sum(charges) - printed_total) > CHARGE_CROSSFOOT_TOLERANCE_USD:
+                raise SystemExit(
+                    f"{path.name} [{period}] {section}/{season} segment {segment}: "
+                    f"printed per-period charges {charges} sum to "
+                    f"${sum(charges):.2f}, but the statement's own printed total is "
+                    f"${printed_total:.2f} — the charge line's columns are "
+                    f"misaligned or misread; fix the parser, do not hand-correct.")
             for j, tp in enumerate(("on_peak", "off_peak", "super_off_peak")):
+                kwh_j, rate_j = _f(u.group(1 + j)), _f(r_row.group(1 + j))
+                # CROSS-FOOT (issue #27): kWh x the printed Rate/kWh must reproduce
+                # the printed per-TOU-period charge, an in-bill arithmetic identity
+                # independent of how rate_per_kwh itself was extracted — the charge
+                # comes from a DIFFERENT regex anchored on a DIFFERENT printed line.
+                # This is what closes rates_history.py's blind spot to a parser
+                # regression that shifts every occurrence of one repeated historical
+                # rate identically: a holdout gate built only from rate_per_kwh values
+                # would see every witness agree (see rates_history.py's module
+                # docstring, "THE HOLDOUT GATE'S BLIND SPOT"), but this check catches
+                # the SAME misread on every single statement that prints it, because
+                # each one is checked against its own independently-printed dollar
+                # figure, not against another statement's rate.
+                expect = kwh_j * rate_j
+                resid = charges[j] - expect
+                if abs(resid) > CHARGE_CROSSFOOT_TOLERANCE_USD:
+                    raise SystemExit(
+                        f"{path.name} [{period}] {section}/{season} segment "
+                        f"{segment} {tp}: printed Rate/kWh ${rate_j:.5f} x kWh "
+                        f"{kwh_j:g} = ${expect:.2f}, but the statement's own printed "
+                        f"charge line says ${charges[j]:.2f} (residual "
+                        f"${resid:+.4f}, tolerance "
+                        f"${CHARGE_CROSSFOOT_TOLERANCE_USD:.3f}). The printed rate "
+                        f"and the statement's own printed charge disagree — a parser "
+                        f"regression on rate_per_kwh, or a misread charge line. Fix "
+                        f"the parser; never hand-correct rate_per_kwh to make this "
+                        f"pass (CLAUDE.md, issue #2 requirement 1).")
                 tou.append(dict(
                     statement_date=stmt, period=period, section=section,
                     season=season, segment=segment, segment_days=seg_days,
-                    tou_period=tp,
-                    kwh=_f(u.group(1 + j)), rate_per_kwh=_f(r_row.group(1 + j)),
+                    tou_period=tp, kwh=kwh_j, rate_per_kwh=rate_j,
                 ))
     return rows, tou
 

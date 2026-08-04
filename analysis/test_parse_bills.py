@@ -238,6 +238,52 @@ def case_tou_headers_stop_matching(tmp):
     return "TOU headers stop matching -> exits, artifacts untouched"
 
 
+def case_common_mode_rate_misread_caught_by_charge_crossfoot(tmp):
+    """Issue #27: prove the charge-line cross-foot actually catches the failure
+    mode it was built for, not just a plausible-sounding one.
+
+    delivery/summer/on_peak's $0.26438 rate is printed, unchanged, on five 2024
+    statements — a real repeated historical vintage. rates_history.py's holdout
+    gate corroborates a printed rate by checking whether OTHER statements' printed
+    rates agree; test_rates_history.py's
+    case_a_common_mode_shift_of_one_repeated_vintage_is_invisible_to_the_holdout
+    proves that gate is BLIND to a parser bug that shifts every occurrence of this
+    exact vintage by the same amount — every witness would carry the identical
+    wrong value and agree with itself.
+
+    Here we inject that exact bug into the extraction (every rate_per_kwh read as
+    literal 0.26438 gets bumped +$0.05, simulating a systematic misread of one
+    printed digit sequence) and confirm parse_bills.py now refuses — on the FIRST
+    occurrence, in the FIRST statement, using nothing from any other statement:
+    the cross-foot checks this block's own printed "Charge $a + $b + $c = total"
+    line, which the injected bug never touches."""
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "electric-bills" / "sdge_electric_2024-06-27.pdf")
+    src = (tmp / "analysis" / "parse_bills.py").read_text()
+    needle = "kwh_j, rate_j = _f(u.group(1 + j)), _f(r_row.group(1 + j))"
+    assert needle in src, "test needs updating: extraction line not found"
+    patched = src.replace(
+        needle,
+        needle + "\n                if abs(rate_j - 0.26438) < 1e-9:\n"
+                  "                    rate_j += 0.05  # simulated common-mode misread"
+                  " (issue #27)",
+        1)
+    assert patched != src, "test needs updating: patch did not apply"
+    (tmp / "analysis" / "parse_bills.py").write_text(patched)
+    r = _run(tmp)
+    assert r.returncode != 0, \
+        f"parser accepted a corpus with a common-mode-shifted printed rate:\n{r.stdout}"
+    assert victim.name in r.stderr, \
+        f"error does not name the first corrupted statement, {victim.name}:\n{r.stderr}"
+    assert "printed charge line" in r.stderr and "disagree" in r.stderr, \
+        f"error is not the charge-line cross-foot:\n{r.stderr}"
+    assert "0.31438" in r.stderr, f"error does not show the shifted rate:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return ("common-mode +$0.05/kWh shift of a 5-statement-repeated vintage -> "
+            "caught on the FIRST occurrence by the charge-line cross-foot: "
+            + r.stderr.strip().splitlines()[-1])
+
+
 def case_missing_household_yaml_fails(tmp):
     """parse_bills now REQUIRES the intake yaml (household.has_gas): without it the
     loader must fail closed pointing at the intake interview, touching nothing."""
@@ -716,6 +762,7 @@ def case_fixed_charge_total_reconciles_real_statements(tmp):
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
                 case_tou_headers_stop_matching,
+                case_common_mode_rate_misread_caught_by_charge_crossfoot,
                 case_missing_household_yaml_fails,
                 case_gas_flag_true_missing_dir_fails,
                 case_gas_flag_true_empty_dir_fails,
