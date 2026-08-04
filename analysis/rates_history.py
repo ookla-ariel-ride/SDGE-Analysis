@@ -222,6 +222,39 @@ THE RESIDUAL ARTIFACT: A RECONSTRUCTION CHECK, NOT A DOLLAR TIE-OUT
       charged during CCA periods (1/28/26-2/26/26: $116.09 printed against a
       $56.82 CCA charge).
 
+THE HOLDOUT GATE'S BLIND SPOT, AND WHERE IT IS CLOSED (issue #27)
+    The holdout gate above corroborates a printed rate_per_kwh line by checking
+    whether OTHER statements' rate_per_kwh lines, over the same dates, carry the
+    same value. By construction this is blind to a COMMON-MODE failure: if a
+    parser regression shifted EVERY occurrence of one repeated historical rate by
+    the same amount, the held-out line and both of its flanking witnesses would
+    all carry the identical wrong value. Span topology, corroboration counts,
+    reason codes and agree/disagree flags would all come back exactly as they do
+    today — the corpus would look perfectly self-consistent while every witness
+    was wrong in the same direction. This module has no way to see that: it never
+    reads anything but the rate_per_kwh column, so it structurally cannot tell a
+    correct repeated rate from an incorrectly-but-identically repeated one.
+    Three options for closing this gap were weighed (issue #27): a second
+    independent extraction path for rate_per_kwh from the same PDF anchor; a
+    charge-line cross-foot verifying the printed rate reproduces the statement's
+    own printed dollar charge; or documenting the limitation and relying on
+    parse_bills.py's existing reproduction gate. The SECOND was chosen and is
+    implemented in parse_bills.py, not here: every TOU block's printed
+    "Charge $a + $b + $c = total" line is a THIRD number, independent of both kWh
+    and rate_per_kwh, and kWh × rate_per_kwh is cross-footed against it before a
+    row is ever written to bill_tou_detail.csv (see parse_bills.py's module
+    docstring, "CHARGE-LINE CROSS-FOOT"). That check runs PER STATEMENT, against
+    that statement's OWN printed charge, so it catches a common-mode rate
+    misread on every single occurrence, independent of how many other statements
+    repeat it — which is exactly the shape of failure this module's holdout gate
+    cannot see. It could not be implemented in this module: by the time a rate
+    reaches bill_tou_detail.csv the printed charge line is gone, and this module
+    never reads the PDFs. test_parse_bills.py proves the cross-foot actually
+    fires on this exact failure shape (a uniform shift applied to every
+    occurrence of one repeated vintage); test_rates_history.py separately proves
+    the SAME uniform shift is invisible to the holdout gate here, which is the
+    blind spot this note describes, not a hypothetical.
+
 Generator outputs (deterministic writers, atomic replace; run twice → identical):
     data/rate_vintages.csv              every cell's spans with the provider in
                                         force, the AUTHORITY of the value

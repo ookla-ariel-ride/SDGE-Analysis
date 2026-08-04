@@ -1010,6 +1010,67 @@ def case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout
             f"26 pinned corroboration tuples")
 
 
+def case_a_common_mode_shift_of_one_repeated_vintage_is_invisible_to_the_holdout():
+    """NEGATIVE fixture proving issue #27's premise, not just asserting it: the
+    holdout gate's blind spot to a COMMON-MODE parser regression.
+
+    delivery/summer/on_peak's $0.26438 rate is a genuine repeated historical
+    vintage: it is printed, unchanged, on five consecutive 2024 statements. Three
+    of those five (6/26/24-7/25/24, 7/26/24-8/26/24, 8/27/24-9/25/24) are already
+    corroborated-and-agreeing in the real corpus (the other two sit at a corpus
+    edge / a mid-cycle split and are uncorroborated by construction either way —
+    see CORROBORATION). Shift EVERY one of the five occurrences by the identical
+    +$0.05/kWh, exactly the shape of bug issue #27 describes ("a parser regression
+    shifts every occurrence of a repeated historical vintage by the same amount"),
+    and confirm the three corroborated lines stay corroborated AND agreeing: the
+    held-out statement and both its flanking witnesses now all carry the same
+    wrong value, so nothing here can tell the difference between this and a real,
+    correctly-repeated $0.26438 vintage. That is the literal blind spot this
+    module's docstring names ("THE HOLDOUT GATE'S BLIND SPOT") — this case is the
+    evidence it is real, not hypothetical, and it is why the fix (parse_bills.py's
+    charge-line cross-foot, tested in test_parse_bills.py) had to live upstream of
+    this module rather than here: nothing in bill_tou_detail.csv could have told
+    the two apart."""
+    cell = ("delivery", "summer", "on_peak")
+    target = 0.26438
+    clean_corroborated = ["6/26/24 - 7/25/24", "7/26/24 - 8/26/24", "8/27/24 - 9/25/24"]
+    all_occurrences = ["5/25/24 - 6/25/24"] + clean_corroborated + ["9/26/24 - 10/25/24"]
+    # pin the starting shape so a future corpus edit can't silently invalidate this
+    # case's premise (a real repeated vintage with >=3 corroborated occurrences)
+    for period in clean_corroborated:
+        row = next(r for r in H.corroboration(period)["rows"] if r["cell"] == cell)
+        assert row["status"] == "corroborated" and row["agrees"] is True, (period, row)
+
+    def mutate(rows):
+        hit = 0
+        for r in rows:
+            if ((r["section"], r["season"], r["tou_period"]) == cell
+                    and r["period"] in all_occurrences
+                    and abs(float(r["rate_per_kwh"]) - target) < 1e-9
+                    and float(r["kwh"]) > 0):
+                r["rate_per_kwh"] = f"{target + 0.05:.5f}"
+                hit += 1
+        assert hit == 5, hit    # every printed occurrence of this vintage, shifted
+
+    with _corrupted_corpus(mutate):
+        for period in clean_corroborated:
+            row = next(r for r in H.corroboration(period)["rows"] if r["cell"] == cell)
+            assert row["status"] == "corroborated", (period, row)
+            assert row["agrees"] is True, (
+                period, row, "the holdout should NOT notice — every witness was "
+                "shifted by the same amount as the line under test")
+            assert row["printed_rate"] == row["witness_rate"] == target + 0.05
+    # and clean again once the mutation is undone (no cross-test leakage)
+    for period in clean_corroborated:
+        row = next(r for r in H.corroboration(period)["rows"] if r["cell"] == cell)
+        assert row["agrees"] is True and row["printed_rate"] == target
+    return (f"a uniform +$0.05/kWh shift applied to all 5 printed occurrences of "
+            f"the {'/'.join(cell)} ${target:.5f} vintage leaves all "
+            f"{len(clean_corroborated)} corroborable occurrences reporting "
+            f"corroborated=True, agrees=True — the holdout gate raises zero "
+            f"anomalies against a corpus whose published rate is wrong")
+
+
 def case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated():
     """NEGATIVE fixture, the honest counterpart: corrupt a line the corpus CANNOT
     corroborate and check the machinery says so instead of scoring a pass.
@@ -1365,6 +1426,7 @@ CASES = [
     case_rate_only_vintage_collapse_worsens_the_split_statements,
     case_netting_collapse_is_a_separate_counterfactual,
     case_a_perturbed_rate_is_invisible_to_the_identity_but_caught_by_the_holdout,
+    case_a_common_mode_shift_of_one_repeated_vintage_is_invisible_to_the_holdout,
     case_a_corruption_on_an_uncorroborable_line_is_reported_as_uncorroborated,
     case_a_malformed_printed_rate_on_a_billed_bucket_is_refused,
     case_a_mis_associated_segment_is_caught_or_pinned,
