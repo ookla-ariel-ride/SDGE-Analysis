@@ -375,6 +375,7 @@ import collections
 import csv
 import datetime as dt
 import json
+import math
 import os
 import pathlib
 import re
@@ -1145,7 +1146,15 @@ PANEL_DOMAIN_NOTE = (
     f"plausible one. {nec('705.12(B)(3)(2)')} computes the remaining backfeed "
     "allowance as busbar * 1.20 - main - existing_backfeed, so a NEGATIVE "
     "existing backfeed ENLARGES the allowance and can turn a failing panel into "
-    "a passing one. Each field is checked before anything is computed on it.")
+    "a passing one. Each field is checked before anything is computed on it. "
+    "'Positive' below always means math.isfinite() too (issue #41 review): "
+    "YAML can represent `.nan`/`.inf`, and NaN in particular fails EVERY `<` "
+    "and `>` comparison as False, so a bare `not value > 0` check silently "
+    "ADMITS it -- the same way it silently admits the NaN as 'not negative' "
+    "either. The value then reaches the 120% arithmetic as neither positive "
+    "nor negative, where `breaker_a > remaining_a`-style comparisons against "
+    "it are ALSO always False, producing a false safety PASS from a "
+    "non-number rather than an obviously-wrong one.")
 
 
 def _panel_domain_error(field, value, why):
@@ -1371,7 +1380,7 @@ def validate_panel(p):
     PANEL_FIELD_SCHEMA["schedule"].
     """
     for f in ("service_rating_a", "busbar_rating_a"):
-        if not p[f] > 0.0:
+        if not (math.isfinite(p[f]) and p[f] > 0.0):
             _panel_domain_error(
                 f, p[f], "is not a positive ampere rating -- a panel with no "
                 "main or no busbar rating is not one this method can score")
@@ -1388,14 +1397,14 @@ def validate_panel(p):
             "'CL' followed by digits, e.g. CL10, CL100, CL320 (the "
             "cheatsheet's own listed examples)")
 
-    if not p["assembly_sccr_ka"] > 0.0:
+    if not (math.isfinite(p["assembly_sccr_ka"]) and p["assembly_sccr_ka"] > 0.0):
         _panel_domain_error(
             "assembly_sccr_ka", p["assembly_sccr_ka"],
             "is not a positive kA rating -- a short-circuit current rating "
             "of zero or negative is not a figure a rating label prints")
 
     socket = p["meter_socket_continuous_a"]
-    if socket is not None and not socket > 0.0:
+    if socket is not None and not (math.isfinite(socket) and socket > 0.0):
         _panel_domain_error(
             "meter_socket_continuous_a", socket,
             "is recorded but is not a positive ampere rating; an explicit null "
@@ -1413,6 +1422,11 @@ def validate_panel(p):
             "two intake answers, not a fact about this one")
 
     backfeed = p["pv_backfeed_a"]
+    if backfeed is not None and not math.isfinite(backfeed):
+        _panel_domain_error(
+            "pv_backfeed_a", backfeed,
+            "is not a finite number; an existing source's backfeed rating "
+            "cannot be NaN or infinite")
     if backfeed is not None and backfeed < 0.0:
         _panel_domain_error(
             "pv_backfeed_a", backfeed,
@@ -1445,7 +1459,7 @@ def validate_panel(p):
                 "breaker nobody catalogued")
 
     nameplate = p["existing_ac_nameplate_rla_a"]
-    if nameplate is not None and not nameplate > 0.0:
+    if nameplate is not None and not (math.isfinite(nameplate) and nameplate > 0.0):
         _panel_domain_error(
             "existing_ac_nameplate_rla_a", nameplate,
             "is recorded but is not a positive ampere rating; an explicit "
@@ -1597,22 +1611,54 @@ def breaker_geometry(entry, where="a schedule entry"):
       * a quad (4 poles, 4 amp values) is TWO 2-pole breakers occupying TWO
         spaces, the outer pair common-trip and the inner pair common-trip --
         which is why the outer and inner values must mirror.
+
+    Every numeric value here is validated before use (issue #41 review):
+    `poles` must be a genuine positive whole number (not a bool, not a
+    fraction silently truncated by a bare `int()`, not non-finite), and
+    every amp value -- scalar or inside the list -- must be a positive
+    FINITE number. This matters beyond type hygiene: `panel_occupancy()`
+    and the branch-breaker OCPD sum downstream do real arithmetic on these
+    values with no further check, so a negative amp rating or a fractional
+    pole count doesn't fail loudly there -- it silently corrupts the
+    reported free capacity and sum-rule totals into a still-plausible-
+    looking wrong answer, exactly what PANEL_DOMAIN_NOTE warns against for
+    the panel-level fields. `math.isfinite()` matters specifically because
+    YAML can represent `.nan`/`.inf`, which pass every bare `<`/`>`
+    comparison as False and so evade a check that isn't isfinite-aware.
     """
-    poles = int(entry["poles"])
+    def _positive_whole(value, label):
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0
+                or value != int(value)):
+            raise SystemExit(
+                f"service_headroom.py: {where} has {label}={value!r}, which "
+                "is not a positive whole number")
+        return int(value)
+
+    def _positive_finite_amp(value, label):
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0):
+            raise SystemExit(
+                f"service_headroom.py: {where} has {label}={value!r}, which "
+                "is not a positive, finite ampere rating")
+        return float(value)
+
+    poles = _positive_whole(entry["poles"], "poles")
     amps = entry["amps"]
     if not isinstance(amps, list):
-        return poles, poles, [float(amps)]
+        return poles, poles, [_positive_finite_amp(amps, "amps")]
     if len(amps) != poles:
         raise SystemExit(f"service_headroom.py: {where} lists {len(amps)} amp "
                          f"values for {poles} poles")
+    amps = [_positive_finite_amp(a, f"amps[{i}]") for i, a in enumerate(amps)]
     if poles == 2:
-        return 1, 2, [float(a) for a in amps]
+        return 1, 2, amps
     if poles == 4:
         if amps[0] != amps[3] or amps[1] != amps[2]:
             raise SystemExit(
                 f"service_headroom.py: the quad at {where} has amps {amps}, "
                 f"which is not an outer/inner common-trip pair")
-        return 2, 4, [float(amps[0]), float(amps[1])]
+        return 2, 4, [amps[0], amps[1]]
     raise SystemExit(f"service_headroom.py: {where} has {poles} poles with a "
                      f"list of amps -- only tandems (2) and quads (4) are "
                      f"twin-density devices")

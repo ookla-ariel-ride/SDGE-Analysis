@@ -918,6 +918,59 @@ def case_impossible_panel_values_fail_closed_by_field():
     return "impossible panel values stop the run naming the field and the value"
 
 
+def case_non_finite_panel_values_fail_closed():
+    """Codex adversarial review, issue #41: NaN and +/-inf both fail EVERY
+    `<` and `>` comparison as False, so a bare `not value > 0` check (which
+    is what every one of the checks above looked like before this review)
+    silently ADMITS them -- neither "positive" nor "negative", the value
+    reaches the 120% arithmetic and produces a false safety PASS instead of
+    stopping the run. YAML represents these as `.nan`/`.inf`/`-.inf`."""
+    for edit, replacement, needle in (
+            ("service_rating_a: 175", "service_rating_a: .nan", "service_rating_a"),
+            ("busbar_rating_a: 200", "busbar_rating_a: .inf", "busbar_rating_a"),
+            ("meter_socket_continuous_a: 170", "meter_socket_continuous_a: .nan",
+             "meter_socket_continuous_a"),
+            ("pv_backfeed_a: 50", "pv_backfeed_a: .nan", "pv_backfeed_a"),
+            ("pv_backfeed_a: 50", "pv_backfeed_a: -.inf", "pv_backfeed_a"),
+            ("assembly_sccr_ka: 22", "assembly_sccr_ka: .nan", "assembly_sccr_ka")):
+        with _with_household(PANEL_YAML.replace(edit, replacement)):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted {replacement!r}")
+            except SystemExit as e:
+                assert f"panel.{needle} is" in str(e), (replacement, str(e))
+    return "NaN and +/-inf panel values fail closed rather than silently passing every sign check"
+
+
+def case_a_nan_backfeed_does_not_produce_a_false_safety_pass():
+    """The exact scenario the finding above closes: BEFORE this fix, `not
+    float('nan') > 0.0` and `not float('nan') < 0.0` were BOTH False -- so
+    NaN skipped the negative check, skipped the schedule cross-check ('>
+    0.0' is also False for NaN), and would have reached
+    busbar_ampacity_leg() as a value neither positive nor negative, where
+    `60.0 > remaining_a` is False for a NaN remaining_a too, reporting
+    'pass' on a panel that was never actually checked (confirmed directly:
+    a NaN remaining_a produces exactly that False/'pass' result today).
+    validate_panel() now has to be the point that refuses it, since nothing
+    downstream will."""
+    assert S.busbar_ampacity_leg(60.0, float("nan"), S.BACKFEED_READ) == "pass", (
+        "if busbar_ampacity_leg() itself now rejects NaN, this assertion "
+        "should be updated to say so explicitly -- but as of this test, "
+        "the arithmetic layer does NOT catch it, which is exactly why the "
+        "refusal has to happen earlier, in validate_panel()")
+    with _with_household(PANEL_YAML.replace("pv_backfeed_a: 50", "pv_backfeed_a: .nan")):
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "a NaN pv_backfeed_a reached the panel dict -- it must be "
+                "refused before ever reaching busbar_ampacity_leg()")
+        except SystemExit as e:
+            assert "not a finite number" in str(e), str(e)
+    return ("a NaN panel.pv_backfeed_a is refused by validate_panel() before "
+           "it can reach busbar_ampacity_leg() and read as neither a pass "
+           "nor a fail on the arithmetic")
+
+
 def case_panel_domain_checks_accept_the_edges_that_are_real():
     """The guard is on safety arithmetic, not a schema validator: values that
     are unusual but physically possible must still run."""
@@ -1203,6 +1256,45 @@ def case_malformed_schedule_entries_fail_closed():
             assert "schedule entry 3 of 9" in str(e), str(e)
             assert entry["label"] not in str(e), str(e)
     return "malformed tandem/quad entries stop the run rather than miscounting"
+
+
+def case_breaker_geometry_rejects_non_finite_or_non_positive_poles():
+    """Codex adversarial review, issue #41: poles/amps went through int()/
+    float() with no domain check -- a negative pole count or a non-finite
+    amp rating passed straight through into panel_occupancy()'s real
+    arithmetic, silently corrupting the reported free capacity rather than
+    stopping the run."""
+    for entry, needle in (
+            ({"poles": -2, "amps": -100, "label": "x"}, "poles"),
+            ({"poles": 0, "amps": 20, "label": "x"}, "poles"),
+            ({"poles": 2.5, "amps": 20, "label": "x"}, "poles"),
+            ({"poles": True, "amps": 20, "label": "x"}, "poles"),
+            ({"poles": float("nan"), "amps": 20, "label": "x"}, "poles"),
+            ({"poles": float("inf"), "amps": 20, "label": "x"}, "poles")):
+        try:
+            S.breaker_geometry(entry, "schedule entry 1 of 1")
+            raise AssertionError(f"accepted a malformed pole count: {entry}")
+        except SystemExit as e:
+            assert needle in str(e), (needle, str(e))
+    return ("breaker_geometry refuses negative, zero, fractional, boolean, "
+           "NaN and infinite pole counts")
+
+
+def case_breaker_geometry_rejects_non_finite_or_non_positive_amps():
+    for entry, needle in (
+            ({"poles": 2, "amps": -60, "label": "x"}, "amps"),
+            ({"poles": 2, "amps": 0, "label": "x"}, "amps"),
+            ({"poles": 2, "amps": float("nan"), "label": "x"}, "amps"),
+            ({"poles": 2, "amps": float("inf"), "label": "x"}, "amps"),
+            ({"poles": 2, "amps": [20, -20], "label": "x"}, "amps[1]"),
+            ({"poles": 2, "amps": [float("nan"), 20], "label": "x"}, "amps[0]")):
+        try:
+            S.breaker_geometry(entry, "schedule entry 1 of 1")
+            raise AssertionError(f"accepted a malformed amp rating: {entry}")
+        except SystemExit as e:
+            assert needle in str(e), (needle, str(e))
+    return ("breaker_geometry refuses negative, zero, NaN and infinite amp "
+           "ratings, in both the scalar and twin-density-list forms")
 
 
 def case_panel_occupancy_counts_spaces_poles_and_ocpd():
@@ -4720,6 +4812,8 @@ CASES = [
     case_a_null_pv_backfeed_runs_end_to_end,
     case_an_absent_pv_backfeed_key_is_not_a_surveyed_zero,
     case_impossible_panel_values_fail_closed_by_field,
+    case_non_finite_panel_values_fail_closed,
+    case_a_nan_backfeed_does_not_produce_a_false_safety_pass,
     case_panel_domain_checks_accept_the_edges_that_are_real,
     case_free_text_panel_fields_fail_closed_on_blank_or_absurd_length,
     case_meter_class_format_fails_closed,
@@ -4732,6 +4826,8 @@ CASES = [
     case_breaker_positions_are_read_from_the_intake,
     case_pole_counting_handles_int_and_list_amps,
     case_malformed_schedule_entries_fail_closed,
+    case_breaker_geometry_rejects_non_finite_or_non_positive_poles,
+    case_breaker_geometry_rejects_non_finite_or_non_positive_amps,
     case_panel_occupancy_counts_spaces_poles_and_ocpd,
     case_gross_is_exact_only_where_nothing_was_produced,
     case_the_pv_ceiling_is_the_inverter_nameplate,
