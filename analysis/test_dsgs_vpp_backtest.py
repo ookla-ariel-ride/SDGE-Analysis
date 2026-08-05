@@ -711,7 +711,11 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
     vb.RESULTS_JSON = pathlib.Path(tmp_dir.name) / "dsgs_vpp_backtest.json"
     try:
         assert not vb.RAW_XLSX.exists()
+        # Includes prestaged_net_usd_min (issue #53): a fixture that ALREADY has the
+        # new field must be preserved verbatim, with NO added note -- the note is
+        # only for a dict that predates the field, see the sibling case below.
         preserved_marker = {"net_usd_min": 12.34, "net_usd_max": 56.78,
+                            "prestaged_net_usd_min": 20.0, "prestaged_net_usd_max": 60.0,
                             "note": "a real, previously-committed breakdown"}
         vb.RESULTS_JSON.write_text(json.dumps({"per_aggregation_sensitivity": preserved_marker}))
         # Calls the REAL function main() uses, not a reimplementation of its logic --
@@ -721,6 +725,89 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
             "the committed per_aggregation_sensitivity must be preserved, not "
             f"overwritten with a placeholder -- got {value}")
         return "an archive-less run preserves the existing committed per_aggregation_sensitivity"
+    finally:
+        vb.RAW_XLSX = real_raw_xlsx
+        vb.RESULTS_JSON = real_results_json
+        tmp_dir.cleanup()
+
+
+@case
+def case_per_aggregation_prestaged_range_is_computed_from_each_aggregations_own_calendar():
+    """Codex adversarial review, issue #53 -- the core fix, verified WITHOUT the
+    private raw CEC archive (monkeypatching build_per_aggregation_calendars() with
+    two synthetic single-aggregation calendars, each carved from REAL rows of the
+    committed union calendar, so this runs in any checkout, not just one with the
+    archive staged): per_aggregation_sensitivity() must compute prestage=True
+    against EACH aggregation's OWN calendar, not the union -- two aggregations with
+    DIFFERENT event dates must get DIFFERENT prestaged figures, and neither should
+    equal the union-calendar headline (which has all 34 real event dates, not one)."""
+    _require_archive()
+    _require_calendar()
+    real_cal = vb.load_calendar()
+    # both dates must be inside the household's own measured window (2025-07-24 to
+    # 2026-07-23) or they'd both contribute zero attributable revenue regardless of
+    # this fix, coincidentally matching for a reason unrelated to what's being tested
+    alpha = real_cal[real_cal["date"] == dt.date(2025, 7, 29)].reset_index(drop=True)
+    beta = real_cal[real_cal["date"] == dt.date(2025, 8, 21)].reset_index(drop=True)
+    assert len(alpha) > 0 and len(beta) > 0, (
+        "test needs updating: these real committed-calendar dates were not found")
+    real_build_fn = vb.build_per_aggregation_calendars
+    vb.build_per_aggregation_calendars = lambda xlsx_path=None: {
+        "Aggregation-Alpha": alpha, "Aggregation-Beta": beta}
+    try:
+        d = br.load()
+        result = vb.per_aggregation_sensitivity(d)
+    finally:
+        vb.build_per_aggregation_calendars = real_build_fn
+    assert result["n_aggregations"] == 2, result["n_aggregations"]
+    alpha_row = result["per_aggregation"]["Aggregation-Alpha"]
+    beta_row = result["per_aggregation"]["Aggregation-Beta"]
+    # different event dates -> different dispatch history -> (generically) different
+    # prestaged figures; if this ever coincidentally ties, pick different dates above
+    assert alpha_row["prestaged_net_usd"] != beta_row["prestaged_net_usd"], (
+        "Aggregation-Alpha and Aggregation-Beta have different event dates but "
+        "identical prestaged_net_usd -- suspicious; either both are silently using "
+        "the SAME (e.g. union) calendar, or this fixture needs different dates")
+    union_result = vb.backtest(d, real_cal)
+    union_pre_net = union_result["prestaged_sensitivity"]["net_usd"]
+    assert alpha_row["prestaged_net_usd"] != union_pre_net, (
+        "Aggregation-Alpha's single-date prestaged figure matches the 34-date union "
+        "headline exactly -- suspicious; check build_per_aggregation_calendars is "
+        "actually being consulted, not silently falling back to the union calendar")
+    return (f"two synthetic single-date aggregations get distinct prestaged figures "
+           f"(${alpha_row['prestaged_net_usd']:.2f} vs ${beta_row['prestaged_net_usd']:.2f}), "
+           f"neither matching the union headline (${union_pre_net:.2f})")
+
+
+@case
+def case_preserved_per_aggregation_dict_predating_prestaging_is_flagged_not_silent():
+    """Codex adversarial review, issue #53: per_aggregation_sensitivity() now also
+    computes a prestaged_net_usd_min/max range, but a PRESERVED dict (this
+    archive-less path) can only carry whatever was last computed WITH the archive.
+    If that predates issue #53 (no prestaged_net_usd_min key), silently presenting
+    it alongside the new union-calendar prestaged_sensitivity headline would be
+    exactly the "no realizable per-household range" problem the review found.
+    Must be flagged explicitly, not silently passed through unchanged."""
+    real_raw_xlsx = vb.RAW_XLSX
+    real_results_json = vb.RESULTS_JSON
+    tmp_dir = tempfile.TemporaryDirectory()
+    vb.RAW_XLSX = pathlib.Path(tmp_dir.name) / "does_not_exist.xlsx"
+    vb.RESULTS_JSON = pathlib.Path(tmp_dir.name) / "dsgs_vpp_backtest.json"
+    try:
+        pre_issue_53_marker = {"net_usd_min": 12.34, "net_usd_max": 56.78,
+                               "note": "a real, previously-committed breakdown "
+                                       "from before prestaging existed"}
+        vb.RESULTS_JSON.write_text(
+            json.dumps({"per_aggregation_sensitivity": pre_issue_53_marker}))
+        value = vb.per_aggregation_sensitivity_or_preserved(None)
+        assert value["net_usd_min"] == 12.34 and value["net_usd_max"] == 56.78, (
+            "the pre-existing fields must still be preserved", value)
+        assert "prestaged_range_pending_archive_regeneration" in value, (
+            "a preserved dict missing prestaged_net_usd_min must be flagged, "
+            f"not silently passed through unchanged -- got {value}")
+        return ("a preserved per_aggregation_sensitivity dict predating issue #53's "
+               "prestaged_net_usd_min field is explicitly flagged as pending "
+               "regeneration, not silently presented as current")
     finally:
         vb.RAW_XLSX = real_raw_xlsx
         vb.RESULTS_JSON = real_results_json
@@ -1040,10 +1127,26 @@ def case_per_aggregation_sensitivity_reports_a_real_range_not_the_union():
     assert len(pas["per_aggregation"]) == pas["n_aggregations"]
     assert pas["net_usd_min"] <= pas["net_usd_max"]
     assert 0 <= pas["miss_rate_min"] <= pas["miss_rate_max"] <= 1
+    # issue #53, Codex adversarial review: the prestaged sensitivity's own
+    # per-aggregation range must exist too, and be internally sane, exactly
+    # like the reactive range above -- this is the realizable counterpart to
+    # the union-calendar prestaged_sensitivity headline elsewhere in the
+    # artifact, which assumes foreknowledge of every aggregation combined.
+    assert pas["prestaged_net_usd_min"] <= pas["prestaged_net_usd_max"]
+    assert 0 <= pas["prestaged_miss_rate_min"] <= pas["prestaged_miss_rate_max"] <= 1
     for agg_id, row in pas["per_aggregation"].items():
         assert row["n_event_hours_in_window"] >= 0
         assert pas["net_usd_min"] - 1e-6 <= row["net_usd"] <= pas["net_usd_max"] + 1e-6, (
             agg_id, row["net_usd"])
+        assert (pas["prestaged_net_usd_min"] - 1e-6 <= row["prestaged_net_usd"]
+               <= pas["prestaged_net_usd_max"] + 1e-6), (agg_id, row["prestaged_net_usd"])
+        # NOTE: net revenue (unlike gross, or SOC entering an event hour) is NOT
+        # asserted monotonic here -- pre-staging trades away some off-peak
+        # arbitrage savings (see TECHNICAL.md), and that forgone-opportunity-cost
+        # effect is not proven to always be smaller than the gross gain for every
+        # individual aggregation's own (possibly very small) event count. Do not
+        # add a prestaged_net_usd >= net_usd assertion here without first proving
+        # or empirically confirming it holds -- CLAUDE.md section 0.
 
     # cross-check via a fresh direct call (not just re-reading the committed JSON)
     d = br.load()
@@ -1051,11 +1154,16 @@ def case_per_aggregation_sensitivity_reports_a_real_range_not_the_union():
     assert fresh["n_aggregations"] == pas["n_aggregations"]
     assert abs(fresh["net_usd_min"] - pas["net_usd_min"]) < 0.01
     assert abs(fresh["net_usd_max"] - pas["net_usd_max"]) < 0.01
+    assert abs(fresh["prestaged_net_usd_min"] - pas["prestaged_net_usd_min"]) < 0.01
+    assert abs(fresh["prestaged_net_usd_max"] - pas["prestaged_net_usd_max"]) < 0.01
 
     union_net = result["revenue"]["reserve_20pct"]["net_usd"]
+    union_net_pre = result["prestaged_sensitivity"]["net_usd"]
     return (f"{pas['n_aggregations']} aggregations isolated; net revenue "
-            f"${pas['net_usd_min']:.2f}-${pas['net_usd_max']:.2f} vs. the "
-            f"union-based headline ${union_net:.2f}")
+            f"${pas['net_usd_min']:.2f}-${pas['net_usd_max']:.2f} (reactive) / "
+            f"${pas['prestaged_net_usd_min']:.2f}-${pas['prestaged_net_usd_max']:.2f} "
+            f"(prestaged) vs. the union-based headlines ${union_net:.2f} / "
+            f"${union_net_pre:.2f}")
 
 
 @case

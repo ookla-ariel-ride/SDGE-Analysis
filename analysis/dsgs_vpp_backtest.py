@@ -557,7 +557,15 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     Returns a dict with the full per-aggregation breakdown plus min/max net revenue
     and miss rate across all aggregations found, so the union-based headline figure
     (computed elsewhere from the committed calendar) can be reported alongside this
-    range rather than as an unqualified point estimate.
+    range rather than as an unqualified point estimate. Also captures each
+    aggregation's OWN prestaged_sensitivity (issue #53, Codex adversarial review):
+    backtest(d, cal, ...) derives event_set entirely from the `cal` it is given, so
+    calling it once per aggregation here already scopes run_batt_vpp(prestage=True)
+    to that single aggregation's own calendar -- the union-calendar prestaged figure
+    computed elsewhere (this same backtest() function, called with the committed
+    union calendar) is what over-states realizable pre-staging benefit by assuming
+    foreknowledge of every aggregation's combined schedule; THIS min/max range is
+    the corresponding real, single-aggregation-scoped answer.
     """
     calendars = build_per_aggregation_calendars(xlsx_path)
     per_agg = {}
@@ -565,6 +573,7 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
         r = backtest(d, cal, reserve_frac=reserve_frac, charge_kw=charge_kw)
         rev = r["revenue"]["reserve_20pct"]
         miss = r["miss_rate"]["reserve_20pct"]
+        pre = r["prestaged_sensitivity"]
         per_agg[agg_id] = {
             "n_event_hours_in_window": r["events_in_window"]["count"],
             "gross_usd": rev["gross_usd"],
@@ -572,6 +581,9 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
             "net_usd": rev["net_usd"],
             "total_discharge_kwh": rev["total_discharge_kwh"],
             "miss_rate": miss["rate"],
+            "prestaged_net_usd": pre["net_usd"],
+            "prestaged_miss_rate": pre["miss_rate"]["rate"],
+            "prestaged_delta_net_usd": pre["delta_vs_reactive"]["net_usd"],
         }
     if not per_agg:  # pragma: no cover -- build_per_aggregation_calendars already
                      # fails closed on an empty result, so this can't be reached
@@ -581,8 +593,13 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     nets = {k: v["net_usd"] for k, v in per_agg.items()}
     miss_rates = {k: v["miss_rate"] for k, v in per_agg.items()
                   if v["miss_rate"] is not None}
+    pre_nets = {k: v["prestaged_net_usd"] for k, v in per_agg.items()}
+    pre_miss_rates = {k: v["prestaged_miss_rate"] for k, v in per_agg.items()
+                      if v["prestaged_miss_rate"] is not None}
     min_agg = min(nets, key=nets.get)
     max_agg = max(nets, key=nets.get)
+    pre_min_agg = min(pre_nets, key=pre_nets.get)
+    pre_max_agg = max(pre_nets, key=pre_nets.get)
     return {
         "n_aggregations": len(per_agg),
         "net_usd_min": nets[min_agg],
@@ -591,6 +608,12 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
         "net_usd_max_aggregation": max_agg,
         "miss_rate_min": min(miss_rates.values()) if miss_rates else None,
         "miss_rate_max": max(miss_rates.values()) if miss_rates else None,
+        "prestaged_net_usd_min": pre_nets[pre_min_agg],
+        "prestaged_net_usd_min_aggregation": pre_min_agg,
+        "prestaged_net_usd_max": pre_nets[pre_max_agg],
+        "prestaged_net_usd_max_aggregation": pre_max_agg,
+        "prestaged_miss_rate_min": min(pre_miss_rates.values()) if pre_miss_rates else None,
+        "prestaged_miss_rate_max": max(pre_miss_rates.values()) if pre_miss_rates else None,
         "note": (
             "A real household belongs to exactly ONE of these aggregations' actual "
             "dispatch schedules, not the union the rest of this artifact's headline "
@@ -598,7 +621,12 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
             "event FREQUENCY (see build_calendar()'s docstring), not a point "
             "estimate of what this household would actually have earned -- this "
             "range is what a real single-aggregation household could have earned "
-            "instead, at the same 20% reserve."),
+            "instead, at the same 20% reserve. The prestaged_* fields are the same "
+            "range for the event-aware SOC pre-staging sensitivity (issue #53): "
+            "each aggregation's own prestaged figure uses ONLY that aggregation's "
+            "own calendar for foreknowledge, never the union -- this is the "
+            "realizable pre-staging range, not the union-calendar headline's "
+            "over-stated upper bound."),
         "per_aggregation": per_agg,
     }
 
@@ -1192,7 +1220,18 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
                 "revenue-motivated household that knows the published DSGS test "
                 "calendar in advance and holds SOC in reserve for a KNOWN, "
                 "same-day scheduled test -- not a household that plans multiple "
-                "days ahead, which this rule does not implement."),
+                "days ahead, which this rule does not implement. CARRIES THE SAME "
+                "UNION-CALENDAR CAVEAT AS THE REACTIVE HEADLINE ABOVE (Codex "
+                "adversarial review, issue #53): when `cal` is the committed union "
+                "calendar (module docstring's 'inclusive upper bound on event "
+                "FREQUENCY'), pre-staging with foreknowledge of every aggregation's "
+                "combined schedule is itself an upper-bound scenario -- no single "
+                "real household would know or benefit from a schedule wider than "
+                "its own aggregation's. See per_aggregation_sensitivity()'s own "
+                "prestaged range (when the private archive is available) for what a "
+                "real single-aggregation household could actually have earned with "
+                "foresight; do not present this field's net_usd/delta as that "
+                "household's own outcome."),
             "reserve_frac": reserve_frac,
             "gross_usd": gross_revenue_pre,
             "opportunity_cost_usd": opp_cost_pre,
@@ -1297,11 +1336,31 @@ def per_aggregation_sensitivity_or_preserved(d):
         return per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
     if RESULTS_JSON.exists():
         existing = json.loads(RESULTS_JSON.read_text())
-        return existing.get(
+        preserved = existing.get(
             "per_aggregation_sensitivity",
             "NOT COMPUTED: needs the private raw CEC archive, which this checkout "
             "does not have, and the previously committed artifact never computed "
             "this field either.")
+        # issue #53, Codex adversarial review: per_aggregation_sensitivity() now
+        # also computes a prestaged_* range, but a PRESERVED dict (this archive-
+        # less path) can only carry whatever was last computed WITH the archive --
+        # if that was before this field existed, silently shipping the union
+        # calendar's prestaged_sensitivity headline with no corrective per-
+        # aggregation range is the exact "do not ship" problem the review found.
+        # Flag it explicitly rather than presenting an incomplete preserved dict
+        # as if it were current.
+        if isinstance(preserved, dict) and "prestaged_net_usd_min" not in preserved:
+            preserved = dict(preserved)
+            preserved["prestaged_range_pending_archive_regeneration"] = (
+                "The preserved per-aggregation range above predates issue #53's "
+                "prestaged_sensitivity field. It does NOT yet include a "
+                "prestaged_net_usd_min/max range, so the union calendar's "
+                "prestaged_sensitivity headline elsewhere in this artifact has "
+                "no realizable single-aggregation counterpart computed yet -- "
+                "treat that headline as an upper-bound scenario only until a "
+                "future run with the private raw CEC archive present "
+                "recomputes this field.")
+        return preserved
     return (
         "NOT COMPUTED: needs the private raw CEC archive "
         f"({RAW_XLSX}), which this checkout does not have, and there is no "
