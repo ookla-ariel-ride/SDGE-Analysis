@@ -109,6 +109,27 @@ def _synthetic_day(consumption_kw=0.0, generation_kw=0.0, weekday=True):
     return d, imp0, gen0
 
 
+def _synthetic_window(start_date, end_date, consumption_kw=0.0, generation_kw=0.0):
+    """Multi-day extension of _synthetic_day: every 15-min interval from start_date
+    00:00 through end_date 23:45 inclusive, constant load/generation, WITH the extra
+    Consumption/Generation/seas/ym/wkend columns backtest()/bp.billed() need on top of
+    the dt/hour/p columns _synthetic_day already provides -- so a case can pass this
+    straight into vb.backtest(d, cal) without br.load() or any private data at all.
+    Built from the same rates.py primitives behavior_rebuild.load() uses (off_peak_day,
+    SUMMER_MONTHS, period_at), never a local re-derivation of the tariff rule."""
+    dtr = pd.date_range(start_date, pd.Timestamp(end_date) + pd.Timedelta(hours=23, minutes=45),
+                        freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["wkend"] = d.dt.dt.date.map(R.off_peak_day)
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    d["ym"] = d.dt.dt.to_period("M")
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["Consumption"] = consumption_kw * 0.25
+    d["Generation"] = generation_kw * 0.25
+    return d
+
+
 @case
 def case_run_batt_vpp_matches_run_batt_with_empty_event_set():
     """With no event hours at all, run_batt_vpp must behave IDENTICALLY to
@@ -733,45 +754,49 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
 
 @case
 def case_per_aggregation_prestaged_range_is_computed_from_each_aggregations_own_calendar():
-    """Codex adversarial review, issue #53 -- the core fix, verified WITHOUT the
-    private raw CEC archive (monkeypatching build_per_aggregation_calendars() with
-    two synthetic single-aggregation calendars, each carved from REAL rows of the
-    committed union calendar, so this runs in any checkout, not just one with the
-    archive staged): per_aggregation_sensitivity() must compute prestage=True
-    against EACH aggregation's OWN calendar, not the union -- two aggregations with
-    DIFFERENT event dates must get DIFFERENT prestaged figures, and neither should
-    equal the union-calendar headline (which has all 34 real event dates, not one)."""
-    _require_archive()
-    _require_calendar()
-    real_cal = vb.load_calendar()
-    # both dates must be inside the household's own measured window (2025-07-24 to
-    # 2026-07-23) or they'd both contribute zero attributable revenue regardless of
-    # this fix, coincidentally matching for a reason unrelated to what's being tested
-    alpha = real_cal[real_cal["date"] == dt.date(2025, 7, 29)].reset_index(drop=True)
-    beta = real_cal[real_cal["date"] == dt.date(2025, 8, 21)].reset_index(drop=True)
-    assert len(alpha) > 0 and len(beta) > 0, (
-        "test needs updating: these real committed-calendar dates were not found")
+    """Codex adversarial review, issue #53 -- the core fix, verified WITHOUT any
+    private data at all (Codex `review` pass 1 caught a prior draft of this case
+    that still called br.load() for `d`, so despite monkeypatching
+    build_per_aggregation_calendars() it still SkipCase'd via _require_archive() in
+    any real public checkout and never actually exercised this logic in CI). Both
+    the calendars AND the dispatch frame `d` are now fully synthetic: two
+    single-aggregation calendars with different event dates over a synthetic
+    _synthetic_window() frame spanning both dates, and build_per_aggregation_calendars
+    monkeypatched to return them. per_aggregation_sensitivity() must compute
+    prestage=True against EACH aggregation's OWN calendar, not the union -- two
+    aggregations with DIFFERENT event dates must get DIFFERENT prestaged figures, and
+    neither should equal the union-calendar headline (which spans both dates, not
+    one)."""
+    # July and August so MONTHLY_RATE_USD_PER_KW has an entry for both months; 17:00
+    # hour_end=18 puts the event inside the 4-9pm "on" window, avoiding the "sop"
+    # charge branch entirely -- see run_batt_vpp's docstring for why that matters.
+    alpha = pd.DataFrame([{"date": dt.date(2026, 7, 15), "hour_end": 18,
+                           "event_type": "Test Capacity", "caiso_lmp_usd_per_mwh": 100.0}])
+    beta = pd.DataFrame([{"date": dt.date(2026, 8, 5), "hour_end": 18,
+                          "event_type": "Test Capacity", "caiso_lmp_usd_per_mwh": 250.0}])
+    union_cal = pd.concat([alpha, beta], ignore_index=True)
+    d = _synthetic_window(dt.date(2026, 7, 1), dt.date(2026, 8, 10))
     real_build_fn = vb.build_per_aggregation_calendars
     vb.build_per_aggregation_calendars = lambda xlsx_path=None: {
         "Aggregation-Alpha": alpha, "Aggregation-Beta": beta}
     try:
-        d = br.load()
         result = vb.per_aggregation_sensitivity(d)
     finally:
         vb.build_per_aggregation_calendars = real_build_fn
     assert result["n_aggregations"] == 2, result["n_aggregations"]
     alpha_row = result["per_aggregation"]["Aggregation-Alpha"]
     beta_row = result["per_aggregation"]["Aggregation-Beta"]
-    # different event dates -> different dispatch history -> (generically) different
-    # prestaged figures; if this ever coincidentally ties, pick different dates above
+    # different event dates (and different LMPs) -> different dispatch history ->
+    # (generically) different prestaged figures; if this ever coincidentally ties,
+    # pick different dates/LMPs above
     assert alpha_row["prestaged_net_usd"] != beta_row["prestaged_net_usd"], (
         "Aggregation-Alpha and Aggregation-Beta have different event dates but "
         "identical prestaged_net_usd -- suspicious; either both are silently using "
         "the SAME (e.g. union) calendar, or this fixture needs different dates")
-    union_result = vb.backtest(d, real_cal)
+    union_result = vb.backtest(d, union_cal)
     union_pre_net = union_result["prestaged_sensitivity"]["net_usd"]
     assert alpha_row["prestaged_net_usd"] != union_pre_net, (
-        "Aggregation-Alpha's single-date prestaged figure matches the 34-date union "
+        "Aggregation-Alpha's single-date prestaged figure matches the two-date union "
         "headline exactly -- suspicious; check build_per_aggregation_calendars is "
         "actually being consulted, not silently falling back to the union calendar")
     return (f"two synthetic single-date aggregations get distinct prestaged figures "
