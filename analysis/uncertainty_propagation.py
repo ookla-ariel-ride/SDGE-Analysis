@@ -519,19 +519,47 @@ def reconstruct_gross_production(d, imp0, gen0):
     test_uncertainty_propagation.py's own annual-total cross-check against
     the committed meter_derived figure for that.
     """
+    # Issue #60 (Codex adversarial review, third pass): the SAM 8760 export
+    # is a FLAT 24-hours-a-day grid indexed from Jan 1, never adjusted for
+    # DST -- this repo's own established, documented fact (service_
+    # headroom.py's "DST" section, threeway_production_validation.py's own
+    # dst_dates_in()/derive_daily() exclusion), NOT something this function
+    # gets to assume away. Green Button `d` is true wall clock (23 real
+    # hours on the spring-forward day, 25 on fall-back -- rates.
+    # expected_day_hours()). Joining the two by bare (date, hour) on either
+    # transition date silently pairs SAM's flat-clock hour against the
+    # WRONG real wall-clock hour (an earlier draft of this function did
+    # exactly that, unnoticed by any test since it changes only ~48 of
+    # 35,040 intervals a year). Fixed the same way this repo's own
+    # precedent handles it: the two DST transition dates are EXCLUDED from
+    # the SAM join entirely, taking a conservative, explicitly-labeled
+    # fallback instead (P = max(net, 0), i.e. D = 0 -- no self-consumption
+    # modeled for those ~48 intervals, so a soiling loss there behaves
+    # exactly like the OLD export-only scaling did, never worse) rather
+    # than trusting a misaligned join for 2 days out of 365.
+    import rates as R
+    dst_dates = set()
+    for y in sorted({dt_.year for dt_ in d.dt.dt.date}):
+        dst_dates |= set(R.dst_transition_sundays(y))
+
     sam_hourly = _load_sam_hourly()
     dates = d.dt.dt.date.values
     hours = d.dt.dt.hour.values
     n = len(d)
+    net = gen0 - imp0
+    is_dst = np.array([dd in dst_dates for dd in dates])
 
     # Group this script's OWN already-loaded 15-minute rows by (date, hour)
     # -- sums of imp0/gen0, and how many quarter-intervals actually belong
-    # to that hour (4 on a normal day; a DST day can carry 3 or 5).
+    # to that hour (4 on a normal day) -- DST-day rows excluded here, they
+    # take the fallback above instead.
     hour_imp = {}
     hour_gen = {}
     hour_count = {}
     hour_members = {}
     for i in range(n):
+        if is_dst[i]:
+            continue
         key = (dates[i], int(hours[i]))
         hour_imp[key] = hour_imp.get(key, 0.0) + imp0[i]
         hour_gen[key] = hour_gen.get(key, 0.0) + gen0[i]
@@ -567,8 +595,8 @@ def reconstruct_gross_production(d, imp0, gen0):
     # future year's data ever needs the production estimate to fall below
     # what its own net-export peaks already require -- not observed in
     # this household's measured year).
-    net = gen0 - imp0
     P = np.empty(n)
+    P[is_dst] = np.maximum(net[is_dst], 0.0)   # DST-day fallback, see above
     for key, members in hour_members.items():
         sam_h = sam_hourly[key]
         imp_h = hour_imp[key]

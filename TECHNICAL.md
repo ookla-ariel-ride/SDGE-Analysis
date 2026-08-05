@@ -2704,29 +2704,57 @@ Previously (Codex review pass 1 finding 1 on issue #15) the Green Button `Genera
 meter — was scaled directly by a loss/noise fraction, which likely understated both the
 soiling and production-measurement-spread slopes.
 
-`reconstruct_gross_production()` fixes this — and an earlier draft of this fix itself got the
-SAM data's own meaning wrong (Codex adversarial review, issue #60, first pass): the two
-staged Enphase SAM 8760 exports (`samA.csv`/`samB.csv`) are whole-home GROSS-LOAD kWh — the
-SAME CT-metered consumption series `threeway_production_validation.py`'s own
-`load_sam_hourly()` reads — NOT PV production directly. That earlier draft assigned SAM's raw
-hourly value straight to `P`, which would have claimed ~29,866 kWh/yr of PV production
-against this repo's own validated `meter_derived` total of 16,459.2 kWh/yr — an ~82%
-overstatement the algebraic energy-conservation check could never catch on its own, since
-that check only verifies `P` and `D` are internally consistent with each other, not that `P`
-means the right physical thing. **Fixed**: gross production is DERIVED per hour via the SAME
+`reconstruct_gross_production()` fixes this — and went through three further review-caught
+corrections of its own before shipping, each finding something the algebraic energy-
+conservation check (verifying `P`/`D`/the reallocation are mutually consistent) could not see
+by construction, since that check never verifies `P` means the right physical thing or that
+an allocation is otherwise sound.
+
+**First (Codex adversarial review, issue #60, first pass): SAM data misidentified.** An
+earlier draft assigned the SAM 8760 files' raw hourly value straight to `P` (production) —
+but the two staged Enphase SAM 8760 exports (`samA.csv`/`samB.csv`) are whole-home GROSS-LOAD
+kWh, the SAME CT-metered consumption series `threeway_production_validation.py`'s own
+`load_sam_hourly()` reads, NOT production directly. That draft would have claimed ~29,866
+kWh/yr of PV production against this repo's own validated `meter_derived` total of 16,459.2
+kWh/yr — an ~82% overstatement. **Fixed**: gross production is DERIVED per hour via the SAME
 identity `threeway_production_validation.py`'s own `derive_daily()` uses — `pv_hour =
-max(sam_load_hour - import_hour + export_hour, 0.0)` (whatever the house didn't draw from
-local production came from the grid as import; whatever local production exceeded the
-house's own draw was exported; production floored at 0) — computed here from this script's
-own already-loaded 15-minute data grouped into hours (reimplemented locally per this repo's
+max(sam_load_hour - import_hour + export_hour, 0.0)` — computed from this script's own
+already-loaded 15-minute data grouped into hours (reimplemented locally per this repo's
 established convention for this exact situation, rather than importing across the module
-boundary). Each hour's derived `pv_hour` is then distributed EVENLY across however many
-15-minute intervals actually belong to that hour (normally 4; a DST day can carry 3 or 5,
-handled generically by dividing by the real count rather than hardcoding 4 or excluding DST
-days the way `threeway_production_validation.py`'s own higher-precision validation use does).
-This reconstruction lands at 16,591.3 kWh/yr — 0.8% from the validated 16,459.2 kWh figure,
-the gap fully explained by covering 365 days (this script's own measured window) against
-that validation's stricter 363 (DST-excluded) days, not a discrepancy to chase further.
+boundary).
+
+**Second (Codex adversarial review, issue #60, second pass): flat intra-hour split and frozen
+overlap.** A flat `pv_hour / N` split across each hour's intervals ignored real intra-hour
+shape, producing a physically-impossible NEGATIVE implied household load (`D < 0`) on 407 of
+35,040 intervals. **Fixed**: each net-EXPORTING interval within an hour now gets its own net
+export as a floor (`D = 0` there, the tightest nonnegative bound), and only the hour's
+REMAINING production is spread evenly across all its intervals — still sums to `pv_hour`
+exactly, but guarantees `D >= 0` everywhere it's mathematically possible to (verified: zero
+deficit hours exist anywhere in this household's real measured year). Separately,
+`scale_production()` added the measured simultaneous-import-and-export "overlap" component
+back UNCHANGED regardless of `gen_scale`, flooring export at `overlap` no matter how far
+production dropped — on a net-importing overlap interval, any further loss then showed up
+ENTIRELY as more import, never as less export, violating the function's own advertised
+"export first, then import" rule for exactly the 2,206 real intervals (6.3% of the year)
+where it matters. **Fixed**: `overlap` now scales WITH `gen_scale`, consistent with it being
+part of the same intra-interval production variability `P` represents, not an independent
+fixed baseline.
+
+**Third (Codex adversarial review, issue #60, third pass): DST clock misalignment.** The SAM
+8760 export is a FLAT 24-hours-a-day grid, never adjusted for DST (this repo's own documented
+fact — `service_headroom.py`'s "DST" section, `threeway_production_validation.py`'s own
+`dst_dates_in()` exclusion) — while Green Button `d` is true wall clock (23 real hours on the
+spring-forward day, 25 on fall-back). Joining the two by bare `(date, hour)` on either
+transition date silently pairs SAM's flat-clock hour against the wrong real wall-clock hour
+for ~48 of 35,040 intervals a year. **Fixed** the same way this repo's own precedent handles
+it: the two DST transition dates are EXCLUDED from the SAM join entirely, taking a
+conservative, explicitly-labeled fallback instead (`P = max(net, 0)`, i.e. no self-consumption
+modeled for those ~48 intervals) rather than trusting a misaligned join for 2 days out of 365.
+
+This reconstruction lands at 16,521.4 kWh/yr — 0.4% from the validated 16,459.2 kWh figure,
+the gap fully explained by covering 363 non-DST days (this script's own measured window minus
+the two DST-fallback dates) against that validation's own stricter, differently-scoped 363-day
+window, not a discrepancy to chase further.
 
 The household's own physical load `D` is then backed out via the energy-balance identity
 `D = P - (gen0 - imp0)`, holding a measured simultaneous-import-and-export "overlap"
@@ -2742,38 +2770,16 @@ alone does not confirm `P` means the right physical thing, which is why the annu
 cross-check above matters independently), keeping `marginal()`'s nominal case, and therefore
 every existing committed dispatch figure, unchanged by this fix.
 
-**Two further defects, both caught by a second Codex adversarial-review pass on real data,
-neither visible to the algebraic energy-conservation check alone.** That check only verifies
-`P`, `D` and the reallocation are mutually self-consistent — it cannot tell whether `P` means
-the right physical thing, or whether the ALLOCATION within an hour or across import/export is
-itself sound. Two more issues surfaced this way:
-
-1. A flat `pv_hour / N` split across each hour's intervals ignores real intra-hour shape, and
-   produced a physically-impossible NEGATIVE implied household load (`D < 0`) on 407 of
-   35,040 intervals. Fixed: each net-EXPORTING interval within an hour now gets its own net
-   export as a floor (`D = 0` there, the tightest nonnegative bound), and only the hour's
-   REMAINING production is spread evenly across all its intervals — still sums to `pv_hour`
-   exactly, but guarantees `D >= 0` everywhere it's mathematically possible to (verified: zero
-   deficit hours exist anywhere in this household's real measured year).
-2. `scale_production()` added the measured simultaneous-import-and-export "overlap" component
-   back UNCHANGED regardless of `gen_scale`, which floors export at `overlap` no matter how
-   far production drops — on a net-importing overlap interval, any further loss then showed up
-   ENTIRELY as more import, never as less export, violating this function's own advertised
-   "export first, then import" rule for exactly the 2,206 real intervals (6.3% of the year)
-   where it matters. Fixed: `overlap` now scales WITH `gen_scale`, consistent with it being
-   part of the same intra-interval production variability `P` represents, not an independent
-   fixed baseline.
-
 **The correction, quantified and energy-conservation-checked, not just directionally
-asserted.** At this household's own `lossB` (5.28%), the lost 875.9 kWh/yr splits into 776.2
-kWh less export and 99.8 kWh more import (the two sum to the total lost, exactly, to a
+asserted.** At this household's own `lossB` (5.28%), the lost 872.2 kWh/yr splits into 774.7
+kWh less export and 97.6 kWh more import (the two sum to the total lost, exactly, to a
 fraction of a kWh — `calibration.production_reconstruction.energy_conservation_check`, not
 just trusted from the generator's own arithmetic). ~11% of the lost energy was being
 SELF-CONSUMED, invisible to the old export-only scaling entirely, and increases IMPORT
 (billed near the full retail rate) rather than only reducing export (billed at the lower NEM
 credit rate) — confirming the issue's own "likely understates" hypothesis with a specific,
 quantified mechanism, not just a directional hunch. `soil_slope_mid` rose from 0.0561 to
-0.2477 (`old_vs_new_soil_slope` in the artifact) — an ~4.4x larger PER-UNIT slope — with the
+0.2475 (`old_vs_new_soil_slope` in the artifact) — an ~4.4x larger PER-UNIT slope — with the
 REALIZED swing at this household's actual loss fraction staying modest (≈1.3%,
 `soil_slope_mid * lossB`). Downstream, the corrected calibration is a genuine but modest
 correction to the published Monte Carlo (soiling/production-measurement-spread remain

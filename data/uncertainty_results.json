@@ -103,16 +103,16 @@
   "steady_state_vs_single_pass_note": "pre_nominal/mid_nominal use a steady-state-converged SOC boundary (Codex review pass 1, finding 2); pre_nominal_single_pass/mid_nominal_single_pass use the same single-pass method as the committed battery_dispatch_policies.json (which this issue does not modify) and are what the $1 tie-out below checks against -- the ~$1-2 gap between the two conventions is the known, expected size of this SOC-boundary effect, not a discrepancy to resolve further.",
   "committed_pre": 2328.0,
   "committed_mid": 2238.0,
-  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid rose from 0.05605402062021063 to 0.2477).",
+  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid rose from 0.05605402062021063 to 0.2475).",
   "production_reconstruction": {
    "method": "issue #60: gross production (P) reconstructed per hour from the SAM 8760 hourly series via P_hour = max(sam_load_hour - import_hour + export_hour, 0), the same identity threeway_production_validation.py's own derive_daily() uses (SAM's own hourly files are whole-home GROSS LOAD, not production directly) -- allocated within each hour so every net-exporting interval gets at least its own net export (keeping the implied household load D non-negative everywhere, not a flat per-quarter split). The household's own physical load (D) is backed out via the energy-balance identity D = P - (gen0 - imp0). A gen_scale (soiling/production-measurement) scenario scales P AND the measured simultaneous-import-and-export 'overlap' component together, then re-derives export/import from the SAME D -- reallocating a production shortfall against export first (including overlap), spilling into import only once export is exhausted -- instead of scaling the Green Button Generation/export column directly, which could never spill into import at all.",
-   "gross_production_kwh": 16591.3,
+   "gross_production_kwh": 16521.4,
    "energy_conservation_check": {
     "at_lossB": 0.05279410891383099,
-    "production_lost_kwh": 875.93,
-    "export_reduction_kwh": 776.16,
-    "import_increase_kwh": 99.77,
-    "gap_kwh": 0.0,
+    "production_lost_kwh": 872.23,
+    "export_reduction_kwh": 774.66,
+    "import_increase_kwh": 97.57,
+    "gap_kwh": -0.0,
     "note": "production_lost_kwh must equal export_reduction_kwh + import_increase_kwh (every lost kWh is EITHER less export OR more import, nothing vanishes) -- gap_kwh is that check's residual, expected to be ~0"
    },
    "old_vs_new_soil_slope": {
@@ -122,18 +122,18 @@
      "as_of": "frozen historical constant: this repo's committed data/uncertainty_results.json value immediately before issue #60's fix, NOT re-derived at runtime -- see this field's own docstring note"
     },
     "new_gross_production_reallocation": {
-     "soil_slope_mid": 0.24769021932631424,
-     "soil_slope_pre": 0.18987054662172026
+     "soil_slope_mid": 0.24753381977907735,
+     "soil_slope_pre": 0.18977390792571439
     },
-    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 100 of 876 lost kWh/yr (~11%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate)."
+    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 98 of 872 lost kWh/yr (~11%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate)."
    }
   },
   "rte_slope_mid": 0.5525027812225078,
   "rte_slope_pre": 0.5924853723365193,
   "rte_slope_used": 0.5724940767795136,
-  "soil_slope_mid": 0.24769021932631424,
-  "soil_slope_pre": 0.18987054662172026,
-  "soil_slope_used": 0.21878038297401725,
+  "soil_slope_mid": 0.24753381977907735,
+  "soil_slope_pre": 0.18977390792571439,
+  "soil_slope_used": 0.21865386385239588,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
@@ -148,11 +148,11 @@
   },
   "soil_calibration_points_mid": {
    "0.0": 2238.9502156222825,
-   "0.05279410891383099": 2268.2280371200977
+   "0.05279410891383099": 2268.209550164744
   },
   "soil_calibration_points_pre": {
    "0.0": 2327.418408081455,
-   "0.05279410891383099": 2350.74855800514
+   "0.05279410891383099": 2350.7366836238502
   },
   "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes"
  },
@@ -183,7 +183,7 @@
     "15yr": {
      "median": 18964,
      "p10": 9734,
-     "p90": 32379
+     "p90": 32378
     }
    },
    "7pct": {

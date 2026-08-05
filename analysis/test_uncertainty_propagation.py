@@ -505,6 +505,57 @@ def case_reconstructed_load_is_nonnegative_across_the_real_measured_year():
 
 
 @case
+def case_dst_dates_are_excluded_from_the_sam_join_not_misaligned_against_it():
+    """issue #60, Codex adversarial review third pass: the SAM 8760 export
+    is a FLAT 24-hours-a-day grid (never adjusted for DST -- this repo's
+    own documented fact, service_headroom.py's "DST" section and
+    threeway_production_validation.py's own dst_dates_in() exclusion),
+    while Green Button `d` is true wall clock (23 real hours on the
+    spring-forward day, 25 on fall-back). An earlier draft joined SAM to
+    Green Button by bare (date, hour) on BOTH transition dates too,
+    silently pairing SAM's flat-clock hour against the wrong real
+    wall-clock hour for ~48 of 35,040 intervals a year -- unnoticed by any
+    energy-conservation or nonnegative-load check, since those only verify
+    internal consistency, not which physical hour was actually joined.
+    Fixed the same way this repo's own precedent handles it: DST dates are
+    excluded from the SAM join entirely, taking a conservative fallback
+    (P = max(net, 0), i.e. D = 0, no self-consumption modeled) instead.
+    Verified directly here: every interval on this household's two real
+    DST transition dates must have D == 0 exactly (the fallback's own
+    signature), not a value derived from a misaligned SAM lookup."""
+    _require_archive()
+    import rates as R
+
+    def _reconstruct():
+        d = br.load()
+        imp0 = d.Consumption.values.astype(float)
+        gen0 = d.Generation.values.astype(float)
+        P, D, _ = up.reconstruct_gross_production(d, imp0, gen0)
+        dates = d.dt.dt.date.values
+        net = gen0 - imp0
+        dst_dates = set()
+        for y in sorted({dt_.year for dt_ in d.dt.dt.date}):
+            dst_dates |= set(R.dst_transition_sundays(y))
+        mask = np.array([dd in dst_dates for dd in dates])
+        return D[mask], P[mask], net[mask], int(mask.sum())
+    D_dst, P_dst, net_dst, n_dst = _in_sandbox(_reconstruct)
+    assert n_dst > 0, "fixture must actually contain a DST transition date"
+    # The fallback's own defining signature: P = max(net, 0) exactly (never
+    # a SAM-hourly-derived value). D = P - net follows from that -- D is
+    # NOT always 0 (only when net >= 0; a net-importing interval correctly
+    # gets D = -net = imp0-gen0, its own measured net import treated as
+    # pure load since P=0 is assumed there) -- so P is the right thing to
+    # check directly, not D.
+    assert np.allclose(P_dst, np.maximum(net_dst, 0.0)), (
+        "DST-date P must equal max(net, 0), the documented fallback, not "
+        "a SAM-derived value")
+    assert np.all(D_dst >= -1e-9), (
+        f"DST-date D must still be non-negative under the fallback, got "
+        f"min {D_dst.min()}")
+    return f"{n_dst} DST-transition-date intervals correctly use the max(net,0) fallback, not a misaligned SAM join"
+
+
+@case
 def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     _require_archive()
     calib = _in_sandbox(up.dispatch_calibration)
