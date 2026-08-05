@@ -1221,17 +1221,24 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
                 "calendar in advance and holds SOC in reserve for a KNOWN, "
                 "same-day scheduled test -- not a household that plans multiple "
                 "days ahead, which this rule does not implement. CARRIES THE SAME "
-                "UNION-CALENDAR CAVEAT AS THE REACTIVE HEADLINE ABOVE (Codex "
-                "adversarial review, issue #53): when `cal` is the committed union "
-                "calendar (module docstring's 'inclusive upper bound on event "
-                "FREQUENCY'), pre-staging with foreknowledge of every aggregation's "
-                "combined schedule is itself an upper-bound scenario -- no single "
-                "real household would know or benefit from a schedule wider than "
-                "its own aggregation's. See per_aggregation_sensitivity()'s own "
-                "prestaged range (when the private archive is available) for what a "
-                "real single-aggregation household could actually have earned with "
-                "foresight; do not present this field's net_usd/delta as that "
-                "household's own outcome."),
+                "UNION-CALENDAR CAVEAT AS THE REACTIVE HEADLINE ABOVE, PRECISELY "
+                "STATED (Codex adversarial review, issue #53, second pass -- an "
+                "EARLIER version of this note incorrectly called this field's own "
+                "net_usd/delta an 'upper bound' on foresight benefit; that claim was "
+                "NOT proven and is retracted): the union calendar (module "
+                "docstring's 'inclusive upper bound on event FREQUENCY') bounds only "
+                "the CANDIDATE EVENT COUNT, never the resulting dollar economics --"
+                " net_usd here reflects a REAL trade-off (event-hour revenue gained "
+                "vs. off-peak arbitrage forgone) that is not proven monotonic in "
+                "event count, and the reactive figures elsewhere in this artifact "
+                "already demonstrate the same union total can sit INSIDE the "
+                "per-aggregation range rather than above every member of it. "
+                "Foreknowledge of every aggregation's combined schedule is not "
+                "something a real household would have, so this field's net_usd/"
+                "delta is not that household's own outcome -- but it is also NOT "
+                "asserted to be a ceiling on what one could earn. See "
+                "per_aggregation_sensitivity()'s own prestaged range (when the "
+                "private archive is available) for the actual realizable spread."),
             "reserve_frac": reserve_frac,
             "gross_usd": gross_revenue_pre,
             "opportunity_cost_usd": opp_cost_pre,
@@ -1357,8 +1364,13 @@ def per_aggregation_sensitivity_or_preserved(d):
                 "prestaged_net_usd_min/max range, so the union calendar's "
                 "prestaged_sensitivity headline elsewhere in this artifact has "
                 "no realizable single-aggregation counterpart computed yet -- "
-                "treat that headline as an upper-bound scenario only until a "
-                "future run with the private raw CEC archive present "
+                "that headline reflects an inclusive UNION calendar (more "
+                "candidate event hours than any single real household saw), "
+                "which bounds event FREQUENCY only, not the resulting dollar "
+                "economics (a real household's own smaller, more selectively-"
+                "timed calendar is not proven to earn less). Do not treat "
+                "net_usd/delta_vs_reactive as a ceiling on realizable benefit "
+                "until a future run with the private raw CEC archive present "
                 "recomputes this field.")
         return preserved
     return (

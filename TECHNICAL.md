@@ -1545,21 +1545,27 @@ behavior (if any) was never observed, since this household owns no battery today
 alternative dispatch POLICY replayed against the same real load/calendar the reactive
 backtest already uses, exactly as reactive figures are modeled against the same inputs.
 
-**These are UNION-CALENDAR figures and carry the same upper-bound caveat the reactive
-headline above already carries (Codex adversarial review, issue #53) — a real household
-would not have this foreknowledge.** A single real household belongs to exactly ONE
-aggregation and knows only that aggregation's own test calendar, never the union of all
-~14 aggregations' combined schedules this $176.82/+26.3% figure assumes foreknowledge of.
-`per_aggregation_sensitivity()` now also computes a `prestaged_net_usd_min`/`_max` range
-per aggregation, scoped to that aggregation's own calendar only, mirroring exactly how the
-reactive headline's own realizable range already works — but that range needs the private
-raw CEC archive to (re)compute, which was not available when this sensitivity was added,
-so the committed artifact's `per_aggregation_sensitivity` section still predates it (flagged
-explicitly there via `prestaged_range_pending_archive_regeneration`). Until a future run
-with the archive present recomputes it, treat the $176.82/+26.3% figure as an inclusive
-upper-bound SCENARIO on foresight benefit, not a point estimate of what this household
-would actually have earned — exactly the same caveat §3.19's reactive $139.95 headline
-already carries, extended to this sensitivity.
+**These are UNION-CALENDAR figures, precisely caveated (Codex adversarial review, issue
+#53, second pass) — a real household would not have this foreknowledge, but that does NOT
+make $176.82/+26.3% a proven ceiling on realizable benefit.** A single real household
+belongs to exactly ONE aggregation and knows only that aggregation's own test calendar,
+never the union of all ~14 aggregations' combined schedules this figure assumes
+foreknowledge of — but the union calendar is a deliberately inclusive upper bound on event
+**FREQUENCY** only (more candidate event hours than any real household saw), not on the
+resulting dollar economics. Pre-staging trades event-hour revenue against forgone off-peak
+arbitrage, a real trade-off not proven monotonic in event count, and the reactive figures
+elsewhere in this same section already demonstrate the union total can land INSIDE the
+per-aggregation range rather than above every member of it — a smaller, more selectively-
+timed real calendar is not guaranteed to earn less. `per_aggregation_sensitivity()` now
+also computes a `prestaged_net_usd_min`/`_max` range per aggregation, scoped to that
+aggregation's own calendar only, mirroring exactly how the reactive headline's own
+realizable range already works — but that range needs the private raw CEC archive to
+(re)compute, which was not available when this sensitivity was added, so the committed
+artifact's `per_aggregation_sensitivity` section still predates it (flagged explicitly
+there via `prestaged_range_pending_archive_regeneration`). Until a future run with the
+archive present recomputes it, the $176.82/+26.3% figure should be read as one scenario
+computed from an inclusive event-frequency assumption, not as a bound in either direction
+on what a real single-aggregation household would have earned.
 
 **Fail-closed design.** Every ambiguity above is checked and asserted in
 `test_dsgs_vpp_backtest.py`, not just narrated. The event calendar and results JSON are
