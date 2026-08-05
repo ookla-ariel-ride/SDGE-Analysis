@@ -359,6 +359,38 @@ def case_build_end_to_end_is_deterministic_and_self_consistent():
 
 
 @case
+def case_dispatch_adherence_and_escalation_sidedness_are_documented_not_modeled():
+    """Issue #59: both scope questions from #15's review resolve to 'no new
+    distribution, documented reasoning instead' -- checked here so the
+    documentation can't silently vanish in a future edit, and so the seven-
+    input set can't silently grow an eighth (fabricated) lever without this
+    test's own expected_inputs check in the sibling case above catching it.
+    Guards the SPECIFIC claim each note makes, not just that a note exists:
+    the dispatch note must say adherence is NOT modeled (not accidentally
+    claim the opposite), and the escalation note must not silently drop the
+    reasoning for why the floor stays at 0%."""
+    _require_archive()
+    out = up.build()
+    dispatch_note = out["dispatch_policy_adherence_note"]
+    assert "issue #59" in dispatch_note.lower()
+    assert "not modeled" in dispatch_note.lower(), (
+        "the dispatch-adherence note must say this is NOT modeled -- if a "
+        "future edit actually implements a distribution, this note (and "
+        "this assertion) need to be updated together, not silently")
+    esc_note = out["escalation_two_sided_evidence_note"]
+    assert "issue #59" in esc_note.lower()
+    assert "0% floor" in esc_note and "kept" in esc_note.lower(), (
+        "the escalation note must state the 0% floor decision explicitly")
+    # ESC_LO/ESC_HI themselves must not have silently drifted while this
+    # documentation was added -- the whole point of issue #59 is that the
+    # floor choice was RE-JUSTIFIED, not changed.
+    assert up.ESC_LO == 0.00 and up.ESC_HI == 0.12, (
+        "issue #59 kept the existing escalation band; ESC_LO/ESC_HI must "
+        f"not have drifted, got ({up.ESC_LO}, {up.ESC_HI})")
+    return "dispatch-adherence and escalation-sidedness are both documented as checked-and-not-modeled, per issue #59"
+
+
+@case
 def case_build_output_is_json_serializable():
     _require_archive()
     out = up.build()

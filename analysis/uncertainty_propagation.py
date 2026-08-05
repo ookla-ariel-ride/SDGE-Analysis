@@ -118,6 +118,86 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    gap) rather than each day being an independent noisy draw that would
    average out. Both statistics are recorded in the output for inspection.
 
+ISSUE #59: TWO SCOPE QUESTIONS FROM #15'S REVIEW, RESOLVED
+-----------------------------------------------------------------------------
+#15's adversarial review (pass 3 of 3) raised two further questions, ruled out
+of that issue's scope box and tracked separately here. Both resolve to "no
+change to the model" — this section states why, with the evidence checked,
+rather than leaving the gap undocumented.
+
+(a) DISPATCH-POLICY ADHERENCE RISK. This is a DIFFERENT question from the
+"dispatch_policy" already addressed in reconcile_tornado()'s notes above (the
+household's CHOICE among evening/twowin/greedy, correctly held fixed at
+greedy as a decision, not an uncertain input) — this is whether, having
+CHOSEN greedy, the Powerwall's own automation actually EXECUTES it reliably.
+Real-world software/automation can fail to follow its configured schedule
+(app settings not saving, a unit needing a manual reboot, etc.). Checked for
+a citable number to build a distribution from: no peer-reviewed study,
+industry report (Wood Mackenzie, EnergySage), or Tesla-published spec
+quantifies Powerwall dispatch-schedule adherence. The one quantitative
+Powerwall "reliability" figure found (a ~0.93% failure rate, Solar Insure)
+is a warranty-claims HARDWARE failure rate — unit died / needed replacement
+— not a measure of whether a working unit follows its schedule, and carries
+no disclosed sample size. CPUC's ELRP demand-response load-impact
+evaluations compute realization rates but aggregate across technologies
+without isolating residential battery storage. What exists beyond that is
+anecdotal (forum reports of app/automation glitches) with no rate attached.
+DECISION: not modeled. There is no number here to build a distribution from
+without inventing one, which CLAUDE.md §0 prohibits — this is the "not
+determined, state what would settle it" case, not a "model it anyway"
+case. What would settle it: a published dispatch-compliance/no-show metric
+from Tesla, a utility VPP program, or an independent monitoring study (the
+PG&E-sponsored residential-battery VPP pilot study looked like a plausible
+future source but no compliance metric could be confirmed in it).
+
+(b) TWO-SIDED ESCALATION DISTRIBUTION. The escalation input above already
+states the underlying BLENDED, structural-break-tested trend is "not
+determined" in EITHER direction (battery.per_period.summer/winter, both
+verdicts). That "not determined" is evidence against a confident claim
+either way, not evidence FOR keeping a one-sided floor — so it alone does
+not resolve this question; checked further, at two levels:
+  Per-TOU-cell (data/tou_spread.json's delivery_cell_escalation, a less
+  conservative fit that skips the structural-break-robustness test the
+  blended figure above must pass): every cell whose 95% CI actually
+  EXCLUDES zero points UP — summer on-peak +7.63%/yr (CI [1.7, 13.91]),
+  winter on-peak +11.3%/yr (CI [7.89, 14.82]), winter off-peak +12.06%/yr
+  (CI [8.45, 15.79]). On-peak is the period that dominates a battery's
+  arbitrage-driven marginal saving, so this is real (if less rigorously
+  tested) evidence that the economically dominant driver has been rising,
+  not falling. Super-off-peak's point estimate is negative in both seasons
+  (~-21%/yr) but its own 95% CI is wide and CROSSES ZERO in both cases
+  ([-61.54, 60.62] summer, [-49.31, 20.86] winter, both on only 2-3 fit
+  degrees of freedom) — not statistically distinguished from zero, let
+  alone confidently negative. Super-off-peak is also a CHARGING-cost period
+  for a battery, not a discharge/arbitrage period, so even a real decline
+  there would slightly IMPROVE payback economics, not create the downside
+  scenario this issue is asking about. Net: no per-cell evidence supports a
+  downside composite-escalation scenario; every cell confidently measured
+  either direction points up.
+  External precedent (researched for this issue, not previously in this
+  repo): California IOU electric rates HAVE fallen in a real, documented,
+  multi-year episode — PG&E's residential rates dropped in several separate
+  2024-2025 rate actions (~$12/mo lower by Oct 2025 for a typical customer),
+  driven by an IDENTIFIED, specific mechanism: AB 1054 wildfire-safety
+  capital costs rolling off the rate base. This is real precedent that a
+  CA IOU rate CAN decline, but the mechanism is not yet shown to apply
+  comparably to SDG&E's own electric delivery rates specifically — the same
+  research found SDG&E's electric delivery rate rose (+0.5c/kWh) over a
+  comparable recent window even as its gas transportation rate fell, and a
+  2023 SDG&E residential rate-DESIGN proposal showing a small (-0.3%)
+  change was a revenue-neutral reallocation proposal, not a confirmed
+  realized bill decrease. Extrapolating PG&E's decline onto SDG&E's own
+  escalation figure would misattribute a different utility's mechanism.
+  DECISION: the existing Uniform(0.00, 0.12) floor-at-zero convention is
+  KEPT and explicitly justified project-wide (not just for this script) on
+  this evidence, rather than widened into an unevidenced negative band:
+  every SDG&E-specific figure this repo can measure with a CI that excludes
+  zero points up; the one real CA-IOU decline precedent found has an
+  identified mechanism not yet shown to apply to this utility's own
+  delivery rates. A future SDG&E-specific rate case or securitization
+  event with the same AB 1054-style mechanism would be the evidence that
+  changes this.
+
 CALIBRATION: RTE- AND SOILING-SAVING SENSITIVITY, FROM THE REAL ENGINE
 -----------------------------------------------------------------------------
 Rather than assume a linear/proportional relationship between RTE (or
@@ -808,7 +888,13 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                           "evidential_basis": "estimated -- data/tou_spread.json's "
                           "battery.uniform_ladder bounding range (3/5/8/12%); the "
                           "underlying escalation TREND is itself 'not determined' "
-                          "per that artifact's per_period.summer/winter verdicts"},
+                          "per that artifact's per_period.summer/winter verdicts. "
+                          "issue #59: the 0% floor is a checked, not assumed, "
+                          "choice -- see this module's own docstring, section "
+                          "'ISSUE #59', part (b) for the per-TOU-cell and "
+                          "external-precedent evidence behind keeping it, and "
+                          "escalation_two_sided_evidence_note below for the "
+                          "same reasoning in the artifact itself"},
             "degradation_fade": {"dist": "Uniform", "low": FADE_LO, "high": FADE_HI,
                                  "evidential_basis": "manufacturer (Powerwall 3) "
                                  "warranty degradation curve; unchanged from "
@@ -867,6 +953,42 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
             "bad draws share a common root cause. No numeric correction is "
             "applied; no data in this repo quantifies either correlation."
         ),
+        "dispatch_policy_adherence_note": (
+            "Issue #59: whether the Powerwall's own automation reliably "
+            "EXECUTES the chosen greedy dispatch policy (distinct from WHICH "
+            "policy to choose, already addressed above) is NOT modeled here. "
+            "Checked for a citable adherence/no-show rate from Tesla, an "
+            "industry report, or an independent monitoring study; none "
+            "exists -- the one quantitative Powerwall reliability figure "
+            "found (a warranty-claims hardware failure rate, not a software/"
+            "automation adherence rate) answers a different question, and "
+            "CPUC ELRP load-impact evaluations aggregate across technologies "
+            "without isolating residential battery storage. CLAUDE.md's "
+            "no-guessing rule means this is left 'not determined' rather "
+            "than modeled from an invented number -- see this module's own "
+            "docstring, section 'ISSUE #59', part (a) for the full check."),
+        "escalation_two_sided_evidence_note": (
+            "Issue #59: the 0% floor on the escalation input above was "
+            "checked against a two-sided alternative, not assumed. Per-TOU-"
+            "cell delivery rates (data/tou_spread.json's "
+            "delivery_cell_escalation) show every cell whose 95% CI excludes "
+            "zero pointing UP -- summer on-peak +7.63%/yr, winter on-peak "
+            "+11.3%/yr, winter off-peak +12.06%/yr -- with on-peak "
+            "dominating a battery's own arbitrage-driven saving. Super-off-"
+            "peak's point estimate is negative in both seasons but its own "
+            "95% CI crosses zero (not statistically distinguished from a "
+            "flat or rising trend), and even a real super-off-peak decline "
+            "would slightly IMPROVE (not worsen) payback economics, since "
+            "that is a charging-cost period for a battery, not a discharge "
+            "one. Externally, a real CA IOU electric-rate decline has "
+            "happened (PG&E, 2024-2025, driven by AB 1054 wildfire-capex "
+            "cost roll-off) but that mechanism is not yet shown to apply to "
+            "SDG&E's own electric delivery rates, which rose over a "
+            "comparable recent window in the same research. No SDG&E-"
+            "specific figure with a CI excluding zero points down, so the "
+            "0% floor is kept and this is the evidence for that choice, not "
+            "an unconsidered gap -- see this module's own docstring, "
+            "section 'ISSUE #59', part (b) for the full check."),
         "calibration": {
             "pre_nominal": round(pre, 2),
             "mid_nominal": round(mid, 2),

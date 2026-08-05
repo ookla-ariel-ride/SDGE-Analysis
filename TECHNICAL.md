@@ -2801,6 +2801,46 @@ classification: its hard tie-out against the committed `battery_dispatch_policie
 `data/deep_results.json` (built from the real year) must diverge and trip on synthetic
 inputs by design, so it runs against the real archive only.
 
+**Two scope questions from issue #15's review, resolved without a model change (issue
+#59).** Both checked against real evidence and documented in the artifact itself
+(`dispatch_policy_adherence_note`, `escalation_two_sided_evidence_note`) and in this
+script's own module docstring, not left as a silent gap.
+
+*Dispatch-policy adherence risk* — whether the Powerwall's own automation reliably
+EXECUTES the chosen `greedy` policy (distinct from WHICH policy to choose, already
+addressed by `reconcile_tornado()`'s existing note) — was checked for a citable
+adherence/no-show rate against Tesla's own published specs, industry reports (Wood
+Mackenzie, EnergySage), and CPUC's ELRP demand-response load-impact evaluations. None
+exists: the one quantitative Powerwall reliability figure found is a warranty-claims
+hardware failure rate (unit died / needed replacement), not a measure of whether a
+working unit follows its configured schedule, and CPUC's evaluations aggregate across
+technologies without isolating residential battery storage. Left "not determined" per
+CLAUDE.md §0 rather than modeled from an invented number.
+
+*Two-sided escalation distribution* — whether the `Uniform(0.00, 0.12)` escalation input
+should allow for rates falling, not just rising — was checked at two levels, not just
+inherited from the existing "not determined" composite-trend finding (`tou_spread.json`'s
+`battery.per_period`, itself evidence AGAINST a confident trend claim either way, not FOR
+a one-sided floor). Per-TOU-cell delivery rates (`tou_spread.json`'s
+`delivery_cell_escalation`, a less conservative fit that skips the composite figure's
+structural-break-robustness test) show every cell whose 95% CI excludes zero pointing UP:
+summer on-peak +7.63%/yr (CI [1.7, 13.91]), winter on-peak +11.3%/yr (CI [7.89, 14.82]),
+winter off-peak +12.06%/yr (CI [8.45, 15.79]) — on-peak being the period that dominates a
+battery's own arbitrage-driven saving. Super-off-peak's point estimate is negative in both
+seasons (~-21%/yr) but its own 95% CI crosses zero in both ([-61.54, 60.62] summer,
+[-49.31, 20.86] winter, each on only 2-3 fit degrees of freedom) — not statistically
+distinguished from flat or rising — and even a real decline there would slightly IMPROVE
+(not worsen) payback economics, since it is a charging-cost period for a battery, not a
+discharge one. Externally: California IOU electric rates HAVE fallen in a real, documented
+multi-year episode (PG&E, 2024-2025, ~$12/mo lower by October 2025 for a typical
+customer), driven by an identified mechanism — AB 1054 wildfire-safety capital costs
+rolling off the rate base — but that mechanism is not yet shown to apply comparably to
+SDG&E's own electric delivery rates, which the same research found rose over a comparable
+recent window even as SDG&E's gas transportation rate fell. No SDG&E-specific figure with
+a CI excluding zero points down, so the 0% floor is kept: this is the checked evidence
+behind that choice, not an unconsidered gap, and it is the reasoning `data/uncertainty_
+results.json` now carries alongside the escalation input itself.
+
 ---
 
 ### 3.26 `analysis/gross_import_decomposition.py` — gross imports are rising: is it the house or the array? (`data/gross_import_decomposition.json`)
