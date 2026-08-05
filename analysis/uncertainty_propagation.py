@@ -479,15 +479,22 @@ def reconstruct_gross_production(d, imp0, gen0):
 
     RESAMPLING (AC1): SAM's own native resolution is hourly (8760 rows/yr)
     -- solar production genuinely does not vary in a way SAM itself
-    resolves below that, so each hour's DERIVED pv_hour is distributed
-    EVENLY across however many 15-minute intervals actually belong to that
-    hour in `d` (normally 4; a DST day can carry 3 or 5 -- see rates.
-    expected_day_hours() -- handled generically here by dividing by the
-    REAL count for that hour, not a hardcoded 4, so DST days need no
-    special-casing or exclusion, unlike threeway_production_validation.py's
-    own stricter validation use of this same SAM data, which explicitly
-    excludes DST days entirely for a different, higher-precision purpose).
-    This is a stated ESTIMATE of intra-hour shape, not a measurement.
+    resolves below that, so each hour's DERIVED pv_hour is allocated across
+    however many 15-minute intervals actually belong to that hour in `d`
+    (normally 4; a DST day can carry 3 or 5 -- see rates.expected_day_
+    hours() -- handled generically by the REAL count for that hour, not a
+    hardcoded 4, so DST days need no special-casing or exclusion, unlike
+    threeway_production_validation.py's own stricter validation use of this
+    same SAM data, which excludes DST days entirely for a different,
+    higher-precision purpose). NOT a flat pv_hour/N split (Codex
+    adversarial review, issue #60, second pass -- an earlier draft's flat
+    split ignored real intra-hour shape and produced physically-impossible
+    negative loads on 407 intervals): each net-EXPORTING interval within
+    the hour gets its own net export as a floor first, and only the
+    remaining production is spread evenly across the hour's intervals --
+    see the allocation loop below for the exact guarantee this gives. This
+    is still a stated ESTIMATE of intra-hour shape, not a measurement, just
+    a tighter one that cannot produce a negative implied load.
 
     ENERGY BALANCE (AC2): for interval i, P[i] (gross production) and D[i]
     (household load) relate to the MEASURED import/export via
@@ -540,17 +547,52 @@ def reconstruct_gross_production(d, imp0, gen0):
             "fully cover the measured window; stage a SAM export for the "
             "missing year(s).")
 
+    # Issue #60 (Codex adversarial review, second pass): a FLAT hour_total/4
+    # split (an earlier draft of this function) does not track real
+    # intra-hour production shape, and produced 407 intervals (out of
+    # 35,040) with a physically-impossible NEGATIVE implied household load
+    # (D = P - net < 0, i.e. this interval's own measured net export
+    # exceeded its flat share of the hour's production) -- a genuine defect,
+    # not just an approximation error to wave away, since D is meant to be
+    # a physical load. Fixed with a constrained allocation that keeps every
+    # interval's own D >= 0 by construction: give each net-EXPORTING
+    # interval (net = gen0-imp0 > 0) exactly its own net export as a floor
+    # (D = 0 there, the tightest nonnegative bound), then distribute
+    # whatever production remains in the hour evenly across ALL of that
+    # hour's intervals (net-importing ones trivially keep D >= 0 for any
+    # nonnegative addition, since D = P - net with net <= 0 there already).
+    # This still sums to pv_h exactly (energy-conservation at the hourly
+    # level is unaffected) and is verified against real data to leave ZERO
+    # deficit hours (see the SystemExit guard below, which fires only if a
+    # future year's data ever needs the production estimate to fall below
+    # what its own net-export peaks already require -- not observed in
+    # this household's measured year).
+    net = gen0 - imp0
     P = np.empty(n)
     for key, members in hour_members.items():
         sam_h = sam_hourly[key]
         imp_h = hour_imp[key]
         exp_h = hour_gen[key]
         pv_h = max(sam_h - imp_h + exp_h, 0.0)
-        share = pv_h / hour_count[key]
+        pos_net = {i: max(net[i], 0.0) for i in members}
+        sum_pos_net = sum(pos_net.values())
+        remainder = pv_h - sum_pos_net
+        if remainder < 0:
+            raise SystemExit(
+                f"uncertainty_propagation: hour {key}'s SAM-derived "
+                f"production ({pv_h:.4f} kWh) is less than the sum of its "
+                f"own net-exporting intervals ({sum_pos_net:.4f} kWh) -- "
+                "the hourly production estimate cannot cover what the "
+                "15-minute data already shows was exported that hour, so "
+                "no nonnegative-load allocation exists for this hour "
+                "(issue #60's allocation guarantees D >= 0 only when this "
+                "does not happen; it does not happen anywhere in this "
+                "household's measured year, so this is a real data "
+                "anomaly to investigate, not silently patched over).")
+        share = remainder / hour_count[key]
         for i in members:
-            P[i] = share
+            P[i] = pos_net[i] + share
 
-    net = gen0 - imp0
     overlap = np.minimum(imp0, gen0)
     D = P - net
     return P, D, overlap
@@ -558,9 +600,22 @@ def reconstruct_gross_production(d, imp0, gen0):
 
 def scale_production(P, D, overlap, imp0, gen_scale):
     """(import_delta, new_export) at a scaled gross production P*gen_scale,
-    holding D (the household's own physical load) and overlap (the
-    simultaneous-bidirectional-flow component, held constant across
-    scenarios -- see reconstruct_gross_production()'s docstring) fixed.
+    holding D (the household's own physical load) fixed.
+
+    overlap (the simultaneous-bidirectional-flow component) is scaled BY
+    gen_scale too, not held frozen (Codex adversarial review, issue #60,
+    second pass -- an earlier draft added the UNSCALED overlap back at
+    every gen_scale, which floors export at `overlap` no matter how far
+    production drops: on a net-importing overlap interval, ANY further
+    production loss then shows up ENTIRELY as more import, never as less
+    export, violating this function's own advertised "export first, then
+    import" rule for exactly the 2,206 real intervals -- 6.3% of this
+    household's year -- where it matters). overlap physically represents
+    an intra-15-minute production/load fluctuation too fine for this
+    interval resolution to resolve cleanly (a brief export burst alongside
+    sustained import, or vice versa) -- it is therefore part of the SAME
+    production variability P itself represents, and scales with it, not a
+    fixed baseline independent of how much the panels are producing.
 
     new_export is the scenario's own EXPORT-before-battery series, used
     directly (gen0 is already treated as independent of which imp_base
@@ -578,10 +633,13 @@ def scale_production(P, D, overlap, imp0, gen_scale):
     ORIGINAL (imp0, gen0) exactly: new_net = P - D = net (by construction),
     and max(net,0)+overlap = gen0, max(-net,0)+overlap = imp0 hold for
     every interval regardless of sign (both cases checked in
-    test_uncertainty_propagation.py), making import_delta all-zeros."""
+    test_uncertainty_propagation.py), making import_delta all-zeros --
+    unaffected by scaling overlap, since gen_scale=1.0 leaves it unchanged
+    either way."""
     new_net = P * gen_scale - D
-    new_export = np.maximum(new_net, 0.0) + overlap
-    new_import_physical = np.maximum(-new_net, 0.0) + overlap
+    scaled_overlap = overlap * gen_scale
+    new_export = np.maximum(new_net, 0.0) + scaled_overlap
+    new_import_physical = np.maximum(-new_net, 0.0) + scaled_overlap
     import_delta = new_import_physical - imp0
     return import_delta, new_export
 
@@ -769,20 +827,24 @@ def dispatch_calibration():
 
     production_reconstruction = {
         "method": (
-            "issue #60: gross production (P) reconstructed from the SAM "
-            "8760 hourly series, evenly disaggregated across each hour's "
-            "four 15-minute intervals (SAM's own native resolution is "
-            "hourly; this claims no finer-grained knowledge than that). "
-            "The household's own physical load (D) is then backed out via "
-            "the energy-balance identity D = P - (gen0 - imp0), holding a "
-            "measured simultaneous-import-and-export 'overlap' component "
-            "fixed across scenarios. A gen_scale (soiling/production-"
-            "measurement) scenario scales P directly and re-derives export/"
+            "issue #60: gross production (P) reconstructed per hour from "
+            "the SAM 8760 hourly series via P_hour = max(sam_load_hour - "
+            "import_hour + export_hour, 0), the same identity threeway_"
+            "production_validation.py's own derive_daily() uses (SAM's own "
+            "hourly files are whole-home GROSS LOAD, not production "
+            "directly) -- allocated within each hour so every net-"
+            "exporting interval gets at least its own net export (keeping "
+            "the implied household load D non-negative everywhere, not a "
+            "flat per-quarter split). The household's own physical load "
+            "(D) is backed out via the energy-balance identity D = P - "
+            "(gen0 - imp0). A gen_scale (soiling/production-measurement) "
+            "scenario scales P AND the measured simultaneous-import-and-"
+            "export 'overlap' component together, then re-derives export/"
             "import from the SAME D -- reallocating a production shortfall "
-            "against export first, spilling into import only once export "
-            "is exhausted -- instead of scaling the Green Button "
-            "Generation/export column directly, which could never spill "
-            "into import at all."),
+            "against export first (including overlap), spilling into "
+            "import only once export is exhausted -- instead of scaling "
+            "the Green Button Generation/export column directly, which "
+            "could never spill into import at all."),
         "gross_production_kwh": round(float(P.sum()), 1),
         "energy_conservation_check": {
             "at_lossB": lossB,

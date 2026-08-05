@@ -2742,22 +2742,44 @@ alone does not confirm `P` means the right physical thing, which is why the annu
 cross-check above matters independently), keeping `marginal()`'s nominal case, and therefore
 every existing committed dispatch figure, unchanged by this fix.
 
+**Two further defects, both caught by a second Codex adversarial-review pass on real data,
+neither visible to the algebraic energy-conservation check alone.** That check only verifies
+`P`, `D` and the reallocation are mutually self-consistent — it cannot tell whether `P` means
+the right physical thing, or whether the ALLOCATION within an hour or across import/export is
+itself sound. Two more issues surfaced this way:
+
+1. A flat `pv_hour / N` split across each hour's intervals ignores real intra-hour shape, and
+   produced a physically-impossible NEGATIVE implied household load (`D < 0`) on 407 of
+   35,040 intervals. Fixed: each net-EXPORTING interval within an hour now gets its own net
+   export as a floor (`D = 0` there, the tightest nonnegative bound), and only the hour's
+   REMAINING production is spread evenly across all its intervals — still sums to `pv_hour`
+   exactly, but guarantees `D >= 0` everywhere it's mathematically possible to (verified: zero
+   deficit hours exist anywhere in this household's real measured year).
+2. `scale_production()` added the measured simultaneous-import-and-export "overlap" component
+   back UNCHANGED regardless of `gen_scale`, which floors export at `overlap` no matter how
+   far production drops — on a net-importing overlap interval, any further loss then showed up
+   ENTIRELY as more import, never as less export, violating this function's own advertised
+   "export first, then import" rule for exactly the 2,206 real intervals (6.3% of the year)
+   where it matters. Fixed: `overlap` now scales WITH `gen_scale`, consistent with it being
+   part of the same intra-interval production variability `P` represents, not an independent
+   fixed baseline.
+
 **The correction, quantified and energy-conservation-checked, not just directionally
-asserted.** At this household's own `lossB` (5.28%), the lost 875.9 kWh/yr splits into 756.8
-kWh less export and 119.2 kWh more import (the two sum to the total lost, exactly, to a
+asserted.** At this household's own `lossB` (5.28%), the lost 875.9 kWh/yr splits into 776.2
+kWh less export and 99.8 kWh more import (the two sum to the total lost, exactly, to a
 fraction of a kWh — `calibration.production_reconstruction.energy_conservation_check`, not
-just trusted from the generator's own arithmetic). ~14% of the lost energy was being
+just trusted from the generator's own arithmetic). ~11% of the lost energy was being
 SELF-CONSUMED, invisible to the old export-only scaling entirely, and increases IMPORT
 (billed near the full retail rate) rather than only reducing export (billed at the lower NEM
 credit rate) — confirming the issue's own "likely understates" hypothesis with a specific,
 quantified mechanism, not just a directional hunch. `soil_slope_mid` rose from 0.0561 to
-0.2632 (`old_vs_new_soil_slope` in the artifact) — an ~4.7x larger PER-UNIT slope — with the
-REALIZED swing at this household's actual loss fraction staying modest (≈1.4%,
+0.2477 (`old_vs_new_soil_slope` in the artifact) — an ~4.4x larger PER-UNIT slope — with the
+REALIZED swing at this household's actual loss fraction staying modest (≈1.3%,
 `soil_slope_mid * lossB`). Downstream, the corrected calibration is a genuine but modest
 correction to the published Monte Carlo (soiling/production-measurement-spread remain
 low-swing tornado levers, dominated by install cost, escalation and degradation): median
 payback unchanged at 5.8 yr, p10 unchanged at 5.1 yr, p90 narrows slightly from 6.9 to 6.8
-yr, 10-yr NPV median rises from $7,474 to $7,524 at 4% discount ($4,318 to $4,376 at 7%) —
+yr, 10-yr NPV median rises from $7,474 to $7,522 at 4% discount ($4,318 to $4,368 at 7%) —
 `index.html`'s own §6 mention of these specific figures updated to match, the only report
 location citing this artifact's own headline numbers (grepped to confirm no other instance
 was missed).

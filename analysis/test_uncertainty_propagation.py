@@ -347,6 +347,37 @@ def case_scale_production_reallocates_a_loss_against_export_before_import():
 
 
 @case
+def case_scale_production_shrinks_overlap_export_under_a_loss_not_floors_it():
+    """issue #60 AC2, Codex adversarial review second pass: an earlier
+    draft added the measured simultaneous-import-and-export 'overlap'
+    component back UNCHANGED at every gen_scale, which floors export at
+    `overlap` no matter how far production drops on a net-IMPORTING
+    overlap interval -- any further loss then showed up ENTIRELY as more
+    import, never as less export, violating the "export first" rule for
+    exactly this case (2,206 of 35,040 real intervals). Synthetic
+    net-importing overlap interval: imp0=3, gen0=1 (overlap=1, net=-2),
+    P=2, D=4 (so net = P-D = -2, consistent). At gen_scale=1, export=1
+    (matches gen0). At gen_scale=0.5 (P'=1, new_net=1-4=-3), export must
+    SHRINK to 0.5 (overlap*0.5), not stay frozen at 1."""
+    P = np.array([2.0])
+    D = np.array([4.0])
+    imp0 = np.array([3.0])
+    gen0 = np.array([1.0])
+    overlap = np.minimum(imp0, gen0)
+    assert overlap[0] == 1.0, "fixture must exercise the overlap>0, net-importing case"
+    _, gen_at_1 = up.scale_production(P, D, overlap, imp0, 1.0)
+    assert gen_at_1[0] == gen0[0], (gen_at_1, gen0)
+    delta_05, gen_05 = up.scale_production(P, D, overlap, imp0, 0.5)
+    assert gen_05[0] == 0.5, (
+        f"export at a net-importing overlap interval must SHRINK "
+        f"proportionally under a production loss (expected 0.5, got "
+        f"{gen_05[0]}) -- if this stays 1.0, overlap is being floored "
+        "again instead of scaled")
+    assert delta_05[0] > 0, "the loss must still increase import at this interval too"
+    return "scale_production shrinks overlap-interval export under a loss, does not floor it"
+
+
+@case
 def case_load_sam_hourly_fails_closed_on_a_wrong_row_count():
     """issue #60: _load_sam_hourly() must refuse a SAM export with the
     wrong number of hourly rows rather than silently misaligning every
@@ -444,6 +475,36 @@ def case_reconstructed_production_matches_the_validated_meter_derived_total():
 
 
 @case
+def case_reconstructed_load_is_nonnegative_across_the_real_measured_year():
+    """issue #60, Codex adversarial review second pass: a flat pv_hour/N
+    disaggregation (an earlier draft) produced a physically-impossible
+    NEGATIVE implied household load (D < 0) on 407 of this household's
+    real 35,040 measured intervals. The fixed allocation (each net-
+    exporting interval floored at its own net export first) is proven
+    algebraically to guarantee D >= 0 whenever a hour's SAM-derived
+    production covers that hour's own net-export peaks -- checked here
+    against the REAL data, not just trusted from the proof, since the
+    proof's own precondition (no "deficit hours") is an empirical fact
+    about this household's data, not a mathematical certainty for all
+    possible inputs."""
+    _require_archive()
+
+    def _reconstruct():
+        d = br.load()
+        imp0 = d.Consumption.values.astype(float)
+        gen0 = d.Generation.values.astype(float)
+        _, D, _ = up.reconstruct_gross_production(d, imp0, gen0)
+        return D
+    D = _in_sandbox(_reconstruct)
+    n_negative = int((D < 0).sum())
+    assert n_negative == 0, (
+        f"{n_negative} interval(s) have a negative implied household load "
+        f"(min D = {D.min():.4f}) -- the nonnegative-load allocation "
+        "guarantee has regressed")
+    return f"reconstructed load is non-negative across all {len(D)} real measured intervals (min D = {D.min():.4f} kWh)"
+
+
+@case
 def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     _require_archive()
     calib = _in_sandbox(up.dispatch_calibration)
@@ -486,7 +547,7 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     # real engine -- exactly why this script calibrates from real reruns
     # instead of assuming a sign.
     #
-    # issue #60: soil_slope's own MAGNITUDE grew roughly 4.7x once soiling
+    # issue #60: soil_slope's own MAGNITUDE grew roughly 4.4x once soiling
     # correctly hits GROSS production (reallocated against export first,
     # spilling into import) instead of scaling the smaller Generation/export
     # column alone -- expected and correct (some of a production loss at
