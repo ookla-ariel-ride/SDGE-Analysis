@@ -1214,7 +1214,7 @@ PANEL_FIELD_SCHEMA = {
         "vocabulary": None,
         "applied": "validate_panel() -- also gates whether "
                    "meter_socket_continuous_a may be recorded, via the "
-                   "literal phrase 'meter-main'"},
+                   "phrase 'meter-main' or 'meter main'"},
     "meter_socket_continuous_a": {
         "type": "float | null", "privacy": "public-ok",
         "domain": "positive ampere rating when recorded; null means "
@@ -1416,15 +1416,30 @@ def validate_panel(p):
             "is how the intake says the socket was read and carries no printed "
             "continuous rating, and a zero or negative one would be published "
             "as the binding ampacity constraint")
-    if socket is not None and "meter-main" not in p["enclosure_type"].lower():
+    # "meter-main" and "meter main" both read (Codex review, pass 3): the
+    # hyphen is a spelling choice, not a different concept, and an
+    # unhyphenated survey answer describing the exact same arrangement
+    # should not fail closed over punctuation. KNOWN LIMITATION beyond
+    # that: this is still a literal-substring check over open-ended free
+    # text, so a genuinely different phrasing of the same fact (e.g.
+    # "combination service entrance equipment") would still be rejected --
+    # closing that fully needs enclosure_type to carry a structured
+    # boolean/enum for "is this a meter-main combination", not another
+    # string to guess at (same shape of gap as issue #83's schedule-role
+    # question); filed as a follow-up rather than chasing more literal
+    # phrasings here.
+    if (socket is not None
+            and "meter-main" not in p["enclosure_type"].lower()
+            and "meter main" not in p["enclosure_type"].lower()):
         _panel_domain_error(
             "meter_socket_continuous_a", socket,
             "is recorded but panel.enclosure_type does not describe a "
-            "meter-main combination (checked for the phrase 'meter-main'); "
-            "the meter-socket ampacity limit only exists where the meter "
-            "shares the main's own enclosure, so a socket rating recorded "
-            "against a panel described otherwise is a disagreement between "
-            "two intake answers, not a fact about this one")
+            "meter-main combination (checked for the phrase 'meter-main' "
+            "or 'meter main'); the meter-socket ampacity limit only exists "
+            "where the meter shares the main's own enclosure, so a socket "
+            "rating recorded against a panel described otherwise is a "
+            "disagreement between two intake answers, not a fact about "
+            "this one")
 
     backfeed = p["pv_backfeed_a"]
     if backfeed is not None and not math.isfinite(backfeed):

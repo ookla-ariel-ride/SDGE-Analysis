@@ -1091,6 +1091,20 @@ def case_meter_socket_requires_a_meter_main_enclosure():
             "meter-main combination fails closed")
 
 
+def case_meter_socket_accepts_the_unhyphenated_spelling_too():
+    """Codex adversarial review, issue #41, pass 3: 'meter-main' and
+    'meter main' describe the same arrangement -- the hyphen is a spelling
+    choice, not a different fact, and a genuine survey answer spelled
+    without it must not fail closed over punctuation alone."""
+    unhyphenated = PANEL_YAML.replace(
+        "enclosure_type: NEMA 1 indoor, meter-main combination",
+        "enclosure_type: NEMA 1 indoor, meter main combination")
+    with _with_household(unhyphenated):
+        p = S.load_panel()  # must NOT raise
+    assert p["meter_socket_continuous_a"] == 170.0, p
+    return "panel.enclosure_type spelled 'meter main' (no hyphen) is accepted, not just 'meter-main'"
+
+
 def case_pv_backfeed_must_match_a_schedule_breaker():
     """A POSITIVE pv_backfeed_a claims one specific installed breaker; if no
     breaker in panel.schedule carries that rating, the two intake answers
@@ -4861,6 +4875,7 @@ CASES = [
     case_meter_class_format_fails_closed,
     case_assembly_sccr_ka_must_be_positive,
     case_meter_socket_requires_a_meter_main_enclosure,
+    case_meter_socket_accepts_the_unhyphenated_spelling_too,
     case_pv_backfeed_must_match_a_schedule_breaker,
     case_KNOWN_LIMITATION_an_unrelated_same_rated_breaker_still_passes,
     case_unrecognized_breaker_position_fails_closed,
