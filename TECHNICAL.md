@@ -2698,19 +2698,98 @@ convention `deep_analyses.py`'s own `_base_save()` uses for a stale sibling arti
 figures and the reasoning are recorded in the artifact's own `calibration.steady_state_vs_
 single_pass_note` field.
 
-**A known, documented limitation: calibrating against net export, not gross production
-(Codex review pass 1, finding 1).** The Green Button `Generation` column used above is net
-grid EXPORT, not gross PV production — self-consumed solar never crosses the meter and is
-invisible in this dataset. Scaling it directly by a loss/noise fraction (rather than
-reconstructing true gross production from an independent load source, reallocating the
-shortfall against export first and spilling into import only once exhausted) likely
-UNDERSTATES both the soiling and production-measurement-spread slopes somewhat, since true
-production during an exporting interval equals export plus whatever load was simultaneously
-self-consumed. Both slopes are already small (`soil_slope_used` ≈ +0.057 per unit loss
-fraction); a full fix needs the SAM 8760 gross-load series (`samA.csv`/`samB.csv`) to
-reconstruct production, resampled to the Green Button's 15-minute cadence, and is filed as a
-follow-up (issue #60) rather than attempted inside this issue's review-response loop. The
-artifact records this explicitly in `calibration.generation_proxy_limitation`.
+**Gross production reconstructed from SAM 8760, not net export (issue #60, resolved).**
+Previously (Codex review pass 1 finding 1 on issue #15) the Green Button `Generation` column
+— net grid EXPORT, not gross PV production, since self-consumed solar never crosses the
+meter — was scaled directly by a loss/noise fraction, which likely understated both the
+soiling and production-measurement-spread slopes.
+
+`reconstruct_gross_production()`/`scale_production()` fix this — and went through four
+further review-caught corrections of their own before shipping, each finding something the
+algebraic energy-conservation check (verifying the reallocation's own arithmetic is
+self-consistent) could not see by construction, since that check never verifies `P` means
+the right physical thing or that an allocation is otherwise physically sound.
+
+**First (Codex adversarial review, issue #60, first pass): SAM data misidentified.** An
+earlier draft assigned the SAM 8760 files' raw hourly value straight to `P` (production) —
+but the two staged Enphase SAM 8760 exports (`samA.csv`/`samB.csv`) are whole-home GROSS-LOAD
+kWh, the SAME CT-metered consumption series `threeway_production_validation.py`'s own
+`load_sam_hourly()` reads, NOT production directly. That draft would have claimed ~29,866
+kWh/yr of PV production against this repo's own validated `meter_derived` total of 16,459.2
+kWh/yr — an ~82% overstatement. **Fixed**: gross production is DERIVED per hour via the SAME
+identity `threeway_production_validation.py`'s own `derive_daily()` uses — `pv_hour =
+max(sam_load_hour - import_hour + export_hour, 0.0)` — computed from this script's own
+already-loaded 15-minute data grouped into hours (reimplemented locally per this repo's
+established convention for this exact situation, rather than importing across the module
+boundary).
+
+**Second (Codex adversarial review, issue #60, second pass): flat intra-hour split.** A flat
+`pv_hour / N` split across each hour's intervals ignored real intra-hour shape, producing a
+physically-impossible NEGATIVE implied household load on 407 of 35,040 intervals. **Fixed**:
+each net-EXPORTING interval within an hour now gets its own net export as a floor first, and
+only the hour's REMAINING production is spread evenly across all its intervals — still sums
+to `pv_hour` exactly, but guarantees the diagnostic implied-load figure stays non-negative
+everywhere it's mathematically possible to (verified: zero deficit hours exist anywhere in
+this household's real measured year).
+
+**Third (Codex adversarial review, issue #60, third pass): DST clock misalignment.** The SAM
+8760 export is a FLAT 24-hours-a-day grid, never adjusted for DST (this repo's own documented
+fact — `service_headroom.py`'s "DST" section, `threeway_production_validation.py`'s own
+`dst_dates_in()` exclusion) — while Green Button `d` is true wall clock (23 real hours on the
+spring-forward day, 25 on fall-back). Joining the two by bare `(date, hour)` on either
+transition date silently pairs SAM's flat-clock hour against the wrong real wall-clock hour
+for ~48 of 35,040 intervals a year. **Fixed** the same way this repo's own precedent handles
+it: the two DST transition dates are EXCLUDED from the SAM join entirely, taking a
+conservative, explicitly-labeled fallback instead (`P = max(net, 0)`, i.e. no self-consumption
+modeled for those ~48 intervals) rather than trusting a misaligned join for 2 days out of 365.
+This reconstruction lands at 16,521.4 kWh/yr — 0.4% from the validated 16,459.2 kWh figure,
+the gap fully explained by covering 363 non-DST days (this script's own measured window minus
+the two DST-fallback dates) against that validation's own stricter, differently-scoped
+363-day window, not a discrepancy to chase further.
+
+**Fourth (Codex `review`, final pass): import must never DECREASE under a production loss.**
+An intermediate version of `scale_production()` (between the second and this final pass)
+reallocated via `D`/an "overlap" component (2,206 of 35,040 intervals with simultaneous
+import AND export) scaled proportionally with `gen_scale`. That correctly let export shrink
+on a net-importing overlap interval, but ALSO let IMPORT shrink on a net-EXPORTING overlap
+interval whenever export alone had enough margin to absorb the whole loss — physically
+backwards: less production available can only require the same or MORE grid draw to meet a
+fixed load, never less. Codex's own worked example: `P=5, imp0=1, gen0=4, gen_scale=0.8`
+should reduce export from 4 to 3 while leaving import at 1 exactly (a 1 kWh loss, smaller
+than the 4 kWh export margin, fully absorbed by export alone) — that intermediate version
+instead produced export 2.8, import 0.8, importing LESS after a production loss. **Fixed**
+with a simpler, correct model that also eliminates the need for `D`/"overlap" in the core
+math entirely: a shortfall (`loss = P * (1 - gen_scale)`) reduces the REAL measured export
+(`gen0`) directly — export is tied to production, so it absorbs a shortfall first, however
+much of it exists, including any simultaneous-flow portion, since `gen0` already IS the real
+gross export for that interval — floored at 0, with only the EXCESS spilling into import,
+which is otherwise untouched (monotonic in `gen_scale` by construction, never negative for a
+loss). `gen0` is used directly rather than a scenario-specific reconstruction, matching the
+existing convention that export is independent of which `imp_base` scenario (real vs.
+EV-shifted) is under test — so this also resolves, by construction rather than special-
+casing, a second `review` finding about the post-behavior calibration needing the SAME
+treatment: since the reallocation never reads `imp_base` at all, it can't drift out of sync
+between the two scenarios.
+
+**The correction, quantified and energy-conservation-checked, not just directionally
+asserted.** At this household's own `lossB` (5.28%), the lost 872.2 kWh/yr splits into 790.7
+kWh less export and 81.6 kWh more import (the two sum to the total lost, exactly, to a
+fraction of a kWh — `calibration.production_reconstruction.energy_conservation_check`, not
+just trusted from the generator's own arithmetic). ~9% of the lost energy was being
+SELF-CONSUMED, invisible to the old export-only scaling entirely, and increases IMPORT
+(billed near the full retail rate) rather than only reducing export (billed at the lower NEM
+credit rate) — confirming the issue's own "likely understates" hypothesis with a specific,
+quantified mechanism, not just a directional hunch. `soil_slope_mid` rose from 0.0561 to
+0.2176 (`old_vs_new_soil_slope` in the artifact) — an ~3.9x larger PER-UNIT slope — with the
+REALIZED swing at this household's actual loss fraction staying modest (≈1.1%,
+`soil_slope_mid * lossB`). Downstream, the corrected calibration is a genuine but modest
+correction to the published Monte Carlo (soiling/production-measurement-spread remain
+low-swing tornado levers, dominated by install cost, escalation and degradation): median
+payback unchanged at 5.8 yr, p10 unchanged at 5.1 yr, p90 narrows slightly from 6.9 to 6.8
+yr, 10-yr NPV median rises from $7,474 to $7,510 at 4% discount ($4,318 to $4,359 at 7%) —
+`index.html`'s own §6 mention of these specific figures updated to match, the only report
+location citing this artifact's own headline numbers (grepped to confirm no other instance
+was missed).
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this
@@ -3006,9 +3085,9 @@ than the OBSERVED GROSS change (496 kWh) issue #16 actually asks about — a 145
 far outside AC4's 5% tolerance. `decomposition_block()` instead builds an hourly-resolution
 counterfactual: 2026's actual hourly CT load and an hourly-derived production series
 (`CT_load - GreenButton_import + GreenButton_export`, reconstructing production entirely from
-meter data at hourly resolution — the SAM-8760-based gross-production reconstruction that
-`uncertainty_propagation.py`'s own `calibration.generation_proxy_limitation` field named as a
-follow-up, issue #60, and which this script implements independently for a different purpose)
+meter data at hourly resolution — the same SAM-8760-based gross-production reconstruction
+`uncertainty_propagation.py`'s own `reconstruct_gross_production()` implements (issue #60),
+built independently here for a different purpose before that issue was resolved)
 feed `sum(max(0, load - production))`.
 
 **Four bugs, found by three separate review passes, on the SAME calculation.** This

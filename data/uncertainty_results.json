@@ -71,7 +71,7 @@
  "escalation_two_sided_evidence_note": "Issue #59: the 0% floor on the escalation input above was checked against a two-sided alternative, not assumed. `esc` scales the battery's SAVING (proportional to the TOU SPREAD it arbitrages) uniformly, so the decision-relevant question is the SPREAD trend, not any one period's own absolute level -- and data/tou_spread.json's dedicated, structural-break-tested spread analysis reports that as 'not determined' in BOTH seasons, genuinely unknown rather than evidence for a positive or a zero-floored range. An earlier draft of this note wrongly cited per-TOU-cell absolute-level trends (on-peak rates rising) as evidence the floor was itself proven correct -- RETRACTED (Codex adversarial review, issue #59, first pass): winter on-peak and winter off-peak moved on nearly identical trajectories over the same window, which is exactly a case where both periods rising together leaves the spread roughly flat, not evidence it widened. What remains true, stated honestly: no cell or spread-level figure in this repo, at any rigor, shows a statistically significant NEGATIVE trend for this household's own tariff (super-off-peak's negative point estimate has a 95% CI crossing zero). Externally, a real CA IOU electric-rate decline has happened (PG&E, 2024-2025, driven by AB 1054 wildfire-capex cost roll-off, a real citable magnitude) but that mechanism is not shown to apply to SDG&E specifically -- SDG&E's own electric delivery rate rose over a comparable window in the same research -- so PG&E's number isn't validly transferable into an SDG&E-specific negative bound without fabricating one. DECISION: the 0% floor is kept, but re-labeled honestly as an INHERITED assumption from deep_analyses.py's original design, not one this repo's evidence proves correct -- a real, stated LIMITATION of this model, not a resolved question. Replacing it with a different unevidenced negative number (self-invented or borrowed from PG&E) would trade one unproven assumption for another. See this module's own docstring, section 'ISSUE #59', part (b) for the full check, and issue #87 for the follow-up (a real per-TOU-period dispatch-rerun escalation model) this is out of scope to implement here. Because documenting this limitation is not the same as showing its consequence (Codex adversarial review, issue #59, third pass), see escalation_downside_sensitivity below for what a range of negative escalation rates would actually cost, as a labeled what-if, not a probability-weighted claim.",
  "escalation_downside_sensitivity": {
   "not_a_probability_distribution": "This grid holds no evidence-backed weight for any point -- it exists because a reader cannot judge a downside risk that is described but never shown. See dispatch_policy_adherence_note and escalation_two_sided_evidence_note for why no probability-weighted negative-escalation input is modeled instead.",
-  "base_case": "the exact same nominal save1/fade/price tornado() uses (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s own nominal_payback_yr by construction",
+  "base_case": "the exact same nominal save1/fade/price tornado()'s escalation lever sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s escalation lever's ESC_LO payback endpoint by construction, not tornado()'s overall nominal_payback_yr (which uses esc=6%, not 0%, for the escalation dimension)",
   "grid": {
    "+0%": {
     "payback_yr": 6.8,
@@ -90,7 +90,7 @@
     "within_10yr_warranty": false
    },
    "-12%": {
-    "payback_yr": 14.0,
+    "payback_yr": 13.9,
     "within_10yr_warranty": false
    }
   }
@@ -103,13 +103,38 @@
   "steady_state_vs_single_pass_note": "pre_nominal/mid_nominal use a steady-state-converged SOC boundary (Codex review pass 1, finding 2); pre_nominal_single_pass/mid_nominal_single_pass use the same single-pass method as the committed battery_dispatch_policies.json (which this issue does not modify) and are what the $1 tie-out below checks against -- the ~$1-2 gap between the two conventions is the known, expected size of this SOC-boundary effect, not a discrepancy to resolve further.",
   "committed_pre": 2328.0,
   "committed_mid": 2238.0,
-  "generation_proxy_limitation": "The soiling and production-measurement-spread calibrations scale the Green Button 'Generation' column (net grid EXPORT, not gross PV production -- self-consumed solar never crosses the meter and is invisible in this dataset) directly by the loss/noise fraction, rather than reconstructing true gross production from an independent load source and reallocating the shortfall against export before spilling into import (Codex review pass 1, finding 1). Because true production during an exporting interval equals export plus whatever load was simultaneously self-consumed, this likely UNDERSTATES the magnitude of both slopes somewhat (a given fractional production loss removes more energy than a same-fraction cut to export alone would). The calibrated slopes are already small (see soil_slope below); a full fix needs the household's independent gross-load series (samA/samB) to reconstruct production and is filed as a follow-up rather than attempted here (issue #60).",
+  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid rose from 0.05605402062021063 to 0.2176).",
+  "production_reconstruction": {
+   "method": "issue #60: gross production (P) reconstructed per hour from the SAM 8760 hourly series via P_hour = max(sam_load_hour - import_hour + export_hour, 0), the same identity threeway_production_validation.py's own derive_daily() uses (SAM's own hourly files are whole-home GROSS LOAD, not production directly) -- allocated within each hour so every net-exporting interval gets at least its own net export (keeping the diagnostic implied-household-load figure non-negative everywhere, not a flat per-quarter split); the two DST transition dates take a conservative fallback instead of a misaligned SAM join (SAM's export is a flat 24-hour clock, Green Button is true wall clock). A gen_scale (soiling/production-measurement) scenario reduces the MEASURED export (gen0) directly by the production shortfall (loss = P*(1-gen_scale)), floored at 0, spilling any remainder into import only once export is fully exhausted -- export is tied to production and absorbs a shortfall first; import is load-driven and only ever grows, never shrinks, from a production loss -- instead of scaling the Green Button Generation/export column proportionally, which could never spill into import at all.",
+   "gross_production_kwh": 16521.4,
+   "energy_conservation_check": {
+    "at_lossB": 0.05279410891383099,
+    "production_lost_kwh": 872.23,
+    "export_reduction_kwh": 790.67,
+    "import_increase_kwh": 81.56,
+    "gap_kwh": 0.0,
+    "note": "production_lost_kwh must equal export_reduction_kwh + import_increase_kwh (every lost kWh is EITHER less export OR more import, nothing vanishes) -- gap_kwh is that check's residual, expected to be ~0"
+   },
+   "old_vs_new_soil_slope": {
+    "old_export_only_scaling": {
+     "soil_slope_mid": 0.05605402062021063,
+     "soil_slope_pre": 0.05634980307893865,
+     "as_of": "frozen historical constant: this repo's committed data/uncertainty_results.json value immediately before issue #60's fix, NOT re-derived at runtime -- see this field's own docstring note"
+    },
+    "new_gross_production_reallocation": {
+     "soil_slope_mid": 0.2176162131897935,
+     "soil_slope_pre": 0.16951981803374996
+    },
+    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 82 of 872 lost kWh/yr (~9%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate)."
+   }
+  },
+  "soil_slope_one_sided_extrapolation_limitation": "Codex review, issue #60, second pass (tracked as issue #89): soil_slope_mid/pre are fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1). Before issue #60 this cost nothing (the old gen0*gen_scale approach was exactly linear); issue #60's scale_production() is deliberately asymmetric by physical design (a loss reduces export first; a surplus should reduce import first), so this is now a real, quantified (not guessed) approximation, checked once by hand -- a frozen snapshot below, NOT recomputed at every build() (a third real dispatch rerun every run is exactly the scope expansion deferred to issue #89): a third real dispatch rerun at the mirrored surplus point gave slope_surplus=-0.2311 vs this artifact's own slope_loss (soil_slope_mid, -0.2176) -- extrapolating the loss slope to that point differs from the real surplus figure by $1.60 (0.07%) on a ~$2,239 base, at the LARGEST magnitude actually used anywhere in this calibration (production_measurement_spread's own real prod_sigma is smaller than lossB, so typical draws see less than this). Real but immaterial to the published payback/NPV percentiles at this household's current evidence -- fitting a genuine second (surplus-side) slope is a model-design change, filed separately (issue #89) rather than expanding this issue's own scope box further.",
   "rte_slope_mid": 0.5525170732494493,
   "rte_slope_pre": 0.5924853723365193,
   "rte_slope_used": 0.5725012227929843,
-  "soil_slope_mid": 0.05605402062021063,
-  "soil_slope_pre": 0.05634980307893865,
-  "soil_slope_used": 0.05620191184957464,
+  "soil_slope_mid": 0.2176162131897935,
+  "soil_slope_pre": 0.16951981803374996,
+  "soil_slope_used": 0.19356801561177173,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
@@ -124,11 +149,11 @@
   },
   "soil_calibration_points_mid": {
    "0.0": 2238.892300422283,
-   "0.05279410891383099": 2245.5179038185624
+   "0.05279410891383099": 2264.6146073191403
   },
   "soil_calibration_points_pre": {
    "0.0": 2327.418408081455,
-   "0.05279410891383099": 2334.342332710065
+   "0.05279410891383099": 2348.247982968826
   },
   "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes"
  },
@@ -137,7 +162,7 @@
   "seed": 43,
   "payback_median": 5.8,
   "payback_p10": 5.1,
-  "payback_p90": 6.9,
+  "payback_p90": 6.8,
   "prob_within_warranty_10yr": 1.0,
   "prob_within_15yr": 1.0,
   "prob_never_within_25yr": 0.0,
@@ -152,32 +177,32 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7474,
-     "p10": 2972,
-     "p90": 12827
+     "median": 7510,
+     "p10": 3009,
+     "p90": 12877
     },
     "15yr": {
-     "median": 18875,
-     "p10": 9688,
-     "p90": 32195
+     "median": 18954,
+     "p10": 9731,
+     "p90": 32343
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4318,
-     "p10": 486,
-     "p90": 8759
+     "median": 4359,
+     "p10": 525,
+     "p90": 8794
     },
     "15yr": {
-     "median": 12215,
-     "p10": 5244,
-     "p90": 22001
+     "median": 12298,
+     "p10": 5289,
+     "p90": 22078
     }
    }
   },
-  "save1_median": 2269,
-  "save1_p10": 2212,
-  "save1_p90": 2327
+  "save1_median": 2274,
+  "save1_p10": 2216,
+  "save1_p90": 2333
  },
  "tornado": {
   "nominal_payback_yr": 5.8,
@@ -215,7 +240,7 @@
      5.8,
      5.8
     ],
-    "swing_yr": 0.0
+    "swing_yr": 0.1
    },
    "round_trip_efficiency": {
     "payback_range_yr": [
@@ -227,9 +252,9 @@
    "production_measurement_spread": {
     "payback_range_yr": [
      5.8,
-     5.8
+     5.9
     ],
-    "swing_yr": 0.0
+    "swing_yr": 0.1
    }
   },
   "ranked_by_swing": [
