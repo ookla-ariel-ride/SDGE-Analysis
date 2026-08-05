@@ -910,6 +910,37 @@ def case_prestaged_sensitivity_is_additive_and_internally_consistent():
 
 
 @case
+def case_prestaged_descriptions_never_assert_an_unproven_dollar_bound():
+    """Codex adversarial review, issue #53, third pass: TWO separate earlier
+    versions of this artifact's own generated text called the union-calendar
+    prestaged net revenue figure an "upper bound"/"over-stated upper bound"
+    on foresight benefit -- an unproven claim (pre-staging's net revenue
+    reflects a real event-revenue-vs-forgone-arbitrage trade-off, never
+    shown monotonic in event count; the reactive figures in this same
+    artifact already demonstrate a union total CAN land inside a
+    per-aggregation range rather than above it). Regression: every
+    prestaged-related description this script generates must scope any
+    "bound" language to event FREQUENCY explicitly, and the exact retracted
+    "over-stated upper bound" phrase must never reappear."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    texts = {"prestaged_sensitivity.description": result["prestaged_sensitivity"]["description"]}
+    pas = result.get("per_aggregation_sensitivity")
+    if isinstance(pas, dict) and "prestaged_range_pending_archive_regeneration" in pas:
+        texts["per_aggregation_sensitivity.prestaged_range_pending_archive_regeneration"] = (
+            pas["prestaged_range_pending_archive_regeneration"])
+    for field, text in texts.items():
+        assert "FREQUENCY" in text, (
+            f"{field} must explicitly scope any bound claim to event "
+            f"FREQUENCY, not dollar economics: {text!r}")
+        assert "over-stated upper bound" not in text, (
+            f"the retracted 'over-stated upper bound' phrasing reappeared in {field}: {text!r}")
+    return (f"{len(texts)} prestaged-related description field(s) correctly scope any "
+           "bound claim to event frequency, never dollar economics")
+
+
+@case
 def case_prestaging_leaves_committed_reactive_figures_untouched():
     """AC1 (byte-identity to the reactive baseline): a fresh backtest() run must
     produce reserve_20pct/reserve_0pct_sensitivity figures IDENTICAL to what's

@@ -625,8 +625,15 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
             "range for the event-aware SOC pre-staging sensitivity (issue #53): "
             "each aggregation's own prestaged figure uses ONLY that aggregation's "
             "own calendar for foreknowledge, never the union -- this is the "
-            "realizable pre-staging range, not the union-calendar headline's "
-            "over-stated upper bound."),
+            "realizable pre-staging range. NOTE (Codex adversarial review, issue "
+            "#53, third pass): the union-calendar prestaged headline it is being "
+            "compared against is an inclusive event-FREQUENCY scenario, not a "
+            "proven bound on dollar economics in either direction -- do not read "
+            "this range as bracketing a ceiling the union headline over-states; "
+            "the union total is not proven to sit above every aggregation's own "
+            "prestaged figure (see the reactive figures elsewhere in this artifact, "
+            "which already demonstrate the union total can land INSIDE the "
+            "per-aggregation range rather than above it)."),
         "per_aggregation": per_agg,
     }
 
@@ -650,6 +657,25 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
 # no new data source, no new calendar-fetching, no multi-day-ahead foresight (the
 # issue's own framing -- and the calendar's own shape, see below -- is about a
 # SAME-day scheduled test, not a household planning multiple days out).
+#
+# THE NOTICE CHAIN -- WHAT IS AND ISN'T CONFIRMED (Codex adversarial review, issue
+# #53, third pass: an earlier version of this note asserted "scheduled in advance"
+# without citing WHO knows how far ahead; this household's own category is DSGS
+# Option 3, Storage VPP -- see the module docstring's UDC2/Residential/Stationary/
+# 2-hr filter). CONFIRMED, from the CEC's own published DSGS Option 3 program FAQ
+# (dsgs.olivineinc.com/faq/, checked 2026-08): "VPP aggregators must notify the CEC
+# of planned test events no later than 3:00 p.m. on the day preceding the planned
+# test event" -- so the AGGREGATOR itself has at minimum day-ahead knowledge of its
+# own scheduled test (it is the one scheduling it and reporting that schedule to the
+# CEC). NOT CONFIRMED by that source: whether, or how far ahead, an individual
+# ENROLLED CUSTOMER is notified by their aggregator. This script therefore models
+# same-day, at-the-start-of-day household awareness as the SIMPLEST version of a
+# confirmed real information channel (the aggregator plainly has it; a customer
+# actively checking their own aggregator's app/notifications same-day is a modest,
+# not extravagant, assumption on top of a documented fact) -- not a household
+# planning multiple days out, which the issue's own framing and this citation both
+# stop short of, and not a claim that every DSGS household definitely receives or
+# acts on customer-facing notice, which is NOT DETERMINED from this source.
 #
 # THE RULE, IMPLEMENTED. Independently re-verified against the committed calendar
 # before choosing this rule (not just trusted): all 34 distinct 2025 event DATES
@@ -1217,10 +1243,18 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
                 "calendar date with a scheduled event, strictly before that date's "
                 "first event hour (see run_batt_vpp()'s module-level DECISION RECORD "
                 "comment for the full rule and reasoning). This models a "
-                "revenue-motivated household that knows the published DSGS test "
-                "calendar in advance and holds SOC in reserve for a KNOWN, "
+                "revenue-motivated household that holds SOC in reserve for a KNOWN, "
                 "same-day scheduled test -- not a household that plans multiple "
-                "days ahead, which this rule does not implement. CARRIES THE SAME "
+                "days ahead, which this rule does not implement. Same-day "
+                "household-level awareness is a MODELED assumption, not a "
+                "confirmed real notice chain all the way to the customer -- the "
+                "CEC's own DSGS Option 3 program FAQ (this household's category) "
+                "confirms VPP aggregators know their own test schedule at least a "
+                "day ahead (aggregators must notify the CEC by 3pm the day before "
+                "a planned test), but does not document whether/how far ahead an "
+                "individual enrolled customer is told (see run_batt_vpp()'s "
+                "module-level DECISION RECORD comment for the citation and the "
+                "confirmed-vs-modeled distinction in full). CARRIES THE SAME "
                 "UNION-CALENDAR CAVEAT AS THE REACTIVE HEADLINE ABOVE, PRECISELY "
                 "STATED (Codex adversarial review, issue #53, second pass -- an "
                 "EARLIER version of this note incorrectly called this field's own "

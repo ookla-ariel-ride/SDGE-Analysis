@@ -1489,6 +1489,21 @@ this script already reads (`event_set`, built from the same committed calendar a
 a new data source, and quantifying how much foresight actually matters is itself a useful,
 evidence-based finding for the report regardless of which way the delta cuts.
 
+**What "known in advance" is actually confirmed, not assumed (Codex adversarial review,
+issue #53, third pass).** This household's own DSGS category is Option 3, Storage VPP (the
+module docstring's UDC2/Residential/Stationary/2-hr filter). The CEC's own published DSGS
+Option 3 program FAQ (`dsgs.olivineinc.com/faq/`, checked 2026-08) confirms: "VPP
+aggregators must notify the CEC of planned test events no later than 3:00 p.m. on the day
+preceding the planned test event" — so the aggregator itself has AT LEAST day-ahead
+knowledge of its own scheduled test (it is the one scheduling it). What that same source
+does NOT document is whether, or how far ahead, an individual enrolled customer is notified
+by their aggregator. Same-day household-level awareness — the assumption this sensitivity
+actually models — is therefore a MODELED assumption resting on a confirmed fact one link up
+the chain (the aggregator plainly knows), not a confirmed real notice chain reaching the
+household. This is a materially weaker claim than "the household is scheduled in advance"
+read as a household-level fact, and this section's language has been corrected to say so
+explicitly rather than let the aggregator-level citation stand in for a customer-level one.
+
 **The rule, independently re-verified before choosing it.** All 34 distinct 2025 event
 DATES have their 1–2 event HOURS entirely within `hour_end` 17–21 (`floor_hour` 16–20) —
 squarely inside `run_batt_vpp()`'s own `disch_win` window (`16 <= h < 21`), the SAME window
