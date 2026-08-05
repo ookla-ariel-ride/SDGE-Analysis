@@ -666,6 +666,28 @@ def case_production_reconstruction_conserves_energy_and_shows_the_understated_di
 
 
 @case
+def case_one_sided_slope_extrapolation_limitation_is_disclosed():
+    """issue #60, Codex review pass 2: scale_production()'s asymmetric
+    design (a loss reduces export first; a surplus should reduce import
+    first) makes soil_slope's single loss-fit slope only an approximation
+    when extrapolated to production_measurement_spread's surplus draws.
+    Quantified (a real third dispatch rerun) as a real but small $1.60/
+    0.07% discrepancy at this household's own lossB magnitude, deferred to
+    issue #89 rather than expanding this issue's scope -- checked here
+    that the artifact actually DISCLOSES this, not just that the code
+    comment does."""
+    if not DATA.joinpath("uncertainty_results.json").is_file():
+        raise SkipCase("needs the committed uncertainty_results.json")
+    result = _committed("uncertainty_results.json")
+    note = result["calibration"]["soil_slope_one_sided_extrapolation_limitation"]
+    assert "issue #89" in note, note
+    assert "$1.60" in note and "0.07%" in note, (
+        f"the disclosed limitation must cite the actual quantified "
+        f"discrepancy, not just assert one exists: {note!r}")
+    return "the one-sided slope-extrapolation limitation is disclosed in the artifact with its quantified magnitude"
+
+
+@case
 def case_build_end_to_end_is_deterministic_and_self_consistent():
     _require_archive()
     out1 = _in_sandbox(up.build)

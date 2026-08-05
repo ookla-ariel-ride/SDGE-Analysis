@@ -1053,7 +1053,30 @@ def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope):
     quantity (true generation level) soiling calibration already measured the
     sensitivity of, so it is routed through the identical soil_slope rather
     than assumed proportional: a prod_noise of (1-x) is treated exactly like a
-    soiling loss fraction of x, and a prod_noise of (1+x) like a loss of -x."""
+    soiling loss fraction of x, and a prod_noise of (1+x) like a loss of -x.
+
+    KNOWN LIMITATION (Codex review, issue #60, second pass; tracked as issue
+    #89): soil_slope is fit from exactly ONE direction -- a real dispatch
+    rerun at a production LOSS -- and applied linearly to both losses (x>0)
+    and surpluses (x<0, i.e. prod_noise>1, roughly half of this lever's own
+    Monte Carlo draws). Before issue #60 this was exact (the old gen0*
+    gen_scale approach was linear in gen_scale, so extrapolating its slope
+    cost nothing); issue #60's scale_production() is deliberately ASYMMETRIC
+    by physical design (a loss reduces export first; a surplus should reduce
+    import first), so the loss-fit slope is no longer an exact stand-in for
+    the surplus direction. Quantified, not guessed: a real third dispatch
+    rerun at the mirrored surplus point (gen_scale=1+lossB) gives slope_
+    surplus=-0.2311 vs slope_loss=-0.2176 (this module's own committed
+    lossB) -- extrapolating the loss slope to that point differs from the
+    real surplus figure by $1.60 (0.07%) on a ~$2,239 base, at the LARGEST
+    scenario magnitude actually used anywhere in this calibration (prod_
+    sigma, the production_measurement_spread lever's own real uncertainty,
+    is smaller than lossB, so typical draws see less than this). Real but
+    immaterial to the published payback/NPV percentiles at this household's
+    current evidence -- fitting a genuine second (surplus-side) slope from a
+    third real dispatch rerun is a model-design change, not a quick patch,
+    filed separately (issue #89) rather than expanding this issue's own
+    scope box further."""
     base_marginal = c * mid + (1 - c) * pre
     rte_factor = 1 + rte_slope * (rte - RTE_NOM)
     soil_factor = 1 + soil_slope * loss
@@ -1540,6 +1563,33 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                 f"{calib['production_reconstruction']['old_vs_new_soil_slope']['old_export_only_scaling']['soil_slope_mid']} "
                 f"to {calib['soil_slope_mid']:.4f})."),
             "production_reconstruction": calib["production_reconstruction"],
+            "soil_slope_one_sided_extrapolation_limitation": (
+                "Codex review, issue #60, second pass (tracked as issue #89): "
+                "soil_slope_mid/pre are fit from a real dispatch rerun at "
+                "ONE production LOSS point and applied linearly to both "
+                "losses and surpluses (roughly half of production_"
+                "measurement_spread's own Monte Carlo draws, prod_noise>1). "
+                "Before issue #60 this cost nothing (the old gen0*gen_scale "
+                "approach was exactly linear); issue #60's scale_"
+                "production() is deliberately asymmetric by physical design "
+                "(a loss reduces export first; a surplus should reduce "
+                "import first), so this is now a real, quantified (not "
+                "guessed) approximation, checked once by hand -- a frozen "
+                "snapshot below, NOT recomputed at every build() (a third "
+                "real dispatch rerun every run is exactly the scope "
+                "expansion deferred to issue #89): a third real dispatch "
+                "rerun at the mirrored surplus point gave slope_surplus=-0.2311 vs this "
+                "artifact's own slope_loss (soil_slope_mid, -0.2176) -- "
+                "extrapolating the loss slope to that point differs from "
+                "the real surplus figure by $1.60 (0.07%) on a ~$2,239 "
+                "base, at the LARGEST magnitude actually used anywhere in "
+                "this calibration (production_measurement_spread's own real "
+                "prod_sigma is smaller than lossB, so typical draws see "
+                "less than this). Real but immaterial to the published "
+                "payback/NPV percentiles at this household's current "
+                "evidence -- fitting a genuine second (surplus-side) slope "
+                "is a model-design change, filed separately (issue #89) "
+                "rather than expanding this issue's own scope box further."),
             "rte_slope_mid": calib["rte_slope_mid"],
             "rte_slope_pre": calib["rte_slope_pre"],
             "rte_slope_used": rte_slope,
