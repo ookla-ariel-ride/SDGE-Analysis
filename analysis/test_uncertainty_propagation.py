@@ -15,6 +15,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_uncertainty_propagatio
 """
 import glob
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -41,6 +42,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
 HOUSEHOLD_YAML = ROOT / "private" / "household.yaml"
 DATA = ROOT / "data"
+# issue #60: samA.csv/samB.csv are read via BARE relative filenames inside
+# uncertainty_propagation.py, matching threeway_production_validation.py's
+# own load_sam_hourly() contract exactly (the private/verify sandbox's own
+# documented run convention -- see this module's CALIBRATION docstring
+# section) -- so any case that calls dispatch_calibration()/build() must
+# os.chdir() into SANDBOX first, the SAME pattern test_threeway_production_
+# validation.py's own archive-gated cases already use.
+SANDBOX = ROOT / "private" / "verify"
 
 CASES = []
 
@@ -62,6 +71,27 @@ def _require_archive():
                        f"{HOUSEHOLD_YAML}, neither of which this checkout has")
     br.CSV = files[0]
     return files[0]
+
+
+def _require_sam():
+    """issue #60: samA.csv/samB.csv, staged at SANDBOX by stage-private-
+    data.sh, needed by any case that calls dispatch_calibration()/build()."""
+    if not (SANDBOX / "samA.csv").is_file() or not (SANDBOX / "samB.csv").is_file():
+        raise SkipCase(f"needs {SANDBOX}/samA.csv and samB.csv, which this "
+                       "checkout does not have")
+
+
+def _in_sandbox(fn, *args, **kwargs):
+    """Run fn(*args, **kwargs) with CWD temporarily at SANDBOX -- the
+    os.chdir/finally dance dispatch_calibration()/build() need (issue #60),
+    centralized here so every call site doesn't repeat it."""
+    _require_sam()
+    cwd = os.getcwd()
+    os.chdir(str(SANDBOX))
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        os.chdir(cwd)
 
 
 EPS = 1e-9
@@ -267,13 +297,108 @@ def case_production_spread_and_soiling_get_consistent_generation_sensitivity():
     return "soiling and production-measurement uncertainty share one calibrated generation-sensitivity, in both directions"
 
 
+@case
+def case_scale_production_reproduces_measured_flows_exactly_at_gen_scale_1():
+    """issue #60: the identity scale_production() depends on for byte-
+    identity at nominal (gen_scale=1.0) -- max(net,0)+overlap == gen0 and
+    max(-net,0)+overlap == imp0 for EVERY interval -- checked on a
+    synthetic array that DELIBERATELY includes an interval with
+    SIMULTANEOUS nonzero import AND export (index 3 below), a real ~6% case
+    in this household's own measured data (2206 of 35040 intervals), not
+    just a theoretical edge case this test shouldn't skip covering."""
+    imp0 = np.array([0.0, 2.0, 0.0, 1.0])
+    gen0 = np.array([0.0, 0.0, 3.0, 0.5])   # index 3: overlap (both > 0)
+    net = gen0 - imp0
+    overlap = np.minimum(imp0, gen0)
+    assert overlap[3] == 0.5, "fixture must actually exercise the overlap>0 case"
+    P = np.array([1.0, 1.0, 3.0, 2.0])      # arbitrary gross production
+    D = P - net                             # the identity reconstruct_gross_production() uses
+    import_delta, new_export = up.scale_production(P, D, overlap, imp0, 1.0)
+    assert np.allclose(import_delta, 0.0), import_delta
+    assert np.allclose(new_export, gen0), (new_export, gen0)
+    return "scale_production reproduces measured import/export exactly at gen_scale=1.0, including a simultaneous-flow interval"
+
+
+@case
+def case_scale_production_reallocates_a_loss_against_export_before_import():
+    """issue #60 AC2: a production LOSS must first eat into EXPORT (the
+    surplus beyond load), and only start increasing IMPORT once export
+    hits zero -- not scale export proportionally while import stays frozen
+    (the bug this issue fixes). Single synthetic interval: production P=5,
+    load D=2 -> nominal export=3, import=0. At gen_scale=0.8, P'=4 -> still
+    export=2, import untouched (the loss is small enough to be absorbed
+    entirely by export). At gen_scale=0.2, P'=1 -> D=2 exceeds P', so
+    export must hit exactly 0 and the FULL 1 kWh shortfall must spill into
+    import."""
+    P = np.array([5.0])
+    D = np.array([2.0])
+    overlap = np.array([0.0])
+    imp0 = np.array([0.0])   # nominal: P > D, so imp0=0 by construction
+    _, gen_at_1 = up.scale_production(P, D, overlap, imp0, 1.0)
+    assert gen_at_1[0] == 3.0
+    delta_08, gen_08 = up.scale_production(P, D, overlap, imp0, 0.8)
+    assert gen_08[0] == 2.0 and delta_08[0] == 0.0, (
+        "a small loss must be absorbed entirely by export, not spill into import yet")
+    delta_02, gen_02 = up.scale_production(P, D, overlap, imp0, 0.2)
+    assert gen_02[0] == 0.0 and delta_02[0] == 1.0, (
+        "once production drops below load, export must hit exactly 0 and "
+        "the shortfall must spill into import")
+    return "scale_production reallocates a loss against export first, spilling into import only once export is exhausted"
+
+
+@case
+def case_load_sam_hourly_fails_closed_on_a_wrong_row_count():
+    """issue #60: _load_sam_hourly() must refuse a SAM export with the
+    wrong number of hourly rows rather than silently misaligning every
+    later timestamp against the wrong hour."""
+    tmp_dir = tempfile.TemporaryDirectory()
+    cwd = os.getcwd()
+    os.chdir(tmp_dir.name)
+    try:
+        with open("samB.csv", "w") as f:
+            f.write("kWh\n" + "\n".join(["1.0"] * 100))   # 2025 needs 8760
+        with open("samA.csv", "w") as f:
+            f.write("kWh\n" + "\n".join(["1.0"] * 8760))
+        try:
+            up._load_sam_hourly()
+            raise AssertionError("expected SystemExit on a wrong SAM row count")
+        except SystemExit as e:
+            assert "8760" in str(e), str(e)
+    finally:
+        os.chdir(cwd)
+        tmp_dir.cleanup()
+    return "_load_sam_hourly fails closed on a wrong row count"
+
+
+@case
+def case_load_sam_hourly_fails_closed_on_a_missing_file():
+    """issue #60: _load_sam_hourly() must name the missing file, not raise
+    an opaque FileNotFoundError from deep inside open()."""
+    tmp_dir = tempfile.TemporaryDirectory()
+    cwd = os.getcwd()
+    os.chdir(tmp_dir.name)
+    try:
+        with open("samB.csv", "w") as f:
+            f.write("kWh\n" + "\n".join(["1.0"] * 8760))
+        # samA.csv deliberately absent
+        try:
+            up._load_sam_hourly()
+            raise AssertionError("expected SystemExit on a missing SAM file")
+        except SystemExit as e:
+            assert "samA.csv" in str(e), str(e)
+    finally:
+        os.chdir(cwd)
+        tmp_dir.cleanup()
+    return "_load_sam_hourly fails closed on a missing SAM file, naming it"
+
+
 # ---------------------------------------------------------------------------
 # (b) archive-gated: exercise the REAL dispatch engine and REAL household
 # ---------------------------------------------------------------------------
 @case
 def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     _require_archive()
-    calib = up.dispatch_calibration()
+    calib = _in_sandbox(up.dispatch_calibration)
     dispatch = _committed("battery_dispatch_policies.json")
     committed_pre = float(dispatch["pw3"]["greedy"]["save"])
     committed_mid = float(dispatch["post_behavior"]["mid"]["battery_marginal"])
@@ -311,15 +436,25 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     # the battery can now discharge into; whether that nets out above or below
     # the lost-solar-charging effect is genuinely ambiguous without running the
     # real engine -- exactly why this script calibrates from real reruns
-    # instead of assuming a sign. What IS checked: the effect is small (this
-    # household's realistic 1.3-6.6% loss range should not swing the marginal
-    # saving by more than a few percent either way) and the pre-/post-behavior
-    # calibrations agree in sign and rough magnitude with each other, i.e. the
-    # measurement is internally consistent, not a coin-flip between reruns.
-    assert abs(calib["soil_slope_mid"]) < 0.5, (
-        f"soiling slope {calib['soil_slope_mid']} implausibly large -- a small "
-        "realistic loss fraction should not swing the marginal saving by more "
-        "than a few percent; investigate before trusting the calibration")
+    # instead of assuming a sign.
+    #
+    # issue #60: soil_slope's own MAGNITUDE grew roughly 18x once soiling
+    # correctly hits GROSS production (reallocated against export first,
+    # spilling into import) instead of scaling the smaller Generation/export
+    # column alone -- expected and correct (most of a production loss at
+    # this household turns out to have been self-consumed, not exported;
+    # see production_reconstruction's own energy-conservation numbers), not
+    # a regression of the "small effect" reasoning below. What that reasoning
+    # was actually always about is the REALIZED swing at the household's own
+    # real loss magnitude (soil_slope * lossB), which the fix leaves genuinely
+    # small (still "a few percent") even though the raw per-unit slope no
+    # longer is -- so this checks the realized swing, not the raw slope.
+    realized_swing = abs(calib["soil_slope_mid"] * calib["lossB"])
+    assert realized_swing < 0.15, (
+        f"soiling's REALIZED swing at this household's own lossB "
+        f"({calib['lossB']:.4f}) is {realized_swing:.4f} ({realized_swing:.1%}) "
+        "-- implausibly large for a small realistic loss fraction; "
+        "investigate before trusting the calibration")
     same_sign = (calib["soil_slope_mid"] > 0) == (calib["soil_slope_pre"] > 0)
     assert same_sign, (
         f"pre- ({calib['soil_slope_pre']}) and post-behavior "
@@ -333,10 +468,56 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
 
 
 @case
+def case_production_reconstruction_conserves_energy_and_shows_the_understated_direction():
+    """issue #60 AC2/AC3, verified from the public committed artifact (no
+    archive needed to check semantics already computed and committed):
+    every lost kWh must show up as EITHER less export OR more import (the
+    energy-conservation check itself, not just trusted from the generator's
+    own arithmetic), and the corrected soil_slope must be LARGER in
+    magnitude than the old export-only-scaling figure -- confirming the
+    issue's own 'likely understates' hypothesis with committed numbers, not
+    just asserting the direction was checked."""
+    if not DATA.joinpath("uncertainty_results.json").is_file():
+        raise SkipCase("needs the committed uncertainty_results.json")
+    result = _committed("uncertainty_results.json")
+    pr = result["calibration"]["production_reconstruction"]
+    cc = pr["energy_conservation_check"]
+    assert abs(cc["gap_kwh"]) < 0.01, (
+        f"production_lost_kwh must equal export_reduction_kwh + "
+        f"import_increase_kwh to within rounding, got gap {cc['gap_kwh']} kWh")
+    assert abs(cc["export_reduction_kwh"] + cc["import_increase_kwh"] - cc["production_lost_kwh"]) < 0.02
+    old = pr["old_vs_new_soil_slope"]["old_export_only_scaling"]
+    new = pr["old_vs_new_soil_slope"]["new_gross_production_reallocation"]
+    assert abs(new["soil_slope_mid"]) > abs(old["soil_slope_mid"]), (
+        "the corrected soil_slope_mid must be LARGER in magnitude than "
+        f"the old export-only figure ({new['soil_slope_mid']} vs "
+        f"{old['soil_slope_mid']}) -- confirms understatement, not just "
+        "asserts it")
+    assert abs(new["soil_slope_pre"]) > abs(old["soil_slope_pre"])
+    # Regression guard: old_export_only_scaling MUST be a frozen historical
+    # constant, not read live from the committed artifact -- an earlier
+    # draft of this fix read _committed("uncertainty_results.json") for
+    # "old", which is self-referential and silently drifts the artifact on
+    # every subsequent regeneration (caught by running the regeneration
+    # twice before committing, not by any single-run check like this one --
+    # but this at least pins the frozen value so a future edit can't
+    # silently swap it back for a live lookup without this test noticing
+    # the value stops matching the known historical constant).
+    assert old["soil_slope_mid"] == 0.05605402062021063, (
+        "old_export_only_scaling.soil_slope_mid must stay pinned to the "
+        f"frozen pre-fix historical constant, got {old['soil_slope_mid']} -- "
+        "if this changed, check it wasn't switched back to a live "
+        "_committed() lookup (non-reproducible, see issue #60 history)")
+    return (f"energy conservation holds (gap {cc['gap_kwh']} kWh) and the fix "
+           f"confirms understatement: soil_slope_mid {old['soil_slope_mid']} "
+           f"-> {new['soil_slope_mid']}")
+
+
+@case
 def case_build_end_to_end_is_deterministic_and_self_consistent():
     _require_archive()
-    out1 = up.build()
-    out2 = up.build()
+    out1 = _in_sandbox(up.build)
+    out2 = _in_sandbox(up.build)
     s1 = json.dumps(out1, sort_keys=True, default=str)
     s2 = json.dumps(out2, sort_keys=True, default=str)
     assert s1 == s2, "build() must be byte-identical across repeated runs on the same inputs"
@@ -474,7 +655,7 @@ def case_escalation_downside_sensitivity_is_labeled_not_a_probability_and_monoto
 @case
 def case_build_output_is_json_serializable():
     _require_archive()
-    out = up.build()
+    out = _in_sandbox(up.build)
     # round-trips through json.dumps/loads with no numpy scalar leakage
     reparsed = json.loads(json.dumps(out, default=str))
     assert isinstance(reparsed, dict) and "battery_marginal_only_full_model" in reparsed

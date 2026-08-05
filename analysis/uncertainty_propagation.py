@@ -314,6 +314,7 @@ the CWD. Finds the repo root by walking up from the CWD, then from this
 file's own location, exactly like deep_analyses.py/extended_findings.py, so
 it also locates the committed data/ artifacts it cross-checks against.
 """
+import datetime as dt
 import json
 import pathlib
 import sys
@@ -374,8 +375,162 @@ def _committed(name):
 
 
 # ---------------------------------------------------------------------------
-# real-engine calibration (requires the private Green Button archive)
+# issue #60: gross-production reconstruction (SAM 8760 + energy balance),
+# so a soiling/production-measurement scenario scales GROSS production, not
+# the Green Button Generation column (net export) directly. Reimplemented
+# locally rather than imported from threeway_production_validation.py's own
+# load_sam_hourly(), matching this repo's established convention for this
+# exact situation (see _steady_state_run()'s own docstring above).
 # ---------------------------------------------------------------------------
+SAM_FILES = (("samB.csv", 2025), ("samA.csv", 2026))   # same files/years/
+                                                        # truncation-at-last-
+                                                        # nonzero-row contract
+                                                        # as threeway_
+                                                        # production_
+                                                        # validation.py
+
+
+def _load_sam_hourly():
+    """{(date, hour): whole-home gross-load kWh} from the two Enphase SAM
+    8760 exports staged for this sandbox -- identical contract to
+    threeway_production_validation.py's load_sam_hourly() (see that
+    function's docstring for the zero-padding-truncation reasoning), kept
+    as a separate local copy rather than a cross-module import."""
+    import csv as _csv
+    out = {}
+    for fname, year in SAM_FILES:
+        if not pathlib.Path(fname).is_file():
+            raise SystemExit(
+                f"uncertainty_propagation: missing {fname} -- gross-"
+                "production reconstruction (issue #60) needs both SAM 8760 "
+                "exports staged beside usage.csv, per the standard "
+                "private/verify sandbox.")
+        with open(fname, newline="") as fh:
+            rd = _csv.DictReader(fh)
+            if rd.fieldnames != ["kWh"]:
+                raise SystemExit(
+                    f"uncertainty_propagation: {fname} has columns "
+                    f"{rd.fieldnames}, expected ['kWh']")
+            vals = [float(r["kWh"]) for r in rd]
+        is_leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+        expect = 8784 if is_leap else 8760
+        if len(vals) != expect:
+            raise SystemExit(
+                f"uncertainty_propagation: {fname} has {len(vals)} rows, "
+                f"expected {expect} for {year}")
+        last = -1
+        for i, v in enumerate(vals):
+            if v != 0.0:
+                last = i
+        if last < 0:
+            raise SystemExit(f"uncertainty_propagation: {fname} is all "
+                             "zeros -- it carries no measurement")
+        base = dt.datetime(year, 1, 1)
+        for i in range(last + 1):
+            ts = base + dt.timedelta(hours=i)
+            key = (ts.date(), ts.hour)
+            if key in out:
+                raise SystemExit(
+                    f"uncertainty_propagation: {fname} duplicates an hour "
+                    f"({key}) already supplied by another SAM file -- the "
+                    "two files' calendar years overlap")
+            out[key] = vals[i]
+    return out
+
+
+def reconstruct_gross_production(d, imp0, gen0):
+    """Issue #60: (P, D) -- per-15-minute-interval GROSS PV production and
+    the household's own physical load, reconstructed from the SAM 8760
+    hourly series and the energy-balance identity, so a fractional
+    production LOSS can be applied to production itself and correctly
+    reallocated against export first, spilling into import only once
+    export is exhausted -- instead of the prior approach (scaling the
+    Green Button Generation/export column directly), which implicitly
+    treated export as if it WERE gross production and could never spill
+    into import at all.
+
+    RESAMPLING (AC1): SAM's own native resolution is hourly (8760 rows/yr)
+    -- solar production genuinely does not vary in a way SAM itself
+    resolves below that, so each hour's SAM total is distributed EVENLY
+    across its four 15-minute intervals (P_hour / 4), not claiming finer-
+    grained knowledge SAM's own model doesn't have. This is a stated
+    ESTIMATE of intra-hour shape, not a measurement.
+
+    ENERGY BALANCE (AC2): for interval i, P[i] (gross production) and D[i]
+    (household load) relate to the MEASURED import/export via
+        net[i]     = gen0[i] - imp0[i]                (signed net export)
+        overlap[i] = min(imp0[i], gen0[i])             (simultaneous
+                       bidirectional import+export within the SAME 15-min
+                       interval -- 2206 of 35040 intervals in this
+                       household's real data, up to 0.795 kWh, a real
+                       metering/intra-interval-dynamics artifact, not
+                       noise to discard: NBC is charged on GROSS imports
+                       (CLAUDE.md section 9), so collapsing overlap away
+                       would understate real billed import at gen_scale=1)
+        D[i]       = P[i] - net[i]
+    which makes D the household's load with the SAME overlap convention
+    gen0/imp0 already carry, so `scale_production(P, D, overlap, imp0, 1.0)`
+    below reproduces (imp0, gen0) EXACTLY (verified in
+    test_uncertainty_propagation.py, not just assumed) -- this is what
+    keeps the gen_scale=1 nominal case, and therefore every existing
+    committed calibration figure, byte-identical to before this fix.
+    """
+    sam_hourly = _load_sam_hourly()
+    dates = d.dt.dt.date.values
+    hours = d.dt.dt.hour.values
+    n = len(d)
+    P = np.empty(n)
+    missing = []
+    for i in range(n):
+        key = (dates[i], int(hours[i]))
+        v = sam_hourly.get(key)
+        if v is None:
+            missing.append(key)
+            continue
+        P[i] = v / 4.0
+    if missing:
+        raise SystemExit(
+            f"uncertainty_propagation: {len(missing)} interval(s) in the "
+            "measured window have no matching SAM 8760 hour (issue #60) -- "
+            f"first few: {sorted(set(missing))[:5]}. samA.csv/samB.csv do "
+            "not fully cover the measured window; stage a SAM export for "
+            "the missing year(s).")
+    net = gen0 - imp0
+    overlap = np.minimum(imp0, gen0)
+    D = P - net
+    return P, D, overlap
+
+
+def scale_production(P, D, overlap, imp0, gen_scale):
+    """(import_delta, new_export) at a scaled gross production P*gen_scale,
+    holding D (the household's own physical load) and overlap (the
+    simultaneous-bidirectional-flow component, held constant across
+    scenarios -- see reconstruct_gross_production()'s docstring) fixed.
+
+    new_export is the scenario's own EXPORT-before-battery series, used
+    directly (gen0 is already treated as independent of which imp_base
+    scenario -- real vs. EV-shifted -- is under test everywhere else in
+    this module; this preserves that same convention, not a new one).
+
+    import_delta is NOT a full import series -- it is the CHANGE in
+    import this production scenario causes relative to the REAL physical
+    baseline (imp0), meant to be ADDED onto whichever imp_base a caller is
+    testing (imp0 or imp_sh) and clipped at 0, so a production change and
+    an independent EV-shift counterfactual compose additively, the same
+    independence assumption gen0-sharing already makes.
+
+    At gen_scale=1.0 this is an algebraic identity that reproduces the
+    ORIGINAL (imp0, gen0) exactly: new_net = P - D = net (by construction),
+    and max(net,0)+overlap = gen0, max(-net,0)+overlap = imp0 hold for
+    every interval regardless of sign (both cases checked in
+    test_uncertainty_propagation.py), making import_delta all-zeros."""
+    new_net = P * gen_scale - D
+    new_export = np.maximum(new_net, 0.0) + overlap
+    new_import_physical = np.maximum(-new_net, 0.0) + overlap
+    import_delta = new_import_physical - imp0
+    return import_delta, new_export
+
+
 def dispatch_calibration():
     """Recompute the pre-/post-behavior 13.5 kWh battery marginal at nominal
     RTE/soiling, plus the RTE- and soiling-saving sensitivity slopes, from the
@@ -401,6 +556,13 @@ def dispatch_calibration():
     sop_idx, sop_ts = br.build_sop_index(d)
     imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
     b_sh = bp.billed(d, imp_sh, gen0)
+
+    # issue #60: gross production (P) and the household's own physical load
+    # (D), reconstructed once from the real measured year -- held fixed and
+    # reused for every gen_scale scenario below (soiling and, via
+    # save1_of()'s shared soil_slope routing, production-measurement-spread
+    # too), instead of the prior gen0*gen_scale approximation.
+    P, D, overlap = reconstruct_gross_production(d, imp0, gen0)
 
     def _steady_state_run(imp_base, gen, eta):
         """run_batt always starts at soc0=cap/2 and runs the year once -- a
@@ -433,8 +595,22 @@ def dispatch_calibration():
         against an unscaled-generation baseline silently folded the direct
         cost of lost solar into what was supposed to be an isolated battery
         effect, contaminating the soiling slope. Both sides of the subtraction
-        must see the identical generation input."""
-        gen = gen0 * gen_scale
+        must see the identical generation input.
+
+        Issue #60: gen_scale now scales GROSS production (P), reallocated
+        against export first and spilling into import only once export is
+        exhausted (scale_production()), instead of scaling the Green Button
+        Generation/export column directly (which could never spill into
+        import at all, understating a production loss's true cost). The
+        resulting import_delta is added onto imp_base and clipped at 0, so
+        it composes with whichever scenario (real imp0 or EV-shifted
+        imp_sh) is under test, matching the existing gen-independent-of-
+        imp_base convention. At gen_scale=1.0 import_delta is exactly zero
+        and gen equals gen0 exactly (see scale_production()'s own
+        docstring), so this is a no-op at nominal -- the byte-identity
+        every existing committed figure depends on."""
+        import_delta, gen = scale_production(P, D, overlap, imp0, gen_scale)
+        imp_base = np.maximum(imp_base + import_delta, 0.0)
         bill_base = bp.billed(d, imp_base, gen)
         eta = np.sqrt(rte)
         orig_eta = bp.ETA
@@ -513,6 +689,86 @@ def dispatch_calibration():
     soil_slope_mid = slope_of(soil_points_mid, 0.0, mid_nominal)
     soil_slope_pre = slope_of(soil_points_pre, 0.0, pre_nominal)
 
+    # issue #60 AC2: verify the reallocation is energy-conserving, not just
+    # plausible-looking -- every kWh the lossB scenario removes from GROSS
+    # production must show up as EITHER reduced export OR increased import,
+    # with nothing lost or created. Checked here, not just asserted, and
+    # exposed in the artifact for AC3.
+    lossB_import_delta, gen_at_lossB = scale_production(P, D, overlap, imp0, 1 - lossB)
+    production_lost_kwh = float(lossB * P.sum())
+    export_reduction_kwh = float(gen0.sum() - gen_at_lossB.sum())
+    import_increase_kwh = float(lossB_import_delta.sum())
+    conservation_gap_kwh = production_lost_kwh - (export_reduction_kwh + import_increase_kwh)
+
+    # issue #60 AC3: compare against the PRE-FIX approach's own figures --
+    # frozen HISTORICAL constants (the committed data/uncertainty_results.
+    # json values immediately before this fix), NOT read live from
+    # _committed(): reading the live committed artifact would make this
+    # field self-referential and non-reproducible after the FIRST
+    # regeneration following this fix (a second regenerate-and-diff would
+    # compare "old" against itself, silently drifting the artifact on every
+    # run and breaking the CLAUDE.md section 9 byte-identity gate -- caught
+    # by running the regeneration twice before committing, not assumed).
+    OLD_SOIL_SLOPE_MID_EXPORT_ONLY = 0.05605402062021063
+    OLD_SOIL_SLOPE_PRE_EXPORT_ONLY = 0.05634980307893865
+
+    production_reconstruction = {
+        "method": (
+            "issue #60: gross production (P) reconstructed from the SAM "
+            "8760 hourly series, evenly disaggregated across each hour's "
+            "four 15-minute intervals (SAM's own native resolution is "
+            "hourly; this claims no finer-grained knowledge than that). "
+            "The household's own physical load (D) is then backed out via "
+            "the energy-balance identity D = P - (gen0 - imp0), holding a "
+            "measured simultaneous-import-and-export 'overlap' component "
+            "fixed across scenarios. A gen_scale (soiling/production-"
+            "measurement) scenario scales P directly and re-derives export/"
+            "import from the SAME D -- reallocating a production shortfall "
+            "against export first, spilling into import only once export "
+            "is exhausted -- instead of scaling the Green Button "
+            "Generation/export column directly, which could never spill "
+            "into import at all."),
+        "gross_production_kwh": round(float(P.sum()), 1),
+        "energy_conservation_check": {
+            "at_lossB": lossB,
+            "production_lost_kwh": round(production_lost_kwh, 2),
+            "export_reduction_kwh": round(export_reduction_kwh, 2),
+            "import_increase_kwh": round(import_increase_kwh, 2),
+            "gap_kwh": round(conservation_gap_kwh, 4),
+            "note": ("production_lost_kwh must equal export_reduction_kwh + "
+                     "import_increase_kwh (every lost kWh is EITHER less "
+                     "export OR more import, nothing vanishes) -- gap_kwh "
+                     "is that check's residual, expected to be ~0"),
+        },
+        "old_vs_new_soil_slope": {
+            "old_export_only_scaling": {
+                "soil_slope_mid": OLD_SOIL_SLOPE_MID_EXPORT_ONLY,
+                "soil_slope_pre": OLD_SOIL_SLOPE_PRE_EXPORT_ONLY,
+                "as_of": ("frozen historical constant: this repo's committed "
+                          "data/uncertainty_results.json value immediately "
+                          "before issue #60's fix, NOT re-derived at "
+                          "runtime -- see this field's own docstring note"),
+            },
+            "new_gross_production_reallocation": {
+                "soil_slope_mid": soil_slope_mid,
+                "soil_slope_pre": soil_slope_pre,
+            },
+            "note": (
+                "Confirms the issue's own 'likely understates' hypothesis, "
+                "with a quantified mechanism: at this household's lossB "
+                f"({lossB:.4f}), {import_increase_kwh:.0f} of "
+                f"{production_lost_kwh:.0f} lost kWh/yr (~"
+                f"{100*import_increase_kwh/production_lost_kwh:.0f}%) was "
+                "being SELF-CONSUMED (invisible to the old export-only "
+                "scaling), not exported -- losing it mostly increases "
+                "IMPORT, billed near the full retail rate, not just export, "
+                "billed at the lower NEM credit rate. The old approach both "
+                "undercounted the lost energy's magnitude (it only ever "
+                "saw the smaller export column) AND mispriced what it did "
+                "count (attributing it all to the export-credit rate)."),
+        },
+    }
+
     return {
         "pre_nominal": pre_nominal,
         "mid_nominal": mid_nominal,
@@ -531,6 +787,7 @@ def dispatch_calibration():
         "rte_points_pre": rte_points_pre,
         "soil_points_mid": soil_points_mid,
         "soil_points_pre": soil_points_pre,
+        "production_reconstruction": production_reconstruction,
     }
 
 
@@ -1118,24 +1375,20 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                 "a discrepancy to resolve further."),
             "committed_pre": committed_pre,
             "committed_mid": committed_mid,
-            "generation_proxy_limitation": (
-                "The soiling and production-measurement-spread calibrations "
-                "scale the Green Button 'Generation' column (net grid EXPORT, "
-                "not gross PV production -- self-consumed solar never crosses "
-                "the meter and is invisible in this dataset) directly by the "
-                "loss/noise fraction, rather than reconstructing true gross "
-                "production from an independent load source and reallocating "
-                "the shortfall against export before spilling into import "
-                "(Codex review pass 1, finding 1). Because true production "
-                "during an exporting interval equals export plus whatever "
-                "load was simultaneously self-consumed, this likely "
-                "UNDERSTATES the magnitude of both slopes somewhat (a given "
-                "fractional production loss removes more energy than a "
-                "same-fraction cut to export alone would). The calibrated "
-                "slopes are already small (see soil_slope below); a full fix "
-                "needs the household's independent gross-load series (samA/"
-                "samB) to reconstruct production and is filed as a follow-up "
-                "rather than attempted here (issue #60)."),
+            "generation_proxy_limitation_resolved": (
+                "Issue #60 (previously a stated limitation here, filed from "
+                "Codex review pass 1 finding 1 on issue #15): the soiling "
+                "and production-measurement-spread calibrations previously "
+                "scaled the Green Button 'Generation' column (net grid "
+                "EXPORT, not gross PV production) directly, understating "
+                "the true impact -- FIXED. See production_reconstruction "
+                "below for the resolved method, an energy-conservation "
+                "check, and the old-vs-new comparison confirming the "
+                "'likely understates' hypothesis with a quantified "
+                "mechanism (soil_slope_mid rose from "
+                f"{calib['production_reconstruction']['old_vs_new_soil_slope']['old_export_only_scaling']['soil_slope_mid']} "
+                f"to {calib['soil_slope_mid']:.4f})."),
+            "production_reconstruction": calib["production_reconstruction"],
             "rte_slope_mid": calib["rte_slope_mid"],
             "rte_slope_pre": calib["rte_slope_pre"],
             "rte_slope_used": rte_slope,

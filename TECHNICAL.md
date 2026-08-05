@@ -2698,19 +2698,50 @@ convention `deep_analyses.py`'s own `_base_save()` uses for a stale sibling arti
 figures and the reasoning are recorded in the artifact's own `calibration.steady_state_vs_
 single_pass_note` field.
 
-**A known, documented limitation: calibrating against net export, not gross production
-(Codex review pass 1, finding 1).** The Green Button `Generation` column used above is net
-grid EXPORT, not gross PV production — self-consumed solar never crosses the meter and is
-invisible in this dataset. Scaling it directly by a loss/noise fraction (rather than
-reconstructing true gross production from an independent load source, reallocating the
-shortfall against export first and spilling into import only once exhausted) likely
-UNDERSTATES both the soiling and production-measurement-spread slopes somewhat, since true
-production during an exporting interval equals export plus whatever load was simultaneously
-self-consumed. Both slopes are already small (`soil_slope_used` ≈ +0.057 per unit loss
-fraction); a full fix needs the SAM 8760 gross-load series (`samA.csv`/`samB.csv`) to
-reconstruct production, resampled to the Green Button's 15-minute cadence, and is filed as a
-follow-up (issue #60) rather than attempted inside this issue's review-response loop. The
-artifact records this explicitly in `calibration.generation_proxy_limitation`.
+**Gross production reconstructed from SAM 8760, not net export (issue #60, resolved).**
+Previously (Codex review pass 1 finding 1 on issue #15) the Green Button `Generation` column
+— net grid EXPORT, not gross PV production, since self-consumed solar never crosses the
+meter — was scaled directly by a loss/noise fraction, which likely understated both the
+soiling and production-measurement-spread slopes.
+
+`reconstruct_gross_production()` fixes this: gross production `P` comes from the two staged
+Enphase SAM 8760 hourly exports (`samA.csv`/`samB.csv`, the same files/contract
+`threeway_production_validation.py` already uses, reimplemented locally rather than imported
+across the module boundary — this repo's established convention for this exact situation),
+each hour's total distributed EVENLY across its four 15-minute intervals (SAM's own native
+resolution is hourly; this claims no finer intra-hour knowledge than that). The household's
+own physical load `D` is then backed out via the energy-balance identity `D = P - (gen0 -
+imp0)`, holding a measured simultaneous-import-and-export "overlap" component (2206 of
+35,040 intervals in this household's real data, up to 0.795 kWh in one interval — a real
+metering/intra-interval-dynamics artifact, not noise) fixed across scenarios, since NBC is
+charged on gross imports (§9) and collapsing that overlap away would understate real billed
+import at the nominal case. `scale_production()` then re-derives export/import from `P*
+gen_scale` and the SAME `D`, reallocating a production shortfall against export first and
+spilling into import only once export is exhausted — verified an exact algebraic identity at
+`gen_scale=1.0` (reproduces the original `(imp0, gen0)` to floating-point precision), which
+is what keeps `marginal()`'s nominal case, and therefore every existing committed dispatch
+figure, unchanged by this fix.
+
+**The correction, quantified and energy-conservation-checked, not just directionally
+asserted.** At this household's own `lossB` (5.28%), the reconstructed gross production is
+29,865.6 kWh/yr; the lost 1,576.7 kWh/yr splits into 264.1 kWh less export and 1,312.6 kWh
+more import (the two sum to the total lost, exactly, to a fraction of a kWh — `calibration.
+production_reconstruction.energy_conservation_check`, not just trusted from the generator's
+own arithmetic). ~83% of the lost energy was being SELF-CONSUMED, invisible to the old
+export-only scaling entirely, and mostly increases IMPORT (billed near the full retail rate)
+rather than only reducing export (billed at the lower NEM credit rate) — confirming the
+issue's own "likely understates" hypothesis with a specific, quantified mechanism, not just
+a directional hunch. `soil_slope_mid` rose from 0.0561 to 1.0128 (`old_vs_new_soil_slope` in
+the artifact) — an ~18x larger PER-UNIT slope — but the REALIZED swing at this household's
+actual loss fraction stays modest (≈5.4%, `soil_slope_mid * lossB`), since the old figure was
+never a physically meaningful per-unit sensitivity to begin with, only an artifact of scaling
+the wrong (smaller) column. Downstream, the corrected calibration is a genuine but modest
+correction to the published Monte Carlo (soiling/production-measurement-spread remain
+low-swing tornado levers, dominated by install cost, escalation and degradation): median
+payback unchanged at 5.8 yr, p10–p90 narrows slightly from 5.1–6.9 to 5.0–6.8 yr, 10-yr NPV
+median rises from $7,474 to $7,724 at 4% discount ($4,318 to $4,524 at 7%) — `index.html`'s
+own §6 mention of these specific figures updated to match, the only report location citing
+this artifact's own headline numbers (grepped to confirm no other instance was missed).
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this
@@ -3006,9 +3037,9 @@ than the OBSERVED GROSS change (496 kWh) issue #16 actually asks about — a 145
 far outside AC4's 5% tolerance. `decomposition_block()` instead builds an hourly-resolution
 counterfactual: 2026's actual hourly CT load and an hourly-derived production series
 (`CT_load - GreenButton_import + GreenButton_export`, reconstructing production entirely from
-meter data at hourly resolution — the SAM-8760-based gross-production reconstruction that
-`uncertainty_propagation.py`'s own `calibration.generation_proxy_limitation` field named as a
-follow-up, issue #60, and which this script implements independently for a different purpose)
+meter data at hourly resolution — the same SAM-8760-based gross-production reconstruction
+`uncertainty_propagation.py`'s own `reconstruct_gross_production()` implements (issue #60),
+built independently here for a different purpose before that issue was resolved)
 feed `sum(max(0, load - production))`.
 
 **Four bugs, found by three separate review passes, on the SAME calculation.** This
