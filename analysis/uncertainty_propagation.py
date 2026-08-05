@@ -449,12 +449,45 @@ def reconstruct_gross_production(d, imp0, gen0):
     treated export as if it WERE gross production and could never spill
     into import at all.
 
+    WHAT THE SAM 8760 FILES ACTUALLY ARE (Codex adversarial review, issue
+    #60, first pass -- an earlier draft of this function got this wrong):
+    _load_sam_hourly()'s own docstring says "whole-home GROSS-LOAD kWh",
+    identical to threeway_production_validation.py's load_sam_hourly() --
+    this is Enphase's CT-metered whole-home CONSUMPTION series, NOT PV
+    production. The earlier draft assigned SAM's raw hourly value directly
+    to P (production), which would have claimed ~29,866 kWh/yr of PV
+    production against this repo's own validated meter_derived total of
+    16,459.2 kWh/yr (TECHNICAL.md section on threeway_production_
+    validation.py) -- an ~82% overstatement the algebraic energy-
+    conservation check could never catch, because that check only verifies
+    internal consistency of P, D and the reallocation math, not that P
+    itself means what it claims to. Caught before regenerating any artifact
+    or report figure from it.
+
+    Fixed: gross PV production is DERIVED per hour via the SAME identity
+    threeway_production_validation.py's own derive_daily() uses --
+    `pv_hour = max(sam_load_hour - import_hour + export_hour, 0.0)` (an
+    energy-balance fact: whatever the house didn't draw from local
+    production came from the grid as import, and whatever local production
+    exceeded the house's own draw was exported, so production equals load
+    plus export minus import, floored at 0 since production cannot be
+    negative) -- computed here directly from this SAME script's own
+    already-loaded 15-minute d/imp0/gen0 (grouped into hours), not
+    re-derived from a second, separately-loaded Green Button read the way
+    threeway_production_validation.py's own gb_hourly loader does, since
+    that would risk the two disagreeing on which 15-minute rows exist.
+
     RESAMPLING (AC1): SAM's own native resolution is hourly (8760 rows/yr)
     -- solar production genuinely does not vary in a way SAM itself
-    resolves below that, so each hour's SAM total is distributed EVENLY
-    across its four 15-minute intervals (P_hour / 4), not claiming finer-
-    grained knowledge SAM's own model doesn't have. This is a stated
-    ESTIMATE of intra-hour shape, not a measurement.
+    resolves below that, so each hour's DERIVED pv_hour is distributed
+    EVENLY across however many 15-minute intervals actually belong to that
+    hour in `d` (normally 4; a DST day can carry 3 or 5 -- see rates.
+    expected_day_hours() -- handled generically here by dividing by the
+    REAL count for that hour, not a hardcoded 4, so DST days need no
+    special-casing or exclusion, unlike threeway_production_validation.py's
+    own stricter validation use of this same SAM data, which explicitly
+    excludes DST days entirely for a different, higher-precision purpose).
+    This is a stated ESTIMATE of intra-hour shape, not a measurement.
 
     ENERGY BALANCE (AC2): for interval i, P[i] (gross production) and D[i]
     (household load) relate to the MEASURED import/export via
@@ -473,28 +506,50 @@ def reconstruct_gross_production(d, imp0, gen0):
     below reproduces (imp0, gen0) EXACTLY (verified in
     test_uncertainty_propagation.py, not just assumed) -- this is what
     keeps the gen_scale=1 nominal case, and therefore every existing
-    committed calibration figure, byte-identical to before this fix.
+    committed calibration figure, byte-identical to before this fix. This
+    identity holds for ANY P (by construction of D), so it does NOT by
+    itself confirm P means the right physical thing -- see
+    test_uncertainty_propagation.py's own annual-total cross-check against
+    the committed meter_derived figure for that.
     """
     sam_hourly = _load_sam_hourly()
     dates = d.dt.dt.date.values
     hours = d.dt.dt.hour.values
     n = len(d)
-    P = np.empty(n)
-    missing = []
+
+    # Group this script's OWN already-loaded 15-minute rows by (date, hour)
+    # -- sums of imp0/gen0, and how many quarter-intervals actually belong
+    # to that hour (4 on a normal day; a DST day can carry 3 or 5).
+    hour_imp = {}
+    hour_gen = {}
+    hour_count = {}
+    hour_members = {}
     for i in range(n):
         key = (dates[i], int(hours[i]))
-        v = sam_hourly.get(key)
-        if v is None:
-            missing.append(key)
-            continue
-        P[i] = v / 4.0
+        hour_imp[key] = hour_imp.get(key, 0.0) + imp0[i]
+        hour_gen[key] = hour_gen.get(key, 0.0) + gen0[i]
+        hour_count[key] = hour_count.get(key, 0) + 1
+        hour_members.setdefault(key, []).append(i)
+
+    missing = [k for k in hour_members if k not in sam_hourly]
     if missing:
         raise SystemExit(
-            f"uncertainty_propagation: {len(missing)} interval(s) in the "
+            f"uncertainty_propagation: {len(missing)} hour(s) in the "
             "measured window have no matching SAM 8760 hour (issue #60) -- "
-            f"first few: {sorted(set(missing))[:5]}. samA.csv/samB.csv do "
-            "not fully cover the measured window; stage a SAM export for "
-            "the missing year(s).")
+            f"first few: {sorted(missing)[:5]}. samA.csv/samB.csv do not "
+            "fully cover the measured window; stage a SAM export for the "
+            "missing year(s).")
+
+    P = np.empty(n)
+    for key, members in hour_members.items():
+        sam_h = sam_hourly[key]
+        imp_h = hour_imp[key]
+        exp_h = hour_gen[key]
+        pv_h = max(sam_h - imp_h + exp_h, 0.0)
+        share = pv_h / hour_count[key]
+        for i in members:
+            P[i] = share
+
     net = gen0 - imp0
     overlap = np.minimum(imp0, gen0)
     D = P - net

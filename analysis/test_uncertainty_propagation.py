@@ -396,6 +396,54 @@ def case_load_sam_hourly_fails_closed_on_a_missing_file():
 # (b) archive-gated: exercise the REAL dispatch engine and REAL household
 # ---------------------------------------------------------------------------
 @case
+def case_reconstructed_production_matches_the_validated_meter_derived_total():
+    """issue #60, Codex adversarial review first pass: an earlier draft
+    assigned the SAM 8760 files' raw hourly value directly to P (gross
+    production) -- but those files are whole-home GROSS-LOAD kWh (see
+    _load_sam_hourly()'s own docstring, identical to threeway_production_
+    validation.py's load_sam_hourly()), not production. That bug claimed
+    ~29,866 kWh/yr of PV production against this repo's own VALIDATED
+    meter_derived total (data/threeway_production_validation.csv, itself
+    gated by a real correlation/ratio check against two independent
+    references before publication) of 16,459.2 kWh/yr -- an ~82%
+    overstatement the algebraic energy-conservation check alone could never
+    catch, since that check only verifies P and D are mutually consistent,
+    never that P means the right physical thing. This is the regression
+    test for exactly that: reconstruct_gross_production()'s own annual
+    total must land close to the independently-validated figure, not just
+    be internally self-consistent."""
+    _require_archive()
+    import pandas as pd
+
+    def _reconstruct():
+        d = br.load()
+        imp0 = d.Consumption.values.astype(float)
+        gen0 = d.Generation.values.astype(float)
+        P, D, overlap = up.reconstruct_gross_production(d, imp0, gen0)
+        return float(P.sum())
+
+    total_kwh = _in_sandbox(_reconstruct)
+    validated_total = float(pd.read_csv(DATA / "threeway_production_validation.csv",
+                                        index_col=0)["meter_derived"].sum())
+    rel_diff = abs(total_kwh - validated_total) / validated_total
+    # Generous tolerance: this script's own 365-day window differs from
+    # threeway_production_validation.py's stricter 363-day (DST-excluded)
+    # window by construction, so a few percent of genuine difference is
+    # expected, not a bug -- but an order-of-magnitude miss (the actual
+    # bug this test exists to catch) must fail loudly.
+    assert rel_diff < 0.10, (
+        f"reconstructed gross production ({total_kwh:.1f} kWh/yr) diverges "
+        f"{rel_diff:.1%} from the validated meter_derived total "
+        f"({validated_total:.1f} kWh/yr) -- if this is anywhere near the "
+        "old ~82% miss, P is being computed from the wrong quantity again "
+        "(SAM load treated as production, not derived via sam - import + "
+        "export)")
+    return (f"reconstructed production {total_kwh:.1f} kWh/yr is within "
+           f"{rel_diff:.1%} of the validated meter_derived total "
+           f"{validated_total:.1f} kWh/yr")
+
+
+@case
 def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     _require_archive()
     calib = _in_sandbox(up.dispatch_calibration)
@@ -438,10 +486,10 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     # real engine -- exactly why this script calibrates from real reruns
     # instead of assuming a sign.
     #
-    # issue #60: soil_slope's own MAGNITUDE grew roughly 18x once soiling
+    # issue #60: soil_slope's own MAGNITUDE grew roughly 4.7x once soiling
     # correctly hits GROSS production (reallocated against export first,
     # spilling into import) instead of scaling the smaller Generation/export
-    # column alone -- expected and correct (most of a production loss at
+    # column alone -- expected and correct (some of a production loss at
     # this household turns out to have been self-consumed, not exported;
     # see production_reconstruction's own energy-conservation numbers), not
     # a regression of the "small effect" reasoning below. What that reasoning

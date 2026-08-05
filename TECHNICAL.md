@@ -2704,44 +2704,63 @@ Previously (Codex review pass 1 finding 1 on issue #15) the Green Button `Genera
 meter — was scaled directly by a loss/noise fraction, which likely understated both the
 soiling and production-measurement-spread slopes.
 
-`reconstruct_gross_production()` fixes this: gross production `P` comes from the two staged
-Enphase SAM 8760 hourly exports (`samA.csv`/`samB.csv`, the same files/contract
-`threeway_production_validation.py` already uses, reimplemented locally rather than imported
-across the module boundary — this repo's established convention for this exact situation),
-each hour's total distributed EVENLY across its four 15-minute intervals (SAM's own native
-resolution is hourly; this claims no finer intra-hour knowledge than that). The household's
-own physical load `D` is then backed out via the energy-balance identity `D = P - (gen0 -
-imp0)`, holding a measured simultaneous-import-and-export "overlap" component (2206 of
-35,040 intervals in this household's real data, up to 0.795 kWh in one interval — a real
-metering/intra-interval-dynamics artifact, not noise) fixed across scenarios, since NBC is
-charged on gross imports (§9) and collapsing that overlap away would understate real billed
-import at the nominal case. `scale_production()` then re-derives export/import from `P*
-gen_scale` and the SAME `D`, reallocating a production shortfall against export first and
-spilling into import only once export is exhausted — verified an exact algebraic identity at
-`gen_scale=1.0` (reproduces the original `(imp0, gen0)` to floating-point precision), which
-is what keeps `marginal()`'s nominal case, and therefore every existing committed dispatch
-figure, unchanged by this fix.
+`reconstruct_gross_production()` fixes this — and an earlier draft of this fix itself got the
+SAM data's own meaning wrong (Codex adversarial review, issue #60, first pass): the two
+staged Enphase SAM 8760 exports (`samA.csv`/`samB.csv`) are whole-home GROSS-LOAD kWh — the
+SAME CT-metered consumption series `threeway_production_validation.py`'s own
+`load_sam_hourly()` reads — NOT PV production directly. That earlier draft assigned SAM's raw
+hourly value straight to `P`, which would have claimed ~29,866 kWh/yr of PV production
+against this repo's own validated `meter_derived` total of 16,459.2 kWh/yr — an ~82%
+overstatement the algebraic energy-conservation check could never catch on its own, since
+that check only verifies `P` and `D` are internally consistent with each other, not that `P`
+means the right physical thing. **Fixed**: gross production is DERIVED per hour via the SAME
+identity `threeway_production_validation.py`'s own `derive_daily()` uses — `pv_hour =
+max(sam_load_hour - import_hour + export_hour, 0.0)` (whatever the house didn't draw from
+local production came from the grid as import; whatever local production exceeded the
+house's own draw was exported; production floored at 0) — computed here from this script's
+own already-loaded 15-minute data grouped into hours (reimplemented locally per this repo's
+established convention for this exact situation, rather than importing across the module
+boundary). Each hour's derived `pv_hour` is then distributed EVENLY across however many
+15-minute intervals actually belong to that hour (normally 4; a DST day can carry 3 or 5,
+handled generically by dividing by the real count rather than hardcoding 4 or excluding DST
+days the way `threeway_production_validation.py`'s own higher-precision validation use does).
+This reconstruction lands at 16,591.3 kWh/yr — 0.8% from the validated 16,459.2 kWh figure,
+the gap fully explained by covering 365 days (this script's own measured window) against
+that validation's stricter 363 (DST-excluded) days, not a discrepancy to chase further.
+
+The household's own physical load `D` is then backed out via the energy-balance identity
+`D = P - (gen0 - imp0)`, holding a measured simultaneous-import-and-export "overlap"
+component (2206 of 35,040 intervals in this household's real data, up to 0.795 kWh in one
+interval — a real metering/intra-interval-dynamics artifact, not noise) fixed across
+scenarios, since NBC is charged on gross imports (§9) and collapsing that overlap away would
+understate real billed import at the nominal case. `scale_production()` then re-derives
+export/import from `P*gen_scale` and the SAME `D`, reallocating a production shortfall
+against export first and spilling into import only once export is exhausted — verified an
+exact algebraic identity at `gen_scale=1.0` (reproduces the original `(imp0, gen0)` to
+floating-point precision, which holds for ANY `P` by construction of `D` — this identity
+alone does not confirm `P` means the right physical thing, which is why the annual-total
+cross-check above matters independently), keeping `marginal()`'s nominal case, and therefore
+every existing committed dispatch figure, unchanged by this fix.
 
 **The correction, quantified and energy-conservation-checked, not just directionally
-asserted.** At this household's own `lossB` (5.28%), the reconstructed gross production is
-29,865.6 kWh/yr; the lost 1,576.7 kWh/yr splits into 264.1 kWh less export and 1,312.6 kWh
-more import (the two sum to the total lost, exactly, to a fraction of a kWh — `calibration.
-production_reconstruction.energy_conservation_check`, not just trusted from the generator's
-own arithmetic). ~83% of the lost energy was being SELF-CONSUMED, invisible to the old
-export-only scaling entirely, and mostly increases IMPORT (billed near the full retail rate)
-rather than only reducing export (billed at the lower NEM credit rate) — confirming the
-issue's own "likely understates" hypothesis with a specific, quantified mechanism, not just
-a directional hunch. `soil_slope_mid` rose from 0.0561 to 1.0128 (`old_vs_new_soil_slope` in
-the artifact) — an ~18x larger PER-UNIT slope — but the REALIZED swing at this household's
-actual loss fraction stays modest (≈5.4%, `soil_slope_mid * lossB`), since the old figure was
-never a physically meaningful per-unit sensitivity to begin with, only an artifact of scaling
-the wrong (smaller) column. Downstream, the corrected calibration is a genuine but modest
+asserted.** At this household's own `lossB` (5.28%), the lost 875.9 kWh/yr splits into 756.8
+kWh less export and 119.2 kWh more import (the two sum to the total lost, exactly, to a
+fraction of a kWh — `calibration.production_reconstruction.energy_conservation_check`, not
+just trusted from the generator's own arithmetic). ~14% of the lost energy was being
+SELF-CONSUMED, invisible to the old export-only scaling entirely, and increases IMPORT
+(billed near the full retail rate) rather than only reducing export (billed at the lower NEM
+credit rate) — confirming the issue's own "likely understates" hypothesis with a specific,
+quantified mechanism, not just a directional hunch. `soil_slope_mid` rose from 0.0561 to
+0.2632 (`old_vs_new_soil_slope` in the artifact) — an ~4.7x larger PER-UNIT slope — with the
+REALIZED swing at this household's actual loss fraction staying modest (≈1.4%,
+`soil_slope_mid * lossB`). Downstream, the corrected calibration is a genuine but modest
 correction to the published Monte Carlo (soiling/production-measurement-spread remain
 low-swing tornado levers, dominated by install cost, escalation and degradation): median
-payback unchanged at 5.8 yr, p10–p90 narrows slightly from 5.1–6.9 to 5.0–6.8 yr, 10-yr NPV
-median rises from $7,474 to $7,724 at 4% discount ($4,318 to $4,524 at 7%) — `index.html`'s
-own §6 mention of these specific figures updated to match, the only report location citing
-this artifact's own headline numbers (grepped to confirm no other instance was missed).
+payback unchanged at 5.8 yr, p10 unchanged at 5.1 yr, p90 narrows slightly from 6.9 to 6.8
+yr, 10-yr NPV median rises from $7,474 to $7,524 at 4% discount ($4,318 to $4,376 at 7%) —
+`index.html`'s own §6 mention of these specific figures updated to match, the only report
+location citing this artifact's own headline numbers (grepped to confirm no other instance
+was missed).
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this

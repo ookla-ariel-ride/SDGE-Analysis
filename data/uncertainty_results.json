@@ -74,45 +74,45 @@
   "base_case": "the exact same nominal save1/fade/price tornado()'s escalation lever sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s escalation lever's ESC_LO payback endpoint by construction, not tornado()'s overall nominal_payback_yr (which uses esc=6%, not 0%, for the escalation dimension)",
   "grid": {
    "+0%": {
-    "payback_yr": 6.7,
+    "payback_yr": 6.8,
     "within_10yr_warranty": true
    },
    "-3%": {
-    "payback_yr": 7.4,
+    "payback_yr": 7.5,
     "within_10yr_warranty": true
    },
    "-6%": {
-    "payback_yr": 8.4,
+    "payback_yr": 8.5,
     "within_10yr_warranty": true
    },
    "-9%": {
-    "payback_yr": 10.0,
-    "within_10yr_warranty": true
+    "payback_yr": 10.2,
+    "within_10yr_warranty": false
    },
    "-12%": {
-    "payback_yr": 13.5,
+    "payback_yr": 13.9,
     "within_10yr_warranty": false
    }
   }
  },
  "calibration": {
-  "pre_nominal": 2327.9,
-  "mid_nominal": 2239.42,
+  "pre_nominal": 2327.42,
+  "mid_nominal": 2238.95,
   "pre_nominal_single_pass": 2328.31,
   "mid_nominal_single_pass": 2238.09,
   "steady_state_vs_single_pass_note": "pre_nominal/mid_nominal use a steady-state-converged SOC boundary (Codex review pass 1, finding 2); pre_nominal_single_pass/mid_nominal_single_pass use the same single-pass method as the committed battery_dispatch_policies.json (which this issue does not modify) and are what the $1 tie-out below checks against -- the ~$1-2 gap between the two conventions is the known, expected size of this SOC-boundary effect, not a discrepancy to resolve further.",
   "committed_pre": 2328.0,
   "committed_mid": 2238.0,
-  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid rose from 0.05605402062021063 to 1.0128).",
+  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid rose from 0.05605402062021063 to 0.2632).",
   "production_reconstruction": {
    "method": "issue #60: gross production (P) reconstructed from the SAM 8760 hourly series, evenly disaggregated across each hour's four 15-minute intervals (SAM's own native resolution is hourly; this claims no finer-grained knowledge than that). The household's own physical load (D) is then backed out via the energy-balance identity D = P - (gen0 - imp0), holding a measured simultaneous-import-and-export 'overlap' component fixed across scenarios. A gen_scale (soiling/production-measurement) scenario scales P directly and re-derives export/import from the SAME D -- reallocating a production shortfall against export first, spilling into import only once export is exhausted -- instead of scaling the Green Button Generation/export column directly, which could never spill into import at all.",
-   "gross_production_kwh": 29865.6,
+   "gross_production_kwh": 16591.3,
    "energy_conservation_check": {
     "at_lossB": 0.05279410891383099,
-    "production_lost_kwh": 1576.73,
-    "export_reduction_kwh": 264.1,
-    "import_increase_kwh": 1312.63,
-    "gap_kwh": -0.0,
+    "production_lost_kwh": 875.93,
+    "export_reduction_kwh": 756.75,
+    "import_increase_kwh": 119.17,
+    "gap_kwh": 0.0,
     "note": "production_lost_kwh must equal export_reduction_kwh + import_increase_kwh (every lost kWh is EITHER less export OR more import, nothing vanishes) -- gap_kwh is that check's residual, expected to be ~0"
    },
    "old_vs_new_soil_slope": {
@@ -122,37 +122,37 @@
      "as_of": "frozen historical constant: this repo's committed data/uncertainty_results.json value immediately before issue #60's fix, NOT re-derived at runtime -- see this field's own docstring note"
     },
     "new_gross_production_reallocation": {
-     "soil_slope_mid": 1.0127878794129839,
-     "soil_slope_pre": 0.6170563020015234
+     "soil_slope_mid": 0.2631546383408323,
+     "soil_slope_pre": 0.20302505384528305
     },
-    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 1313 of 1577 lost kWh/yr (~83%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate)."
+    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 119 of 876 lost kWh/yr (~14%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate)."
    }
   },
-  "rte_slope_mid": 0.5524589640832265,
-  "rte_slope_pre": 0.5924330630269926,
-  "rte_slope_used": 0.5724460135551095,
-  "soil_slope_mid": 1.0127878794129839,
-  "soil_slope_pre": 0.6170563020015234,
-  "soil_slope_used": 0.8149220907072536,
+  "rte_slope_mid": 0.5525025031760377,
+  "rte_slope_pre": 0.5924853723365215,
+  "rte_slope_used": 0.5724939377562797,
+  "soil_slope_mid": 0.2631546383408323,
+  "soil_slope_pre": 0.20302505384528305,
+  "soil_slope_used": 0.23308984609305766,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
-   "0.85": 2174.570146730691,
-   "0.9": 2239.422227027838,
-   "0.95": 2298.289035099566
+   "0.85": 2174.107847042456,
+   "0.9": 2238.9513423722824,
+   "0.95": 2297.81046915746
   },
   "rte_calibration_points_pre": {
-   "0.85": 2255.955089104949,
-   "0.9": 2327.89847613701,
-   "0.95": 2393.867491568321
+   "0.85": 2255.483606016714,
+   "0.9": 2327.418408081455,
+   "0.95": 2393.3797422262155
   },
   "soil_calibration_points_mid": {
-   "0.0": 2239.422227027838,
-   "0.05279410891383099": 2359.1624172414495
+   "0.0": 2238.9513423722824,
+   "0.05279410891383099": 2270.0571261450614
   },
   "soil_calibration_points_pre": {
-   "0.0": 2327.89847613701,
-   "0.05279410891383099": 2403.7342795654654
+   "0.0": 2327.418408081455,
+   "0.05279410891383099": 2352.364904674797
   },
   "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes"
  },
@@ -160,7 +160,7 @@
   "N": 5000,
   "seed": 43,
   "payback_median": 5.8,
-  "payback_p10": 5.0,
+  "payback_p10": 5.1,
   "payback_p90": 6.8,
   "prob_within_warranty_10yr": 1.0,
   "prob_within_15yr": 1.0,
@@ -176,32 +176,32 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7724,
-     "p10": 3243,
-     "p90": 13140
+     "median": 7524,
+     "p10": 3031,
+     "p90": 12892
     },
     "15yr": {
-     "median": 19297,
-     "p10": 9989,
-     "p90": 32959
+     "median": 18972,
+     "p10": 9736,
+     "p90": 32379
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4524,
-     "p10": 723,
-     "p90": 8998
+     "median": 4376,
+     "p10": 534,
+     "p90": 8803
     },
     "15yr": {
-     "median": 12543,
-     "p10": 5513,
-     "p90": 22530
+     "median": 12314,
+     "p10": 5310,
+     "p90": 22118
     }
    }
   },
-  "save1_median": 2298,
-  "save1_p10": 2220,
-  "save1_p90": 2381
+  "save1_median": 2276,
+  "save1_p10": 2217,
+  "save1_p90": 2336
  },
  "tornado": {
   "nominal_payback_yr": 5.8,
@@ -209,51 +209,51 @@
    "install_cost": {
     "payback_range_yr": [
      5.0,
-     6.5
+     6.6
     ],
     "swing_yr": 1.6
    },
    "escalation": {
     "payback_range_yr": [
      5.2,
-     6.7
+     6.8
     ],
-    "swing_yr": 1.5
+    "swing_yr": 1.6
    },
    "degradation": {
     "payback_range_yr": [
-     5.6,
-     5.9
+     5.7,
+     6.0
     ],
     "swing_yr": 0.3
    },
    "ev_persistence": {
     "payback_range_yr": [
-     5.6,
-     5.8
+     5.7,
+     5.9
     ],
     "swing_yr": 0.2
    },
    "soiling": {
     "payback_range_yr": [
-     5.6,
+     5.8,
      5.8
     ],
-    "swing_yr": 0.2
+    "swing_yr": 0.1
    },
    "round_trip_efficiency": {
     "payback_range_yr": [
-     5.6,
-     5.9
+     5.7,
+     6.0
     ],
     "swing_yr": 0.3
    },
    "production_measurement_spread": {
     "payback_range_yr": [
-     5.6,
+     5.8,
      5.9
     ],
-    "swing_yr": 0.3
+    "swing_yr": 0.1
    }
   },
   "ranked_by_swing": [
@@ -261,9 +261,9 @@
    "escalation",
    "degradation",
    "round_trip_efficiency",
-   "production_measurement_spread",
    "ev_persistence",
-   "soiling"
+   "soiling",
+   "production_measurement_spread"
   ],
   "reconciliation_vs_extended_results_tornado_battery": {
    "old_ranked_by_swing": [
@@ -277,13 +277,13 @@
     "escalation",
     "degradation",
     "round_trip_efficiency",
-    "production_measurement_spread",
     "ev_persistence",
-    "soiling"
+    "soiling",
+    "production_measurement_spread"
    ],
    "notes": [
-    "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.0, 6.5]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
-    "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.5 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
+    "install_cost: old swing 2.1 yr (range [5.2, 7.3]) vs new swing 1.6 yr (range [5.0, 6.6]) -- same lever (install price), same band, so a close match is expected; both models read savings from the same post_behavior.mid.battery_marginal-rooted base case.",
+    "escalation: old model's 'escalation_5yr_avg' swept 0-8% with an average-uplift approximation (swing 0.9 yr); this model sweeps the full 0-12% ladder-bound range directly (swing 1.6 yr) -- a wider band on the same lever, so a larger swing here is an expected reordering, not a disagreement.",
     "ev_persistence generalizes the old model's 2-point 'post_behavior' lever (swing 0.3 yr, G vs G_POST) into a continuous Beta(2,1) blend across the SAME two endpoints; this model's swing (0.2 yr) should be of the same order since it is rooted in the identical pair of measured marginals.",
     "dispatch_policy (old model's largest lever, swing 2.2 yr) has no counterpart here: it is a discrete DESIGN CHOICE the household makes (evening/twowin/greedy dispatch), not an uncertain physical input to propagate, so this Monte Carlo holds it fixed at greedy (the recommended policy) throughout, matching the old model's own base case.",
     "soiling, round_trip_efficiency and production_measurement_spread have no counterpart in the old tornado at all -- they are new levers this issue adds, not previously quantified anywhere in the repo."
