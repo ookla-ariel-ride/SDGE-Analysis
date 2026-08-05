@@ -2704,11 +2704,11 @@ Previously (Codex review pass 1 finding 1 on issue #15) the Green Button `Genera
 meter — was scaled directly by a loss/noise fraction, which likely understated both the
 soiling and production-measurement-spread slopes.
 
-`reconstruct_gross_production()` fixes this — and went through three further review-caught
-corrections of its own before shipping, each finding something the algebraic energy-
-conservation check (verifying `P`/`D`/the reallocation are mutually consistent) could not see
-by construction, since that check never verifies `P` means the right physical thing or that
-an allocation is otherwise sound.
+`reconstruct_gross_production()`/`scale_production()` fix this — and went through four
+further review-caught corrections of their own before shipping, each finding something the
+algebraic energy-conservation check (verifying the reallocation's own arithmetic is
+self-consistent) could not see by construction, since that check never verifies `P` means
+the right physical thing or that an allocation is otherwise physically sound.
 
 **First (Codex adversarial review, issue #60, first pass): SAM data misidentified.** An
 earlier draft assigned the SAM 8760 files' raw hourly value straight to `P` (production) —
@@ -2723,22 +2723,14 @@ already-loaded 15-minute data grouped into hours (reimplemented locally per this
 established convention for this exact situation, rather than importing across the module
 boundary).
 
-**Second (Codex adversarial review, issue #60, second pass): flat intra-hour split and frozen
-overlap.** A flat `pv_hour / N` split across each hour's intervals ignored real intra-hour
-shape, producing a physically-impossible NEGATIVE implied household load (`D < 0`) on 407 of
-35,040 intervals. **Fixed**: each net-EXPORTING interval within an hour now gets its own net
-export as a floor (`D = 0` there, the tightest nonnegative bound), and only the hour's
-REMAINING production is spread evenly across all its intervals — still sums to `pv_hour`
-exactly, but guarantees `D >= 0` everywhere it's mathematically possible to (verified: zero
-deficit hours exist anywhere in this household's real measured year). Separately,
-`scale_production()` added the measured simultaneous-import-and-export "overlap" component
-back UNCHANGED regardless of `gen_scale`, flooring export at `overlap` no matter how far
-production dropped — on a net-importing overlap interval, any further loss then showed up
-ENTIRELY as more import, never as less export, violating the function's own advertised
-"export first, then import" rule for exactly the 2,206 real intervals (6.3% of the year)
-where it matters. **Fixed**: `overlap` now scales WITH `gen_scale`, consistent with it being
-part of the same intra-interval production variability `P` represents, not an independent
-fixed baseline.
+**Second (Codex adversarial review, issue #60, second pass): flat intra-hour split.** A flat
+`pv_hour / N` split across each hour's intervals ignored real intra-hour shape, producing a
+physically-impossible NEGATIVE implied household load on 407 of 35,040 intervals. **Fixed**:
+each net-EXPORTING interval within an hour now gets its own net export as a floor first, and
+only the hour's REMAINING production is spread evenly across all its intervals — still sums
+to `pv_hour` exactly, but guarantees the diagnostic implied-load figure stays non-negative
+everywhere it's mathematically possible to (verified: zero deficit hours exist anywhere in
+this household's real measured year).
 
 **Third (Codex adversarial review, issue #60, third pass): DST clock misalignment.** The SAM
 8760 export is a FLAT 24-hours-a-day grid, never adjusted for DST (this repo's own documented
@@ -2750,42 +2742,51 @@ for ~48 of 35,040 intervals a year. **Fixed** the same way this repo's own prece
 it: the two DST transition dates are EXCLUDED from the SAM join entirely, taking a
 conservative, explicitly-labeled fallback instead (`P = max(net, 0)`, i.e. no self-consumption
 modeled for those ~48 intervals) rather than trusting a misaligned join for 2 days out of 365.
-
 This reconstruction lands at 16,521.4 kWh/yr — 0.4% from the validated 16,459.2 kWh figure,
 the gap fully explained by covering 363 non-DST days (this script's own measured window minus
-the two DST-fallback dates) against that validation's own stricter, differently-scoped 363-day
-window, not a discrepancy to chase further.
+the two DST-fallback dates) against that validation's own stricter, differently-scoped
+363-day window, not a discrepancy to chase further.
 
-The household's own physical load `D` is then backed out via the energy-balance identity
-`D = P - (gen0 - imp0)`, holding a measured simultaneous-import-and-export "overlap"
-component (2206 of 35,040 intervals in this household's real data, up to 0.795 kWh in one
-interval — a real metering/intra-interval-dynamics artifact, not noise) fixed across
-scenarios, since NBC is charged on gross imports (§9) and collapsing that overlap away would
-understate real billed import at the nominal case. `scale_production()` then re-derives
-export/import from `P*gen_scale` and the SAME `D`, reallocating a production shortfall
-against export first and spilling into import only once export is exhausted — verified an
-exact algebraic identity at `gen_scale=1.0` (reproduces the original `(imp0, gen0)` to
-floating-point precision, which holds for ANY `P` by construction of `D` — this identity
-alone does not confirm `P` means the right physical thing, which is why the annual-total
-cross-check above matters independently), keeping `marginal()`'s nominal case, and therefore
-every existing committed dispatch figure, unchanged by this fix.
+**Fourth (Codex `review`, final pass): import must never DECREASE under a production loss.**
+An intermediate version of `scale_production()` (between the second and this final pass)
+reallocated via `D`/an "overlap" component (2,206 of 35,040 intervals with simultaneous
+import AND export) scaled proportionally with `gen_scale`. That correctly let export shrink
+on a net-importing overlap interval, but ALSO let IMPORT shrink on a net-EXPORTING overlap
+interval whenever export alone had enough margin to absorb the whole loss — physically
+backwards: less production available can only require the same or MORE grid draw to meet a
+fixed load, never less. Codex's own worked example: `P=5, imp0=1, gen0=4, gen_scale=0.8`
+should reduce export from 4 to 3 while leaving import at 1 exactly (a 1 kWh loss, smaller
+than the 4 kWh export margin, fully absorbed by export alone) — that intermediate version
+instead produced export 2.8, import 0.8, importing LESS after a production loss. **Fixed**
+with a simpler, correct model that also eliminates the need for `D`/"overlap" in the core
+math entirely: a shortfall (`loss = P * (1 - gen_scale)`) reduces the REAL measured export
+(`gen0`) directly — export is tied to production, so it absorbs a shortfall first, however
+much of it exists, including any simultaneous-flow portion, since `gen0` already IS the real
+gross export for that interval — floored at 0, with only the EXCESS spilling into import,
+which is otherwise untouched (monotonic in `gen_scale` by construction, never negative for a
+loss). `gen0` is used directly rather than a scenario-specific reconstruction, matching the
+existing convention that export is independent of which `imp_base` scenario (real vs.
+EV-shifted) is under test — so this also resolves, by construction rather than special-
+casing, a second `review` finding about the post-behavior calibration needing the SAME
+treatment: since the reallocation never reads `imp_base` at all, it can't drift out of sync
+between the two scenarios.
 
 **The correction, quantified and energy-conservation-checked, not just directionally
-asserted.** At this household's own `lossB` (5.28%), the lost 872.2 kWh/yr splits into 774.7
-kWh less export and 97.6 kWh more import (the two sum to the total lost, exactly, to a
+asserted.** At this household's own `lossB` (5.28%), the lost 872.2 kWh/yr splits into 790.7
+kWh less export and 81.6 kWh more import (the two sum to the total lost, exactly, to a
 fraction of a kWh — `calibration.production_reconstruction.energy_conservation_check`, not
-just trusted from the generator's own arithmetic). ~11% of the lost energy was being
+just trusted from the generator's own arithmetic). ~9% of the lost energy was being
 SELF-CONSUMED, invisible to the old export-only scaling entirely, and increases IMPORT
 (billed near the full retail rate) rather than only reducing export (billed at the lower NEM
 credit rate) — confirming the issue's own "likely understates" hypothesis with a specific,
 quantified mechanism, not just a directional hunch. `soil_slope_mid` rose from 0.0561 to
-0.2475 (`old_vs_new_soil_slope` in the artifact) — an ~4.4x larger PER-UNIT slope — with the
-REALIZED swing at this household's actual loss fraction staying modest (≈1.3%,
+0.2176 (`old_vs_new_soil_slope` in the artifact) — an ~3.9x larger PER-UNIT slope — with the
+REALIZED swing at this household's actual loss fraction staying modest (≈1.1%,
 `soil_slope_mid * lossB`). Downstream, the corrected calibration is a genuine but modest
 correction to the published Monte Carlo (soiling/production-measurement-spread remain
 low-swing tornado levers, dominated by install cost, escalation and degradation): median
 payback unchanged at 5.8 yr, p10 unchanged at 5.1 yr, p90 narrows slightly from 6.9 to 6.8
-yr, 10-yr NPV median rises from $7,474 to $7,522 at 4% discount ($4,318 to $4,368 at 7%) —
+yr, 10-yr NPV median rises from $7,474 to $7,510 at 4% discount ($4,318 to $4,359 at 7%) —
 `index.html`'s own §6 mention of these specific figures updated to match, the only report
 location citing this artifact's own headline numbers (grepped to confirm no other instance
 was missed).

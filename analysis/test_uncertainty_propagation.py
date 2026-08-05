@@ -300,81 +300,73 @@ def case_production_spread_and_soiling_get_consistent_generation_sensitivity():
 @case
 def case_scale_production_reproduces_measured_flows_exactly_at_gen_scale_1():
     """issue #60: the identity scale_production() depends on for byte-
-    identity at nominal (gen_scale=1.0) -- max(net,0)+overlap == gen0 and
-    max(-net,0)+overlap == imp0 for EVERY interval -- checked on a
-    synthetic array that DELIBERATELY includes an interval with
-    SIMULTANEOUS nonzero import AND export (index 3 below), a real ~6% case
-    in this household's own measured data (2206 of 35040 intervals), not
-    just a theoretical edge case this test shouldn't skip covering."""
-    imp0 = np.array([0.0, 2.0, 0.0, 1.0])
-    gen0 = np.array([0.0, 0.0, 3.0, 0.5])   # index 3: overlap (both > 0)
-    net = gen0 - imp0
-    overlap = np.minimum(imp0, gen0)
-    assert overlap[3] == 0.5, "fixture must actually exercise the overlap>0 case"
+    identity at nominal (gen_scale=1.0) -- loss=0, so new_export=gen0 and
+    import_delta=0 for EVERY interval, checked on a synthetic array that
+    DELIBERATELY includes an interval with SIMULTANEOUS nonzero import AND
+    export (index 3 below), a real ~6% case in this household's own
+    measured data (2206 of 35040 intervals), not just a theoretical edge
+    case this test shouldn't skip covering -- the new formula does not
+    even need to treat that case specially (see scale_production()'s own
+    docstring), which this proves rather than assumes."""
+    gen0 = np.array([0.0, 0.0, 3.0, 0.5])   # index 3: simultaneous-flow interval
     P = np.array([1.0, 1.0, 3.0, 2.0])      # arbitrary gross production
-    D = P - net                             # the identity reconstruct_gross_production() uses
-    import_delta, new_export = up.scale_production(P, D, overlap, imp0, 1.0)
+    import_delta, new_export = up.scale_production(P, gen0, 1.0)
     assert np.allclose(import_delta, 0.0), import_delta
     assert np.allclose(new_export, gen0), (new_export, gen0)
-    return "scale_production reproduces measured import/export exactly at gen_scale=1.0, including a simultaneous-flow interval"
+    return "scale_production reproduces measured export exactly at gen_scale=1.0, including a simultaneous-flow interval"
 
 
 @case
 def case_scale_production_reallocates_a_loss_against_export_before_import():
-    """issue #60 AC2: a production LOSS must first eat into EXPORT (the
-    surplus beyond load), and only start increasing IMPORT once export
-    hits zero -- not scale export proportionally while import stays frozen
-    (the bug this issue fixes). Single synthetic interval: production P=5,
-    load D=2 -> nominal export=3, import=0. At gen_scale=0.8, P'=4 -> still
-    export=2, import untouched (the loss is small enough to be absorbed
-    entirely by export). At gen_scale=0.2, P'=1 -> D=2 exceeds P', so
-    export must hit exactly 0 and the FULL 1 kWh shortfall must spill into
-    import."""
+    """issue #60 AC2: a production LOSS must first eat into EXPORT, and
+    only start increasing IMPORT once export hits zero -- not scale export
+    proportionally while import stays frozen (the original bug), and NOT
+    decrease import under a loss either (Codex review, issue #60: an
+    earlier fix attempt let import shrink on a net-exporting overlap
+    interval whenever export alone had margin to absorb the loss --
+    physically backwards, since a production loss can only leave import
+    the same or make it worse). Single synthetic interval: production P=5,
+    nominal export=3. At gen_scale=0.8, loss=1 -> export drops to 2,
+    import untouched (small loss, absorbed entirely by export). At
+    gen_scale=0.2, loss=4 -> export must hit exactly 0 and the 1 kWh
+    excess must spill into import."""
     P = np.array([5.0])
-    D = np.array([2.0])
-    overlap = np.array([0.0])
-    imp0 = np.array([0.0])   # nominal: P > D, so imp0=0 by construction
-    _, gen_at_1 = up.scale_production(P, D, overlap, imp0, 1.0)
+    gen0 = np.array([3.0])
+    _, gen_at_1 = up.scale_production(P, gen0, 1.0)
     assert gen_at_1[0] == 3.0
-    delta_08, gen_08 = up.scale_production(P, D, overlap, imp0, 0.8)
+    delta_08, gen_08 = up.scale_production(P, gen0, 0.8)
     assert gen_08[0] == 2.0 and delta_08[0] == 0.0, (
         "a small loss must be absorbed entirely by export, not spill into import yet")
-    delta_02, gen_02 = up.scale_production(P, D, overlap, imp0, 0.2)
+    delta_02, gen_02 = up.scale_production(P, gen0, 0.2)
     assert gen_02[0] == 0.0 and delta_02[0] == 1.0, (
-        "once production drops below load, export must hit exactly 0 and "
-        "the shortfall must spill into import")
+        "once the loss exceeds export, export must hit exactly 0 and the "
+        "excess must spill into import")
     return "scale_production reallocates a loss against export first, spilling into import only once export is exhausted"
 
 
 @case
-def case_scale_production_shrinks_overlap_export_under_a_loss_not_floors_it():
-    """issue #60 AC2, Codex adversarial review second pass: an earlier
-    draft added the measured simultaneous-import-and-export 'overlap'
-    component back UNCHANGED at every gen_scale, which floors export at
-    `overlap` no matter how far production drops on a net-IMPORTING
-    overlap interval -- any further loss then showed up ENTIRELY as more
-    import, never as less export, violating the "export first" rule for
-    exactly this case (2,206 of 35,040 real intervals). Synthetic
-    net-importing overlap interval: imp0=3, gen0=1 (overlap=1, net=-2),
-    P=2, D=4 (so net = P-D = -2, consistent). At gen_scale=1, export=1
-    (matches gen0). At gen_scale=0.5 (P'=1, new_net=1-4=-3), export must
-    SHRINK to 0.5 (overlap*0.5), not stay frozen at 1."""
-    P = np.array([2.0])
-    D = np.array([4.0])
-    imp0 = np.array([3.0])
-    gen0 = np.array([1.0])
-    overlap = np.minimum(imp0, gen0)
-    assert overlap[0] == 1.0, "fixture must exercise the overlap>0, net-importing case"
-    _, gen_at_1 = up.scale_production(P, D, overlap, imp0, 1.0)
-    assert gen_at_1[0] == gen0[0], (gen_at_1, gen0)
-    delta_05, gen_05 = up.scale_production(P, D, overlap, imp0, 0.5)
-    assert gen_05[0] == 0.5, (
-        f"export at a net-importing overlap interval must SHRINK "
-        f"proportionally under a production loss (expected 0.5, got "
-        f"{gen_05[0]}) -- if this stays 1.0, overlap is being floored "
-        "again instead of scaled")
-    assert delta_05[0] > 0, "the loss must still increase import at this interval too"
-    return "scale_production shrinks overlap-interval export under a loss, does not floor it"
+def case_scale_production_never_decreases_import_under_a_loss():
+    """issue #60, Codex review (final pass): a production LOSS must never
+    DECREASE import -- less production available can only require the
+    same or MORE grid draw to meet a fixed load, never less. An earlier
+    fix attempt (scaling a "simultaneous flow" component down with
+    gen_scale) violated this on a net-EXPORTING interval with enough
+    export margin to fully absorb the loss: Codex's own concrete example
+    -- P=5, imp0=1, gen0=4, gen_scale=0.8 -- should reduce export from 4
+    to 3 while leaving import at 1 exactly (the loss, 1 kWh, is smaller
+    than gen0, 4 kWh, so it's fully absorbed by export alone); the earlier
+    formula instead produced export=2.8, import=0.8 -- import going DOWN
+    because of a production LOSS, which is not physically possible."""
+    P = np.array([5.0])
+    gen0 = np.array([4.0])
+    imp0 = np.array([1.0])
+    import_delta, new_export = up.scale_production(P, gen0, 0.8)
+    assert new_export[0] == 3.0, new_export
+    assert import_delta[0] == 0.0, (
+        f"import must stay exactly at its baseline when export alone "
+        f"absorbs the whole loss, got a delta of {import_delta[0]} "
+        f"(new import would be {imp0[0] + import_delta[0]}, not {imp0[0]})")
+    return "scale_production never decreases import under a production loss, matching Codex's own worked example"
 
 
 @case
@@ -450,7 +442,7 @@ def case_reconstructed_production_matches_the_validated_meter_derived_total():
         d = br.load()
         imp0 = d.Consumption.values.astype(float)
         gen0 = d.Generation.values.astype(float)
-        P, D, overlap = up.reconstruct_gross_production(d, imp0, gen0)
+        P, D = up.reconstruct_gross_production(d, imp0, gen0)
         return float(P.sum())
 
     total_kwh = _in_sandbox(_reconstruct)
@@ -493,7 +485,7 @@ def case_reconstructed_load_is_nonnegative_across_the_real_measured_year():
         d = br.load()
         imp0 = d.Consumption.values.astype(float)
         gen0 = d.Generation.values.astype(float)
-        _, D, _ = up.reconstruct_gross_production(d, imp0, gen0)
+        _, D = up.reconstruct_gross_production(d, imp0, gen0)
         return D
     D = _in_sandbox(_reconstruct)
     n_negative = int((D < 0).sum())
@@ -519,10 +511,10 @@ def case_dst_dates_are_excluded_from_the_sam_join_not_misaligned_against_it():
     internal consistency, not which physical hour was actually joined.
     Fixed the same way this repo's own precedent handles it: DST dates are
     excluded from the SAM join entirely, taking a conservative fallback
-    (P = max(net, 0), i.e. D = 0, no self-consumption modeled) instead.
-    Verified directly here: every interval on this household's two real
-    DST transition dates must have D == 0 exactly (the fallback's own
-    signature), not a value derived from a misaligned SAM lookup."""
+    (P = max(net, 0), no self-consumption modeled) instead. Verified
+    directly here: every interval on this household's two real DST
+    transition dates must have P == max(net, 0) exactly (the fallback's
+    own signature), not a value derived from a misaligned SAM lookup."""
     _require_archive()
     import rates as R
 
@@ -530,7 +522,7 @@ def case_dst_dates_are_excluded_from_the_sam_join_not_misaligned_against_it():
         d = br.load()
         imp0 = d.Consumption.values.astype(float)
         gen0 = d.Generation.values.astype(float)
-        P, D, _ = up.reconstruct_gross_production(d, imp0, gen0)
+        P, D = up.reconstruct_gross_production(d, imp0, gen0)
         dates = d.dt.dt.date.values
         net = gen0 - imp0
         dst_dates = set()

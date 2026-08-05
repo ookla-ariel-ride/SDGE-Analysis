@@ -496,28 +496,17 @@ def reconstruct_gross_production(d, imp0, gen0):
     is still a stated ESTIMATE of intra-hour shape, not a measurement, just
     a tighter one that cannot produce a negative implied load.
 
-    ENERGY BALANCE (AC2): for interval i, P[i] (gross production) and D[i]
-    (household load) relate to the MEASURED import/export via
-        net[i]     = gen0[i] - imp0[i]                (signed net export)
-        overlap[i] = min(imp0[i], gen0[i])             (simultaneous
-                       bidirectional import+export within the SAME 15-min
-                       interval -- 2206 of 35040 intervals in this
-                       household's real data, up to 0.795 kWh, a real
-                       metering/intra-interval-dynamics artifact, not
-                       noise to discard: NBC is charged on GROSS imports
-                       (CLAUDE.md section 9), so collapsing overlap away
-                       would understate real billed import at gen_scale=1)
-        D[i]       = P[i] - net[i]
-    which makes D the household's load with the SAME overlap convention
-    gen0/imp0 already carry, so `scale_production(P, D, overlap, imp0, 1.0)`
-    below reproduces (imp0, gen0) EXACTLY (verified in
-    test_uncertainty_propagation.py, not just assumed) -- this is what
-    keeps the gen_scale=1 nominal case, and therefore every existing
-    committed calibration figure, byte-identical to before this fix. This
-    identity holds for ANY P (by construction of D), so it does NOT by
-    itself confirm P means the right physical thing -- see
-    test_uncertainty_propagation.py's own annual-total cross-check against
-    the committed meter_derived figure for that.
+    D (household load) is returned for DIAGNOSTIC purposes ONLY -- a sanity
+    check that P is physically plausible (D = P[i] - (gen0[i] - imp0[i])
+    must never be negative; see the nonnegative-load test) -- it is NOT an
+    input to scale_production() below (Codex review, issue #60: an earlier
+    draft routed the reallocation through D and a frozen or gen_scale-
+    scaled "overlap" component derived from it, which handled a
+    simultaneous-import-and-export interval -- 2206 of 35040 in this
+    household's real data -- inconsistently depending on whether the
+    interval was net-exporting or net-importing overall; see
+    scale_production()'s own docstring for the simpler, correct model that
+    replaced it).
     """
     # Issue #60 (Codex adversarial review, third pass): the SAM 8760 export
     # is a FLAT 24-hours-a-day grid indexed from Jan 1, never adjusted for
@@ -621,54 +610,67 @@ def reconstruct_gross_production(d, imp0, gen0):
         for i in members:
             P[i] = pos_net[i] + share
 
-    overlap = np.minimum(imp0, gen0)
+    # D is a DIAGNOSTIC quantity only (the household load P implies, used to
+    # verify P itself is physically plausible -- see the nonnegative-load
+    # test) -- scale_production() below no longer computes anything from it
+    # (Codex review, issue #60: see scale_production()'s own docstring for
+    # why D/overlap turned out to be the wrong abstraction for the actual
+    # reallocation math).
     D = P - net
-    return P, D, overlap
+    return P, D
 
 
-def scale_production(P, D, overlap, imp0, gen_scale):
-    """(import_delta, new_export) at a scaled gross production P*gen_scale,
-    holding D (the household's own physical load) fixed.
+def scale_production(P, gen0, gen_scale):
+    """(import_delta, new_export) at a scaled gross production P*gen_scale.
 
-    overlap (the simultaneous-bidirectional-flow component) is scaled BY
-    gen_scale too, not held frozen (Codex adversarial review, issue #60,
-    second pass -- an earlier draft added the UNSCALED overlap back at
-    every gen_scale, which floors export at `overlap` no matter how far
-    production drops: on a net-importing overlap interval, ANY further
-    production loss then shows up ENTIRELY as more import, never as less
-    export, violating this function's own advertised "export first, then
-    import" rule for exactly the 2,206 real intervals -- 6.3% of this
-    household's year -- where it matters). overlap physically represents
-    an intra-15-minute production/load fluctuation too fine for this
-    interval resolution to resolve cleanly (a brief export burst alongside
-    sustained import, or vice versa) -- it is therefore part of the SAME
-    production variability P itself represents, and scales with it, not a
-    fixed baseline independent of how much the panels are producing.
+    THE MODEL (Codex review, issue #60 -- this replaced a D/overlap-based
+    formula that handled a simultaneous-import-and-export interval (2,206
+    of 35,040 in this household's real data) inconsistently: an earlier
+    version scaled the "overlap" component down WITH gen_scale, which
+    correctly let export shrink on a net-importing overlap interval, but
+    ALSO wrongly let IMPORT shrink on a net-EXPORTING overlap interval
+    whenever export alone had enough margin to absorb the whole loss --
+    physically backwards, since a production LOSS can only leave import
+    the same or make it WORSE, never better). The correct, simpler model:
+    export is directly tied to production, so a production shortfall
+    (`loss = P * (1 - gen_scale)`, positive for a loss, negative for a
+    surplus) is absorbed by REDUCING the ALREADY-MEASURED export (`gen0`)
+    first, however much of it there is (including any simultaneous-flow
+    "overlap" portion -- gen0 already IS the real gross export for that
+    interval, nothing to separately track), floored at 0; only once export
+    is fully exhausted does the remaining ("excess") loss spill into
+    import, which otherwise stays completely untouched by a production
+    change. This makes import_delta MONOTONIC in gen_scale by construction
+    (never negative for a loss, gen_scale <= 1) -- the property the
+    D/overlap formula's overlap-scaling violated.
 
-    new_export is the scenario's own EXPORT-before-battery series, used
-    directly (gen0 is already treated as independent of which imp_base
-    scenario -- real vs. EV-shifted -- is under test everywhere else in
-    this module; this preserves that same convention, not a new one).
+    gen0 -- the REAL measured export -- is used directly rather than a
+    scenario-specific reconstruction: gen0 is already treated as
+    independent of which imp_base scenario (real vs. EV-shifted) is under
+    test everywhere else in this module (the SAME gen0 feeds both
+    marginal(imp0) and marginal(imp_sh) calls), so import_delta -- built
+    only from P and gen0, never from imp_base -- is consistent with that
+    existing convention by construction, not a new assumption: EV-shifting
+    moves WHEN import happens, not the household's solar export, so a
+    production-driven adjustment has no reason to depend on it either.
 
-    import_delta is NOT a full import series -- it is the CHANGE in
-    import this production scenario causes relative to the REAL physical
-    baseline (imp0), meant to be ADDED onto whichever imp_base a caller is
-    testing (imp0 or imp_sh) and clipped at 0, so a production change and
-    an independent EV-shift counterfactual compose additively, the same
-    independence assumption gen0-sharing already makes.
+    import_delta is NOT a full import series -- it is the CHANGE a
+    production scenario causes, meant to be ADDED onto whichever imp_base
+    a caller is testing (imp0 or imp_sh) and clipped at 0.
 
-    At gen_scale=1.0 this is an algebraic identity that reproduces the
-    ORIGINAL (imp0, gen0) exactly: new_net = P - D = net (by construction),
-    and max(net,0)+overlap = gen0, max(-net,0)+overlap = imp0 hold for
-    every interval regardless of sign (both cases checked in
-    test_uncertainty_propagation.py), making import_delta all-zeros --
-    unaffected by scaling overlap, since gen_scale=1.0 leaves it unchanged
-    either way."""
-    new_net = P * gen_scale - D
-    scaled_overlap = overlap * gen_scale
-    new_export = np.maximum(new_net, 0.0) + scaled_overlap
-    new_import_physical = np.maximum(-new_net, 0.0) + scaled_overlap
-    import_delta = new_import_physical - imp0
+    At gen_scale=1.0, loss=0, so new_export=gen0 and import_delta=0
+    exactly -- reproduces the ORIGINAL (imp0, gen0) exactly for any
+    imp_base, which is what keeps the nominal case, and therefore every
+    existing committed calibration figure, byte-identical to before this
+    fix (verified in test_uncertainty_propagation.py, not just assumed).
+
+    Energy conservation holds per-interval, not just in aggregate:
+    (gen0 - new_export) + import_delta == loss always (a lost kWh is
+    EITHER less export OR more import, the same invariant the artifact's
+    own energy_conservation_check verifies)."""
+    loss = P * (1.0 - gen_scale)
+    new_export = np.maximum(gen0 - loss, 0.0)
+    import_delta = np.maximum(loss - gen0, 0.0)
     return import_delta, new_export
 
 
@@ -698,12 +700,13 @@ def dispatch_calibration():
     imp_sh, moved = br.shift_ev(d, ev, sessions, [True] * len(sessions), sop_idx, sop_ts)
     b_sh = bp.billed(d, imp_sh, gen0)
 
-    # issue #60: gross production (P) and the household's own physical load
-    # (D), reconstructed once from the real measured year -- held fixed and
-    # reused for every gen_scale scenario below (soiling and, via
-    # save1_of()'s shared soil_slope routing, production-measurement-spread
-    # too), instead of the prior gen0*gen_scale approximation.
-    P, D, overlap = reconstruct_gross_production(d, imp0, gen0)
+    # issue #60: gross production (P), reconstructed once from the real
+    # measured year -- held fixed and reused for every gen_scale scenario
+    # below (soiling and, via save1_of()'s shared soil_slope routing,
+    # production-measurement-spread too), instead of the prior gen0*
+    # gen_scale approximation. D is diagnostic-only (see reconstruct_
+    # gross_production()'s own docstring), not used below.
+    P, D = reconstruct_gross_production(d, imp0, gen0)
 
     def _steady_state_run(imp_base, gen, eta):
         """run_batt always starts at soc0=cap/2 and runs the year once -- a
@@ -750,7 +753,7 @@ def dispatch_calibration():
         and gen equals gen0 exactly (see scale_production()'s own
         docstring), so this is a no-op at nominal -- the byte-identity
         every existing committed figure depends on."""
-        import_delta, gen = scale_production(P, D, overlap, imp0, gen_scale)
+        import_delta, gen = scale_production(P, gen0, gen_scale)
         imp_base = np.maximum(imp_base + import_delta, 0.0)
         bill_base = bp.billed(d, imp_base, gen)
         eta = np.sqrt(rte)
@@ -835,7 +838,7 @@ def dispatch_calibration():
     # production must show up as EITHER reduced export OR increased import,
     # with nothing lost or created. Checked here, not just asserted, and
     # exposed in the artifact for AC3.
-    lossB_import_delta, gen_at_lossB = scale_production(P, D, overlap, imp0, 1 - lossB)
+    lossB_import_delta, gen_at_lossB = scale_production(P, gen0, 1 - lossB)
     production_lost_kwh = float(lossB * P.sum())
     export_reduction_kwh = float(gen0.sum() - gen_at_lossB.sum())
     import_increase_kwh = float(lossB_import_delta.sum())
@@ -862,17 +865,20 @@ def dispatch_calibration():
             "hourly files are whole-home GROSS LOAD, not production "
             "directly) -- allocated within each hour so every net-"
             "exporting interval gets at least its own net export (keeping "
-            "the implied household load D non-negative everywhere, not a "
-            "flat per-quarter split). The household's own physical load "
-            "(D) is backed out via the energy-balance identity D = P - "
-            "(gen0 - imp0). A gen_scale (soiling/production-measurement) "
-            "scenario scales P AND the measured simultaneous-import-and-"
-            "export 'overlap' component together, then re-derives export/"
-            "import from the SAME D -- reallocating a production shortfall "
-            "against export first (including overlap), spilling into "
-            "import only once export is exhausted -- instead of scaling "
-            "the Green Button Generation/export column directly, which "
-            "could never spill into import at all."),
+            "the diagnostic implied-household-load figure non-negative "
+            "everywhere, not a flat per-quarter split); the two DST "
+            "transition dates take a conservative fallback instead of a "
+            "misaligned SAM join (SAM's export is a flat 24-hour clock, "
+            "Green Button is true wall clock). A gen_scale (soiling/"
+            "production-measurement) scenario reduces the MEASURED export "
+            "(gen0) directly by the production shortfall (loss = P*(1-"
+            "gen_scale)), floored at 0, spilling any remainder into import "
+            "only once export is fully exhausted -- export is tied to "
+            "production and absorbs a shortfall first; import is load-"
+            "driven and only ever grows, never shrinks, from a production "
+            "loss -- instead of scaling the Green Button Generation/export "
+            "column proportionally, which could never spill into import "
+            "at all."),
         "gross_production_kwh": round(float(P.sum()), 1),
         "energy_conservation_check": {
             "at_lossB": lossB,
