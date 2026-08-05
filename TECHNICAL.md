@@ -2871,12 +2871,18 @@ adversarial review, issue #59, third pass).** Labeling the 0% floor as unproven 
 Monte Carlo still structurally cannot sample a negative escalation draw left a real gap: a
 reader could not judge what that excluded downside would actually cost. `escalation_
 downside_sensitivity()` closes it WITHOUT fabricating a probability distribution — a plain
-what-if grid (0%, -3%, -6%, -9%, -12%) run through the same `payback_of()` at the
-post-behavior mid marginal and nominal fade/price, explicitly labeled as carrying no
+what-if grid (0%, -3%, -6%, -9%, -12%) run through the same `payback_of()` at the EXACT
+nominal save1/fade/price `tornado()`'s own escalation lever sweeps (an earlier draft used
+the raw post-behavior `mid` alone instead of that Beta(2,1)-blended nominal save1, a
+self-inconsistency caught in review before this PR shipped — that draft's own +0% point
+silently disagreed with the figure it claimed to match), explicitly labeled as carrying no
 evidence-backed weight for any point (`not_a_probability_distribution` in the artifact).
-The result: payback stays within the 10-yr warranty down to -6%/yr (8.7 yr), but misses it
-at -9%/yr (10.5 yr) and worse at -12%/yr (14.7 yr) — a concrete, computed answer to "how
-much downside would it take to matter," reported as a labeled sensitivity, the same
+This grid's +0% point is now identical, by construction, to `tornado()`'s own escalation
+lever's ESC_LO payback endpoint (6.8 yr) — not to `tornado()`'s overall
+`nominal_payback_yr` (5.8 yr), which uses 6%, not 0%, escalation, a genuinely different
+scenario. The result: payback stays within the 10-yr warranty down to -6%/yr (8.5 yr), but
+misses it at -9%/yr (10.2 yr) and worse at -12%/yr (14.0 yr) — a concrete, computed answer
+to "how much downside would it take to matter," reported as a labeled sensitivity, the same
 pattern `dsgs_vpp_backtest.py`'s own additive sensitivities already established in this
 repo, never folded into the Monte Carlo's own percentile claims.
 

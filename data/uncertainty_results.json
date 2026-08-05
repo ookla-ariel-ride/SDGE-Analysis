@@ -71,26 +71,26 @@
  "escalation_two_sided_evidence_note": "Issue #59: the 0% floor on the escalation input above was checked against a two-sided alternative, not assumed. `esc` scales the battery's SAVING (proportional to the TOU SPREAD it arbitrages) uniformly, so the decision-relevant question is the SPREAD trend, not any one period's own absolute level -- and data/tou_spread.json's dedicated, structural-break-tested spread analysis reports that as 'not determined' in BOTH seasons, genuinely unknown rather than evidence for a positive or a zero-floored range. An earlier draft of this note wrongly cited per-TOU-cell absolute-level trends (on-peak rates rising) as evidence the floor was itself proven correct -- RETRACTED (Codex adversarial review, issue #59, first pass): winter on-peak and winter off-peak moved on nearly identical trajectories over the same window, which is exactly a case where both periods rising together leaves the spread roughly flat, not evidence it widened. What remains true, stated honestly: no cell or spread-level figure in this repo, at any rigor, shows a statistically significant NEGATIVE trend for this household's own tariff (super-off-peak's negative point estimate has a 95% CI crossing zero). Externally, a real CA IOU electric-rate decline has happened (PG&E, 2024-2025, driven by AB 1054 wildfire-capex cost roll-off, a real citable magnitude) but that mechanism is not shown to apply to SDG&E specifically -- SDG&E's own electric delivery rate rose over a comparable window in the same research -- so PG&E's number isn't validly transferable into an SDG&E-specific negative bound without fabricating one. DECISION: the 0% floor is kept, but re-labeled honestly as an INHERITED assumption from deep_analyses.py's original design, not one this repo's evidence proves correct -- a real, stated LIMITATION of this model, not a resolved question. Replacing it with a different unevidenced negative number (self-invented or borrowed from PG&E) would trade one unproven assumption for another. See this module's own docstring, section 'ISSUE #59', part (b) for the full check, and issue #87 for the follow-up (a real per-TOU-period dispatch-rerun escalation model) this is out of scope to implement here. Because documenting this limitation is not the same as showing its consequence (Codex adversarial review, issue #59, third pass), see escalation_downside_sensitivity below for what a range of negative escalation rates would actually cost, as a labeled what-if, not a probability-weighted claim.",
  "escalation_downside_sensitivity": {
   "not_a_probability_distribution": "This grid holds no evidence-backed weight for any point -- it exists because a reader cannot judge a downside risk that is described but never shown. See dispatch_policy_adherence_note and escalation_two_sided_evidence_note for why no probability-weighted negative-escalation input is modeled instead.",
-  "base_case": "post-behavior mid marginal, nominal fade/price (matches tornado()'s own nominal point)",
+  "base_case": "the exact same nominal save1/fade/price tornado() uses (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s own nominal_payback_yr by construction",
   "grid": {
    "+0%": {
-    "payback_yr": 6.9,
+    "payback_yr": 6.8,
     "within_10yr_warranty": true
    },
    "-3%": {
-    "payback_yr": 7.6,
+    "payback_yr": 7.5,
     "within_10yr_warranty": true
    },
    "-6%": {
-    "payback_yr": 8.7,
+    "payback_yr": 8.5,
     "within_10yr_warranty": true
    },
    "-9%": {
-    "payback_yr": 10.5,
+    "payback_yr": 10.2,
     "within_10yr_warranty": false
    },
    "-12%": {
-    "payback_yr": 14.7,
+    "payback_yr": 14.0,
     "within_10yr_warranty": false
    }
   }

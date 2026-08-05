@@ -453,6 +453,20 @@ def case_escalation_downside_sensitivity_is_labeled_not_a_probability_and_monoto
         "the downside grid must span far enough to show at least one "
         "scenario that misses the 10-yr warranty repay, or it doesn't "
         "actually demonstrate a consequence")
+    # A first draft of this grid used the raw post-behavior `mid` marginal
+    # instead of tornado()'s own Beta(2,1)-blended nominal save1, so its own
+    # +0% point silently disagreed with the figure the code claimed it
+    # matched -- caught in an independent review pass, not by any automated
+    # one. Guard the fix directly: this grid's +0% point (esc=0, same as
+    # ESC_LO) must equal tornado()'s escalation lever's own ESC_LO payback
+    # endpoint (its range is sorted ascending, and ESC_LO gives the WORSE/
+    # longer payback of the two, so it's the range's upper bound) exactly,
+    # not just approximately.
+    esc_lever_hi = result["tornado"]["levers"]["escalation"]["payback_range_yr"][1]
+    assert grid["+0%"]["payback_yr"] == esc_lever_hi, (
+        "escalation_downside_sensitivity's +0% point must equal tornado()'s "
+        f"own escalation-lever ESC_LO payback exactly: {grid['+0%']['payback_yr']} "
+        f"!= {esc_lever_hi}")
     return (f"escalation downside grid is labeled non-probabilistic and "
            f"monotonic across {sorted(grid)}")
 

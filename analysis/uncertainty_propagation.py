@@ -797,7 +797,7 @@ def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
 ESC_DOWNSIDE_GRID_PCT = (0.00, -0.03, -0.06, -0.09, -0.12)
 
 
-def escalation_downside_sensitivity(mid):
+def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, lossB):
     """Issue #59 (Codex adversarial review, third pass): documenting the 0%
     floor as an unproven, inherited assumption while the Monte Carlo can
     still never SAMPLE a negative escalation draw leaves a reader unable to
@@ -808,15 +808,25 @@ def escalation_downside_sensitivity(mid):
     function); it is a plain, labeled WHAT-IF grid, mirroring dsgs_vpp_
     backtest.py's own precedent for an additive, clearly-scoped sensitivity
     that never touches the primary probability-weighted figures. Computed at
-    the SAME nominal fade/price/horizon tornado() uses and the POST-behavior
-    mid marginal (this issue's decision-relevant base case, matching the
-    report's own headline payback), holding everything but esc fixed, so
-    each grid point isolates exactly what a given escalation rate costs."""
+    the EXACT SAME nominal save1/fade/price tornado()'s escalation LEVER
+    itself sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/
+    production -- an earlier draft used the raw post-behavior `mid` alone
+    instead of this blended nominal save1, a self-inconsistency caught in
+    review: that draft's own +0% grid point disagreed with what it CLAIMED
+    to match by over a year). This grid's +0% point (esc=0, same as
+    ESC_LO) is IDENTICAL, by construction, to tornado()'s own escalation
+    lever's ESC_LO payback endpoint -- NOT to tornado()'s overall
+    nominal_payback_yr, which uses esc_nom = (ESC_LO+ESC_HI)/2 = 6% rather
+    than 0% for the escalation dimension specifically, a genuinely
+    different scenario point, not a second inconsistency to fix."""
     fade_nom = (FADE_LO + FADE_HI) / 2
     price_nom = (PRICE_LO + PRICE_HI) / 2
+    c_nom = EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B)
+    loss_nom = (lossA + lossA + lossB) / 3
+    save1_nom = save1_of(c_nom, RTE_NOM, loss_nom, 1.0, pre, mid, rte_slope, soil_slope)
     grid = {}
     for pct in ESC_DOWNSIDE_GRID_PCT:
-        pb = payback_of(mid, pct, fade_nom, price_nom)
+        pb = payback_of(save1_nom, pct, fade_nom, price_nom)
         grid[f"{pct:+.0%}"] = {
             "payback_yr": (round(float(pb), 1) if not np.isnan(pb) else None),
             "within_10yr_warranty": (bool(pb <= WARRANTY_YR) if not np.isnan(pb) else False),
@@ -828,7 +838,7 @@ def escalation_downside_sensitivity(mid):
             "described but never shown. See dispatch_policy_adherence_note "
             "and escalation_two_sided_evidence_note for why no probability-"
             "weighted negative-escalation input is modeled instead."),
-        "base_case": "post-behavior mid marginal, nominal fade/price (matches tornado()'s own nominal point)",
+        "base_case": "the exact same nominal save1/fade/price tornado()'s escalation lever sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s escalation lever's ESC_LO payback endpoint by construction, not tornado()'s overall nominal_payback_yr (which uses esc=6%, not 0%, for the escalation dimension)",
         "grid": grid,
     }
 
@@ -925,7 +935,7 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     mc = full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB,
                           prod_sigma, N=N_full, seed=seed_full)
     tor = tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma)
-    esc_downside = escalation_downside_sensitivity(mid)
+    esc_downside = escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, lossB)
 
     old_deep = _committed("deep_results.json")
     # deep_analyses.py's own _base_save() reads the COMMITTED, already-rounded
