@@ -150,53 +150,76 @@ from Tesla, a utility VPP program, or an independent monitoring study (the
 PG&E-sponsored residential-battery VPP pilot study looked like a plausible
 future source but no compliance metric could be confirmed in it).
 
-(b) TWO-SIDED ESCALATION DISTRIBUTION. The escalation input above already
-states the underlying BLENDED, structural-break-tested trend is "not
-determined" in EITHER direction (battery.per_period.summer/winter, both
-verdicts). That "not determined" is evidence against a confident claim
-either way, not evidence FOR keeping a one-sided floor — so it alone does
-not resolve this question; checked further, at two levels:
-  Per-TOU-cell (data/tou_spread.json's delivery_cell_escalation, a less
-  conservative fit that skips the structural-break-robustness test the
-  blended figure above must pass): every cell whose 95% CI actually
-  EXCLUDES zero points UP — summer on-peak +7.63%/yr (CI [1.7, 13.91]),
-  winter on-peak +11.3%/yr (CI [7.89, 14.82]), winter off-peak +12.06%/yr
-  (CI [8.45, 15.79]). On-peak is the period that dominates a battery's
-  arbitrage-driven marginal saving, so this is real (if less rigorously
-  tested) evidence that the economically dominant driver has been rising,
-  not falling. Super-off-peak's point estimate is negative in both seasons
-  (~-21%/yr) but its own 95% CI is wide and CROSSES ZERO in both cases
-  ([-61.54, 60.62] summer, [-49.31, 20.86] winter, both on only 2-3 fit
-  degrees of freedom) — not statistically distinguished from zero, let
-  alone confidently negative. Super-off-peak is also a CHARGING-cost period
-  for a battery, not a discharge/arbitrage period, so even a real decline
-  there would slightly IMPROVE payback economics, not create the downside
-  scenario this issue is asking about. Net: no per-cell evidence supports a
-  downside composite-escalation scenario; every cell confidently measured
-  either direction points up.
+(b) TWO-SIDED ESCALATION DISTRIBUTION. `esc` in payback_of()/npv_of() below
+scales save1 (the battery's marginal SAVING, itself proportional to the
+on-peak/off-peak/super-off-peak SPREAD it arbitrages) by a SINGLE uniform
+factor (1+esc)^yr — i.e. it models the SPREAD/margin structure scaling
+proportionally at one blended rate, not each TOU period escalating at its
+own independently-measured rate. The decision-relevant question is
+therefore whether the SPREAD trend (not any one period's own absolute
+level) is measurably rising, falling, or undetermined — and
+data/tou_spread.json is this repo's own dedicated, structural-break-tested
+tool for exactly that question. Its verdict: "not determined" in BOTH
+seasons (battery.per_period.summer/winter). That is a genuine "unknown, not
+zero, not positive" finding for the spread itself, not evidence for either
+a positive OR a zero-floored distribution.
+  AN EARLIER DRAFT OF THIS SECTION GOT THIS WRONG (Codex adversarial
+  review, issue #59, first pass) — it argued per-TOU-cell ABSOLUTE-level
+  trends (on-peak delivery rates rising, individually, with CIs excluding
+  zero) as evidence that keeping the 0% floor was itself evidence-backed.
+  That conflates "the price level households pay in each period has risen"
+  with "the arbitrage margin a battery captures has risen" — two different
+  quantities. Winter on-peak and winter off-peak, for example, moved on
+  nearly identical trajectories over the same window (rate_first $0.26687,
+  rate_last $0.31174 for BOTH; escalation_pct_yr 11.3%/yr vs 12.06%/yr,
+  nearly the same rate), which is exactly a case where both periods rising
+  together leaves the SPREAD between them roughly flat rather than
+  widening — the per-cell reasoning, applied uniformly, does not actually
+  establish the spread rose. That claim is RETRACTED here.
+  What the per-cell data DOES still show, honestly stated: this repo has
+  no measured evidence, at ANY level of rigor, of a genuinely NEGATIVE
+  spread/margin trend for this household's own tariff. The composite
+  spread-level finding is "not determined" (unknown direction, not a
+  negative estimate); the individual TOU cells with CIs excluding zero all
+  point to rising absolute levels, which is at least consistent with a
+  non-shrinking (if not provably widening) spread, and none shows a
+  significant absolute decline except super-off-peak, whose own CI crosses
+  zero and which is a charging-cost (not arbitrage-margin) period besides.
   External precedent (researched for this issue, not previously in this
   repo): California IOU electric rates HAVE fallen in a real, documented,
   multi-year episode — PG&E's residential rates dropped in several separate
   2024-2025 rate actions (~$12/mo lower by Oct 2025 for a typical customer),
   driven by an IDENTIFIED, specific mechanism: AB 1054 wildfire-safety
-  capital costs rolling off the rate base. This is real precedent that a
-  CA IOU rate CAN decline, but the mechanism is not yet shown to apply
-  comparably to SDG&E's own electric delivery rates specifically — the same
-  research found SDG&E's electric delivery rate rose (+0.5c/kWh) over a
-  comparable recent window even as its gas transportation rate fell, and a
-  2023 SDG&E residential rate-DESIGN proposal showing a small (-0.3%)
-  change was a revenue-neutral reallocation proposal, not a confirmed
-  realized bill decrease. Extrapolating PG&E's decline onto SDG&E's own
-  escalation figure would misattribute a different utility's mechanism.
+  capital costs rolling off the rate base. This shows a CA IOU rate decline
+  is a real, not hypothetical, kind of event, with a real, citable
+  magnitude attached to it. But the mechanism is not yet shown to apply
+  comparably to SDG&E specifically — the same research found SDG&E's
+  electric delivery rate rose (+0.5c/kWh) over a comparable recent window
+  even as its gas transportation rate fell, and a 2023 SDG&E residential
+  rate-DESIGN proposal showing a small (-0.3%) change was a revenue-neutral
+  reallocation proposal, not a confirmed realized bill decrease. PG&E's own
+  magnitude is therefore not validly transferable to an SDG&E-specific
+  negative-escalation bound: using it would fabricate an SDG&E number from
+  a different utility's evidence, which CLAUDE.md §0 prohibits exactly as
+  much as inventing one from nothing.
   DECISION: the existing Uniform(0.00, 0.12) floor-at-zero convention is
-  KEPT and explicitly justified project-wide (not just for this script) on
-  this evidence, rather than widened into an unevidenced negative band:
-  every SDG&E-specific figure this repo can measure with a CI that excludes
-  zero points up; the one real CA-IOU decline precedent found has an
-  identified mechanism not yet shown to apply to this utility's own
-  delivery rates. A future SDG&E-specific rate case or securitization
-  event with the same AB 1054-style mechanism would be the evidence that
-  changes this.
+  KEPT, but honestly re-labeled: it is an INHERITED assumption (from
+  deep_analyses.py's original design), NOT one this repo's evidence proves
+  correct. No rigorous SDG&E-specific negative-spread magnitude exists
+  anywhere in this repo or in the external research done for this issue to
+  build a defensible lower band from; replacing an inherited-but-unproven
+  zero floor with a DIFFERENT, fabricated negative number (whether
+  self-invented or borrowed from PG&E's unrelated mechanism) would trade
+  one unevidenced assumption for another, not improve on it. This is
+  explicitly a LIMITATION of the current model, stated as such rather than
+  silently carried forward: what would settle it is a season-and-TOU-period
+  battery-savings trend computed by rerunning the actual dispatch/billing
+  engine at each period's own separately-measured historical rate path (not
+  a single blended scalar), or a longer bill corpus that lets tou_spread.py's
+  structural-break test resolve the spread trend with adequate power. Both
+  are out of this issue's own scope box (a dispatch-rerun-based escalation
+  model is a design change to how `esc` works, not a distribution-tuning
+  fix); filed as a follow-up (issue #87) rather than attempted here.
 
 CALIBRATION: RTE- AND SOILING-SAVING SENSITIVITY, FROM THE REAL ENGINE
 -----------------------------------------------------------------------------
@@ -969,26 +992,42 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
             "docstring, section 'ISSUE #59', part (a) for the full check."),
         "escalation_two_sided_evidence_note": (
             "Issue #59: the 0% floor on the escalation input above was "
-            "checked against a two-sided alternative, not assumed. Per-TOU-"
-            "cell delivery rates (data/tou_spread.json's "
-            "delivery_cell_escalation) show every cell whose 95% CI excludes "
-            "zero pointing UP -- summer on-peak +7.63%/yr, winter on-peak "
-            "+11.3%/yr, winter off-peak +12.06%/yr -- with on-peak "
-            "dominating a battery's own arbitrage-driven saving. Super-off-"
-            "peak's point estimate is negative in both seasons but its own "
-            "95% CI crosses zero (not statistically distinguished from a "
-            "flat or rising trend), and even a real super-off-peak decline "
-            "would slightly IMPROVE (not worsen) payback economics, since "
-            "that is a charging-cost period for a battery, not a discharge "
-            "one. Externally, a real CA IOU electric-rate decline has "
-            "happened (PG&E, 2024-2025, driven by AB 1054 wildfire-capex "
-            "cost roll-off) but that mechanism is not yet shown to apply to "
-            "SDG&E's own electric delivery rates, which rose over a "
-            "comparable recent window in the same research. No SDG&E-"
-            "specific figure with a CI excluding zero points down, so the "
-            "0% floor is kept and this is the evidence for that choice, not "
-            "an unconsidered gap -- see this module's own docstring, "
-            "section 'ISSUE #59', part (b) for the full check."),
+            "checked against a two-sided alternative, not assumed. `esc` "
+            "scales the battery's SAVING (proportional to the TOU SPREAD it "
+            "arbitrages) uniformly, so the decision-relevant question is the "
+            "SPREAD trend, not any one period's own absolute level -- and "
+            "data/tou_spread.json's dedicated, structural-break-tested "
+            "spread analysis reports that as 'not determined' in BOTH "
+            "seasons, genuinely unknown rather than evidence for a positive "
+            "or a zero-floored range. An earlier draft of this note wrongly "
+            "cited per-TOU-cell absolute-level trends (on-peak rates rising) "
+            "as evidence the floor was itself proven correct -- RETRACTED "
+            "(Codex adversarial review, issue #59, first pass): winter "
+            "on-peak and winter off-peak moved on nearly identical "
+            "trajectories over the same window, which is exactly a case "
+            "where both periods rising together leaves the spread roughly "
+            "flat, not evidence it widened. What remains true, stated "
+            "honestly: no cell or spread-level figure in this repo, at any "
+            "rigor, shows a statistically significant NEGATIVE trend for "
+            "this household's own tariff (super-off-peak's negative point "
+            "estimate has a 95% CI crossing zero). Externally, a real CA "
+            "IOU electric-rate decline has happened (PG&E, 2024-2025, "
+            "driven by AB 1054 wildfire-capex cost roll-off, a real citable "
+            "magnitude) but that mechanism is not shown to apply to SDG&E "
+            "specifically -- SDG&E's own electric delivery rate rose over a "
+            "comparable window in the same research -- so PG&E's number "
+            "isn't validly transferable into an SDG&E-specific negative "
+            "bound without fabricating one. DECISION: the 0% floor is kept, "
+            "but re-labeled honestly as an INHERITED assumption from "
+            "deep_analyses.py's original design, not one this repo's "
+            "evidence proves correct -- a real, stated LIMITATION of this "
+            "model, not a resolved question. Replacing it with a different "
+            "unevidenced negative number (self-invented or borrowed from "
+            "PG&E) would trade one unproven assumption for another. See "
+            "this module's own docstring, section 'ISSUE #59', part (b) "
+            "for the full check, and issue #87 for the follow-up (a real "
+            "per-TOU-period dispatch-rerun escalation model) this is out of "
+            "scope to implement here."),
         "calibration": {
             "pre_nominal": round(pre, 2),
             "mid_nominal": round(mid, 2),

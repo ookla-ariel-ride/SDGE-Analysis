@@ -381,6 +381,22 @@ def case_dispatch_adherence_and_escalation_sidedness_are_documented_not_modeled(
     assert "issue #59" in esc_note.lower()
     assert "0% floor" in esc_note and "kept" in esc_note.lower(), (
         "the escalation note must state the 0% floor decision explicitly")
+    # Codex adversarial review, issue #59, first pass: an earlier draft
+    # claimed per-TOU-cell absolute-level trends (on-peak rising) PROVED the
+    # floor correct -- a category error, since `esc` scales the SPREAD-
+    # driven saving uniformly, not any one period's own level, and the
+    # repo's own dedicated spread-level tool (tou_spread.json) reports that
+    # as "not determined". The note must tie the decision to the SPREAD
+    # question specifically (evidence semantics, not just tone words) and
+    # must NOT reassert the retracted claim that per-cell evidence alone
+    # settles it.
+    assert "spread" in esc_note.lower() and "not determined" in esc_note.lower(), (
+        "the escalation note must tie the 0% floor decision to the SPREAD-"
+        "level 'not determined' finding, not just individual TOU-cell "
+        f"levels: {esc_note!r}")
+    assert "inherited" in esc_note.lower(), (
+        "the note must be honest that the floor is an INHERITED assumption, "
+        f"not one this repo's evidence proves correct: {esc_note!r}")
     # ESC_LO/ESC_HI themselves must not have silently drifted while this
     # documentation was added -- the whole point of issue #59 is that the
     # floor choice was RE-JUSTIFIED, not changed.

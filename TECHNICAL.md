@@ -2818,28 +2818,44 @@ technologies without isolating residential battery storage. Left "not determined
 CLAUDE.md §0 rather than modeled from an invented number.
 
 *Two-sided escalation distribution* — whether the `Uniform(0.00, 0.12)` escalation input
-should allow for rates falling, not just rising — was checked at two levels, not just
-inherited from the existing "not determined" composite-trend finding (`tou_spread.json`'s
-`battery.per_period`, itself evidence AGAINST a confident trend claim either way, not FOR
-a one-sided floor). Per-TOU-cell delivery rates (`tou_spread.json`'s
-`delivery_cell_escalation`, a less conservative fit that skips the composite figure's
-structural-break-robustness test) show every cell whose 95% CI excludes zero pointing UP:
-summer on-peak +7.63%/yr (CI [1.7, 13.91]), winter on-peak +11.3%/yr (CI [7.89, 14.82]),
-winter off-peak +12.06%/yr (CI [8.45, 15.79]) — on-peak being the period that dominates a
-battery's own arbitrage-driven saving. Super-off-peak's point estimate is negative in both
-seasons (~-21%/yr) but its own 95% CI crosses zero in both ([-61.54, 60.62] summer,
-[-49.31, 20.86] winter, each on only 2-3 fit degrees of freedom) — not statistically
-distinguished from flat or rising — and even a real decline there would slightly IMPROVE
-(not worsen) payback economics, since it is a charging-cost period for a battery, not a
-discharge one. Externally: California IOU electric rates HAVE fallen in a real, documented
-multi-year episode (PG&E, 2024-2025, ~$12/mo lower by October 2025 for a typical
-customer), driven by an identified mechanism — AB 1054 wildfire-safety capital costs
-rolling off the rate base — but that mechanism is not yet shown to apply comparably to
-SDG&E's own electric delivery rates, which the same research found rose over a comparable
-recent window even as SDG&E's gas transportation rate fell. No SDG&E-specific figure with
-a CI excluding zero points down, so the 0% floor is kept: this is the checked evidence
-behind that choice, not an unconsidered gap, and it is the reasoning `data/uncertainty_
-results.json` now carries alongside the escalation input itself.
+should allow for rates falling, not just rising. `esc` scales `save1` (the battery's
+marginal SAVING, proportional to the on-peak/off-peak/super-off-peak SPREAD it arbitrages)
+by one uniform factor in `payback_of()`/`npv_of()` — so the decision-relevant question is
+the SPREAD trend, not any single period's own absolute level, and `tou_spread.json`'s own
+dedicated, structural-break-tested spread analysis already answers that: "not determined"
+in BOTH seasons (`battery.per_period`) — genuinely unknown, not evidence for either a
+positive or a zero-floored range.
+
+An earlier draft of this section argued per-TOU-cell absolute-level trends (on-peak
+delivery rates rising, individually, with 95% CIs excluding zero: summer +7.63%/yr,
+winter +11.3%/yr) PROVED the 0% floor correct. **Retracted** (Codex adversarial review,
+issue #59, first pass): that conflates "the price level in each period has risen" with
+"the arbitrage margin has risen" — two different quantities. Winter on-peak and winter
+off-peak, for example, moved on nearly identical trajectories over the same window (same
+rate_first $0.26687 and rate_last $0.31174 for both; 11.3%/yr vs 12.06%/yr) — exactly the
+case where both periods rising together leaves the SPREAD roughly flat, not evidence it
+widened. What remains true, stated more carefully: no cell or spread-level figure in this
+repo, at any rigor, shows a statistically significant NEGATIVE trend for this household's
+own tariff (super-off-peak's negative point estimate, ~-21%/yr both seasons, has a 95% CI
+crossing zero in both — [-61.54, 60.62] summer, [-49.31, 20.86] winter). Externally,
+California IOU electric rates HAVE fallen in a real, documented multi-year episode (PG&E,
+2024-2025, ~$12/mo lower by October 2025 for a typical customer, driven by an identified
+mechanism — AB 1054 wildfire-safety capital costs rolling off the rate base) — a real,
+citable magnitude for a rate decline — but that mechanism is not shown to apply to SDG&E
+specifically: the same research found SDG&E's own electric delivery rate rose over a
+comparable recent window even as its gas transportation rate fell. PG&E's magnitude is not
+validly transferable into an SDG&E-specific negative bound without fabricating one.
+
+**Decision: the 0% floor is kept, honestly re-labeled.** It is an INHERITED assumption
+from `deep_analyses.py`'s original design, not one this repo's evidence proves correct —
+a real, stated LIMITATION of the current model, not a resolved question. Replacing it with
+a different unevidenced negative number (self-invented or borrowed from PG&E) would trade
+one unproven assumption for another, not improve on it. `data/uncertainty_results.json`'s
+`escalation_two_sided_evidence_note` carries this reasoning, including the retraction, and
+what would actually settle the underlying question — a per-TOU-period battery-savings
+model built from real dispatch reruns at each period's own separately-measured rate path,
+rather than one blended scalar — is filed as issue #87 rather than attempted here (a
+model-design change, out of issue #59's own scope box).
 
 ---
 
