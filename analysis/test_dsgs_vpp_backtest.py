@@ -935,6 +935,37 @@ def case_prestaged_sensitivity_is_additive_and_internally_consistent():
 
 
 @case
+def case_prestaged_delta_note_wording_follows_the_actual_computed_sign():
+    """Codex review, issue #53: an earlier version of delta_vs_reactive's generated
+    note hardcoded a "rises"/"worth a REAL amount" narrative regardless of the actual
+    computed net-revenue delta -- wrong whenever pre-staging nets WORSE than reactive
+    (a real possibility: it always gives up ordinary arbitrage before the event hour,
+    but only gets paid back if the event itself is a capacity-payment ("Test
+    Capacity") event with a big enough rate; a "Test Non-Capacity" event earns zero
+    capacity payment while still giving up that arbitrage). Reproduced here on a
+    fully synthetic single-day frame -- consistent import to arbitrage during the
+    4-9pm window, one Test Non-Capacity event at the LAST on-peak hour, so pre-staging
+    forgoes four hours of real arbitrage value for zero offsetting capacity revenue --
+    which must make delta_vs_reactive.net_usd negative and its note say "falls", not
+    "rises"."""
+    d = _synthetic_window(dt.date(2026, 7, 15), dt.date(2026, 7, 15), consumption_kw=5.0)
+    cal = pd.DataFrame([{"date": dt.date(2026, 7, 15), "hour_end": 21,
+                         "event_type": "Test Non-Capacity", "caiso_lmp_usd_per_mwh": 50.0}])
+    result = vb.backtest(d, cal)
+    delta = result["prestaged_sensitivity"]["delta_vs_reactive"]
+    assert delta["net_usd"] < 0, (
+        "test fixture needs adjusting: expected pre-staging to net WORSE than "
+        f"reactive on a zero-capacity-payment event, got delta {delta['net_usd']:+.2f}")
+    assert "falls" in delta["note"], (
+        f"a negative net_usd delta ({delta['net_usd']:+.2f}) must produce a "
+        f"'falls' note, not a hardcoded 'rises' claim: {delta['note']!r}")
+    assert "rises $" not in delta["note"], (
+        f"note wrongly claims revenue rises despite a negative delta: {delta['note']!r}")
+    return (f"a zero-capacity-payment event with forgone arbitrage produces "
+           f"net_usd delta ${delta['net_usd']:+.2f}, correctly worded 'falls'")
+
+
+@case
 def case_prestaged_descriptions_never_assert_an_unproven_dollar_bound():
     """Codex adversarial review, issue #53, third pass: TWO separate earlier
     versions of this artifact's own generated text called the union-calendar

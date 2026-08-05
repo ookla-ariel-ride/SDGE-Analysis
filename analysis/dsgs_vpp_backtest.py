@@ -1063,6 +1063,16 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
         f"${gross_revenue:,.2f} -- same order of magnitude as a partial (not full "
         "6-month) season at the program-terms rate.")
 
+    # Codex review, issue #53: the prestaged delta_vs_reactive note below must not
+    # hardcode a "rises"/"is worth a real amount" narrative -- pre-staging can also
+    # sacrifice more arbitrage value than it earns for a given calendar (a real
+    # possibility per-aggregation, not just theoretical), so the wording is picked
+    # from the actual computed sign, not assumed positive.
+    pre_net_delta = round(net_revenue_pre - net_revenue, 2)
+    pre_kwh_delta = round(total_kwh_pre - total_kwh_20pct, 2)
+    pre_net_verb = "rises" if pre_net_delta > 0 else "falls" if pre_net_delta < 0 else "is unchanged"
+    pre_kwh_verb = "rises" if pre_kwh_delta > 0 else "falls" if pre_kwh_delta < 0 else "is unchanged"
+
     result = {
         "hypothetical": True,
         "household_has_battery_today": False,
@@ -1290,25 +1300,22 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
                 "net_usd_pct": (round((net_revenue_pre - net_revenue) / net_revenue * 100, 1)
                                 if net_revenue else None),
                 "note": (
-                    f"Computed, not assumed either way. Foresight is worth a REAL "
-                    f"amount here, not a rounding error, but it shows up mostly as "
-                    f"MORE revenue per served hour, not as fewer misses: net "
-                    f"revenue rises "
-                    f"${round(net_revenue_pre - net_revenue, 2):+,.2f} "
+                    f"Computed, not assumed either way -- pre-staging trades "
+                    f"ordinary/arbitrage discharge earlier in the day for more SOC "
+                    f"held back for the event hour(s), which can raise OR lower net "
+                    f"revenue depending on how much arbitrage value that trade gives "
+                    f"up relative to the extra event-hour capacity it delivers: net "
+                    f"revenue {pre_net_verb} "
+                    f"${pre_net_delta:+,.2f} "
                     f"({round((net_revenue_pre - net_revenue) / net_revenue * 100, 1) if net_revenue else float('nan'):+.1f}%, "
                     f"${net_revenue:,.2f} to ${net_revenue_pre:,.2f}) and total "
-                    f"delivered discharge rises "
-                    f"{round(total_kwh_pre - total_kwh_20pct, 2):+,.2f} kWh "
+                    f"delivered discharge {pre_kwh_verb} "
+                    f"{pre_kwh_delta:+,.2f} kWh "
                     f"({round((total_kwh_pre - total_kwh_20pct) / total_kwh_20pct * 100, 1) if total_kwh_20pct else float('nan'):+.1f}%), "
-                    f"while the miss rate moves only "
+                    f"while the miss rate moves "
                     f"{(round((miss_rate_pre - miss_rate) * 100, 2) if miss_rate is not None and miss_rate_pre is not None else float('nan')):+.2f} "
                     f"percentage points ({misses_pre} of {n_hours_in_window} misses "
-                    f"pre-staged vs {n_misses} reactive) -- pre-staging mostly helps "
-                    "event hours that were already delivering SOME capacity deliver "
-                    "MORE of it (holding back arbitrage discharge earlier in the "
-                    "day leaves more SOC above the reserve floor when the event "
-                    "hour arrives), rather than converting a fully SOC-exhausted "
-                    "miss into a hit."),
+                    f"pre-staged vs {n_misses} reactive)."),
             },
         },
         "total_discharge_kwh_note": (
