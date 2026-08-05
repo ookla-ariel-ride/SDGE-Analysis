@@ -997,6 +997,31 @@ def solar_present():
             or HH.get("solar.inverter_count", required=False) is not None)
 
 
+def _is_number(value):
+    """True only for a genuine int/float, never a bool (Codex review, issue
+    #41: `float(True)` is 1.0 and `float("x")` raises an unfriendly
+    TypeError/ValueError from deep inside a coercion call -- both need to be
+    a clean, field-named domain error instead, checked on the RAW value
+    before coercion, the same discipline already applied to spaces/
+    max_circuits and to schedule pole counts)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _bare_panel_field(key):
+    """"panel.pv_backfeed_a" -> "pv_backfeed_a", for _panel_domain_error()."""
+    return key.split(".", 1)[1] if key.startswith("panel.") else key
+
+
+def _required_number(key):
+    """A required panel intake field as a float, refusing a boolean or any
+    other non-numeric raw value before coercion rather than after (Codex
+    review, issue #41)."""
+    v = HH.get(key)
+    if not _is_number(v):
+        _panel_domain_error(_bare_panel_field(key), v, "is not a number")
+    return float(v)
+
+
 def _optional_number(key):
     """A nullable intake field as a float, or None.
 
@@ -1004,10 +1029,16 @@ def _optional_number(key):
     there is a MEANING, not a missing answer: no source backfeeds the panel, no
     continuous rating is printed on the socket, the breaker end was not read.
     float(None) raises, so a value that the committed template ships would
-    otherwise stop the run.
+    otherwise stop the run. A recorded value that is a boolean or any other
+    non-numeric type is refused before coercion (Codex review, issue #41):
+    float(True) == 1.0 would otherwise pass as a falsely-plausible reading.
     """
     v = HH.get(key, required=False)
-    return None if v is None else float(v)
+    if v is None:
+        return None
+    if not _is_number(v):
+        _panel_domain_error(_bare_panel_field(key), v, "is not a number")
+    return float(v)
 
 
 def _key_present(dotted):
@@ -1630,14 +1661,14 @@ def load_panel():
     has_ev = _flag(EV_FLAG) is not False
     return validate_panel({
         "has_ev": has_ev,
-        "service_rating_a": float(HH.get("panel.service_rating_a")),
-        "busbar_rating_a": float(HH.get("panel.busbar_rating_a")),
+        "service_rating_a": _required_number("panel.service_rating_a"),
+        "busbar_rating_a": _required_number("panel.busbar_rating_a"),
         "main_breaker_catalog": HH.get("panel.main_breaker_catalog"),
         "enclosure_catalog": HH.get("panel.enclosure_catalog"),
         "enclosure_type": HH.get("panel.enclosure_type"),
         "meter_class": HH.get("panel.meter_class"),
         "breaker_family": HH.get("panel.breaker_family"),
-        "assembly_sccr_ka": float(HH.get("panel.assembly_sccr_ka")),
+        "assembly_sccr_ka": _required_number("panel.assembly_sccr_ka"),
         "pv_backfeed_a": _optional_number("panel.pv_backfeed_a"),
         "pv_backfeed_recorded": _key_present("panel.pv_backfeed_a"),
         "meter_socket_continuous_a": _optional_number(

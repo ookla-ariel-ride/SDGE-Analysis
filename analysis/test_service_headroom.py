@@ -998,6 +998,32 @@ def case_spaces_and_max_circuits_reject_lossy_coercion():
            "with int()")
 
 
+def case_panel_float_fields_reject_boolean_coercion():
+    """Codex review, issue #41: the mirror of the spaces/max_circuits fix
+    above, for float()-coerced fields. `float(True) == 1.0`, so
+    panel.assembly_sccr_ka: true would otherwise pass every downstream
+    positive/finite check as a falsely-plausible 1.0 kA rating -- checked
+    on the raw value now, in _required_number()/_optional_number(), before
+    float() ever runs."""
+    for edit, replacement, needle in (
+            ("service_rating_a: 175", "service_rating_a: true", "service_rating_a"),
+            ("busbar_rating_a: 200", "busbar_rating_a: false", "busbar_rating_a"),
+            ("assembly_sccr_ka: 22", "assembly_sccr_ka: true", "assembly_sccr_ka"),
+            ("pv_backfeed_a: 50", "pv_backfeed_a: true", "pv_backfeed_a"),
+            ("meter_socket_continuous_a: 170",
+             "meter_socket_continuous_a: false", "meter_socket_continuous_a")):
+        with _with_household(PANEL_YAML.replace(edit, replacement)):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted {replacement!r}")
+            except SystemExit as e:
+                assert f"panel.{needle} is" in str(e), (replacement, str(e))
+                assert "is not a number" in str(e), str(e)
+    return ("panel.service_rating_a/busbar_rating_a/assembly_sccr_ka/"
+           "pv_backfeed_a/meter_socket_continuous_a all refuse a boolean "
+           "raw value rather than silently coercing it to 1.0/0.0")
+
+
 def case_panel_domain_checks_accept_the_edges_that_are_real():
     """The guard is on safety arithmetic, not a schema validator: values that
     are unusual but physically possible must still run."""
@@ -4898,6 +4924,7 @@ CASES = [
     case_non_finite_panel_values_fail_closed,
     case_a_nan_backfeed_does_not_produce_a_false_safety_pass,
     case_spaces_and_max_circuits_reject_lossy_coercion,
+    case_panel_float_fields_reject_boolean_coercion,
     case_panel_domain_checks_accept_the_edges_that_are_real,
     case_free_text_panel_fields_fail_closed_on_blank_or_absurd_length,
     case_meter_class_format_fails_closed,
