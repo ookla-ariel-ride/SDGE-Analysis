@@ -359,6 +359,119 @@ def case_build_end_to_end_is_deterministic_and_self_consistent():
 
 
 @case
+def case_dispatch_adherence_and_escalation_sidedness_are_documented_not_modeled():
+    """Issue #59: both scope questions from #15's review resolve to 'no new
+    distribution, documented reasoning instead' -- checked here so the
+    documentation can't silently vanish in a future edit. Codex adversarial
+    review, issue #59, second pass: an earlier version of this case called
+    _require_archive() before checking either note, so it SKIPPED (not ran)
+    in any real public checkout/CI and never actually verified the committed
+    artifact. Reads data/uncertainty_results.json directly instead -- no
+    archive needed, matching case_esc_hi_matches_committed_tou_spread_ladder_
+    ceiling's own public-data pattern above -- so this genuinely runs in CI.
+    Guards the SPECIFIC claim each note makes, not just that a note exists:
+    the dispatch note must say adherence is NOT modeled (not accidentally
+    claim the opposite), and the escalation note must not silently drop the
+    reasoning for why the floor stays at 0%, nor silently re-assert the
+    retracted per-cell-alone claim a first adversarial-review pass caught."""
+    result = _committed("uncertainty_results.json")
+    dispatch_note = result["dispatch_policy_adherence_note"]
+    assert "issue #59" in dispatch_note.lower()
+    assert "not modeled" in dispatch_note.lower(), (
+        "the dispatch-adherence note must say this is NOT modeled -- if a "
+        "future edit actually implements a distribution, this note (and "
+        "this assertion) need to be updated together, not silently")
+    esc_note = result["escalation_two_sided_evidence_note"]
+    assert "issue #59" in esc_note.lower()
+    assert "0% floor" in esc_note and "kept" in esc_note.lower(), (
+        "the escalation note must state the 0% floor decision explicitly")
+    # Codex adversarial review, issue #59, first pass: an earlier draft
+    # claimed per-TOU-cell absolute-level trends (on-peak rising) PROVED the
+    # floor correct -- a category error, since `esc` scales the SPREAD-
+    # driven saving uniformly, not any one period's own level, and the
+    # repo's own dedicated spread-level tool (tou_spread.json) reports that
+    # as "not determined". The note must tie the decision to the SPREAD
+    # question specifically (evidence semantics, not just tone words) and
+    # must NOT reassert the retracted claim that per-cell evidence alone
+    # settles it.
+    assert "spread" in esc_note.lower() and "not determined" in esc_note.lower(), (
+        "the escalation note must tie the 0% floor decision to the SPREAD-"
+        "level 'not determined' finding, not just individual TOU-cell "
+        f"levels: {esc_note!r}")
+    assert "inherited" in esc_note.lower(), (
+        "the note must be honest that the floor is an INHERITED assumption, "
+        f"not one this repo's evidence proves correct: {esc_note!r}")
+    # The escalation input's own short evidential_basis must not contradict
+    # the fuller note by implying the floor is proven/evidence-backed
+    # outright (Codex adversarial review, issue #59, second pass).
+    esc_basis = result["inputs"]["escalation"]["evidential_basis"].lower()
+    assert "inherited" in esc_basis and "unproven" in esc_basis, (
+        "the escalation input's own evidential_basis must not contradict "
+        f"the fuller note by implying the floor is proven: {esc_basis!r}")
+    # ESC_LO/ESC_HI themselves must not have silently drifted while this
+    # documentation was added -- the whole point of issue #59 is that the
+    # floor choice was RE-JUSTIFIED, not changed.
+    assert up.ESC_LO == 0.00 and up.ESC_HI == 0.12, (
+        "issue #59 kept the existing escalation band; ESC_LO/ESC_HI must "
+        f"not have drifted, got ({up.ESC_LO}, {up.ESC_HI})")
+    return "dispatch-adherence and escalation-sidedness are both documented as checked-and-not-modeled, per issue #59, verified from the public committed artifact"
+
+
+@case
+def case_escalation_downside_sensitivity_is_labeled_not_a_probability_and_monotonic():
+    """Codex adversarial review, issue #59, third pass: documenting the 0%
+    floor as inherited/unproven while the Monte Carlo can never sample a
+    negative escalation draw hides the downside's actual consequence from a
+    reader. escalation_downside_sensitivity is a plain what-if grid, not a
+    new probability-weighted input -- checked here for two things: (1) it
+    is explicitly labeled as carrying no evidence-backed weight (so a
+    reader can't mistake it for a Monte Carlo percentile), and (2) payback
+    years actually get WORSE as the grid moves more negative (a sign/
+    monotonicity sanity check -- if a more negative escalation scenario
+    ever produced a SHORTER payback, that would mean payback_of()'s own
+    compounding is broken, not that negative escalation somehow helps)."""
+    result = _committed("uncertainty_results.json")
+    sens = result["escalation_downside_sensitivity"]
+    disclaimer = sens["not_a_probability_distribution"].lower()
+    assert "no evidence-backed weight" in disclaimer and "probability" in disclaimer, (
+        "the downside grid must explicitly disclaim being a probability "
+        f"distribution: {sens['not_a_probability_distribution']!r}")
+    grid = sens["grid"]
+    assert set(grid) == {f"{p:+.0%}" for p in up.ESC_DOWNSIDE_GRID_PCT}
+    paybacks = [grid[f"{p:+.0%}"]["payback_yr"] for p in sorted(up.ESC_DOWNSIDE_GRID_PCT)]
+    assert paybacks == sorted(paybacks, reverse=True), (
+        "payback years must be monotonically WORSE (longer) as the grid "
+        f"moves more negative -- got {paybacks} for pcts "
+        f"{sorted(up.ESC_DOWNSIDE_GRID_PCT)}")
+    # This household's own real base case (Codex's concrete ask: show what
+    # the downside actually costs, not just that one exists): at 0% this
+    # must match warranty-repaying, and the grid must contain at least one
+    # scenario that does NOT, or the grid is too narrow to show a real
+    # consequence at all.
+    assert grid["+0%"]["within_10yr_warranty"] is True
+    assert any(not row["within_10yr_warranty"] for row in grid.values()), (
+        "the downside grid must span far enough to show at least one "
+        "scenario that misses the 10-yr warranty repay, or it doesn't "
+        "actually demonstrate a consequence")
+    # A first draft of this grid used the raw post-behavior `mid` marginal
+    # instead of tornado()'s own Beta(2,1)-blended nominal save1, so its own
+    # +0% point silently disagreed with the figure the code claimed it
+    # matched -- caught in an independent review pass, not by any automated
+    # one. Guard the fix directly: this grid's +0% point (esc=0, same as
+    # ESC_LO) must equal tornado()'s escalation lever's own ESC_LO payback
+    # endpoint (its range is sorted ascending, and ESC_LO gives the WORSE/
+    # longer payback of the two, so it's the range's upper bound) exactly,
+    # not just approximately.
+    esc_lever_hi = result["tornado"]["levers"]["escalation"]["payback_range_yr"][1]
+    assert grid["+0%"]["payback_yr"] == esc_lever_hi, (
+        "escalation_downside_sensitivity's +0% point must equal tornado()'s "
+        f"own escalation-lever ESC_LO payback exactly: {grid['+0%']['payback_yr']} "
+        f"!= {esc_lever_hi}")
+    return (f"escalation downside grid is labeled non-probabilistic and "
+           f"monotonic across {sorted(grid)}")
+
+
+@case
 def case_build_output_is_json_serializable():
     _require_archive()
     out = up.build()

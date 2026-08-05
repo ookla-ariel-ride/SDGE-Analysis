@@ -118,6 +118,124 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    gap) rather than each day being an independent noisy draw that would
    average out. Both statistics are recorded in the output for inspection.
 
+ISSUE #59: TWO SCOPE QUESTIONS FROM #15'S REVIEW, RESOLVED
+-----------------------------------------------------------------------------
+#15's adversarial review (pass 3 of 3) raised two further questions, ruled out
+of that issue's scope box and tracked separately here. Both resolve to "no
+change to the model" — this section states why, with the evidence checked,
+rather than leaving the gap undocumented.
+
+(a) DISPATCH-POLICY ADHERENCE RISK. This is a DIFFERENT question from the
+"dispatch_policy" already addressed in reconcile_tornado()'s notes above (the
+household's CHOICE among evening/twowin/greedy, correctly held fixed at
+greedy as a decision, not an uncertain input) — this is whether, having
+CHOSEN greedy, the Powerwall's own automation actually EXECUTES it reliably.
+Real-world software/automation can fail to follow its configured schedule
+(app settings not saving, a unit needing a manual reboot, etc.). Checked
+(WebSearch, 2026-08) for a citable number to build a distribution from
+against these specific sources, none of which quantifies Powerwall dispatch-
+schedule adherence:
+  - solarinsure.com/tesla-powerwall-reliability-study — the one quantitative
+    Powerwall "reliability" figure found (a ~0.93% failure rate) is a
+    warranty-claims HARDWARE failure rate (unit died / needed replacement),
+    not a measure of whether a working unit follows its own schedule, and
+    carries no disclosed sample size.
+  - calmac.org/publications/PY2024_SCE_DR_Program_Report_ELRP_FINAL_PUBLIC.pdf
+    — CPUC's ELRP demand-response load-impact evaluation computes
+    realization rates but aggregates across technologies without isolating
+    residential battery storage.
+  - A PG&E-sponsored residential-battery VPP pilot study (dret-ca.com,
+    "PGE-Residential-Battery-as-Virtual-Power-Plant-VPP-Study.pdf") looked
+    like a plausible source but no dispatch-compliance/no-show metric could
+    be confirmed in it.
+  - No Tesla-published spec, and no Wood Mackenzie or EnergySage report,
+    addressing this specific question was found. What exists beyond the
+    above is anecdotal (forum reports of app/automation glitches, a 2025
+    Powerwall-2-recall class action over unrelated OTA charge-limiting) with
+    no adherence rate attached to any of it.
+DECISION: not modeled. There is no number here to build a distribution from
+without inventing one, which CLAUDE.md §0 prohibits — this is the "not
+determined, state what would settle it" case, not a "model it anyway" case,
+bounded to the sources actually checked above, not a claim that no such
+number could ever exist anywhere. What would settle it: a published
+dispatch-compliance/no-show metric from Tesla, a utility VPP program, or an
+independent monitoring study.
+
+(b) TWO-SIDED ESCALATION DISTRIBUTION. `esc` in payback_of()/npv_of() below
+scales save1 (the battery's marginal SAVING, itself proportional to the
+on-peak/off-peak/super-off-peak SPREAD it arbitrages) by a SINGLE uniform
+factor (1+esc)^yr — i.e. it models the SPREAD/margin structure scaling
+proportionally at one blended rate, not each TOU period escalating at its
+own independently-measured rate. The decision-relevant question is
+therefore whether the SPREAD trend (not any one period's own absolute
+level) is measurably rising, falling, or undetermined — and
+data/tou_spread.json is this repo's own dedicated, structural-break-tested
+tool for exactly that question. Its verdict: "not determined" in BOTH
+seasons (battery.per_period.summer/winter). That is a genuine "unknown, not
+zero, not positive" finding for the spread itself, not evidence for either
+a positive OR a zero-floored distribution.
+  AN EARLIER DRAFT OF THIS SECTION GOT THIS WRONG (Codex adversarial
+  review, issue #59, first pass) — it argued per-TOU-cell ABSOLUTE-level
+  trends (on-peak delivery rates rising, individually, with CIs excluding
+  zero) as evidence that keeping the 0% floor was itself evidence-backed.
+  That conflates "the price level households pay in each period has risen"
+  with "the arbitrage margin a battery captures has risen" — two different
+  quantities. Winter on-peak and winter off-peak, for example, moved on
+  nearly identical trajectories over the same window (rate_first $0.26687,
+  rate_last $0.31174 for BOTH; escalation_pct_yr 11.3%/yr vs 12.06%/yr,
+  nearly the same rate), which is exactly a case where both periods rising
+  together leaves the SPREAD between them roughly flat rather than
+  widening — the per-cell reasoning, applied uniformly, does not actually
+  establish the spread rose. That claim is RETRACTED here.
+  What the per-cell data DOES still show, honestly stated: this repo has
+  no measured evidence, at ANY level of rigor, of a genuinely NEGATIVE
+  spread/margin trend for this household's own tariff. The composite
+  spread-level finding is "not determined" (unknown direction, not a
+  negative estimate); the individual TOU cells with CIs excluding zero all
+  point to rising absolute levels, which is at least consistent with a
+  non-shrinking (if not provably widening) spread, and none shows a
+  significant absolute decline except super-off-peak, whose own CI crosses
+  zero and which is a charging-cost (not arbitrage-margin) period besides.
+  External precedent (WebSearch, 2026-08, not previously in this repo):
+  California IOU electric rates HAVE fallen in a real, documented, multi-
+  year episode — PG&E's residential rates dropped in several separate
+  2024-2025 rate actions (~$12/mo lower by Oct 2025 for a typical customer):
+  pge.com/en/newsroom/currents/energy-savings/pg-e-electric-bills-down-
+  from-last-year--expected-to-drop-again-.html; nasdaq.com/press-release/
+  pge-lower-electric-prices-jan-1-fourth-decrease-two-years-2025-12-30.
+  Driven by an IDENTIFIED, specific mechanism: AB 1054 wildfire-safety
+  capital costs rolling off the rate base (docs.cpuc.ca.gov/PublishedDocs/
+  Efile/G000/M523/K181/523181110.PDF). This shows a CA IOU rate decline
+  is a real, not hypothetical, kind of event, with a real, citable
+  magnitude attached to it. But the mechanism is not yet shown to apply
+  comparably to SDG&E specifically — the same research found SDG&E's
+  electric delivery rate rose (+0.5c/kWh) over a comparable recent window
+  even as its gas transportation rate fell, and a 2023 SDG&E residential
+  rate-DESIGN proposal showing a small (-0.3%) change was a revenue-neutral
+  reallocation proposal, not a confirmed realized bill decrease. PG&E's own
+  magnitude is therefore not validly transferable to an SDG&E-specific
+  negative-escalation bound: using it would fabricate an SDG&E number from
+  a different utility's evidence, which CLAUDE.md §0 prohibits exactly as
+  much as inventing one from nothing.
+  DECISION: the existing Uniform(0.00, 0.12) floor-at-zero convention is
+  KEPT, but honestly re-labeled: it is an INHERITED assumption (from
+  deep_analyses.py's original design), NOT one this repo's evidence proves
+  correct. No rigorous SDG&E-specific negative-spread magnitude exists
+  anywhere in this repo or in the external research done for this issue to
+  build a defensible lower band from; replacing an inherited-but-unproven
+  zero floor with a DIFFERENT, fabricated negative number (whether
+  self-invented or borrowed from PG&E's unrelated mechanism) would trade
+  one unevidenced assumption for another, not improve on it. This is
+  explicitly a LIMITATION of the current model, stated as such rather than
+  silently carried forward: what would settle it is a season-and-TOU-period
+  battery-savings trend computed by rerunning the actual dispatch/billing
+  engine at each period's own separately-measured historical rate path (not
+  a single blended scalar), or a longer bill corpus that lets tou_spread.py's
+  structural-break test resolve the spread trend with adequate power. Both
+  are out of this issue's own scope box (a dispatch-rerun-based escalation
+  model is a design change to how `esc` works, not a distribution-tuning
+  fix); filed as a follow-up (issue #87) rather than attempted here.
+
 CALIBRATION: RTE- AND SOILING-SAVING SENSITIVITY, FROM THE REAL ENGINE
 -----------------------------------------------------------------------------
 Rather than assume a linear/proportional relationship between RTE (or
@@ -676,6 +794,55 @@ def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
             "ranked_by_swing": ranked}
 
 
+ESC_DOWNSIDE_GRID_PCT = (0.00, -0.03, -0.06, -0.09, -0.12)
+
+
+def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, lossB):
+    """Issue #59 (Codex adversarial review, third pass): documenting the 0%
+    floor as an unproven, inherited assumption while the Monte Carlo can
+    still never SAMPLE a negative escalation draw leaves a reader unable to
+    see what a real downside would cost -- labeling the limitation is not
+    the same as showing its consequence. This is NOT a new probability
+    distribution (no evidence supports weighting these scenarios, which is
+    exactly why ESC_LO/full_monte_carlo/tornado are unchanged by this
+    function); it is a plain, labeled WHAT-IF grid, mirroring dsgs_vpp_
+    backtest.py's own precedent for an additive, clearly-scoped sensitivity
+    that never touches the primary probability-weighted figures. Computed at
+    the EXACT SAME nominal save1/fade/price tornado()'s escalation LEVER
+    itself sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/
+    production -- an earlier draft used the raw post-behavior `mid` alone
+    instead of this blended nominal save1, a self-inconsistency caught in
+    review: that draft's own +0% grid point disagreed with what it CLAIMED
+    to match by over a year). This grid's +0% point (esc=0, same as
+    ESC_LO) is IDENTICAL, by construction, to tornado()'s own escalation
+    lever's ESC_LO payback endpoint -- NOT to tornado()'s overall
+    nominal_payback_yr, which uses esc_nom = (ESC_LO+ESC_HI)/2 = 6% rather
+    than 0% for the escalation dimension specifically, a genuinely
+    different scenario point, not a second inconsistency to fix."""
+    fade_nom = (FADE_LO + FADE_HI) / 2
+    price_nom = (PRICE_LO + PRICE_HI) / 2
+    c_nom = EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B)
+    loss_nom = (lossA + lossA + lossB) / 3
+    save1_nom = save1_of(c_nom, RTE_NOM, loss_nom, 1.0, pre, mid, rte_slope, soil_slope)
+    grid = {}
+    for pct in ESC_DOWNSIDE_GRID_PCT:
+        pb = payback_of(save1_nom, pct, fade_nom, price_nom)
+        grid[f"{pct:+.0%}"] = {
+            "payback_yr": (round(float(pb), 1) if not np.isnan(pb) else None),
+            "within_10yr_warranty": (bool(pb <= WARRANTY_YR) if not np.isnan(pb) else False),
+        }
+    return {
+        "not_a_probability_distribution": (
+            "This grid holds no evidence-backed weight for any point -- it "
+            "exists because a reader cannot judge a downside risk that is "
+            "described but never shown. See dispatch_policy_adherence_note "
+            "and escalation_two_sided_evidence_note for why no probability-"
+            "weighted negative-escalation input is modeled instead."),
+        "base_case": "the exact same nominal save1/fade/price tornado()'s escalation lever sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s escalation lever's ESC_LO payback endpoint by construction, not tornado()'s overall nominal_payback_yr (which uses esc=6%, not 0%, for the escalation dimension)",
+        "grid": grid,
+    }
+
+
 def reconcile_tornado(new_tornado, old_tornado_battery):
     old_ranked = old_tornado_battery["ranked_by_swing"]
     old_levers = old_tornado_battery["levers"]
@@ -768,6 +935,7 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     mc = full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB,
                           prod_sigma, N=N_full, seed=seed_full)
     tor = tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma)
+    esc_downside = escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, lossB)
 
     old_deep = _committed("deep_results.json")
     # deep_analyses.py's own _base_save() reads the COMMITTED, already-rounded
@@ -808,7 +976,16 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                           "evidential_basis": "estimated -- data/tou_spread.json's "
                           "battery.uniform_ladder bounding range (3/5/8/12%); the "
                           "underlying escalation TREND is itself 'not determined' "
-                          "per that artifact's per_period.summer/winter verdicts"},
+                          "per that artifact's per_period.summer/winter verdicts. "
+                          "issue #59: the 0% floor was CHECKED against a two-sided "
+                          "alternative (see this module's own docstring, section "
+                          "'ISSUE #59', part (b), and escalation_two_sided_"
+                          "evidence_note below), but that check did NOT find "
+                          "evidence PROVING the floor correct -- it remains an "
+                          "INHERITED, unproven modeling assumption from "
+                          "deep_analyses.py's original design, not an evidence-"
+                          "backed one; a real, stated limitation, not resolved "
+                          "by this issue"},
             "degradation_fade": {"dist": "Uniform", "low": FADE_LO, "high": FADE_HI,
                                  "evidential_basis": "manufacturer (Powerwall 3) "
                                  "warranty degradation curve; unchanged from "
@@ -867,6 +1044,64 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
             "bad draws share a common root cause. No numeric correction is "
             "applied; no data in this repo quantifies either correlation."
         ),
+        "dispatch_policy_adherence_note": (
+            "Issue #59: whether the Powerwall's own automation reliably "
+            "EXECUTES the chosen greedy dispatch policy (distinct from WHICH "
+            "policy to choose, already addressed above) is NOT modeled here. "
+            "Checked for a citable adherence/no-show rate from Tesla, an "
+            "industry report, or an independent monitoring study; none "
+            "exists -- the one quantitative Powerwall reliability figure "
+            "found (a warranty-claims hardware failure rate, not a software/"
+            "automation adherence rate) answers a different question, and "
+            "CPUC ELRP load-impact evaluations aggregate across technologies "
+            "without isolating residential battery storage. CLAUDE.md's "
+            "no-guessing rule means this is left 'not determined' rather "
+            "than modeled from an invented number -- see this module's own "
+            "docstring, section 'ISSUE #59', part (a) for the full check."),
+        "escalation_two_sided_evidence_note": (
+            "Issue #59: the 0% floor on the escalation input above was "
+            "checked against a two-sided alternative, not assumed. `esc` "
+            "scales the battery's SAVING (proportional to the TOU SPREAD it "
+            "arbitrages) uniformly, so the decision-relevant question is the "
+            "SPREAD trend, not any one period's own absolute level -- and "
+            "data/tou_spread.json's dedicated, structural-break-tested "
+            "spread analysis reports that as 'not determined' in BOTH "
+            "seasons, genuinely unknown rather than evidence for a positive "
+            "or a zero-floored range. An earlier draft of this note wrongly "
+            "cited per-TOU-cell absolute-level trends (on-peak rates rising) "
+            "as evidence the floor was itself proven correct -- RETRACTED "
+            "(Codex adversarial review, issue #59, first pass): winter "
+            "on-peak and winter off-peak moved on nearly identical "
+            "trajectories over the same window, which is exactly a case "
+            "where both periods rising together leaves the spread roughly "
+            "flat, not evidence it widened. What remains true, stated "
+            "honestly: no cell or spread-level figure in this repo, at any "
+            "rigor, shows a statistically significant NEGATIVE trend for "
+            "this household's own tariff (super-off-peak's negative point "
+            "estimate has a 95% CI crossing zero). Externally, a real CA "
+            "IOU electric-rate decline has happened (PG&E, 2024-2025, "
+            "driven by AB 1054 wildfire-capex cost roll-off, a real citable "
+            "magnitude) but that mechanism is not shown to apply to SDG&E "
+            "specifically -- SDG&E's own electric delivery rate rose over a "
+            "comparable window in the same research -- so PG&E's number "
+            "isn't validly transferable into an SDG&E-specific negative "
+            "bound without fabricating one. DECISION: the 0% floor is kept, "
+            "but re-labeled honestly as an INHERITED assumption from "
+            "deep_analyses.py's original design, not one this repo's "
+            "evidence proves correct -- a real, stated LIMITATION of this "
+            "model, not a resolved question. Replacing it with a different "
+            "unevidenced negative number (self-invented or borrowed from "
+            "PG&E) would trade one unproven assumption for another. See "
+            "this module's own docstring, section 'ISSUE #59', part (b) "
+            "for the full check, and issue #87 for the follow-up (a real "
+            "per-TOU-period dispatch-rerun escalation model) this is out of "
+            "scope to implement here. Because documenting this limitation is "
+            "not the same as showing its consequence (Codex adversarial "
+            "review, issue #59, third pass), see escalation_downside_"
+            "sensitivity below for what a range of negative escalation "
+            "rates would actually cost, as a labeled what-if, not a "
+            "probability-weighted claim."),
+        "escalation_downside_sensitivity": esc_downside,
         "calibration": {
             "pre_nominal": round(pre, 2),
             "mid_nominal": round(mid, 2),
