@@ -1241,7 +1241,12 @@ PANEL_FIELD_SCHEMA = {
                   "panel.schedule (0.0 is exempt -- it carries the same "
                   "'nothing backfeeds this panel' meaning as null, and no "
                   "real breaker is rated 0 A); null means surveyed and "
-                  "nothing backfeeds; absence means not surveyed",
+                  "nothing backfeeds; absence means not surveyed. KNOWN "
+                  "LIMITATION: the schedule-match check is amp-value "
+                  "membership only, not row identity -- schedule has no "
+                  "role/ID field, so an unrelated breaker sharing the same "
+                  "rating can stand in for an omitted PV breaker; see the "
+                  "check's own comment in validate_panel()",
         "vocabulary": None, "applied": "validate_panel()"},
     "breaker_family": {
         "type": str, "privacy": "private-only",
@@ -1440,6 +1445,30 @@ def validate_panel(p):
     # carries (existing_backfeed() already treats a recorded 0 no
     # differently), and no real breaker is rated 0 A for it to match, so 0.0
     # is exempt rather than being an automatic domain violation.
+    #
+    # KNOWN LIMITATION (Codex adversarial review, issue #41, pass 2): this
+    # checks only that SOME breaker in the schedule carries the declared
+    # amp rating, not that any specific row IS the PV/backfeed breaker.
+    # panel.schedule has no structured role/ID field distinguishing "this
+    # row is the backfed source" from "this row happens to share its amp
+    # rating" -- the schedule's own `label` field is the one place a role
+    # could be read from, but its docstring already calls that field the
+    # "weak half" of each row (hand-lettered legend text, position-matched,
+    # explicitly provisional), so keying this safety check off label text
+    # would trade one false-pass risk for another: a fragile keyword guess
+    # that could reject a DIFFERENTLY-labeled but genuinely correct PV
+    # breaker on some OTHER household's real intake. If the real PV breaker
+    # is omitted from the schedule entirely while an unrelated breaker
+    # happens to share its amp rating (e.g. a 50 A EV charger breaker
+    # standing in for an omitted 50 A PV breaker), this check cannot tell
+    # the difference -- the omitted breaker then silently vanishes from
+    # panel_occupancy()'s space/pole count and OCPD sum. Closing this
+    # properly needs panel.schedule to carry a real structural marker (a
+    # role or stable ID per row), which is an intake-contract/schema
+    # change outside this issue's scope (validating fields the schema
+    # already has, not adding new ones to it) -- filed as a follow-up
+    # rather than patched here with a heuristic that could break other
+    # households' real data.
     if backfeed is not None and backfeed > 0.0:
         schedule_amps_a = set()
         for e in p["schedule"]:
