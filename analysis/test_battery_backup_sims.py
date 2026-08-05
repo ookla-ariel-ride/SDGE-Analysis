@@ -268,9 +268,95 @@ def case_backup_endurance_matches_hand_computation():
             "configs x 2 tiers")
 
 
+def _trace_capped_endurance(cap, pwr, cpwr, load, max_steps=24 * 14):
+    """Independent re-implementation of endurance()'s inner walk (NOT a call
+    into the generator) for a fixture whose hourly whole-house load is a
+    constant `load` and whose hourly production alternates 0 (even hour) /
+    a huge surplus (odd hour), starting at an even hour (18:00, soc=cap) --
+    mirrors case_endurance_solar_recharge_respects_the_charge_cap's fixture
+    below. Same documented physics as endurance() (discharge net*1.05,
+    capped recharge*0.9, capacity ceiling, break when soc can't cover the
+    next discharge) written independently, so an arithmetic bug in the
+    generator shows up as a mismatch here rather than agreeing with itself."""
+    soc = cap
+    t = 0
+    even = True  # hour 18 is even -> the daily start is a discharge hour
+    while t < max_steps:
+        if even:
+            net = load  # prod=0 on even hours; load <= pwr by construction, so min(load,pwr)=load
+            if soc >= net * 1.05:
+                soc -= net * 1.05
+            else:
+                break
+        else:
+            soc = min(cap, soc + cpwr * 0.9)  # odd hour: huge surplus, recharge capped at cpwr
+        t += 1
+        even = not even
+    return t
+
+
+# ---------------------------------------------------------------------------
+# Case 3: endurance()'s solar-recharge branch respects the per-config charge
+# cap (issue #70). The flat fixture in Case 2 never exercises this branch at
+# all (production there is always LESS than load, so net is always positive
+# -- pure discharge). This fixture alternates: even hours carry pure load
+# (imp = SL, exp = 0, so prod = SL - imp + exp = 0, a discharge hour), odd
+# hours carry a huge export (imp = 0, exp = BIG, so prod = SL + BIG, a
+# recharge hour whose surplus vastly exceeds any config's charge cap).
+# SAM load is held at SL = 7.0 (<= the >7 kWh/h EV-detection threshold, so
+# nonev = load = SL exactly, and <= every tested config's discharge power,
+# so discharge is never power-limited). Only PW3 and PW3+Exp are asserted --
+# the two configs issue #70 actually changed (a real, cited charge rating
+# different from their discharge rating); the Enphase configs keep
+# charge_pwr=None (symmetric with discharge, unchanged by this fix) and
+# aren't part of what this case exists to prove.
+# ---------------------------------------------------------------------------
+def case_endurance_solar_recharge_respects_the_charge_cap():
+    SL = 7.0
+    BIG = 1000.0
+
+    def shape(d, h):
+        if int(h) % 2 == 0:
+            return SL / 4, 0.0
+        return 0.0, BIG / 4
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        shutil.copy(ANALYSIS / "battery_backup_sims.py", tmp / "battery_backup_sims.py")
+        shutil.copy(ANALYSIS / "rates.py", tmp / "rates.py")
+        _write_meter_csv(tmp / "usage.csv", shape)
+        _write_flat_sam(tmp / "samA.csv", SL, 2026)
+        _write_flat_sam(tmp / "samB.csv", SL, 2025)
+        _run(tmp)
+        got = json.loads((tmp / "backup_endurance.json").read_text())
+
+    # (cap, discharge_pwr, name, charge_kw) from the generator's own source --
+    # same rationale as case_arbitrage_sim_matches_hand_computation above.
+    by_name = {name: (cap, pwr, charge_kw) for cap, pwr, name, charge_kw in GENERATOR_CONFIGS}
+    for cfg_name in ("1x Tesla Powerwall 3", "PW3 + 1 Expansion"):
+        cap, pwr, charge_kw = by_name[cfg_name]
+        assert charge_kw is not None, (cfg_name, "expected a distinct charge rating")
+        assert SL <= pwr, "fixture assumes discharge is never power-limited"
+        exp_hours = _trace_capped_endurance(cap, pwr, charge_kw, SL)
+        # sanity: an UNCAPPED recharge (the pre-#70 bug) would snap straight
+        # to `cap` every odd hour regardless of `charge_kw` -- since SL*1.05
+        # can never exceed a capacity this small in one discharge step, that
+        # never breaks, so it would report the full max_steps window instead.
+        assert exp_hours < 24 * 14, "fixture failed to distinguish capped from uncapped recharge"
+        key = {"1x Tesla Powerwall 3": "PW3", "PW3 + 1 Expansion": "PW3+Exp"}[cfg_name] + "|t2"
+        assert key in got, (key, got.keys())
+        assert got[key]["median_h"] == exp_hours, (key, got[key], exp_hours)
+        assert got[key]["p10_h"] == exp_hours, (key, got[key], exp_hours)
+    return ("endurance()'s solar-recharge branch caps hourly charge at the "
+            "config's own charge rating instead of absorbing an unbounded "
+            "surplus, for both configs with a distinct charge rating (PW3, "
+            "PW3+Exp)")
+
+
 CASES = [
     case_arbitrage_sim_matches_hand_computation,
     case_backup_endurance_matches_hand_computation,
+    case_endurance_solar_recharge_respects_the_charge_cap,
 ]
 
 
