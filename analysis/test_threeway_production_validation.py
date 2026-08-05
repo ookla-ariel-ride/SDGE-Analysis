@@ -78,12 +78,36 @@ def case_dst_dates_in_is_empty_outside_the_transition_dates():
 # ---------------------------------------------------------------------------
 # (b) window_dates -- the shared, contiguous pvoutput/enphase date range
 # ---------------------------------------------------------------------------
+def _without_a_committed_artifact():
+    """Context manager: points TPV.OUT at a path that does not exist, so
+    window_dates()'s shrink floor (issue #37 review) sees "no artifact
+    committed yet" rather than comparing against the REAL, currently-365-day
+    data/threeway_production_validation.csv this checkout has committed.
+    Pure-synthetic window_dates tests that aren't specifically exercising
+    the shrink guard need this, or a small synthetic window fails closed
+    against the real file's own size for reasons unrelated to what the test
+    is actually checking."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        real_out = TPV.OUT
+        with tempfile.TemporaryDirectory() as td:
+            TPV.OUT = pathlib.Path(td) / "does-not-exist.csv"
+            try:
+                yield
+            finally:
+                TPV.OUT = real_out
+    return _cm()
+
+
 @case
 def case_window_dates_is_the_contiguous_shared_range():
     d0 = dt.date(2026, 1, 1)
     pv = {d0 + dt.timedelta(days=i): 1.0 for i in range(10)}
     en = {d0 + dt.timedelta(days=i): 1.0 for i in range(2, 12)}  # offset overlap
-    dates = TPV.window_dates(pv, en)
+    with _without_a_committed_artifact():
+        dates = TPV.window_dates(pv, en)
     assert dates[0] == d0 + dt.timedelta(days=2), dates
     assert dates[-1] == d0 + dt.timedelta(days=9), dates
     assert len(dates) == 8, dates
@@ -102,6 +126,62 @@ def case_window_dates_fails_closed_on_a_gap_in_the_shared_range():
         assert "contiguous" in str(e), e
         return "a gap in the shared pvoutput/enphase date range is refused, not silently spanned"
     raise AssertionError("window_dates should have refused a non-contiguous shared range")
+
+
+@case
+def case_window_dates_refuses_a_window_smaller_than_the_committed_artifact():
+    """Codex adversarial review pass 3: a truncated re-export of either
+    reference file (a partial 30-day refresh, say) that still happens to
+    overlap the other file CONTIGUOUSLY passes the checks above with no
+    signal anything shrank -- write_csv() would then silently replace a
+    365-day artifact with a 30-day one. window_dates() must refuse a window
+    smaller than what is ALREADY committed, using the existing artifact's
+    own row count as the floor (not a guessed constant)."""
+    with tempfile.TemporaryDirectory() as td:
+        fake_out = pathlib.Path(td) / "threeway_production_validation.csv"
+        fake_out.write_text(
+            ",pvoutput,enphase_meter,meter_derived\n" +
+            "".join(f"2026-01-{d:02d},1.0,1.0,1.0\n" for d in range(1, 32)))  # 31 rows
+        real_out = TPV.OUT
+        TPV.OUT = fake_out
+        try:
+            d0 = dt.date(2026, 6, 1)
+            small_window = {d0 + dt.timedelta(days=i): 1.0 for i in range(10)}  # 10 days, contiguous
+            try:
+                TPV.window_dates(small_window, small_window)
+                raise AssertionError(
+                    "window_dates accepted a 10-day window when 31 days "
+                    "are already committed")
+            except SystemExit as e:
+                assert "SMALLER than the currently committed artifact" in str(e), str(e)
+                assert "31 days" in str(e), str(e)
+        finally:
+            TPV.OUT = real_out
+    return ("window_dates refuses a contiguous-but-truncated 10-day window "
+           "when 31 days are already committed, rather than silently "
+           "shrinking the published artifact")
+
+
+@case
+def case_window_dates_allows_extending_past_the_committed_artifact():
+    """The mirror case: a window LARGER than (or equal to) what's committed
+    must still be accepted -- the floor guards against shrinking, not
+    against the normal case of a fresh export extending the window."""
+    with tempfile.TemporaryDirectory() as td:
+        fake_out = pathlib.Path(td) / "threeway_production_validation.csv"
+        fake_out.write_text(
+            ",pvoutput,enphase_meter,meter_derived\n" +
+            "".join(f"2026-01-{d:02d},1.0,1.0,1.0\n" for d in range(1, 11)))  # 10 rows
+        real_out = TPV.OUT
+        TPV.OUT = fake_out
+        try:
+            d0 = dt.date(2026, 6, 1)
+            bigger_window = {d0 + dt.timedelta(days=i): 1.0 for i in range(31)}  # 31 days
+            dates = TPV.window_dates(bigger_window, bigger_window)  # must not raise
+            assert len(dates) == 31, dates
+        finally:
+            TPV.OUT = real_out
+    return "window_dates accepts a 31-day window extending past a 10-day committed artifact"
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +569,76 @@ def case_check_validation_fails_closed_on_a_proportionally_scaled_series():
            "-scaled series despite near-perfect correlation with the "
            "reference -- correlation alone cannot catch a constant scale "
            "error, the tightened ratio band does")
+
+
+@case
+def case_check_validation_refuses_to_be_relaxed_by_a_corrupted_reference():
+    """Codex adversarial review pass 3, the exact scenario named: pvoutput
+    accidentally scaled 2x upstream while enphase_meter and meter_derived
+    stay correct. Without a FIXED, non-adaptive check on the references
+    themselves, ref_ratio=2.0 would widen the adaptive band enough to admit
+    meter_derived/pvoutput=0.5 -- the corrupted reference relaxing the very
+    check meant to catch it. check_reference_sanity() must refuse this
+    BEFORE any adaptive threshold is derived, regardless of how the derived
+    series itself looks."""
+    stats_en = {"correlation": 0.99996, "mae_kwh": 0.160,
+               "ratio_derived_over_reference": 1.0032}   # looks perfectly fine
+    stats_pv = {"correlation": 0.9999, "mae_kwh": 5.0,
+               "ratio_derived_over_reference": 0.5}       # matches the corrupted 2x reference
+    try:
+        TPV.check_validation(stats_en, stats_pv,
+                             ref_correlation=0.9998, ref_ratio=2.0)
+        raise AssertionError(
+            "check_validation accepted a corrupted 2.0 reference ratio, "
+            "which would have widened the adaptive band enough to pass "
+            "meter_derived/pvoutput=0.5")
+    except SystemExit as e:
+        assert "REFERENCE instruments failed their own fixed sanity check" in str(e), str(e)
+        assert "outside the fixed sanity band" in str(e), str(e)
+    return ("check_validation refuses to derive an adaptive threshold from "
+           "a corrupted (ratio=2.0) reference pair, even though the "
+           "meter_derived-vs-enphase_meter comparison alone looks fine")
+
+
+@case
+def case_check_reference_sanity_refuses_a_corrupted_correlation():
+    try:
+        TPV.check_reference_sanity(ref_correlation=0.7, ref_ratio=1.0)
+        raise AssertionError("check_reference_sanity accepted a 0.7 reference correlation")
+    except SystemExit as e:
+        assert "correlation, 0.70000" in str(e), str(e)
+    return "check_reference_sanity refuses a 0.7 reference-to-reference correlation"
+
+
+@case
+def case_check_reference_sanity_passes_on_the_real_measured_values():
+    TPV.check_reference_sanity(ref_correlation=REF_CORRELATION, ref_ratio=REF_RATIO)  # must not raise
+    return "check_reference_sanity does not raise on the real archive's own measured reference agreement"
+
+
+@case
+def case_ratio_band_is_capped_by_the_absolute_ceiling_not_just_the_multiplier():
+    """A reference ratio that clears the fixed sanity bound (0.9-1.1) but
+    sits near its edge would, under the multiplier alone (10x), open a band
+    far wider than RATIO_DEVIATION_ABSOLUTE_CEILING allows. The ceiling must
+    still bind even for a reference that passes its own sanity check."""
+    edge_ref_ratio = 1.09  # inside (0.9, 1.1), but 10x its 0.09 deviation is 0.9 -- way over the ceiling
+    stats_en = {"correlation": 0.9999, "mae_kwh": 1.0,
+               "ratio_derived_over_reference": 1.15}   # inside the uncapped 0.9x band, OUTSIDE the capped one
+    stats_pv = {"correlation": 0.9999, "mae_kwh": 1.0,
+               "ratio_derived_over_reference": 1.02}
+    try:
+        TPV.check_validation(stats_en, stats_pv,
+                             ref_correlation=0.998, ref_ratio=edge_ref_ratio)
+        raise AssertionError(
+            "check_validation accepted ratio=1.15 despite the absolute "
+            f"ceiling ({TPV.RATIO_DEVIATION_ABSOLUTE_CEILING}) being tighter "
+            "than the uncapped multiplier would allow at this edge ref_ratio")
+    except SystemExit as e:
+        assert "ratio 1.1500" in str(e), str(e)
+    return ("the absolute ratio-deviation ceiling binds even for a "
+           "reference ratio that clears its own fixed sanity bound, not "
+           "just the multiplier-derived band")
 
 
 @case

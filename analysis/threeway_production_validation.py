@@ -257,11 +257,33 @@ def load_green_button_hourly():
 # ---------------------------------------------------------------------------
 # 3. The window, the DST exclusion, and the derivation itself.
 # ---------------------------------------------------------------------------
+def _committed_row_count():
+    """How many data rows the CURRENTLY COMMITTED artifact has, or None if
+    none is committed yet (a first run). Used only as a shrink floor below
+    -- never read for its content, so a malformed existing file cannot
+    break a fresh, correct regeneration; a header-only or unreadable file
+    counts as 0 rows, not as "no floor"."""
+    if not OUT.exists():
+        return None
+    with open(OUT, newline="") as fh:
+        return max(0, sum(1 for _ in fh) - 1)  # minus the header line
+
+
 def window_dates(pv, en):
     """The analysis window: the exact date range BOTH reference series cover
     (currently identical, 365 contiguous days each) -- derived from the data
     rather than hardcoded, so a future refresh of either daily record
-    extends this file automatically instead of silently going stale."""
+    extends this file automatically instead of silently going stale.
+
+    Refuses a window SMALLER than the currently committed artifact (issue
+    #37 review): the intersection-and-contiguity checks above say nothing
+    about SIZE, so a truncated re-export of either reference file (a
+    partial 30-day refresh, say) that still happens to overlap the other
+    file contiguously would otherwise pass silently and write_csv() would
+    replace a full-year artifact with a 30-day one, discarding the other
+    335 days with no signal anything shrank. The existing artifact's own
+    row count is the floor, not a guessed constant -- it is exactly what
+    was true before this run and must not be lost by this run."""
     common = sorted(set(pv) & set(en))
     if not common:
         raise SystemExit(
@@ -275,6 +297,16 @@ def window_dates(pv, en):
             "threeway_production_validation.py: the shared pvoutput/enphase "
             f"date range ({start}..{end}) is not a contiguous run of days "
             f"-- got {len(common)} of {expected} expected")
+    floor = _committed_row_count()
+    if floor is not None and expected < floor:
+        raise SystemExit(
+            f"threeway_production_validation.py: the new window ({expected} "
+            f"days, {start}..{end}) is SMALLER than the currently committed "
+            f"artifact ({floor} days) -- refusing to publish a truncated "
+            "window over a fuller one. If pvoutput_daily.csv or "
+            "enphase_daily_production.csv were genuinely truncated, restore "
+            "them; a deliberate re-baseline to a shorter window needs the "
+            "committed artifact removed first, not silently overwritten.")
     return [start + dt.timedelta(days=i) for i in range(expected)]
 
 
@@ -413,18 +445,73 @@ CORRELATION_FLOOR_BELOW_REF = 0.01
 # data, i.e. a 0.0205 deviation from perfect agreement) is the natural
 # "how far can two honest measurements of the same thing drift" benchmark.
 # RATIO_DEVIATION_MARGIN_MULTIPLE gives 10x that measured deviation as
-# headroom (0.205, i.e. the band [0.795, 1.205] on this data) -- generous
-# enough for ordinary instrument disagreement, tight enough that a 60% or
-# 190% scale error (Codex's own example) is nowhere close. RATIO_DEVIATION_FLOOR
-# is a minimum band width so this never gets pathologically tight if the two
-# references happen to agree almost exactly on some future refresh.
+# headroom (0.205 on this data), capped by RATIO_DEVIATION_ABSOLUTE_CEILING
+# below at 0.10 -- so the actual band on today's data is [0.90, 1.10], not
+# the uncapped 0.205 the multiplier alone would give. Generous enough for
+# ordinary instrument disagreement, tight enough that a 60% or 190% scale
+# error (Codex's own example) is nowhere close, and bounded regardless of
+# how far a reference that clears check_reference_sanity() might still
+# legitimately drift. RATIO_DEVIATION_FLOOR is a minimum band width so this
+# never gets pathologically tight if the two references happen to agree
+# almost exactly on some future refresh.
 RATIO_DEVIATION_MARGIN_MULTIPLE = 10
 RATIO_DEVIATION_FLOOR = 0.05
+# An ADAPTIVE threshold derived from the references is only sound if the
+# references themselves are trustworthy (Codex pass 3, issue #37 review): if
+# pvoutput were accidentally scaled 2x upstream while enphase_meter and
+# meter_derived stayed correct, ref_ratio becomes ~2.0 and the multiplier
+# above would widen the derived-series band to admit almost anything --
+# the corrupted reference relaxes the very check meant to catch it. Two
+# independent, FIXED (never derived from the references being checked)
+# guards close that: (1) the references must themselves look sane BEFORE
+# they're allowed to set an adaptive threshold at all, checked against
+# bounds wide enough for real instrument disagreement (measured 0.99989
+# correlation, 1.0205 ratio) but nowhere near a 2x corruption; (2) even a
+# reference that clears that bar can't blow the adaptive ratio band past a
+# hard ceiling, so a merely-borderline-sane reference can't relax the
+# derived-series check without limit either.
+REF_CORRELATION_SANITY_MIN = 0.995
+REF_RATIO_SANITY_BOUNDS = (0.9, 1.1)
+RATIO_DEVIATION_ABSOLUTE_CEILING = 0.10
+
+
+def check_reference_sanity(ref_correlation, ref_ratio):
+    """FIXED bounds on the two REFERENCE instruments' own mutual agreement,
+    checked before anything derives an adaptive threshold from them. Must
+    never be computed FROM ref_correlation/ref_ratio themselves -- that
+    would be exactly the self-relaxing hole this function exists to close."""
+    problems = []
+    if ref_correlation < REF_CORRELATION_SANITY_MIN:
+        problems.append(
+            f"the two REFERENCE instruments' own correlation, "
+            f"{ref_correlation:.5f}, is below the fixed sanity floor "
+            f"{REF_CORRELATION_SANITY_MIN} -- pvoutput and enphase_meter no "
+            "longer look like two honest measurements of the same "
+            "production, so nothing derived from their agreement can be "
+            "trusted as a validation threshold")
+    lo, hi = REF_RATIO_SANITY_BOUNDS
+    if not (lo <= ref_ratio <= hi):
+        problems.append(
+            f"the two REFERENCE instruments' own ratio, {ref_ratio:.4f}, is "
+            f"outside the fixed sanity band [{lo}, {hi}] -- one of them "
+            "looks scaled or corrupted upstream (pvoutput_daily.csv / "
+            "enphase_daily_production.csv), which would otherwise silently "
+            "widen the derived-series validation band instead of tripping it")
+    if problems:
+        raise SystemExit(
+            "threeway_production_validation.py: the two REFERENCE "
+            "instruments failed their own fixed sanity check; refusing to "
+            "derive an adaptive validation threshold from them (the "
+            "existing committed artifact is untouched):\n  " +
+            "\n  ".join(problems))
 
 
 def check_validation(stats_en, stats_pv, ref_correlation, ref_ratio):
-    ratio_deviation = max(RATIO_DEVIATION_MARGIN_MULTIPLE * abs(ref_ratio - 1.0),
-                          RATIO_DEVIATION_FLOOR)
+    check_reference_sanity(ref_correlation, ref_ratio)
+    ratio_deviation = min(
+        max(RATIO_DEVIATION_MARGIN_MULTIPLE * abs(ref_ratio - 1.0),
+           RATIO_DEVIATION_FLOOR),
+        RATIO_DEVIATION_ABSOLUTE_CEILING)
     ratio_lo, ratio_hi = 1.0 - ratio_deviation, 1.0 + ratio_deviation
     problems = []
     for label, stats in (("enphase_meter", stats_en), ("pvoutput", stats_pv)):
