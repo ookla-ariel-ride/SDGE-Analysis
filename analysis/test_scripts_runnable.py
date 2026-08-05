@@ -89,6 +89,7 @@ MANIFEST = {
     "gross_import_decomposition.py": "generator",
     "reprice_by_vintage.py": "generator",
     "quiet_night_floor.py": "generator",
+    "threeway_production_validation.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -142,6 +143,9 @@ OWNS = {
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as tou_structure_stress.py/rates_history.py/reprice_by_vintage.py
     "quiet_night_floor.py":         [("data", "quiet_night_floor.json")],
+    # writes directly into ROOT/data via its own repo_root() walk-up, same
+    # convention as quiet_night_floor.py/rates_history.py
+    "threeway_production_validation.py": [("data", "threeway_production_validation.csv")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -400,6 +404,11 @@ NEEDS_PRIVATE_ARCHIVE = {
                              "and gross_import_decomposition.py), none of which has a "
                              "synthetic stand-in carrying a real, continuous always-on "
                              "signature"),
+    "threeway_production_validation.py": ("both SAM 8760 exports (samA.csv/samB.csv, "
+                             "the only independent gross-load instrument -- same "
+                             "dependency as service_headroom.py and gross_import_"
+                             "decomposition.py) and the raw Green Button export, "
+                             "none of which has a stand-in carrying a real solar year"),
 }
 
 # Generators listed above that nonetheless run END TO END IN CI -- just not

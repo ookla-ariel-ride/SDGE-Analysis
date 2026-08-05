@@ -3160,14 +3160,31 @@ def conservation_check(pv, excluded_days):
         if d in excluded_days:
             continue
         daily[d] += v
+    # Every column after the date EXCEPT a derived one excluded by name --
+    # generic over however many independently MEASURED reference columns the
+    # file carries (test_service_headroom.py's own synthetic fixtures use
+    # arbitrary names like refA/refB/synthetic_ct/synthetic_feed, which this
+    # must keep reading exactly as before). threeway_production_validation.py
+    # (issue #37) added meter_derived to the real file: itself computed from
+    # this same CT-load-minus-import-plus-export identity, on largely the
+    # same raw inputs this script's own `pv` already is -- comparing a
+    # derived series against another derived series computed the same way
+    # would be circular, not an independent conservation check -- and it is
+    # null on the two DST dates, which a bare float() cannot parse. Excluding
+    # it by name (rather than allow-listing "pvoutput"/"enphase_meter",
+    # which would break every synthetic fixture above) keeps this generic
+    # for any OTHER reference column a future refresh adds.
+    EXCLUDED_DERIVED_COLS = {"meter_derived"}
     with open(THREEWAY, newline="") as fh:
         rd = csv.reader(fh)
         head = next(rd)
-        cols = head[1:]
+        keep_idx = [i for i, c in enumerate(head[1:], start=1)
+                   if c not in EXCLUDED_DERIVED_COLS]
+        cols = [head[i] for i in keep_idx]
         ref = {}
         for row in rd:
             d = dt.date.fromisoformat(row[0])
-            ref[d] = [float(x) for x in row[1:]]
+            ref[d] = [float(row[i]) for i in keep_idx]
     common = sorted(d for d in daily if d in ref)
     if not common:
         raise SystemExit("service_headroom.py: derived PV and "
