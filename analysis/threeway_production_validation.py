@@ -203,8 +203,21 @@ def load_sam_hourly():
 
 
 def load_green_button_hourly():
-    """{(date, hour): (import_kwh, export_kwh)}, hourly sums of the SDG&E
-    revenue meter's 15-minute Consumption/Generation columns.
+    """{(date, hour): (import_kwh, export_kwh, n_intervals)}, hourly sums of
+    the SDG&E revenue meter's 15-minute Consumption/Generation columns, WITH
+    a count of how many 15-minute rows actually contributed to each hour.
+
+    The count matters on its own: summing whatever rows happen to carry a
+    given (date, hour) key silently accepts an hour built from 3 intervals
+    (one quarter missing from the export) or 5 (a duplicated or
+    misdated row) exactly as readily as a genuine 4 -- the SUM still looks
+    like a plausible number either way, just a wrong one, with nothing in
+    the shape of the data to say so. derive_daily() below refuses any
+    non-DST hour whose count isn't exactly 4 rather than trusting presence
+    alone (issue #37 review; DST hours are excluded before this check ever
+    runs, so their genuinely non-standard interval counts -- 5 quarters in
+    the fall-back hour, a missing 02:00 hour entirely on spring-forward --
+    never reach it).
 
     Scans for the data header row rather than trusting a fixed skiprows
     count, and reads nothing above it into memory: the header block above
@@ -230,14 +243,15 @@ def load_green_button_hourly():
             d = dt.datetime.strptime(rec[1].strip(), "%m/%d/%Y").date()
             t = dt.datetime.strptime(rec[2].strip(), "%I:%M %p")
             key = (d, t.hour)
-            a = acc.setdefault(key, [0.0, 0.0])
+            a = acc.setdefault(key, [0.0, 0.0, 0])
             a[0] += float(rec[4])
             a[1] += float(rec[5])
+            a[2] += 1
     if not acc:
         raise SystemExit(
             "threeway_production_validation.py: no interval rows parsed "
             f"from {USAGE_CSV} -- is this a Green Button 15-minute export?")
-    return {k: (v[0], v[1]) for k, v in acc.items()}
+    return {k: (v[0], v[1], v[2]) for k, v in acc.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +292,22 @@ def dst_dates_in(dates):
     return out
 
 
+EXPECTED_INTERVALS_PER_HOUR = 4  # 15-minute Green Button rows, on any non-DST hour
+
+
 def derive_daily(dates, dst_days, sam_hourly, gb_hourly):
     """{date: meter_derived_kwh or None} -- None for the two DST dates
     (skipped outright, never computed), a hard stop for any OTHER day this
     window claims to cover but the raw archive does not actually have all
-    24 hours of (a real data gap, not a DST artifact, and not something to
-    paper over)."""
+    24 COMPLETE hours of (a real data gap, not a DST artifact, and not
+    something to paper over).
+
+    "Complete" means both: the hour key is present in both archives, AND
+    the Green Button side was built from exactly EXPECTED_INTERVALS_PER_HOUR
+    15-minute rows -- an hour missing one quarter, or carrying a duplicated
+    one, still has a KEY (so a presence-only check would call it complete)
+    but sums to a wrong total; gb_hourly's own n_intervals count (issue #37
+    review) is what actually proves the hour is whole, not just present."""
     daily = {}
     gaps = []
     for d in dates:
@@ -292,27 +316,37 @@ def derive_daily(dates, dst_days, sam_hourly, gb_hourly):
             continue
         total = 0.0
         hours_seen = 0
+        bad_counts = []
         for h in range(24):
             key = (d, h)
             if key not in sam_hourly or key not in gb_hourly:
                 continue
             sam_h = sam_hourly[key]
-            imp_h, exp_h = gb_hourly[key]
+            imp_h, exp_h, n_h = gb_hourly[key]
+            if n_h != EXPECTED_INTERVALS_PER_HOUR:
+                bad_counts.append((h, n_h))
+                continue
             total += max(sam_h - imp_h + exp_h, 0.0)
             hours_seen += 1
         if hours_seen != 24:
-            gaps.append((d, hours_seen))
+            gaps.append((d, hours_seen, bad_counts))
             daily[d] = None
         else:
             daily[d] = total
     if gaps:
+        parts = []
+        for d, n, bad in gaps:
+            detail = f"{d} has {n}/24 complete hours"
+            if bad:
+                detail += (" (" + ", ".join(
+                    f"hour {h} built from {c} intervals, not "
+                    f"{EXPECTED_INTERVALS_PER_HOUR}" for h, c in bad) + ")")
+            parts.append(detail)
         raise SystemExit(
             "threeway_production_validation.py: incomplete hourly coverage "
-            "on non-DST day(s) -- " +
-            "; ".join(f"{d} has {n}/24 hours in both the SAM and Green "
-                     f"Button archives" for d, n in gaps) +
-            ". This is a real data gap, not the DST exclusion, and is not "
-            "papered over.")
+            "on non-DST day(s) -- " + "; ".join(parts) +
+            ". This is a real data gap or a missing/duplicated 15-minute "
+            "interval, not the DST exclusion, and is not papered over.")
     return daily
 
 
@@ -368,13 +402,30 @@ def validation_stats(dates, dst_days, derived, reference):
 # enough that a wrong-year SAM match or a broken hour alignment (which would
 # scramble the day-to-day SHAPE of production, not just its level) does.
 CORRELATION_FLOOR_BELOW_REF = 0.01
-# Ratio bounds are deliberately loose (real data lands at 0.98-1.00): this
-# guards against gross unit/scale errors (a 1000x mixup, an accidentally
-# doubled sum), not against ordinary measurement disagreement.
-RATIO_BOUNDS = (0.5, 2.0)
+# Correlation is scale-invariant (issue #37 review, Codex pass 2): a
+# derived series that is a CONSTANT multiple of the truth -- 60% of it, or
+# 190% of it, a units mixup or a doubled/halved sum -- still tracks the
+# reference's day-to-day SHAPE perfectly and would sail through the
+# correlation floor above alone. The ratio check is what has to catch that,
+# so it needs its own evidence-derived band, not a flat guess. Same
+# principle as the correlation floor: the two REFERENCE instruments'
+# own ratio (pvoutput/enphase_meter, measured 1.0205 on this household's
+# data, i.e. a 0.0205 deviation from perfect agreement) is the natural
+# "how far can two honest measurements of the same thing drift" benchmark.
+# RATIO_DEVIATION_MARGIN_MULTIPLE gives 10x that measured deviation as
+# headroom (0.205, i.e. the band [0.795, 1.205] on this data) -- generous
+# enough for ordinary instrument disagreement, tight enough that a 60% or
+# 190% scale error (Codex's own example) is nowhere close. RATIO_DEVIATION_FLOOR
+# is a minimum band width so this never gets pathologically tight if the two
+# references happen to agree almost exactly on some future refresh.
+RATIO_DEVIATION_MARGIN_MULTIPLE = 10
+RATIO_DEVIATION_FLOOR = 0.05
 
 
-def check_validation(stats_en, stats_pv, ref_correlation):
+def check_validation(stats_en, stats_pv, ref_correlation, ref_ratio):
+    ratio_deviation = max(RATIO_DEVIATION_MARGIN_MULTIPLE * abs(ref_ratio - 1.0),
+                          RATIO_DEVIATION_FLOOR)
+    ratio_lo, ratio_hi = 1.0 - ratio_deviation, 1.0 + ratio_deviation
     problems = []
     for label, stats in (("enphase_meter", stats_en), ("pvoutput", stats_pv)):
         corr = stats["correlation"]
@@ -394,12 +445,14 @@ def check_validation(stats_en, stats_pv, ref_correlation):
                 "longer tracks day-to-day production the way an honest "
                 "third measurement should")
         ratio = stats["ratio_derived_over_reference"]
-        lo, hi = RATIO_BOUNDS
-        if not (lo <= ratio <= hi):
+        if not (ratio_lo <= ratio <= ratio_hi):
             problems.append(
                 f"meter_derived vs {label}: annual ratio {ratio:.4f} is "
-                f"outside the [{lo}, {hi}] sanity band -- looks like a "
-                "units or scale error, not measurement noise")
+                f"outside the [{ratio_lo:.4f}, {ratio_hi:.4f}] band (derived "
+                f"from the two REFERENCE instruments' own {ref_ratio:.4f} "
+                "ratio) -- looks like a units or scale error, since "
+                "correlation alone cannot catch a constant multiplicative "
+                "error")
     if problems:
         raise SystemExit(
             "threeway_production_validation.py: meter_derived FAILED "
@@ -449,7 +502,7 @@ def main():
             "instruments (pvoutput, enphase_meter) have zero variance "
             "between them on this window -- cannot derive a correlation "
             "floor from degenerate reference data")
-    check_validation(stats_en, stats_pv, ref_correlation)
+    check_validation(stats_en, stats_pv, ref_correlation, ref_ratio)
 
     write_csv(dates, pv, en, derived)
 

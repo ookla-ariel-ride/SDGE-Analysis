@@ -107,11 +107,14 @@ def case_window_dates_fails_closed_on_a_gap_in_the_shared_range():
 # ---------------------------------------------------------------------------
 # (c) derive_daily -- the core identity, and the DST exclusion
 # ---------------------------------------------------------------------------
-def _hourly_dicts_for(d, sam_by_hour, imp_by_hour, exp_by_hour=None):
-    """Build one day's {(d,h): kwh} and {(d,h): (imp,exp)} entries."""
+def _hourly_dicts_for(d, sam_by_hour, imp_by_hour, exp_by_hour=None, n_by_hour=None):
+    """Build one day's {(d,h): kwh} and {(d,h): (imp,exp,n_intervals)}
+    entries. n_by_hour defaults to a complete 4-interval hour everywhere,
+    the well-formed case; cases proving the interval-count gate override it."""
     exp_by_hour = exp_by_hour or {h: 0.0 for h in range(24)}
+    n_by_hour = n_by_hour or {h: TPV.EXPECTED_INTERVALS_PER_HOUR for h in range(24)}
     sam = {(d, h): sam_by_hour[h] for h in range(24)}
-    gb = {(d, h): (imp_by_hour[h], exp_by_hour[h]) for h in range(24)}
+    gb = {(d, h): (imp_by_hour[h], exp_by_hour[h], n_by_hour[h]) for h in range(24)}
     return sam, gb
 
 
@@ -174,6 +177,76 @@ def case_derive_daily_fails_closed_on_a_genuine_non_dst_gap():
         assert "23/24" in str(e), e
         return "a non-DST day missing an hour of raw coverage is refused, not silently nulled"
     raise AssertionError("derive_daily should have refused an incomplete non-DST day")
+
+
+@case
+def case_derive_daily_fails_closed_on_a_missing_15min_interval():
+    """The hour KEY is present (unlike the gap case above), but was built
+    from only 3 of the expected 4 fifteen-minute rows -- a partial hour that
+    a presence-only check would wrongly call complete."""
+    d = dt.date(2026, 6, 18)
+    sam_h = {h: 2.0 for h in range(24)}
+    imp_h = {h: 0.5 for h in range(24)}
+    n_h = {h: TPV.EXPECTED_INTERVALS_PER_HOUR for h in range(24)}
+    n_h[9] = 3  # one 15-minute quarter missing from hour 9
+    sam, gb = _hourly_dicts_for(d, sam_h, imp_h, n_by_hour=n_h)
+    try:
+        TPV.derive_daily([d], set(), sam, gb)
+    except SystemExit as e:
+        assert str(d) in str(e), e
+        assert "hour 9 built from 3 intervals" in str(e), e
+        return "a non-DST hour built from only 3 of 4 expected 15-minute intervals is refused"
+    raise AssertionError("derive_daily should have refused a 3-interval hour")
+
+
+@case
+def case_derive_daily_fails_closed_on_a_duplicated_15min_interval():
+    """The mirror case: an hour built from 5 rows (a duplicated or
+    misdated 15-minute reading), which sums to a plausible-looking but
+    wrong total if only presence is checked."""
+    d = dt.date(2026, 6, 19)
+    sam_h = {h: 2.0 for h in range(24)}
+    imp_h = {h: 0.5 for h in range(24)}
+    n_h = {h: TPV.EXPECTED_INTERVALS_PER_HOUR for h in range(24)}
+    n_h[14] = 5  # one duplicated (or misdated) 15-minute row in hour 14
+    sam, gb = _hourly_dicts_for(d, sam_h, imp_h, n_by_hour=n_h)
+    try:
+        TPV.derive_daily([d], set(), sam, gb)
+    except SystemExit as e:
+        assert str(d) in str(e), e
+        assert "hour 14 built from 5 intervals" in str(e), e
+        return "a non-DST hour built from 5 (duplicated/misdated) 15-minute intervals is refused"
+    raise AssertionError("derive_daily should have refused a 5-interval hour")
+
+
+@case
+def case_load_green_button_hourly_counts_intervals_on_the_real_archive():
+    """The loader's own interval-counting, against the real export: every
+    non-DST hour in the archive must show exactly 4, proving the count
+    isn't a synthetic-only concept -- it is what the real file's own rows
+    actually look like."""
+    _require_archive()
+    cwd = os.getcwd()
+    os.chdir(str(SANDBOX))
+    try:
+        gb = TPV.load_green_button_hourly()
+    finally:
+        os.chdir(cwd)
+    bad = [(k, n) for k, (_, _, n) in gb.items() if n != TPV.EXPECTED_INTERVALS_PER_HOUR]
+    # DST-day hours are allowed to be irregular (that's exactly why derive_daily
+    # excludes the whole day before ever reading an interval count); everything
+    # else must be exactly 4.
+    dst_days_2025_2026 = set()
+    for y in (2025, 2026):
+        dst_days_2025_2026.update(R.dst_transition_sundays(y))
+    non_dst_bad = [(k, n) for k, n in bad if k[0] not in dst_days_2025_2026]
+    assert not non_dst_bad, (
+        f"{len(non_dst_bad)} non-DST hour(s) in the real archive have "
+        f"other than {TPV.EXPECTED_INTERVALS_PER_HOUR} intervals: "
+        f"{non_dst_bad[:5]}")
+    return (f"every non-DST hour in the real archive ({len(gb) - len(bad)} of "
+           f"{len(gb)}) has exactly {TPV.EXPECTED_INTERVALS_PER_HOUR} "
+           "15-minute intervals")
 
 
 # ---------------------------------------------------------------------------
@@ -334,13 +407,17 @@ def case_correlation_and_mae_on_the_real_archive_used_only_363_days():
            f"vs enphase_meter, over exactly {stats_en['n_days']} non-DST days")
 
 
+REF_CORRELATION = 0.99989
+REF_RATIO = 1.0205  # measured pvoutput/enphase_meter ratio on the real archive
+
+
 @case
 def case_check_validation_passes_on_realistic_stats():
     stats_en = {"correlation": 0.99996, "mae_kwh": 0.160,
                "ratio_derived_over_reference": 1.0032}
     stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
                "ratio_derived_over_reference": 0.9831}
-    TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)  # must not raise
+    TPV.check_validation(stats_en, stats_pv, REF_CORRELATION, REF_RATIO)  # must not raise
     return "check_validation does not raise on realistic real-archive-shaped stats"
 
 
@@ -351,7 +428,7 @@ def case_check_validation_fails_closed_on_low_correlation():
     stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
                "ratio_derived_over_reference": 0.9831}
     try:
-        TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)
+        TPV.check_validation(stats_en, stats_pv, REF_CORRELATION, REF_RATIO)
         assert False, "check_validation accepted a 0.5 correlation"
     except SystemExit as e:
         assert "correlation 0.50000" in str(e), str(e)
@@ -366,7 +443,7 @@ def case_check_validation_fails_closed_on_none_correlation():
     stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
                "ratio_derived_over_reference": 0.9831}
     try:
-        TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)
+        TPV.check_validation(stats_en, stats_pv, REF_CORRELATION, REF_RATIO)
         assert False, "check_validation accepted a None (degenerate) correlation"
     except SystemExit as e:
         assert "undefined" in str(e), str(e)
@@ -380,11 +457,38 @@ def case_check_validation_fails_closed_on_bad_ratio():
     stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
                "ratio_derived_over_reference": 0.9831}
     try:
-        TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)
+        TPV.check_validation(stats_en, stats_pv, REF_CORRELATION, REF_RATIO)
         assert False, "check_validation accepted a 5.0 ratio"
     except SystemExit as e:
         assert "ratio 5.0000" in str(e), str(e)
     return "check_validation refuses a meter_derived vs enphase_meter ratio of 5.0 (a scale-error shape)"
+
+
+@case
+def case_check_validation_fails_closed_on_a_proportionally_scaled_series():
+    """Codex adversarial review, pass 2: correlation is scale-invariant, so
+    a series that is a CONSTANT multiple of the truth (60% of it, say) has
+    near-perfect correlation with the reference it was scaled from and would
+    have passed the OLD flat [0.5, 2.0] ratio band entirely. Both 0.60 and
+    1.90 sit inside that old band; both must be refused by the new,
+    evidence-derived one."""
+    for bad_ratio in (0.60, 1.90):
+        stats_en = {"correlation": 0.9999, "mae_kwh": 5.0,
+                   "ratio_derived_over_reference": bad_ratio}
+        stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
+                   "ratio_derived_over_reference": 0.9831}
+        try:
+            TPV.check_validation(stats_en, stats_pv, REF_CORRELATION, REF_RATIO)
+            raise AssertionError(
+                f"check_validation accepted a {bad_ratio} ratio despite "
+                "near-perfect correlation -- a proportionally-scaled series "
+                "was not caught")
+        except SystemExit as e:
+            assert f"ratio {bad_ratio:.4f}" in str(e), str(e)
+    return ("check_validation refuses both a 0.60x and a 1.90x proportionally "
+           "-scaled series despite near-perfect correlation with the "
+           "reference -- correlation alone cannot catch a constant scale "
+           "error, the tightened ratio band does")
 
 
 @case
