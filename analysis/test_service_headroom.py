@@ -971,6 +971,33 @@ def case_a_nan_backfeed_does_not_produce_a_false_safety_pass():
            "nor a fail on the arithmetic")
 
 
+def case_spaces_and_max_circuits_reject_lossy_coercion():
+    """Codex review, issue #41: `int(HH.get("panel.spaces"))` alone silently
+    truncates a fractional YAML value (20.9 -> 20) or coerces a boolean
+    (True -> 1) BEFORE validate_panel()'s own positivity check ever runs --
+    by then the malformed original is gone and the coerced value looks like
+    a plausible count. _positive_whole_intake() checks the RAW value at
+    load_panel() instead, the same discipline breaker_geometry()'s
+    _positive_whole() already applies to schedule pole counts."""
+    for edit, replacement, needle in (
+            ("spaces: 20", "spaces: 20.9", "spaces"),
+            ("spaces: 20", "spaces: true", "spaces"),
+            ("spaces: 20", "spaces: 0", "spaces"),
+            ("spaces: 20", "spaces: .nan", "spaces"),
+            ("max_circuits: 40", "max_circuits: 39.5", "max_circuits"),
+            ("max_circuits: 40", "max_circuits: false", "max_circuits")):
+        with _with_household(PANEL_YAML.replace(edit, replacement)):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted {replacement!r}")
+            except SystemExit as e:
+                assert f"panel.{needle} is" in str(e), (replacement, str(e))
+                assert "positive whole number" in str(e), str(e)
+    return ("spaces and max_circuits refuse fractional, boolean, zero and "
+           "non-finite raw values instead of silently truncating them "
+           "with int()")
+
+
 def case_panel_domain_checks_accept_the_edges_that_are_real():
     """The guard is on safety arithmetic, not a schema validator: values that
     are unusual but physically possible must still run."""
@@ -4870,6 +4897,7 @@ CASES = [
     case_impossible_panel_values_fail_closed_by_field,
     case_non_finite_panel_values_fail_closed,
     case_a_nan_backfeed_does_not_produce_a_false_safety_pass,
+    case_spaces_and_max_circuits_reject_lossy_coercion,
     case_panel_domain_checks_accept_the_edges_that_are_real,
     case_free_text_panel_fields_fail_closed_on_blank_or_absurd_length,
     case_meter_class_format_fails_closed,

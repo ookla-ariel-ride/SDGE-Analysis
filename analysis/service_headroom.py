@@ -1163,6 +1163,25 @@ def _panel_domain_error(field, value, why):
                      f"{why}. {PANEL_DOMAIN_NOTE}")
 
 
+def _positive_whole_intake(field, raw_value):
+    """A panel-level count (spaces, max_circuits) as a genuine positive whole
+    number, checked on the RAW value before any coercion (Codex review,
+    issue #41: `int(HH.get(...))` alone silently truncates a fractional YAML
+    value like 20.9 to 20, or coerces a boolean True to 1, before the field
+    ever reaches validate_panel()'s own 'must be positive' check -- by then
+    the original malformed value is already gone, and the coerced one looks
+    like a plausible count. Checked here, at the point the raw value is
+    still available, the same discipline breaker_geometry()'s own
+    _positive_whole() already applies to schedule-row pole counts."""
+    if (isinstance(raw_value, bool) or not isinstance(raw_value, (int, float))
+            or not math.isfinite(raw_value) or raw_value <= 0
+            or raw_value != int(raw_value)):
+        _panel_domain_error(
+            field, raw_value, "is not a positive whole number of physical "
+            "positions")
+    return int(raw_value)
+
+
 # ---------------------------------------------------------------------------
 # The panel intake schema (issue #41), declared once
 # ---------------------------------------------------------------------------
@@ -1203,11 +1222,17 @@ PANEL_FIELD_SCHEMA = {
     "spaces": {
         "type": int, "privacy": "public-ok",
         "domain": "positive count of full-size positions, <= max_circuits",
-        "vocabulary": None, "applied": "validate_panel()"},
+        "vocabulary": None,
+        "applied": "load_panel() (positive-whole-number check on the raw "
+                   "value, before int() coercion) and validate_panel() "
+                   "(the <= max_circuits cross-check)"},
     "max_circuits": {
         "type": int, "privacy": "public-ok",
         "domain": "positive count of pole positions, >= spaces",
-        "vocabulary": None, "applied": "validate_panel()"},
+        "vocabulary": None,
+        "applied": "load_panel() (positive-whole-number check on the raw "
+                   "value, before int() coercion) and validate_panel() "
+                   "(the >= spaces cross-check)"},
     "enclosure_type": {
         "type": str, "privacy": "private-only",
         "domain": "non-empty free text (NEMA rating / mounting description)",
@@ -1369,8 +1394,10 @@ def validate_panel(p):
         recorded it must match a breaker rating actually present in
         panel.schedule -- a backfeed breaker with no matching device is two
         intake answers disagreeing, not a fact about this panel;
-      * the two position counts must be positive, and a panel cannot offer
-        fewer pole positions than it has full-size spaces;
+      * a panel cannot offer fewer pole positions than it has full-size
+        spaces (the counts' own positivity is checked earlier, in
+        load_panel(), on the raw value before int() coercion could turn a
+        fractional or boolean YAML value into a falsely-plausible count);
       * a main larger than the busbar it feeds is not a panel this method can
         score -- every 120% figure computed from that pair is meaningless;
       * each of the three breaker positions, where recorded, must be a
@@ -1511,10 +1538,10 @@ def validate_panel(p):
             "no legible RLA (rated-load amps) figure, and a zero or "
             f"negative one would be published as a real {nec('220.60')} "
             "noncoincident credit")
-    for f in ("spaces", "max_circuits"):
-        if not p[f] > 0:
-            _panel_domain_error(
-                f, p[f], "is not a positive count of physical positions")
+    # spaces/max_circuits are already guaranteed positive whole numbers by
+    # load_panel()'s own _positive_whole_intake() call, checked on the RAW
+    # value before this dict is even built -- only the cross-field relation
+    # remains to check here.
     if p["max_circuits"] < p["spaces"]:
         _panel_domain_error(
             "max_circuits", p["max_circuits"],
@@ -1625,8 +1652,9 @@ def load_panel():
                                            required=False),
         "main_breaker_position": HH.get("panel.main_breaker_position",
                                         required=False),
-        "spaces": int(HH.get("panel.spaces")),
-        "max_circuits": int(HH.get("panel.max_circuits")),
+        "spaces": _positive_whole_intake("spaces", HH.get("panel.spaces")),
+        "max_circuits": _positive_whole_intake(
+            "max_circuits", HH.get("panel.max_circuits")),
         "schedule": HH.get("panel.schedule"),
         "charger_kw": float(HH.get("charger.kw")) if has_ev else None,
     })
