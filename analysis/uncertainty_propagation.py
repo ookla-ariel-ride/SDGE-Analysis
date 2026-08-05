@@ -131,24 +131,35 @@ household's CHOICE among evening/twowin/greedy, correctly held fixed at
 greedy as a decision, not an uncertain input) — this is whether, having
 CHOSEN greedy, the Powerwall's own automation actually EXECUTES it reliably.
 Real-world software/automation can fail to follow its configured schedule
-(app settings not saving, a unit needing a manual reboot, etc.). Checked for
-a citable number to build a distribution from: no peer-reviewed study,
-industry report (Wood Mackenzie, EnergySage), or Tesla-published spec
-quantifies Powerwall dispatch-schedule adherence. The one quantitative
-Powerwall "reliability" figure found (a ~0.93% failure rate, Solar Insure)
-is a warranty-claims HARDWARE failure rate — unit died / needed replacement
-— not a measure of whether a working unit follows its schedule, and carries
-no disclosed sample size. CPUC's ELRP demand-response load-impact
-evaluations compute realization rates but aggregate across technologies
-without isolating residential battery storage. What exists beyond that is
-anecdotal (forum reports of app/automation glitches) with no rate attached.
+(app settings not saving, a unit needing a manual reboot, etc.). Checked
+(WebSearch, 2026-08) for a citable number to build a distribution from
+against these specific sources, none of which quantifies Powerwall dispatch-
+schedule adherence:
+  - solarinsure.com/tesla-powerwall-reliability-study — the one quantitative
+    Powerwall "reliability" figure found (a ~0.93% failure rate) is a
+    warranty-claims HARDWARE failure rate (unit died / needed replacement),
+    not a measure of whether a working unit follows its own schedule, and
+    carries no disclosed sample size.
+  - calmac.org/publications/PY2024_SCE_DR_Program_Report_ELRP_FINAL_PUBLIC.pdf
+    — CPUC's ELRP demand-response load-impact evaluation computes
+    realization rates but aggregates across technologies without isolating
+    residential battery storage.
+  - A PG&E-sponsored residential-battery VPP pilot study (dret-ca.com,
+    "PGE-Residential-Battery-as-Virtual-Power-Plant-VPP-Study.pdf") looked
+    like a plausible source but no dispatch-compliance/no-show metric could
+    be confirmed in it.
+  - No Tesla-published spec, and no Wood Mackenzie or EnergySage report,
+    addressing this specific question was found. What exists beyond the
+    above is anecdotal (forum reports of app/automation glitches, a 2025
+    Powerwall-2-recall class action over unrelated OTA charge-limiting) with
+    no adherence rate attached to any of it.
 DECISION: not modeled. There is no number here to build a distribution from
 without inventing one, which CLAUDE.md §0 prohibits — this is the "not
-determined, state what would settle it" case, not a "model it anyway"
-case. What would settle it: a published dispatch-compliance/no-show metric
-from Tesla, a utility VPP program, or an independent monitoring study (the
-PG&E-sponsored residential-battery VPP pilot study looked like a plausible
-future source but no compliance metric could be confirmed in it).
+determined, state what would settle it" case, not a "model it anyway" case,
+bounded to the sources actually checked above, not a claim that no such
+number could ever exist anywhere. What would settle it: a published
+dispatch-compliance/no-show metric from Tesla, a utility VPP program, or an
+independent monitoring study.
 
 (b) TWO-SIDED ESCALATION DISTRIBUTION. `esc` in payback_of()/npv_of() below
 scales save1 (the battery's marginal SAVING, itself proportional to the
@@ -185,12 +196,16 @@ a positive OR a zero-floored distribution.
   non-shrinking (if not provably widening) spread, and none shows a
   significant absolute decline except super-off-peak, whose own CI crosses
   zero and which is a charging-cost (not arbitrage-margin) period besides.
-  External precedent (researched for this issue, not previously in this
-  repo): California IOU electric rates HAVE fallen in a real, documented,
-  multi-year episode — PG&E's residential rates dropped in several separate
-  2024-2025 rate actions (~$12/mo lower by Oct 2025 for a typical customer),
-  driven by an IDENTIFIED, specific mechanism: AB 1054 wildfire-safety
-  capital costs rolling off the rate base. This shows a CA IOU rate decline
+  External precedent (WebSearch, 2026-08, not previously in this repo):
+  California IOU electric rates HAVE fallen in a real, documented, multi-
+  year episode — PG&E's residential rates dropped in several separate
+  2024-2025 rate actions (~$12/mo lower by Oct 2025 for a typical customer):
+  pge.com/en/newsroom/currents/energy-savings/pg-e-electric-bills-down-
+  from-last-year--expected-to-drop-again-.html; nasdaq.com/press-release/
+  pge-lower-electric-prices-jan-1-fourth-decrease-two-years-2025-12-30.
+  Driven by an IDENTIFIED, specific mechanism: AB 1054 wildfire-safety
+  capital costs rolling off the rate base (docs.cpuc.ca.gov/PublishedDocs/
+  Efile/G000/M523/K181/523181110.PDF). This shows a CA IOU rate decline
   is a real, not hypothetical, kind of event, with a real, citable
   magnitude attached to it. But the mechanism is not yet shown to apply
   comparably to SDG&E specifically — the same research found SDG&E's
@@ -912,12 +927,15 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                           "battery.uniform_ladder bounding range (3/5/8/12%); the "
                           "underlying escalation TREND is itself 'not determined' "
                           "per that artifact's per_period.summer/winter verdicts. "
-                          "issue #59: the 0% floor is a checked, not assumed, "
-                          "choice -- see this module's own docstring, section "
-                          "'ISSUE #59', part (b) for the per-TOU-cell and "
-                          "external-precedent evidence behind keeping it, and "
-                          "escalation_two_sided_evidence_note below for the "
-                          "same reasoning in the artifact itself"},
+                          "issue #59: the 0% floor was CHECKED against a two-sided "
+                          "alternative (see this module's own docstring, section "
+                          "'ISSUE #59', part (b), and escalation_two_sided_"
+                          "evidence_note below), but that check did NOT find "
+                          "evidence PROVING the floor correct -- it remains an "
+                          "INHERITED, unproven modeling assumption from "
+                          "deep_analyses.py's original design, not an evidence-"
+                          "backed one; a real, stated limitation, not resolved "
+                          "by this issue"},
             "degradation_fade": {"dist": "Uniform", "low": FADE_LO, "high": FADE_HI,
                                  "evidential_basis": "manufacturer (Powerwall 3) "
                                  "warranty degradation curve; unchanged from "

@@ -17,7 +17,7 @@
    "dist": "Uniform",
    "low": 0.0,
    "high": 0.12,
-   "evidential_basis": "estimated -- data/tou_spread.json's battery.uniform_ladder bounding range (3/5/8/12%); the underlying escalation TREND is itself 'not determined' per that artifact's per_period.summer/winter verdicts. issue #59: the 0% floor is a checked, not assumed, choice -- see this module's own docstring, section 'ISSUE #59', part (b) for the per-TOU-cell and external-precedent evidence behind keeping it, and escalation_two_sided_evidence_note below for the same reasoning in the artifact itself"
+   "evidential_basis": "estimated -- data/tou_spread.json's battery.uniform_ladder bounding range (3/5/8/12%); the underlying escalation TREND is itself 'not determined' per that artifact's per_period.summer/winter verdicts. issue #59: the 0% floor was CHECKED against a two-sided alternative (see this module's own docstring, section 'ISSUE #59', part (b), and escalation_two_sided_evidence_note below), but that check did NOT find evidence PROVING the floor correct -- it remains an INHERITED, unproven modeling assumption from deep_analyses.py's original design, not an evidence-backed one; a real, stated limitation, not resolved by this issue"
   },
   "degradation_fade": {
    "dist": "Uniform",

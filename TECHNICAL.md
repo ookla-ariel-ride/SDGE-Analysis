@@ -2808,14 +2808,19 @@ script's own module docstring, not left as a silent gap.
 
 *Dispatch-policy adherence risk* — whether the Powerwall's own automation reliably
 EXECUTES the chosen `greedy` policy (distinct from WHICH policy to choose, already
-addressed by `reconcile_tornado()`'s existing note) — was checked for a citable
-adherence/no-show rate against Tesla's own published specs, industry reports (Wood
-Mackenzie, EnergySage), and CPUC's ELRP demand-response load-impact evaluations. None
-exists: the one quantitative Powerwall reliability figure found is a warranty-claims
-hardware failure rate (unit died / needed replacement), not a measure of whether a
-working unit follows its configured schedule, and CPUC's evaluations aggregate across
-technologies without isolating residential battery storage. Left "not determined" per
-CLAUDE.md §0 rather than modeled from an invented number.
+addressed by `reconcile_tornado()`'s existing note) — was checked (WebSearch, 2026-08)
+for a citable adherence/no-show rate against: Tesla's own published specs; Wood Mackenzie
+and EnergySage industry reports; a Solar Insure Powerwall reliability study
+(solarinsure.com/tesla-powerwall-reliability-study); CPUC's ELRP demand-response
+load-impact evaluation (calmac.org/publications/PY2024_SCE_DR_Program_Report_ELRP_
+FINAL_PUBLIC.pdf); and a PG&E-sponsored residential-battery VPP pilot study
+(dret-ca.com). None of these quantifies dispatch-schedule adherence: the Solar Insure
+figure is a warranty-claims hardware failure rate (unit died / needed replacement), not a
+measure of whether a working unit follows its configured schedule; CPUC's evaluation
+aggregates across technologies without isolating residential battery storage; no
+compliance metric could be confirmed in the PG&E pilot study. Left "not determined" per
+CLAUDE.md §0, bounded to the sources actually checked, rather than modeled from an
+invented number.
 
 *Two-sided escalation distribution* — whether the `Uniform(0.00, 0.12)` escalation input
 should allow for rates falling, not just rising. `esc` scales `save1` (the battery's
@@ -2837,14 +2842,18 @@ case where both periods rising together leaves the SPREAD roughly flat, not evid
 widened. What remains true, stated more carefully: no cell or spread-level figure in this
 repo, at any rigor, shows a statistically significant NEGATIVE trend for this household's
 own tariff (super-off-peak's negative point estimate, ~-21%/yr both seasons, has a 95% CI
-crossing zero in both — [-61.54, 60.62] summer, [-49.31, 20.86] winter). Externally,
-California IOU electric rates HAVE fallen in a real, documented multi-year episode (PG&E,
-2024-2025, ~$12/mo lower by October 2025 for a typical customer, driven by an identified
-mechanism — AB 1054 wildfire-safety capital costs rolling off the rate base) — a real,
-citable magnitude for a rate decline — but that mechanism is not shown to apply to SDG&E
-specifically: the same research found SDG&E's own electric delivery rate rose over a
-comparable recent window even as its gas transportation rate fell. PG&E's magnitude is not
-validly transferable into an SDG&E-specific negative bound without fabricating one.
+crossing zero in both — [-61.54, 60.62] summer, [-49.31, 20.86] winter). Externally
+(WebSearch, 2026-08), California IOU electric rates HAVE fallen in a real, documented
+multi-year episode: PG&E's residential rates dropped in several separate 2024-2025 rate
+actions, ~$12/mo lower by October 2025 for a typical customer (pge.com/en/newsroom/
+currents/energy-savings, nasdaq.com/press-release/pge-lower-electric-prices-jan-1-fourth-
+decrease-two-years-2025-12-30), driven by an identified mechanism — AB 1054 wildfire-safety
+capital costs rolling off the rate base (docs.cpuc.ca.gov/PublishedDocs/Efile/G000/M523/
+K181/523181110.PDF) — a real, citable magnitude for a rate decline. But that mechanism is
+not shown to apply to SDG&E specifically: the same research found SDG&E's own electric
+delivery rate rose over a comparable recent window even as its gas transportation rate
+fell. PG&E's magnitude is not validly transferable into an SDG&E-specific negative bound
+without fabricating one.
 
 **Decision: the 0% floor is kept, honestly re-labeled.** It is an INHERITED assumption
 from `deep_analyses.py`'s original design, not one this repo's evidence proves correct —
