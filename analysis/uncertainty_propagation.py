@@ -735,9 +735,11 @@ def dispatch_calibration():
     # measured year -- held fixed and reused for every gen_scale scenario
     # below (soiling and, via save1_of()'s shared soil_slope routing,
     # production-measurement-spread too), instead of the prior gen0*
-    # gen_scale approximation. D is diagnostic-only (see reconstruct_
-    # gross_production()'s own docstring), not used below.
-    P, D = reconstruct_gross_production(d, imp0, gen0)
+    # gen_scale approximation. The second return value (household load) is
+    # diagnostic-only (see reconstruct_gross_production()'s own docstring
+    # and test_uncertainty_propagation.py's own nonnegative-load check),
+    # not used below.
+    P, _ = reconstruct_gross_production(d, imp0, gen0)
 
     def _steady_state_run(imp_base, gen, eta):
         """run_batt always starts at soc0=cap/2 and runs the year once -- a
