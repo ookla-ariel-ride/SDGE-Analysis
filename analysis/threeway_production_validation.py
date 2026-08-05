@@ -346,7 +346,70 @@ def validation_stats(dates, dst_days, derived, reference):
 
 
 # ---------------------------------------------------------------------------
-# 5. Write the artifact.
+# 5. Gate: `meter_derived` must actually agree with the two references before
+#    it is trusted enough to publish -- printing corr/MAE/ratio is not a
+#    check, it is a caption. A misaligned year, a units error, or an SAM/GB
+#    hour-offset bug would still produce a complete-looking file with no
+#    signal anything was wrong, and exit 0.
+# ---------------------------------------------------------------------------
+# The floor comes from evidence, not a guess (CLAUDE.md section 0): pvoutput
+# and enphase_meter are two independent, already-trusted instruments, and
+# their OWN mutual correlation on this exact window is the natural benchmark
+# for "two honest measurements of the same daily production." meter_derived
+# is a THIRD independent measurement of the same quantity, so its
+# correlation with either reference should land in the same neighborhood,
+# not measurably worse. Measured at the time this gate was written: the two
+# references agree at r=0.99989 on this household's data; meter_derived
+# agrees with enphase_meter at r=0.99996 and with pvoutput at r=0.99986 --
+# both AT or ABOVE the two references' own agreement. CORRELATION_FLOOR_BELOW_REF
+# gives a full two orders of magnitude of headroom below that (0.01, i.e.
+# ~100x the ~0.0001 gap actually observed) before refusing to publish --
+# generous enough that ordinary day-to-day noise never trips it, tight
+# enough that a wrong-year SAM match or a broken hour alignment (which would
+# scramble the day-to-day SHAPE of production, not just its level) does.
+CORRELATION_FLOOR_BELOW_REF = 0.01
+# Ratio bounds are deliberately loose (real data lands at 0.98-1.00): this
+# guards against gross unit/scale errors (a 1000x mixup, an accidentally
+# doubled sum), not against ordinary measurement disagreement.
+RATIO_BOUNDS = (0.5, 2.0)
+
+
+def check_validation(stats_en, stats_pv, ref_correlation):
+    problems = []
+    for label, stats in (("enphase_meter", stats_en), ("pvoutput", stats_pv)):
+        corr = stats["correlation"]
+        if corr is None:
+            problems.append(
+                f"meter_derived vs {label}: correlation is undefined (zero "
+                "variance in one of the two series) -- the derivation "
+                "produced a degenerate (e.g. constant or all-zero) series")
+            continue
+        floor = ref_correlation - CORRELATION_FLOOR_BELOW_REF
+        if corr < floor:
+            problems.append(
+                f"meter_derived vs {label}: correlation {corr:.5f} is below "
+                f"the {floor:.5f} floor (the two REFERENCE instruments' own "
+                f"mutual correlation, {ref_correlation:.5f}, minus "
+                f"{CORRELATION_FLOOR_BELOW_REF}) -- the derived series no "
+                "longer tracks day-to-day production the way an honest "
+                "third measurement should")
+        ratio = stats["ratio_derived_over_reference"]
+        lo, hi = RATIO_BOUNDS
+        if not (lo <= ratio <= hi):
+            problems.append(
+                f"meter_derived vs {label}: annual ratio {ratio:.4f} is "
+                f"outside the [{lo}, {hi}] sanity band -- looks like a "
+                "units or scale error, not measurement noise")
+    if problems:
+        raise SystemExit(
+            "threeway_production_validation.py: meter_derived FAILED "
+            "validation against the two reference instruments; refusing to "
+            "publish (the existing committed artifact is untouched):\n  " +
+            "\n  ".join(problems))
+
+
+# ---------------------------------------------------------------------------
+# 6. Write the artifact -- only ever called AFTER check_validation() passes.
 # ---------------------------------------------------------------------------
 def write_csv(dates, pv, en, derived):
     lines = [",pvoutput,enphase_meter,meter_derived"]
@@ -369,6 +432,25 @@ def main():
     gb_hourly = load_green_button_hourly()
     derived = derive_daily(dates, dst_days, sam_hourly, gb_hourly)
 
+    # Validate BEFORE writing anything: a botched derivation must leave the
+    # existing committed artifact byte-untouched, not overwrite it with a
+    # complete-looking but wrong file.
+    stats_en = validation_stats(dates, dst_days, derived, en)
+    stats_pv = validation_stats(dates, dst_days, derived, pv)
+    valid_dates = [d for d in dates if d not in dst_days]
+    ref_diffs = [pv[d] - en[d] for d in valid_dates]
+    ref_mae = sum(abs(v) for v in ref_diffs) / len(ref_diffs)
+    ref_ratio = sum(pv[d] for d in valid_dates) / sum(en[d] for d in valid_dates)
+    ref_correlation = _pearson([pv[d] for d in valid_dates],
+                               [en[d] for d in valid_dates])
+    if ref_correlation is None:
+        raise SystemExit(
+            "threeway_production_validation.py: the two REFERENCE "
+            "instruments (pvoutput, enphase_meter) have zero variance "
+            "between them on this window -- cannot derive a correlation "
+            "floor from degenerate reference data")
+    check_validation(stats_en, stats_pv, ref_correlation)
+
     write_csv(dates, pv, en, derived)
 
     print(f"wrote data/threeway_production_validation.csv "
@@ -381,13 +463,8 @@ def main():
          "meter_derived value is computed for them; pvoutput and "
          "enphase_meter are independent instruments and are unaffected.")
 
-    stats_en = validation_stats(dates, dst_days, derived, en)
-    stats_pv = validation_stats(dates, dst_days, derived, pv)
-    ref_diffs = [pv[d] - en[d] for d in dates if d not in dst_days]
-    ref_mae = sum(abs(v) for v in ref_diffs) / len(ref_diffs)
-    ref_ratio = (sum(pv[d] for d in dates if d not in dst_days) /
-                sum(en[d] for d in dates if d not in dst_days))
-    print(f"validation, over the {stats_en['n_days']} non-DST days:")
+    print(f"validation, over the {stats_en['n_days']} non-DST days "
+         "(PASSED -- see check_validation):")
     print(f"  meter_derived vs enphase_meter: corr={stats_en['correlation']:.5f} "
          f"MAE={stats_en['mae_kwh']:.3f} kWh/day "
          f"ratio={stats_en['ratio_derived_over_reference']:.4f}")
@@ -395,7 +472,8 @@ def main():
          f"MAE={stats_pv['mae_kwh']:.3f} kWh/day "
          f"ratio={stats_pv['ratio_derived_over_reference']:.4f}")
     print(f"  pvoutput vs enphase_meter (the two REFERENCE instruments, for "
-         f"scale): MAE={ref_mae:.3f} kWh/day ratio={ref_ratio:.4f}")
+         f"scale): corr={ref_correlation:.5f} MAE={ref_mae:.3f} kWh/day "
+         f"ratio={ref_ratio:.4f}")
 
 
 if __name__ == "__main__":

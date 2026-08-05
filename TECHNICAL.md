@@ -3396,6 +3396,19 @@ independent measurements: the Enphase revenue-grade production CT (16,502 kWh), 
 microinverter-reported records (16,839 kWh), and a derived series (load − imports + exports)
 that touches neither (16,660 kWh) — within ±2%, with 0.9999 daily correlation and near-zero
 nighttime residual in the derived series (`data/threeway_production_validation.csv`; report §1).
+The 16,660 kWh figure above is from that original, unarchived workpaper computation, over the
+full 365-day year. Issue #37 subsequently gave the file a committed generator,
+`analysis/threeway_production_validation.py`, whose own `meter_derived` column reproduces the
+SAME identity but is NOT directly comparable to the 365-day figure above: two DST transition
+dates are excluded (the flat-grid SAM export and the wall-clock Green Button meter do not
+share a common hour boundary on those two calendar days — see the script's own docstring), so
+the generator's total is 16,459.2 kWh over 363 measured days. Over those days it tracks
+enphase_meter at r=0.99996 (MAE 0.160 kWh/day) and pvoutput at r=0.99986 (MAE 0.789 kWh/day) —
+both inside the ±2% spread the two reference instruments already carry between themselves
+(r=0.99989 on the same window). Whether the headline 16,660 kWh figure above should be
+replaced with this now-reproducible number is a report-prose question issue #37 explicitly
+left open; this note exists so this section's own claim about what the committed artifact
+contains stays accurate regardless of how that question is eventually settled.
 
 **6.2 Bill-audit validation.** All 12 detailed electric bills were parsed. The modeled CEA
 generation rates matched the billed rates **to the penny** ($0.51684 / $0.15975 / $0.04961

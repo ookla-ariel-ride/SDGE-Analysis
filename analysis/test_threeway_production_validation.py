@@ -334,6 +334,99 @@ def case_correlation_and_mae_on_the_real_archive_used_only_363_days():
            f"vs enphase_meter, over exactly {stats_en['n_days']} non-DST days")
 
 
+@case
+def case_check_validation_passes_on_realistic_stats():
+    stats_en = {"correlation": 0.99996, "mae_kwh": 0.160,
+               "ratio_derived_over_reference": 1.0032}
+    stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
+               "ratio_derived_over_reference": 0.9831}
+    TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)  # must not raise
+    return "check_validation does not raise on realistic real-archive-shaped stats"
+
+
+@case
+def case_check_validation_fails_closed_on_low_correlation():
+    stats_en = {"correlation": 0.5, "mae_kwh": 0.5,
+               "ratio_derived_over_reference": 1.0}
+    stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
+               "ratio_derived_over_reference": 0.9831}
+    try:
+        TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)
+        assert False, "check_validation accepted a 0.5 correlation"
+    except SystemExit as e:
+        assert "correlation 0.50000" in str(e), str(e)
+        assert "enphase_meter" in str(e), str(e)
+    return "check_validation refuses a meter_derived vs enphase_meter correlation of 0.5"
+
+
+@case
+def case_check_validation_fails_closed_on_none_correlation():
+    stats_en = {"correlation": None, "mae_kwh": 0.5,
+               "ratio_derived_over_reference": 1.0}
+    stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
+               "ratio_derived_over_reference": 0.9831}
+    try:
+        TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)
+        assert False, "check_validation accepted a None (degenerate) correlation"
+    except SystemExit as e:
+        assert "undefined" in str(e), str(e)
+    return "check_validation refuses a degenerate (None) correlation rather than crashing on it"
+
+
+@case
+def case_check_validation_fails_closed_on_bad_ratio():
+    stats_en = {"correlation": 0.99996, "mae_kwh": 0.160,
+               "ratio_derived_over_reference": 5.0}   # a 5x scale error
+    stats_pv = {"correlation": 0.99986, "mae_kwh": 0.789,
+               "ratio_derived_over_reference": 0.9831}
+    try:
+        TPV.check_validation(stats_en, stats_pv, ref_correlation=0.99989)
+        assert False, "check_validation accepted a 5.0 ratio"
+    except SystemExit as e:
+        assert "ratio 5.0000" in str(e), str(e)
+    return "check_validation refuses a meter_derived vs enphase_meter ratio of 5.0 (a scale-error shape)"
+
+
+@case
+def case_main_leaves_the_committed_artifact_untouched_on_a_failed_gate():
+    """End-to-end proof of ORDERING, not just that check_validation() itself
+    raises: monkeypatch derive_daily to return a derivation that is
+    obviously broken (every day's value replaced with a huge constant, which
+    both tanks correlation to ~undefined/near-zero AND blows the ratio band)
+    and confirm main() raises BEFORE write_csv ever runs -- the committed
+    artifact must come out byte-identical to how it went in, not overwritten
+    with the bad run's output."""
+    _require_archive()
+    if not ARTIFACT.exists():
+        raise SkipCase(f"{ARTIFACT} not committed in this checkout")
+    before = ARTIFACT.read_bytes()
+    real_derive_daily = TPV.derive_daily
+
+    def _broken_derive_daily(dates, dst_days, sam_hourly, gb_hourly):
+        real = real_derive_daily(dates, dst_days, sam_hourly, gb_hourly)
+        return {d: (None if v is None else 999999.0) for d, v in real.items()}
+
+    TPV.derive_daily = _broken_derive_daily
+    cwd = os.getcwd()
+    os.chdir(str(SANDBOX))
+    try:
+        try:
+            TPV.main()
+            assert False, "main() accepted an obviously-broken derivation"
+        except SystemExit as e:
+            assert "FAILED validation" in str(e), str(e)
+    finally:
+        os.chdir(cwd)
+        TPV.derive_daily = real_derive_daily
+    after = ARTIFACT.read_bytes()
+    assert after == before, (
+        "the committed artifact was modified despite the validation gate "
+        "failing -- write_csv ran before (or despite) the failed check")
+    return ("main() refuses an obviously-broken derivation (constant "
+           "999999.0 kWh/day) and leaves the committed artifact "
+           "byte-untouched, proving validation runs BEFORE publication")
+
+
 def _read_artifact_rows():
     with open(ARTIFACT, newline="") as fh:
         return list(csv.DictReader(fh))
