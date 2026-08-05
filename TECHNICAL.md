@@ -2866,6 +2866,20 @@ model built from real dispatch reruns at each period's own separately-measured r
 rather than one blended scalar — is filed as issue #87 rather than attempted here (a
 model-design change, out of issue #59's own scope box).
 
+**Showing the downside's consequence, not just documenting its existence (Codex
+adversarial review, issue #59, third pass).** Labeling the 0% floor as unproven while the
+Monte Carlo still structurally cannot sample a negative escalation draw left a real gap: a
+reader could not judge what that excluded downside would actually cost. `escalation_
+downside_sensitivity()` closes it WITHOUT fabricating a probability distribution — a plain
+what-if grid (0%, -3%, -6%, -9%, -12%) run through the same `payback_of()` at the
+post-behavior mid marginal and nominal fade/price, explicitly labeled as carrying no
+evidence-backed weight for any point (`not_a_probability_distribution` in the artifact).
+The result: payback stays within the 10-yr warranty down to -6%/yr (8.7 yr), but misses it
+at -9%/yr (10.5 yr) and worse at -12%/yr (14.7 yr) — a concrete, computed answer to "how
+much downside would it take to matter," reported as a labeled sensitivity, the same
+pattern `dsgs_vpp_backtest.py`'s own additive sensitivities already established in this
+repo, never folded into the Monte Carlo's own percentile claims.
+
 ---
 
 ### 3.26 `analysis/gross_import_decomposition.py` — gross imports are rising: is it the house or the array? (`data/gross_import_decomposition.json`)

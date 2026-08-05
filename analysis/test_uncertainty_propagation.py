@@ -418,6 +418,46 @@ def case_dispatch_adherence_and_escalation_sidedness_are_documented_not_modeled(
 
 
 @case
+def case_escalation_downside_sensitivity_is_labeled_not_a_probability_and_monotonic():
+    """Codex adversarial review, issue #59, third pass: documenting the 0%
+    floor as inherited/unproven while the Monte Carlo can never sample a
+    negative escalation draw hides the downside's actual consequence from a
+    reader. escalation_downside_sensitivity is a plain what-if grid, not a
+    new probability-weighted input -- checked here for two things: (1) it
+    is explicitly labeled as carrying no evidence-backed weight (so a
+    reader can't mistake it for a Monte Carlo percentile), and (2) payback
+    years actually get WORSE as the grid moves more negative (a sign/
+    monotonicity sanity check -- if a more negative escalation scenario
+    ever produced a SHORTER payback, that would mean payback_of()'s own
+    compounding is broken, not that negative escalation somehow helps)."""
+    result = _committed("uncertainty_results.json")
+    sens = result["escalation_downside_sensitivity"]
+    disclaimer = sens["not_a_probability_distribution"].lower()
+    assert "no evidence-backed weight" in disclaimer and "probability" in disclaimer, (
+        "the downside grid must explicitly disclaim being a probability "
+        f"distribution: {sens['not_a_probability_distribution']!r}")
+    grid = sens["grid"]
+    assert set(grid) == {f"{p:+.0%}" for p in up.ESC_DOWNSIDE_GRID_PCT}
+    paybacks = [grid[f"{p:+.0%}"]["payback_yr"] for p in sorted(up.ESC_DOWNSIDE_GRID_PCT)]
+    assert paybacks == sorted(paybacks, reverse=True), (
+        "payback years must be monotonically WORSE (longer) as the grid "
+        f"moves more negative -- got {paybacks} for pcts "
+        f"{sorted(up.ESC_DOWNSIDE_GRID_PCT)}")
+    # This household's own real base case (Codex's concrete ask: show what
+    # the downside actually costs, not just that one exists): at 0% this
+    # must match warranty-repaying, and the grid must contain at least one
+    # scenario that does NOT, or the grid is too narrow to show a real
+    # consequence at all.
+    assert grid["+0%"]["within_10yr_warranty"] is True
+    assert any(not row["within_10yr_warranty"] for row in grid.values()), (
+        "the downside grid must span far enough to show at least one "
+        "scenario that misses the 10-yr warranty repay, or it doesn't "
+        "actually demonstrate a consequence")
+    return (f"escalation downside grid is labeled non-probabilistic and "
+           f"monotonic across {sorted(grid)}")
+
+
+@case
 def case_build_output_is_json_serializable():
     _require_archive()
     out = up.build()

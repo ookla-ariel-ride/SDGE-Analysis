@@ -794,6 +794,45 @@ def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
             "ranked_by_swing": ranked}
 
 
+ESC_DOWNSIDE_GRID_PCT = (0.00, -0.03, -0.06, -0.09, -0.12)
+
+
+def escalation_downside_sensitivity(mid):
+    """Issue #59 (Codex adversarial review, third pass): documenting the 0%
+    floor as an unproven, inherited assumption while the Monte Carlo can
+    still never SAMPLE a negative escalation draw leaves a reader unable to
+    see what a real downside would cost -- labeling the limitation is not
+    the same as showing its consequence. This is NOT a new probability
+    distribution (no evidence supports weighting these scenarios, which is
+    exactly why ESC_LO/full_monte_carlo/tornado are unchanged by this
+    function); it is a plain, labeled WHAT-IF grid, mirroring dsgs_vpp_
+    backtest.py's own precedent for an additive, clearly-scoped sensitivity
+    that never touches the primary probability-weighted figures. Computed at
+    the SAME nominal fade/price/horizon tornado() uses and the POST-behavior
+    mid marginal (this issue's decision-relevant base case, matching the
+    report's own headline payback), holding everything but esc fixed, so
+    each grid point isolates exactly what a given escalation rate costs."""
+    fade_nom = (FADE_LO + FADE_HI) / 2
+    price_nom = (PRICE_LO + PRICE_HI) / 2
+    grid = {}
+    for pct in ESC_DOWNSIDE_GRID_PCT:
+        pb = payback_of(mid, pct, fade_nom, price_nom)
+        grid[f"{pct:+.0%}"] = {
+            "payback_yr": (round(float(pb), 1) if not np.isnan(pb) else None),
+            "within_10yr_warranty": (bool(pb <= WARRANTY_YR) if not np.isnan(pb) else False),
+        }
+    return {
+        "not_a_probability_distribution": (
+            "This grid holds no evidence-backed weight for any point -- it "
+            "exists because a reader cannot judge a downside risk that is "
+            "described but never shown. See dispatch_policy_adherence_note "
+            "and escalation_two_sided_evidence_note for why no probability-"
+            "weighted negative-escalation input is modeled instead."),
+        "base_case": "post-behavior mid marginal, nominal fade/price (matches tornado()'s own nominal point)",
+        "grid": grid,
+    }
+
+
 def reconcile_tornado(new_tornado, old_tornado_battery):
     old_ranked = old_tornado_battery["ranked_by_swing"]
     old_levers = old_tornado_battery["levers"]
@@ -886,6 +925,7 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     mc = full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB,
                           prod_sigma, N=N_full, seed=seed_full)
     tor = tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma)
+    esc_downside = escalation_downside_sensitivity(mid)
 
     old_deep = _committed("deep_results.json")
     # deep_analyses.py's own _base_save() reads the COMMITTED, already-rounded
@@ -1045,7 +1085,13 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
             "this module's own docstring, section 'ISSUE #59', part (b) "
             "for the full check, and issue #87 for the follow-up (a real "
             "per-TOU-period dispatch-rerun escalation model) this is out of "
-            "scope to implement here."),
+            "scope to implement here. Because documenting this limitation is "
+            "not the same as showing its consequence (Codex adversarial "
+            "review, issue #59, third pass), see escalation_downside_"
+            "sensitivity below for what a range of negative escalation "
+            "rates would actually cost, as a labeled what-if, not a "
+            "probability-weighted claim."),
+        "escalation_downside_sensitivity": esc_downside,
         "calibration": {
             "pre_nominal": round(pre, 2),
             "mid_nominal": round(mid, 2),
