@@ -98,15 +98,22 @@ solar:
 panel:
   service_rating_a: 175
   busbar_rating_a: 200
+  main_breaker_catalog: TESTCO-MAIN01
+  enclosure_catalog: TESTCO-ENC02
+  enclosure_type: NEMA 1 indoor, meter-main combination
+  meter_class: CL100
+  assembly_sccr_ka: 22
+  breaker_family: Test-Brand BR
   pv_backfeed_a: 50
   meter_socket_continuous_a: 170
   pv_breaker_position: bottom
   spaces: 20
   max_circuits: 40
   schedule:
-    - {device: full-size 2-pole, poles: 2, amps: 60, label: Car charger}
+    - {device: full-size 2-pole, poles: 2, amps: 60, label: EV charger}
     - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}
-    - {device: quad, poles: 4, amps: [15, 20, 20, 15], label: Kitchen / dining}
+    - {device: quad, poles: 4, amps: [15, 20, 20, 15], label: Test kitchen circuit}
+    - {device: full-size 2-pole, poles: 2, amps: 50, label: PV backfeed}
 """
 
 
@@ -714,15 +721,30 @@ def case_panel_intake_reads_every_required_field():
     assert _close(p["pv_backfeed_a"], 50.0)
     assert _close(p["meter_socket_continuous_a"], 170.0)
     assert p["spaces"] == 20 and p["max_circuits"] == 40
-    assert len(p["schedule"]) == 3
+    assert len(p["schedule"]) == 4
+    # issue #41: the six panel fields that were never read at all before
+    assert p["main_breaker_catalog"] == "TESTCO-MAIN01", p
+    assert p["enclosure_catalog"] == "TESTCO-ENC02", p
+    assert p["enclosure_type"] == \
+        "NEMA 1 indoor, meter-main combination", p
+    assert p["meter_class"] == "CL100", p
+    assert _close(p["assembly_sccr_ka"], 22.0), p
+    assert p["breaker_family"] == "Test-Brand BR", p
     return "load_panel pulls every panel field through the fail-closed accessor"
 
 
 def case_every_required_panel_field_still_fails_closed():
-    """Only the two documented-nullable fields became optional. Everything the
-    panel answer actually rests on still stops the run when it is absent."""
+    """Only the four documented-nullable fields (plus the three optional
+    breaker positions) are not required. Everything the panel answer actually
+    rests on still stops the run when it is absent -- including the six
+    fields issue #41 started reading for the first time."""
     for key in ("service_rating_a: 175", "busbar_rating_a: 200", "spaces: 20",
-                "max_circuits: 40"):
+                "max_circuits: 40", "main_breaker_catalog: TESTCO-MAIN01",
+                "enclosure_catalog: TESTCO-ENC02",
+                "enclosure_type: NEMA 1 indoor, meter-main "
+                "combination",
+                "meter_class: CL100", "assembly_sccr_ka: 22",
+                "breaker_family: Test-Brand BR"):
         with _with_household(PANEL_YAML.replace(key, "")):
             try:
                 S.load_panel()
@@ -914,6 +936,179 @@ def case_panel_domain_checks_accept_the_edges_that_are_real():
     with _with_household(PANEL_YAML_NO_BACKFEED):
         assert S.load_panel()["pv_backfeed_a"] is None
     return "a zero backfeed, a main equal to the busbar and null optionals still run"
+
+
+# ---------------------------------------------------------------------------
+# issue #41: the rest of the panel schema, one negative test per new rule
+# ---------------------------------------------------------------------------
+
+def case_free_text_panel_fields_fail_closed_on_blank_or_absurd_length():
+    """main_breaker_catalog, enclosure_catalog, enclosure_type and
+    breaker_family have no invented vocabulary -- they are manufacturer part
+    numbers, family names and hand-transcribed enclosure descriptions -- but
+    _private_text_ok() still catches a blank answer or one far longer than
+    any real catalog number, family name or description in this project's
+    own intake (the longest today is under 60 characters). The bad value
+    itself never reaches stderr: these are all private-only fields."""
+    edits = {
+        "enclosure_type": "enclosure_type: NEMA 1 indoor, meter-main combination",
+        "breaker_family": "breaker_family: Test-Brand BR",
+        "main_breaker_catalog": "main_breaker_catalog: TESTCO-MAIN01",
+        "enclosure_catalog": "enclosure_catalog: TESTCO-ENC02",
+    }
+    for field, edit in edits.items():
+        with _with_household(PANEL_YAML.replace(edit, f'{field}: ""')):
+            try:
+                S.load_panel()
+                raise AssertionError(f"a blank {field} was accepted")
+            except SystemExit as e:
+                assert f"panel.{field}" in str(e), (field, str(e))
+                assert "empty" in str(e), (field, str(e))
+        overlong = "x" * 250
+        with _with_household(
+                PANEL_YAML.replace(edit, f'{field}: "{overlong}"')):
+            try:
+                S.load_panel()
+                raise AssertionError(f"an absurdly long {field} was accepted")
+            except SystemExit as e:
+                assert f"panel.{field}" in str(e), (field, str(e))
+                assert "characters" in str(e), (field, str(e))
+                assert overlong not in str(e), \
+                    (field, "the private value reached stderr", str(e))
+    return ("the free-text catalog/family/enclosure fields fail closed on a "
+            "blank or absurdly long value, and the value never reaches stderr")
+
+
+def case_meter_class_format_fails_closed():
+    """panel.meter_class has a real, checkable format -- the cheatsheet's own
+    question spells out the convention ('CL10, CL100, CL320') -- so a
+    value outside 'CL' + digits is a bad reading, not a variant spelling.
+    This is a format check, not a closed list of legitimate class numbers."""
+    for bad in ("Class 200", "cl100x", "200", "CL 100"):
+        text = PANEL_YAML.replace("meter_class: CL100",
+                                  f"meter_class: {bad!r}")
+        with _with_household(text):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted meter_class {bad!r}")
+            except SystemExit as e:
+                assert "panel.meter_class" in str(e), (bad, str(e))
+                assert "ANSI meter-class format" in str(e), (bad, str(e))
+                assert bad not in str(e), \
+                    (bad, "the private value reached stderr", str(e))
+    return "meter_class outside the 'CL' + digits format fails closed"
+
+
+def case_assembly_sccr_ka_must_be_positive():
+    """assembly_sccr_ka was never read at all before issue #41, so it was
+    never checked either. A short-circuit current rating of zero or negative
+    is not a figure any rating label prints."""
+    for bad in ("0", "-5"):
+        text = PANEL_YAML.replace("assembly_sccr_ka: 22",
+                                  f"assembly_sccr_ka: {bad}")
+        with _with_household(text):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted assembly_sccr_ka: {bad}")
+            except SystemExit as e:
+                assert "panel.assembly_sccr_ka is" in str(e), (bad, str(e))
+                assert bad in str(e), (bad, str(e))
+    return "a non-positive assembly_sccr_ka fails closed, naming the value"
+
+
+def case_meter_socket_requires_a_meter_main_enclosure():
+    """meter_socket_continuous_a is the meter socket's own printed rating,
+    and that rating only exists where the meter shares the main's enclosure.
+    A number recorded against a panel whose enclosure_type says otherwise is
+    two intake answers disagreeing, not a fact about this panel."""
+    not_combo = PANEL_YAML.replace(
+        "enclosure_type: NEMA 1 indoor, meter-main combination",
+        "enclosure_type: NEMA 1 indoor, main-breaker load center")
+    with _with_household(not_combo):
+        try:
+            S.load_panel()
+            raise AssertionError("a meter-socket rating on a non-meter-main "
+                                 "enclosure was accepted")
+        except SystemExit as e:
+            assert "panel.meter_socket_continuous_a is 170" in str(e), e
+            assert "meter-main" in str(e), e
+            # enclosure_type is private-only: its own text never reaches stderr
+            assert "load center" not in str(e), e
+    return ("a recorded meter-socket rating on a panel not described as a "
+            "meter-main combination fails closed")
+
+
+def case_pv_backfeed_must_match_a_schedule_breaker():
+    """A POSITIVE pv_backfeed_a claims one specific installed breaker; if no
+    breaker in panel.schedule carries that rating, the two intake answers
+    disagree and the 120% arithmetic would spend an allowance against a
+    breaker nobody catalogued. (0.0 is exempt from this rule --
+    case_panel_domain_checks_accept_the_edges_that_are_real covers that
+    edge, since no real breaker is rated 0 A for it to match.)"""
+    no_match = PANEL_YAML.replace("pv_backfeed_a: 50", "pv_backfeed_a: 65")
+    with _with_household(no_match):
+        try:
+            S.load_panel()
+            raise AssertionError("a pv_backfeed_a with no matching schedule "
+                                 "breaker was accepted")
+        except SystemExit as e:
+            assert "panel.pv_backfeed_a is 65" in str(e), e
+            assert "does not match" in str(e), e
+    return "pv_backfeed_a with no matching schedule breaker fails closed"
+
+
+def case_unrecognized_breaker_position_fails_closed():
+    """_end() maps anything outside {'top', 'bottom'} to None, and downstream
+    that reads as 'not surveyed' -- exactly what an unanswered question looks
+    like. validate_panel() has to tell a REAL typo apart from that before
+    _end() ever sees it, or a bad answer (a mis-typed 'buttom') silently
+    reads the same as nobody having looked."""
+    cases = (
+        ("pv_breaker_position",
+         PANEL_YAML.replace("pv_breaker_position: bottom",
+                            "pv_breaker_position: buttom"), "buttom"),
+        ("main_breaker_position",
+         PANEL_YAML + "  main_breaker_position: middle\n", "middle"),
+        ("battery_breaker_position",
+         PANEL_YAML + "  battery_breaker_position: sideways\n", "sideways"),
+    )
+    for field, text, bad in cases:
+        with _with_household(text):
+            try:
+                S.load_panel()
+                raise AssertionError(f"accepted {field}: {bad!r}")
+            except SystemExit as e:
+                assert f"panel.{field} is {bad!r}" in str(e), (field, str(e))
+                assert "recognized busbar end" in str(e), (field, str(e))
+    # a real value survives case and surrounding whitespace -- this is the
+    # normalization the bad values above must not be confused with
+    with _with_household(PANEL_YAML + "  main_breaker_position: ' Top '\n"):
+        p = S.load_panel()
+        assert p["main_breaker_position"] == " Top ", p
+        assert S._end(p["main_breaker_position"]) == "top", p
+    return "an unrecognized breaker position fails closed, not 'not surveyed'"
+
+
+def case_schedule_device_and_label_must_be_non_empty_text():
+    """Every schedule row's device marking and door-legend label must be
+    non-empty text, the same free-text sanity the panel-level catalog fields
+    get. The row is named POSITIONALLY in the message -- breaker_geometry()'s
+    own discipline -- because the label is private-tier intake."""
+    full = "device: full-size 2-pole, poles: 2, amps: 60, label: EV charger"
+    for bad_field, replacement in (
+            ("device", "device: '', poles: 2, amps: 60, label: EV charger"),
+            ("label", "device: full-size 2-pole, poles: 2, amps: 60, "
+                      "label: ''")):
+        with _with_household(PANEL_YAML.replace(full, replacement)):
+            try:
+                S.load_panel()
+                raise AssertionError(
+                    f"a blank schedule {bad_field} was accepted")
+            except SystemExit as e:
+                assert f"panel.schedule[1].{bad_field}" in str(e), \
+                    (bad_field, str(e))
+                assert "empty" in str(e), (bad_field, str(e))
+    return "a blank schedule device or label fails closed, naming the row"
 
 
 def case_a_schedule_larger_than_its_enclosure_fails_closed():
@@ -3492,10 +3687,17 @@ def case_a_replacement_notes_do_not_overclaim_when_unscored():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n"
         "  schedule:\n"
-        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+        "    - {device: full-size 2-pole, poles: 2, amps: 30, "
+        "label: Test circuit}\n")
     real_raw = S.RAW_DIR
     try:
         S.RAW_DIR = raw
@@ -3904,12 +4106,18 @@ charger:
 panel:
   service_rating_a: 175
   busbar_rating_a: 200
+  main_breaker_catalog: TESTCO-MAIN01
+  enclosure_catalog: TESTCO-ENC02
+  enclosure_type: NEMA 1 indoor, meter-main combination
+  meter_class: CL100
+  assembly_sccr_ka: 22
+  breaker_family: Test-Brand BR
   pv_backfeed_a: null
   meter_socket_continuous_a: 170
   spaces: 20
   max_circuits: 40
   schedule:
-    - {device: full-size 2-pole, poles: 2, amps: 60}
+    - {device: full-size 2-pole, poles: 2, amps: 60, label: Main circuit}
 """
 
 
@@ -4051,6 +4259,12 @@ def case_the_no_solar_path_fails_closed_on_unexpected_export():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n  schedule: []\n")
     real_raw = S.RAW_DIR
@@ -4092,6 +4306,12 @@ def case_the_no_solar_path_catches_a_negative_export_too():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n  schedule: []\n")
     real_raw = S.RAW_DIR
@@ -4141,10 +4361,17 @@ def case_the_no_solar_path_handles_a_single_season_window():
         hh = _with_household(
             "household:\n  has_new_load_interest: true\n  has_ev: false\n"
             "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+            "  main_breaker_catalog: TESTCO-MAIN01\n"
+            "  enclosure_catalog: TESTCO-ENC02\n"
+            "  enclosure_type: NEMA 1 indoor, meter-main "
+            "combination\n"
+            "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+            "  breaker_family: Test-Brand BR\n"
             "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
             "  spaces: 20\n  max_circuits: 40\n"
             "  schedule:\n"
-            "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+            "    - {device: full-size 2-pole, poles: 2, amps: 30, "
+            "label: Test circuit}\n")
         real_raw = S.RAW_DIR
         try:
             S.RAW_DIR = raw
@@ -4189,10 +4416,17 @@ def case_the_no_solar_path_narrative_matches_a_failed_condition_1():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n"
         "  schedule:\n"
-        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+        "    - {device: full-size 2-pole, poles: 2, amps: 30, "
+        "label: Test circuit}\n")
     real_raw = S.RAW_DIR
     try:
         S.RAW_DIR = raw
@@ -4235,6 +4469,12 @@ def case_the_no_solar_path_fails_closed_on_a_stray_enphase_export():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n  schedule: []\n")
     real_raw = S.RAW_DIR
@@ -4274,10 +4514,17 @@ def case_the_no_solar_path_respects_has_ev_too():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 175\n  busbar_rating_a: 200\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n"
         "  schedule:\n"
-        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+        "    - {device: full-size 2-pole, poles: 2, amps: 30, "
+        "label: Test circuit}\n")
     real_raw = S.RAW_DIR
     try:
         S.RAW_DIR = raw
@@ -4317,10 +4564,17 @@ def case_the_no_solar_path_reports_a_shortfall_not_headroom():
     hh = _with_household(
         "household:\n  has_new_load_interest: true\n  has_ev: false\n"
         "panel:\n  service_rating_a: 50\n  busbar_rating_a: 60\n"
+        "  main_breaker_catalog: TESTCO-MAIN01\n"
+        "  enclosure_catalog: TESTCO-ENC02\n"
+        "  enclosure_type: NEMA 1 indoor, meter-main "
+        "combination\n"
+        "  meter_class: CL100\n  assembly_sccr_ka: 22\n"
+        "  breaker_family: Test-Brand BR\n"
         "  pv_backfeed_a: null\n  meter_socket_continuous_a: null\n"
         "  spaces: 20\n  max_circuits: 40\n"
         "  schedule:\n"
-        "    - {device: full-size 2-pole, poles: 2, amps: 30}\n")
+        "    - {device: full-size 2-pole, poles: 2, amps: 30, "
+        "label: Test circuit}\n")
     real_raw = S.RAW_DIR
     try:
         S.RAW_DIR = raw
@@ -4467,6 +4721,13 @@ CASES = [
     case_an_absent_pv_backfeed_key_is_not_a_surveyed_zero,
     case_impossible_panel_values_fail_closed_by_field,
     case_panel_domain_checks_accept_the_edges_that_are_real,
+    case_free_text_panel_fields_fail_closed_on_blank_or_absurd_length,
+    case_meter_class_format_fails_closed,
+    case_assembly_sccr_ka_must_be_positive,
+    case_meter_socket_requires_a_meter_main_enclosure,
+    case_pv_backfeed_must_match_a_schedule_breaker,
+    case_unrecognized_breaker_position_fails_closed,
+    case_schedule_device_and_label_must_be_non_empty_text,
     case_a_schedule_larger_than_its_enclosure_fails_closed,
     case_breaker_positions_are_read_from_the_intake,
     case_pole_counting_handles_int_and_list_amps,

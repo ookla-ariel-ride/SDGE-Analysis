@@ -1154,33 +1154,246 @@ def _panel_domain_error(field, value, why):
                      f"{why}. {PANEL_DOMAIN_NOTE}")
 
 
+# ---------------------------------------------------------------------------
+# The panel intake schema (issue #41), declared once
+# ---------------------------------------------------------------------------
+#
+# Every key load_panel() reads off panel.* in household.yaml, its type, its
+# physical domain and, where a real one exists, its vocabulary. This is the
+# single declaration issue #41 asked for: what "valid" means for a panel
+# field lives here rather than being inferable only by reading every call
+# site. The CHECKS that enforce it still live where the values needed to
+# check them are already in scope -- validate_panel() for the panel-level
+# scalars and strings, breaker_geometry()/panel_occupancy() for the
+# schedule's own geometry -- this dict is the index, not a second
+# implementation, and `applied` below says where to look.
+#
+# `vocabulary: None` on a string field is a decision, not an omission. Those
+# fields (a catalog number, a manufacturer family name, a NEMA/enclosure
+# description, a schedule row's device marking or door-legend label) are
+# genuinely open-ended -- there is no closed set of legitimate values -- and
+# CLAUDE.md section 0 bars inventing one to check them against. They still
+# get a real check: _private_text_ok()'s non-empty/length sanity.
+PANEL_FIELD_SCHEMA = {
+    "service_rating_a": {
+        "type": float, "privacy": "public-ok",
+        "domain": "positive ampere rating, <= busbar_rating_a",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "busbar_rating_a": {
+        "type": float, "privacy": "public-ok",
+        "domain": "positive ampere rating, >= service_rating_a",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "main_breaker_catalog": {
+        "type": str, "privacy": "private-only",
+        "domain": "non-empty free text (manufacturer catalog/style number)",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "enclosure_catalog": {
+        "type": str, "privacy": "private-only",
+        "domain": "non-empty free text (enclosure catalog number)",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "spaces": {
+        "type": int, "privacy": "public-ok",
+        "domain": "positive count of full-size positions, <= max_circuits",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "max_circuits": {
+        "type": int, "privacy": "public-ok",
+        "domain": "positive count of pole positions, >= spaces",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "enclosure_type": {
+        "type": str, "privacy": "private-only",
+        "domain": "non-empty free text (NEMA rating / mounting description)",
+        "vocabulary": None,
+        "applied": "validate_panel() -- also gates whether "
+                   "meter_socket_continuous_a may be recorded, via the "
+                   "literal phrase 'meter-main'"},
+    "meter_socket_continuous_a": {
+        "type": "float | null", "privacy": "public-ok",
+        "domain": "positive ampere rating when recorded; null means "
+                  "surveyed and not applicable; the key's ABSENCE (distinct "
+                  "from null) means not surveyed at all; may only be "
+                  "recorded where enclosure_type describes a meter-main "
+                  "combination",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "assembly_sccr_ka": {
+        "type": float, "privacy": "public-ok",
+        "domain": "positive kA rating", "vocabulary": None,
+        "applied": "validate_panel()"},
+    "meter_class": {
+        "type": str, "privacy": "private-only",
+        "domain": "ANSI meter-class label",
+        "vocabulary": "'CL' followed by digits (e.g. CL10, CL100, CL320 "
+                      "-- from the cheatsheet's own listed examples); see "
+                      "METER_CLASS_RE",
+        "applied": "validate_panel()"},
+    "pv_backfeed_a": {
+        "type": "float | null", "privacy": "public-ok",
+        "domain": "non-negative ampere rating when recorded; a POSITIVE "
+                  "value must equal the amps of some breaker in "
+                  "panel.schedule (0.0 is exempt -- it carries the same "
+                  "'nothing backfeeds this panel' meaning as null, and no "
+                  "real breaker is rated 0 A); null means surveyed and "
+                  "nothing backfeeds; absence means not surveyed",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "breaker_family": {
+        "type": str, "privacy": "private-only",
+        "domain": "non-empty free text (manufacturer/product-line name)",
+        "vocabulary": None, "applied": "validate_panel()"},
+    "pv_breaker_position": {
+        "type": "str | null", "privacy": "public-ok",
+        "domain": "a recognized busbar end when recorded; null/absence "
+                  "means not surveyed",
+        "vocabulary": "'top' or 'bottom', case-insensitive, whitespace "
+                      "ignored -- BUSBAR_ENDS", "applied": "validate_panel()"},
+    "main_breaker_position": {
+        "type": "str | null", "privacy": "public-ok",
+        "domain": "same as pv_breaker_position",
+        "vocabulary": "BUSBAR_ENDS", "applied": "validate_panel()"},
+    "battery_breaker_position": {
+        "type": "str | null", "privacy": "public-ok",
+        "domain": "same as pv_breaker_position",
+        "vocabulary": "BUSBAR_ENDS", "applied": "validate_panel()"},
+    "schedule": {
+        "type": "list of {device: str, poles: int, amps: number|list, "
+                "label: str}",
+        "privacy": "private-only (device, label); poles/amps are public-ok "
+                  "only as the aggregates data/service_headroom.json "
+                  "publishes -- never as a per-row value",
+        "domain": "poles a positive int; amps a single ampere rating for a "
+                  "full-size breaker, or a list of len(poles) ampere "
+                  "ratings for a twin-density device (poles in {2, 4}; a "
+                  "quad's outer pair and inner pair must each match); "
+                  "device and label non-empty free text",
+        "vocabulary": None,
+        "applied": "breaker_geometry() for the poles/amps geometry; "
+                  "validate_panel() for device/label sanity and the "
+                  "pv_backfeed_a cross-check; panel_occupancy() for the "
+                  "schedule-vs-enclosure space/pole totals"},
+    "existing_ac_nameplate_rla_a": {
+        "type": "float | null", "privacy": "public-ok",
+        "domain": "positive ampere rating when recorded; null means "
+                  "surveyed, no legible RLA; absence means not surveyed",
+        "vocabulary": None, "applied": "validate_panel()"},
+}
+
+
+def _panel_domain_error_private(field, why):
+    """Same shape as _panel_domain_error(), for a field whose VALUE must never
+    reach stderr because the intake tags it private-only (a catalog number, a
+    manufacturer family name, a door-legend transcription, a NEMA/enclosure
+    description). breaker_geometry() already keeps a schedule row's `label`
+    out of its own stop messages for this reason; the pre-commit privacy-tier
+    gate (privacy_tiers.py) keeps the same discipline in its own BLOCKED
+    message, naming a field id without quoting what it holds. This is that
+    same rule applied to the panel-level string fields."""
+    raise SystemExit(f"service_headroom.py: panel.{field} {why}. "
+                     f"{PANEL_DOMAIN_NOTE}")
+
+
+def _private_text_ok(field, value, max_len=200):
+    """A basic sanity check for a free-text private-only field: present, a
+    string, non-empty once stripped, and under a generous length ceiling.
+
+    This is deliberately NOT a vocabulary. panel.main_breaker_catalog,
+    panel.enclosure_catalog, panel.breaker_family, panel.enclosure_type and
+    the schedule's own `device`/`label` are manufacturer part numbers, family
+    names and hand-transcribed door legends -- there is no closed set of
+    legitimate values to check them against, and CLAUDE.md section 0 bars
+    inventing one. What IS checkable without guessing a vocabulary: that the
+    field is text at all, that it is not blank, and that its length is in the
+    range every real catalog number, family name or legend entry in this
+    project's own intake actually falls in (the longest today is under 60
+    characters) rather than, say, a stray number or a pasted paragraph.
+    """
+    if not isinstance(value, str) or not value.strip():
+        _panel_domain_error_private(
+            field, "is empty, blank, or not text -- a device/enclosure "
+            "description with nothing legible in it is not evidence about "
+            "the panel")
+    if len(value) > max_len:
+        _panel_domain_error_private(
+            field, f"is over {max_len} characters, far longer than any "
+            f"catalog number, family name or door-legend transcription in "
+            f"this project's own intake -- the wrong text likely landed in "
+            f"this field")
+
+
+# panel.meter_class is the one private-only string field with a real,
+# checkable format: DATA-SOURCES-CHEATSHEET.md's own question names the
+# convention -- "CL10, CL100, CL320" -- so the format below is read
+# off the cheatsheet's own examples, not invented. It is a FORMAT check
+# (letters then digits), not a closed list of the values those digits may
+# take, because the cheatsheet does not enumerate every ANSI meter class and
+# guessing the rest would be exactly the kind of constant CLAUDE.md bars.
+METER_CLASS_RE = re.compile(r"^CL\d+$")
+
+
 def validate_panel(p):
     """Domain checks on the panel intake, fail-closed and field-specific.
 
-    Only what can flip a verdict or make the arithmetic meaningless is checked
-    here; this is a guard on safety arithmetic, not a schema validator:
+    Every key PANEL_FIELD_SCHEMA declares is checked somewhere: the fields
+    below plus the schedule's own geometry, checked where it is counted, in
+    breaker_geometry() and panel_occupancy() (issue #41 closed the remaining
+    gap -- the earlier version of this function checked only what could flip
+    a verdict; the rest of the schema now has a declared type, domain and,
+    where one is real rather than invented, a vocabulary):
 
       * the two ampere ratings every figure divides the panel by must be
         positive;
+      * the free-text catalog/family/enclosure fields must be non-empty text
+        under a generous length ceiling -- a sanity check, not a vocabulary,
+        because none of them has a closed set of legitimate values;
+      * panel.meter_class must match the cheatsheet's own documented format
+        ('CL' + digits);
+      * panel.assembly_sccr_ka must be a positive kA rating;
       * a meter-socket rating, where one is recorded at all, must be positive --
         `null` is how the intake says the constraint does not apply, and a zero
-        would be published as a binding constraint instead;
+        would be published as a binding constraint instead -- and it may only
+        be recorded where panel.enclosure_type actually describes a
+        meter-main combination, the one arrangement the rating applies to;
       * an existing backfeed must not be negative, which is the one that can
-        turn a failing panel into a passing one;
+        turn a failing panel into a passing one, and where a POSITIVE one is
+        recorded it must match a breaker rating actually present in
+        panel.schedule -- a backfeed breaker with no matching device is two
+        intake answers disagreeing, not a fact about this panel;
       * the two position counts must be positive, and a panel cannot offer
         fewer pole positions than it has full-size spaces;
       * a main larger than the busbar it feeds is not a panel this method can
-        score -- every 120% figure computed from that pair is meaningless.
+        score -- every 120% figure computed from that pair is meaningless;
+      * each of the three breaker positions, where recorded, must be a
+        recognized busbar end -- an unrecognized value (a typo, a third
+        answer) is a bad value and has to fail closed, not vanish into "not
+        surveyed" the way _end() treats it downstream;
+      * every schedule row's device and label must be non-empty text, the
+        same sanity check as the panel-level free-text fields above.
 
-    The schedule's own geometry is checked where it is counted, in
-    panel_occupancy(): a schedule that fills more spaces or pole positions than
-    the enclosure has stops the run there.
+    The schedule's pole-count-vs-amp-list-length invariant is enforced in
+    breaker_geometry(), not here -- see its own docstring and
+    PANEL_FIELD_SCHEMA["schedule"].
     """
     for f in ("service_rating_a", "busbar_rating_a"):
         if not p[f] > 0.0:
             _panel_domain_error(
                 f, p[f], "is not a positive ampere rating -- a panel with no "
                 "main or no busbar rating is not one this method can score")
+
+    # Free-text fields: sanity only, no invented vocabulary -- except
+    # meter_class, whose format the cheatsheet's own question already gives.
+    for f in ("enclosure_type", "breaker_family", "main_breaker_catalog",
+              "enclosure_catalog"):
+        _private_text_ok(f, p[f])
+    _private_text_ok("meter_class", p["meter_class"])
+    if not METER_CLASS_RE.match(p["meter_class"]):
+        _panel_domain_error_private(
+            "meter_class", "does not match the ANSI meter-class format -- "
+            "'CL' followed by digits, e.g. CL10, CL100, CL320 (the "
+            "cheatsheet's own listed examples)")
+
+    if not p["assembly_sccr_ka"] > 0.0:
+        _panel_domain_error(
+            "assembly_sccr_ka", p["assembly_sccr_ka"],
+            "is not a positive kA rating -- a short-circuit current rating "
+            "of zero or negative is not a figure a rating label prints")
+
     socket = p["meter_socket_continuous_a"]
     if socket is not None and not socket > 0.0:
         _panel_domain_error(
@@ -1189,6 +1402,16 @@ def validate_panel(p):
             "is how the intake says the socket was read and carries no printed "
             "continuous rating, and a zero or negative one would be published "
             "as the binding ampacity constraint")
+    if socket is not None and "meter-main" not in p["enclosure_type"].lower():
+        _panel_domain_error(
+            "meter_socket_continuous_a", socket,
+            "is recorded but panel.enclosure_type does not describe a "
+            "meter-main combination (checked for the phrase 'meter-main'); "
+            "the meter-socket ampacity limit only exists where the meter "
+            "shares the main's own enclosure, so a socket rating recorded "
+            "against a panel described otherwise is a disagreement between "
+            "two intake answers, not a fact about this one")
+
     backfeed = p["pv_backfeed_a"]
     if backfeed is not None and backfeed < 0.0:
         _panel_domain_error(
@@ -1196,6 +1419,31 @@ def validate_panel(p):
             "is negative; an existing source cannot spend a negative share of "
             "the 120% allowance, and a negative one increases the remaining "
             "allowance rather than reducing it")
+    # A POSITIVE recorded backfeed claims one specific installed breaker, and
+    # that breaker has to be one of the ones the schedule actually catalogues
+    # -- see PANEL_FIELD_SCHEMA["pv_backfeed_a"]. An explicit 0.0 is not that
+    # claim: it is the same "nothing backfeeds this panel" answer null
+    # carries (existing_backfeed() already treats a recorded 0 no
+    # differently), and no real breaker is rated 0 A for it to match, so 0.0
+    # is exempt rather than being an automatic domain violation.
+    if backfeed is not None and backfeed > 0.0:
+        schedule_amps_a = set()
+        for e in p["schedule"]:
+            a = e["amps"]
+            if isinstance(a, list):
+                schedule_amps_a.update(float(x) for x in a)
+            else:
+                schedule_amps_a.add(float(a))
+        if backfeed not in schedule_amps_a:
+            _panel_domain_error(
+                "pv_backfeed_a", backfeed,
+                "does not match the ampere rating of any breaker recorded "
+                "in panel.schedule; a backfeed breaker whose declared "
+                "rating is not one of the panel's own recorded devices is a "
+                "disagreement between two intake answers, and the 120% "
+                "arithmetic would be spending an allowance against a "
+                "breaker nobody catalogued")
+
     nameplate = p["existing_ac_nameplate_rla_a"]
     if nameplate is not None and not nameplate > 0.0:
         _panel_domain_error(
@@ -1221,6 +1469,24 @@ def validate_panel(p):
             f"exceeds panel.busbar_rating_a ({p['busbar_rating_a']}); a main "
             f"larger than the busbar it feeds is not a panel this method can "
             f"score")
+
+    for f in ("pv_breaker_position", "battery_breaker_position",
+              "main_breaker_position"):
+        v = p[f]
+        if v is not None and _end(v) is None:
+            _panel_domain_error(
+                f, v,
+                f"is not a recognized busbar end -- {BUSBAR_ENDS[0]!r} or "
+                f"{BUSBAR_ENDS[1]!r} (case-insensitive, surrounding "
+                f"whitespace ignored) are the only two ends "
+                f"{nec('705.12(B)(3)(2)')} compares against, and an "
+                f"unrecognized value is a bad answer -- it must not read "
+                f"the same as the question never having been asked")
+
+    for i, e in enumerate(p["schedule"], start=1):
+        _private_text_ok(f"schedule[{i}].device", e.get("device"))
+        _private_text_ok(f"schedule[{i}].label", e.get("label"))
+
     return p
 
 
@@ -1260,7 +1526,18 @@ def load_panel():
     rather than compute from a None. Absence is not false: only an explicit
     false disables, which is the same contract the new-load flag carries.
 
-    Everything numeric then goes through validate_panel(), which rejects values
+    `enclosure_type`, `meter_class`, `breaker_family`, `main_breaker_catalog`,
+    `enclosure_catalog` and `assembly_sccr_ka` (issue #41) join the REQUIRED
+    fields above: the cheatsheet already tags every one of them
+    `required_if: has_new_load_interest`, the same tier as service_rating_a,
+    and none of them documents a null/absent meaning the way the four
+    nullable fields above do -- there is no third state to carry for them.
+    They feed no safety arithmetic -- every existing computation this module
+    makes is exactly what it was before issue #41 -- but PANEL_FIELD_SCHEMA
+    now declares them and validate_panel() now checks them, which was
+    impossible while they were never read.
+
+    Everything then goes through validate_panel(), which rejects values
     outside their physical domain. A missing field already stops the run; an
     impossible one has to as well, because the busbar arithmetic turns it into a
     plausible answer rather than an obviously wrong one.
@@ -1270,6 +1547,12 @@ def load_panel():
         "has_ev": has_ev,
         "service_rating_a": float(HH.get("panel.service_rating_a")),
         "busbar_rating_a": float(HH.get("panel.busbar_rating_a")),
+        "main_breaker_catalog": HH.get("panel.main_breaker_catalog"),
+        "enclosure_catalog": HH.get("panel.enclosure_catalog"),
+        "enclosure_type": HH.get("panel.enclosure_type"),
+        "meter_class": HH.get("panel.meter_class"),
+        "breaker_family": HH.get("panel.breaker_family"),
+        "assembly_sccr_ka": float(HH.get("panel.assembly_sccr_ka")),
         "pv_backfeed_a": _optional_number("panel.pv_backfeed_a"),
         "pv_backfeed_recorded": _key_present("panel.pv_backfeed_a"),
         "meter_socket_continuous_a": _optional_number(

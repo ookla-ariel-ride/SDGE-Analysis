@@ -656,7 +656,7 @@ id: panel_main_breaker_catalog
 question: "What is the catalog (or style) number printed on the main breaker?"
 type: string
 required_if: has_new_load_interest
-where: "On the face of the main breaker, beside the amp stamp. It identifies the breaker type, which the panel's rating label refers back to when it states a short-circuit rating per main type."
+where: "On the face of the main breaker, beside the amp stamp. It identifies the breaker type, which the panel's rating label refers back to when it states a short-circuit rating per main type. There is no fixed vocabulary of catalog numbers to check this against — manufacturers mint new ones constantly — so analysis/service_headroom.py's validate_panel() only checks that the answer is non-empty text of a plausible length, the same basic sanity every free-text panel field below gets (issue #41)."
 privacy: private-only
 privacy_note: "A catalog number names one specific device in one specific panel, which is what the bare rating does not — it stays out of every committed artifact."
 ```
@@ -676,7 +676,7 @@ id: panel_enclosure_catalog
 question: "What is the catalog number of the panel enclosure itself?"
 type: string
 required_if: has_new_load_interest
-where: "On the same rating label inside the door, and often on a sticker on the outside of the can. It is what a supply house needs to sell you a matching breaker or cover."
+where: "On the same rating label inside the door, and often on a sticker on the outside of the can. It is what a supply house needs to sell you a matching breaker or cover. Like panel_main_breaker_catalog, this has no closed vocabulary — validate_panel() checks only that it is non-empty text of a plausible length (issue #41)."
 privacy: private-only
 privacy_note: "Same reason as the main breaker's catalog number: it names one enclosure model rather than a rating, so it stays out of committed artifacts."
 ```
@@ -706,7 +706,7 @@ id: panel_enclosure_type
 question: "What type of enclosure is it — indoor or outdoor, what NEMA rating, and is the meter in the same box?"
 type: string
 required_if: has_new_load_interest
-where: "The rating label gives the NEMA type (NEMA 1 indoor, NEMA 3R rainproof, and so on). Note whether it is a meter-main combination, with meter and main breaker in one outdoor enclosure, because that adds the socket rating below."
+where: "The rating label gives the NEMA type (NEMA 1 indoor, NEMA 3R rainproof, and so on). Note whether it is a meter-main combination, with meter and main breaker in one outdoor enclosure, because that adds the socket rating below. This is free text with no closed vocabulary — validate_panel() checks only that it is non-empty and a plausible length — EXCEPT for one mechanical cross-check (issue #41): panel_meter_socket_continuous_a may only carry a recorded number where this answer contains the literal phrase 'meter-main', since that rating only applies to a meter-main combination. Answer with that phrase, verbatim, whenever the enclosure is one."
 privacy: private-only
 privacy_note: "Free text describing where on the building the gear sits and how it is arranged — a physical description of one house, not a rating, so it stays private-only. The socket rating it implies is published on its own."
 ```
@@ -716,7 +716,7 @@ id: panel_meter_socket_continuous_a
 question: "If the meter shares the panel enclosure, what continuous amp rating is printed for the meter socket?"
 type: number
 required_if: has_new_load_interest
-where: "On the rating label of a meter-main combination, worded like 'METER SOCKET RATED ___ AMPS CONTINUOUS'. It is a third limit, separate from the bus and from the main, and usually the tightest one. Set it to null if you looked and the meter sits in its own enclosure or no such rating is printed — that is an answer, and the headroom is then reported against the main alone. Leave the key out entirely if you have not looked; the headroom is then published as an upper limit that a socket rating could tighten, rather than as though the constraint did not exist."
+where: "On the rating label of a meter-main combination, worded like 'METER SOCKET RATED ___ AMPS CONTINUOUS'. It is a third limit, separate from the bus and from the main, and usually the tightest one. Set it to null if you looked and the meter sits in its own enclosure or no such rating is printed — that is an answer, and the headroom is then reported against the main alone. Leave the key out entirely if you have not looked; the headroom is then published as an upper limit that a socket rating could tighten, rather than as though the constraint did not exist. A recorded NUMBER here also requires panel_enclosure_type to contain the literal phrase 'meter-main' — validate_panel() fails closed otherwise (issue #41), since the rating cannot exist on a panel that answer does not describe as a meter-main combination."
 privacy: public-ok
 privacy_note: "A printed continuous rating, same class of fact as the main and the bus; it is the binding constraint in the published headroom, which cannot be shown without it."
 ```
@@ -726,7 +726,7 @@ id: panel_assembly_sccr_ka
 question: "What short-circuit current rating (SCCR, in kA) does the rating label give for the assembly?"
 type: number
 required_if: has_new_load_interest
-where: "On the rating label, often conditioned on which main is installed ('___ AMPS WITH TYPE __ MAIN'). Take the assembly figure matching your installed main; it can be lower than the rating marked on the breaker by itself."
+where: "On the rating label, often conditioned on which main is installed ('___ AMPS WITH TYPE __ MAIN'). Take the assembly figure matching your installed main; it can be lower than the rating marked on the breaker by itself. validate_panel() requires a positive kA figure (issue #41); it does not check against a fixed list of standard SCCR values, since no committed source enumerates every one a real label can print."
 privacy: public-ok
 privacy_note: "A kA rating off a label, drawn from the same short standard list (10/22/25 kA) as every other panel of its type."
 ```
@@ -736,7 +736,7 @@ id: panel_meter_class
 question: "What class is the utility meter (e.g. CL10, CL100, CL200, CL320)?"
 type: string
 required_if: has_new_load_interest
-where: "On the meter face or its nameplate, alongside the form and voltage. A meter class is a socket rating, not a service rating — record it, and don't let it stand in for the main breaker."
+where: "On the meter face or its nameplate, alongside the form and voltage. A meter class is a socket rating, not a service rating — record it, and don't let it stand in for the main breaker. The format is checkable even though the full list of ANSI classes is not: validate_panel() requires 'CL' followed by digits (issue #41), the convention this question's own examples already show — it does not restrict WHICH digits, since no committed source enumerates every class a real meter face can print."
 privacy: private-only
 privacy_note: "Read off the utility's own metering equipment and recorded alongside the meter's form, model and AMI type, which together describe one installed meter — it stays private-only, and no committed artifact may quote it."
 ```
@@ -746,7 +746,7 @@ id: panel_pv_backfeed_a
 question: "If solar or a battery is connected to the panel, what is its backfeed breaker rated at?"
 type: number
 required_if: has_new_load_interest
-where: "The breaker the solar feeds through, usually at the far end of the stack from the main and often under a red PV or DO-NOT-RELOCATE sticker. Read the handle stamp, then cross-check it against the 'Max System AC Current' figure on the interconnection placard beside the panel. Set it to null if you looked at the panel and nothing backfeeds it — that is an answer, and it lets the 120% busbar check resolve. Leave the key out entirely if you have not looked; the check then reports not_determined instead of crediting a zero nobody verified."
+where: "The breaker the solar feeds through, usually at the far end of the stack from the main and often under a red PV or DO-NOT-RELOCATE sticker. Read the handle stamp, then cross-check it against the 'Max System AC Current' figure on the interconnection placard beside the panel. Set it to null if you looked at the panel and nothing backfeeds it — that is an answer, and it lets the 120% busbar check resolve. Leave the key out entirely if you have not looked; the check then reports not_determined instead of crediting a zero nobody verified. A POSITIVE value must also equal the amps of some breaker in panel_schedule — validate_panel() fails closed otherwise (issue #41), since a backfeed rating with no matching cataloged breaker is two answers disagreeing about the same panel. (0 A is exempt from that cross-check; use null, not 0, to record a surveyed 'nothing backfeeds this panel'.)"
 privacy: public-ok
 privacy_note: "A breaker rating, no more identifying than the main's; the repo already publishes this array's kW DC, module count and PTO date, all of which say far more about the house."
 ```
@@ -756,7 +756,7 @@ id: panel_breaker_family
 question: "What breaker family does the panel take?"
 type: string
 required_if: has_new_load_interest
-where: "Read the type letters off any existing branch breaker (BR, QO, HOM, THQL…) and check the rating label, which lists the classified types the panel accepts. Any new circuit has to use a compatible breaker."
+where: "Read the type letters off any existing branch breaker (BR, QO, HOM, THQL…) and check the rating label, which lists the classified types the panel accepts. Any new circuit has to use a compatible breaker. Manufacturers add families faster than any list here could track, so validate_panel() checks only that the answer is non-empty text of a plausible length (issue #41), not membership in the examples above."
 privacy: private-only
 privacy_note: "A manufacturer and product line rather than a rating; it belongs with the catalog numbers it is read off, and stays private-only for the same reason."
 ```
@@ -766,7 +766,7 @@ id: panel_pv_breaker_position
 question: "Which end of the breaker stack is the solar backfeed breaker at, top or bottom — and which end is the main at?"
 type: string
 required_if: has_new_load_interest
-where: "NEC 705.12(B)(3)(2) is two conditions, not one: the 120% arithmetic, and the backfeed breaker sitting at the opposite end of the busbar from the main. The check compares the two ends, so record both — the backfeed breaker's as panel.pv_breaker_position and the main's as panel.main_breaker_position, each 'top' or 'bottom'. With either one missing the position condition is reported as not determined rather than assumed, and the arithmetic alone is never read as a compliant verdict. Null if nothing backfeeds the panel. This field describes the breaker ALREADY on the bus; a proposed battery breaker gets its own answer, panel.battery_breaker_position, below. The main's end is a separate answer with its own block, panel_main_breaker_position, immediately below."
+where: "NEC 705.12(B)(3)(2) is two conditions, not one: the 120% arithmetic, and the backfeed breaker sitting at the opposite end of the busbar from the main. The check compares the two ends, so record both — the backfeed breaker's as panel.pv_breaker_position and the main's as panel.main_breaker_position, each 'top' or 'bottom'. With either one missing the position condition is reported as not determined rather than assumed, and the arithmetic alone is never read as a compliant verdict. Null if nothing backfeeds the panel. This field describes the breaker ALREADY on the bus; a proposed battery breaker gets its own answer, panel.battery_breaker_position, below. The main's end is a separate answer with its own block, panel_main_breaker_position, immediately below. 'top' and 'bottom' (case-insensitive, surrounding whitespace ignored) are the only two recognized answers; validate_panel() fails closed on anything else rather than reading a typo as an unasked question (issue #41) — a third answer stops the run instead of silently becoming not_determined."
 privacy: public-ok
 privacy_note: "Which end of a busbar a breaker sits on is one bit — top or bottom — and it is what makes the published 705.12(B)(3)(2) verdict checkable."
 ```
@@ -776,7 +776,7 @@ id: panel_main_breaker_position
 question: "Which end of the breaker stack does the main supply land on, top or bottom?"
 type: string
 required_if: has_new_load_interest
-where: "The main is the large breaker at one end of the stack, usually placarded SERVICE DISCONNECT. Record which end as panel.main_breaker_position, 'top' or 'bottom'. It is the second half of NEC 705.12(B)(3)(2)'s position condition — every backfeed breaker's end is judged against it — so with this missing the condition reports not determined for every source, however the 120% arithmetic came out. Leave the key out until someone has looked; nothing is inferred from where the PV breaker sits."
+where: "The main is the large breaker at one end of the stack, usually placarded SERVICE DISCONNECT. Record which end as panel.main_breaker_position, 'top' or 'bottom'. It is the second half of NEC 705.12(B)(3)(2)'s position condition — every backfeed breaker's end is judged against it — so with this missing the condition reports not determined for every source, however the 120% arithmetic came out. Leave the key out until someone has looked; nothing is inferred from where the PV breaker sits. As with panel_pv_breaker_position, an answer outside 'top'/'bottom' fails closed rather than reading as unsurveyed (issue #41)."
 privacy: public-ok
 privacy_note: "One bit, top or bottom, on a stock enclosure; without it no position verdict in the artifact can be audited."
 ```
@@ -786,7 +786,7 @@ id: panel_battery_breaker_position
 question: "If you are considering a battery, has a position been surveyed for its backfeed breaker — which end of the busbar would it land on, top or bottom?"
 type: string
 required_if: has_new_load_interest
-where: "This is a SEPARATE answer from panel.pv_breaker_position, and the existing PV breaker's end is never reused for it: a panel can satisfy NEC 705.12(B)(3)(2) for the breaker already installed and have nowhere at that end to land another. Answer only from a survey of the panel — two adjacent full-size spaces at the end of the bus opposite the main, and which end that is. Null until someone has looked, which keeps the battery's position condition at 'not determined' instead of borrowing a compliant-looking answer from a different breaker."
+where: "This is a SEPARATE answer from panel.pv_breaker_position, and the existing PV breaker's end is never reused for it: a panel can satisfy NEC 705.12(B)(3)(2) for the breaker already installed and have nowhere at that end to land another. Answer only from a survey of the panel — two adjacent full-size spaces at the end of the bus opposite the main, and which end that is. Null until someone has looked, which keeps the battery's position condition at 'not determined' instead of borrowing a compliant-looking answer from a different breaker. As with the other two positions, an answer outside 'top'/'bottom' fails closed rather than reading as unsurveyed (issue #41)."
 privacy: public-ok
 privacy_note: "Same one bit as the other two positions, about a breaker that does not exist yet."
 ```
@@ -796,7 +796,7 @@ id: panel_schedule
 question: "List every breaker in the panel: the device marking, its pole count, its amp rating(s), and what the door legend says it feeds."
 type: list
 required_if: has_new_load_interest
-where: "Two sources of different quality. Device markings are read straight off each breaker (catalog number and amp stamp) and are firm. Circuit descriptions come from the hand-lettered legend on the door and get matched to devices by position, which is weaker — record that mapping as provisional and note any legend entry you can't pair with a device. Photograph the stack top to bottom in overlapping frames so no position falls between shots. A tandem or quad device carries one amp value per pole group."
+where: "Two sources of different quality. Device markings are read straight off each breaker (catalog number and amp stamp) and are firm. Circuit descriptions come from the hand-lettered legend on the door and get matched to devices by position, which is weaker — record that mapping as provisional and note any legend entry you can't pair with a device. Photograph the stack top to bottom in overlapping frames so no position falls between shots. A tandem or quad device carries one amp value per pole group. Each row's `device` and `label` must be non-empty text; validate_panel() checks that much (issue #41) but invents no vocabulary for either, since both are open-ended transcriptions with no closed set of legitimate values. Each row's `poles` and `amps` are checked for internal consistency by breaker_geometry() — a list of `amps` must have exactly `poles` values for a tandem (2 poles) or a quad (4 poles, outer and inner pairs matching)."
 privacy: private-only
 privacy_note: "The strongest private-only field in this section: `device` gives catalog numbers, and `label` and any note transcribe a door legend describing what the inside of one particular house runs. No committed artifact may carry a device string, a label string or per-device detail — only aggregates over the schedule (device count, spaces and pole positions used and free, twin-density count, the branch-OCPD sum and the largest branch OCPD), plus one derived single-device figure: the ampere rating of the branch overcurrent device serving the existing air conditioning, published as `noncoincident_loads.existing_ac_ocpd_a` alongside the count of schedule entries that matched. It is admitted for the same reason the bare service, busbar and backfeed ratings are public-ok — a standard NEC 240.6(A) ampere size shared by millions of dwellings — and it is load-bearing: the NEC 220.60 noncoincident credit bound is 125% of it. The label that selected it, and the words searched for, stay private."
 ```
