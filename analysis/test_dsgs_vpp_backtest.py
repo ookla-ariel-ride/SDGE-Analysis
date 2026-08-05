@@ -109,6 +109,27 @@ def _synthetic_day(consumption_kw=0.0, generation_kw=0.0, weekday=True):
     return d, imp0, gen0
 
 
+def _synthetic_window(start_date, end_date, consumption_kw=0.0, generation_kw=0.0):
+    """Multi-day extension of _synthetic_day: every 15-min interval from start_date
+    00:00 through end_date 23:45 inclusive, constant load/generation, WITH the extra
+    Consumption/Generation/seas/ym/wkend columns backtest()/bp.billed() need on top of
+    the dt/hour/p columns _synthetic_day already provides -- so a case can pass this
+    straight into vb.backtest(d, cal) without br.load() or any private data at all.
+    Built from the same rates.py primitives behavior_rebuild.load() uses (off_peak_day,
+    SUMMER_MONTHS, period_at), never a local re-derivation of the tariff rule."""
+    dtr = pd.date_range(start_date, pd.Timestamp(end_date) + pd.Timedelta(hours=23, minutes=45),
+                        freq="15min")
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["wkend"] = d.dt.dt.date.map(R.off_peak_day)
+    d["seas"] = np.where(d.dt.dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    d["ym"] = d.dt.dt.to_period("M")
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+    d["Consumption"] = consumption_kw * 0.25
+    d["Generation"] = generation_kw * 0.25
+    return d
+
+
 @case
 def case_run_batt_vpp_matches_run_batt_with_empty_event_set():
     """With no event hours at all, run_batt_vpp must behave IDENTICALLY to
@@ -354,6 +375,129 @@ def case_solar_surplus_during_an_event_hour_does_not_round_trip_through_the_batt
 
 
 # ---------------------------------------------------------------------------
+# (a2) event-aware SOC pre-staging (issue #53) -- synthetic-frame, no archive needed
+# ---------------------------------------------------------------------------
+@case
+def case_prestage_true_with_empty_event_set_still_matches_run_batt():
+    """prestage=True must be a no-op when event_set is empty -- first_event_hour is
+    built from event_set itself, so an empty event_set leaves it empty and
+    disch_win_active == disch_win for every interval regardless of the prestage flag.
+    Extends the existing prestage=False empty-event-set guarantee to prestage=True,
+    since a future caller could plausibly pass prestage=True with no events at all."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=1.0, generation_kw=0.5)
+    imp_a, exp_a, _served, _thru = bp.run_batt(d, imp0, gen0, vb.CAP, "greedy")
+    imp_b, exp_b, soc_start, event_kwh, bau_kwh = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, set(), 0.20, prestage=True)
+    assert np.allclose(imp_a, imp_b) and np.allclose(exp_a, exp_b)
+    assert (event_kwh == 0).all()
+    return "run_batt_vpp(prestage=True, event_set=set()) is still byte-identical to run_batt('greedy')"
+
+
+@case
+def case_prestage_suppresses_ordinary_discharge_before_the_days_first_event_hour():
+    """The core pre-staging rule (issue #53): on a date with a scheduled event, the
+    ordinary/arbitrage disch_win branch must deliver ZERO discharge for hours strictly
+    before that date's first event hour, when prestage=True -- and the reactive
+    (prestage=False) run on the SAME fixture must show non-zero ordinary discharge in
+    at least one of those same hours, or this fixture wouldn't be exercising the
+    branch this rule suppresses.
+
+    Fixture: real 3 kW house load across the whole evening disch_win window (16-20),
+    with a single declared event at HE21 (floor_hour 20, the LAST disch_win hour of
+    the day) -- so hours 16-19 are strictly before the event and must be fully
+    suppressed, matching the same 3 kW evening-load shape the existing reserve-floor
+    regression case above already uses to exercise the ordinary branch."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=3.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    event_set = {(date, 20)}   # HE21 -> floor_hour 20, the day's only/last disch_win hour
+    h = np.floor(d.hour.values).astype(int)
+    before_mask = np.isin(h, [16, 17, 18, 19])
+
+    _, _, _, _, bau_reactive = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=False)
+    assert bau_reactive[before_mask].sum() > 0, (
+        "fixture precondition failed: the reactive path must actually discharge "
+        "during hours 16-19, or this case can't distinguish suppression from a "
+        "fixture that never exercised the branch at all")
+
+    _, _, soc_start_pre, event_kwh_pre, bau_pre = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=True)
+    assert bau_pre[before_mask].sum() == 0.0, (
+        f"pre-staged ordinary discharge before the event hour must be fully "
+        f"suppressed, got {bau_pre[before_mask].sum()} kWh")
+    assert event_kwh_pre[before_mask].sum() == 0.0, (
+        "the event-forcing block must not fire before an actual event hour either "
+        "way -- is_event[] itself is unaffected by prestage")
+
+    # Suppression must leave AT LEAST as much SOC entering the event hour as the
+    # reactive path -- the entire point of pre-staging.
+    event_idx = np.where(h == 20)[0][0]
+    _, _, soc_start_reactive, _, _ = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=False)
+    assert soc_start_pre[event_idx] >= soc_start_reactive[event_idx] - 1e-9, (
+        f"pre-staged SOC entering the event hour ({soc_start_pre[event_idx]}) must "
+        f"be >= reactive SOC ({soc_start_reactive[event_idx]})")
+    return (f"reactive path discharged {bau_reactive[before_mask].sum():.4f} kWh in "
+            "hours 16-19; pre-staged path discharged 0, entering the event hour with "
+            f"{soc_start_pre[event_idx]:.4f} kWh vs reactive's "
+            f"{soc_start_reactive[event_idx]:.4f} kWh")
+
+
+@case
+def case_prestage_is_a_noop_from_the_first_event_hour_onward():
+    """'From the first event hour onward, behavior is unchanged' (issue #53's rule) --
+    verified here by declaring the event at the EARLIEST disch_win hour of the day
+    (floor_hour 16, HE17), so there is no hour strictly before it within the disch_win
+    window for the suppression clause to act on. With nothing to suppress,
+    prestage=True must be byte-identical to prestage=False on this fixture."""
+    d, imp0, gen0 = _synthetic_day(consumption_kw=3.0, generation_kw=0.0)
+    date = d.dt.dt.date.iloc[0]
+    event_set = {(date, 16)}   # HE17 -> floor_hour 16, the day's FIRST disch_win hour
+    imp_a, exp_a, soc_a, ek_a, bk_a = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=False)
+    imp_b, exp_b, soc_b, ek_b, bk_b = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=True)
+    assert np.allclose(imp_a, imp_b) and np.allclose(exp_a, exp_b)
+    assert np.allclose(soc_a, soc_b) and np.allclose(ek_a, ek_b) and np.allclose(bk_a, bk_b)
+    return "prestage=True matches prestage=False exactly when the event is the day's first disch_win hour"
+
+
+@case
+def case_prestage_does_not_affect_a_date_before_any_scheduled_event():
+    """A calendar date with no entry in event_set, and CAUSALLY UPSTREAM of any date
+    that does (dispatch is a forward-running simulation, so a date's own outcome can
+    only depend on itself and dates before it, never on a later date's event), must
+    be completely unaffected by prestage=True -- the suppression clause only ever
+    fires for a date present in first_event_hour. Two-day fixture: day 1 has real
+    evening load and NO event; day 2 carries the only declared event. (A day AFTER
+    the event date is deliberately not asserted identical here: pre-staging changes
+    day 1's ending SOC, which legitimately carries forward and can change a later
+    date's dispatch too, even a date with no event of its own -- that's expected
+    cross-day state coupling, not a bug, and not what this rule's date-scoping
+    promises to leave untouched.)"""
+    dtr = pd.date_range("2026-01-07", periods=192, freq="15min")  # 2 days
+    d = pd.DataFrame({"dt": dtr})
+    d["hour"] = d.dt.dt.hour + d.dt.dt.minute / 60
+    d["p"] = [R.period_at(ts) for ts in d.dt]
+    imp0 = np.full(192, 3.0 * 0.25)
+    gen0 = np.zeros(192)
+    dates = d.dt.dt.date.values
+    day1, day2 = sorted(set(dates))
+    event_set = {(day2, 20)}   # only day 2 has a scheduled event; day 1 precedes it
+
+    imp_a, exp_a, soc_a, ek_a, bk_a = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=False)
+    imp_b, exp_b, soc_b, ek_b, bk_b = vb.run_batt_vpp(
+        d, imp0.copy(), gen0.copy(), vb.CAP, event_set, 0.20, prestage=True)
+    day1_mask = dates == day1
+    assert np.allclose(imp_a[day1_mask], imp_b[day1_mask])
+    assert np.allclose(exp_a[day1_mask], exp_b[day1_mask])
+    assert np.allclose(bk_a[day1_mask], bk_b[day1_mask])
+    assert np.allclose(soc_a[day1_mask], soc_b[day1_mask])
+    return "day 1 (precedes the only scheduled event, on day 2) is unaffected by prestage=True"
+
+
+# ---------------------------------------------------------------------------
 # (b) build_calendar() fail-closed / correctness -- synthetic xlsx, no private
 #     archive needed (openpyxl fixtures built in a tempdir)
 # ---------------------------------------------------------------------------
@@ -588,7 +732,11 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
     vb.RESULTS_JSON = pathlib.Path(tmp_dir.name) / "dsgs_vpp_backtest.json"
     try:
         assert not vb.RAW_XLSX.exists()
+        # Includes prestaged_net_usd_min (issue #53): a fixture that ALREADY has the
+        # new field must be preserved verbatim, with NO added note -- the note is
+        # only for a dict that predates the field, see the sibling case below.
         preserved_marker = {"net_usd_min": 12.34, "net_usd_max": 56.78,
+                            "prestaged_net_usd_min": 20.0, "prestaged_net_usd_max": 60.0,
                             "note": "a real, previously-committed breakdown"}
         vb.RESULTS_JSON.write_text(json.dumps({"per_aggregation_sensitivity": preserved_marker}))
         # Calls the REAL function main() uses, not a reimplementation of its logic --
@@ -598,6 +746,93 @@ def case_main_preserves_committed_per_aggregation_sensitivity_without_the_archiv
             "the committed per_aggregation_sensitivity must be preserved, not "
             f"overwritten with a placeholder -- got {value}")
         return "an archive-less run preserves the existing committed per_aggregation_sensitivity"
+    finally:
+        vb.RAW_XLSX = real_raw_xlsx
+        vb.RESULTS_JSON = real_results_json
+        tmp_dir.cleanup()
+
+
+@case
+def case_per_aggregation_prestaged_range_is_computed_from_each_aggregations_own_calendar():
+    """Codex adversarial review, issue #53 -- the core fix, verified WITHOUT any
+    private data at all (Codex `review` pass 1 caught a prior draft of this case
+    that still called br.load() for `d`, so despite monkeypatching
+    build_per_aggregation_calendars() it still SkipCase'd via _require_archive() in
+    any real public checkout and never actually exercised this logic in CI). Both
+    the calendars AND the dispatch frame `d` are now fully synthetic: two
+    single-aggregation calendars with different event dates over a synthetic
+    _synthetic_window() frame spanning both dates, and build_per_aggregation_calendars
+    monkeypatched to return them. per_aggregation_sensitivity() must compute
+    prestage=True against EACH aggregation's OWN calendar, not the union -- two
+    aggregations with DIFFERENT event dates must get DIFFERENT prestaged figures, and
+    neither should equal the union-calendar headline (which spans both dates, not
+    one)."""
+    # July and August so MONTHLY_RATE_USD_PER_KW has an entry for both months; 17:00
+    # hour_end=18 puts the event inside the 4-9pm "on" window, avoiding the "sop"
+    # charge branch entirely -- see run_batt_vpp's docstring for why that matters.
+    alpha = pd.DataFrame([{"date": dt.date(2026, 7, 15), "hour_end": 18,
+                           "event_type": "Test Capacity", "caiso_lmp_usd_per_mwh": 100.0}])
+    beta = pd.DataFrame([{"date": dt.date(2026, 8, 5), "hour_end": 18,
+                          "event_type": "Test Capacity", "caiso_lmp_usd_per_mwh": 250.0}])
+    union_cal = pd.concat([alpha, beta], ignore_index=True)
+    d = _synthetic_window(dt.date(2026, 7, 1), dt.date(2026, 8, 10))
+    real_build_fn = vb.build_per_aggregation_calendars
+    vb.build_per_aggregation_calendars = lambda xlsx_path=None: {
+        "Aggregation-Alpha": alpha, "Aggregation-Beta": beta}
+    try:
+        result = vb.per_aggregation_sensitivity(d)
+    finally:
+        vb.build_per_aggregation_calendars = real_build_fn
+    assert result["n_aggregations"] == 2, result["n_aggregations"]
+    alpha_row = result["per_aggregation"]["Aggregation-Alpha"]
+    beta_row = result["per_aggregation"]["Aggregation-Beta"]
+    # different event dates (and different LMPs) -> different dispatch history ->
+    # (generically) different prestaged figures; if this ever coincidentally ties,
+    # pick different dates/LMPs above
+    assert alpha_row["prestaged_net_usd"] != beta_row["prestaged_net_usd"], (
+        "Aggregation-Alpha and Aggregation-Beta have different event dates but "
+        "identical prestaged_net_usd -- suspicious; either both are silently using "
+        "the SAME (e.g. union) calendar, or this fixture needs different dates")
+    union_result = vb.backtest(d, union_cal)
+    union_pre_net = union_result["prestaged_sensitivity"]["net_usd"]
+    assert alpha_row["prestaged_net_usd"] != union_pre_net, (
+        "Aggregation-Alpha's single-date prestaged figure matches the two-date union "
+        "headline exactly -- suspicious; check build_per_aggregation_calendars is "
+        "actually being consulted, not silently falling back to the union calendar")
+    return (f"two synthetic single-date aggregations get distinct prestaged figures "
+           f"(${alpha_row['prestaged_net_usd']:.2f} vs ${beta_row['prestaged_net_usd']:.2f}), "
+           f"neither matching the union headline (${union_pre_net:.2f})")
+
+
+@case
+def case_preserved_per_aggregation_dict_predating_prestaging_is_flagged_not_silent():
+    """Codex adversarial review, issue #53: per_aggregation_sensitivity() now also
+    computes a prestaged_net_usd_min/max range, but a PRESERVED dict (this
+    archive-less path) can only carry whatever was last computed WITH the archive.
+    If that predates issue #53 (no prestaged_net_usd_min key), silently presenting
+    it alongside the new union-calendar prestaged_sensitivity headline would be
+    exactly the "no realizable per-household range" problem the review found.
+    Must be flagged explicitly, not silently passed through unchanged."""
+    real_raw_xlsx = vb.RAW_XLSX
+    real_results_json = vb.RESULTS_JSON
+    tmp_dir = tempfile.TemporaryDirectory()
+    vb.RAW_XLSX = pathlib.Path(tmp_dir.name) / "does_not_exist.xlsx"
+    vb.RESULTS_JSON = pathlib.Path(tmp_dir.name) / "dsgs_vpp_backtest.json"
+    try:
+        pre_issue_53_marker = {"net_usd_min": 12.34, "net_usd_max": 56.78,
+                               "note": "a real, previously-committed breakdown "
+                                       "from before prestaging existed"}
+        vb.RESULTS_JSON.write_text(
+            json.dumps({"per_aggregation_sensitivity": pre_issue_53_marker}))
+        value = vb.per_aggregation_sensitivity_or_preserved(None)
+        assert value["net_usd_min"] == 12.34 and value["net_usd_max"] == 56.78, (
+            "the pre-existing fields must still be preserved", value)
+        assert "prestaged_range_pending_archive_regeneration" in value, (
+            "a preserved dict missing prestaged_net_usd_min must be flagged, "
+            f"not silently passed through unchanged -- got {value}")
+        return ("a preserved per_aggregation_sensitivity dict predating issue #53's "
+               "prestaged_net_usd_min field is explicitly flagged as pending "
+               "regeneration, not silently presented as current")
     finally:
         vb.RAW_XLSX = real_raw_xlsx
         vb.RESULTS_JSON = real_results_json
@@ -643,7 +878,7 @@ def case_committed_results_json_has_expected_sections():
               "events_in_window", "miss_rate", "revenue", "opportunity_cost_note",
               "second_program_year_event_list_2024", "total_discharge_kwh_note",
               "partial_season_caveat", "per_aggregation_sensitivity",
-              "partial_months_note"):
+              "partial_months_note", "prestaged_sensitivity"):
         assert k in result, f"results section missing: {k}"
     caveat = result["partial_season_caveat"]
     assert "NOT DETERMINED" in caveat and "PARTIAL-SEASON" in caveat, (
@@ -666,6 +901,124 @@ def case_committed_results_json_has_expected_sections():
     miss = result["miss_rate"]["reserve_20pct"]
     assert 0 <= miss["misses"] <= miss["total"]
     return f"gross=${rev['gross_usd']:.2f} net=${rev['net_usd']:.2f} miss={miss}"
+
+
+@case
+def case_prestaged_sensitivity_is_additive_and_internally_consistent():
+    """issue #53 AC2/AC3: the committed prestaged_sensitivity field must (a) be a
+    genuinely computed sensitivity (modeled=True, not a placeholder), (b) be additive
+    -- present ALONGSIDE reserve_20pct/reserve_0pct_sensitivity, neither of which it
+    may alter -- and (c) carry a delta_vs_reactive block whose arithmetic matches the
+    difference between its own figures and reserve_20pct's, not an independently
+    hand-typed number that could silently drift from the actual computation."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    pre = result["prestaged_sensitivity"]
+    assert pre["modeled"] is True
+    reactive = result["revenue"]["reserve_20pct"]
+    assert pre["reserve_frac"] == 0.20, "prestaged_sensitivity must use the same primary reserve as reactive"
+    assert pre["net_usd"] == round(pre["gross_usd"] - pre["opportunity_cost_usd"], 2)
+    delta = pre["delta_vs_reactive"]
+    assert delta["net_usd"] == round(pre["net_usd"] - reactive["net_usd"], 2)
+    assert delta["gross_usd"] == round(pre["gross_usd"] - reactive["gross_usd"], 2)
+    assert delta["total_discharge_kwh"] == round(pre["total_discharge_kwh"] - reactive["total_discharge_kwh"], 2)
+    reactive_miss = result["miss_rate"]["reserve_20pct"]["rate"]
+    assert delta["miss_rate"] == round(pre["miss_rate"]["rate"] - reactive_miss, 4)
+    # AC2: pre-staging must never make the miss rate WORSE than reactive on this
+    # household's real calendar -- it can only hold SOC back for the event, never
+    # spend more of it, so serving strictly fewer event hours would indicate a bug.
+    assert pre["miss_rate"]["misses"] <= result["miss_rate"]["reserve_20pct"]["misses"], (
+        "pre-staging must not increase the miss count vs the reactive baseline")
+    return (f"prestaged net=${pre['net_usd']:.2f} vs reactive net=${reactive['net_usd']:.2f} "
+            f"(delta ${delta['net_usd']:+.2f}), miss rate delta {delta['miss_rate']:+.4f}")
+
+
+@case
+def case_prestaged_delta_note_wording_follows_the_actual_computed_sign():
+    """Codex review, issue #53: an earlier version of delta_vs_reactive's generated
+    note hardcoded a "rises"/"worth a REAL amount" narrative regardless of the actual
+    computed net-revenue delta -- wrong whenever pre-staging nets WORSE than reactive
+    (a real possibility: it always gives up ordinary arbitrage before the event hour,
+    but only gets paid back if the event itself is a capacity-payment ("Test
+    Capacity") event with a big enough rate; a "Test Non-Capacity" event earns zero
+    capacity payment while still giving up that arbitrage). Reproduced here on a
+    fully synthetic single-day frame -- consistent import to arbitrage during the
+    4-9pm window, one Test Non-Capacity event at the LAST on-peak hour, so pre-staging
+    forgoes four hours of real arbitrage value for zero offsetting capacity revenue --
+    which must make delta_vs_reactive.net_usd negative and its note say "falls", not
+    "rises"."""
+    d = _synthetic_window(dt.date(2026, 7, 15), dt.date(2026, 7, 15), consumption_kw=5.0)
+    cal = pd.DataFrame([{"date": dt.date(2026, 7, 15), "hour_end": 21,
+                         "event_type": "Test Non-Capacity", "caiso_lmp_usd_per_mwh": 50.0}])
+    result = vb.backtest(d, cal)
+    delta = result["prestaged_sensitivity"]["delta_vs_reactive"]
+    assert delta["net_usd"] < 0, (
+        "test fixture needs adjusting: expected pre-staging to net WORSE than "
+        f"reactive on a zero-capacity-payment event, got delta {delta['net_usd']:+.2f}")
+    assert "falls" in delta["note"], (
+        f"a negative net_usd delta ({delta['net_usd']:+.2f}) must produce a "
+        f"'falls' note, not a hardcoded 'rises' claim: {delta['note']!r}")
+    assert "rises $" not in delta["note"], (
+        f"note wrongly claims revenue rises despite a negative delta: {delta['note']!r}")
+    return (f"a zero-capacity-payment event with forgone arbitrage produces "
+           f"net_usd delta ${delta['net_usd']:+.2f}, correctly worded 'falls'")
+
+
+@case
+def case_prestaged_descriptions_never_assert_an_unproven_dollar_bound():
+    """Codex adversarial review, issue #53, third pass: TWO separate earlier
+    versions of this artifact's own generated text called the union-calendar
+    prestaged net revenue figure an "upper bound"/"over-stated upper bound"
+    on foresight benefit -- an unproven claim (pre-staging's net revenue
+    reflects a real event-revenue-vs-forgone-arbitrage trade-off, never
+    shown monotonic in event count; the reactive figures in this same
+    artifact already demonstrate a union total CAN land inside a
+    per-aggregation range rather than above it). Regression: every
+    prestaged-related description this script generates must scope any
+    "bound" language to event FREQUENCY explicitly, and the exact retracted
+    "over-stated upper bound" phrase must never reappear."""
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    result = json.loads(vb.RESULTS_JSON.read_text())
+    texts = {"prestaged_sensitivity.description": result["prestaged_sensitivity"]["description"]}
+    pas = result.get("per_aggregation_sensitivity")
+    if isinstance(pas, dict) and "prestaged_range_pending_archive_regeneration" in pas:
+        texts["per_aggregation_sensitivity.prestaged_range_pending_archive_regeneration"] = (
+            pas["prestaged_range_pending_archive_regeneration"])
+    for field, text in texts.items():
+        assert "FREQUENCY" in text, (
+            f"{field} must explicitly scope any bound claim to event "
+            f"FREQUENCY, not dollar economics: {text!r}")
+        assert "over-stated upper bound" not in text, (
+            f"the retracted 'over-stated upper bound' phrasing reappeared in {field}: {text!r}")
+    return (f"{len(texts)} prestaged-related description field(s) correctly scope any "
+           "bound claim to event frequency, never dollar economics")
+
+
+@case
+def case_prestaging_leaves_committed_reactive_figures_untouched():
+    """AC1 (byte-identity to the reactive baseline): a fresh backtest() run must
+    produce reserve_20pct/reserve_0pct_sensitivity figures IDENTICAL to what's
+    already committed, even though this same run also computes prestaged_sensitivity
+    alongside them -- the new sensitivity must be purely additive, never a side
+    channel that perturbs the existing reactive computation."""
+    _require_archive()
+    _require_calendar()
+    if not vb.RESULTS_JSON.exists():
+        raise SkipCase(f"needs the committed {vb.RESULTS_JSON}")
+    committed = json.loads(vb.RESULTS_JSON.read_text())
+    d = br.load()
+    cal = vb.load_calendar()
+    fresh = vb.backtest(d, cal, charge_kw=vb.CHARGE_KW)
+    for scenario in ("reserve_20pct", "reserve_0pct_sensitivity"):
+        assert fresh["revenue"][scenario] == committed["revenue"][scenario], (
+            f"{scenario} changed after adding the prestaged sensitivity: "
+            f"{fresh['revenue'][scenario]} != {committed['revenue'][scenario]}")
+    assert fresh["miss_rate"]["reserve_20pct"] == committed["miss_rate"]["reserve_20pct"]
+    assert fresh["miss_rate"]["reserve_0pct_sensitivity"] == committed["miss_rate"]["reserve_0pct_sensitivity"]
+    assert fresh["hour_detail"] == committed["hour_detail"]
+    return "reserve_20pct/reserve_0pct_sensitivity/hour_detail unchanged by the additive prestaged_sensitivity"
 
 
 @case
@@ -861,10 +1214,26 @@ def case_per_aggregation_sensitivity_reports_a_real_range_not_the_union():
     assert len(pas["per_aggregation"]) == pas["n_aggregations"]
     assert pas["net_usd_min"] <= pas["net_usd_max"]
     assert 0 <= pas["miss_rate_min"] <= pas["miss_rate_max"] <= 1
+    # issue #53, Codex adversarial review: the prestaged sensitivity's own
+    # per-aggregation range must exist too, and be internally sane, exactly
+    # like the reactive range above -- this is the realizable counterpart to
+    # the union-calendar prestaged_sensitivity headline elsewhere in the
+    # artifact, which assumes foreknowledge of every aggregation combined.
+    assert pas["prestaged_net_usd_min"] <= pas["prestaged_net_usd_max"]
+    assert 0 <= pas["prestaged_miss_rate_min"] <= pas["prestaged_miss_rate_max"] <= 1
     for agg_id, row in pas["per_aggregation"].items():
         assert row["n_event_hours_in_window"] >= 0
         assert pas["net_usd_min"] - 1e-6 <= row["net_usd"] <= pas["net_usd_max"] + 1e-6, (
             agg_id, row["net_usd"])
+        assert (pas["prestaged_net_usd_min"] - 1e-6 <= row["prestaged_net_usd"]
+               <= pas["prestaged_net_usd_max"] + 1e-6), (agg_id, row["prestaged_net_usd"])
+        # NOTE: net revenue (unlike gross, or SOC entering an event hour) is NOT
+        # asserted monotonic here -- pre-staging trades away some off-peak
+        # arbitrage savings (see TECHNICAL.md), and that forgone-opportunity-cost
+        # effect is not proven to always be smaller than the gross gain for every
+        # individual aggregation's own (possibly very small) event count. Do not
+        # add a prestaged_net_usd >= net_usd assertion here without first proving
+        # or empirically confirming it holds -- CLAUDE.md section 0.
 
     # cross-check via a fresh direct call (not just re-reading the committed JSON)
     d = br.load()
@@ -872,11 +1241,16 @@ def case_per_aggregation_sensitivity_reports_a_real_range_not_the_union():
     assert fresh["n_aggregations"] == pas["n_aggregations"]
     assert abs(fresh["net_usd_min"] - pas["net_usd_min"]) < 0.01
     assert abs(fresh["net_usd_max"] - pas["net_usd_max"]) < 0.01
+    assert abs(fresh["prestaged_net_usd_min"] - pas["prestaged_net_usd_min"]) < 0.01
+    assert abs(fresh["prestaged_net_usd_max"] - pas["prestaged_net_usd_max"]) < 0.01
 
     union_net = result["revenue"]["reserve_20pct"]["net_usd"]
+    union_net_pre = result["prestaged_sensitivity"]["net_usd"]
     return (f"{pas['n_aggregations']} aggregations isolated; net revenue "
-            f"${pas['net_usd_min']:.2f}-${pas['net_usd_max']:.2f} vs. the "
-            f"union-based headline ${union_net:.2f}")
+            f"${pas['net_usd_min']:.2f}-${pas['net_usd_max']:.2f} (reactive) / "
+            f"${pas['prestaged_net_usd_min']:.2f}-${pas['prestaged_net_usd_max']:.2f} "
+            f"(prestaged) vs. the union-based headlines ${union_net:.2f} / "
+            f"${union_net_pre:.2f}")
 
 
 @case

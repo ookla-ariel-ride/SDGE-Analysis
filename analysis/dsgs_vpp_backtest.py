@@ -557,7 +557,15 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     Returns a dict with the full per-aggregation breakdown plus min/max net revenue
     and miss rate across all aggregations found, so the union-based headline figure
     (computed elsewhere from the committed calendar) can be reported alongside this
-    range rather than as an unqualified point estimate.
+    range rather than as an unqualified point estimate. Also captures each
+    aggregation's OWN prestaged_sensitivity (issue #53, Codex adversarial review):
+    backtest(d, cal, ...) derives event_set entirely from the `cal` it is given, so
+    calling it once per aggregation here already scopes run_batt_vpp(prestage=True)
+    to that single aggregation's own calendar -- the union-calendar prestaged figure
+    computed elsewhere (this same backtest() function, called with the committed
+    union calendar) is what over-states realizable pre-staging benefit by assuming
+    foreknowledge of every aggregation's combined schedule; THIS min/max range is
+    the corresponding real, single-aggregation-scoped answer.
     """
     calendars = build_per_aggregation_calendars(xlsx_path)
     per_agg = {}
@@ -565,6 +573,7 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
         r = backtest(d, cal, reserve_frac=reserve_frac, charge_kw=charge_kw)
         rev = r["revenue"]["reserve_20pct"]
         miss = r["miss_rate"]["reserve_20pct"]
+        pre = r["prestaged_sensitivity"]
         per_agg[agg_id] = {
             "n_event_hours_in_window": r["events_in_window"]["count"],
             "gross_usd": rev["gross_usd"],
@@ -572,6 +581,9 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
             "net_usd": rev["net_usd"],
             "total_discharge_kwh": rev["total_discharge_kwh"],
             "miss_rate": miss["rate"],
+            "prestaged_net_usd": pre["net_usd"],
+            "prestaged_miss_rate": pre["miss_rate"]["rate"],
+            "prestaged_delta_net_usd": pre["delta_vs_reactive"]["net_usd"],
         }
     if not per_agg:  # pragma: no cover -- build_per_aggregation_calendars already
                      # fails closed on an empty result, so this can't be reached
@@ -581,8 +593,13 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
     nets = {k: v["net_usd"] for k, v in per_agg.items()}
     miss_rates = {k: v["miss_rate"] for k, v in per_agg.items()
                   if v["miss_rate"] is not None}
+    pre_nets = {k: v["prestaged_net_usd"] for k, v in per_agg.items()}
+    pre_miss_rates = {k: v["prestaged_miss_rate"] for k, v in per_agg.items()
+                      if v["prestaged_miss_rate"] is not None}
     min_agg = min(nets, key=nets.get)
     max_agg = max(nets, key=nets.get)
+    pre_min_agg = min(pre_nets, key=pre_nets.get)
+    pre_max_agg = max(pre_nets, key=pre_nets.get)
     return {
         "n_aggregations": len(per_agg),
         "net_usd_min": nets[min_agg],
@@ -591,6 +608,12 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
         "net_usd_max_aggregation": max_agg,
         "miss_rate_min": min(miss_rates.values()) if miss_rates else None,
         "miss_rate_max": max(miss_rates.values()) if miss_rates else None,
+        "prestaged_net_usd_min": pre_nets[pre_min_agg],
+        "prestaged_net_usd_min_aggregation": pre_min_agg,
+        "prestaged_net_usd_max": pre_nets[pre_max_agg],
+        "prestaged_net_usd_max_aggregation": pre_max_agg,
+        "prestaged_miss_rate_min": min(pre_miss_rates.values()) if pre_miss_rates else None,
+        "prestaged_miss_rate_max": max(pre_miss_rates.values()) if pre_miss_rates else None,
         "note": (
             "A real household belongs to exactly ONE of these aggregations' actual "
             "dispatch schedules, not the union the rest of this artifact's headline "
@@ -598,13 +621,94 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
             "event FREQUENCY (see build_calendar()'s docstring), not a point "
             "estimate of what this household would actually have earned -- this "
             "range is what a real single-aggregation household could have earned "
-            "instead, at the same 20% reserve."),
+            "instead, at the same 20% reserve. The prestaged_* fields are the same "
+            "range for the event-aware SOC pre-staging sensitivity (issue #53): "
+            "each aggregation's own prestaged figure uses ONLY that aggregation's "
+            "own calendar for foreknowledge, never the union -- this is the "
+            "realizable pre-staging range. NOTE (Codex adversarial review, issue "
+            "#53, third pass): the union-calendar prestaged headline it is being "
+            "compared against is an inclusive event-FREQUENCY scenario, not a "
+            "proven bound on dollar economics in either direction -- do not read "
+            "this range as bracketing a ceiling the union headline over-states; "
+            "the union total is not proven to sit above every aggregation's own "
+            "prestaged figure (see the reactive figures elsewhere in this artifact, "
+            "which already demonstrate the union total can land INSIDE the "
+            "per-aggregation range rather than above it)."),
         "per_aggregation": per_agg,
     }
 
 
 # --------------------------------------------------------------------------- dispatch
-def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
+# EVENT-AWARE SOC PRE-STAGING -- DECISION RECORD (issue #53). The reactive dispatch
+# below (prestage=False, the default, and the ONLY mode used for every existing
+# committed figure) only reacts to is_event[i] once the CURRENT interval is a real
+# DSGS event hour. But DSGS's monthly "Test Capacity"/"Test Non-Capacity" events ARE
+# scheduled in advance -- data/dsgs_event_calendar_2025.csv exists as committed data
+# for exactly that reason, and issue #10 already established 2025 had ZERO real
+# emergency dispatches, meaning every real 2025 event this household could have seen
+# was one of these calendar-published monthly tests, not a surprise. DSGS capacity
+# payments are based on demonstrated performance DURING the test, so a rational,
+# revenue-motivated household has a genuine financial incentive to plan around a
+# known calendar rather than treat it as a surprise. DECISION: model it (this is not
+# a re-litigation of the issue's own "decide whether to model this at all" draft
+# criterion -- that decision was made once, here, with this reasoning, and is not
+# revisited per-call). This is a pure dispatch-logic question over data already read
+# by this same script (event_set, already built from the committed calendar below);
+# no new data source, no new calendar-fetching, no multi-day-ahead foresight (the
+# issue's own framing -- and the calendar's own shape, see below -- is about a
+# SAME-day scheduled test, not a household planning multiple days out).
+#
+# THE NOTICE CHAIN -- WHAT IS AND ISN'T CONFIRMED (Codex adversarial review, issue
+# #53, third pass: an earlier version of this note asserted "scheduled in advance"
+# without citing WHO knows how far ahead; this household's own category is DSGS
+# Option 3, Storage VPP -- see the module docstring's UDC2/Residential/Stationary/
+# 2-hr filter). CONFIRMED, from the CEC's own published DSGS Option 3 program FAQ
+# (dsgs.olivineinc.com/faq/, checked 2026-08): "VPP aggregators must notify the CEC
+# of planned test events no later than 3:00 p.m. on the day preceding the planned
+# test event" -- so the AGGREGATOR itself has at minimum day-ahead knowledge of its
+# own scheduled test (it is the one scheduling it and reporting that schedule to the
+# CEC). NOT CONFIRMED by that source: whether, or how far ahead, an individual
+# ENROLLED CUSTOMER is notified by their aggregator. This script therefore models
+# same-day, at-the-start-of-day household awareness as the SIMPLEST version of a
+# confirmed real information channel (the aggregator plainly has it; a customer
+# actively checking their own aggregator's app/notifications same-day is a modest,
+# not extravagant, assumption on top of a documented fact) -- not a household
+# planning multiple days out, which the issue's own framing and this citation both
+# stop short of, and not a claim that every DSGS household definitely receives or
+# acts on customer-facing notice, which is NOT DETERMINED from this source.
+#
+# THE RULE, IMPLEMENTED. Independently re-verified against the committed calendar
+# before choosing this rule (not just trusted): all 34 distinct 2025 event DATES
+# have their 1-2 event HOURS entirely within hour_end 17-21 (floor_hour 16-20) --
+# i.e. squarely inside this function's own `disch_win` window (16 <= h < 21), the
+# SAME window the reactive/BAU-equivalent branch already treats as ordinary
+# peak-arbitrage-discharge territory. That means on an event day, the reactive
+# dispatch below can spend SOC on ordinary bill-arbitrage discharge in the peak
+# hours strictly BEFORE that day's event hour(s) arrive, potentially leaving less
+# SOC available once the event-forcing block (further down this same function,
+# untouched by prestage) tries to maximize demonstrated capacity. The pre-staging
+# rule: on any calendar DATE with at least one hour in event_set, suppress the
+# ordinary disch_win-triggered arbitrage discharge -- and ONLY that branch, not the
+# event-forcing block, which is unchanged -- for hours on that date STRICTLY BEFORE
+# the date's first event hour. From the first event hour onward (including the
+# event hour itself), behavior is completely unchanged from the reactive path. A
+# date with no event hour in event_set is entirely unaffected. This is the
+# suppress-arbitrage-before-the-known-test rule as scoped by the issue; no
+# multi-day lookahead is implemented (event_set's own (date, floor_hour) shape
+# gives this function no visibility into any date but the current one anyway).
+#
+# WHAT "SUPPRESS" MEANS, MECHANICALLY. Only the disch_win elif's own ACTIVATION is
+# gated (a separate disch_win_active flag); the solar-surplus charge branch's own
+# condition still reads the true, unsuppressed disch_win, so this rule changes
+# nothing about how solar surplus is charged or exported -- a suppressed interval
+# with imp[i] > 0 and no solar surplus simply takes NO dispatch action at all (the
+# household pays ordinary retail import price that interval, same as if it had no
+# battery for it), holding SOC in reserve for the day's known test rather than
+# spending it on arbitrage first. disch_win_active == disch_win whenever
+# prestage=False (the default) or the current interval's date has no event hour in
+# event_set, which is what keeps the tested empty-event_set byte-identity guarantee
+# to run_batt intact for every EXISTING call site (none of which pass prestage=True).
+def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, prestage=False):
     """A close variant of battery_dispatch_policies.run_batt's "greedy" policy.
 
     For any interval NOT in event_set, the control flow is IDENTICAL to run_batt's
@@ -659,6 +763,17 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
     discharge-direction cap; defaults to None, which reuses PWRQ for both
     directions -- byte-for-byte the prior symmetric behavior, preserving the
     empty-event_set byte-identity guarantee to run_batt.
+
+    prestage (issue #53, default False) turns on the EVENT-AWARE SOC PRE-STAGING
+    variant -- see the module-level "DECISION RECORD" comment immediately above
+    this function for the full reasoning and the exact rule. In one line: on any
+    calendar date with at least one hour in event_set, the ordinary disch_win
+    arbitrage-discharge branch (NOT the event-forcing block) is suppressed for
+    hours on that date strictly before the date's first event hour, so a
+    revenue-motivated household holds SOC in reserve ahead of a KNOWN,
+    calendar-published test rather than spending it on ordinary peak arbitrage
+    first. False (the default) reproduces the reactive dispatch above exactly,
+    for every existing call site.
     """
     imp = imp0.copy(); exp = gen0.copy()
     soc = cap / 2.0
@@ -673,10 +788,33 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
     soc_start = np.empty(n)
     event_discharge = np.zeros(n)
     bau_discharge = np.zeros(n)
+    # Pre-staging (issue #53): the earliest floor_hour with an event on each
+    # calendar date present in event_set. Built once, outside the loop, from
+    # event_set itself -- no new data source, just this same event_set's own
+    # (date, floor_hour) tuples regrouped by date. Empty when prestage is False
+    # (never consulted below) or when event_set is empty, either of which keeps
+    # this a no-op and preserves the empty-event_set byte-identity guarantee.
+    first_event_hour = {}
+    if prestage:
+        for ev_date, ev_hour in event_set:
+            prev = first_event_hour.get(ev_date)
+            if prev is None or ev_hour < prev:
+                first_event_hour[ev_date] = ev_hour
     for i in range(n):
         soc_start[i] = soc
         disch_win = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
         disch_used = 0.0
+        # Pre-staging (issue #53): suppress ONLY the ordinary disch_win branch's
+        # own ACTIVATION on an event date, strictly before that date's first event
+        # hour -- the solar-surplus charge branch's condition just below still
+        # reads the true, unsuppressed disch_win (unchanged), and the
+        # event-forcing block further down is untouched. disch_win_active ==
+        # disch_win (a no-op) whenever prestage is False or i's date has no entry
+        # in first_event_hour, which is what keeps the empty-event_set/
+        # prestage=False byte-identity guarantee to run_batt intact.
+        disch_win_active = disch_win and not (
+            prestage and dates[i] in first_event_hour
+            and floor_h[i] < first_event_hour[dates[i]])
         # Never charge from solar surplus during a declared event hour (Finding 2,
         # issue #10 second adversarial review) -- let the surplus pass straight
         # through to export instead of round-tripping it for the event-forcing
@@ -691,7 +829,7 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
             take = min(max((cap - soc) / ETA, 0), pwrq_chg)
             if take > 0:
                 soc += take * ETA; imp[i] += take
-        elif disch_win:
+        elif disch_win_active:
             # During an event hour, the ordinary/BAU-equivalent discharge must ALSO
             # respect the reserve floor -- otherwise this branch can draw soc below
             # reserve_kwh before the event-forcing block below ever runs, and the
@@ -873,6 +1011,50 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
     miss_rate0 = round(misses0 / n_hours_in_window, 4) if n_hours_in_window else None
     total_kwh_20pct = sum(r["total_discharge_kwh"] for r in hour_rows)
 
+    # ---- ADDITIVE sensitivity (issue #53): event-aware SOC pre-staging, same
+    # reserve_frac as the primary reactive case above -- computed ALONGSIDE the
+    # reactive backtest, not replacing it. Every reactive-path variable above
+    # (imp_vpp/exp_vpp/hour_rows/gross_revenue/net_revenue/miss_rate/etc.) is
+    # untouched by this block, which is what keeps the existing committed
+    # data/dsgs_vpp_backtest.json figures byte-identical after this change. See
+    # run_batt_vpp()'s module-level "DECISION RECORD" comment for the rule and
+    # the reasoning behind modeling this at all. ----
+    imp_pre, exp_pre, soc_start_pre, event_kwh_pre, bau_kwh_pre = run_batt_vpp(
+        d, imp0, gen0, CAP, event_set, reserve_frac, charge_kw=charge_kw, prestage=True)
+    # Same priced-months-only split as the reactive case, for the same reason: the
+    # opportunity cost feeding net_revenue_pre must not include a partial month's
+    # bill effect when that month's gross revenue is zeroed out.
+    imp_pre_priced, exp_pre_priced, _, _, _ = run_batt_vpp(
+        d, imp0, gen0, CAP, event_set_priced, reserve_frac, charge_kw=charge_kw, prestage=True)
+    bill_pre_priced = bp.billed(d, imp_pre_priced, exp_pre_priced)
+    opp_cost_pre = round(bill_pre_priced - bill_bau, 2)
+    monthly_gross_pre = {}
+    for mo, rows in sorted(by_month.items()):
+        if mo in partial_months:
+            continue  # cannot validly price a partial month -- see partial_months_note
+        total_pre = {}
+        for r in rows:
+            key = (dt.date.fromisoformat(r["date"]), r["hour_end"] - 1)
+            idxs = idx_by_hour.get(key, [])
+            total_pre[r["date"], r["hour_end"]] = float(sum(event_kwh_pre[j] + bau_kwh_pre[j] for j in idxs))
+        num = sum((total_pre[r["date"], r["hour_end"]] - baseline_kw) * r["caiso_lmp_usd_per_mwh"] for r in rows)
+        den = sum(r["caiso_lmp_usd_per_mwh"] for r in rows)
+        dc_kw = num / den if den else 0.0
+        rate = MONTHLY_RATE_USD_PER_KW[mo]
+        monthly_gross_pre[mo] = round(max(dc_kw, 0.0) * rate, 2)
+    gross_revenue_pre = round(sum(monthly_gross_pre.values()), 2)
+    net_revenue_pre = round(gross_revenue_pre - opp_cost_pre, 2)
+    misses_pre = 0
+    total_kwh_pre = 0.0
+    for r in hour_rows:
+        key = (dt.date.fromisoformat(r["date"]), r["hour_end"] - 1)
+        idxs = idx_by_hour.get(key, [])
+        total_p = float(sum(event_kwh_pre[j] + bau_kwh_pre[j] for j in idxs))
+        total_kwh_pre += total_p
+        if total_p < 1.0:
+            misses_pre += 1
+    miss_rate_pre = round(misses_pre / n_hours_in_window, 4) if n_hours_in_window else None
+
     # ---- Tesla program-terms sanity check ----
     tesla_note = (
         f"§6's existing program-terms estimate cites ${TESLA_SEASON_RANGE_USD[0]}-"
@@ -880,6 +1062,16 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
         f"revenue for the {len(by_month)} in-window participation month(s) is "
         f"${gross_revenue:,.2f} -- same order of magnitude as a partial (not full "
         "6-month) season at the program-terms rate.")
+
+    # Codex review, issue #53: the prestaged delta_vs_reactive note below must not
+    # hardcode a "rises"/"is worth a real amount" narrative -- pre-staging can also
+    # sacrifice more arbitrage value than it earns for a given calendar (a real
+    # possibility per-aggregation, not just theoretical), so the wording is picked
+    # from the actual computed sign, not assumed positive.
+    pre_net_delta = round(net_revenue_pre - net_revenue, 2)
+    pre_kwh_delta = round(total_kwh_pre - total_kwh_20pct, 2)
+    pre_net_verb = "rises" if pre_net_delta > 0 else "falls" if pre_net_delta < 0 else "is unchanged"
+    pre_kwh_verb = "rises" if pre_kwh_delta > 0 else "falls" if pre_kwh_delta < 0 else "is unchanged"
 
     result = {
         "hypothetical": True,
@@ -1049,6 +1241,83 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
                 "monthly_gross_usd": {str(k): v for k, v in monthly_gross0.items()},
             },
         },
+        "prestaged_sensitivity": {
+            "modeled": True,
+            "description": (
+                "ADDITIVE sensitivity (issue #53), NOT a replacement for the "
+                "reserve_20pct reactive figures above, which are unchanged by this "
+                "field's presence. Same event-hour-only 20% reserve floor and the "
+                "same event calendar/measured load as reserve_20pct, but with "
+                "EVENT-AWARE SOC PRE-STAGING turned on: run_batt_vpp(prestage=True) "
+                "suppresses the ordinary/arbitrage disch_win discharge branch on any "
+                "calendar date with a scheduled event, strictly before that date's "
+                "first event hour (see run_batt_vpp()'s module-level DECISION RECORD "
+                "comment for the full rule and reasoning). This models a "
+                "revenue-motivated household that holds SOC in reserve for a KNOWN, "
+                "same-day scheduled test -- not a household that plans multiple "
+                "days ahead, which this rule does not implement. Same-day "
+                "household-level awareness is a MODELED assumption, not a "
+                "confirmed real notice chain all the way to the customer -- the "
+                "CEC's own DSGS Option 3 program FAQ (this household's category) "
+                "confirms VPP aggregators know their own test schedule at least a "
+                "day ahead (aggregators must notify the CEC by 3pm the day before "
+                "a planned test), but does not document whether/how far ahead an "
+                "individual enrolled customer is told (see run_batt_vpp()'s "
+                "module-level DECISION RECORD comment for the citation and the "
+                "confirmed-vs-modeled distinction in full). CARRIES THE SAME "
+                "UNION-CALENDAR CAVEAT AS THE REACTIVE HEADLINE ABOVE, PRECISELY "
+                "STATED (Codex adversarial review, issue #53, second pass -- an "
+                "EARLIER version of this note incorrectly called this field's own "
+                "net_usd/delta an 'upper bound' on foresight benefit; that claim was "
+                "NOT proven and is retracted): the union calendar (module "
+                "docstring's 'inclusive upper bound on event FREQUENCY') bounds only "
+                "the CANDIDATE EVENT COUNT, never the resulting dollar economics --"
+                " net_usd here reflects a REAL trade-off (event-hour revenue gained "
+                "vs. off-peak arbitrage forgone) that is not proven monotonic in "
+                "event count, and the reactive figures elsewhere in this artifact "
+                "already demonstrate the same union total can sit INSIDE the "
+                "per-aggregation range rather than above every member of it. "
+                "Foreknowledge of every aggregation's combined schedule is not "
+                "something a real household would have, so this field's net_usd/"
+                "delta is not that household's own outcome -- but it is also NOT "
+                "asserted to be a ceiling on what one could earn. See "
+                "per_aggregation_sensitivity()'s own prestaged range (when the "
+                "private archive is available) for the actual realizable spread."),
+            "reserve_frac": reserve_frac,
+            "gross_usd": gross_revenue_pre,
+            "opportunity_cost_usd": opp_cost_pre,
+            "net_usd": net_revenue_pre,
+            "total_discharge_kwh": round(total_kwh_pre, 2),
+            "monthly_gross_usd": {str(k): v for k, v in monthly_gross_pre.items()},
+            "miss_rate": {"misses": misses_pre, "total": n_hours_in_window, "rate": miss_rate_pre},
+            "delta_vs_reactive": {
+                "net_usd": round(net_revenue_pre - net_revenue, 2),
+                "gross_usd": round(gross_revenue_pre - gross_revenue, 2),
+                "total_discharge_kwh": round(total_kwh_pre - total_kwh_20pct, 2),
+                "miss_rate": (round(miss_rate_pre - miss_rate, 4)
+                              if miss_rate is not None and miss_rate_pre is not None
+                              else None),
+                "net_usd_pct": (round((net_revenue_pre - net_revenue) / net_revenue * 100, 1)
+                                if net_revenue else None),
+                "note": (
+                    f"Computed, not assumed either way -- pre-staging trades "
+                    f"ordinary/arbitrage discharge earlier in the day for more SOC "
+                    f"held back for the event hour(s), which can raise OR lower net "
+                    f"revenue depending on how much arbitrage value that trade gives "
+                    f"up relative to the extra event-hour capacity it delivers: net "
+                    f"revenue {pre_net_verb} "
+                    f"${pre_net_delta:+,.2f} "
+                    f"({round((net_revenue_pre - net_revenue) / net_revenue * 100, 1) if net_revenue else float('nan'):+.1f}%, "
+                    f"${net_revenue:,.2f} to ${net_revenue_pre:,.2f}) and total "
+                    f"delivered discharge {pre_kwh_verb} "
+                    f"{pre_kwh_delta:+,.2f} kWh "
+                    f"({round((total_kwh_pre - total_kwh_20pct) / total_kwh_20pct * 100, 1) if total_kwh_20pct else float('nan'):+.1f}%), "
+                    f"while the miss rate moves "
+                    f"{(round((miss_rate_pre - miss_rate) * 100, 2) if miss_rate is not None and miss_rate_pre is not None else float('nan')):+.2f} "
+                    f"percentage points ({misses_pre} of {n_hours_in_window} misses "
+                    f"pre-staged vs {n_misses} reactive)."),
+            },
+        },
         "total_discharge_kwh_note": (
             "AC4's 'kWh exported' figure: total battery discharge across the "
             "in-window event hours (event-forced discharge -- which this dispatch "
@@ -1115,11 +1384,36 @@ def per_aggregation_sensitivity_or_preserved(d):
         return per_aggregation_sensitivity(d, charge_kw=CHARGE_KW)
     if RESULTS_JSON.exists():
         existing = json.loads(RESULTS_JSON.read_text())
-        return existing.get(
+        preserved = existing.get(
             "per_aggregation_sensitivity",
             "NOT COMPUTED: needs the private raw CEC archive, which this checkout "
             "does not have, and the previously committed artifact never computed "
             "this field either.")
+        # issue #53, Codex adversarial review: per_aggregation_sensitivity() now
+        # also computes a prestaged_* range, but a PRESERVED dict (this archive-
+        # less path) can only carry whatever was last computed WITH the archive --
+        # if that was before this field existed, silently shipping the union
+        # calendar's prestaged_sensitivity headline with no corrective per-
+        # aggregation range is the exact "do not ship" problem the review found.
+        # Flag it explicitly rather than presenting an incomplete preserved dict
+        # as if it were current.
+        if isinstance(preserved, dict) and "prestaged_net_usd_min" not in preserved:
+            preserved = dict(preserved)
+            preserved["prestaged_range_pending_archive_regeneration"] = (
+                "The preserved per-aggregation range above predates issue #53's "
+                "prestaged_sensitivity field. It does NOT yet include a "
+                "prestaged_net_usd_min/max range, so the union calendar's "
+                "prestaged_sensitivity headline elsewhere in this artifact has "
+                "no realizable single-aggregation counterpart computed yet -- "
+                "that headline reflects an inclusive UNION calendar (more "
+                "candidate event hours than any single real household saw), "
+                "which bounds event FREQUENCY only, not the resulting dollar "
+                "economics (a real household's own smaller, more selectively-"
+                "timed calendar is not proven to earn less). Do not treat "
+                "net_usd/delta_vs_reactive as a ceiling on realizable benefit "
+                "until a future run with the private raw CEC archive present "
+                "recomputes this field.")
+        return preserved
     return (
         "NOT COMPUTED: needs the private raw CEC archive "
         f"({RAW_XLSX}), which this checkout does not have, and there is no "
