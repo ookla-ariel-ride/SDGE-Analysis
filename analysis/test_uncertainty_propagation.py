@@ -370,6 +370,29 @@ def case_scale_production_never_decreases_import_under_a_loss():
 
 
 @case
+def case_scale_production_fails_closed_on_a_surplus_not_silently_export_only():
+    """issue #60, Codex review third pass: gen_scale > 1 (a production
+    SURPLUS) is not modeled -- a surplus should reduce the scenario's
+    existing import first (self-consumption absorbs it) and only then
+    increase export, the mirror of the loss-side rule, but that needs
+    imp_base as an input this function deliberately does not take. No
+    caller in this module's real pipeline ever passes gen_scale > 1
+    (production_measurement_spread's surplus draws are handled by save1_
+    of()'s linear extrapolation instead, a separate, already-quantified
+    approximation -- see issue #89). Rather than silently return a
+    one-sided (export-only) result for an unvalidated case, this must
+    fail closed."""
+    P = np.array([5.0])
+    gen0 = np.array([3.0])
+    try:
+        up.scale_production(P, gen0, 1.2)
+        raise AssertionError("expected SystemExit for gen_scale > 1.0")
+    except SystemExit as e:
+        assert "gen_scale > 1.0" in str(e) or "not modeled" in str(e), str(e)
+    return "scale_production fails closed on a production surplus (gen_scale > 1.0) instead of silently mishandling it"
+
+
+@case
 def case_load_sam_hourly_fails_closed_on_a_wrong_row_count():
     """issue #60: _load_sam_hourly() must refuse a SAM export with the
     wrong number of hourly rows rather than silently misaligning every

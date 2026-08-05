@@ -667,7 +667,38 @@ def scale_production(P, gen0, gen_scale):
     Energy conservation holds per-interval, not just in aggregate:
     (gen0 - new_export) + import_delta == loss always (a lost kWh is
     EITHER less export OR more import, the same invariant the artifact's
-    own energy_conservation_check verifies)."""
+    own energy_conservation_check verifies).
+
+    gen_scale > 1 (a production SURPLUS) is NOT modeled -- fails closed
+    below rather than silently mishandling it (Codex review, issue #60,
+    third pass). A surplus should reduce the scenario's existing IMPORT
+    first (self-consumption absorbs it, avoiding retail/NBC charges) and
+    only then increase export -- the mirror image of the loss-side rule
+    -- but that needs `imp_base` as an input, which this function
+    deliberately does not take (see the gen0-independent-of-imp_base
+    reasoning above), so it cannot be modeled here without changing this
+    function's own signature. No caller in this module ever passes
+    gen_scale > 1 (verified: every real call site uses gen_scale <= 1.0);
+    production_measurement_spread's own surplus draws are handled entirely
+    by save1_of()'s linear extrapolation of the loss-fit slope instead, a
+    separate, already-quantified approximation (see save1_of()'s own
+    KNOWN LIMITATION docstring section, issue #89) that never calls this
+    function for the surplus side either. Failing closed here, rather than
+    silently returning a one-sided (export-only) result for a case this
+    function was never validated against, is deliberate: whoever
+    eventually implements #89's proper two-sided calibration will need to
+    extend this function's signature anyway, at which point this guard
+    should be removed as part of that work, not before."""
+    if gen_scale > 1.0:
+        raise SystemExit(
+            "uncertainty_propagation.scale_production: gen_scale > 1.0 "
+            f"(got {gen_scale}) is not modeled -- a production surplus "
+            "should reduce import before increasing export, the mirror "
+            "of the loss-side rule this function implements, but doing "
+            "that needs imp_base as an input this function deliberately "
+            "does not take (see this function's own docstring). No "
+            "caller in this module currently needs this case; see issue "
+            "#89 for the proper two-sided fix before adding one.")
     loss = P * (1.0 - gen_scale)
     new_export = np.maximum(gen0 - loss, 0.0)
     import_delta = np.maximum(loss - gen0, 0.0)
