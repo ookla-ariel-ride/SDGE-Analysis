@@ -604,7 +604,57 @@ def per_aggregation_sensitivity(d, xlsx_path=RAW_XLSX, reserve_frac=BACKUP_RESER
 
 
 # --------------------------------------------------------------------------- dispatch
-def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
+# EVENT-AWARE SOC PRE-STAGING -- DECISION RECORD (issue #53). The reactive dispatch
+# below (prestage=False, the default, and the ONLY mode used for every existing
+# committed figure) only reacts to is_event[i] once the CURRENT interval is a real
+# DSGS event hour. But DSGS's monthly "Test Capacity"/"Test Non-Capacity" events ARE
+# scheduled in advance -- data/dsgs_event_calendar_2025.csv exists as committed data
+# for exactly that reason, and issue #10 already established 2025 had ZERO real
+# emergency dispatches, meaning every real 2025 event this household could have seen
+# was one of these calendar-published monthly tests, not a surprise. DSGS capacity
+# payments are based on demonstrated performance DURING the test, so a rational,
+# revenue-motivated household has a genuine financial incentive to plan around a
+# known calendar rather than treat it as a surprise. DECISION: model it (this is not
+# a re-litigation of the issue's own "decide whether to model this at all" draft
+# criterion -- that decision was made once, here, with this reasoning, and is not
+# revisited per-call). This is a pure dispatch-logic question over data already read
+# by this same script (event_set, already built from the committed calendar below);
+# no new data source, no new calendar-fetching, no multi-day-ahead foresight (the
+# issue's own framing -- and the calendar's own shape, see below -- is about a
+# SAME-day scheduled test, not a household planning multiple days out).
+#
+# THE RULE, IMPLEMENTED. Independently re-verified against the committed calendar
+# before choosing this rule (not just trusted): all 34 distinct 2025 event DATES
+# have their 1-2 event HOURS entirely within hour_end 17-21 (floor_hour 16-20) --
+# i.e. squarely inside this function's own `disch_win` window (16 <= h < 21), the
+# SAME window the reactive/BAU-equivalent branch already treats as ordinary
+# peak-arbitrage-discharge territory. That means on an event day, the reactive
+# dispatch below can spend SOC on ordinary bill-arbitrage discharge in the peak
+# hours strictly BEFORE that day's event hour(s) arrive, potentially leaving less
+# SOC available once the event-forcing block (further down this same function,
+# untouched by prestage) tries to maximize demonstrated capacity. The pre-staging
+# rule: on any calendar DATE with at least one hour in event_set, suppress the
+# ordinary disch_win-triggered arbitrage discharge -- and ONLY that branch, not the
+# event-forcing block, which is unchanged -- for hours on that date STRICTLY BEFORE
+# the date's first event hour. From the first event hour onward (including the
+# event hour itself), behavior is completely unchanged from the reactive path. A
+# date with no event hour in event_set is entirely unaffected. This is the
+# suppress-arbitrage-before-the-known-test rule as scoped by the issue; no
+# multi-day lookahead is implemented (event_set's own (date, floor_hour) shape
+# gives this function no visibility into any date but the current one anyway).
+#
+# WHAT "SUPPRESS" MEANS, MECHANICALLY. Only the disch_win elif's own ACTIVATION is
+# gated (a separate disch_win_active flag); the solar-surplus charge branch's own
+# condition still reads the true, unsuppressed disch_win, so this rule changes
+# nothing about how solar surplus is charged or exported -- a suppressed interval
+# with imp[i] > 0 and no solar surplus simply takes NO dispatch action at all (the
+# household pays ordinary retail import price that interval, same as if it had no
+# battery for it), holding SOC in reserve for the day's known test rather than
+# spending it on arbitrage first. disch_win_active == disch_win whenever
+# prestage=False (the default) or the current interval's date has no event hour in
+# event_set, which is what keeps the tested empty-event_set byte-identity guarantee
+# to run_batt intact for every EXISTING call site (none of which pass prestage=True).
+def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None, prestage=False):
     """A close variant of battery_dispatch_policies.run_batt's "greedy" policy.
 
     For any interval NOT in event_set, the control flow is IDENTICAL to run_batt's
@@ -659,6 +709,17 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
     discharge-direction cap; defaults to None, which reuses PWRQ for both
     directions -- byte-for-byte the prior symmetric behavior, preserving the
     empty-event_set byte-identity guarantee to run_batt.
+
+    prestage (issue #53, default False) turns on the EVENT-AWARE SOC PRE-STAGING
+    variant -- see the module-level "DECISION RECORD" comment immediately above
+    this function for the full reasoning and the exact rule. In one line: on any
+    calendar date with at least one hour in event_set, the ordinary disch_win
+    arbitrage-discharge branch (NOT the event-forcing block) is suppressed for
+    hours on that date strictly before the date's first event hour, so a
+    revenue-motivated household holds SOC in reserve ahead of a KNOWN,
+    calendar-published test rather than spending it on ordinary peak arbitrage
+    first. False (the default) reproduces the reactive dispatch above exactly,
+    for every existing call site.
     """
     imp = imp0.copy(); exp = gen0.copy()
     soc = cap / 2.0
@@ -673,10 +734,33 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
     soc_start = np.empty(n)
     event_discharge = np.zeros(n)
     bau_discharge = np.zeros(n)
+    # Pre-staging (issue #53): the earliest floor_hour with an event on each
+    # calendar date present in event_set. Built once, outside the loop, from
+    # event_set itself -- no new data source, just this same event_set's own
+    # (date, floor_hour) tuples regrouped by date. Empty when prestage is False
+    # (never consulted below) or when event_set is empty, either of which keeps
+    # this a no-op and preserves the empty-event_set byte-identity guarantee.
+    first_event_hour = {}
+    if prestage:
+        for ev_date, ev_hour in event_set:
+            prev = first_event_hour.get(ev_date)
+            if prev is None or ev_hour < prev:
+                first_event_hour[ev_date] = ev_hour
     for i in range(n):
         soc_start[i] = soc
         disch_win = (16 <= h[i] < 21) or (p[i] != "sop" and kw[i] < 2.5)
         disch_used = 0.0
+        # Pre-staging (issue #53): suppress ONLY the ordinary disch_win branch's
+        # own ACTIVATION on an event date, strictly before that date's first event
+        # hour -- the solar-surplus charge branch's condition just below still
+        # reads the true, unsuppressed disch_win (unchanged), and the
+        # event-forcing block further down is untouched. disch_win_active ==
+        # disch_win (a no-op) whenever prestage is False or i's date has no entry
+        # in first_event_hour, which is what keeps the empty-event_set/
+        # prestage=False byte-identity guarantee to run_batt intact.
+        disch_win_active = disch_win and not (
+            prestage and dates[i] in first_event_hour
+            and floor_h[i] < first_event_hour[dates[i]])
         # Never charge from solar surplus during a declared event hour (Finding 2,
         # issue #10 second adversarial review) -- let the surplus pass straight
         # through to export instead of round-tripping it for the event-forcing
@@ -691,7 +775,7 @@ def run_batt_vpp(d, imp0, gen0, cap, event_set, reserve_frac, charge_kw=None):
             take = min(max((cap - soc) / ETA, 0), pwrq_chg)
             if take > 0:
                 soc += take * ETA; imp[i] += take
-        elif disch_win:
+        elif disch_win_active:
             # During an event hour, the ordinary/BAU-equivalent discharge must ALSO
             # respect the reserve floor -- otherwise this branch can draw soc below
             # reserve_kwh before the event-forcing block below ever runs, and the
@@ -873,6 +957,50 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
     miss_rate0 = round(misses0 / n_hours_in_window, 4) if n_hours_in_window else None
     total_kwh_20pct = sum(r["total_discharge_kwh"] for r in hour_rows)
 
+    # ---- ADDITIVE sensitivity (issue #53): event-aware SOC pre-staging, same
+    # reserve_frac as the primary reactive case above -- computed ALONGSIDE the
+    # reactive backtest, not replacing it. Every reactive-path variable above
+    # (imp_vpp/exp_vpp/hour_rows/gross_revenue/net_revenue/miss_rate/etc.) is
+    # untouched by this block, which is what keeps the existing committed
+    # data/dsgs_vpp_backtest.json figures byte-identical after this change. See
+    # run_batt_vpp()'s module-level "DECISION RECORD" comment for the rule and
+    # the reasoning behind modeling this at all. ----
+    imp_pre, exp_pre, soc_start_pre, event_kwh_pre, bau_kwh_pre = run_batt_vpp(
+        d, imp0, gen0, CAP, event_set, reserve_frac, charge_kw=charge_kw, prestage=True)
+    # Same priced-months-only split as the reactive case, for the same reason: the
+    # opportunity cost feeding net_revenue_pre must not include a partial month's
+    # bill effect when that month's gross revenue is zeroed out.
+    imp_pre_priced, exp_pre_priced, _, _, _ = run_batt_vpp(
+        d, imp0, gen0, CAP, event_set_priced, reserve_frac, charge_kw=charge_kw, prestage=True)
+    bill_pre_priced = bp.billed(d, imp_pre_priced, exp_pre_priced)
+    opp_cost_pre = round(bill_pre_priced - bill_bau, 2)
+    monthly_gross_pre = {}
+    for mo, rows in sorted(by_month.items()):
+        if mo in partial_months:
+            continue  # cannot validly price a partial month -- see partial_months_note
+        total_pre = {}
+        for r in rows:
+            key = (dt.date.fromisoformat(r["date"]), r["hour_end"] - 1)
+            idxs = idx_by_hour.get(key, [])
+            total_pre[r["date"], r["hour_end"]] = float(sum(event_kwh_pre[j] + bau_kwh_pre[j] for j in idxs))
+        num = sum((total_pre[r["date"], r["hour_end"]] - baseline_kw) * r["caiso_lmp_usd_per_mwh"] for r in rows)
+        den = sum(r["caiso_lmp_usd_per_mwh"] for r in rows)
+        dc_kw = num / den if den else 0.0
+        rate = MONTHLY_RATE_USD_PER_KW[mo]
+        monthly_gross_pre[mo] = round(max(dc_kw, 0.0) * rate, 2)
+    gross_revenue_pre = round(sum(monthly_gross_pre.values()), 2)
+    net_revenue_pre = round(gross_revenue_pre - opp_cost_pre, 2)
+    misses_pre = 0
+    total_kwh_pre = 0.0
+    for r in hour_rows:
+        key = (dt.date.fromisoformat(r["date"]), r["hour_end"] - 1)
+        idxs = idx_by_hour.get(key, [])
+        total_p = float(sum(event_kwh_pre[j] + bau_kwh_pre[j] for j in idxs))
+        total_kwh_pre += total_p
+        if total_p < 1.0:
+            misses_pre += 1
+    miss_rate_pre = round(misses_pre / n_hours_in_window, 4) if n_hours_in_window else None
+
     # ---- Tesla program-terms sanity check ----
     tesla_note = (
         f"§6's existing program-terms estimate cites ${TESLA_SEASON_RANGE_USD[0]}-"
@@ -1047,6 +1175,60 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
                 "net_usd": net_revenue0,
                 "total_discharge_kwh": round(total_kwh_0pct, 2),
                 "monthly_gross_usd": {str(k): v for k, v in monthly_gross0.items()},
+            },
+        },
+        "prestaged_sensitivity": {
+            "modeled": True,
+            "description": (
+                "ADDITIVE sensitivity (issue #53), NOT a replacement for the "
+                "reserve_20pct reactive figures above, which are unchanged by this "
+                "field's presence. Same event-hour-only 20% reserve floor and the "
+                "same event calendar/measured load as reserve_20pct, but with "
+                "EVENT-AWARE SOC PRE-STAGING turned on: run_batt_vpp(prestage=True) "
+                "suppresses the ordinary/arbitrage disch_win discharge branch on any "
+                "calendar date with a scheduled event, strictly before that date's "
+                "first event hour (see run_batt_vpp()'s module-level DECISION RECORD "
+                "comment for the full rule and reasoning). This models a "
+                "revenue-motivated household that knows the published DSGS test "
+                "calendar in advance and holds SOC in reserve for a KNOWN, "
+                "same-day scheduled test -- not a household that plans multiple "
+                "days ahead, which this rule does not implement."),
+            "reserve_frac": reserve_frac,
+            "gross_usd": gross_revenue_pre,
+            "opportunity_cost_usd": opp_cost_pre,
+            "net_usd": net_revenue_pre,
+            "total_discharge_kwh": round(total_kwh_pre, 2),
+            "monthly_gross_usd": {str(k): v for k, v in monthly_gross_pre.items()},
+            "miss_rate": {"misses": misses_pre, "total": n_hours_in_window, "rate": miss_rate_pre},
+            "delta_vs_reactive": {
+                "net_usd": round(net_revenue_pre - net_revenue, 2),
+                "gross_usd": round(gross_revenue_pre - gross_revenue, 2),
+                "total_discharge_kwh": round(total_kwh_pre - total_kwh_20pct, 2),
+                "miss_rate": (round(miss_rate_pre - miss_rate, 4)
+                              if miss_rate is not None and miss_rate_pre is not None
+                              else None),
+                "net_usd_pct": (round((net_revenue_pre - net_revenue) / net_revenue * 100, 1)
+                                if net_revenue else None),
+                "note": (
+                    f"Computed, not assumed either way. Foresight is worth a REAL "
+                    f"amount here, not a rounding error, but it shows up mostly as "
+                    f"MORE revenue per served hour, not as fewer misses: net "
+                    f"revenue rises "
+                    f"${round(net_revenue_pre - net_revenue, 2):+,.2f} "
+                    f"({round((net_revenue_pre - net_revenue) / net_revenue * 100, 1) if net_revenue else float('nan'):+.1f}%, "
+                    f"${net_revenue:,.2f} to ${net_revenue_pre:,.2f}) and total "
+                    f"delivered discharge rises "
+                    f"{round(total_kwh_pre - total_kwh_20pct, 2):+,.2f} kWh "
+                    f"({round((total_kwh_pre - total_kwh_20pct) / total_kwh_20pct * 100, 1) if total_kwh_20pct else float('nan'):+.1f}%), "
+                    f"while the miss rate moves only "
+                    f"{(round((miss_rate_pre - miss_rate) * 100, 2) if miss_rate is not None and miss_rate_pre is not None else float('nan')):+.2f} "
+                    f"percentage points ({misses_pre} of {n_hours_in_window} misses "
+                    f"pre-staged vs {n_misses} reactive) -- pre-staging mostly helps "
+                    "event hours that were already delivering SOME capacity deliver "
+                    "MORE of it (holding back arbitrage discharge earlier in the "
+                    "day leaves more SOC above the reserve floor when the event "
+                    "hour arrives), rather than converting a fully SOC-exhausted "
+                    "miss into a hit."),
             },
         },
         "total_discharge_kwh_note": (

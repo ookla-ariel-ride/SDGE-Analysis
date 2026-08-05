@@ -771,6 +771,33 @@
    }
   }
  },
+ "prestaged_sensitivity": {
+  "delta_vs_reactive": {
+   "gross_usd": 48.49,
+   "miss_rate": -0.0217,
+   "net_usd": 36.87,
+   "net_usd_pct": 26.3,
+   "note": "Computed, not assumed either way. Foresight is worth a REAL amount here, not a rounding error, but it shows up mostly as MORE revenue per served hour, not as fewer misses: net revenue rises $+36.87 (+26.3%, $139.95 to $176.82) and total delivered discharge rises +53.46 kWh (+29.3%), while the miss rate moves only -2.17 percentage points (23 of 46 misses pre-staged vs 24 reactive) -- pre-staging mostly helps event hours that were already delivering SOME capacity deliver MORE of it (holding back arbitrage discharge earlier in the day leaves more SOC above the reserve floor when the event hour arrives), rather than converting a fully SOC-exhausted miss into a hit.",
+   "total_discharge_kwh": 53.46
+  },
+  "description": "ADDITIVE sensitivity (issue #53), NOT a replacement for the reserve_20pct reactive figures above, which are unchanged by this field's presence. Same event-hour-only 20% reserve floor and the same event calendar/measured load as reserve_20pct, but with EVENT-AWARE SOC PRE-STAGING turned on: run_batt_vpp(prestage=True) suppresses the ordinary/arbitrage disch_win discharge branch on any calendar date with a scheduled event, strictly before that date's first event hour (see run_batt_vpp()'s module-level DECISION RECORD comment for the full rule and reasoning). This models a revenue-motivated household that knows the published DSGS test calendar in advance and holds SOC in reserve for a KNOWN, same-day scheduled test -- not a household that plans multiple days ahead, which this rule does not implement.",
+  "gross_usd": 176.96,
+  "miss_rate": {
+   "misses": 23,
+   "rate": 0.5,
+   "total": 46
+  },
+  "modeled": true,
+  "monthly_gross_usd": {
+   "10": 40.35,
+   "8": 64.52,
+   "9": 72.09
+  },
+  "net_usd": 176.82,
+  "opportunity_cost_usd": 0.14,
+  "reserve_frac": 0.2,
+  "total_discharge_kwh": 235.65
+ },
  "revenue": {
   "reserve_0pct_sensitivity": {
    "gross_usd": 187.78,

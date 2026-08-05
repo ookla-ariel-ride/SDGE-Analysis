@@ -1474,6 +1474,77 @@ same window — the
 range a real single-aggregation household could see on top of its own arbitrage payback,
 not a payback-year figure in its own right.
 
+**Event-aware SOC pre-staging, an ADDITIVE sensitivity (issue #53) — decided: model it.**
+`run_batt_vpp()` above dispatches REACTIVELY: it only changes behavior once `is_event[i]`
+is true for the CURRENT interval, with no advance knowledge of an upcoming scheduled event.
+But DSGS's monthly "Test Capacity"/"Test Non-Capacity" tests ARE scheduled in advance —
+`data/dsgs_event_calendar_2025.csv` exists as committed data for exactly that reason, and
+this section's own earlier finding (2025 had zero real emergency dispatches) means every
+real 2025 event this household could have seen was one of these calendar-published monthly
+tests, not a surprise. Since DSGS capacity payments are based on demonstrated performance
+DURING the test, a rational, revenue-motivated household has a genuine financial incentive
+to plan around a known calendar rather than dispatch reactively and hope enough charge is
+left. Decided in favor of modeling it: this is a pure dispatch-logic question over data
+this script already reads (`event_set`, built from the same committed calendar above), not
+a new data source, and quantifying how much foresight actually matters is itself a useful,
+evidence-based finding for the report regardless of which way the delta cuts.
+
+**The rule, independently re-verified before choosing it.** All 34 distinct 2025 event
+DATES have their 1–2 event HOURS entirely within `hour_end` 17–21 (`floor_hour` 16–20) —
+squarely inside `run_batt_vpp()`'s own `disch_win` window (`16 <= h < 21`), the SAME window
+the reactive path already treats as ordinary peak-arbitrage-discharge territory. So on an
+event day, the reactive dispatch can spend SOC on ordinary bill-arbitrage discharge in the
+peak hours strictly BEFORE that day's event hour(s) arrive, potentially leaving less SOC
+available once the event-forcing block tries to maximize demonstrated capacity. The rule:
+on any calendar date with at least one hour in `event_set`, suppress the ordinary
+`disch_win`-triggered arbitrage-discharge branch — and ONLY that branch, never the
+event-forcing block — for hours on that date strictly BEFORE the date's first event hour.
+From the first event hour onward (including the event hour itself), dispatch is completely
+unchanged from the reactive path; a date with no event in `event_set` is entirely
+unaffected. No multi-day lookahead is implemented or needed — the issue's own framing, and
+the calendar's own same-day shape confirmed here, are both about a known SAME-day test, not
+a household planning multiple days ahead.
+
+Mechanically, a new `run_batt_vpp(..., prestage=False)` keyword (default `False`,
+preserving every existing call site and the tested empty-event-set byte-identity guarantee
+to `battery_dispatch_policies.run_batt` exactly) gates only the `disch_win` branch's own
+ACTIVATION via a separate `disch_win_active` flag; the solar-surplus charge branch's
+condition still reads the true, unsuppressed `disch_win`, so a suppressed interval with
+house import and no solar surplus simply takes no dispatch action at all that interval
+(the household pays ordinary retail import price, same as if it had no battery for it).
+`backtest()` calls `run_batt_vpp(..., prestage=True)` a SECOND time, alongside (not instead
+of) the existing reactive calls, at the same primary 20% reserve and the same
+priced-months-only opportunity-cost split already used for the reactive figures, and embeds
+the result in a new, additive `prestaged_sensitivity` field — every existing `revenue`/
+`miss_rate`/`hour_detail` key is untouched (verified: a fresh `backtest()` run reproduces
+`data/dsgs_vpp_backtest.json`'s pre-existing `reserve_20pct`/`reserve_0pct_sensitivity`/
+`hour_detail` sections byte-for-byte, `case_prestaging_leaves_committed_reactive_figures_
+untouched`).
+
+**The delta vs. reactive: foresight is worth a real amount here, not a rounding error, but
+it shows up as more revenue per served hour, not as fewer misses.** Over this household's
+real 2025 event calendar and measured load, pre-staging raises net revenue from $139.95 to
+**$176.82** (+$36.87, +26.3%) and gross revenue from $128.47 to $176.96 (+$48.49), with
+opportunity cost falling from −$11.48 to **$0.14** (pre-staging trades away some
+off-peak-hour arbitrage savings the reactive path was capturing, which very nearly
+cancels out against the bill impact of the extra event-hour export). Total delivered
+discharge across the 46 in-window event hours rises from 182.19 kWh to 235.65 kWh
+(+53.46 kWh, +29.3%). The miss rate, by contrast, moves only marginally: 23 of 46 misses
+(50.0%) vs the reactive path's 24 of 46 (52.2%) — a single additional event hour served,
+not a materially lower miss rate. The mechanism: pre-staging can only ever leave SOC
+entering an event hour greater than or equal to the reactive path's SOC at that same
+moment (proved by induction over the shared, monotone-nondecreasing charge/discharge
+update rule both paths use — confirmed empirically too: the pre-staged miss count never
+exceeds the reactive miss count on this dataset, `case_prestaged_sensitivity_is_additive_
+and_internally_consistent`), so it mostly helps event hours that were already delivering
+SOME demonstrated capacity deliver MORE of it, rather than converting a fully
+SOC-exhausted miss into a hit. Computed, not assumed either way — see the artifact's own
+`prestaged_sensitivity.delta_vs_reactive.note` for the same figures in narrative form.
+These figures are **MODELED**, not measured: a real household's actual pre-staging
+behavior (if any) was never observed, since this household owns no battery today: it's an
+alternative dispatch POLICY replayed against the same real load/calendar the reactive
+backtest already uses, exactly as reactive figures are modeled against the same inputs.
+
 **Fail-closed design.** Every ambiguity above is checked and asserted in
 `test_dsgs_vpp_backtest.py`, not just narrated. The event calendar and results JSON are
 each written to a temp file and `os.replace`d, so a partial/failed run changes neither.
