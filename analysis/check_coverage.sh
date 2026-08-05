@@ -49,7 +49,7 @@ for g in behavior_rebuild battery_dispatch_policies battery_plan_matrix \
          bill_decomposition irreducible_bill nem3_grandfathering dsgs_vpp_backtest \
          cca_rate_extraction cca_bundled_counterfactual battery_sizing_curve \
          perfect_foresight_dispatch tou_structure_stress gross_import_decomposition \
-         reprice_by_vintage quiet_night_floor; do
+         reprice_by_vintage quiet_night_floor uncertainty_propagation; do
   "$COV" run --rcfile="$ROOT/.coveragerc" "$g.py" >/dev/null 2>&1 \
     && echo "gen    $g" || { echo "gen    $g FAILED"; exit 1; }
 done
