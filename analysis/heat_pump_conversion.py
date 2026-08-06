@@ -13,11 +13,17 @@ checkable against CLAUDE.md's own rules:
     (a "typical morning/evening heating shape" is a real HVAC convention --
     ASHRAE Handbook--Fundamentals Ch.17 documents an overnight-setback
     "pickup load" recovery peak -- but this house's own OWN diurnal shape
-    was never measured), this script bounds the true answer with a
-    UNIFORM-within-day primary estimate (no shape assumption: each heating
-    day's own kWh spreads evenly across that day's own real intervals) and
-    an on-peak/off-peak BRACKET sensitivity (the two extremes any real shape
-    must fall between), rather than publish one falsely precise number.
+    was never measured), this script bounds the true answer with an
+    on-peak/off-peak BRACKET sensitivity (the two extremes any real shape
+    must fall between) plus a UNIFORM-within-day illustrative midpoint
+    (each heating day's own kWh spread evenly across that day's own real
+    intervals) for a single reference number to anchor the payback tables
+    against. Uniform spreading is itself a real, specific operational
+    assumption -- not an absence of one, and not more likely to be true
+    than either bracket end (Codex adversarial review, issue #1, pass 2) --
+    so it is never called a "central estimate" below, and the bracket, not
+    the midpoint, is the honest disclosure of what this script actually
+    knows.
   - It does NOT credit any purchase incentive. As of this run (2026-08),
     every federal/state/utility incentive that could apply to this
     conversion is confirmed closed: the federal 25C credit terminated for
@@ -156,12 +162,22 @@ NPV_HORIZON_YEARS = 15   # this study's own HPSH EUL (Table 8, cited in INSTALL_
 # not quantified further.
 INSTALL_COST_NOTE = (
     "2025 CA Statewide Codes & Standards Cost-Effectiveness Study (PG&E/SCE/"
-    "SDG&E, CPUC), Table 8 -- CZ7/SDG&E/EV-TOU-5, 4-ton example system "
+    "SDG&E, CPUC), Tables 7-8 -- CZ7/SDG&E/EV-TOU-5, 4-ton example system "
     "(this household's own CZ7 sizing, Table 4, is 3.0 tons; a smaller "
     "system would likely cost somewhat less, not quantified)")
 INSTALL_COST_STANDALONE_USD = 14529    # Table 8: "AC fails, install new HP & AHU", 2026
-INSTALL_COST_BASELINE_AC_FURNACE_USD = 13808   # Table 8: "AC fails, install new AC & furnace", 2026
-INSTALL_COST_MARGINAL_USD = INSTALL_COST_STANDALONE_USD - INSTALL_COST_BASELINE_AC_FURNACE_USD
+# The TRUE "AC-only" comparator (Codex adversarial review, issue #1, pass 2):
+# Table 8's $13,808 "AC fails, install new AC & furnace" line is a
+# SIMULTANEOUS AC-and-furnace replacement, not the AC-only counterfactual
+# this issue's own AC asks for ("marginal cost over an AC replacement that
+# would happen eventually anyway", i.e. the furnace keeps running as-is).
+# Table 7 (the DFHP dual-fuel scenario, which keeps the existing furnace as
+# backup) tabulates exactly that: "AC fails, install new AC, keep existing
+# furnace" = $10,431 in 2026 -- the real cost of replacing ONLY the AC,
+# leaving the furnace alone. That is the correct baseline to net the full
+# HPSH replacement against for a genuine "eventually anyway" framing.
+INSTALL_COST_AC_ONLY_REPLACEMENT_USD = 10431   # Table 7: "AC fails, install new AC, keep existing furnace", 2026
+INSTALL_COST_MARGINAL_USD = INSTALL_COST_STANDALONE_USD - INSTALL_COST_AC_ONLY_REPLACEMENT_USD
 
 # A wider bracket for the sensitivity table, from web-sourced contractor
 # pricing guides (rough estimates, not California-specific, kept ONLY as a
@@ -384,9 +400,11 @@ def build_hp_load_series(d, iso, cop):
     (energy conservation, CLAUDE.md section 1b) but placed in different
     intervals:
 
-      uniform    -- PRIMARY. Each heating day's own kWh (from that day's own
-                    HDD share) spreads evenly across that day's own real
-                    intervals. No hour-of-day assumption at all.
+      uniform    -- ILLUSTRATIVE MIDPOINT, not a privileged central estimate.
+                    Each heating day's own kWh (from that day's own HDD
+                    share) spreads evenly across that day's own real
+                    intervals -- a real, specific operational assumption
+                    (uniform-in-time), not the absence of one.
       on_peak    -- BRACKET upper bound on cost: every kWh forced into that
                     day's on-peak (4-9pm) intervals only.
       off_peak   -- BRACKET lower bound on cost: every kWh forced into that
@@ -434,7 +452,21 @@ def build_hp_load_series(d, iso, cop):
 
 def electric_cost_scenarios(d, iso):
     """{cop_key: {dist_key: annual electric cost increase usd}}, every kWh
-    total verified to conserve against ann_heat_kwh before being trusted."""
+    total verified to conserve against ann_heat_kwh before being trusted.
+
+    Added load is netted against that SAME interval's own solar Generation
+    before it ever becomes new Consumption (Codex adversarial review, issue
+    #1, pass 2, matching the established solar_absorbed_i convention
+    perfect_foresight_dispatch.py already uses): a real house's added
+    electric load is served first by whatever solar is being generated in
+    that instant, and only spills into new grid import once that interval's
+    export is exhausted. Adding the load straight into Consumption while
+    leaving Generation untouched would manufacture simultaneous gross
+    import AND export the household never actually has, and rates.py's own
+    non-bypassable charge (NBC) is billed on GROSS imports under NEM
+    (CLAUDE.md's own documented lesson) -- so an unnetted interval would
+    overstate NBC on import that never happened.
+    """
     base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
     out = {}
     for cop_key, cop in COP_SCENARIOS.items():
@@ -447,11 +479,20 @@ def electric_cost_scenarios(d, iso):
                     f"heat_pump_conversion.py: {cop_key}/{dist_key} added "
                     f"{total_added:.1f} kWh, not the {ann_heat_kwh:.1f} kWh "
                     "the heating load requires -- energy is not conserved")
+            absorbed = pd.concat([d["Generation"], series], axis=1).min(axis=1)
+            remainder = series - absorbed
             f = d.copy()
-            f["Consumption"] = d["Consumption"] + series
+            f["Generation"] = d["Generation"] - absorbed
+            f["Consumption"] = d["Consumption"] + remainder
+            # the netting step must not change total delivered energy: every
+            # added kWh is now EITHER absorbed solar (Generation reduced) OR
+            # new import (Consumption increased), never both, never lost
+            assert abs(float(absorbed.sum() + remainder.sum()) - total_added) < 0.01, (
+                cop_key, dist_key, "solar-netting step lost or duplicated energy")
             new_bill = R.bill_nem(f, imp="Consumption", exp="Generation")
             scen[dist_key] = {
                 "added_kwh": round(total_added),
+                "solar_absorbed_kwh": round(float(absorbed.sum())),
                 "electric_cost_increase_usd": round(new_bill - base_bill, 2),
             }
         out[cop_key] = scen
@@ -586,7 +627,7 @@ def build():
         "install_cost": {
             "note": INSTALL_COST_NOTE,
             "standalone_usd": INSTALL_COST_STANDALONE_USD,
-            "baseline_ac_and_furnace_replacement_usd": INSTALL_COST_BASELINE_AC_FURNACE_USD,
+            "ac_only_replacement_usd": INSTALL_COST_AC_ONLY_REPLACEMENT_USD,
             "marginal_over_ac_replacement_usd": INSTALL_COST_MARGINAL_USD,
             "sensitivity_range_usd": list(INSTALL_COST_SENSITIVITY_USD),
         },

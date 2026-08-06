@@ -558,7 +558,7 @@ def case_heat_pump_conversion_section_matches_the_artifact():
         f"{pb['central_3.5']['marginal_over_ac_replacement']['payback_years']} years",
         f"{pb['high_4.2']['marginal_over_ac_replacement']['payback_years']} years",
         f"${hpc['install_cost']['standalone_usd']:,}",
-        f"${hpc['install_cost']['baseline_ac_and_furnace_replacement_usd']:,}",
+        f"${hpc['install_cost']['ac_only_replacement_usd']:,}",
         f"${hpc['install_cost']['marginal_over_ac_replacement_usd']:,}",
     ]
     for value in checks:

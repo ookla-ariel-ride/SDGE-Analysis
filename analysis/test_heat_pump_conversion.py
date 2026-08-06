@@ -329,6 +329,50 @@ def case_on_peak_distribution_costs_at_least_as_much_as_off_peak():
 
 
 @case
+def case_added_load_absorbs_contemporaneous_solar_before_creating_new_import():
+    """Codex adversarial review, issue #1, pass 2: added heat-pump load must
+    reduce that SAME interval's own Generation first (solar self-consumption),
+    spilling into new Consumption only once that interval's export is used
+    up -- never added straight into Consumption while Generation sits
+    untouched, which would manufacture simultaneous gross import and export
+    the house never actually has and overstate rates.py's non-bypassable
+    charge (billed on GROSS imports under NEM). Proves this two ways: (1)
+    solar_absorbed_kwh is reported and positive whenever there is real
+    Generation to absorb into, (2) the netted bill is never MORE expensive
+    than a naive (unnetted, straight-into-Consumption) version of the same
+    scenario -- absorbing solar can only reduce or match billed cost,
+    never increase it."""
+    d = _synthetic_frame(n_days=30)
+    hdd_by_day = pd.Series({(dt.date(2026, 1, 5) + dt.timedelta(days=i)): 10.0
+                            for i in range(30)})
+    iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+          "annual_heating_therms": 50.0}
+    electric, base_bill = hpc.electric_cost_scenarios(d, iso)
+    for cop_key, scen in electric.items():
+        for dist_key in ("uniform", "on_peak", "off_peak"):
+            assert scen[dist_key]["solar_absorbed_kwh"] > 0, (
+                cop_key, dist_key, "every interval in this fixture has real "
+                "Generation (0.05 kWh/interval) to absorb into")
+
+    # naive (wrong) comparison: add the SAME series straight into Consumption
+    # with Generation left untouched, and confirm it never bills CHEAPER than
+    # the netted version -- if netting were a no-op or backwards, this would fail
+    cop = hpc.COP_SCENARIOS["central_3.5"]
+    added, _, _ = hpc.build_hp_load_series(d, iso, cop)
+    series = added["uniform"]
+    naive = d.copy()
+    naive["Consumption"] = d["Consumption"] + series
+    naive_bill = R.bill_nem(naive, imp="Consumption", exp="Generation")
+    netted_increase = electric["central_3.5"]["uniform"]["electric_cost_increase_usd"]
+    naive_increase = round(naive_bill - base_bill, 2)
+    assert netted_increase <= naive_increase, (
+        "netting solar first must never cost MORE than the naive unnetted "
+        f"approach: netted={netted_increase}, naive={naive_increase}")
+    return (f"solar absorption reduces the netted electric cost increase "
+           f"({netted_increase}) below or equal to the naive unnetted one ({naive_increase})")
+
+
+@case
 def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
     """A synthetic bill_periods_gas.csv covering the same window as a
     synthetic hdd_by_day: the sum of each period's own allocated heating
