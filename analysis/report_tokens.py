@@ -841,6 +841,15 @@ _tok("BATTERY_KW", kind="derived",
 _tok("BATTERY_EXPANDED_KWH", kind="derived",
      get=lambda ctx: _battery_sim_row("PW3 + 1 Expansion")["usable_kwh"],
      sources=["data/battery_sim.json"], fmt="num0")
+_tok("BATTERY_CHARGE_KW", kind="cited_constant", value=5.0, fmt="num1",
+     source="analysis/battery_dispatch_policies.py's CHARGE_KW constant (issue #40: "
+            "the bare PW3 unit's nameplate CHARGE power, distinct from its 11.5 kW "
+            "DISCHARGE rating in BATTERY_KW); data/battery_sim.json has no charge_kw "
+            "field to derive this from, so it is cited directly from the source module")
+_tok("BATTERY_EXPANDED_CHARGE_KW", kind="cited_constant", value=8.0, fmt="num1",
+     source="analysis/battery_dispatch_policies.py's CHARGE_KW_WITH_EXPANSION constant "
+            "(issue #40: the PW3 + Expansion config's nameplate CHARGE power; discharge "
+            "stays 11.5 kW same as the bare unit, see BATTERY_EXPANDED_MODEL)")
 _tok("BATTERY_SAVINGS_BASE", kind="derived",
      get=lambda ctx: _battery_sim_row("1x Tesla Powerwall 3")["net_annual_savings"],
      sources=["data/battery_sim.json"], fmt="usd0")
