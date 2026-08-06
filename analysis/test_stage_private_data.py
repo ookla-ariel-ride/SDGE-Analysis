@@ -142,20 +142,27 @@ def _staged_basenames(script_text):
 
 
 def _is_staged(name, script_text):
-    """A literal filename/dirname must be exactly one of the staged
-    basenames. A glob PATTERN (contains '*') is satisfied only if it and a
-    staged basename/pattern actually describe overlapping files -- checked
-    with fnmatch in BOTH directions (either could be the more specific one),
-    never a bare substring or prefix test, which a fixed-prefix-sharing but
-    otherwise unrelated future pattern (e.g. "enphase_sam*.pdf" against the
-    already-staged "enphase_sam8760_2025.csv") would pass by accident
-    (adversarial review, issue #33, round 2)."""
+    """A literal filename/dirname (no '*') is covered by an identical staged
+    basename, OR by a staged GLOB that matches it -- a broader staged
+    pattern genuinely proves the concrete file gets copied.
+
+    A referenced GLOB pattern (contains '*') is a different, stronger claim
+    -- "every file this generator's own glob would ever match gets staged"
+    -- and can ONLY be proven by an IDENTICAL staged glob (a copy that uses
+    the exact same wildcard the generator reads with, so any future file
+    the generator would pick up is staged too). A staged glob matching this
+    pattern via fnmatch but not being identical, or a single enumerated
+    concrete file happening to fall inside the pattern, does NOT prove
+    coverage of the open-ended pattern -- a script that regressed from
+    glob-copying enphase_sam8760_*.csv back to two hardcoded year-specific
+    cp lines would still (wrongly) look "covered" under a looser check,
+    silently reintroducing the class of bug issue #33 was opened to close
+    (Codex review, issue #33, pass 2)."""
     import fnmatch
     staged = _staged_basenames(script_text)
     if "*" not in name:
-        return name in staged
-    return any(name == s or fnmatch.fnmatch(s, name) or fnmatch.fnmatch(name, s)
-              for s in staged)
+        return name in staged or any("*" in s and fnmatch.fnmatch(name, s) for s in staged)
+    return name in staged
 
 
 @case
@@ -190,6 +197,25 @@ def case_is_staged_rejects_an_unrelated_pattern_sharing_a_prefix():
     # the real, genuinely-covered pattern must still pass
     assert _is_staged("enphase_sam8760_*.csv", script_text)
     return "an unrelated pattern sharing only a text prefix with a staged file is correctly rejected"
+
+
+@case
+def case_is_staged_does_not_certify_a_glob_covered_by_one_concrete_file():
+    """Codex review, issue #33, pass 2: a referenced GLOB pattern is an
+    open-ended claim ("every file this generator's own glob would ever
+    match"), which a single enumerated concrete file can never prove --
+    only an identically-globbing staged copy can. Simulates the exact
+    regression named in review: the script reverting from glob-copying
+    enphase_sam8760_*.csv back to two hardcoded year-specific cp lines."""
+    regressed_script_text = (
+        'cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$DST/private/1-raw-data/"\n'
+        'cp "$SRC/private/1-raw-data/enphase_sam8760_2026.csv" "$DST/private/1-raw-data/"\n')
+    assert not _is_staged("enphase_sam8760_*.csv", regressed_script_text), (
+        "two hardcoded year-specific cp lines must not certify the open-ended "
+        "glob pattern the generator actually reads with as covered")
+    # the same referenced LITERAL year, by contrast, genuinely is covered
+    assert _is_staged("enphase_sam8760_2025.csv", regressed_script_text)
+    return "a referenced glob is not falsely certified by enumerated concrete files alone"
 
 
 @case

@@ -48,9 +48,33 @@ cp -R "$SRC/private/1-raw-data/electric-bills"        "$DST/private/1-raw-data/"
 cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" \
    "$DST/private/1-raw-data/"
 
-if [ -d "$SRC/private/1-raw-data/gas-bills" ]; then
-  cp -R "$SRC/private/1-raw-data/gas-bills" "$DST/private/1-raw-data/"
-fi
+# Read the authoritative flag rather than inferring applicability from
+# directory presence (Codex review, issue #33, pass 2): a missing gas-bills/
+# on a has_gas:true household must fail loudly here, not two steps later
+# inside parse_bills.py against a destination this script already reported
+# as fully staged; a stale gas-bills/ on a has_gas:false household is
+# equally a real inconsistency worth stopping for. Mirrors parse_bills.py's
+# own fail-closed has_gas invariant exactly.
+HAS_GAS=$(grep -m1 'has_gas:' "$SRC/private/household.yaml" | sed 's/#.*//' | awk -F: '{print $2}' | tr -d ' \t\r')
+case "$HAS_GAS" in
+  true)
+    if [ ! -d "$SRC/private/1-raw-data/gas-bills" ]; then
+      echo "stage-private-data.sh: household.has_gas is true but $SRC/private/1-raw-data/gas-bills is missing" >&2
+      exit 1
+    fi
+    cp -R "$SRC/private/1-raw-data/gas-bills" "$DST/private/1-raw-data/"
+    ;;
+  false)
+    if [ -d "$SRC/private/1-raw-data/gas-bills" ]; then
+      echo "stage-private-data.sh: household.has_gas is false but $SRC/private/1-raw-data/gas-bills exists (stale?)" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "stage-private-data.sh: could not read household.has_gas from $SRC/private/household.yaml (got ${HAS_GAS:-empty})" >&2
+    exit 1
+    ;;
+esac
 
 cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$DST/private/verify/usage.csv"
 cp "$SRC/private/1-raw-data/enphase_sam8760_2026.csv" "$DST/private/verify/samA.csv"
