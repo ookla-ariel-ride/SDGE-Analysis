@@ -1293,16 +1293,16 @@ PANEL_FIELD_SCHEMA = {
     "pv_backfeed_a": {
         "type": "float | null", "privacy": "public-ok",
         "domain": "non-negative ampere rating when recorded; a POSITIVE "
-                  "value must equal the amps of some breaker in "
-                  "panel.schedule (0.0 is exempt -- it carries the same "
-                  "'nothing backfeeds this panel' meaning as null, and no "
-                  "real breaker is rated 0 A); null means surveyed and "
-                  "nothing backfeeds; absence means not surveyed. KNOWN "
-                  "LIMITATION: the schedule-match check is amp-value "
-                  "membership only, not row identity -- schedule has no "
-                  "role/ID field, so an unrelated breaker sharing the same "
-                  "rating can stand in for an omitted PV breaker; see the "
-                  "check's own comment in validate_panel()",
+                  "value must equal the amps of EXACTLY ONE panel.schedule "
+                  "row marked role: pv_backfeed (issue #83 -- not just any "
+                  "row that happens to share the rating), and conversely a "
+                  "null, zero, or absent value must have NO row marked "
+                  "role: pv_backfeed -- the two answers must agree in both "
+                  "directions (0.0 is exempt from the amp-value cross-check "
+                  "itself -- it carries the same 'nothing backfeeds this "
+                  "panel' meaning as null, and no real breaker is rated "
+                  "0 A); null means surveyed and nothing backfeeds; "
+                  "absence means not surveyed",
         "vocabulary": None, "applied": "validate_panel()"},
     "breaker_family": {
         "type": str, "privacy": "private-only",
@@ -1324,20 +1324,28 @@ PANEL_FIELD_SCHEMA = {
         "vocabulary": "BUSBAR_ENDS", "applied": "validate_panel()"},
     "schedule": {
         "type": "list of {device: str, poles: int, amps: number|list, "
-                "label: str}",
+                "label: str, role: str|absent}",
         "privacy": "private-only (device, label); poles/amps are public-ok "
                   "only as the aggregates data/service_headroom.json "
-                  "publishes -- never as a per-row value",
+                  "publishes -- never as a per-row value; role is public-ok "
+                  "(one word from a closed vocabulary, no more identifying "
+                  "than pv_breaker_position)",
         "domain": "poles a positive int; amps a single ampere rating for a "
                   "full-size breaker, or a list of len(poles) ampere "
                   "ratings for a twin-density device (poles in {2, 4}; a "
                   "quad's outer pair and inner pair must each match); "
-                  "device and label non-empty free text",
-        "vocabulary": None,
+                  "device and label non-empty free text; role, when "
+                  "present, marks exactly one row as the structural "
+                  "PV/backfeed source for the pv_backfeed_a cross-check "
+                  "(issue #83) -- ordinary branch circuits leave it out "
+                  "entirely",
+        "vocabulary": "role: SCHEDULE_ROW_ROLES (currently just "
+                      "'pv_backfeed')",
         "applied": "breaker_geometry() for the poles/amps geometry; "
-                  "validate_panel() for device/label sanity and the "
-                  "pv_backfeed_a cross-check; panel_occupancy() for the "
-                  "schedule-vs-enclosure space/pole totals"},
+                  "validate_panel() for device/label sanity, role "
+                  "vocabulary, and the pv_backfeed_a cross-check; "
+                  "panel_occupancy() for the schedule-vs-enclosure "
+                  "space/pole totals"},
     "existing_ac_nameplate_rla_a": {
         "type": "float | null", "privacy": "public-ok",
         "domain": "positive ampere rating when recorded; null means "
@@ -1395,6 +1403,11 @@ def _private_text_ok(field, value, max_len=200):
 # take, because the cheatsheet does not enumerate every ANSI meter class and
 # guessing the rest would be exactly the kind of constant CLAUDE.md bars.
 METER_CLASS_RE = re.compile(r"^CL\d+$")
+
+# The only recognized panel.schedule row role (issue #83). A closed
+# vocabulary, not free text like label/device -- an unrecognized role is a
+# typo to fail closed on, not a new kind of row to guess about.
+SCHEDULE_ROW_ROLES = frozenset({"pv_backfeed"})
 
 
 def validate_panel(p):
@@ -1511,54 +1524,69 @@ def validate_panel(p):
             "is negative; an existing source cannot spend a negative share of "
             "the 120% allowance, and a negative one increases the remaining "
             "allowance rather than reducing it")
-    # A POSITIVE recorded backfeed claims one specific installed breaker, and
-    # that breaker has to be one of the ones the schedule actually catalogues
-    # -- see PANEL_FIELD_SCHEMA["pv_backfeed_a"]. An explicit 0.0 is not that
-    # claim: it is the same "nothing backfeeds this panel" answer null
-    # carries (existing_backfeed() already treats a recorded 0 no
-    # differently), and no real breaker is rated 0 A for it to match, so 0.0
-    # is exempt rather than being an automatic domain violation.
+    # A POSITIVE recorded backfeed claims one specific installed breaker,
+    # identified STRUCTURALLY (issue #83's role field), not by an amp-value
+    # coincidence -- see PANEL_FIELD_SCHEMA["pv_backfeed_a"]. An explicit 0.0
+    # is not that claim: it is the same "nothing backfeeds this panel"
+    # answer null carries (existing_backfeed() already treats a recorded 0
+    # no differently), and no real breaker is rated 0 A for it to match, so
+    # 0.0 is exempt rather than being an automatic domain violation.
     #
-    # KNOWN LIMITATION (Codex adversarial review, issue #41, pass 2): this
-    # checks only that SOME breaker in the schedule carries the declared
-    # amp rating, not that any specific row IS the PV/backfeed breaker.
-    # panel.schedule has no structured role/ID field distinguishing "this
-    # row is the backfed source" from "this row happens to share its amp
-    # rating" -- the schedule's own `label` field is the one place a role
-    # could be read from, but its docstring already calls that field the
-    # "weak half" of each row (hand-lettered legend text, position-matched,
-    # explicitly provisional), so keying this safety check off label text
-    # would trade one false-pass risk for another: a fragile keyword guess
-    # that could reject a DIFFERENTLY-labeled but genuinely correct PV
-    # breaker on some OTHER household's real intake. If the real PV breaker
-    # is omitted from the schedule entirely while an unrelated breaker
-    # happens to share its amp rating (e.g. a 50 A EV charger breaker
-    # standing in for an omitted 50 A PV breaker), this check cannot tell
-    # the difference -- the omitted breaker then silently vanishes from
-    # panel_occupancy()'s space/pole count and OCPD sum. Closing this
-    # properly needs panel.schedule to carry a real structural marker (a
-    # role or stable ID per row), which is an intake-contract/schema
-    # change outside this issue's scope (validating fields the schema
-    # already has, not adding new ones to it) -- filed as a follow-up
-    # rather than patched here with a heuristic that could break other
-    # households' real data.
+    # Before issue #83, this only checked that SOME breaker in the schedule
+    # carried the declared amp rating -- an unrelated breaker sharing that
+    # rating (a 50 A EV charger standing in for an omitted 50 A PV breaker,
+    # say) passed just as readily as the genuine PV breaker, and the omitted
+    # row then silently vanished from panel_occupancy()'s space/pole count
+    # and OCPD sum. role: pv_backfeed closes that: exactly one schedule row
+    # must claim the role, and ITS rating (not any row's) must match.
+    #
+    # The check has to run BOTH ways (Codex adversarial review, issue #83,
+    # pass 1): a schedule row marked role: pv_backfeed while pv_backfeed_a is
+    # null, zero, or unanswered is the SAME two-answers-disagree contradiction
+    # in the other direction, and existing_backfeed() reads pv_backfeed_a
+    # alone -- it has no idea a row claims to be the backfeed source, so a
+    # marked row the top-level answer denies would silently spend 0 A of the
+    # 120% allowance against a breaker that is actually there.
+    marked = [e for e in p["schedule"] if e.get("role") == "pv_backfeed"]
+    if len(marked) > 1:
+        _panel_domain_error(
+            "pv_backfeed_a", backfeed,
+            f"panel.schedule has {len(marked)} rows marked role: "
+            "pv_backfeed; exactly one row can be the backfed PV source")
     if backfeed is not None and backfeed > 0.0:
-        schedule_amps_a = set()
-        for e in p["schedule"]:
-            a = e["amps"]
-            if isinstance(a, list):
-                schedule_amps_a.update(float(x) for x in a)
-            else:
-                schedule_amps_a.add(float(a))
-        if backfeed not in schedule_amps_a:
+        if not marked:
             _panel_domain_error(
                 "pv_backfeed_a", backfeed,
-                "does not match the ampere rating of any breaker recorded "
-                "in panel.schedule; a backfeed breaker whose declared "
-                "rating is not one of the panel's own recorded devices is a "
-                "disagreement between two intake answers, and the 120% "
-                "arithmetic would be spending an allowance against a "
-                "breaker nobody catalogued")
+                "is positive, but no panel.schedule row is marked "
+                "role: pv_backfeed; a positive backfeed claims one specific "
+                "installed breaker, and that breaker must be identified "
+                "structurally, not inferred from an amp-value coincidence "
+                "with some unrelated device")
+        row_amps_a = set()
+        a = marked[0]["amps"]
+        if isinstance(a, list):
+            row_amps_a.update(float(x) for x in a)
+        else:
+            row_amps_a.add(float(a))
+        if backfeed not in row_amps_a:
+            _panel_domain_error(
+                "pv_backfeed_a", backfeed,
+                "does not match the ampere rating of the panel.schedule row "
+                "marked role: pv_backfeed; a backfeed breaker whose "
+                "declared rating disagrees with its own identified "
+                "schedule row is two answers about the same breaker "
+                "disagreeing, and the 120% arithmetic would be spending an "
+                "allowance against a rating nobody actually catalogued for it")
+    elif marked:
+        _panel_domain_error(
+            "pv_backfeed_a", backfeed,
+            "is not a positive ampere rating, but a panel.schedule row is "
+            "marked role: pv_backfeed; a schedule row structurally "
+            "identified as the backfeed source contradicts a null, zero, "
+            "or not-yet-surveyed pv_backfeed_a -- the two intake answers "
+            "disagree about which panel devices actually backfeed it, and "
+            "existing_backfeed() would silently spend 0 A of the 120% "
+            "allowance against a breaker the schedule says is really there")
 
     nameplate = p["existing_ac_nameplate_rla_a"]
     if nameplate is not None and not (math.isfinite(nameplate) and nameplate > 0.0):
@@ -1602,6 +1630,44 @@ def validate_panel(p):
     for i, e in enumerate(p["schedule"], start=1):
         _private_text_ok(f"schedule[{i}].device", e.get("device"))
         _private_text_ok(f"schedule[{i}].label", e.get("label"))
+        role = e.get("role")
+        # `role` has no "surveyed, nothing to report" meaning the way
+        # pv_breaker_position's null does -- the cheatsheet says to leave
+        # the key out entirely, so an explicit `role: null` is a malformed
+        # answer, not an unasked question, and must fail closed exactly
+        # like a bad string does (Codex review, issue #83, pass 2: `e.get()`
+        # alone cannot tell "key absent" from "key present, value null"
+        # apart, so the vocabulary check below keys off "role" in e, not off
+        # role being non-None).
+        if "role" in e:
+            if not isinstance(role, str) or role not in SCHEDULE_ROW_ROLES:
+                # `role not in SCHEDULE_ROW_ROLES` alone raises an uncaught
+                # TypeError on an unhashable value (a YAML list or mapping)
+                # instead of failing closed with the intended message -- the
+                # isinstance check has to run first.
+                _panel_domain_error(
+                    f"schedule[{i}].role", role,
+                    f"is not a recognized row role -- "
+                    f"{sorted(SCHEDULE_ROW_ROLES)} is the only closed "
+                    "vocabulary this reads; an unrecognized role is a bad "
+                    "answer, not a new kind of row to guess about")
+        # Codex adversarial review, issue #83, pass 2: a tandem or quad row's
+        # `amps` is a LIST because breaker_geometry() treats it as multiple
+        # DISTINCT OCPDs sharing one physical device slot -- role: pv_backfeed
+        # names a single breaker, and role has no per-pole index to say WHICH
+        # of a tandem/quad's several breakers it means. Accepting one would
+        # let pv_backfeed_a match an unrelated pole in the same device and
+        # silently pass. A dedicated PV/battery backfeed breaker is a
+        # full-size device in every real installation this project has
+        # intake for, so refusing the ambiguous case costs nothing real.
+        if role == "pv_backfeed" and isinstance(e.get("amps"), list):
+            _panel_domain_error(
+                f"schedule[{i}].role", role,
+                "is 'pv_backfeed' on a row whose amps is a list -- a tandem "
+                "or quad device represents multiple distinct breakers "
+                "sharing one physical slot, and role: pv_backfeed cannot "
+                "say which one is meant; mark the single full-size breaker "
+                "row that is the actual backfeed source instead")
 
     return p
 

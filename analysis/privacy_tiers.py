@@ -147,6 +147,13 @@ YAML_PATH_OVERRIDES = {
     "miles_per_year": "misc.miles_per_year",
     "supercharge_kwh_yr": "misc.supercharge_kwh_yr",
     "monitoring_feeds": "monitoring[]",
+    # panel.schedule is itself nested inside panel (a dict, not a list), so
+    # the single-underscore split can reach panel.schedule (step 3's own
+    # worked example) but not one level deeper into each row's own keys --
+    # there is no way to spell "panel_schedule_role" so the generic rule
+    # lands on "panel.schedule[].role" (issue #83) instead of the flat
+    # "panel.schedule_role" it would actually derive.
+    "panel_schedule_role": "panel.schedule[].role",
 }
 
 # ---------------------------------------------------------------------------

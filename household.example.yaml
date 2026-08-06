@@ -151,7 +151,10 @@ panel:                               # omit only if you don't want a service-hea
                                      # and the 120% busbar check resolves on it. Leave
                                      # the key out if you have not looked; the check then
                                      # reports not_determined rather than crediting an
-                                     # unverified zero.
+                                     # unverified zero. A POSITIVE value must match the
+                                     # amps of the ONE schedule row below marked
+                                     # `role: pv_backfeed` — not just any row that
+                                     # happens to share the rating.
   breaker_family: "EX / EXC (CTL classified)"
                                      # [private-only] what a new branch breaker has to be
                                      # compatible with — a manufacturer and product line
@@ -180,12 +183,18 @@ panel:                               # omit only if you don't want a service-hea
                                      # inferred from position. The whole list is
                                      # private-only — `device`, `label` and any note name
                                      # the equipment and the circuits of one house — and
-                                     # only aggregates over it are ever published.
+                                     # only aggregates over it are ever published. `role`
+                                     # is optional and public-ok: leave it out for an
+                                     # ordinary branch circuit, and set it to
+                                     # `pv_backfeed` on EXACTLY the one row that is the
+                                     # backfed PV/battery source pv_backfeed_a describes
+                                     # above — an amp-value match alone is not enough
+                                     # (issue #83).
     - {device: "EX-2P60",  poles: 2, amps: 60, label: "EV charger"}
     - {device: "EX-2P40",  poles: 2, amps: 40, label: "Range"}
     - {device: "EX-2P35",  poles: 2, amps: 35, label: "Condenser"}
     - {device: "EX-T2020 tandem", poles: 2, amps: [20, 20], label: "Kitchen"}
-    - {device: "EX-2P30",  poles: 2, amps: 30, label: "Solar PV (backfed)"}
+    - {device: "EX-2P30",  poles: 2, amps: 30, label: "Solar PV (backfed)", role: pv_backfeed}
   schedule_confidence: "example: devices read directly; two legend entries unpaired"
                                      # [private-only] how firm the schedule above is: the
                                      # device markings are read directly, the legend-to-
