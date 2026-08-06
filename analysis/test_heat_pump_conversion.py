@@ -614,6 +614,37 @@ def case_real_archive_two_isolation_methods_agree_within_ten_percent():
 
 
 @case
+def case_real_archive_electric_load_and_gas_savings_use_the_same_reconciled_therms():
+    """Codex review, issue #1, pass 3 (P1): the raw HDD-regression annual
+    estimate (isolation.annual_heating_therms) is unconstrained, but not all
+    of it can be attributed to a specific billed period once each period's
+    own non-heating floor is reserved -- sizing the heat pump's electric
+    load on the raw (larger) figure while crediting gas savings on the
+    capped (smaller) figure would silently model and pay for two different
+    amounts of heat. build() must size the electric load on the SAME
+    reconciled total it credits as gas savings, not the raw regression
+    figure."""
+    _require_archive()
+    out = hpc.build()
+    raw = out["isolation"]["annual_heating_therms"]
+    reconciled = out["reconciled_heating_therms_yr"]
+    # on this household's own real data, capping actually binds -- a fixture
+    # where raw == reconciled would let this test pass without proving the
+    # reconciliation logic does anything
+    assert reconciled < raw, (reconciled, raw, "capping does not appear to "
+        "bind on this archive -- this test needs a case where it does")
+    for cop_key, cop in hpc.COP_SCENARIOS.items():
+        expected_kwh = reconciled * hpc.KWH_PER_THERM * hpc.FURNACE_AFUE / cop
+        actual_kwh = out["electric_cost_by_scenario"][cop_key]["uniform"]["added_kwh"]
+        assert abs(actual_kwh - expected_kwh) < 1, (cop_key, actual_kwh, expected_kwh)
+        raw_kwh = raw * hpc.KWH_PER_THERM * hpc.FURNACE_AFUE / cop
+        assert abs(actual_kwh - raw_kwh) > 1, (cop_key, "electric load must NOT "
+            "still be sized on the raw unreconciled figure")
+    return (f"electric load is sized on the reconciled {reconciled} therms/yr, "
+           f"not the raw {raw} therms/yr regression estimate")
+
+
+@case
 def case_real_archive_regenerates_byte_identically():
     _require_archive()
     committed = pathlib.Path(hpc.DATA) / "heat_pump_conversion.json"

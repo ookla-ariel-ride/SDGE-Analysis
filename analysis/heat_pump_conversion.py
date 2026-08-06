@@ -644,7 +644,21 @@ def build():
     gas_realized_rate_avg = sum(r["gas_savings_usd"] for r in gas_rows) / \
         sum(r["heating_therms_attributed"] for r in gas_rows if r["heating_therms_attributed"] > 0)
 
-    electric, baseline_bill_usd = electric_cost_scenarios(d, iso)
+    # Codex review, issue #1, pass 3 (P1): the raw HDD-regression estimate
+    # (iso["annual_heating_therms"]) is an unconstrained annual extrapolation;
+    # once each period's own non-heating floor is reserved (above), not all
+    # of it can actually be attributed to a specific billed period without
+    # exceeding what that period billed. Sizing the heat pump's electric
+    # load on the raw (larger) figure while crediting gas savings on the
+    # capped (smaller) figure silently modeled and paid for two different
+    # amounts of heat. Reconcile: the heat pump only has to replace, and
+    # only earns credit for, the therms this analysis can actually attribute
+    # to a real billed period -- so both sides use the SAME reconciled total.
+    reconciled_heat_therms = round(
+        sum(r["heating_therms_attributed"] for r in gas_rows), 2)
+    iso_reconciled = {**iso, "annual_heating_therms": reconciled_heat_therms}
+
+    electric, baseline_bill_usd = electric_cost_scenarios(d, iso_reconciled)
 
     paybacks = {}
     for cop_key in COP_SCENARIOS:
@@ -669,6 +683,7 @@ def build():
                   "savings priced at each real billing period's own "
                   "realized $/therm"),
         "isolation": {k: v for k, v in iso.items() if k not in ("hdd_by_day",)},
+        "reconciled_heating_therms_yr": reconciled_heat_therms,
         "gas_savings_by_period": gas_rows,
         "gas_savings_annual_usd": gas_savings_annual,
         "gas_realized_rate_avg_usd_per_therm": round(gas_realized_rate_avg, 4),
@@ -720,7 +735,7 @@ def build():
             ],
         },
         "payback": paybacks,
-        "sensitivity_table": sensitivity_table(iso, electric, gas_realized_rate_avg),
+        "sensitivity_table": sensitivity_table(iso_reconciled, electric, gas_realized_rate_avg),
         "npv_horizon_years": NPV_HORIZON_YEARS,
         "discount_rates": list(DISCOUNT_RATES),
     }
