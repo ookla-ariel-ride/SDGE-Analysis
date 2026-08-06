@@ -257,6 +257,61 @@ def case_the_scanner_catches_single_quoted_references_too():
     return "a single-quoted private-input reference is detected"
 
 
+def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
+    """A minimal SRC tree the script can run against: just enough of
+    analysis/household.py's own repo-root walk-up (analysis/+data/) for it
+    to resolve correctly when imported with PYTHONPATH pointed at this
+    tree's own analysis/, plus a symlinked .venv (real PyYAML) and the
+    handful of private/1-raw-data/ files the script's non-gas cp lines
+    need so the whole run succeeds end to end, not just the has_gas branch."""
+    src = pathlib.Path(td) / "src"
+    (src / "analysis").mkdir(parents=True)
+    (src / "data").mkdir(parents=True)
+    (src / "private" / "1-raw-data").mkdir(parents=True)
+    shutil.copy2(ANALYSIS / "household.py", src / "analysis" / "household.py")
+    (src / ".venv").symlink_to(ROOT / ".venv")
+    (src / "private" / "household.yaml").write_text(household_yaml_text)
+    raw = src / "private" / "1-raw-data"
+    (raw / "gas.csv").touch()
+    (raw / "electric_billing_history_2024-2026.csv").touch()
+    (raw / "electric-bills").mkdir()
+    (raw / "Electric_15_Minute_test.csv").touch()
+    (raw / "enphase_sam8760_2025.csv").touch()
+    (raw / "enphase_sam8760_2026.csv").touch()
+    if has_gas_bills_dir:
+        (raw / "gas-bills").mkdir()
+    return src
+
+
+@case
+def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
+    """Codex review, issue #33, pass 3: an earlier version grepped the
+    household.yaml text for the first line containing "has_gas:" and
+    string-compared it to the literal "true" -- which an unrelated EARLIER
+    comment mentioning "has_gas:" would have matched instead of the real
+    key, and which a valid PyYAML boolean spelling household.py itself
+    accepts (True, not just lowercase true) would have rejected as
+    unreadable. Both scenarios are real household.yaml configurations the
+    actual pipeline runs on without complaint."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(
+            td,
+            "# note: has_gas: false is the default before intake (comment only)\n"
+            "household:\n"
+            "  has_gas: True\n",
+            has_gas_bills_dir=True)
+        dst = pathlib.Path(td) / "dst"
+        import subprocess
+        result = subprocess.run(
+            ["bash", str(SCRIPT), str(src), str(dst)], capture_output=True, text=True)
+        assert result.returncode == 0, (
+            f"a real, pipeline-accepted household.yaml (capitalized True, "
+            f"preceded by an unrelated comment mentioning has_gas:) must not "
+            f"fail staging: {result.stderr}")
+        assert (dst / "private" / "1-raw-data" / "gas-bills").is_dir()
+    return "has_gas is read via real YAML semantics, not a text scan"
+
+
 @case
 def case_real_archive_stage_script_produces_every_required_path():
     """End-to-end proof of AC-1: run the actual script against this

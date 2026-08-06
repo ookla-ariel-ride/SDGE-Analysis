@@ -48,30 +48,40 @@ cp -R "$SRC/private/1-raw-data/electric-bills"        "$DST/private/1-raw-data/"
 cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" \
    "$DST/private/1-raw-data/"
 
-# Read the authoritative flag rather than inferring applicability from
-# directory presence (Codex review, issue #33, pass 2): a missing gas-bills/
-# on a has_gas:true household must fail loudly here, not two steps later
-# inside parse_bills.py against a destination this script already reported
-# as fully staged; a stale gas-bills/ on a has_gas:false household is
-# equally a real inconsistency worth stopping for. Mirrors parse_bills.py's
-# own fail-closed has_gas invariant exactly.
-HAS_GAS=$(grep -m1 'has_gas:' "$SRC/private/household.yaml" | sed 's/#.*//' | awk -F: '{print $2}' | tr -d ' \t\r')
+# Read the authoritative flag with the SAME YAML parser the pipeline itself
+# uses (household.py's own get(), via yaml.safe_load) rather than a text
+# scan (Codex review, issue #33, pass 3): a text-based grep either matches
+# an unrelated earlier mention of "has_gas:" in a comment, or rejects a
+# valid PyYAML boolean spelling household.py itself accepts (True/TRUE/yes,
+# not just lowercase true) -- both would fail this script on a household
+# configuration the real pipeline runs on without complaint. A missing
+# gas-bills/ on a has_gas:true household must fail loudly here, not two
+# steps later inside parse_bills.py against a destination this script
+# already reported as fully staged; a stale gas-bills/ on a has_gas:false
+# household is equally a real inconsistency worth stopping for. Mirrors
+# parse_bills.py's own fail-closed has_gas invariant exactly.
+if [ ! -x "$SRC/.venv/bin/python" ]; then
+  echo "stage-private-data.sh: $SRC/.venv/bin/python not found -- set up the venv first (CLAUDE.md Commands)" >&2
+  exit 1
+fi
+HAS_GAS=$(PYTHONPATH="$SRC/analysis" "$SRC/.venv/bin/python" -c \
+  "import household as hh; print(hh.get('household.has_gas'))")
 case "$HAS_GAS" in
-  true)
+  True)
     if [ ! -d "$SRC/private/1-raw-data/gas-bills" ]; then
       echo "stage-private-data.sh: household.has_gas is true but $SRC/private/1-raw-data/gas-bills is missing" >&2
       exit 1
     fi
     cp -R "$SRC/private/1-raw-data/gas-bills" "$DST/private/1-raw-data/"
     ;;
-  false)
+  False)
     if [ -d "$SRC/private/1-raw-data/gas-bills" ]; then
       echo "stage-private-data.sh: household.has_gas is false but $SRC/private/1-raw-data/gas-bills exists (stale?)" >&2
       exit 1
     fi
     ;;
   *)
-    echo "stage-private-data.sh: could not read household.has_gas from $SRC/private/household.yaml (got ${HAS_GAS:-empty})" >&2
+    echo "stage-private-data.sh: unexpected household.has_gas value from household.py: ${HAS_GAS:-empty}" >&2
     exit 1
     ;;
 esac
