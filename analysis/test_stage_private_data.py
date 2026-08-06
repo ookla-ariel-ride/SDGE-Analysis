@@ -14,8 +14,8 @@ not stage fails this suite instead of silently breaking a fresh worktree the
 way electric-bills/, gas-bills/ and electric_billing_history_2024-2026.csv
 did before this issue.
 
-KNOWN GAP, left honest rather than silently claimed solved (Codex review,
-issue #33, round 1): service_headroom.py's only_match(pattern, what) takes
+KNOWN GAP, left honest rather than silently claimed solved (adversarial
+review, issue #33, round 1): service_headroom.py's only_match(pattern, what) takes
 its glob pattern as a FUNCTION PARAMETER, so `RAW_DIR.glob(pattern)` at
 service_headroom.py:746 cannot be resolved by scanning that line alone --
 doing so would require tracing every call site of an arbitrary function,
@@ -120,18 +120,33 @@ class SkipCase(Exception):
     """Raised by a case whose preconditions this checkout cannot meet."""
 
 
+_CP_ARG = re.compile(r'^\s*cp\s+(?:-R\s+)?"?\$SRC"?/private/1-raw-data/([^\s"\\]+)', re.M)
+
+
+def _staged_basenames(script_text):
+    """Every source basename (or glob pattern) an actual cp/cp -R INVOCATION
+    line copies out of private/1-raw-data/ -- e.g. "Electric_15_Minute_*.csv",
+    "enphase_sam8760_2025.csv", "electric-bills". Anchored to a leading `cp`
+    so the script's own unrelated caiso_raw existence-check `ls` line is
+    never mistaken for a real copy."""
+    return {pathlib.PurePosixPath(m.group(1)).name for m in _CP_ARG.finditer(script_text)}
+
+
 def _is_staged(name, script_text):
-    """A literal filename/dirname must appear verbatim; a glob PATTERN
-    (contains '*') is satisfied if the script stages any file matching it --
-    checked via the pattern's own fixed prefix, since the script sometimes
-    stages the concrete files a pattern would match individually rather than
-    reusing the same glob string (e.g. enphase_sam8760_*.csv is satisfied by
-    the script's separate enphase_sam8760_2025.csv/2026.csv lines, not by
-    that literal glob substring)."""
+    """A literal filename/dirname must be exactly one of the staged
+    basenames. A glob PATTERN (contains '*') is satisfied only if it and a
+    staged basename/pattern actually describe overlapping files -- checked
+    with fnmatch in BOTH directions (either could be the more specific one),
+    never a bare substring or prefix test, which a fixed-prefix-sharing but
+    otherwise unrelated future pattern (e.g. "enphase_sam*.pdf" against the
+    already-staged "enphase_sam8760_2025.csv") would pass by accident
+    (adversarial review, issue #33, round 2)."""
+    import fnmatch
+    staged = _staged_basenames(script_text)
     if "*" not in name:
-        return name in script_text
-    prefix = name.split("*", 1)[0]
-    return bool(prefix) and prefix in script_text
+        return name in staged
+    return any(name == s or fnmatch.fnmatch(s, name) or fnmatch.fnmatch(name, s)
+              for s in staged)
 
 
 @case
@@ -146,6 +161,26 @@ def case_every_referenced_private_input_is_staged_or_documented_optional():
         f"reads, and they are not documented in OPTIONAL_NOT_STAGED: {missing}")
     return (f"{len(referenced)} referenced private inputs are all either "
            f"staged by the script or documented as intentionally optional")
+
+
+@case
+def case_is_staged_rejects_an_unrelated_pattern_sharing_a_prefix():
+    """Adversarial review, issue #33, round 2: an earlier version of
+    _is_staged checked only whether a glob pattern's fixed prefix appeared
+    anywhere in the script's text, which would have wrongly certified a
+    brand-new, genuinely different glob pattern as covered merely because it
+    shares a prefix with an already-staged, unrelated filename -- e.g.
+    "enphase_sam*.pdf" (a hypothetical future export) against the real,
+    already-staged "enphase_sam8760_2025.csv" (a .csv, not a .pdf)."""
+    script_text = SCRIPT.read_text()
+    assert not _is_staged("enphase_sam*.pdf", script_text), (
+        "a pattern for a different file type must not be certified staged "
+        "just because it shares a text prefix with an unrelated staged file")
+    assert not _is_staged("gas*.xlsx", script_text)
+    assert not _is_staged("electric_billing*.pdf", script_text)
+    # the real, genuinely-covered pattern must still pass
+    assert _is_staged("enphase_sam8760_*.csv", script_text)
+    return "an unrelated pattern sharing only a text prefix with a staged file is correctly rejected"
 
 
 @case
