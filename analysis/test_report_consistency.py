@@ -554,15 +554,27 @@ def case_heat_pump_conversion_section_matches_the_artifact():
         fmt_signed(pb["central_3.5"]["annual_net_savings_usd"]) + "/yr",
         fmt_signed(pb["high_4.2"]["annual_net_savings_usd"]) + "/yr",
         fmt_signed(pb["low_2.8"]["annual_net_savings_usd"]) + "/yr",
-        f"{pb['central_3.5']['standalone']['payback_years']} years",
-        f"{pb['central_3.5']['marginal_over_ac_replacement']['payback_years']} years",
-        f"{pb['high_4.2']['marginal_over_ac_replacement']['payback_years']} years",
         f"${hpc['install_cost']['standalone_usd']:,}",
         f"${hpc['install_cost']['ac_only_replacement_usd']:,}",
         f"${hpc['install_cost']['marginal_over_ac_replacement_usd']:,}",
     ]
     for value in checks:
         assert value in section, f"§10 heat-pump-conversion section: {value!r} not found in it"
+
+    # Payback years, only for COP/basis combinations that actually pay back
+    # (a None here means no positive annual net savings on that basis, and
+    # the report must not cite a specific year count for it). At least one
+    # combination must cite a real number, or this check would trivially
+    # pass on an all-None artifact without the report actually naming
+    # anything.
+    cited_a_payback_year = False
+    for cop_key in ("low_2.8", "central_3.5", "high_4.2"):
+        for basis in ("standalone", "marginal_over_ac_replacement"):
+            years = pb[cop_key][basis]["payback_years"]
+            if years is not None:
+                assert f"{years} years" in section, (cop_key, basis, years)
+                cited_a_payback_year = True
+    assert cited_a_payback_year, "no COP/basis pays back -- the report must cite at least one real payback figure"
 
     # the on-peak/off-peak NET-SAVINGS bracket for all three COPs (gas savings
     # minus each bracket's own electric cost) -- this is the report's own
@@ -579,12 +591,18 @@ def case_heat_pump_conversion_section_matches_the_artifact():
         assert fmt_signed(on_net) + "/yr" in section, (cop_key, on_net)
 
     # NPV figures cited on the marginal-over-AC basis, both discount rates,
-    # for the two COPs the report names a number for
-    for cop_key in ("central_3.5", "high_4.2"):
-        npv = pb[cop_key]["marginal_over_ac_replacement"]["npv"]
+    # only for COPs that actually have one (a COP with no payback reports no
+    # npv key at all -- see payback_and_npv()'s own non-positive-savings path)
+    cited_an_npv = False
+    for cop_key in ("low_2.8", "central_3.5", "high_4.2"):
+        npv = pb[cop_key]["marginal_over_ac_replacement"].get("npv")
+        if npv is None:
+            continue
         for rate_key in ("4pct", "5pct"):
             v = npv[rate_key]
             assert f"{'+' if v >= 0 else '−'}${abs(v):,}" in section, (cop_key, rate_key, v)
+            cited_an_npv = True
+    assert cited_an_npv, "no COP pays back -- the report must cite at least one real NPV figure"
     return "the §10 heat-pump-conversion section matches the live artifact, including the full sign-flip bracket"
 
 

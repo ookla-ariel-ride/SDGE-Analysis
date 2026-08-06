@@ -325,6 +325,7 @@ def isolate_heating_therms():
                      "re-billing needs"),
         },
         "annual_heating_therms": round(ann_heat_hdd),
+        "floor_therms_per_day": floor_day_hdd,
         "hdd_by_day": hdd_by_day,
         "total_hdd": float(hdd_by_day.sum()),
     }
@@ -375,6 +376,7 @@ def gas_savings_by_period(iso):
     hdd_by_day = iso["hdd_by_day"]
     total_hdd = iso["total_hdd"]
     ann_heat = iso["annual_heating_therms"]
+    floor_per_day = iso["floor_therms_per_day"]
 
     # Each period's own REAL service dates come straight from the CSV's own
     # "period" column ("Mon DD, YYYY - Mon DD, YYYY", the exact range SDG&E
@@ -410,15 +412,25 @@ def gas_savings_by_period(iso):
         period_hdd = hdd_by_day[(hdd_by_day.index >= start) & (hdd_by_day.index <= end)].sum()
         heat_share = ann_heat * (period_hdd / total_hdd) if total_hdd > 0 else 0.0
         therms = row["therms"]
+        # Codex review, issue #1, pass 2: capping at total period therms
+        # alone still lets a shoulder-season period attribute nearly ALL its
+        # usage to heating, when this same model's own non-heating floor
+        # (water heating/cooking, floor_per_day) had to run every one of
+        # those days too. Reserve that floor's share of the period before
+        # capping, so heating attribution can never exceed what's left after
+        # the model's own non-heating usage is accounted for.
+        period_days = (end - start).days + 1
+        heating_capable_therms = max(0.0, therms - floor_per_day * period_days)
+        heating_therms_attributed = min(heat_share, heating_capable_therms)
         all_in_rate = row["total_gas_service"] / therms if therms > 0 else 0.0
-        savings = min(heat_share, therms) * all_in_rate   # never credit more than was billed
+        savings = heating_therms_attributed * all_in_rate
         total_savings += savings
         total_allocated_heat += heat_share
         rows.append({
             "statement_date": str(row["statement_date"]),
             "therms": float(therms),
             "period_hdd": round(float(period_hdd), 1),
-            "heating_therms_attributed": round(float(min(heat_share, therms)), 2),
+            "heating_therms_attributed": round(float(heating_therms_attributed), 2),
             "realized_rate_usd_per_therm": round(float(all_in_rate), 4),
             "gas_savings_usd": round(float(savings), 2),
         })

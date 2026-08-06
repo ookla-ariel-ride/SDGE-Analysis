@@ -264,7 +264,7 @@ def case_gas_savings_use_the_periods_own_blended_realized_rate():
         try:
             hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
             iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 50.0}
+                  "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
             rows, total_savings, _ = hpc.gas_savings_by_period(iso)
         finally:
             hpc.GAS_PERIODS_CSV = real_path
@@ -404,7 +404,7 @@ def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
             hdd_by_day = pd.concat([hdd_by_day, pd.Series({
                 dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
             iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 95.0}
+                  "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
             rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
         finally:
             hpc.GAS_PERIODS_CSV = real_path
@@ -441,7 +441,7 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
             hdd_by_day = pd.concat([hdd_by_day, pd.Series({
                 dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
             iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 95.0}
+                  "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
             rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
         finally:
             hpc.GAS_PERIODS_CSV = real_path
@@ -452,6 +452,44 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
     assert abs(total_allocated - 95) <= 1, total_allocated
     assert total_savings < 95 * 2.70, (total_savings, "capping must reduce total savings below the uncapped figure")
     return "a period's attributed heating is capped at its own billed therms, never exceeding what was paid"
+
+
+@case
+def case_gas_savings_reserves_the_non_heating_floor_before_capping():
+    """Codex review, issue #1, pass 2: capping heating attribution at a
+    period's own billed therms alone still lets a shoulder-season statement
+    have nearly ALL of its usage counted as furnace load, when this same
+    model's own non-heating floor (water heating/cooking) had to run every
+    one of those days too. A 28-day period billing 15 therms with a
+    0.3 therm/day floor can credit at most 15 - (0.3*28) = 6.6 therms to
+    heating, never the full 15 even if the HDD-weighted share implies more."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        periods = pd.DataFrame({
+            "statement_date": ["2026-04-28"],
+            "period": ["Apr 1, 2026 - Apr 28, 2026"],
+            "therms": [15.0],
+            "total_gas_service": [40.5],
+        })
+        csv_path = tmp / "bill_periods_gas.csv"
+        periods.to_csv(csv_path, index=False)
+        real_path = hpc.GAS_PERIODS_CSV
+        hpc.GAS_PERIODS_CSV = str(csv_path)
+        try:
+            hdd_by_day = pd.Series({dt.date(2026, 4, d): 10.0 for d in range(1, 29)})
+            # HDD share alone would credit the full 15 therms to heating
+            # (annual_heating_therms == total_hdd's sum means 100% share)
+            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+                  "annual_heating_therms": float(hdd_by_day.sum()),
+                  "floor_therms_per_day": 0.3}
+            rows, total_savings, _ = hpc.gas_savings_by_period(iso)
+        finally:
+            hpc.GAS_PERIODS_CSV = real_path
+    row = rows[0]
+    expected_cap = 15.0 - 0.3 * 28
+    assert abs(row["heating_therms_attributed"] - expected_cap) < 1e-9, (row, expected_cap)
+    return (f"a 28-day, 15-therm period with a 0.3 therm/day floor caps "
+           f"heating attribution at {expected_cap} therms, not the full 15")
 
 
 @case
@@ -492,7 +530,7 @@ def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
             values.update({dt.date(2025, 11, d): 100.0 for d in (26, 27, 28, 29, 30)})
             hdd_by_day = pd.Series(values)
             iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 30.0}
+                  "annual_heating_therms": 30.0, "floor_therms_per_day": 0.0}
             rows, _, _ = hpc.gas_savings_by_period(iso)
         finally:
             hpc.GAS_PERIODS_CSV = real_path
