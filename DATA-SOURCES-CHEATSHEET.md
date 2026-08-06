@@ -132,6 +132,7 @@ derivation defeat a literal scan too; TECHNICAL.md §11 states those limits in f
 | `miles_per_year` | `misc.miles_per_year` | the block is `misc` |
 | `supercharge_kwh_yr` | `misc.supercharge_kwh_yr` | same |
 | `monitoring_feeds` | `monitoring[]` | the list itself has no key name of its own, and step 3 would otherwise read `feeds` as a key inside each entry |
+| `panel_schedule_role` | `panel.schedule[].role` | `panel.schedule` is itself nested inside `panel` (a dict, not a top-level list), so splitting at the first underscore only reaches `panel.schedule` (step 3's own worked example) — one level short of this key, which lives inside each row of that list |
 
 **Declared path-less** — ids that store no value in `household.yaml` at all. A tool treats
 these as resolved by declaration, which is a different outcome from failing to resolve:

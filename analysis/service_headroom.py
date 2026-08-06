@@ -1631,17 +1631,26 @@ def validate_panel(p):
         _private_text_ok(f"schedule[{i}].device", e.get("device"))
         _private_text_ok(f"schedule[{i}].label", e.get("label"))
         role = e.get("role")
-        if role is not None and (not isinstance(role, str)
-                                 or role not in SCHEDULE_ROW_ROLES):
-            # Codex review, issue #83: `role not in SCHEDULE_ROW_ROLES` alone
-            # raises an uncaught TypeError on an unhashable value (a YAML
-            # list or mapping) instead of failing closed with the intended
-            # message -- the isinstance check has to run first.
-            _panel_domain_error(
-                f"schedule[{i}].role", role,
-                f"is not a recognized row role -- {sorted(SCHEDULE_ROW_ROLES)} "
-                "is the only closed vocabulary this reads; an unrecognized "
-                "role is a bad answer, not a new kind of row to guess about")
+        # `role` has no "surveyed, nothing to report" meaning the way
+        # pv_breaker_position's null does -- the cheatsheet says to leave
+        # the key out entirely, so an explicit `role: null` is a malformed
+        # answer, not an unasked question, and must fail closed exactly
+        # like a bad string does (Codex review, issue #83, pass 2: `e.get()`
+        # alone cannot tell "key absent" from "key present, value null"
+        # apart, so the vocabulary check below keys off "role" in e, not off
+        # role being non-None).
+        if "role" in e:
+            if not isinstance(role, str) or role not in SCHEDULE_ROW_ROLES:
+                # `role not in SCHEDULE_ROW_ROLES` alone raises an uncaught
+                # TypeError on an unhashable value (a YAML list or mapping)
+                # instead of failing closed with the intended message -- the
+                # isinstance check has to run first.
+                _panel_domain_error(
+                    f"schedule[{i}].role", role,
+                    f"is not a recognized row role -- "
+                    f"{sorted(SCHEDULE_ROW_ROLES)} is the only closed "
+                    "vocabulary this reads; an unrecognized role is a bad "
+                    "answer, not a new kind of row to guess about")
         # Codex adversarial review, issue #83, pass 2: a tandem or quad row's
         # `amps` is a LIST because breaker_geometry() treats it as multiple
         # DISTINCT OCPDs sharing one physical device slot -- role: pv_backfeed

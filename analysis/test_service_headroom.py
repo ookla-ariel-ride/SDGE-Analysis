@@ -1244,6 +1244,28 @@ def case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked():
            "when a matching amp happens to exist")
 
 
+def case_schedule_role_null_fails_closed_not_treated_as_absent():
+    """Codex review, issue #83, pass 2: role has no "surveyed, nothing to
+    report" meaning the way pv_breaker_position's null does -- the
+    cheatsheet says to leave the key out entirely on an ordinary circuit, so
+    an explicit `role: null` is a malformed answer someone actually typed,
+    not the same as never asking. `e.get("role")` alone cannot tell "key
+    absent" from "key present, value null" apart; this proves the two are
+    NOT treated the same."""
+    role_is_null = PANEL_YAML_NO_BACKFEED.replace(
+        "label: EV charger}", "label: EV charger, role: null}")
+    assert role_is_null != PANEL_YAML_NO_BACKFEED, \
+        "test needs updating: fixture text not found"
+    with _with_household(role_is_null):
+        try:
+            S.load_panel()
+            raise AssertionError("an explicit role: null was accepted")
+        except SystemExit as e:
+            assert "schedule[" in str(e) and "role" in str(e), e
+            assert "not a recognized row role" in str(e), e
+    return "an explicit role: null fails closed, not silently treated as an absent key"
+
+
 def case_schedule_role_fails_closed_on_a_non_string_value_without_crashing():
     """Codex review, issue #83: a role value that is a YAML list or mapping
     is unhashable, and `role not in SCHEDULE_ROW_ROLES` alone would raise an
@@ -5101,6 +5123,7 @@ CASES = [
     case_pv_backfeed_must_match_a_schedule_breaker,
     case_pv_backfeed_omitted_row_with_unrelated_same_rated_breaker_fails_closed,
     case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked,
+    case_schedule_role_null_fails_closed_not_treated_as_absent,
     case_schedule_role_fails_closed_on_a_non_string_value_without_crashing,
     case_pv_backfeed_role_rejects_a_tandem_or_quad_row,
     case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed,
