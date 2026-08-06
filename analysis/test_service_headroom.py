@@ -132,10 +132,17 @@ def _day(date, import_kwh=1.0, export_kwh=0.0):
 
 PANEL_YAML_NO_SOCKET = PANEL_YAML.replace(
     "meter_socket_continuous_a: 170", "meter_socket_continuous_a: null")
+# A genuinely surveyed/unasked "nothing backfeeds this panel" has to drop the
+# schedule's own role marker too (issue #83, Codex adversarial review pass
+# 1): pv_backfeed_a: null alongside a row still marked role: pv_backfeed is
+# the exact contradiction validate_panel() now refuses, not a well-formed
+# "no backfeed" fixture.
 PANEL_YAML_NO_BACKFEED = PANEL_YAML.replace(
-    "pv_backfeed_a: 50", "pv_backfeed_a: null")
+    "pv_backfeed_a: 50", "pv_backfeed_a: null").replace(
+    ", role: pv_backfeed}", "}")
 # The keys gone entirely -- an unanswered question, not a surveyed absence.
-PANEL_YAML_BACKFEED_UNASKED = PANEL_YAML.replace("  pv_backfeed_a: 50\n", "")
+PANEL_YAML_BACKFEED_UNASKED = PANEL_YAML.replace(
+    "  pv_backfeed_a: 50\n", "").replace(", role: pv_backfeed}", "}")
 PANEL_YAML_SOCKET_UNASKED = PANEL_YAML.replace(
     "  meter_socket_continuous_a: 170\n", "")
 
@@ -1029,6 +1036,7 @@ def case_panel_domain_checks_accept_the_edges_that_are_real():
     are unusual but physically possible must still run."""
     ok = (PANEL_YAML
           .replace("pv_backfeed_a: 50", "pv_backfeed_a: 0")
+          .replace(", role: pv_backfeed}", "}")  # 0.0 has no row to identify
           .replace("service_rating_a: 175", "service_rating_a: 200")
           .replace("max_circuits: 40", "max_circuits: 20"))
     with _with_household(ok):
@@ -1250,8 +1258,73 @@ def case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed():
             S.load_panel()
             raise AssertionError("two rows marked role: pv_backfeed were accepted")
         except SystemExit as e:
-            assert "2 panel.schedule rows are marked role: pv_backfeed" in str(e), e
+            assert "panel.schedule has 2 rows marked role: pv_backfeed" in str(e), e
     return "two schedule rows both marked role: pv_backfeed fails closed"
+
+
+def case_pv_backfeed_null_contradicts_a_marked_schedule_row():
+    """Codex adversarial review, issue #83, pass 1: the cross-check has to
+    run both ways. A surveyed 'nothing backfeeds this panel' (pv_backfeed_a:
+    null) alongside a schedule row still marked role: pv_backfeed is the
+    same two-answers-disagree contradiction as the positive-side checks
+    above, in the other direction -- and existing_backfeed() reads
+    pv_backfeed_a alone, so without this check it would silently spend 0 A
+    of the 120% allowance against a breaker the schedule says is really
+    there."""
+    null_but_marked = PANEL_YAML.replace("pv_backfeed_a: 50", "pv_backfeed_a: null")
+    assert null_but_marked != PANEL_YAML, "test needs updating: fixture text not found"
+    assert "role: pv_backfeed" in null_but_marked, (
+        "test setup error: the marked row should still be present")
+    with _with_household(null_but_marked):
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "pv_backfeed_a: null alongside a row marked role: "
+                "pv_backfeed was accepted")
+        except SystemExit as e:
+            assert "is not a positive ampere rating, but a panel.schedule " \
+                   "row is marked role: pv_backfeed" in str(e), e
+    return "pv_backfeed_a: null with a schedule row still marked role: pv_backfeed fails closed"
+
+
+def case_pv_backfeed_zero_contradicts_a_marked_schedule_row():
+    """The zero-value mirror of the null case above: 0.0 carries the same
+    'nothing backfeeds this panel' meaning as null (existing_backfeed()
+    treats them identically), so it must be refused by the same contradiction
+    check when a row is still marked."""
+    zero_but_marked = PANEL_YAML.replace("pv_backfeed_a: 50", "pv_backfeed_a: 0")
+    assert zero_but_marked != PANEL_YAML, "test needs updating: fixture text not found"
+    with _with_household(zero_but_marked):
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "pv_backfeed_a: 0 alongside a row marked role: pv_backfeed "
+                "was accepted")
+        except SystemExit as e:
+            assert "is not a positive ampere rating, but a panel.schedule " \
+                   "row is marked role: pv_backfeed" in str(e), e
+    return "pv_backfeed_a: 0 with a schedule row still marked role: pv_backfeed fails closed"
+
+
+def case_pv_backfeed_unasked_contradicts_a_marked_schedule_row():
+    """The unanswered-key mirror: pv_backfeed_a absent entirely (never
+    surveyed) alongside a row already marked role: pv_backfeed is still a
+    contradiction -- there is no legitimate way to know which row is the
+    backfeed source without also knowing its rating."""
+    unasked_but_marked = PANEL_YAML.replace("  pv_backfeed_a: 50\n", "")
+    assert unasked_but_marked != PANEL_YAML, "test needs updating: fixture text not found"
+    assert "role: pv_backfeed" in unasked_but_marked, (
+        "test setup error: the marked row should still be present")
+    with _with_household(unasked_but_marked):
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "an absent pv_backfeed_a alongside a row marked role: "
+                "pv_backfeed was accepted")
+        except SystemExit as e:
+            assert "is not a positive ampere rating, but a panel.schedule " \
+                   "row is marked role: pv_backfeed" in str(e), e
+    return "an absent pv_backfeed_a with a schedule row still marked role: pv_backfeed fails closed"
 
 
 def case_unrecognized_breaker_position_fails_closed():
@@ -4970,6 +5043,9 @@ CASES = [
     case_pv_backfeed_omitted_row_with_unrelated_same_rated_breaker_fails_closed,
     case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked,
     case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed,
+    case_pv_backfeed_null_contradicts_a_marked_schedule_row,
+    case_pv_backfeed_zero_contradicts_a_marked_schedule_row,
+    case_pv_backfeed_unasked_contradicts_a_marked_schedule_row,
     case_unrecognized_breaker_position_fails_closed,
     case_schedule_device_and_label_must_be_non_empty_text,
     case_a_schedule_larger_than_its_enclosure_fails_closed,

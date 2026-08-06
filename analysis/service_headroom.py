@@ -1295,11 +1295,14 @@ PANEL_FIELD_SCHEMA = {
         "domain": "non-negative ampere rating when recorded; a POSITIVE "
                   "value must equal the amps of EXACTLY ONE panel.schedule "
                   "row marked role: pv_backfeed (issue #83 -- not just any "
-                  "row that happens to share the rating) (0.0 is exempt -- "
-                  "it carries the same 'nothing backfeeds this panel' "
-                  "meaning as null, and no real breaker is rated 0 A); null "
-                  "means surveyed and nothing backfeeds; absence means not "
-                  "surveyed",
+                  "row that happens to share the rating), and conversely a "
+                  "null, zero, or absent value must have NO row marked "
+                  "role: pv_backfeed -- the two answers must agree in both "
+                  "directions (0.0 is exempt from the amp-value cross-check "
+                  "itself -- it carries the same 'nothing backfeeds this "
+                  "panel' meaning as null, and no real breaker is rated "
+                  "0 A); null means surveyed and nothing backfeeds; "
+                  "absence means not surveyed",
         "vocabulary": None, "applied": "validate_panel()"},
     "breaker_family": {
         "type": str, "privacy": "private-only",
@@ -1536,8 +1539,21 @@ def validate_panel(p):
     # row then silently vanished from panel_occupancy()'s space/pole count
     # and OCPD sum. role: pv_backfeed closes that: exactly one schedule row
     # must claim the role, and ITS rating (not any row's) must match.
+    #
+    # The check has to run BOTH ways (Codex adversarial review, issue #83,
+    # pass 1): a schedule row marked role: pv_backfeed while pv_backfeed_a is
+    # null, zero, or unanswered is the SAME two-answers-disagree contradiction
+    # in the other direction, and existing_backfeed() reads pv_backfeed_a
+    # alone -- it has no idea a row claims to be the backfeed source, so a
+    # marked row the top-level answer denies would silently spend 0 A of the
+    # 120% allowance against a breaker that is actually there.
+    marked = [e for e in p["schedule"] if e.get("role") == "pv_backfeed"]
+    if len(marked) > 1:
+        _panel_domain_error(
+            "pv_backfeed_a", backfeed,
+            f"panel.schedule has {len(marked)} rows marked role: "
+            "pv_backfeed; exactly one row can be the backfed PV source")
     if backfeed is not None and backfeed > 0.0:
-        marked = [e for e in p["schedule"] if e.get("role") == "pv_backfeed"]
         if not marked:
             _panel_domain_error(
                 "pv_backfeed_a", backfeed,
@@ -1546,12 +1562,6 @@ def validate_panel(p):
                 "installed breaker, and that breaker must be identified "
                 "structurally, not inferred from an amp-value coincidence "
                 "with some unrelated device")
-        if len(marked) > 1:
-            _panel_domain_error(
-                "pv_backfeed_a", backfeed,
-                f"is positive, but {len(marked)} panel.schedule rows are "
-                "marked role: pv_backfeed; exactly one row can be the "
-                "backfed PV source")
         row_amps_a = set()
         a = marked[0]["amps"]
         if isinstance(a, list):
@@ -1567,6 +1577,16 @@ def validate_panel(p):
                 "schedule row is two answers about the same breaker "
                 "disagreeing, and the 120% arithmetic would be spending an "
                 "allowance against a rating nobody actually catalogued for it")
+    elif marked:
+        _panel_domain_error(
+            "pv_backfeed_a", backfeed,
+            "is not a positive ampere rating, but a panel.schedule row is "
+            "marked role: pv_backfeed; a schedule row structurally "
+            "identified as the backfeed source contradicts a null, zero, "
+            "or not-yet-surveyed pv_backfeed_a -- the two intake answers "
+            "disagree about which panel devices actually backfeed it, and "
+            "existing_backfeed() would silently spend 0 A of the 120% "
+            "allowance against a breaker the schedule says is really there")
 
     nameplate = p["existing_ac_nameplate_rla_a"]
     if nameplate is not None and not (math.isfinite(nameplate) and nameplate > 0.0):
