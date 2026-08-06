@@ -394,13 +394,14 @@ KNOWN_GAPS = {
         "companion figure to EXPANSION_PAYBACK_YEARS (the marginal new-panel kWh's "
         "export value) -- same gap, no committed script or artifact computes it"),
     "ELECTRIFICATION_VERDICT_SHORT": (
-        "data/extended_results.json:gas_decomposition gives hp_heating_saving_yr "
-        "(384) and hpwh_saving_yr (205), i.e. space heating has the LARGER raw "
-        "annual saving -- but 'which appliance pencils' is a return-on-investment "
-        "claim that also needs each appliance's install cost, and no committed "
-        "artifact, household.yaml field, or analysis/*.py constant prices heat-"
-        "pump or HPWH equipment for this household, so the comparison cannot be "
-        "made honestly from what is committed"),
+        "data/heat_pump_conversion.json now prices the space-heating side "
+        "(install cost, three COP scenarios, real per-interval-billed net "
+        "savings: negative to marginal, not the flat gas_decomposition:"
+        "hp_heating_saving_yr figure the pre-issue-#1 comparison used), but "
+        "hpwh_saving_yr (205) still has no committed install-cost source -- "
+        "'which appliance pencils' needs BOTH sides costed the same way, "
+        "and only one is, so the comparison still cannot be made honestly "
+        "from what is committed"),
     "INCENTIVE_STATUS": (
         "DATA-SOURCES-CHEATSHEET.md's incentive_status field is an explicit "
         "'research task' (current federal ITC / CA SGIP status, deliberately not "
@@ -1300,8 +1301,9 @@ _tok("ACTUAL_ANNUAL_GAS_BILL", kind="derived",
      sources=["data/gas_bill_summary.csv"], fmt="usd0")
 _tok("MODELED_ANNUAL_AT_CURRENT_RATES", kind="data_json", file="package_results.json",
      path=("model_baseline_current_rates",), fmt="usd0")
-# ELECTRIFICATION_VERDICT_SHORT is declared in KNOWN_GAPS above (no committed
-# appliance-install-cost basis exists to justify a "which pencils" verdict).
+# ELECTRIFICATION_VERDICT_SHORT is declared in KNOWN_GAPS above (heat-pump
+# space heating has a committed install-cost basis since issue #1; HPWH
+# still does not, so a "which pencils" verdict needing both still isn't).
 
 
 # ---------------------------------------------------------------------------

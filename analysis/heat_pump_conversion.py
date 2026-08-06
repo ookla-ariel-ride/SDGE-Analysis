@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""Heat-pump conversion: replace the gas furnace + AC, priced per interval (issue #1).
+
+Two things this script does NOT do, and why, stated up front so the design is
+checkable against CLAUDE.md's own rules:
+
+  - It does NOT distribute the heat pump's electric load using an INVENTED
+    hourly shape. This household's gas meter reports DAILY totals only
+    (`private/1-raw-data/gas.csv`, Interval UOM: Day) and there is no hourly
+    outdoor-temperature series anywhere in this repo (only
+    `data/weather_daily_tmean.csv`, also daily) -- so there is no measured
+    basis for a specific hour-of-day heating curve. Rather than assume one
+    (a "typical morning/evening heating shape" is a real HVAC convention --
+    ASHRAE Handbook--Fundamentals Ch.17 documents an overnight-setback
+    "pickup load" recovery peak -- but this house's own OWN diurnal shape
+    was never measured), this script bounds the true answer with a
+    UNIFORM-within-day primary estimate (no shape assumption: each heating
+    day's own kWh spreads evenly across that day's own real intervals) and
+    an on-peak/off-peak BRACKET sensitivity (the two extremes any real shape
+    must fall between), rather than publish one falsely precise number.
+  - It does NOT credit any purchase incentive. As of this run (2026-08),
+    every federal/state/utility incentive that could apply to this
+    conversion is confirmed closed: the federal 25C credit terminated for
+    property placed in service after 2025-12-31 under the One Big Beautiful
+    Bill Act (P.L. 119-21) -- irs.gov/credits-deductions/energy-efficient-
+    home-improvement-credit, and its OBBB FAQ; TECH Clean California's
+    single-family heat-pump-HVAC incentive reservations closed statewide
+    2025-11-14 -- techcleanca.com/incentives/single-family-incentives/;
+    HEEHRA (the federal IRA rebate TECH administers in CA) reports
+    single-family rebates "fully reserved for projects statewide" as of
+    2026-02-24 -- techcleanca.com/incentives/heehrarebates/; SGIP (CPUC)
+    covers batteries and heat-pump WATER heaters, not space-heating HVAC,
+    and its ratepayer budgets closed 2025-12-31 regardless; SDG&E's own
+    electrification page names no dedicated HVAC heat-pump rebate, only a
+    referral to a third-party readiness program. INCENTIVE_USD is 0 for
+    exactly this reason -- not an oversight, a verified absence, re-checked
+    at whatever date this script is next run (the constant is dated below).
+
+Furnace therms are isolated TWO independent ways and cross-checked (issue's
+own AC): a summer-month floor average (rates.SUMMER_MONTHS, the same months
+this repo already treats as non-heating for every other purpose) and an HDD
+regression against data/weather_daily_tmean.csv (the same method, same
+weather file, as extended_findings.py's existing gas_decomposition -- this
+script's own regression is expected to closely reproduce it, and asserts so;
+a material drift between them would mean the weather file or the gas export
+changed and needs investigating, not silently accepting two different
+"true" floors).
+
+Electric cost is computed by ADDING the heat pump's modeled kWh into real
+15-minute Consumption intervals and re-billing the WHOLE measured year with
+rates.bill_nem() -- the same canonical NEM engine every other script in this
+repo bills through, never a year-end lump-sum rate multiply (CLAUDE.md
+section 1b). This is what makes the NEM interaction (added winter import
+first offsetting whatever export credit that period already had, only then
+spending on volumetric energy charges) come out of the SAME arithmetic the
+household's real bills are validated against, not a separate assumption.
+
+Gas savings are priced at each REAL billing period's own realized $/therm
+(data/bill_periods_gas.csv's total_gas_service / therms for that period --
+already inclusive of the period's own baseline/nonbaseline tier mix, public
+purpose programs and state fees, since total_gas_service is the all-in
+charged amount), not a single flat annual constant. A real gas bill PDF for
+this household's own GR-Residential rate (sdge_gas_2025-07-30.pdf) was read
+directly to confirm there is NO separate fixed/customer charge on this rate
+schedule -- every line item is per-therm or a percentage of the per-therm
+charge -- so eliminating heating gas usage removes that share of the bill in
+full, with no minimum floor left behind.
+
+Run AFTER behavior_rebuild.py in the same working directory (needs its
+staged usage.csv); writes data/heat_pump_conversion.json.
+"""
+import datetime as dt
+import json
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rates as R
+import household as hh
+import behavior_rebuild as BR
+
+
+def repo_root():
+    for base in (os.getcwd(), os.path.dirname(os.path.abspath(__file__))):
+        p = base
+        for _ in range(8):
+            if os.path.exists(os.path.join(p, "data", "plan_results.csv")):
+                return p
+            p = os.path.dirname(p)
+    raise SystemExit("repo root not found (data/plan_results.csv)")
+
+
+ROOT = repo_root()
+DATA = os.path.join(ROOT, "data")
+GAS_CSV = os.path.join(ROOT, "private", "1-raw-data", "gas.csv")
+WEATHER_CSV = os.path.join(DATA, "weather_daily_tmean.csv")
+GAS_PERIODS_CSV = os.path.join(DATA, "bill_periods_gas.csv")
+
+KWH_PER_THERM = 29.3   # same conversion extended_findings.py uses (EIA/DOE standard)
+
+# Three coefficients of performance spanning this issue's own requested range;
+# coastal-mild climate (this household's own climate_zone: "Coastal",
+# private/household.yaml, bill-confirmed) favors the high end, so all three
+# are carried through rather than picking one.
+COP_SCENARIOS = {"low_2.8": 2.8, "central_3.5": 3.5, "high_4.2": 4.2}
+
+# The two discount rates already established in this repo for a payback/NPV
+# figure (battery_dispatch_policies.escalation()'s 5%, deep_analyses.py's/
+# test_deep_analyses.py's 4%) -- reused rather than a third, novel rate.
+DISCOUNT_RATES = (0.04, 0.05)
+
+NPV_HORIZON_YEARS = 15   # this study's own HPSH EUL (Table 8, cited in INSTALL_COST_NOTE)
+
+# Install-cost scenarios, sourced from the one CA-specific, CZ7-relevant primary
+# source found: "2025 Cost-Effectiveness Study: Single Family AC to Heat Pump
+# Replacement" (Frontier Energy / Misti Bruceri & Associates for the CA
+# Statewide Codes & Standards Program, funded by PG&E/SCE/SDG&E under CPUC
+# auspices, rev 2025/06/09) -- localenergycodes.com/content/resources, PDF
+# hosted at pinole.gov/wp-content/uploads/2025/07/2025-Single-Family-AC-to-HP-
+# Cost-eff-Study.pdf. Table 4 (p.15) sizes this household's own climate zone
+# (CZ7, SDG&E territory, EV-TOU-5 electrification tariff -- this household's
+# OWN plan, Table 5 p.16) at 3.0 tons for BOTH the AC-only and heat-pump
+# paths. Table 8 (p.19) gives the year-2026 first-cost comparison for the
+# FULL HPSH replacement (no gas furnace kept, matching this issue's own
+# "replace gas furnace + AC" scope, not the dual-fuel DFHP alternative that
+# keeps a gas connection) for a 4-ton EXAMPLE system -- the study tabulates
+# 4-ton as its worked example regardless of CZ7's own 3.0-ton sizing, so
+# these dollar figures are cited as a 4-ton reference point, not rescaled to
+# 3 tons (no cited $/ton scaling factor exists to rescale them correctly;
+# guessing one would violate CLAUDE.md section 0). A smaller, 3-ton system
+# is expected to cost somewhat less than the figures below, directionally,
+# not quantified further.
+INSTALL_COST_NOTE = (
+    "2025 CA Statewide Codes & Standards Cost-Effectiveness Study (PG&E/SCE/"
+    "SDG&E, CPUC), Table 8 -- CZ7/SDG&E/EV-TOU-5, 4-ton example system "
+    "(this household's own CZ7 sizing, Table 4, is 3.0 tons; a smaller "
+    "system would likely cost somewhat less, not quantified)")
+INSTALL_COST_STANDALONE_USD = 14529    # Table 8: "AC fails, install new HP & AHU", 2026
+INSTALL_COST_BASELINE_AC_FURNACE_USD = 13808   # Table 8: "AC fails, install new AC & furnace", 2026
+INSTALL_COST_MARGINAL_USD = INSTALL_COST_STANDALONE_USD - INSTALL_COST_BASELINE_AC_FURNACE_USD
+
+# A wider bracket for the sensitivity table, from web-sourced contractor
+# pricing guides (rough estimates, not California-specific, kept ONLY as a
+# sensitivity bound around the cited CEC-study point estimate above, never
+# as the primary figure): San Diego-specific $14,000-$24,000 before
+# incentives (climateprosd.com); general CA $9,000-$16,000-$18,000
+# (hvacprojectcost.com, eamechanical.com).
+INSTALL_COST_SENSITIVITY_USD = (10000, 14529, 20000)
+
+# Every incentive checked and confirmed closed/expired as of this date --
+# see the module docstring for the source list. Re-verify before reusing
+# this constant on a later run.
+INCENTIVE_USD = 0
+INCENTIVE_VERIFIED_DATE = "2026-08-06"
+
+# The observed per-therm range across this household's own real 25 billed
+# gas statements (data/bill_periods_gas.csv, baseline_rate column, low to
+# high) -- used as the gas-price sensitivity bound, not an invented range.
+
+
+def _flag(path):
+    v = hh.get(path, required=False)
+    if v is None:
+        raise SystemExit(f"private/household.yaml is missing {path}")
+    if not isinstance(v, bool):
+        raise SystemExit(f"{path} in private/household.yaml must be a YAML boolean")
+    return v
+
+
+HAS_GAS = _flag("household.has_gas")
+
+
+def load_gas_daily():
+    """{date: therms} for every day in the gas Green Button export."""
+    gas = pd.read_csv(GAS_CSV, skiprows=13)
+    gas.columns = [c.strip().lower() for c in gas.columns]
+    gas["date"] = pd.to_datetime(gas["date"]).dt.date
+    gas["therms"] = pd.to_numeric(gas["consumption"], errors="coerce")
+    if gas["therms"].isna().any():
+        raise SystemExit("heat_pump_conversion.py: unparseable therms value in gas.csv")
+    return gas.set_index("date")["therms"]
+
+
+def load_weather_daily():
+    """{date: mean temp F} for every day the weather file carries."""
+    w = pd.read_csv(WEATHER_CSV, skiprows=1, names=["date", "tf"])
+    w["date"] = pd.to_datetime(w["date"]).dt.date
+    return w.set_index("date")["tf"]
+
+
+def summer_baseline_floor(gas_daily):
+    """Annual non-heating floor (therms/yr), method 1: the average daily
+    rate over rates.SUMMER_MONTHS -- the same months this repo already
+    treats as having no space heating for every other purpose -- times 365.
+    No weather data needed; this is the simplest, most defensible baseline
+    and does not depend on the HDD regression agreeing with it."""
+    dates = pd.Series(gas_daily.index)
+    in_summer = dates.map(lambda d: d.month in R.SUMMER_MONTHS)
+    summer_days = gas_daily[in_summer.values]
+    if len(summer_days) < 60:
+        raise SystemExit(
+            f"heat_pump_conversion.py: only {len(summer_days)} summer days in "
+            "gas.csv -- too few to estimate a non-heating floor")
+    daily_floor = float(summer_days.mean())
+    return daily_floor, daily_floor * 365
+
+
+def hdd_regression(gas_daily, weather_daily):
+    """(floor_therms_day, slope_therms_per_hdd, per-day HDD Series), method 2:
+    linear regression of daily therms against heating-degree-days (base
+    65F), reproducing extended_findings.py's own gas_decomposition method
+    exactly (same weather file, same regression) so the two can be
+    cross-checked rather than silently diverging."""
+    merged = pd.DataFrame({"therms": gas_daily}).join(
+        pd.DataFrame({"tf": weather_daily}), how="inner")
+    if len(merged) < 300:
+        raise SystemExit(
+            f"heat_pump_conversion.py: gas/weather merge too small "
+            f"({len(merged)} days) -- schema drift?")
+    hdd = np.clip(65 - merged["tf"].astype(float), 0, None)
+    slope, floor = np.polyfit(hdd, merged["therms"], 1)
+    return float(floor), float(slope), pd.Series(hdd.values, index=merged.index)
+
+
+def isolate_heating_therms():
+    """Both isolation methods, cross-checked, plus the per-day HDD weights
+    method 2 needs for allocating heating kWh to specific calendar days."""
+    gas_daily = load_gas_daily()
+    weather_daily = load_weather_daily()
+
+    floor_day_summer, ann_floor_summer = summer_baseline_floor(gas_daily)
+    ann_total = float(gas_daily.sum()) * 365 / len(gas_daily)
+    ann_heat_summer = ann_total - ann_floor_summer
+
+    floor_day_hdd, slope_hdd, hdd_by_day = hdd_regression(gas_daily, weather_daily)
+    ann_floor_hdd = floor_day_hdd * 365
+    ann_heat_hdd = ann_total - ann_floor_hdd
+
+    if not (ann_floor_summer > 0 and ann_heat_summer > 0
+            and ann_floor_hdd > 0 and ann_heat_hdd > 0):
+        raise SystemExit(
+            "heat_pump_conversion.py: both isolation methods must find a "
+            "positive floor AND a positive heating slope -- this house has "
+            "both a water-heating floor and space heating; a method finding "
+            "otherwise signals a real data problem, not a fact about this house")
+
+    disagreement_pct = abs(ann_floor_summer - ann_floor_hdd) / ann_floor_hdd * 100
+    return {
+        "annual_total_therms": round(ann_total),
+        "summer_baseline": {
+            "method": "average daily therms over rates.SUMMER_MONTHS x 365",
+            "floor_therms_yr": round(ann_floor_summer),
+            "heating_therms_yr": round(ann_heat_summer),
+        },
+        "hdd_regression": {
+            "method": "linear regression, daily therms vs HDD base 65F "
+                      "(same method and weather file as extended_findings.py's "
+                      "gas_decomposition)",
+            "floor_therms_yr": round(ann_floor_hdd),
+            "heating_therms_yr": round(ann_heat_hdd),
+            "slope_therms_per_hdd": round(slope_hdd, 4),
+        },
+        "cross_check": {
+            "floor_disagreement_pct": round(disagreement_pct, 1),
+            "note": ("the two independent methods' non-heating floors "
+                     f"({round(ann_floor_summer)} vs {round(ann_floor_hdd)} "
+                     "therms/yr) are compared as a cross-check, not averaged; "
+                     "the HDD regression drives every downstream figure below "
+                     "since it alone can attribute a SPECIFIC day's therms to "
+                     "that day's own heating demand, which the electric "
+                     "re-billing needs"),
+        },
+        "annual_heating_therms": round(ann_heat_hdd),
+        "hdd_by_day": hdd_by_day,
+        "total_hdd": float(hdd_by_day.sum()),
+    }
+
+
+def gas_savings_by_period(iso):
+    """Real per-statement gas savings: each billed period's own share of
+    annual heating therms (from that period's OWN days' HDD, never a flat
+    annual average) priced at that period's own realized $/therm
+    (total_gas_service / therms -- the all-in charged rate, confirmed from a
+    real bill PDF to have no separate fixed charge on this rate schedule)."""
+    periods = pd.read_csv(GAS_PERIODS_CSV)
+    periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
+    hdd_by_day = iso["hdd_by_day"]
+    total_hdd = iso["total_hdd"]
+    ann_heat = iso["annual_heating_therms"]
+
+    # Each period's own date range: statement_date is the END of the period;
+    # bill_periods_gas.csv's own "period" column names the range in prose,
+    # not machine-readable start/end columns, so periods are reconstructed
+    # by sorting statements and taking (previous statement_date, this one].
+    periods = periods.sort_values("statement_date").reset_index(drop=True)
+    starts = [None] + list(periods["statement_date"][:-1])
+    rows = []
+    total_savings = 0.0
+    total_allocated_heat = 0.0
+    for i, row in periods.iterrows():
+        end = row["statement_date"]
+        start = starts[i]
+        if start is None:
+            start = end - dt.timedelta(days=32)   # first period: no prior statement to bound it
+        period_hdd = hdd_by_day[(hdd_by_day.index > start) & (hdd_by_day.index <= end)].sum()
+        heat_share = ann_heat * (period_hdd / total_hdd) if total_hdd > 0 else 0.0
+        therms = row["therms"]
+        all_in_rate = row["total_gas_service"] / therms if therms > 0 else 0.0
+        savings = min(heat_share, therms) * all_in_rate   # never credit more than was billed
+        total_savings += savings
+        total_allocated_heat += heat_share
+        rows.append({
+            "statement_date": str(end),
+            "therms": float(therms),
+            "period_hdd": round(float(period_hdd), 1),
+            "heating_therms_attributed": round(float(min(heat_share, therms)), 2),
+            "realized_rate_usd_per_therm": round(float(all_in_rate), 4),
+            "gas_savings_usd": round(float(savings), 2),
+        })
+    return rows, round(total_savings, 2), round(total_allocated_heat)
+
+
+def build_hp_load_series(d, iso, cop):
+    """Three added-Consumption Series (index-aligned to d), one per
+    distribution scenario, each summing to the SAME total heating kWh
+    (energy conservation, CLAUDE.md section 1b) but placed in different
+    intervals:
+
+      uniform    -- PRIMARY. Each heating day's own kWh (from that day's own
+                    HDD share) spreads evenly across that day's own real
+                    intervals. No hour-of-day assumption at all.
+      on_peak    -- BRACKET upper bound on cost: every kWh forced into that
+                    day's on-peak (4-9pm) intervals only.
+      off_peak   -- BRACKET lower bound on cost: every kWh forced into that
+                    day's off-peak/super-off-peak intervals only.
+
+    A day with zero intervals of the required kind (on_peak/off_peak) falls
+    back to uniform for that day alone, logged, never silently dropped.
+    """
+    hdd_by_day = iso["hdd_by_day"]
+    total_hdd = iso["total_hdd"]
+    ann_heat_kwh = iso["annual_heating_therms"] * KWH_PER_THERM / cop
+
+    dates = d["dt"].dt.date
+    out = {"uniform": pd.Series(0.0, index=d.index),
+           "on_peak": pd.Series(0.0, index=d.index),
+           "off_peak": pd.Series(0.0, index=d.index)}
+    fallback_days = 0
+    for day, day_hdd in hdd_by_day.items():
+        if day_hdd <= 0 or total_hdd <= 0:
+            continue
+        day_kwh = ann_heat_kwh * (day_hdd / total_hdd)
+        mask = dates == day
+        n = int(mask.sum())
+        if n == 0:
+            continue   # day not covered by the electric window at all
+        out["uniform"].loc[mask] += day_kwh / n
+
+        on_mask = mask & (d["p"] == "on")
+        n_on = int(on_mask.sum())
+        if n_on > 0:
+            out["on_peak"].loc[on_mask] += day_kwh / n_on
+        else:
+            out["on_peak"].loc[mask] += day_kwh / n
+            fallback_days += 1
+
+        off_mask = mask & (d["p"] != "on")
+        n_off = int(off_mask.sum())
+        if n_off > 0:
+            out["off_peak"].loc[off_mask] += day_kwh / n_off
+        else:
+            out["off_peak"].loc[mask] += day_kwh / n
+
+    return out, ann_heat_kwh, fallback_days
+
+
+def electric_cost_scenarios(d, iso):
+    """{cop_key: {dist_key: annual electric cost increase usd}}, every kWh
+    total verified to conserve against ann_heat_kwh before being trusted."""
+    base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
+    out = {}
+    for cop_key, cop in COP_SCENARIOS.items():
+        added, ann_heat_kwh, fallback_days = build_hp_load_series(d, iso, cop)
+        scen = {}
+        for dist_key, series in added.items():
+            total_added = float(series.sum())
+            if ann_heat_kwh > 0 and abs(total_added - ann_heat_kwh) / ann_heat_kwh > 0.001:
+                raise SystemExit(
+                    f"heat_pump_conversion.py: {cop_key}/{dist_key} added "
+                    f"{total_added:.1f} kWh, not the {ann_heat_kwh:.1f} kWh "
+                    "the heating load requires -- energy is not conserved")
+            f = d.copy()
+            f["Consumption"] = d["Consumption"] + series
+            new_bill = R.bill_nem(f, imp="Consumption", exp="Generation")
+            scen[dist_key] = {
+                "added_kwh": round(total_added),
+                "electric_cost_increase_usd": round(new_bill - base_bill, 2),
+            }
+        out[cop_key] = scen
+        out[cop_key]["_fallback_days"] = fallback_days
+    return out, round(base_bill, 2)
+
+
+def payback_and_npv(annual_net_savings, install_cost, discount_rates, years):
+    if annual_net_savings <= 0:
+        return {"payback_years": None,
+                "note": "no positive annual savings on this basis -- no payback"}
+    payback = install_cost / annual_net_savings
+    npv = {}
+    for r in discount_rates:
+        pv = sum(annual_net_savings / ((1 + r) ** y) for y in range(1, years + 1))
+        npv[f"{int(r * 100)}pct"] = round(pv - install_cost)
+    return {"payback_years": round(payback, 1), "npv": npv}
+
+
+def sensitivity_table(iso, gas_realized_rate_avg):
+    """COP x install-cost x gas-price grid, all on the PRIMARY (uniform)
+    electric-distribution basis -- the bracket sensitivity is reported
+    separately, alongside, not multiplied into this table (a 3x3x3x3 grid
+    would bury the reader in scenarios no one asked to compare at once)."""
+    gas_rates = pd.read_csv(GAS_PERIODS_CSV)["baseline_rate"].dropna()
+    gas_price_lo, gas_price_hi = float(gas_rates.min()), float(gas_rates.max())
+    gas_prices = {"low": gas_price_lo, "central": gas_realized_rate_avg, "high": gas_price_hi}
+
+    rows = []
+    for cop_key, cop in COP_SCENARIOS.items():
+        ann_heat_kwh = iso["annual_heating_therms"] * KWH_PER_THERM / cop
+        # the sensitivity table varies gas PRICE and install COST around the
+        # already-computed uniform-distribution electric cost for this COP;
+        # electric cost itself does not depend on gas price, so it is fixed
+        # per COP and only gas savings + install cost vary across the grid
+        for cost_key, cost in zip(("low", "central", "high"), INSTALL_COST_SENSITIVITY_USD):
+            for price_key, price in gas_prices.items():
+                gas_savings = iso["annual_heating_therms"] * price
+                rows.append({
+                    "cop": cop_key, "install_cost": cost_key,
+                    "gas_price": price_key,
+                    "install_cost_usd": cost,
+                    "gas_price_usd_per_therm": round(price, 4),
+                    "annual_heating_kwh": round(ann_heat_kwh),
+                    "gas_savings_usd": round(gas_savings, 2),
+                })
+    return rows
+
+
+def build():
+    if not HAS_GAS:
+        return {"applicable": False, "reason": "household.has_gas is false"}
+
+    d = BR.load()
+    iso = isolate_heating_therms()
+    gas_rows, gas_savings_annual, allocated_heat_therms = gas_savings_by_period(iso)
+    if abs(allocated_heat_therms - iso["annual_heating_therms"]) > 2:
+        raise SystemExit(
+            "heat_pump_conversion.py: gas savings allocated across billing "
+            f"periods ({allocated_heat_therms} therms) disagrees with the "
+            f"annual heating estimate ({iso['annual_heating_therms']} therms) "
+            "by more than 2 therms -- the period date-range reconstruction "
+            "or the HDD allocation has a bug")
+    gas_realized_rate_avg = sum(r["gas_savings_usd"] for r in gas_rows) / \
+        sum(r["heating_therms_attributed"] for r in gas_rows if r["heating_therms_attributed"] > 0)
+
+    electric, baseline_bill_usd = electric_cost_scenarios(d, iso)
+
+    paybacks = {}
+    for cop_key in COP_SCENARIOS:
+        electric_increase = electric[cop_key]["uniform"]["electric_cost_increase_usd"]
+        net_savings = gas_savings_annual - electric_increase
+        paybacks[cop_key] = {
+            "annual_gas_savings_usd": gas_savings_annual,
+            "annual_electric_cost_increase_usd": electric_increase,
+            "annual_net_savings_usd": round(net_savings, 2),
+            "standalone": payback_and_npv(
+                net_savings, INSTALL_COST_STANDALONE_USD, DISCOUNT_RATES, NPV_HORIZON_YEARS),
+            "marginal_over_ac_replacement": payback_and_npv(
+                net_savings, INSTALL_COST_MARGINAL_USD, DISCOUNT_RATES, NPV_HORIZON_YEARS),
+        }
+
+    out = {
+        "applicable": True,
+        "basis": ("furnace therms isolated two ways and cross-checked; heat "
+                  "pump kWh added into real 15-minute intervals and the "
+                  "whole measured year re-billed with rates.bill_nem() "
+                  "(canonical NEM engine, never a lump-sum multiply); gas "
+                  "savings priced at each real billing period's own "
+                  "realized $/therm"),
+        "isolation": {k: v for k, v in iso.items() if k not in ("hdd_by_day",)},
+        "gas_savings_by_period": gas_rows,
+        "gas_savings_annual_usd": gas_savings_annual,
+        "gas_realized_rate_avg_usd_per_therm": round(gas_realized_rate_avg, 4),
+        "baseline_electric_bill_usd": baseline_bill_usd,
+        "electric_cost_by_scenario": electric,
+        "cooling_side": {
+            "treatment": "roughly a wash vs a like-for-like AC replacement, "
+                        "not separately re-billed",
+            "seer2_note": ("2026 federal minimum residential ducted "
+                           "efficiency is 14.3 SEER2/11.7 EER2 (the exact "
+                           "baseline the CZ7 cost-effectiveness study above "
+                           "uses for its new-AC comparison, Table 8); "
+                           "mid-tier units run 16-18 SEER2, high-efficiency "
+                           "19-21+ SEER2. Coastal San Diego's mild summers "
+                           "mean the cooling-side efficiency delta between a "
+                           "heat pump's cooling mode and a same-tier "
+                           "standalone AC is small and not separately "
+                           "quantified here -- a secondary term, per this "
+                           "issue's own scope."),
+        },
+        "install_cost": {
+            "note": INSTALL_COST_NOTE,
+            "standalone_usd": INSTALL_COST_STANDALONE_USD,
+            "baseline_ac_and_furnace_replacement_usd": INSTALL_COST_BASELINE_AC_FURNACE_USD,
+            "marginal_over_ac_replacement_usd": INSTALL_COST_MARGINAL_USD,
+            "sensitivity_range_usd": list(INSTALL_COST_SENSITIVITY_USD),
+        },
+        "incentives": {
+            "usd": INCENTIVE_USD,
+            "verified_date": INCENTIVE_VERIFIED_DATE,
+            "sources": [
+                "IRS 25C credit: terminated for property placed in service "
+                "after 2025-12-31 under P.L. 119-21 (One Big Beautiful Bill "
+                "Act) -- irs.gov/credits-deductions/energy-efficient-home-"
+                "improvement-credit",
+                "TECH Clean California single-family heat-pump-HVAC "
+                "reservations: closed statewide 2025-11-14 -- "
+                "techcleanca.com/incentives/single-family-incentives/",
+                "HEEHRA (federal IRA rebate, CA-administered via TECH): "
+                "single-family rebates fully reserved statewide as of "
+                "2026-02-24 -- techcleanca.com/incentives/heehrarebates/",
+                "SGIP (CPUC): covers batteries and heat-pump water heaters, "
+                "not space-heating HVAC; ratepayer budgets closed "
+                "2025-12-31 regardless",
+                "SDG&E residential electrification page: no dedicated HVAC "
+                "heat-pump rebate named, only a referral to a third-party "
+                "readiness program (CHERP) -- sdge.com/residential/savings-"
+                "center/tips/home-electrification",
+            ],
+        },
+        "payback": paybacks,
+        "sensitivity_table": sensitivity_table(iso, gas_realized_rate_avg),
+        "npv_horizon_years": NPV_HORIZON_YEARS,
+        "discount_rates": list(DISCOUNT_RATES),
+    }
+    return out
+
+
+def main():
+    out = build()
+    tmp = os.path.join(DATA, "heat_pump_conversion.json.tmp")
+    with open(tmp, "w") as fh:
+        json.dump(out, fh, indent=1, sort_keys=True)
+    os.replace(tmp, os.path.join(DATA, "heat_pump_conversion.json"))
+    print("wrote data/heat_pump_conversion.json")
+    if out["applicable"]:
+        c = out["payback"]["central_3.5"]
+        print(f"central COP (3.5): net savings ${c['annual_net_savings_usd']}/yr, "
+              f"standalone payback {c['standalone']['payback_years']} yr, "
+              f"marginal-over-AC payback {c['marginal_over_ac_replacement']['payback_years']} yr")
+
+
+if __name__ == "__main__":
+    main()
