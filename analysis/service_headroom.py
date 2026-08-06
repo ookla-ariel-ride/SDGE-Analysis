@@ -1637,6 +1637,23 @@ def validate_panel(p):
                 f"is not a recognized row role -- {sorted(SCHEDULE_ROW_ROLES)} "
                 "is the only closed vocabulary this reads; an unrecognized "
                 "role is a bad answer, not a new kind of row to guess about")
+        # Codex adversarial review, issue #83, pass 2: a tandem or quad row's
+        # `amps` is a LIST because breaker_geometry() treats it as multiple
+        # DISTINCT OCPDs sharing one physical device slot -- role: pv_backfeed
+        # names a single breaker, and role has no per-pole index to say WHICH
+        # of a tandem/quad's several breakers it means. Accepting one would
+        # let pv_backfeed_a match an unrelated pole in the same device and
+        # silently pass. A dedicated PV/battery backfeed breaker is a
+        # full-size device in every real installation this project has
+        # intake for, so refusing the ambiguous case costs nothing real.
+        if role == "pv_backfeed" and isinstance(e.get("amps"), list):
+            _panel_domain_error(
+                f"schedule[{i}].role", role,
+                "is 'pv_backfeed' on a row whose amps is a list -- a tandem "
+                "or quad device represents multiple distinct breakers "
+                "sharing one physical slot, and role: pv_backfeed cannot "
+                "say which one is meant; mark the single full-size breaker "
+                "row that is the actual backfeed source instead")
 
     return p
 

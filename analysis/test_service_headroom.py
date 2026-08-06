@@ -1244,6 +1244,38 @@ def case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked():
            "when a matching amp happens to exist")
 
 
+def case_pv_backfeed_role_rejects_a_tandem_or_quad_row():
+    """Codex adversarial review, issue #83, pass 2: a tandem/quad row's
+    `amps` is a LIST because breaker_geometry() treats it as several
+    DISTINCT breakers sharing one physical slot -- role: pv_backfeed names
+    ONE breaker and has no per-pole index, so marking a list-valued row is
+    ambiguous. Before this fix, matching pv_backfeed_a against ANY value in
+    the list would silently accept an unrelated pole's rating (a 20 A
+    kitchen circuit standing in for the PV breaker, say) -- this proves that
+    row is refused outright, regardless of whether pv_backfeed_a happens to
+    equal one of its amps."""
+    tandem_marked = PANEL_YAML.replace(
+        "    - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}\n",
+        "    - {device: tandem, poles: 2, amps: [20, 20], label: Test tandem row, role: pv_backfeed}\n"
+    ).replace(
+        # the real PV row must give up its own role marker, or this fixture
+        # would have TWO rows marked (a different, already-covered failure)
+        "label: PV backfeed, role: pv_backfeed}", "label: PV backfeed}"
+    ).replace("pv_backfeed_a: 50", "pv_backfeed_a: 20")
+    assert tandem_marked != PANEL_YAML, "test needs updating: fixture text not found"
+    with _with_household(tandem_marked):
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "role: pv_backfeed on a tandem (list-amps) row was accepted "
+                "even though pv_backfeed_a matched one of its two values")
+        except SystemExit as e:
+            assert "schedule[" in str(e), e
+            assert "role" in str(e) and "pv_backfeed" in str(e), e
+            assert "list" in str(e), e
+    return "role: pv_backfeed on a tandem/quad (list-amps) row fails closed regardless of amp match"
+
+
 def case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed():
     """Exactly one row may claim role: pv_backfeed. Two rows marked (a data
     error, or two real backfed sources sharing one intake answer) must fail
@@ -5042,6 +5074,7 @@ CASES = [
     case_pv_backfeed_must_match_a_schedule_breaker,
     case_pv_backfeed_omitted_row_with_unrelated_same_rated_breaker_fails_closed,
     case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked,
+    case_pv_backfeed_role_rejects_a_tandem_or_quad_row,
     case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed,
     case_pv_backfeed_null_contradicts_a_marked_schedule_row,
     case_pv_backfeed_zero_contradicts_a_marked_schedule_row,
