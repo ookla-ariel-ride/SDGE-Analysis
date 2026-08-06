@@ -75,8 +75,14 @@ ev=np.where(m["load"]>7,m["load"]-1.5,0)          # EV heuristic: >7 kWh/h hours
 m["nonev"]=m["load"]-ev
 m["t1"]=np.minimum(m["nonev"],0.7)                 # essentials tier: 0.7 kW cap
 m["t2"]=m["nonev"]                                 # whole house minus EV
-def endurance(cap,pwr,tier):
+# `pwr` is the DISCHARGE cap (as in sim() above). `charge_pwr` (issue #70) caps
+# the solar-recharge branch's hourly charge the same way sim()'s `charge_pwr`
+# already caps its export-charging branch; defaults to None (reuse `pwr`,
+# symmetric) so every existing call below is byte-for-byte unchanged unless a
+# cited charge rating is passed.
+def endurance(cap,pwr,tier,charge_pwr=None):
     hrs=[]; L=m[tier].values; P=m["prod"].values; idx=m.index
+    cpwr = pwr if charge_pwr is None else charge_pwr
     for s in [i for i,ts in enumerate(idx) if ts.hour==18]:
         soc=cap;t=0;i=s
         while i<len(L)-1 and t<24*14:
@@ -84,13 +90,15 @@ def endurance(cap,pwr,tier):
             if net>0:
                 if soc>=net*1.05: soc-=net*1.05
                 else: break
-            else: soc=min(cap,soc-net*0.9)
+            else: soc=min(cap,soc+min(-net,cpwr)*0.9)
             t+=1;i+=1
         hrs.append(t)
     return round(float(np.median(hrs))), round(float(np.percentile(hrs,10)))
 out={}
-for cfg,cap,pwr in [("IQ 5P",5,3.84),("IQ 10C",10,7.08),("PW3",13.5,11.5),("PW3+Exp",27,11.5)]:
+for cfg,cap,pwr,cpwr in [("IQ 5P",5,3.84,None),("IQ 10C",10,7.08,None),
+                         ("PW3",13.5,11.5,CHARGE_KW_PW3),
+                         ("PW3+Exp",27,11.5,CHARGE_KW_PW3_WITH_EXPANSION)]:
     for tier in["t1","t2"]:
-        med,p10=endurance(cap,pwr,tier); out[f"{cfg}|{tier}"]={"median_h":med,"p10_h":p10}
+        med,p10=endurance(cap,pwr,tier,charge_pwr=cpwr); out[f"{cfg}|{tier}"]={"median_h":med,"p10_h":p10}
 json.dump(out,open("backup_endurance.json","w"),indent=1)
 print("done")
