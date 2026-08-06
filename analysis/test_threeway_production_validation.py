@@ -187,14 +187,22 @@ def case_window_dates_allows_extending_past_the_committed_artifact():
 # ---------------------------------------------------------------------------
 # (c) derive_daily -- the core identity, and the DST exclusion
 # ---------------------------------------------------------------------------
-def _hourly_dicts_for(d, sam_by_hour, imp_by_hour, exp_by_hour=None, n_by_hour=None):
-    """Build one day's {(d,h): kwh} and {(d,h): (imp,exp,n_intervals)}
-    entries. n_by_hour defaults to a complete 4-interval hour everywhere,
-    the well-formed case; cases proving the interval-count gate override it."""
+def _hourly_dicts_for(d, sam_by_hour, imp_by_hour, exp_by_hour=None, n_by_hour=None,
+                       minutes_by_hour=None):
+    """Build one day's {(d,h): kwh} and {(d,h): (imp,exp,n_intervals,minutes)}
+    entries. n_by_hour defaults to a complete 4-interval hour everywhere, the
+    well-formed case; cases proving the interval-count gate override it.
+    minutes_by_hour defaults to the four genuine expected quarter-hours
+    (0/15/30/45) everywhere; cases proving the minute-identity gate (issue
+    #81) override it -- independently of n_by_hour, since a duplicated
+    quarter paired with a different missing one keeps the COUNT at 4 while
+    changing which minutes were actually seen."""
     exp_by_hour = exp_by_hour or {h: 0.0 for h in range(24)}
     n_by_hour = n_by_hour or {h: TPV.EXPECTED_INTERVALS_PER_HOUR for h in range(24)}
+    minutes_by_hour = minutes_by_hour or {h: TPV.EXPECTED_MINUTES for h in range(24)}
     sam = {(d, h): sam_by_hour[h] for h in range(24)}
-    gb = {(d, h): (imp_by_hour[h], exp_by_hour[h], n_by_hour[h]) for h in range(24)}
+    gb = {(d, h): (imp_by_hour[h], exp_by_hour[h], n_by_hour[h], minutes_by_hour[h])
+          for h in range(24)}
     return sam, gb
 
 
@@ -300,6 +308,32 @@ def case_derive_daily_fails_closed_on_a_duplicated_15min_interval():
 
 
 @case
+def case_derive_daily_fails_closed_on_a_duplicated_quarter_masking_a_missing_one():
+    """issue #81: the count-only gate's blind spot. Hour 11 is built from
+    exactly 4 rows -- :00, :15, :15 (duplicated), :30 -- with :45 missing
+    entirely. n_intervals reads 4, which the ORIGINAL count-only check would
+    wrongly call complete; minutes_seen ({0,15,30}, only 3 distinct values)
+    is what actually proves this hour is not the four genuine quarter-hours."""
+    d = dt.date(2026, 6, 20)
+    sam_h = {h: 2.0 for h in range(24)}
+    imp_h = {h: 0.5 for h in range(24)}
+    n_h = {h: TPV.EXPECTED_INTERVALS_PER_HOUR for h in range(24)}  # count stays 4 everywhere
+    minutes_h = {h: TPV.EXPECTED_MINUTES for h in range(24)}
+    minutes_h[11] = frozenset({0, 15, 30})  # :45 missing, :15 duplicated in its place
+    sam, gb = _hourly_dicts_for(d, sam_h, imp_h, n_by_hour=n_h, minutes_by_hour=minutes_h)
+    try:
+        TPV.derive_daily([d], set(), sam, gb)
+    except SystemExit as e:
+        assert str(d) in str(e), e
+        assert "hour 11 built from minutes" in str(e), e
+        return ("a non-DST hour with a duplicated quarter-hour masking a missing "
+                "one is refused even though its row count reads exactly 4")
+    raise AssertionError(
+        "derive_daily should have refused an hour whose 4 rows are not the "
+        "four expected quarter-hours")
+
+
+@case
 def case_load_green_button_hourly_counts_intervals_on_the_real_archive():
     """The loader's own interval-counting, against the real export: every
     non-DST hour in the archive must show exactly 4, proving the count
@@ -312,7 +346,7 @@ def case_load_green_button_hourly_counts_intervals_on_the_real_archive():
         gb = TPV.load_green_button_hourly()
     finally:
         os.chdir(cwd)
-    bad = [(k, n) for k, (_, _, n) in gb.items() if n != TPV.EXPECTED_INTERVALS_PER_HOUR]
+    bad = [(k, n) for k, (_, _, n, _) in gb.items() if n != TPV.EXPECTED_INTERVALS_PER_HOUR]
     # DST-day hours are allowed to be irregular (that's exactly why derive_daily
     # excludes the whole day before ever reading an interval count); everything
     # else must be exactly 4.
@@ -327,6 +361,35 @@ def case_load_green_button_hourly_counts_intervals_on_the_real_archive():
     return (f"every non-DST hour in the real archive ({len(gb) - len(bad)} of "
            f"{len(gb)}) has exactly {TPV.EXPECTED_INTERVALS_PER_HOUR} "
            "15-minute intervals")
+
+
+@case
+def case_load_green_button_hourly_minutes_are_the_real_quarter_hours_on_the_real_archive():
+    """issue #81's own minute-identity check, against the real export: every
+    non-DST hour with a genuine 4-row count must also show the four EXPECTED
+    quarter-hours themselves (0/15/30/45), not just four rows of some shape
+    -- proving the household's own archive has no duplicate-plus-missing
+    pair hiding behind a correct count."""
+    _require_archive()
+    cwd = os.getcwd()
+    os.chdir(str(SANDBOX))
+    try:
+        gb = TPV.load_green_button_hourly()
+    finally:
+        os.chdir(cwd)
+    dst_days_2025_2026 = set()
+    for y in (2025, 2026):
+        dst_days_2025_2026.update(R.dst_transition_sundays(y))
+    bad = [(k, sorted(minutes)) for k, (_, _, n, minutes) in gb.items()
+           if n == TPV.EXPECTED_INTERVALS_PER_HOUR
+           and minutes != TPV.EXPECTED_MINUTES
+           and k[0] not in dst_days_2025_2026]
+    assert not bad, (
+        f"{len(bad)} non-DST hour(s) with a 4-row count in the real archive "
+        f"do not carry the four expected quarter-hours {sorted(TPV.EXPECTED_MINUTES)}: "
+        f"{bad[:5]}")
+    return ("every non-DST hour with a 4-row count in the real archive carries "
+            f"exactly the four expected quarter-hours {sorted(TPV.EXPECTED_MINUTES)}")
 
 
 # ---------------------------------------------------------------------------
