@@ -203,9 +203,11 @@ def load_sam_hourly():
 
 
 def load_green_button_hourly():
-    """{(date, hour): (import_kwh, export_kwh, n_intervals)}, hourly sums of
-    the SDG&E revenue meter's 15-minute Consumption/Generation columns, WITH
-    a count of how many 15-minute rows actually contributed to each hour.
+    """{(date, hour): (import_kwh, export_kwh, n_intervals, minutes_seen)},
+    hourly sums of the SDG&E revenue meter's 15-minute Consumption/Generation
+    columns, WITH a count of how many 15-minute rows actually contributed to
+    each hour AND the distinct set of quarter-hour minute values (0/15/30/45)
+    those rows carried.
 
     The count matters on its own: summing whatever rows happen to carry a
     given (date, hour) key silently accepts an hour built from 3 intervals
@@ -218,6 +220,14 @@ def load_green_button_hourly():
     runs, so their genuinely non-standard interval counts -- 5 quarters in
     the fall-back hour, a missing 02:00 hour entirely on spring-forward --
     never reach it).
+
+    The count alone still has a blind spot (issue #81): a hour missing one
+    quarter-hour AND carrying a duplicate of a different one still counts to
+    exactly 4, passing a count-only check while actually summing a wrong
+    total (one real interval double-counted, another silently dropped).
+    minutes_seen -- the set of DISTINCT minute values actually seen, not just
+    how many rows arrived -- lets derive_daily() additionally verify the four
+    rows are the four EXPECTED quarter-hours, not just four rows.
 
     Scans for the data header row rather than trusting a fixed skiprows
     count, and reads nothing above it into memory: the header block above
@@ -243,15 +253,16 @@ def load_green_button_hourly():
             d = dt.datetime.strptime(rec[1].strip(), "%m/%d/%Y").date()
             t = dt.datetime.strptime(rec[2].strip(), "%I:%M %p")
             key = (d, t.hour)
-            a = acc.setdefault(key, [0.0, 0.0, 0])
+            a = acc.setdefault(key, [0.0, 0.0, 0, set()])
             a[0] += float(rec[4])
             a[1] += float(rec[5])
             a[2] += 1
+            a[3].add(t.minute)
     if not acc:
         raise SystemExit(
             "threeway_production_validation.py: no interval rows parsed "
             f"from {USAGE_CSV} -- is this a Green Button 15-minute export?")
-    return {k: (v[0], v[1], v[2]) for k, v in acc.items()}
+    return {k: (v[0], v[1], v[2], frozenset(v[3])) for k, v in acc.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +336,7 @@ def dst_dates_in(dates):
 
 
 EXPECTED_INTERVALS_PER_HOUR = 4  # 15-minute Green Button rows, on any non-DST hour
+EXPECTED_MINUTES = frozenset({0, 15, 30, 45})  # the four quarter-hours themselves
 
 
 def derive_daily(dates, dst_days, sam_hourly, gb_hourly):
@@ -334,12 +346,16 @@ def derive_daily(dates, dst_days, sam_hourly, gb_hourly):
     24 COMPLETE hours of (a real data gap, not a DST artifact, and not
     something to paper over).
 
-    "Complete" means both: the hour key is present in both archives, AND
+    "Complete" means all three: the hour key is present in both archives,
     the Green Button side was built from exactly EXPECTED_INTERVALS_PER_HOUR
-    15-minute rows -- an hour missing one quarter, or carrying a duplicated
+    15-minute rows, AND those rows carry the four EXPECTED_MINUTES themselves
+    (0/15/30/45) -- an hour missing one quarter, or carrying a duplicated
     one, still has a KEY (so a presence-only check would call it complete)
     but sums to a wrong total; gb_hourly's own n_intervals count (issue #37
-    review) is what actually proves the hour is whole, not just present."""
+    review) proves the hour has the right NUMBER of rows, and its
+    minutes_seen set (issue #81) proves they are the right FOUR rows -- a
+    duplicated quarter paired with a different missing one still counts to
+    4 but leaves minutes_seen short of all four expected values."""
     daily = {}
     gaps = []
     for d in dates:
@@ -349,30 +365,41 @@ def derive_daily(dates, dst_days, sam_hourly, gb_hourly):
         total = 0.0
         hours_seen = 0
         bad_counts = []
+        bad_minutes = []
         for h in range(24):
             key = (d, h)
             if key not in sam_hourly or key not in gb_hourly:
                 continue
             sam_h = sam_hourly[key]
-            imp_h, exp_h, n_h = gb_hourly[key]
+            imp_h, exp_h, n_h, minutes_h = gb_hourly[key]
             if n_h != EXPECTED_INTERVALS_PER_HOUR:
                 bad_counts.append((h, n_h))
+                continue
+            if minutes_h != EXPECTED_MINUTES:
+                bad_minutes.append((h, sorted(minutes_h)))
                 continue
             total += max(sam_h - imp_h + exp_h, 0.0)
             hours_seen += 1
         if hours_seen != 24:
-            gaps.append((d, hours_seen, bad_counts))
+            gaps.append((d, hours_seen, bad_counts, bad_minutes))
             daily[d] = None
         else:
             daily[d] = total
     if gaps:
         parts = []
-        for d, n, bad in gaps:
+        for d, n, bad, bad_min in gaps:
             detail = f"{d} has {n}/24 complete hours"
+            sub = []
             if bad:
-                detail += (" (" + ", ".join(
+                sub.extend(
                     f"hour {h} built from {c} intervals, not "
-                    f"{EXPECTED_INTERVALS_PER_HOUR}" for h, c in bad) + ")")
+                    f"{EXPECTED_INTERVALS_PER_HOUR}" for h, c in bad)
+            if bad_min:
+                sub.extend(
+                    f"hour {h} built from minutes {mins}, not "
+                    f"{sorted(EXPECTED_MINUTES)}" for h, mins in bad_min)
+            if sub:
+                detail += " (" + ", ".join(sub) + ")"
             parts.append(detail)
         raise SystemExit(
             "threeway_production_validation.py: incomplete hourly coverage "
