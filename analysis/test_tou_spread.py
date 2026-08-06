@@ -87,6 +87,79 @@ def case_vanished_settlement_zeros_abort():
 
 
 # ---------------------------------------------------------------------------
+# Season-crossing periods (issue #32)
+# ---------------------------------------------------------------------------
+
+@case
+def case_season_crossing_period_is_dated_from_the_season_start():
+    """A billing period that straddles the summer/winter boundary must date
+    its SECOND season block's segment 0 from the day that season actually
+    began, not from the period's own start. Issue #32's own real example:
+    period 5/25/24-6/25/24's winter block covers only 5/25-5/31 (7 days) and
+    its summer block only 6/1-6/25 (25 days) -- the old code anchored BOTH
+    blocks' segment 0 at 5/25, giving the summer block a midpoint of
+    2024-06-06 instead of the season-anchored 2024-06-13."""
+    real = ts.DETAIL
+    tmp = ROOT / "data" / "_test_tou_season_crossing.csv"
+    header = "statement_date,period,section,season,segment,segment_days,tou_period,kwh,rate_per_kwh"
+    rows = [
+        header,
+        # a settlement zero so _priced_rows()'s own "corpus must contain
+        # settlement zeros" guard does not abort first
+        "2024-06-27,5/25/24 - 6/25/24,delivery,winter,0,7,off_peak,-138.0,0.0",
+        "2024-06-27,5/25/24 - 6/25/24,delivery,winter,0,7,super_off_peak,204.0,0.04013",
+        "2024-06-27,5/25/24 - 6/25/24,delivery,summer,0,25,super_off_peak,698.0,0.04013",
+    ]
+    tmp.write_text("\n".join(rows) + "\n")
+    ts.DETAIL = tmp
+    try:
+        priced, dropped = ts._priced_rows()
+    finally:
+        ts.DETAIL = real
+        tmp.unlink(missing_ok=True)
+    assert dropped == 1, dropped
+    winter = next(p for p in priced if p["season"] == "winter")
+    summer = next(p for p in priced if p["season"] == "summer")
+    # winter's block starts at the period start (5/25), unaffected by this fix:
+    # mid = 5/25 + floor(7/2)=3 days = 5/28
+    assert winter["date"] == dt.date(2024, 5, 28), winter["date"]
+    # summer's block starts at the season calendar start (6/1), NOT the period
+    # start (5/25): mid = 6/1 + floor(25/2)=12 days = 6/13, matching the
+    # issue's own "roughly 2024-06-13" expectation, not the old 2024-06-06
+    assert summer["date"] == dt.date(2024, 6, 13), summer["date"]
+    return (f"season-crossing period dated winter={winter['date']}, "
+           f"summer={summer['date']} (season-anchored, not period-anchored)")
+
+
+@case
+def case_season_block_missing_from_the_calendar_aborts():
+    """A row claiming a season the period's own calendar span never touches
+    (e.g. 'summer' on a wholly-winter period) must abort loudly rather than
+    silently mis-date it -- the same fail-closed posture rates_history.py's
+    own _date_segments uses for the identical mismatch."""
+    real = ts.DETAIL
+    tmp = ROOT / "data" / "_test_tou_bad_season.csv"
+    header = "statement_date,period,section,season,segment,segment_days,tou_period,kwh,rate_per_kwh"
+    rows = [
+        header,
+        "2024-01-27,12/26/23 - 1/26/24,delivery,winter,0,32,off_peak,-138.0,0.0",
+        "2024-01-27,12/26/23 - 1/26/24,delivery,summer,0,32,super_off_peak,204.0,0.04013",
+    ]
+    tmp.write_text("\n".join(rows) + "\n")
+    ts.DETAIL = tmp
+    try:
+        ts._priced_rows()
+    except SystemExit as exc:
+        assert "no" in str(exc) and "summer" in str(exc), f"wrong refusal: {exc}"
+        return "a season absent from the period's own calendar span aborts the run"
+    else:
+        raise AssertionError("a season not covered by the period's calendar span was accepted")
+    finally:
+        ts.DETAIL = real
+        tmp.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
 # The structural-break check -- the bug this module was rewritten to fix
 # ---------------------------------------------------------------------------
 
