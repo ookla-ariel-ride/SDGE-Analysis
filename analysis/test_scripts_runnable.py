@@ -90,6 +90,7 @@ MANIFEST = {
     "reprice_by_vintage.py": "generator",
     "quiet_night_floor.py": "generator",
     "threeway_production_validation.py": "generator",
+    "heat_pump_conversion.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -146,6 +147,9 @@ OWNS = {
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as quiet_night_floor.py/rates_history.py
     "threeway_production_validation.py": [("data", "threeway_production_validation.csv")],
+    # writes directly into ROOT/data via its own repo_root() walk-up, same
+    # convention as threeway_production_validation.py/quiet_night_floor.py
+    "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -376,6 +380,11 @@ NEEDS_PRIVATE_ARCHIVE = {
                                     "(built from the real year) within a $5 tolerance -- "
                                     "the same tie-out shape as battery_plan_matrix.py, "
                                     "so synthetic inputs must diverge and trip it"),
+    "heat_pump_conversion.py": ("the raw gas Green Button export "
+                               "(private/1-raw-data/gas.csv, daily therms) -- no "
+                               "synthetic stand-in exists, and the isolation methods "
+                               "need a real, physically plausible year of gas usage "
+                               "to cross-check against real weather, not an invented one"),
     "cca_rate_extraction.py": ("the bill PDF corpus (every CCA-era statement's own "
                                "per-TOU generation-charge lines are printed nowhere "
                                "else)"),

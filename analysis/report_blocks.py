@@ -326,10 +326,11 @@ HUMAN_REASONS = {
     "s9#5": "the EV report card asks for sessions/yr, kWh/yr, and compliance % broken out "
             "by window; only the two compliance-savings dollar figures are tokenized "
             "(EV_FIX_SAVINGS_100/80) -- the session counts and percentages have no entry",
-    "s10#4": "this is exactly report_tokens.py's ELECTRIFICATION_VERDICT_SHORT gap: no "
-             "committed artifact prices heat-pump or HPWH install cost, so an "
-             "appliance-by-appliance ROI verdict cannot be made honestly from what is "
-             "committed",
+    "s10#4": "this is exactly report_tokens.py's ELECTRIFICATION_VERDICT_SHORT gap: "
+             "heat-pump space heating has a committed install-cost basis since issue "
+             "#1 (data/heat_pump_conversion.json), HPWH still does not, so an "
+             "appliance-by-appliance ROI verdict needing both still cannot be made "
+             "honestly from what is committed",
     "s12#5": "an optimal single-cleaning month and a shop-below price threshold are new "
              "figures with no report_tokens.py entry",
     "s13#8": "a per-season escalation trend (%/yr, 95% CI, r-squared, rate-level count) is "
