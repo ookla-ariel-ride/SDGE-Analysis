@@ -524,9 +524,9 @@ def case_dsgs_prestaged_sensitivity_matches_the_artifact():
 def case_heat_pump_conversion_section_matches_the_artifact():
     """The §10 heat-pump-conversion subsection is hand-written, not
     templated -- lock its headline figures (annual gas savings, the
-    electric-cost-increase bracket, all three COP net-savings figures, and
-    the two payback years) against the live artifact so a regeneration
-    can't silently drift them (issue #1)."""
+    electric-cost-increase bracket, all three COPs' central AND bracket
+    net-savings figures, and the payback/NPV figures) against the live
+    artifact so a regeneration can't silently drift them (issue #1)."""
     hpc_path = ROOT / "data" / "heat_pump_conversion.json"
     assert hpc_path.exists(), f"{hpc_path} is committed public data and must exist"
     hpc = json.loads(hpc_path.read_text())
@@ -537,17 +537,26 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     assert m, "the heat-pump-conversion subsection was not found in index.html"
     section = m.group(0)
 
+    gas_savings = hpc["gas_savings_annual_usd"]
+    e = hpc["electric_cost_by_scenario"]
+    pb = hpc["payback"]
+
+    def fmt_signed(v):
+        sign = "−$" if v < 0 else "+$"
+        return f"{sign}{abs(v):,.2f}"
+
     checks = [
         f"{hpc['isolation']['annual_heating_therms']} therms/yr",
-        f"${hpc['gas_savings_annual_usd']:,.2f}/yr",
-        f"${hpc['electric_cost_by_scenario']['central_3.5']['off_peak']['electric_cost_increase_usd']:,.0f}",
-        f"${hpc['electric_cost_by_scenario']['central_3.5']['on_peak']['electric_cost_increase_usd']:,.0f}",
-        f"${hpc['electric_cost_by_scenario']['central_3.5']['uniform']['electric_cost_increase_usd']:,.0f}/yr",
-        f"{abs(hpc['payback']['central_3.5']['annual_net_savings_usd']):,.2f}/yr",
-        f"{abs(hpc['payback']['low_2.8']['annual_net_savings_usd']):,.2f}/yr",
-        f"{abs(hpc['payback']['high_4.2']['annual_net_savings_usd']):,.2f}/yr",
-        f"{hpc['payback']['high_4.2']['standalone']['payback_years']} years",
-        f"{hpc['payback']['high_4.2']['marginal_over_ac_replacement']['payback_years']} years",
+        f"${gas_savings:,.2f}/yr",
+        f"${e['central_3.5']['off_peak']['electric_cost_increase_usd']:,.0f}/yr",
+        f"${e['central_3.5']['on_peak']['electric_cost_increase_usd']:,.0f}/yr",
+        f"${e['central_3.5']['uniform']['electric_cost_increase_usd']:,.0f}/yr",
+        fmt_signed(pb["central_3.5"]["annual_net_savings_usd"]) + "/yr",
+        fmt_signed(pb["high_4.2"]["annual_net_savings_usd"]) + "/yr",
+        fmt_signed(pb["low_2.8"]["annual_net_savings_usd"]) + "/yr",
+        f"{pb['central_3.5']['standalone']['payback_years']} years",
+        f"{pb['central_3.5']['marginal_over_ac_replacement']['payback_years']} years",
+        f"{pb['high_4.2']['marginal_over_ac_replacement']['payback_years']} years",
         f"${hpc['install_cost']['standalone_usd']:,}",
         f"${hpc['install_cost']['baseline_ac_and_furnace_replacement_usd']:,}",
         f"${hpc['install_cost']['marginal_over_ac_replacement_usd']:,}",
@@ -555,16 +564,28 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     for value in checks:
         assert value in section, f"§10 heat-pump-conversion section: {value!r} not found in it"
 
-    # the sign of the two highest-stakes COP scenarios must read as negative
-    # in prose (a "-$X" figure), matching the artifact's own negative sign --
-    # protects against the exact class of sign-direction bug caught in issue #85
-    assert hpc["payback"]["central_3.5"]["annual_net_savings_usd"] < 0, "test premise: central COP must be negative"
-    assert hpc["payback"]["low_2.8"]["annual_net_savings_usd"] < 0, "test premise: low COP must be negative"
-    assert "−$57.54/yr" in section or "-$57.54/yr" in section, \
-        "central-COP net savings must be presented as negative, matching the artifact's own sign"
-    assert "−$210.33/yr" in section or "-$210.33/yr" in section, \
-        "low-COP net savings must be presented as negative, matching the artifact's own sign"
-    return "the §10 heat-pump-conversion section matches the live artifact, signs included"
+    # the on-peak/off-peak NET-SAVINGS bracket for all three COPs (gas savings
+    # minus each bracket's own electric cost) -- this is the report's own
+    # central claim ("every one of the three flips sign across the bracket"),
+    # so it must be independently re-derivable from the artifact, not merely
+    # asserted in prose
+    for cop_key in ("low_2.8", "central_3.5", "high_4.2"):
+        off_net = gas_savings - e[cop_key]["off_peak"]["electric_cost_increase_usd"]
+        on_net = gas_savings - e[cop_key]["on_peak"]["electric_cost_increase_usd"]
+        assert off_net > 0 > on_net, (
+            f"{cop_key}: the report's claim that every COP flips sign across the "
+            f"bracket requires off_net>0>on_net; got off={off_net}, on={on_net}")
+        assert fmt_signed(off_net) + "/yr" in section, (cop_key, off_net)
+        assert fmt_signed(on_net) + "/yr" in section, (cop_key, on_net)
+
+    # NPV figures cited on the marginal-over-AC basis, both discount rates,
+    # for the two COPs the report names a number for
+    for cop_key in ("central_3.5", "high_4.2"):
+        npv = pb[cop_key]["marginal_over_ac_replacement"]["npv"]
+        for rate_key in ("4pct", "5pct"):
+            v = npv[rate_key]
+            assert f"{'+' if v >= 0 else '−'}${abs(v):,}" in section, (cop_key, rate_key, v)
+    return "the §10 heat-pump-conversion section matches the live artifact, including the full sign-flip bracket"
 
 
 CASES = [

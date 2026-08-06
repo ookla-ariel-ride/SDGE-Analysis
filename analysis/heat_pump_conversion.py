@@ -101,6 +101,27 @@ GAS_PERIODS_CSV = os.path.join(DATA, "bill_periods_gas.csv")
 
 KWH_PER_THERM = 29.3   # same conversion extended_findings.py uses (EIA/DOE standard)
 
+# Metered gas THERMS are furnace FUEL INPUT, not delivered heat -- a furnace
+# below 100% AFUE (Annual Fuel Utilization Efficiency) burns more fuel than
+# the heat it actually delivers, and it is the DELIVERED heat a heat pump
+# has to replace, not the raw therms (Codex adversarial review, issue #1,
+# pass 1: treating therms as 100% delivered heat overstates the heat pump's
+# required kWh, and so overstates its electric cost, by 1/AFUE). This
+# household's own furnace nameplate AFUE was never recorded (not in
+# private/household.yaml, not in any committed intake field) -- 0.78 is
+# used instead: the SAME existing-furnace assumption the cited CZ7
+# cost-effectiveness study uses for its own baseline (Table 3, "Heating
+# Efficiency 78 AFUE"), and also the historical federal minimum efficiency
+# for residential gas furnaces sold in the US for decades before the 2028
+# 95-AFUE standard takes effect (cited in that same study, section 2.4).
+# A furnace built to a higher voluntary efficiency tier delivers MORE
+# useful heat per therm burned, meaning the heat pump would have to
+# replace MORE heat for the same metered gas usage, raising its required
+# kWh and cost -- so 0.78, the low end of the plausible existing-furnace
+# range, is the assumption more FAVORABLE to the heat pump, not a
+# worst-case pick made to flatter the gas side.
+FURNACE_AFUE = 0.78
+
 # Three coefficients of performance spanning this issue's own requested range;
 # coastal-mild climate (this household's own climate_zone: "Coastal",
 # private/household.yaml, bill-confirmed) favors the high end, so all three
@@ -283,8 +304,42 @@ def gas_savings_by_period(iso):
     """Real per-statement gas savings: each billed period's own share of
     annual heating therms (from that period's OWN days' HDD, never a flat
     annual average) priced at that period's own realized $/therm
-    (total_gas_service / therms -- the all-in charged rate, confirmed from a
-    real bill PDF to have no separate fixed charge on this rate schedule)."""
+    (total_gas_service / therms).
+
+    Why this is the right basis, not just the easy one (Codex adversarial
+    review, issue #1: two passes on this exact question). Two real gas bill
+    PDFs for this household's own GR-Residential rate were read directly
+    (sdge_gas_2025-07-30.pdf, a low-usage summer statement; sdge_gas_2025-
+    12-30.pdf, a 61-therm winter statement) to see what total_gas_service
+    actually contains: THREE separate charges, not the two rate columns
+    bill_periods_gas.csv carries. "Gas Service" is the two-tier
+    baseline/nonbaseline rate (baseline_rate/nonbaseline_rate); a SEPARATE
+    "Gas Energy Charge" line prices EVERY therm (baseline and nonbaseline
+    alike) at a third, flat, untiered rate (~$0.50/therm on the December
+    statement) that appears NOWHERE in the committed CSV; Public Purpose
+    Programs and a State Regulatory Fee add a further ~$0.12/therm. Pricing
+    heating therms at nonbaseline_rate ALONE (a version of this function
+    tried during review) would OMIT the entire Gas Energy Charge and the tax
+    surcharge, understating real savings far more than blending in a little
+    baseline-tier discount ever could -- confirmed on the real December
+    statement: nonbaseline_rate alone is $2.38/therm, but the period's true
+    all-in average is $2.80/therm, HIGHER, not lower.
+
+    total_gas_service / therms is the only per-period figure this repo has
+    committed that already sums all three real charge components. It is a
+    BLENDED average across both tiers, not a pure marginal-tier rate, but
+    every period that materially contributes to heating attribution has
+    usage far above its own baseline allowance (winter statements run
+    34-97 billed therms; the one baseline allowance read directly from a
+    real bill was 11 therms in summer, 36 in winter -- still far below
+    winter's actual usage), so the blended average is dominated by
+    nonbaseline-tier economics for exactly the periods that matter. A fully
+    precise marginal-tier rebilling would need each period's own baseline
+    allowance and its own Gas Energy Charge rate, NEITHER of which
+    parse_bills.py currently extracts into committed data -- filed as a
+    follow-up (issue #98) rather than attempted here with numbers this
+    script would otherwise have to invent.
+    """
     periods = pd.read_csv(GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
     hdd_by_day = iso["hdd_by_day"]
@@ -342,7 +397,7 @@ def build_hp_load_series(d, iso, cop):
     """
     hdd_by_day = iso["hdd_by_day"]
     total_hdd = iso["total_hdd"]
-    ann_heat_kwh = iso["annual_heating_therms"] * KWH_PER_THERM / cop
+    ann_heat_kwh = iso["annual_heating_therms"] * KWH_PER_THERM * FURNACE_AFUE / cop
 
     dates = d["dt"].dt.date
     out = {"uniform": pd.Series(0.0, index=d.index),
@@ -416,32 +471,52 @@ def payback_and_npv(annual_net_savings, install_cost, discount_rates, years):
     return {"payback_years": round(payback, 1), "npv": npv}
 
 
-def sensitivity_table(iso, gas_realized_rate_avg):
-    """COP x install-cost x gas-price grid, all on the PRIMARY (uniform)
-    electric-distribution basis -- the bracket sensitivity is reported
-    separately, alongside, not multiplied into this table (a 3x3x3x3 grid
-    would bury the reader in scenarios no one asked to compare at once)."""
-    gas_rates = pd.read_csv(GAS_PERIODS_CSV)["baseline_rate"].dropna()
-    gas_price_lo, gas_price_hi = float(gas_rates.min()), float(gas_rates.max())
+def sensitivity_table(iso, electric, gas_realized_rate_avg):
+    """COP x install-cost x gas-price grid, each row a real payback/NPV, all
+    on the PRIMARY (uniform) electric-distribution basis -- the on/off-peak
+    bracket sensitivity is reported separately, alongside, not multiplied
+    into this table (a 3x3x3x3 grid would bury the reader in scenarios no
+    one asked to compare at once).
+
+    low/central/high gas prices all share the SAME basis -- the period's own
+    blended realized $/therm rate (total_gas_service / therms) that
+    gas_savings_by_period() actually bills at, never a mix of a single
+    tier's rate and a blended average (Codex adversarial review, issue #1,
+    pass 1: an earlier version compared a single-tier rate's low/high
+    against an all-in blended-rate central, which could and did invert the
+    ordering -- and a still-earlier attempt at using the nonbaseline tier
+    rate alone turned out to OMIT two real charge components entirely, see
+    gas_savings_by_period()'s own docstring). low/high come from the
+    observed range of that SAME per-period blended rate across this
+    household's own 25 real statements."""
+    all_periods = pd.read_csv(GAS_PERIODS_CSV)
+    per_period_rate = (all_periods["total_gas_service"] / all_periods["therms"]).dropna()
+    gas_price_lo, gas_price_hi = float(per_period_rate.min()), float(per_period_rate.max())
+    assert gas_price_lo <= gas_realized_rate_avg <= gas_price_hi, (
+        "sensitivity_table: low/central/high gas prices are not monotonically "
+        f"ordered ({gas_price_lo}, {gas_realized_rate_avg}, {gas_price_hi}) -- "
+        "they no longer share the same rate basis")
     gas_prices = {"low": gas_price_lo, "central": gas_realized_rate_avg, "high": gas_price_hi}
 
     rows = []
-    for cop_key, cop in COP_SCENARIOS.items():
-        ann_heat_kwh = iso["annual_heating_therms"] * KWH_PER_THERM / cop
-        # the sensitivity table varies gas PRICE and install COST around the
-        # already-computed uniform-distribution electric cost for this COP;
-        # electric cost itself does not depend on gas price, so it is fixed
-        # per COP and only gas savings + install cost vary across the grid
+    for cop_key in COP_SCENARIOS:
+        electric_increase = electric[cop_key]["uniform"]["electric_cost_increase_usd"]
+        ann_heat_kwh = electric[cop_key]["uniform"]["added_kwh"]
         for cost_key, cost in zip(("low", "central", "high"), INSTALL_COST_SENSITIVITY_USD):
             for price_key, price in gas_prices.items():
                 gas_savings = iso["annual_heating_therms"] * price
+                net_savings = gas_savings - electric_increase
+                pb = payback_and_npv(net_savings, cost, DISCOUNT_RATES, NPV_HORIZON_YEARS)
                 rows.append({
                     "cop": cop_key, "install_cost": cost_key,
                     "gas_price": price_key,
                     "install_cost_usd": cost,
                     "gas_price_usd_per_therm": round(price, 4),
-                    "annual_heating_kwh": round(ann_heat_kwh),
+                    "annual_heating_kwh": ann_heat_kwh,
                     "gas_savings_usd": round(gas_savings, 2),
+                    "electric_cost_increase_usd": electric_increase,
+                    "annual_net_savings_usd": round(net_savings, 2),
+                    "payback_years": pb["payback_years"],
                 })
     return rows
 
@@ -539,7 +614,7 @@ def build():
             ],
         },
         "payback": paybacks,
-        "sensitivity_table": sensitivity_table(iso, gas_realized_rate_avg),
+        "sensitivity_table": sensitivity_table(iso, electric, gas_realized_rate_avg),
         "npv_horizon_years": NPV_HORIZON_YEARS,
         "discount_rates": list(DISCOUNT_RATES),
     }

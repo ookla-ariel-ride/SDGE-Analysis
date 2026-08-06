@@ -203,6 +203,110 @@ def case_hp_load_series_conserve_energy_across_all_three_distributions():
 
 
 @case
+def case_afue_below_one_reduces_required_heat_pump_kwh():
+    """Codex adversarial review, issue #1, pass 1: metered gas THERMS are
+    furnace fuel INPUT, not delivered heat -- treating them as 100%
+    delivered (AFUE=1.0) overstates the heat pump's required kWh by
+    1/FURNACE_AFUE. This proves the module's real constant (0.78) actually
+    reduces the computed load below what an (incorrect) AFUE=1.0 assumption
+    would give, by exactly the expected ratio."""
+    d = _synthetic_frame(n_days=10)
+    hdd_by_day = pd.Series({(dt.date(2026, 1, 5) + dt.timedelta(days=i)): 10.0
+                            for i in range(10)})
+    iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+          "annual_heating_therms": 100.0}
+    real_afue = hpc.FURNACE_AFUE
+    try:
+        hpc.FURNACE_AFUE = 1.0
+        _, ann_heat_kwh_at_100pct, _ = hpc.build_hp_load_series(d, iso, 3.5)
+        hpc.FURNACE_AFUE = real_afue
+        _, ann_heat_kwh_at_real_afue, _ = hpc.build_hp_load_series(d, iso, 3.5)
+    finally:
+        hpc.FURNACE_AFUE = real_afue
+    assert abs(ann_heat_kwh_at_real_afue / ann_heat_kwh_at_100pct - real_afue) < 1e-9, \
+        (ann_heat_kwh_at_real_afue, ann_heat_kwh_at_100pct, real_afue)
+    assert ann_heat_kwh_at_real_afue < ann_heat_kwh_at_100pct, \
+        "a sub-1.0 AFUE must reduce the computed heat pump load, not leave it unchanged"
+    return (f"AFUE={real_afue} reduces required heat-pump kWh to "
+           f"{real_afue:.0%} of the (incorrect) 100%-delivered-heat assumption, exactly")
+
+
+@case
+def case_gas_savings_use_the_periods_own_blended_realized_rate():
+    """Codex adversarial review, issue #1: two real gas bill PDFs read
+    directly show total_gas_service also embeds a separate, untiered "Gas
+    Energy Charge" plus taxes that neither baseline_rate nor
+    nonbaseline_rate captures alone -- an earlier attempt at pricing
+    heating therms at nonbaseline_rate ALONE (tried during review) turned
+    out to OMIT those real charges entirely, understating savings more than
+    the blended average's own tier-dilution ever did. This proves the
+    fixture's own blended rate correctly exceeds either tier's bare Gas
+    Service rate."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        periods = pd.DataFrame({
+            "statement_date": ["2026-01-31"],
+            "therms": [60.0],
+            # blended average deliberately does NOT equal either tier rate on
+            # its own: total_gas_service also embeds the real Gas Energy
+            # Charge + tax components neither rate column captures (see the
+            # function's own docstring) -- 172.8/60 = 2.88/therm, above BOTH
+            # the baseline and nonbaseline Gas Service rates alone
+            "total_gas_service": [172.8],
+            "baseline_rate": [1.8],
+            "nonbaseline_rate": [2.3],
+        })
+        csv_path = tmp / "bill_periods_gas.csv"
+        periods.to_csv(csv_path, index=False)
+        real_path = hpc.GAS_PERIODS_CSV
+        hpc.GAS_PERIODS_CSV = str(csv_path)
+        try:
+            hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
+            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+                  "annual_heating_therms": 50.0}
+            rows, total_savings, _ = hpc.gas_savings_by_period(iso)
+        finally:
+            hpc.GAS_PERIODS_CSV = real_path
+    row = rows[0]
+    blended_rate = 172.8 / 60.0
+    assert abs(row["realized_rate_usd_per_therm"] - blended_rate) < 1e-9, row
+    # the whole point: the blended rate exceeds EITHER tier's own Gas Service
+    # rate alone, because it also carries the Gas Energy Charge + taxes that
+    # neither baseline_rate nor nonbaseline_rate captures on their own
+    assert blended_rate > 2.3 > 1.8, blended_rate
+    return "gas savings use the period's own blended realized rate, which correctly exceeds either tier's Gas Service rate alone"
+
+
+@case
+def case_sensitivity_table_gas_prices_are_monotonically_ordered_and_vary_payback():
+    """Codex adversarial review, issue #1, pass 1: low/central/high gas
+    prices must share the same rate basis (all marginal/nonbaseline), so
+    low <= central <= high always holds -- and changing install cost must
+    actually change the reported payback, not just be echoed unused."""
+    _require_archive()
+    out = hpc.build()
+    assert out["applicable"], out
+    rows = out["sensitivity_table"]
+    by_cop = {}
+    for r in rows:
+        by_cop.setdefault(r["cop"], {})[(r["install_cost"], r["gas_price"])] = r
+    for cop_key, table in by_cop.items():
+        lo = table[("central", "low")]["gas_price_usd_per_therm"]
+        ce = table[("central", "central")]["gas_price_usd_per_therm"]
+        hi = table[("central", "high")]["gas_price_usd_per_therm"]
+        assert lo <= ce <= hi, (cop_key, lo, ce, hi)
+        # the same COP/gas-price cell at low vs high install cost must give a
+        # DIFFERENT payback (or one/both None) -- proves the sensitivity table
+        # actually recomputes payback per install-cost scenario, not just
+        # echoing the cost value back unused
+        low_cost_pb = table[("low", "central")]["payback_years"]
+        high_cost_pb = table[("high", "central")]["payback_years"]
+        if low_cost_pb is not None and high_cost_pb is not None:
+            assert low_cost_pb != high_cost_pb, (cop_key, low_cost_pb, high_cost_pb)
+    return "sensitivity table gas prices are monotonically ordered and payback varies with install cost"
+
+
+@case
 def case_on_peak_distribution_costs_at_least_as_much_as_off_peak():
     """A structural property that must hold regardless of the specific
     numbers on any given year: concentrating the SAME kWh into the priciest
