@@ -113,7 +113,7 @@ panel:
     - {device: full-size 2-pole, poles: 2, amps: 60, label: EV charger}
     - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}
     - {device: quad, poles: 4, amps: [15, 20, 20, 15], label: Test kitchen circuit}
-    - {device: full-size 2-pole, poles: 2, amps: 50, label: PV backfeed}
+    - {device: full-size 2-pole, poles: 2, amps: 50, label: PV backfeed, role: pv_backfeed}
 """
 
 
@@ -1159,10 +1159,11 @@ def case_meter_socket_accepts_the_unhyphenated_spelling_too():
 
 
 def case_pv_backfeed_must_match_a_schedule_breaker():
-    """A POSITIVE pv_backfeed_a claims one specific installed breaker; if no
-    breaker in panel.schedule carries that rating, the two intake answers
-    disagree and the 120% arithmetic would spend an allowance against a
-    breaker nobody catalogued. (0.0 is exempt from this rule --
+    """A POSITIVE pv_backfeed_a claims one specific installed breaker,
+    identified structurally by role: pv_backfeed (issue #83); if that row's
+    own amp rating disagrees, the two intake answers disagree and the 120%
+    arithmetic would spend an allowance against a rating nobody actually
+    catalogued for the identified breaker. (0.0 is exempt from this rule --
     case_panel_domain_checks_accept_the_edges_that_are_real covers that
     edge, since no real breaker is rated 0 A for it to match.)"""
     no_match = PANEL_YAML.replace("pv_backfeed_a: 50", "pv_backfeed_a: 65")
@@ -1177,46 +1178,80 @@ def case_pv_backfeed_must_match_a_schedule_breaker():
     return "pv_backfeed_a with no matching schedule breaker fails closed"
 
 
-def case_KNOWN_LIMITATION_an_unrelated_same_rated_breaker_still_passes():
-    """Codex adversarial review, issue #41, pass 2, NOT fixed here (filed as
-    a follow-up, see validate_panel()'s own comment on the check above): the
-    schedule-match cross-check is amp-VALUE membership only, with no row
-    IDENTITY -- panel.schedule has no role/ID field distinguishing "this
-    row is the PV breaker" from "this row happens to share its rating."
-
-    This test documents the gap on purpose, asserting the CURRENT (still
-    limited) behavior rather than silently letting it drift: with the real
-    50 A "PV backfeed" row removed from the schedule and an unrelated 50 A
-    breaker left in its place (an EV charger, say), pv_backfeed_a: 50 still
-    passes -- an omitted PV breaker silently vanishes from panel_occupancy's
-    space/pole count and OCPD sum with no error. If this is ever fixed (the
-    real fix needs a structured schedule role/ID, an intake-contract change
-    outside this issue's scope), THIS TEST should start failing and should
-    be updated to assert the new, stricter behavior instead of loosened to
-    keep passing."""
+def case_pv_backfeed_omitted_row_with_unrelated_same_rated_breaker_fails_closed():
+    """issue #83, fixing the gap Codex adversarial review found on issue #41
+    pass 2: the real 50 A "PV backfeed" row is removed from the schedule and
+    an UNRELATED 50 A breaker (a second EV charger, nothing to do with
+    solar, and critically not marked role: pv_backfeed) is left in its
+    place. Before #83 this coincidence silently passed; now, with no row
+    claiming the role, it fails closed instead of letting the omitted
+    breaker vanish from panel_occupancy()'s space/pole count and OCPD sum
+    with no error."""
     pv_breaker_removed = PANEL_YAML.replace(
         "    - {device: full-size 2-pole, poles: 2, amps: 60, label: EV charger}\n"
         "    - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}\n"
         "    - {device: quad, poles: 4, amps: [15, 20, 20, 15], label: Test kitchen circuit}\n"
-        "    - {device: full-size 2-pole, poles: 2, amps: 50, label: PV backfeed}\n",
-        # the real PV breaker row is gone; an UNRELATED 50 A breaker (a second
-        # EV charger, nothing to do with solar) coincidentally shares its rating
+        "    - {device: full-size 2-pole, poles: 2, amps: 50, label: PV backfeed, role: pv_backfeed}\n",
+        # the real PV breaker row (and its role marker) is gone; an
+        # UNRELATED 50 A breaker (a second EV charger) coincidentally
+        # shares its rating but claims no role
         "    - {device: full-size 2-pole, poles: 2, amps: 60, label: EV charger}\n"
         "    - {device: full-size 2-pole, poles: 2, amps: 50, label: Second EV charger}\n"
         "    - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}\n"
         "    - {device: quad, poles: 4, amps: [15, 20, 20, 15], label: Test kitchen circuit}\n")
     assert pv_breaker_removed != PANEL_YAML, "test needs updating: fixture text not found"
     with _with_household(pv_breaker_removed):
-        p = S.load_panel()  # must NOT raise -- this is the documented gap, not a crash
-    assert p["pv_backfeed_a"] == 50.0, p
-    occ = S.panel_occupancy(p["schedule"], p["spaces"], p["max_circuits"])
-    # the real PV breaker's 2 spaces / 50 A are simply absent from these totals
-    # -- nothing here flags that the amp-match came from an unrelated device
-    assert not any("PV backfeed" in str(e.get("label", "")) for e in p["schedule"]), (
-        "test setup error: the real PV breaker row is still present")
-    return ("KNOWN LIMITATION, tracked not silently regressed: an unrelated "
-           "same-rated breaker still satisfies the pv_backfeed_a schedule "
-           "cross-check when the real PV breaker is omitted entirely")
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "a pv_backfeed_a matched only by an unrelated same-rated "
+                "breaker, with no row marked role: pv_backfeed, was accepted")
+        except SystemExit as e:
+            assert "panel.pv_backfeed_a is 50" in str(e), e
+            assert "no panel.schedule row is marked role: pv_backfeed" in str(e), e
+    return ("an unrelated same-rated breaker standing in for an omitted PV "
+           "breaker now fails closed instead of silently passing (issue #83)")
+
+
+def case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked():
+    """The narrower half of the same gap: the real PV breaker row is still
+    physically present with the right amp rating, but nobody has marked it
+    role: pv_backfeed yet (an intake not yet updated for the new field).
+    This must fail closed too -- the check is gated on the structural
+    marker, not merely on SOME row having the right amps, which is exactly
+    what the pre-#83 behavior got wrong."""
+    role_stripped = PANEL_YAML.replace(
+        "label: PV backfeed, role: pv_backfeed}", "label: PV backfeed}")
+    assert role_stripped != PANEL_YAML, "test needs updating: fixture text not found"
+    with _with_household(role_stripped):
+        try:
+            S.load_panel()
+            raise AssertionError(
+                "a pv_backfeed_a matched by amps alone, with the matching "
+                "row unmarked, was accepted")
+        except SystemExit as e:
+            assert "no panel.schedule row is marked role: pv_backfeed" in str(e), e
+    return ("a schedule row with the right amp rating but no role marker "
+           "still fails closed -- the marker is required, not optional "
+           "when a matching amp happens to exist")
+
+
+def case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed():
+    """Exactly one row may claim role: pv_backfeed. Two rows marked (a data
+    error, or two real backfed sources sharing one intake answer) must fail
+    closed rather than the check picking one arbitrarily."""
+    two_marked = PANEL_YAML.replace(
+        "    - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}\n",
+        "    - {device: tandem, poles: 2, amps: [20, 20], label: Kitchen}\n"
+        "    - {device: full-size 2-pole, poles: 2, amps: 50, label: Second inverter, role: pv_backfeed}\n")
+    assert two_marked != PANEL_YAML, "test needs updating: fixture text not found"
+    with _with_household(two_marked):
+        try:
+            S.load_panel()
+            raise AssertionError("two rows marked role: pv_backfeed were accepted")
+        except SystemExit as e:
+            assert "2 panel.schedule rows are marked role: pv_backfeed" in str(e), e
+    return "two schedule rows both marked role: pv_backfeed fails closed"
 
 
 def case_unrecognized_breaker_position_fails_closed():
@@ -4932,7 +4967,9 @@ CASES = [
     case_meter_socket_requires_a_meter_main_enclosure,
     case_meter_socket_accepts_the_unhyphenated_spelling_too,
     case_pv_backfeed_must_match_a_schedule_breaker,
-    case_KNOWN_LIMITATION_an_unrelated_same_rated_breaker_still_passes,
+    case_pv_backfeed_omitted_row_with_unrelated_same_rated_breaker_fails_closed,
+    case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked,
+    case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed,
     case_unrecognized_breaker_position_fails_closed,
     case_schedule_device_and_label_must_be_non_empty_text,
     case_a_schedule_larger_than_its_enclosure_fails_closed,
