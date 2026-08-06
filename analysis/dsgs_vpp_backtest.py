@@ -1076,7 +1076,8 @@ def backtest(d, cal, reserve_frac=BACKUP_RESERVE_FRAC, charge_kw=None):
     result = {
         "hypothetical": True,
         "household_has_battery_today": False,
-        "battery_config": {"usable_kwh": CAP, "power_kw": BATT_KW, "charge_kw": CHARGE_KW,
+        "battery_config": {"usable_kwh": CAP, "power_kw": BATT_KW,
+                            "charge_kw": BATT_KW if charge_kw is None else charge_kw,
                             "round_trip_eta": 0.90},
         "measured_window": {"start": window_start.isoformat(), "end": window_end.isoformat()},
         "udc_identity_caveat": (

@@ -1173,6 +1173,39 @@ def case_bau_bill_matches_battery_dispatch_policies_committed_figure():
 
 
 @case
+def case_battery_config_charge_kw_reflects_the_effective_input_not_a_fixed_constant():
+    """Issue #71 (adversarial-review finding on that PR): battery_config["charge_kw"]
+    must report the charge rate THIS backtest() call actually simulated, not the
+    hardcoded module-level CHARGE_KW constant -- an earlier draft of the #71 fix
+    always reported CHARGE_KW regardless of what charge_kw was actually passed,
+    which happened to be correct for main()'s one production call site (it always
+    passes charge_kw=CHARGE_KW explicitly) but would silently mislabel any OTHER
+    caller's result, e.g. backtest()'s own charge_kw=None default (symmetric with
+    discharge, BATT_KW) or a sensitivity value different from the nameplate 5 kW."""
+    _require_archive()
+    _require_calendar()
+    d = br.load()
+    cal = vb.load_calendar()
+
+    default_result = vb.backtest(d, cal, charge_kw=None)
+    assert default_result["battery_config"]["charge_kw"] == vb.BATT_KW, (
+        default_result["battery_config"], vb.BATT_KW)
+
+    custom_charge_kw = 7.3   # deliberately not CHARGE_KW (5.0) or BATT_KW (11.5)
+    custom_result = vb.backtest(d, cal, charge_kw=custom_charge_kw)
+    assert custom_result["battery_config"]["charge_kw"] == custom_charge_kw, (
+        custom_result["battery_config"], custom_charge_kw)
+
+    nameplate_result = vb.backtest(d, cal, charge_kw=vb.CHARGE_KW)
+    assert nameplate_result["battery_config"]["charge_kw"] == vb.CHARGE_KW, (
+        nameplate_result["battery_config"], vb.CHARGE_KW)
+
+    return ("battery_config.charge_kw tracks the effective per-call charge_kw "
+            f"(None->{vb.BATT_KW}, custom->{custom_charge_kw}, nameplate->{vb.CHARGE_KW}), "
+            "not a fixed constant")
+
+
+@case
 def case_artifact_regenerates_byte_identically():
     """main() now embeds per_aggregation_sensitivity (Defect-#2 fix), which needs the
     private raw CEC archive to compute -- so full byte-identical regeneration needs
