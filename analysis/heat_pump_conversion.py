@@ -79,7 +79,6 @@ full, with no minimum floor left behind.
 Run AFTER behavior_rebuild.py in the same working directory (needs its
 staged usage.csv); writes data/heat_pump_conversion.json.
 """
-import datetime as dt
 import json
 import os
 import sys
