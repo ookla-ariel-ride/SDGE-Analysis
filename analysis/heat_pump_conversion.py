@@ -362,21 +362,38 @@ def gas_savings_by_period(iso):
     total_hdd = iso["total_hdd"]
     ann_heat = iso["annual_heating_therms"]
 
-    # Each period's own date range: statement_date is the END of the period;
-    # bill_periods_gas.csv's own "period" column names the range in prose,
-    # not machine-readable start/end columns, so periods are reconstructed
-    # by sorting statements and taking (previous statement_date, this one].
-    periods = periods.sort_values("statement_date").reset_index(drop=True)
-    starts = [None] + list(periods["statement_date"][:-1])
+    # Each period's own REAL service dates come straight from the CSV's own
+    # "period" column ("Mon DD, YYYY - Mon DD, YYYY", the exact range SDG&E
+    # itself prints on the statement) -- NOT reconstructed from adjacent
+    # statement_dates. Codex adversarial review, issue #1, pass 3: an
+    # earlier version of this function assumed "period" was unparseable
+    # prose and rebuilt each period as (previous statement_date, this one],
+    # which can be off by several real days from the printed range (the
+    # 2025-11-28 statement's own printed period is Oct 28-Nov 25; the
+    # reconstruction gave approximately Oct 30-Nov 28) -- shifting which
+    # calendar days' HDD gets attributed to which period, and to which
+    # period's own realized $/therm rate.
+    periods[["period_start", "period_end"]] = periods["period"].str.split(
+        " - ", expand=True).apply(lambda c: pd.to_datetime(c, format="%b %d, %Y").dt.date)
+    periods = periods.sort_values("period_start").reset_index(drop=True)
+    for i in range(1, len(periods)):
+        prev_end = periods.loc[i - 1, "period_end"]
+        this_start = periods.loc[i, "period_start"]
+        gap = (this_start - prev_end).days
+        if gap != 1:
+            raise SystemExit(
+                f"heat_pump_conversion.py: gas billing periods are not "
+                f"contiguous -- {periods.loc[i - 1, 'statement_date']}'s period "
+                f"ends {prev_end}, but {periods.loc[i, 'statement_date']}'s "
+                f"period starts {this_start} ({gap - 1} day gap, or an "
+                "overlap if negative) -- a real coverage gap changes which "
+                "days' HDD gets attributed to which period's own rate")
     rows = []
     total_savings = 0.0
     total_allocated_heat = 0.0
     for i, row in periods.iterrows():
-        end = row["statement_date"]
-        start = starts[i]
-        if start is None:
-            start = end - dt.timedelta(days=32)   # first period: no prior statement to bound it
-        period_hdd = hdd_by_day[(hdd_by_day.index > start) & (hdd_by_day.index <= end)].sum()
+        start, end = row["period_start"], row["period_end"]
+        period_hdd = hdd_by_day[(hdd_by_day.index >= start) & (hdd_by_day.index <= end)].sum()
         heat_share = ann_heat * (period_hdd / total_hdd) if total_hdd > 0 else 0.0
         therms = row["therms"]
         all_in_rate = row["total_gas_service"] / therms if therms > 0 else 0.0
@@ -384,7 +401,7 @@ def gas_savings_by_period(iso):
         total_savings += savings
         total_allocated_heat += heat_share
         rows.append({
-            "statement_date": str(end),
+            "statement_date": str(row["statement_date"]),
             "therms": float(therms),
             "period_hdd": round(float(period_hdd), 1),
             "heating_therms_attributed": round(float(min(heat_share, therms)), 2),
@@ -408,10 +425,22 @@ def build_hp_load_series(d, iso, cop):
       on_peak    -- BRACKET upper bound on cost: every kWh forced into that
                     day's on-peak (4-9pm) intervals only.
       off_peak   -- BRACKET lower bound on cost: every kWh forced into that
-                    day's off-peak/super-off-peak intervals only.
+                    day's SUPER-OFF-PEAK intervals only (rates.period()'s
+                    "sop" code) -- the genuinely cheapest tariff period, not
+                    "not on-peak" (Codex adversarial review, issue #1, pass
+                    3: EV-TOU-5 has THREE tiers, not two; a load spread
+                    across off-peak AND super-off-peak together is not the
+                    true floor, since super-off-peak alone prices lower
+                    than off-peak). Physically plausible too: weekday
+                    super-off-peak runs before 6am and 10am-2pm -- exactly
+                    the overnight/pre-dawn window ASHRAE's own pickup-load
+                    convention (cited in this module's own docstring) says
+                    heating demand concentrates in.
 
-    A day with zero intervals of the required kind (on_peak/off_peak) falls
-    back to uniform for that day alone, logged, never silently dropped.
+    A day with zero intervals of the required kind (on_peak/super-off-peak)
+    falls back to uniform for that day alone, logged, never silently dropped
+    -- weekend days can plausibly need this (rates.period() gives a weekend
+    day sop only before 2pm, off afterward, so a mask CAN come up empty).
     """
     hdd_by_day = iso["hdd_by_day"]
     total_hdd = iso["total_hdd"]
@@ -421,7 +450,7 @@ def build_hp_load_series(d, iso, cop):
     out = {"uniform": pd.Series(0.0, index=d.index),
            "on_peak": pd.Series(0.0, index=d.index),
            "off_peak": pd.Series(0.0, index=d.index)}
-    fallback_days = 0
+    fallback_days = {"on_peak": 0, "off_peak": 0}
     for day, day_hdd in hdd_by_day.items():
         if day_hdd <= 0 or total_hdd <= 0:
             continue
@@ -438,14 +467,15 @@ def build_hp_load_series(d, iso, cop):
             out["on_peak"].loc[on_mask] += day_kwh / n_on
         else:
             out["on_peak"].loc[mask] += day_kwh / n
-            fallback_days += 1
+            fallback_days["on_peak"] += 1
 
-        off_mask = mask & (d["p"] != "on")
-        n_off = int(off_mask.sum())
-        if n_off > 0:
-            out["off_peak"].loc[off_mask] += day_kwh / n_off
+        sop_mask = mask & (d["p"] == "sop")
+        n_sop = int(sop_mask.sum())
+        if n_sop > 0:
+            out["off_peak"].loc[sop_mask] += day_kwh / n_sop
         else:
             out["off_peak"].loc[mask] += day_kwh / n
+            fallback_days["off_peak"] += 1
 
     return out, ann_heat_kwh, fallback_days
 

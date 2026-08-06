@@ -246,6 +246,7 @@ def case_gas_savings_use_the_periods_own_blended_realized_rate():
         tmp = pathlib.Path(td)
         periods = pd.DataFrame({
             "statement_date": ["2026-01-31"],
+            "period": ["Jan 1, 2026 - Jan 31, 2026"],
             "therms": [60.0],
             # blended average deliberately does NOT equal either tier rate on
             # its own: total_gas_service also embeds the real Gas Energy
@@ -386,6 +387,8 @@ def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
             # was billed" cap never binds -- this fixture checks the
             # allocation arithmetic itself, not the separate capping rule
             "statement_date": ["2026-01-31", "2026-02-28", "2026-03-31"],
+            "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
+                      "Mar 1, 2026 - Mar 31, 2026"],
             "therms": [50.0, 50.0, 50.0],
             "total_gas_service": [135.0, 135.0, 135.0],   # $2.70/therm flat, hand-checkable
         })
@@ -422,6 +425,8 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
         tmp = pathlib.Path(td)
         periods = pd.DataFrame({
             "statement_date": ["2026-01-31", "2026-02-28", "2026-03-31"],
+            "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
+                      "Mar 1, 2026 - Mar 31, 2026"],
             "therms": [40.0, 35.0, 20.0],   # March's 20 is less than its own HDD share would imply
             "total_gas_service": [108.0, 94.5, 54.0],
         })
@@ -447,6 +452,64 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
     assert abs(total_allocated - 95) <= 1, total_allocated
     assert total_savings < 95 * 2.70, (total_savings, "capping must reduce total savings below the uncapped figure")
     return "a period's attributed heating is capped at its own billed therms, never exceeding what was paid"
+
+
+@case
+def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
+    """Codex adversarial review, issue #1, pass 3, using the exact real
+    example it named: the 2025-11-28 statement's own printed period is
+    "Oct 28, 2025 - Nov 25, 2025". Reconstructing periods from adjacent
+    statement_dates instead (an earlier version of this function did this)
+    would have bounded that period as roughly Oct 30-Nov 28 -- several real
+    days off, pulling in some of December's colder HDD and excluding some
+    of late October's. This proves the real printed dates are what the
+    period_hdd sum is actually computed from."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        periods = pd.DataFrame({
+            "statement_date": ["2025-10-29", "2025-11-28"],
+            "period": ["Sep 26, 2025 - Oct 27, 2025", "Oct 28, 2025 - Nov 25, 2025"],
+            "therms": [14.0, 34.0],
+            "total_gas_service": [35.61, 93.57],
+        })
+        csv_path = tmp / "bill_periods_gas.csv"
+        periods.to_csv(csv_path, index=False)
+        real_path = hpc.GAS_PERIODS_CSV
+        hpc.GAS_PERIODS_CSV = str(csv_path)
+        try:
+            # 1 HDD/day everywhere EXCEPT a spike (100) on Oct 26-28 and Nov
+            # 26-30 -- days that straddle the REAL Nov period's boundary
+            # (Oct 28 - Nov 25) closely enough that a same-statement-date
+            # reconstruction (which would have bounded it roughly Oct 30 -
+            # Nov 28 instead, per Codex's own named example) misattributes
+            # some of them. Built as one dict (last write wins per date),
+            # never pd.concat of overlapping Series, which would duplicate
+            # rather than overwrite an index label.
+            values = {dt.date(2025, 9, d): 1.0 for d in range(26, 31)}
+            values.update({dt.date(2025, 10, d): 1.0 for d in range(1, 32)})
+            values.update({dt.date(2025, 11, d): 1.0 for d in range(1, 26)})
+            values.update({dt.date(2025, 10, d): 100.0 for d in (26, 27, 28)})
+            values.update({dt.date(2025, 11, d): 100.0 for d in (26, 27, 28, 29, 30)})
+            hdd_by_day = pd.Series(values)
+            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+                  "annual_heating_therms": 30.0}
+            rows, _, _ = hpc.gas_savings_by_period(iso)
+        finally:
+            hpc.GAS_PERIODS_CSV = real_path
+    nov = next(r for r in rows if r["statement_date"] == "2025-11-28")
+    oct_ = next(r for r in rows if r["statement_date"] == "2025-10-29")
+    # the real Nov period (Oct 28 - Nov 25, inclusive) contains one spike day
+    # (Oct 28, value 100), three ordinary Oct days (29-31, value 1 each),
+    # and 25 ordinary Nov days (1-25, value 1 each) = 100+3+25 = 128; it
+    # must NOT include the Oct 26-27 spike (belongs to the real Oct period)
+    # or the Nov 26-30 spike (belongs to the NEXT period, not in this
+    # fixture at all) -- either leaking in would move this off 128
+    assert nov["period_hdd"] == 128.0, nov
+    # the real Oct period (Sep 26 - Oct 27, inclusive): 5 Sep days + 25
+    # ordinary Oct days (1-25) at value 1, plus the Oct 26-27 spike (2 days
+    # x100) -- must NOT include Oct 28 (belongs to the Nov period, not this one)
+    assert oct_["period_hdd"] == 230.0, oct_
+    return "gas savings correctly use the real printed period dates, not a statement-date reconstruction"
 
 
 @case
