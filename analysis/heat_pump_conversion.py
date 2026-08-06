@@ -13,9 +13,13 @@ checkable against CLAUDE.md's own rules:
     (a "typical morning/evening heating shape" is a real HVAC convention --
     ASHRAE Handbook--Fundamentals Ch.17 documents an overnight-setback
     "pickup load" recovery peak -- but this house's own OWN diurnal shape
-    was never measured), this script bounds the true answer with an
-    on-peak/off-peak BRACKET sensitivity (the two extremes any real shape
-    must fall between) plus a UNIFORM-within-day illustrative midpoint
+    was never measured), this script illustrates the sensitivity with an
+    on-peak/off-peak BRACKET (each side spreads the day's kWh evenly across
+    every interval of its own TOU window -- a plausible concentrated shape,
+    not a computed cost extremum; a real schedule concentrated into one
+    specific interval within that window could in principle land outside
+    this bracket, Codex review, issue #1, pass 3) plus a UNIFORM-within-day
+    illustrative midpoint
     (each heating day's own kWh spread evenly across that day's own real
     intervals) for a single reference number to anchor the payback tables
     against. Uniform spreading is itself a real, specific operational
@@ -284,7 +288,8 @@ def isolate_heating_therms():
             "both a water-heating floor and space heating; a method finding "
             "otherwise signals a real data problem, not a fact about this house")
 
-    disagreement_pct = abs(ann_floor_summer - ann_floor_hdd) / ann_floor_hdd * 100
+    floor_disagreement_pct = abs(ann_floor_summer - ann_floor_hdd) / ann_floor_hdd * 100
+    heating_disagreement_pct = abs(ann_heat_summer - ann_heat_hdd) / ann_heat_hdd * 100
     return {
         "annual_total_therms": round(ann_total),
         "summer_baseline": {
@@ -300,14 +305,23 @@ def isolate_heating_therms():
             "heating_therms_yr": round(ann_heat_hdd),
             "slope_therms_per_hdd": round(slope_hdd, 4),
         },
+        # Codex review, issue #1: report BOTH disagreements distinctly, never
+        # let one stand in for the other in prose -- floor and heating are
+        # different quantities with different (and here, different-looking)
+        # agreement percentages.
         "cross_check": {
-            "floor_disagreement_pct": round(disagreement_pct, 1),
+            "floor_disagreement_pct": round(floor_disagreement_pct, 1),
+            "heating_disagreement_pct": round(heating_disagreement_pct, 1),
             "note": ("the two independent methods' non-heating floors "
                      f"({round(ann_floor_summer)} vs {round(ann_floor_hdd)} "
-                     "therms/yr) are compared as a cross-check, not averaged; "
-                     "the HDD regression drives every downstream figure below "
-                     "since it alone can attribute a SPECIFIC day's therms to "
-                     "that day's own heating demand, which the electric "
+                     f"therms/yr, {round(floor_disagreement_pct, 1)}% apart) "
+                     "and heating estimates "
+                     f"({round(ann_heat_summer)} vs {round(ann_heat_hdd)} "
+                     f"therms/yr, {round(heating_disagreement_pct, 1)}% apart) "
+                     "are compared as cross-checks, not averaged; the HDD "
+                     "regression drives every downstream figure below since "
+                     "it alone can attribute a SPECIFIC day's therms to that "
+                     "day's own heating demand, which the electric "
                      "re-billing needs"),
         },
         "annual_heating_therms": round(ann_heat_hdd),
@@ -422,20 +436,29 @@ def build_hp_load_series(d, iso, cop):
                     share) spreads evenly across that day's own real
                     intervals -- a real, specific operational assumption
                     (uniform-in-time), not the absence of one.
-      on_peak    -- BRACKET upper bound on cost: every kWh forced into that
-                    day's on-peak (4-9pm) intervals only.
-      off_peak   -- BRACKET lower bound on cost: every kWh forced into that
-                    day's SUPER-OFF-PEAK intervals only (rates.period()'s
-                    "sop" code) -- the genuinely cheapest tariff period, not
-                    "not on-peak" (Codex adversarial review, issue #1, pass
-                    3: EV-TOU-5 has THREE tiers, not two; a load spread
-                    across off-peak AND super-off-peak together is not the
-                    true floor, since super-off-peak alone prices lower
-                    than off-peak). Physically plausible too: weekday
-                    super-off-peak runs before 6am and 10am-2pm -- exactly
-                    the overnight/pre-dawn window ASHRAE's own pickup-load
-                    convention (cited in this module's own docstring) says
-                    heating demand concentrates in.
+      on_peak    -- ILLUSTRATIVE high-cost lean: every kWh spread evenly
+                    across that day's on-peak (4-9pm) intervals only.
+      off_peak   -- ILLUSTRATIVE low-cost lean: every kWh spread evenly
+                    across that day's SUPER-OFF-PEAK intervals only
+                    (rates.period()'s "sop" code) -- the genuinely cheapest
+                    tariff period, not "not on-peak" (Codex adversarial
+                    review, issue #1, pass 3: EV-TOU-5 has THREE tiers, not
+                    two; a load spread across off-peak AND super-off-peak
+                    together is not the cheap lean, since super-off-peak
+                    alone prices lower than off-peak). Physically plausible
+                    too: weekday super-off-peak runs before 6am and
+                    10am-2pm -- exactly the overnight/pre-dawn window
+                    ASHRAE's own pickup-load convention (cited in this
+                    module's own docstring) says heating demand
+                    concentrates in.
+
+    Neither on_peak nor off_peak is a computed cost extremum: each spreads
+    evenly across every interval of its own TOU window rather than solving
+    for the single cheapest or costliest interval placement, so a real
+    schedule concentrated into one specific interval within that window
+    could in principle land outside this bracket in either direction
+    (Codex review, issue #1, pass 3). These are illustrative
+    TOU-concentrated distributions, not proven upper/lower bounds.
 
     A day with zero intervals of the required kind (on_peak/super-off-peak)
     falls back to uniform for that day alone, logged, never silently dropped

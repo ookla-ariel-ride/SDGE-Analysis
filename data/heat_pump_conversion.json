@@ -306,7 +306,8 @@
   "annual_total_therms": 342,
   "cross_check": {
    "floor_disagreement_pct": 6.4,
-   "note": "the two independent methods' non-heating floors (146 vs 137 therms/yr) are compared as a cross-check, not averaged; the HDD regression drives every downstream figure below since it alone can attribute a SPECIFIC day's therms to that day's own heating demand, which the electric re-billing needs"
+   "heating_disagreement_pct": 4.3,
+   "note": "the two independent methods' non-heating floors (146 vs 137 therms/yr, 6.4% apart) and heating estimates (197 vs 205 therms/yr, 4.3% apart) are compared as cross-checks, not averaged; the HDD regression drives every downstream figure below since it alone can attribute a SPECIFIC day's therms to that day's own heating demand, which the electric re-billing needs"
   },
   "hdd_regression": {
    "floor_therms_yr": 137,
