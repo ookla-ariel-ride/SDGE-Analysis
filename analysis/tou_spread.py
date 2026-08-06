@@ -179,8 +179,51 @@ def _repo_root():
 
 
 ROOT = _repo_root()
+sys.path.insert(0, str(ROOT / "analysis"))
+import rates as RATES              # noqa: E402  -- canonical SUMMER_MONTHS, read-only
+
 DETAIL = ROOT / "data" / "bill_tou_detail.csv"
 OUT = ROOT / "data" / "tou_spread.json"
+
+
+def _season_of(day):
+    return "summer" if day.month in RATES.SUMMER_MONTHS else "winter"
+
+
+def _season_blocks(a, b):
+    """Contiguous (season, start, end) runs covering the period [a, b] --
+    same calendar-anchored logic as rates_history.py's own _season_blocks
+    (issue #32's own fix sketch), reimplemented here rather than imported
+    since it is a small, self-contained calendar walk and this module
+    otherwise has no dependency on rates_history.py."""
+    out = []
+    day = a
+    while day <= b:
+        s = _season_of(day)
+        start = day
+        while day < b and _season_of(day + dt.timedelta(days=1)) == s:
+            day += dt.timedelta(days=1)
+        out.append((s, start, day))
+        day += dt.timedelta(days=1)
+    if len(out) > 2:
+        raise SystemExit(f"tou_spread.py: period {a}..{b} crosses more than "
+                         f"one season boundary: {out}")
+    return out
+
+
+def _season_block_start(period_start, period_end, season):
+    """The calendar-anchored start of `season`'s own block within
+    [period_start, period_end] -- the later of the period start and the
+    season's own first day, never assumed to be the period start (issue #32:
+    a season-crossing period's second season block was wrongly dated from
+    the period start instead of from the day that season actually began)."""
+    blocks = _season_blocks(period_start, period_end)
+    matches = [b for b in blocks if b[0] == season]
+    if not matches:
+        raise SystemExit(f"tou_spread.py: period {period_start}..{period_end} "
+                         f"has no {season!r} block per the season calendar, but "
+                         f"bill_tou_detail.csv prints one")
+    return matches[0][1]
 
 # The provider break. Delivery is the charged tariff on both sides of it;
 # generation is charged only before it. See rates_history.py.
@@ -217,9 +260,14 @@ def _priced_rows():
     """Every row that states an actual unit price, with its observation date.
 
     Segments split a statement at a mid-cycle rate change. Segment 0 starts at
-    the period start; segment 1 follows it. Each observation is dated at the
-    MIDPOINT of its own segment, so a rate that ran seven days is not given the
-    same weight of placement as one that ran twenty-five.
+    the LATER of the period start and that segment's own season block's
+    calendar start (issue #32: a season-crossing period's second season block
+    was previously dated from the period start, not from the day that season
+    actually began -- e.g. period 5/25/24-6/25/24's summer block covers only
+    6/1-6/25, not the full period, so segment 0 there starts 6/1, not 5/25);
+    segment 1 follows it. Each observation is dated at the MIDPOINT of its own
+    segment, so a rate that ran seven days is not given the same weight of
+    placement as one that ran twenty-five.
     """
     if not DETAIL.exists():
         raise SystemExit(f"tou_spread.py: missing {DETAIL} -- run parse_bills.py first")
@@ -246,10 +294,12 @@ def _priced_rows():
             continue
 
         start, end = _parse_period(r["period"])
+        season_start = _season_block_start(start, end, r["season"])
         seg = int(r["segment"])
         seg_days = int(r["segment_days"])
-        # Segment 0 occupies the first seg_days of the period; segment 1 the rest.
-        seg_start = start if seg == 0 else start + dt.timedelta(
+        # Segment 0 occupies the first seg_days of its OWN season block
+        # (anchored to season_start, not the period start); segment 1 the rest.
+        seg_start = season_start if seg == 0 else season_start + dt.timedelta(
             days=sum(int(x["segment_days"]) for x in rows
                      if x["statement_date"] == r["statement_date"]
                      and x["period"] == r["period"]
