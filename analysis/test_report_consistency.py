@@ -448,6 +448,57 @@ def case_tou_structure_stress_table_matches_the_artifact():
     return "the §7 tariff-structure-risk table matches the live tou_structure_stress artifact"
 
 
+def case_dsgs_prestaged_sensitivity_matches_the_artifact():
+    """The §6 event-aware pre-staging disclosure is hand-written, not
+    templated -- lock every cited number (and the direction of the
+    opportunity-cost change) against the live artifact so a regeneration
+    can't silently drift them, and so a sign error like the one caught in
+    adversarial review (issue #85: "opportunity cost falls to $0.14" had it
+    backwards -- it actually WORSENS, from -$11.48 to +$0.14) can't recur
+    silently."""
+    dsgs_path = ROOT / "data" / "dsgs_vpp_backtest.json"
+    assert dsgs_path.exists(), f"{dsgs_path} is committed public data and must exist"
+    dsgs = json.loads(dsgs_path.read_text())
+    reactive_rev = dsgs["revenue"]["reserve_20pct"]
+    reactive_miss = dsgs["miss_rate"]["reserve_20pct"]
+    ps = dsgs["prestaged_sensitivity"]
+    delta = ps["delta_vs_reactive"]
+
+    checks = [
+        f"${reactive_rev['net_usd']:,.2f}",
+        f"${reactive_rev['gross_usd']:,.2f}",
+        f"${ps['net_usd']:,.2f}",
+        f"${ps['gross_usd']:,.2f}",
+        f"+${delta['net_usd']:,.2f}",
+        f"+{delta['net_usd_pct']:.1f}%",
+        f"{reactive_rev['total_discharge_kwh']:,.2f} kWh",
+        f"{ps['total_discharge_kwh']:,.2f} kWh",
+        f"+{delta['total_discharge_kwh']:,.2f} kWh",
+        f"{ps['reserve_frac'] * 100:.0f}%",
+        f"{ps['miss_rate']['misses']} of {ps['miss_rate']['total']}",
+        f"{reactive_miss['misses']} reactive",
+    ]
+    for value in checks:
+        assert value in HTML, f"§6 DSGS pre-staging disclosure: {value!r} not found in the report"
+
+    # the sign-direction bug itself: opportunity cost WORSENS (a negative
+    # "cost" -- itself a net gain -- shrinking toward, then past, zero), not
+    # improves, so the report must say "moves from"/"rises", never "falls"
+    assert reactive_rev["opportunity_cost_usd"] < 0 < ps["opportunity_cost_usd"], (
+        "this test's own premise is wrong if the artifact's signs ever change -- "
+        "re-derive the assertion below, don't just delete it")
+    opp_delta = ps["opportunity_cost_usd"] - reactive_rev["opportunity_cost_usd"]
+    assert abs(delta["gross_usd"] - opp_delta - delta["net_usd"]) < 0.01, (
+        "gross delta minus the opportunity-cost swing must equal the net delta")
+    assert f"−${abs(reactive_rev['opportunity_cost_usd']):,.2f}" in HTML, (
+        "the reactive opportunity cost must appear with its real sign, not silently dropped"
+    )
+    assert "opportunity cost falls" not in HTML, (
+        "opportunity cost RISES under pre-staging (a smaller net gain than gross "
+        "alone suggests) -- 'falls' has the direction backwards")
+    return "the §6 DSGS pre-staging disclosure matches the live artifact, direction included"
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -465,6 +516,7 @@ CASES = [
     case_sizing_curve_knee_direction_is_not_reversed,
     case_optimality_gap_table_matches_the_artifact,
     case_tou_structure_stress_table_matches_the_artifact,
+    case_dsgs_prestaged_sensitivity_matches_the_artifact,
 ]
 
 
