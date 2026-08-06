@@ -4,13 +4,29 @@ generator actually reads, so a fresh worktree staged only by the script can
 run the full pipeline (issue #33).
 
 The required-input set is DERIVED by scanning every generator's own source
-for its private/1-raw-data path references, in the three shapes this repo's
-generators actually use (a pathlib chain, os.path.join, or a
-ROOT/"private"/"1-raw-data" directory variable referenced later) -- not
-hand-typed here -- so a newly added private input a future generator reads
-and stage-private-data.sh does not stage fails this suite instead of silently
-breaking a fresh worktree the way electric-bills/, gas-bills/ and
-electric_billing_history_2024-2026.csv did before this issue.
+for its private/1-raw-data path references, in the four shapes this repo's
+generators actually use (a pathlib chain, os.path.join, a
+ROOT/"private"/"1-raw-data" directory variable referenced later, or a .glob()
+call directly on that bare root variable/expression with either a literal
+pattern or a same-file string constant) -- not hand-typed here -- so a newly
+added private input a future generator reads and stage-private-data.sh does
+not stage fails this suite instead of silently breaking a fresh worktree the
+way electric-bills/, gas-bills/ and electric_billing_history_2024-2026.csv
+did before this issue.
+
+KNOWN GAP, left honest rather than silently claimed solved (Codex review,
+issue #33, round 1): service_headroom.py's only_match(pattern, what) takes
+its glob pattern as a FUNCTION PARAMETER, so `RAW_DIR.glob(pattern)` at
+service_headroom.py:746 cannot be resolved by scanning that line alone --
+doing so would require tracing every call site of an arbitrary function,
+which this scanner does not attempt. Both of that function's actual call
+sites (service_headroom.py:3941,4785) pass the literal
+"Electric_15_Minute_*.csv", already staged and already caught directly at
+its OTHER two call shapes elsewhere in the codebase (service_headroom.py's
+own RAW_DIR.glob("enphase_sam8760_*.csv") calls, and
+irreducible_bill.py's (ROOT/"private"/"1-raw-data").glob(RAW_INTERVAL_GLOB))
+-- verified by hand, not by this scanner, and re-verify by hand if
+only_match() ever gains a new call site with a new pattern.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_stage_private_data.py
 """
@@ -42,9 +58,30 @@ OPTIONAL_NOT_STAGED = {
 }
 
 _ROOT_VAR = re.compile(r'^(\w+)\s*=\s*ROOT\s*/\s*"private"\s*/\s*"1-raw-data"\s*$', re.M)
+_ANON_ROOT = r'\(\s*ROOT\s*/\s*"private"\s*/\s*"1-raw-data"\s*\)'
 _DIRECT = re.compile(r'"private"\s*/\s*"1-raw-data"\s*/\s*"([^"/]+)"')
 _OS_JOIN = re.compile(
     r'os\.path\.join\(\s*ROOT\s*,\s*"private"\s*,\s*"1-raw-data"\s*,\s*"([^"/]+)"')
+_STR_CONST = re.compile(r'^(\w+)\s*=\s*"([^"]+)"\s*$', re.M)
+
+
+def _glob_matches(text, receiver_pattern):
+    """.glob(...) calls on `receiver_pattern` (a bare 1-raw-data root, never a
+    subdirectory var -- a glob on an already-staged subdirectory like
+    ELEC_DIR/GAS_DIR/CAISO_DIR needs no separate entry, since cp -R already
+    covers every file under it). The argument is either a literal string or
+    a same-file string constant's name; a glob argument that is itself a
+    function PARAMETER (service_headroom.py's only_match(pattern, ...)) is
+    not resolved here -- see this module's own docstring."""
+    consts = dict(_STR_CONST.findall(text))
+    out = []
+    for m in re.finditer(receiver_pattern + r'\.glob\(\s*(?:"([^"]+)"|(\w+))\s*\)', text):
+        literal, name = m.group(1), m.group(2)
+        if literal is not None:
+            out.append(literal)
+        elif name in consts:
+            out.append(consts[name])
+    return out
 
 
 def _referenced_1raw_data_paths():
@@ -64,6 +101,10 @@ def _referenced_1raw_data_paths():
         for var in root_vars:
             for m in re.finditer(re.escape(var) + r'\s*/\s*"([^"/]+)"', text):
                 found.setdefault(m.group(1), set()).add(f.name)
+            for pattern in _glob_matches(text, re.escape(var)):
+                found.setdefault(pattern, set()).add(f.name)
+        for pattern in _glob_matches(text, _ANON_ROOT):
+            found.setdefault(pattern, set()).add(f.name)
     return found
 
 
@@ -79,13 +120,27 @@ class SkipCase(Exception):
     """Raised by a case whose preconditions this checkout cannot meet."""
 
 
+def _is_staged(name, script_text):
+    """A literal filename/dirname must appear verbatim; a glob PATTERN
+    (contains '*') is satisfied if the script stages any file matching it --
+    checked via the pattern's own fixed prefix, since the script sometimes
+    stages the concrete files a pattern would match individually rather than
+    reusing the same glob string (e.g. enphase_sam8760_*.csv is satisfied by
+    the script's separate enphase_sam8760_2025.csv/2026.csv lines, not by
+    that literal glob substring)."""
+    if "*" not in name:
+        return name in script_text
+    prefix = name.split("*", 1)[0]
+    return bool(prefix) and prefix in script_text
+
+
 @case
 def case_every_referenced_private_input_is_staged_or_documented_optional():
     referenced = _referenced_1raw_data_paths()
     assert referenced, "the scanner found nothing -- it likely broke silently"
     script_text = SCRIPT.read_text()
     missing = {name: sorted(users) for name, users in referenced.items()
-              if name not in OPTIONAL_NOT_STAGED and name not in script_text}
+              if name not in OPTIONAL_NOT_STAGED and not _is_staged(name, script_text)}
     assert not missing, (
         f"stage-private-data.sh does not stage these private inputs a generator "
         f"reads, and they are not documented in OPTIONAL_NOT_STAGED: {missing}")
@@ -101,7 +156,6 @@ def case_the_scanner_catches_a_planted_missing_input():
         planted = pathlib.Path(td) / "_planted_generator.py"
         planted.write_text(
             'NEW_INPUT = ROOT / "private" / "1-raw-data" / "brand_new_export.csv"\n')
-        real_glob = list(ANALYSIS.glob("*.py"))
         try:
             shutil.copy2(planted, ANALYSIS / "_planted_generator.py")
             referenced = _referenced_1raw_data_paths()
