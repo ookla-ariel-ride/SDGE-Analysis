@@ -238,7 +238,7 @@ def case_the_scanner_catches_a_planted_missing_input():
 
 @case
 def case_the_scanner_catches_single_quoted_references_too():
-    """Codex review, issue #33, round 1 (post-Codex): Python allows either
+    """Codex review, issue #33, pass 1: Python allows either
     quote style, and an earlier version of the scanner only recognized
     double-quoted literals -- a future generator written with single quotes
     (ROOT / 'private' / '1-raw-data' / 'new.csv') would have gone completely
@@ -336,7 +336,7 @@ def case_real_archive_stage_script_produces_every_required_path():
         # household (parse_bills.py's own invariant); the script's own
         # conditional mirrors that, so this check must too, or it would
         # falsely fail on a genuinely supported has_gas:false checkout
-        # (Codex review, issue #33, round 1).
+        # (Codex review, issue #33, pass 1).
         source_has_gas_bills = (src / "private" / "1-raw-data" / "gas-bills").is_dir()
         missing = []
         for name in referenced:
