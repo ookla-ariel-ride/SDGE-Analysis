@@ -1631,7 +1631,12 @@ def validate_panel(p):
         _private_text_ok(f"schedule[{i}].device", e.get("device"))
         _private_text_ok(f"schedule[{i}].label", e.get("label"))
         role = e.get("role")
-        if role is not None and role not in SCHEDULE_ROW_ROLES:
+        if role is not None and (not isinstance(role, str)
+                                 or role not in SCHEDULE_ROW_ROLES):
+            # Codex review, issue #83: `role not in SCHEDULE_ROW_ROLES` alone
+            # raises an uncaught TypeError on an unhashable value (a YAML
+            # list or mapping) instead of failing closed with the intended
+            # message -- the isinstance check has to run first.
             _panel_domain_error(
                 f"schedule[{i}].role", role,
                 f"is not a recognized row role -- {sorted(SCHEDULE_ROW_ROLES)} "

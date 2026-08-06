@@ -1244,6 +1244,33 @@ def case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked():
            "when a matching amp happens to exist")
 
 
+def case_schedule_role_fails_closed_on_a_non_string_value_without_crashing():
+    """Codex review, issue #83: a role value that is a YAML list or mapping
+    is unhashable, and `role not in SCHEDULE_ROW_ROLES` alone would raise an
+    uncaught TypeError on it instead of the intended fail-closed
+    _panel_domain_error -- this proves it does not crash and reports the
+    same clean message a bad string role gets.
+
+    Based on PANEL_YAML_NO_BACKFEED (pv_backfeed_a: null, no row marked) so
+    the pv_backfeed_a cross-check has nothing to say about this row -- a
+    list-valued role on an ORDINARY row is what actually reaches the
+    per-row vocabulary check the crash was in, proving the fix on its own
+    terms rather than being masked by an earlier, unrelated failure."""
+    role_is_a_list = PANEL_YAML_NO_BACKFEED.replace(
+        "label: EV charger}", "label: EV charger, role: [pv_backfeed]}")
+    assert role_is_a_list != PANEL_YAML_NO_BACKFEED, \
+        "test needs updating: fixture text not found"
+    with _with_household(role_is_a_list):
+        try:
+            S.load_panel()
+            raise AssertionError("a list-valued schedule role was accepted")
+        except SystemExit as e:
+            assert "schedule[" in str(e) and "role" in str(e), e
+            assert "not a recognized row role" in str(e), e
+        # anything other than SystemExit (a bare TypeError, say) is the bug
+    return "a non-string schedule row role fails closed cleanly, not with an uncaught exception"
+
+
 def case_pv_backfeed_role_rejects_a_tandem_or_quad_row():
     """Codex adversarial review, issue #83, pass 2: a tandem/quad row's
     `amps` is a LIST because breaker_geometry() treats it as several
@@ -5074,6 +5101,7 @@ CASES = [
     case_pv_backfeed_must_match_a_schedule_breaker,
     case_pv_backfeed_omitted_row_with_unrelated_same_rated_breaker_fails_closed,
     case_pv_backfeed_fails_closed_with_the_row_present_but_unmarked,
+    case_schedule_role_fails_closed_on_a_non_string_value_without_crashing,
     case_pv_backfeed_role_rejects_a_tandem_or_quad_row,
     case_pv_backfeed_fails_closed_on_two_rows_marked_pv_backfeed,
     case_pv_backfeed_null_contradicts_a_marked_schedule_row,
