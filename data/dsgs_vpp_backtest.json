@@ -2,6 +2,7 @@
  "backup_reserve_caveat": "BACKUP_RESERVE_FRAC=0.20 is an ASSUMED, uncited operating parameter -- no reserve figure is established elsewhere in this repository (checked against battery_backup_sims.py and extended_findings.py; the existing outage-endurance sims assume a FULLY charged battery at outage start, the opposite convention). It is an EVENT-HOUR-ONLY dispatch floor: enforced only during a declared DSGS event hour (both the ordinary and the event-forced discharge are capped against it then), NOT a continuously-held standing backup-reserve setting -- ordinary, non-VPP arbitrage in the hours before an event is unaffected, so a real Powerwall's own continuously-enforced reserve setting would leave LESS reserve actually available by the time a declared event starts than this figure implies. A 0% (no reserve) sensitivity is included for comparison.",
  "baseline_kw": 1.2408,
  "battery_config": {
+  "charge_kw": 5.0,
   "power_kw": 11.5,
   "round_trip_eta": 0.9,
   "usable_kwh": 13.5

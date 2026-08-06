@@ -283,6 +283,29 @@ def case_format_specs_render_as_expected_on_known_values():
 
 
 @case
+def case_battery_charge_kw_tokens_match_the_dispatch_policies_source_constants():
+    """Issue #71: BATTERY_CHARGE_KW / BATTERY_EXPANDED_CHARGE_KW are cited_constant
+    tokens (report_tokens.py has no python import of battery_dispatch_policies.py,
+    only JSON reads of its OUTPUT, so the values are literal copies) -- verify them
+    against an independent import of the actual source module's CHARGE_KW /
+    CHARGE_KW_WITH_EXPANSION constants, not just against the hardcoded literal, so a
+    future edit to battery_dispatch_policies.py that changes the charge rating would
+    be caught here rather than silently drifting from the cited value."""
+    import battery_dispatch_policies as bp
+    assert bp.CHARGE_KW == 5.0, bp.CHARGE_KW
+    assert bp.CHARGE_KW_WITH_EXPANSION == 8.0, bp.CHARGE_KW_WITH_EXPANSION
+    bare = rt.resolve_token("BATTERY_CHARGE_KW")
+    expanded = rt.resolve_token("BATTERY_EXPANDED_CHARGE_KW")
+    assert bare == "5.0", bare
+    assert expanded == "8.0", expanded
+    assert bare == f"{bp.CHARGE_KW:.1f}", (bare, bp.CHARGE_KW)
+    assert expanded == f"{bp.CHARGE_KW_WITH_EXPANSION:.1f}", (expanded, bp.CHARGE_KW_WITH_EXPANSION)
+    return ("BATTERY_CHARGE_KW=5.0 kW (bare unit), BATTERY_EXPANDED_CHARGE_KW=8.0 kW "
+            "(with expansion), both matching battery_dispatch_policies.py's own "
+            "CHARGE_KW / CHARGE_KW_WITH_EXPANSION constants")
+
+
+@case
 def case_unknown_token_name_fails_closed_not_keyerror():
     """resolve_token(name) with no spec argument looks the name up in TOKENS itself
     -- that lookup must fail closed (SystemExit naming the token) rather than
