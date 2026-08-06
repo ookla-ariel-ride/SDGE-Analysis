@@ -57,12 +57,19 @@ OPTIONAL_NOT_STAGED = {
                 "data/caiso_hourly_intensity.csv when it is not",
 }
 
-_ROOT_VAR = re.compile(r'^(\w+)\s*=\s*ROOT\s*/\s*"private"\s*/\s*"1-raw-data"\s*$', re.M)
-_ANON_ROOT = r'\(\s*ROOT\s*/\s*"private"\s*/\s*"1-raw-data"\s*\)'
-_DIRECT = re.compile(r'"private"\s*/\s*"1-raw-data"\s*/\s*"([^"/]+)"')
+_Q = '["\']'   # Python allows either quote style; the codebase happens to use
+              # only double quotes today, but the whole point of this scanner
+              # is not to assume that stays true (Codex review, issue #33).
+
+_ROOT_VAR = re.compile(
+    r'^(\w+)\s*=\s*ROOT\s*/\s*' + _Q + r'private' + _Q + r'\s*/\s*' + _Q + r'1-raw-data' + _Q + r'\s*$', re.M)
+_ANON_ROOT = r'\(\s*ROOT\s*/\s*' + _Q + r'private' + _Q + r'\s*/\s*' + _Q + r'1-raw-data' + _Q + r'\s*\)'
+_DIRECT = re.compile(
+    _Q + r'private' + _Q + r'\s*/\s*' + _Q + r'1-raw-data' + _Q + r'\s*/\s*' + _Q + r'([^"\'/]+)' + _Q)
 _OS_JOIN = re.compile(
-    r'os\.path\.join\(\s*ROOT\s*,\s*"private"\s*,\s*"1-raw-data"\s*,\s*"([^"/]+)"')
-_STR_CONST = re.compile(r'^(\w+)\s*=\s*"([^"]+)"\s*$', re.M)
+    r'os\.path\.join\(\s*ROOT\s*,\s*' + _Q + r'private' + _Q + r'\s*,\s*'
+    + _Q + r'1-raw-data' + _Q + r'\s*,\s*' + _Q + r'([^"\'/]+)' + _Q)
+_STR_CONST = re.compile(r'^(\w+)\s*=\s*' + _Q + r'([^"\']+)' + _Q + r'\s*$', re.M)
 
 
 def _glob_matches(text, receiver_pattern):
@@ -75,7 +82,8 @@ def _glob_matches(text, receiver_pattern):
     not resolved here -- see this module's own docstring."""
     consts = dict(_STR_CONST.findall(text))
     out = []
-    for m in re.finditer(receiver_pattern + r'\.glob\(\s*(?:"([^"]+)"|(\w+))\s*\)', text):
+    pat = receiver_pattern + r'\.glob\(\s*(?:' + _Q + r'([^"\']+)' + _Q + r'|(\w+))\s*\)'
+    for m in re.finditer(pat, text):
         literal, name = m.group(1), m.group(2)
         if literal is not None:
             out.append(literal)
@@ -99,7 +107,8 @@ def _referenced_1raw_data_paths():
             for m in pat.finditer(text):
                 found.setdefault(m.group(1), set()).add(f.name)
         for var in root_vars:
-            for m in re.finditer(re.escape(var) + r'\s*/\s*"([^"/]+)"', text):
+            for m in re.finditer(
+                    re.escape(var) + r'\s*/\s*' + _Q + r'([^"\'/]+)' + _Q, text):
                 found.setdefault(m.group(1), set()).add(f.name)
             for pattern in _glob_matches(text, re.escape(var)):
                 found.setdefault(pattern, set()).add(f.name)
@@ -202,6 +211,27 @@ def case_the_scanner_catches_a_planted_missing_input():
 
 
 @case
+def case_the_scanner_catches_single_quoted_references_too():
+    """Codex review, issue #33, round 1 (post-Codex): Python allows either
+    quote style, and an earlier version of the scanner only recognized
+    double-quoted literals -- a future generator written with single quotes
+    (ROOT / 'private' / '1-raw-data' / 'new.csv') would have gone completely
+    undetected, and this suite would have reported a clean pass on a real
+    staging gap."""
+    with tempfile.TemporaryDirectory() as td:
+        planted = pathlib.Path(td) / "_planted_single_quoted.py"
+        planted.write_text(
+            "NEW_INPUT = ROOT / 'private' / '1-raw-data' / 'single_quoted_export.csv'\n")
+        try:
+            shutil.copy2(planted, ANALYSIS / "_planted_single_quoted.py")
+            referenced = _referenced_1raw_data_paths()
+            assert "single_quoted_export.csv" in referenced, referenced
+        finally:
+            (ANALYSIS / "_planted_single_quoted.py").unlink(missing_ok=True)
+    return "a single-quoted private-input reference is detected"
+
+
+@case
 def case_real_archive_stage_script_produces_every_required_path():
     """End-to-end proof of AC-1: run the actual script against this
     machine's real private archive into a scratch directory, and check every
@@ -221,9 +251,17 @@ def case_real_archive_stage_script_produces_every_required_path():
             capture_output=True, text=True)
         assert result.returncode == 0, (
             f"stage-private-data.sh exited {result.returncode}: {result.stderr}")
+        # gas-bills only exists in the source archive for a has_gas:true
+        # household (parse_bills.py's own invariant); the script's own
+        # conditional mirrors that, so this check must too, or it would
+        # falsely fail on a genuinely supported has_gas:false checkout
+        # (Codex review, issue #33, round 1).
+        source_has_gas_bills = (src / "private" / "1-raw-data" / "gas-bills").is_dir()
         missing = []
         for name in referenced:
             if name in OPTIONAL_NOT_STAGED:
+                continue
+            if name == "gas-bills" and not source_has_gas_bills:
                 continue
             if not list((dst / "private" / "1-raw-data").glob(name)) \
                     and not (dst / "private" / "1-raw-data" / name).exists():

@@ -10,8 +10,9 @@
 # What the pipeline needs and why:
 #   private/household.yaml                    intake file (analysis/household.py)
 #   private/1-raw-data/Electric_15_Minute_*.csv  Green Button 15-min interval data
-#   private/1-raw-data/enphase_sam8760_2025.csv  Enphase SAM hourly load, full year
-#   private/1-raw-data/enphase_sam8760_2026.csv  Enphase SAM hourly load, partial year
+#   private/1-raw-data/enphase_sam8760_*.csv  Enphase SAM hourly load, one file per
+#                                             calendar year (glob-copied, so a future
+#                                             year's export needs no script change)
 #   private/1-raw-data/gas.csv                gas Green Button daily therms
 #   private/1-raw-data/electric-bills/*.pdf   detailed electric statements
 #                                             (bill_decomposition.py, parse_bills.py,
@@ -41,8 +42,7 @@ mkdir -p "$DST/private/1-raw-data" "$DST/private/verify"
 
 cp "$SRC/private/household.yaml"                      "$DST/private/household.yaml"
 cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$DST/private/1-raw-data/"
-cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$DST/private/1-raw-data/"
-cp "$SRC/private/1-raw-data/enphase_sam8760_2026.csv" "$DST/private/1-raw-data/"
+cp "$SRC"/private/1-raw-data/enphase_sam8760_*.csv    "$DST/private/1-raw-data/"
 cp "$SRC/private/1-raw-data/gas.csv"                  "$DST/private/1-raw-data/"
 cp -R "$SRC/private/1-raw-data/electric-bills"        "$DST/private/1-raw-data/"
 cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" \
