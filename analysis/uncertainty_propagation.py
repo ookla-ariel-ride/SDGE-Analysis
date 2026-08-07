@@ -1062,14 +1062,27 @@ def dispatch_calibration():
                 100 * (mid_nominal * (1 + soil_slope_loss_mid * (-lossB)) - surplus_point_mid)
                 / mid_nominal, 4),
             "resolution": (
-                "Eliminated by construction, not merely reduced: save1_of() "
-                "now uses soil_slope_surplus, fit directly from this real "
-                "surplus dispatch rerun, for every surplus-like draw "
-                "(prod_noise > 1, i.e. (1 - prod_noise) < 0) instead of "
-                "linearly extrapolating the loss-side slope -- the "
-                "discrepancy above no longer exists in save1_of()'s output "
-                "for any draw, at any magnitude, not just at this "
-                "particular lossB point."),
+                "The ONE-SIDED EXTRAPOLATION discrepancy quantified above is "
+                "eliminated by construction: save1_of() now uses "
+                "soil_slope_surplus, fit directly from this real surplus "
+                "dispatch rerun, for every surplus-like draw (prod_noise > "
+                "1, i.e. (1 - prod_noise) < 0) instead of linearly "
+                "extrapolating the loss-side slope, for any draw magnitude "
+                "-- not just at this particular lossB point. This does NOT "
+                "mean save1_of()'s output exactly reproduces either the "
+                "real mid or real pre surplus point at c=1/c=0: save1_of() "
+                "applies ONE slope per side, averaged across mid/pre "
+                "(matching this module's existing rte_slope convention, "
+                "pre-dating this issue), to the ALREADY c-blended "
+                "base_marginal -- a separate, pre-existing, much smaller "
+                "residual (Codex review, issue #89, pass 2: ~$3.5, ~0.16% "
+                "at this household's real surplus point, comparable in "
+                "size to the analogous rte_slope-averaging residual, versus "
+                "the $14.51/0.65% one-sided-extrapolation discrepancy this "
+                "fix actually targets) that a genuine mid/pre-unaveraged "
+                "slope architecture would remove for every slope-based "
+                "lever, not just this one -- out of this issue's own scope "
+                "box, filed as issue #107 rather than expanding it here."),
         },
     }
 
