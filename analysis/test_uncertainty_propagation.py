@@ -140,18 +140,24 @@ def case_esc_hi_matches_committed_tou_spread_ladder_ceiling():
 @case
 def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
     """Issue #87: `esc` scales save1 by ONE blended factor rather than each
-    TOU period's own separately-measured rate path, because
-    data/tou_spread.json's dedicated structural-break test for the SPREAD
-    trend -- the decision-relevant quantity, not any one period's absolute
-    level (see the (b) docstring above payback_of/npv_of) -- currently
-    returns "not determined" in both seasons: only 3 (summer) / 4 (winter)
-    independent post-break price levels exist, too few to both locate a
-    breakpoint and estimate a slope from. Fitting a per-period escalation
-    model on that same data would be curve-fitting noise, not evidence, so
-    issue #87 resolved as "document the gap" rather than "build the model".
-    If a longer bill corpus ever gives tou_spread.py's test enough power to
-    determine the spread trend, THIS CHECK FAILS -- that is the signal to
-    revisit #87 for real per-period modeling, not to update this assertion."""
+    TOU period's own separately-measured rate path. Most individual TOU
+    cells DO resolve to tight, zero-excluding trends (5 of 6, per
+    data/tou_spread.json's delivery_cell_escalation) -- the per-cell data
+    isn't thin. The reason a per-period model isn't built is that those
+    resolved cells move together and cancel in the SPREAD, the actual
+    arbitrage-relevant quantity (see the (b) docstring above payback_of/
+    npv_of), and the spread-level structural-break test -- the more
+    rigorous tool for that exact question -- currently returns "not
+    determined" in both seasons: only 3 (summer) / 4 (winter) independent
+    post-break price levels exist, too few to both locate a breakpoint and
+    estimate a slope from. Building a per-period model from the same
+    individually-resolved-but-correlated cells would just reproduce esc's
+    existing blended-rate assumption dressed up as period-specific inputs,
+    not new evidence about the spread -- so issue #87 resolved as "document
+    the gap" rather than "build the model". If a longer bill corpus ever
+    gives tou_spread.py's test enough power to determine the spread trend,
+    THIS CHECK FAILS -- that is the signal to revisit #87 for real
+    per-period modeling, not to update this assertion."""
     spread = _committed("tou_spread.json")["delivery_spread"]
     for season in ("summer", "winter"):
         s = spread[season]
