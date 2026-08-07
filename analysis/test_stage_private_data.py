@@ -343,9 +343,18 @@ def case_real_archive_stage_script_produces_every_required_path():
     with tempfile.TemporaryDirectory() as td:
         dst = pathlib.Path(td) / "dst"
         import subprocess
+        # cwd=src: same reason as the synthetic-fixture case above -- without
+        # it, household.py's _repo_root() (Path.cwd() checked before
+        # __file__) resolves against whatever repo this test process happens
+        # to be invoked from rather than `src`. Harmless when invoked from
+        # this same checkout's root, but this repo routinely runs from
+        # sibling git worktrees (limits-wt/sdge-issue-*) with their own
+        # unrelated household.yaml, where the mismatch produces a confusing,
+        # unrelated-looking failure instead of exercising this checkout's
+        # own archive (issue #102 review, round 2).
         result = subprocess.run(
             ["bash", str(SCRIPT), str(src), str(dst)],
-            capture_output=True, text=True)
+            capture_output=True, text=True, cwd=src)
         assert result.returncode == 0, (
             f"stage-private-data.sh exited {result.returncode}: {result.stderr}")
         # gas-bills only exists in the source archive for a has_gas:true
