@@ -2663,7 +2663,7 @@ byte-identical — this script never imports `deep_analyses.py`).
 | EV-behavior persistence | Beta(2,1) compliance fraction *c*, mean 0.667 | **Estimated** — blends `battery_dispatch_policies.json`'s pre-behavior marginal (`pw3.greedy.save`, *c*=0) and post-behavior marginal (`post_behavior.mid.battery_marginal`, *c*=1), the only two compliance points the pipeline computes. This is a MODELED, not-yet-implemented change (§7 recommends it as a pending action, "do it this week," not something this household has sustained) — an earlier draft wrongly called it an already-observed, completed behavior to justify a more confident Beta(4,1) prior (Codex review pass 3 finding). The milder skew toward *c*=1 reflects only the indirect evidence that ~80% of this household's EV charging already lands in favorable windows unshifted (2,618 of ~13,100 kWh/yr currently mis-timed, per `behavior_rebuild.py`'s own session detection). |
 | Soiling / production loss | Triangular(0, 0, lossB) | `data/soiling_results.json`'s two named, genuinely different scenarios, reframed relative to the OBSERVED baseline (Codex review pass 2): the Green Button `Generation` column is this year's actual, already-soiled production, and scenario A **is** "this year's evidence" — so the observed data already embeds roughly scenario A's own loss, and scaling it down by scenario A's raw loss fraction would double-subtract that loss. `lossB` = the INCREMENTAL further loss (as a fraction of measured annual generation) to reach `scenario_B_2024_cleaning_evidence`'s worse, dirtier rate, relative to that same observed baseline — not scenario B's raw loss applied on top of an already-reduced series. Converted into a battery-saving derate via a REAL, calibrated sensitivity (below), not an assumed proportionality. |
 | Round-trip efficiency (RTE) | Uniform(85%, 95%) | **Engineering estimate** around the Powerwall 3 nameplate 90% round-trip spec (`battery_dispatch_policies.py`'s `ETA = sqrt(0.90)`); no independent RTE measurement exists in this repo for this household. |
-| Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical** — `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the ANNUAL relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the MEAN daily gap rather than shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap) rather than each day being an independent noisy draw that would average out. Routed through the SAME calibrated generation-sensitivity (`soil_slope`, below) as soiling rather than applied as a direct 1:1 multiplier on the dollar saving — a production-measurement discrepancy and a soiling-driven generation loss are uncertainty about the identical physical quantity, so an equal-fraction change from either source must move the saving identically (adversarial review pass 2, finding 2: an earlier draft assumed a 1:1 response, overstating this lever's swing roughly 1/`soil_slope`-fold). |
+| Production measurement spread | Normal(mean 1.0, sd ≈2.05%) | **Empirical** — `data/threeway_production_validation.csv`'s 365-day PVOutput-vs-Enphase-meter comparison. The sd used is the ANNUAL relative gap between the two full-year totals (≈2.05%), not the larger day-to-day relative std (≈2.8%): the annual gap tracks the MEAN daily gap rather than shrinking by 1/√365, which is evidence the two meters disagree systematically (a persistent accounting/calibration gap) rather than each day being an independent noisy draw that would average out. Routed through the SAME calibrated generation-sensitivity as soiling (`soil_slope_loss`/`soil_slope_surplus`, below) rather than applied as a direct 1:1 multiplier on the dollar saving — a production-measurement discrepancy and a soiling-driven generation change are uncertainty about the identical physical quantity, so an equal-fraction change from either source must move the saving identically PROVIDED it's on the same side (a shortfall from either source routes through `soil_slope_loss`; a surplus from either source routes through `soil_slope_surplus`, issue #89 — the two are no longer one shared number, since `scale_production()`'s loss/surplus reallocation is genuinely asymmetric by physical design) (adversarial review pass 2, finding 2: an earlier draft assumed a 1:1 response, overstating this lever's swing roughly 1/`soil_slope`-fold). |
 
 **Calibrating the RTE and soiling saving-sensitivity from the REAL engine, not an assumed
 proportionality.** Rather than guess how much a change in round-trip efficiency or a
@@ -2794,6 +2794,36 @@ yr, 10-yr NPV median rises from $7,474 to $7,510 at 4% discount ($4,318 to $4,35
 `index.html`'s own §6 mention of these specific figures updated to match, the only report
 location citing this artifact's own headline numbers (grepped to confirm no other instance
 was missed).
+
+**Two-sided soiling/production-measurement slope (issue #89, resolved).** The calibration
+above fit ONE `soil_slope` from a single loss-side dispatch rerun (`gen_scale = 1-lossB`)
+and applied it linearly to both directions in `save1_of()` — a `loss` (soiling, always ≥0)
+and a `prod_noise`-implied `(1 - prod_noise)` (production-measurement, either sign). This
+was exact before issue #60 (the old `gen0*gen_scale` scaling was linear in `gen_scale`, so
+extrapolating its own fitted slope cost nothing); issue #60's `scale_production()` is
+deliberately ASYMMETRIC (a loss reduces export first; a surplus reduces the scenario's own
+import first, self-consumption absorbing it, before spilling into more export), so
+extrapolating the loss-fit slope to the surplus side is no longer exact. **Fixed**:
+`dispatch_calibration()` now reruns a real THIRD dispatch point at the mirrored surplus
+scenario (`gen_scale = 1+lossB`) every regeneration and fits `soil_slope_surplus` from it
+directly — two separate 2-point fits (`{nominal, loss}` and `{surplus, nominal}`), not one
+3-point line through all three, since the physical relationship is genuinely piecewise, not
+one straight line. `save1_of()` now selects `soil_slope_loss` or `soil_slope_surplus` by
+the sign of its input (`np.where`, vectorized-safe for both the Monte Carlo's array draws
+and tornado()/escalation_downside_sensitivity()'s scalar calls). At this household's own
+`lossB` (5.28%), the real surplus-side slope (`soil_slope_surplus_mid` +0.3404) came out
+steeper than the loss-side slope (`soil_slope_loss_mid` +0.2176, ratio ≈1.56 — steeper than
+this issue's own filing ballpark of ~1.06, which was a pre-fix estimate rather than a real
+dispatch rerun of the self-consumption-first surplus model this fix implements).
+Extrapolating the old loss-fit slope to the real surplus point would have predicted
+$2,213.17 against the real measured $2,198.66 — a $14.51 (0.65%) gap now eliminated by
+construction (`calibration.production_reconstruction.surplus_slope_fix` in the artifact).
+Downstream this is a small correction: `production_measurement_spread`'s own tornado swing
+widens from 0.0680 yr to 0.0889 yr at full precision (both round to the same 0.1 yr in the
+published, rounded artifact field), and the full Monte Carlo's `save1`/NPV percentiles
+shift by a few dollars (`save1_median` $2,274 → $2,272; 10-yr NPV median at 4% discount
+$7,510 → $7,477) — soiling and production-measurement-spread remain low-swing tornado
+levers either way, dominated by install cost, escalation and degradation.
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this

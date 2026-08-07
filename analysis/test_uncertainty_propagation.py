@@ -262,8 +262,9 @@ def case_full_monte_carlo_is_deterministic_given_seed():
     """Byte-identical regeneration (AC8) depends on the RNG stream being
     fully determined by the seed and nothing else -- checked directly here on
     synthetic calibration inputs (no archive needed)."""
-    kwargs = dict(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope=-1.0,
-                  lossA=0.013, lossB=0.066, prod_sigma=0.02, N=500, seed=99)
+    kwargs = dict(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
+                  soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066,
+                  prod_sigma=0.02, N=500, seed=99)
     r1 = up.full_monte_carlo(**kwargs)
     r2 = up.full_monte_carlo(**kwargs)
     assert r1 == r2, "two full_monte_carlo() calls with the same seed must match exactly"
@@ -274,8 +275,9 @@ def case_full_monte_carlo_is_deterministic_given_seed():
 def case_full_monte_carlo_reports_required_probabilities_and_npv_shape():
     """AC3 (warranty/15yr/never probabilities) and AC4 (NPV at two discount
     rates) as a structural contract, on synthetic calibration inputs."""
-    r = up.full_monte_carlo(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope=-1.0,
-                            lossA=0.013, lossB=0.066, prod_sigma=0.02, N=500, seed=7)
+    r = up.full_monte_carlo(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
+                            soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066,
+                            prod_sigma=0.02, N=500, seed=7)
     for k in ("prob_within_warranty_10yr", "prob_within_15yr", "prob_never_within_25yr"):
         assert k in r, f"missing required probability field {k!r}"
         assert 0.0 <= r[k] <= 1.0, f"{k}={r[k]} not a probability"
@@ -295,8 +297,8 @@ def case_tornado_reconciles_against_extended_results_tornado_battery():
     """AC6: reconcile against data/extended_results.json's own tornado_battery
     ranking (a real, committed artifact -- no private archive needed)."""
     old_tb = _committed("extended_results.json")["tornado_battery"]
-    tor = up.tornado(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope=-1.0,
-                     lossA=0.013, lossB=0.066, prod_sigma=0.02)
+    tor = up.tornado(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
+                     soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066, prod_sigma=0.02)
     rec = up.reconcile_tornado(tor, old_tb)
     assert rec["old_ranked_by_swing"] == old_tb["ranked_by_swing"]
     assert rec["new_ranked_by_swing"] == tor["ranked_by_swing"]
@@ -309,8 +311,8 @@ def case_tornado_reconciles_against_extended_results_tornado_battery():
 
 @case
 def case_tornado_levers_cover_all_seven_ac1_inputs():
-    tor = up.tornado(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope=-1.0,
-                     lossA=0.013, lossB=0.066, prod_sigma=0.02)
+    tor = up.tornado(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
+                     soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066, prod_sigma=0.02)
     expected = {"install_cost", "escalation", "degradation", "ev_persistence",
                 "soiling", "round_trip_efficiency", "production_measurement_spread"}
     assert set(tor["levers"]) == expected, (
@@ -359,8 +361,8 @@ def case_full_monte_carlo_rejects_a_non_positive_saving_draw():
     emitting an infinite or nonsensical payback."""
     try:
         up.full_monte_carlo(pre=2329.0, mid=2238.0, rte_slope=-1000.0,
-                            soil_slope=-1000.0, lossA=0.013, lossB=0.066,
-                            prod_sigma=0.02, N=50, seed=1)
+                            soil_slope_loss=-1000.0, soil_slope_surplus=-1000.0,
+                            lossA=0.013, lossB=0.066, prod_sigma=0.02, N=50, seed=1)
     except SystemExit as e:
         assert "non-positive" in str(e)
         return "an absurd calibration slope that drives savings negative is caught, not silently published"
@@ -377,29 +379,60 @@ def case_production_spread_and_soiling_get_consistent_generation_sensitivity():
     a loss of -x. This is a regression test against re-introducing the
     original bug (prod_noise multiplied 1:1 into the dollar saving,
     overstating this lever's impact relative to soiling's calibrated
-    sensitivity by roughly 1/soil_slope)."""
-    pre, mid, rte_slope, soil_slope = 2329.0, 2238.0, 0.55, 0.057
+    sensitivity by roughly 1/soil_slope).
+
+    Issue #89 update: the model is now genuinely PIECEWISE (soil_slope_loss
+    != soil_slope_surplus by physical design), so this test's original
+    all-one-slope symmetry assumption no longer holds AS STATED -- the
+    intent it actually needs to keep verifying is that soiling and
+    prod_noise share the SAME routing mechanism (an x-fraction shortfall
+    from either source hits soil_slope_loss; an x-fraction surplus from
+    either source hits soil_slope_surplus), not that both directions use
+    the identical NUMBER. Uses deliberately DIFFERENT soil_slope_loss/
+    soil_slope_surplus values below so a bug that silently collapsed the
+    two back into one slope, or that routed by the wrong sign, would be
+    caught, not hidden by both slopes happening to match."""
+    pre, mid, rte_slope = 2329.0, 2238.0, 0.55
+    soil_slope_loss, soil_slope_surplus = 0.057, 0.091   # deliberately different
     for x in (0.0, 0.02, 0.0568, 0.10):
         via_soiling = up.save1_of(c=1.0, rte=0.90, loss=x, prod_noise=1.0,
                                   pre=pre, mid=mid, rte_slope=rte_slope,
-                                  soil_slope=soil_slope)
+                                  soil_slope_loss=soil_slope_loss,
+                                  soil_slope_surplus=soil_slope_surplus)
         via_prod_shortfall = up.save1_of(c=1.0, rte=0.90, loss=0.0, prod_noise=1 - x,
                                          pre=pre, mid=mid, rte_slope=rte_slope,
-                                         soil_slope=soil_slope)
+                                         soil_slope_loss=soil_slope_loss,
+                                         soil_slope_surplus=soil_slope_surplus)
         via_prod_surplus = up.save1_of(c=1.0, rte=0.90, loss=0.0, prod_noise=1 + x,
                                        pre=pre, mid=mid, rte_slope=rte_slope,
-                                       soil_slope=soil_slope)
+                                       soil_slope_loss=soil_slope_loss,
+                                       soil_slope_surplus=soil_slope_surplus)
         assert abs(via_soiling - via_prod_shortfall) < 1e-9, (
             f"x={x}: soiling loss and an equal-fraction prod_noise shortfall "
-            f"must produce the identical save1 ({via_soiling} vs {via_prod_shortfall})")
+            f"must produce the identical save1 ({via_soiling} vs {via_prod_shortfall}) "
+            "-- both are loss-like (>= 0) inputs and must route to soil_slope_loss")
         via_soiling_negative = up.save1_of(c=1.0, rte=0.90, loss=-x, prod_noise=1.0,
                                            pre=pre, mid=mid, rte_slope=rte_slope,
-                                           soil_slope=soil_slope)
+                                           soil_slope_loss=soil_slope_loss,
+                                           soil_slope_surplus=soil_slope_surplus)
         assert abs(via_soiling_negative - via_prod_surplus) < 1e-9, (
             f"x={x}: a negative loss (generation surplus) and an equal-fraction "
             f"prod_noise surplus must produce the identical save1 "
-            f"({via_soiling_negative} vs {via_prod_surplus})")
-    return "soiling and production-measurement uncertainty share one calibrated generation-sensitivity, in both directions"
+            f"({via_soiling_negative} vs {via_prod_surplus}) -- both are "
+            "surplus-like (< 0) inputs and must route to soil_slope_surplus")
+        if x > 0:
+            # issue #89's whole point: with genuinely different loss/surplus
+            # slopes, the loss-side and surplus-side results must actually
+            # DIFFER -- a regression test against silently routing both
+            # directions through the same slope again.
+            assert via_soiling != via_soiling_negative, (
+                f"x={x}: loss-side and surplus-side save1 must differ when "
+                "soil_slope_loss != soil_slope_surplus, got identical "
+                f"{via_soiling} for both -- the piecewise routing isn't "
+                "actually piecewise")
+    return ("soiling and production-measurement uncertainty share one "
+           "calibrated routing mechanism, but now correctly apply GENUINELY "
+           "different loss-side/surplus-side slopes (issue #89)")
 
 
 @case
@@ -475,26 +508,81 @@ def case_scale_production_never_decreases_import_under_a_loss():
 
 
 @case
-def case_scale_production_fails_closed_on_a_surplus_not_silently_export_only():
-    """issue #60, Codex review third pass: gen_scale > 1 (a production
-    SURPLUS) is not modeled -- a surplus should reduce the scenario's
-    existing import first (self-consumption absorbs it) and only then
-    increase export, the mirror of the loss-side rule, but that needs
-    imp_base as an input this function deliberately does not take. No
-    caller in this module's real pipeline ever passes gen_scale > 1
-    (production_measurement_spread's surplus draws are handled by save1_
-    of()'s linear extrapolation instead, a separate, already-quantified
-    approximation -- see issue #89). Rather than silently return a
-    one-sided (export-only) result for an unvalidated case, this must
-    fail closed."""
+def case_scale_production_reallocates_a_surplus_against_import_before_export():
+    """issue #89: gen_scale > 1.0 (a production SURPLUS) is now modeled,
+    mirroring case_scale_production_reallocates_a_loss_against_export_
+    before_import above -- a surplus first reduces the scenario's own
+    IMPORT (self-consumption absorbs it), and only once import is fully
+    exhausted does the remainder spill into MORE export -- the mirror
+    image of the loss-side rule. Single synthetic interval: production
+    P=5, nominal export=3, scenario import=2. At gen_scale=1.2, surplus=1
+    -> import drops to 1 (absorbed_by_import=1), export untouched (small
+    surplus, fully absorbed by import). At gen_scale=1.6, surplus=3 ->
+    import must hit exactly 0 and the 1 kWh excess must spill into export
+    (3 -> 4)."""
+    P = np.array([5.0])
+    gen0 = np.array([3.0])
+    imp_base = np.array([2.0])
+    delta_1, gen_1 = up.scale_production(P, gen0, 1.0, imp_base=imp_base)
+    assert delta_1[0] == 0.0 and gen_1[0] == 3.0
+    delta_small, gen_small = up.scale_production(P, gen0, 1.2, imp_base=imp_base)
+    assert abs(delta_small[0] - -1.0) < 1e-9 and abs(gen_small[0] - 3.0) < 1e-9, (
+        "a small surplus must be absorbed entirely by import, not spill "
+        f"into export yet (got delta={delta_small[0]}, export={gen_small[0]})")
+    delta_large, gen_large = up.scale_production(P, gen0, 1.6, imp_base=imp_base)
+    assert abs(delta_large[0] - -2.0) < 1e-9 and abs(gen_large[0] - 4.0) < 1e-9, (
+        "once the surplus exceeds available import, import must hit "
+        f"exactly 0 (delta=-imp_base) and the excess must spill into "
+        f"export (got delta={delta_large[0]}, export={gen_large[0]})")
+    return "scale_production reallocates a surplus against import first, spilling into export only once import is exhausted"
+
+
+@case
+def case_scale_production_never_increases_import_under_a_surplus():
+    """issue #89, mirroring case_scale_production_never_decreases_import_
+    under_a_loss: a production SURPLUS must never INCREASE import -- more
+    production available can only require the same or LESS grid draw,
+    never more -- and must never drive import negative. Checked across
+    random synthetic scenarios (including intervals where the scenario's
+    own import is already 0, a net-exporting interval, where the entire
+    surplus must spill straight to export with zero import effect), and
+    that surplus == (import reduction) + (export increase) exactly, the
+    surplus-side mirror of the loss-side energy-conservation identity."""
+    rng = np.random.default_rng(0)
+    P = rng.uniform(0, 10, 200)
+    gen0 = rng.uniform(0, 8, 200)
+    imp_base = rng.uniform(0, 5, 200)
+    for gen_scale in (1.01, 1.1, 1.5, 2.0):
+        import_delta, new_export = up.scale_production(P, gen0, gen_scale, imp_base=imp_base)
+        assert np.all(import_delta <= 1e-9), (
+            f"gen_scale={gen_scale}: a surplus must never increase import, "
+            f"got a positive import_delta up to {import_delta.max()}")
+        assert np.all(imp_base + import_delta >= -1e-9), (
+            f"gen_scale={gen_scale}: import must never go negative after "
+            "the surplus offset")
+        surplus = P * (gen_scale - 1.0)
+        conserved = -import_delta + (new_export - gen0)
+        assert np.allclose(conserved, surplus, atol=1e-9), (
+            f"gen_scale={gen_scale}: surplus must equal (import reduction) "
+            "+ (export increase) exactly -- energy not conserved")
+    return "a production surplus never increases import, never drives it negative, and conserves energy exactly"
+
+
+@case
+def case_scale_production_fails_closed_on_a_surplus_without_imp_base():
+    """issue #89: gen_scale > 1.0 needs imp_base (a surplus reduces import
+    first, mirroring the loss side's need for gen0), so a caller that
+    forgets to pass it must fail closed, not silently mishandle the
+    surplus as if it were export-only (the pre-#89 behavior this
+    function's SystemExit guard used to apply unconditionally)."""
     P = np.array([5.0])
     gen0 = np.array([3.0])
     try:
         up.scale_production(P, gen0, 1.2)
-        raise AssertionError("expected SystemExit for gen_scale > 1.0")
+        raise AssertionError("expected SystemExit for gen_scale > 1.0 without imp_base")
     except SystemExit as e:
-        assert "gen_scale > 1.0" in str(e) or "not modeled" in str(e), str(e)
-    return "scale_production fails closed on a production surplus (gen_scale > 1.0) instead of silently mishandling it"
+        assert "imp_base" in str(e), str(e)
+    return "scale_production fails closed on a production surplus with no imp_base supplied"
 
 
 @case
@@ -726,25 +814,90 @@ def case_dispatch_calibration_matches_committed_battery_dispatch_policies():
     # see production_reconstruction's own energy-conservation numbers), not
     # a regression of the "small effect" reasoning below. What that reasoning
     # was actually always about is the REALIZED swing at the household's own
-    # real loss magnitude (soil_slope * lossB), which the fix leaves genuinely
-    # small (still "a few percent") even though the raw per-unit slope no
-    # longer is -- so this checks the realized swing, not the raw slope.
-    realized_swing = abs(calib["soil_slope_mid"] * calib["lossB"])
+    # real loss magnitude (soil_slope_loss * lossB), which the fix leaves
+    # genuinely small (still "a few percent") even though the raw per-unit
+    # slope no longer is -- so this checks the realized swing, not the raw
+    # slope. Issue #89: checked on the LOSS-side slope specifically (the
+    # direct descendant of the pre-#89 single soil_slope, still fit against
+    # the same +lossB point) -- the new surplus-side slope is checked
+    # separately in case_dispatch_calibration_fits_a_real_third_surplus_
+    # point_distinct_from_loss below.
+    realized_swing = abs(calib["soil_slope_loss_mid"] * calib["lossB"])
     assert realized_swing < 0.15, (
         f"soiling's REALIZED swing at this household's own lossB "
         f"({calib['lossB']:.4f}) is {realized_swing:.4f} ({realized_swing:.1%}) "
         "-- implausibly large for a small realistic loss fraction; "
         "investigate before trusting the calibration")
-    same_sign = (calib["soil_slope_mid"] > 0) == (calib["soil_slope_pre"] > 0)
+    same_sign = (calib["soil_slope_loss_mid"] > 0) == (calib["soil_slope_loss_pre"] > 0)
     assert same_sign, (
-        f"pre- ({calib['soil_slope_pre']}) and post-behavior "
-        f"({calib['soil_slope_mid']}) soiling slopes disagree in sign -- not "
-        "internally consistent enough to average into one slope")
+        f"pre- ({calib['soil_slope_loss_pre']}) and post-behavior "
+        f"({calib['soil_slope_loss_mid']}) soiling loss-side slopes disagree "
+        "in sign -- not internally consistent enough to average into one slope")
+    surplus_same_sign = (calib["soil_slope_surplus_mid"] > 0) == (calib["soil_slope_surplus_pre"] > 0)
+    assert surplus_same_sign, (
+        f"pre- ({calib['soil_slope_surplus_pre']}) and post-behavior "
+        f"({calib['soil_slope_surplus_mid']}) soiling surplus-side slopes "
+        "disagree in sign -- not internally consistent enough to average "
+        "into one slope")
     return (f"real dispatch calibration's single-pass figures match the committed "
             f"artifact within $1 (steady-state pre={calib['pre_nominal']:.2f}, "
             f"mid={calib['mid_nominal']:.2f}) "
             "with a correctly-signed RTE sensitivity and an internally-"
-            f"consistent, small soiling sensitivity ({calib['soil_slope_mid']:+.4f})")
+            f"consistent, small soiling sensitivity (loss={calib['soil_slope_loss_mid']:+.4f}, "
+            f"surplus={calib['soil_slope_surplus_mid']:+.4f})")
+
+
+@case
+def case_dispatch_calibration_fits_a_real_third_surplus_point_distinct_from_loss():
+    """Issue #89 AC1/AC3: a real THIRD dispatch rerun at the mirrored surplus
+    scenario (gen_scale=1+lossB) must now exist alongside the nominal and
+    loss points -- soil_points_mid/soil_points_pre must have 3 entries,
+    including a -lossB key (the sign convention save1_of()'s own
+    (1 - prod_noise) already uses for a surplus-like input) -- and the
+    fitted soil_slope_surplus_mid/pre must be a genuinely DIFFERENT real
+    number from soil_slope_loss_mid/pre, not a placeholder or an accidental
+    copy. The issue's OWN filing used an illustrative ~6% steeper ballpark
+    (a rough pre-fix estimate, not a real dispatch rerun of the self-
+    consumption-first surplus model this fix actually implements); this
+    household's real regenerated numbers, from the real self-consumption-
+    first dispatch rerun, land around 1.5-1.7x (55-70% steeper) instead --
+    checked here against THIS run's own regenerated numbers, not the
+    issue's frozen illustrative figures, per this issue's own explicit
+    instruction not to assert the filing's ballpark verbatim."""
+    _require_archive()
+    calib = _in_sandbox(up.dispatch_calibration)
+    lossB = calib["lossB"]
+    for name, points in (("mid", calib["soil_points_mid"]), ("pre", calib["soil_points_pre"])):
+        assert len(points) == 3, (
+            f"soil_points_{name} must have exactly 3 real calibration points "
+            f"(surplus/nominal/loss), got {len(points)}: {points}")
+        assert -lossB in points, (
+            f"soil_points_{name} is missing the surplus calibration point "
+            f"at -lossB ({-lossB}): {points}")
+        assert 0.0 in points and lossB in points, (
+            f"soil_points_{name} is missing the nominal (0.0) or loss "
+            f"(+lossB) point: {points}")
+    for side in ("mid", "pre"):
+        loss_slope = calib[f"soil_slope_loss_{side}"]
+        surplus_slope = calib[f"soil_slope_surplus_{side}"]
+        assert loss_slope != surplus_slope, (
+            f"soil_slope_surplus_{side} must be a genuinely distinct real "
+            f"number from soil_slope_loss_{side} (issue #89's whole point), "
+            f"got identical {loss_slope}")
+        ratio = abs(surplus_slope) / abs(loss_slope)
+        assert 1.2 < ratio < 2.0, (
+            f"soil_slope_surplus_{side}/soil_slope_loss_{side} magnitude "
+            f"ratio {ratio:.4f} is outside a plausible band around this "
+            "household's own regenerated ~1.5-1.7x finding -- investigate "
+            "before trusting the calibration")
+    fix = calib["production_reconstruction"]["surplus_slope_fix"]
+    assert fix["real_surplus_marginal"] != fix["old_extrapolated_estimate"], (
+        "the real surplus marginal must differ from the old one-sided "
+        "extrapolated estimate, or this fix changed nothing")
+    return (f"real 3rd surplus calibration point exists and fits a "
+            f"genuinely distinct slope: loss_mid={calib['soil_slope_loss_mid']:+.4f} "
+            f"vs surplus_mid={calib['soil_slope_surplus_mid']:+.4f} "
+            f"(ratio {abs(calib['soil_slope_surplus_mid'])/abs(calib['soil_slope_loss_mid']):.3f})")
 
 
 @case
@@ -794,25 +947,31 @@ def case_production_reconstruction_conserves_energy_and_shows_the_understated_di
 
 
 @case
-def case_one_sided_slope_extrapolation_limitation_is_disclosed():
-    """issue #60, Codex review pass 2: scale_production()'s asymmetric
-    design (a loss reduces export first; a surplus should reduce import
-    first) makes soil_slope's single loss-fit slope only an approximation
-    when extrapolated to production_measurement_spread's surplus draws.
-    Quantified (a real third dispatch rerun) as a real but small $1.60/
-    0.07% discrepancy at this household's own lossB magnitude, deferred to
-    issue #89 rather than expanding this issue's scope -- checked here
-    that the artifact actually DISCLOSES this, not just that the code
-    comment does."""
+def case_soil_slope_two_sided_fix_is_disclosed_and_matches_the_live_check():
+    """issue #89: the old one-sided-extrapolation LIMITATION note is retired
+    now that the fix is in -- this checks the artifact discloses the
+    RESOLUTION (a real third dispatch rerun + two genuinely separate
+    slopes), citing the SAME live-computed discrepancy dispatch_
+    calibration()'s own production_reconstruction.surplus_slope_fix block
+    reports, not a stale hardcoded number left over from the old note."""
     if not DATA.joinpath("uncertainty_results.json").is_file():
         raise SkipCase("needs the committed uncertainty_results.json")
     result = _committed("uncertainty_results.json")
-    note = result["calibration"]["soil_slope_one_sided_extrapolation_limitation"]
-    assert "issue #89" in note, note
-    assert "$1.60" in note and "0.07%" in note, (
-        f"the disclosed limitation must cite the actual quantified "
-        f"discrepancy, not just assert one exists: {note!r}")
-    return "the one-sided slope-extrapolation limitation is disclosed in the artifact with its quantified magnitude"
+    calib = result["calibration"]
+    note = calib["soil_slope_two_sided_fix"]
+    assert "issue #89" in note.lower(), note
+    fix = calib["production_reconstruction"]["surplus_slope_fix"]
+    assert f"${fix['discrepancy_usd']:,.2f}" in note, (
+        "the resolution note must cite the actual regenerated discrepancy "
+        f"dollar figure ({fix['discrepancy_usd']}), not a stale or "
+        f"invented one: {note!r}")
+    assert fix["real_surplus_marginal"] != fix["old_extrapolated_estimate"], (
+        "the real surplus marginal must differ from the retired one-sided "
+        "extrapolated estimate, or nothing was actually fixed")
+    assert calib["soil_slope_loss_mid"] != calib["soil_slope_surplus_mid"], (
+        "the artifact's own loss/surplus slopes must be genuinely distinct "
+        "-- the whole point of this fix")
+    return "the two-sided soil-slope fix is disclosed in the artifact, citing the live regenerated discrepancy figure"
 
 
 @case

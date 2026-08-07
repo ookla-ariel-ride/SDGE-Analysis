@@ -99,15 +99,17 @@ INPUT DISTRIBUTIONS AND THEIR EVIDENTIAL BASIS
    saving derate via `rte_factor()` (see CALIBRATION below).
 7. production measurement spread   Normal(mean=1.0, sd=PROD_SIGMA), a factor
    on TRUE generation (uncertainty about which of the two meters is closer to
-   the real output). Routed through the SAME calibrated soil_slope as
-   soiling (see CALIBRATION below and save1_of()'s own docstring), not
-   applied as a direct 1:1 multiplier on the dollar saving: a production
-   measurement discrepancy and a soiling-driven generation loss are
-   uncertainty about the identical physical quantity (how much the array
-   actually generated), and soiling's own calibration already measured how
-   weakly a generation-level change moves the battery's marginal saving
-   (adversarial review pass 2, finding 2 — an earlier draft assumed a full
-   1:1 response, overstating this lever's impact by roughly 1/soil_slope).
+   the real output). Routed through the SAME calibrated soiling slopes as
+   soiling itself -- soil_slope_loss for a measured-generation shortfall,
+   soil_slope_surplus for a measured-generation surplus (issue #89; see
+   CALIBRATION below and save1_of()'s own docstring) -- not applied as a
+   direct 1:1 multiplier on the dollar saving: a production measurement
+   discrepancy and a soiling-driven generation change are uncertainty about
+   the identical physical quantity (how much the array actually generated),
+   and soiling's own calibration already measured how weakly a generation-
+   level change moves the battery's marginal saving (adversarial review
+   pass 2, finding 2 — an earlier draft assumed a full 1:1 response,
+   overstating this lever's impact by roughly 1/soil_slope).
    PROD_SIGMA is computed AT RUNTIME from
    data/threeway_production_validation.csv (365 days, two independent
    monitoring sources for the same array — PVOutput and the Enphase meter):
@@ -657,7 +659,7 @@ def reconstruct_gross_production(d, imp0, gen0):
     return P, D
 
 
-def scale_production(P, gen0, gen_scale):
+def scale_production(P, gen0, gen_scale, imp_base=None):
     """(import_delta, new_export) at a scaled gross production P*gen_scale.
 
     THE MODEL (Codex review, issue #60 -- this replaced a D/overlap-based
@@ -706,36 +708,37 @@ def scale_production(P, gen0, gen_scale):
     EITHER less export OR more import, the same invariant the artifact's
     own energy_conservation_check verifies).
 
-    gen_scale > 1 (a production SURPLUS) is NOT modeled -- fails closed
-    below rather than silently mishandling it (Codex review, issue #60,
-    third pass). A surplus should reduce the scenario's existing IMPORT
-    first (self-consumption absorbs it, avoiding retail/NBC charges) and
-    only then increase export -- the mirror image of the loss-side rule
-    -- but that needs `imp_base` as an input, which this function
-    deliberately does not take (see the gen0-independent-of-imp_base
-    reasoning above), so it cannot be modeled here without changing this
-    function's own signature. No caller in this module ever passes
-    gen_scale > 1 (verified: every real call site uses gen_scale <= 1.0);
-    production_measurement_spread's own surplus draws are handled entirely
-    by save1_of()'s linear extrapolation of the loss-fit slope instead, a
-    separate, already-quantified approximation (see save1_of()'s own
-    KNOWN LIMITATION docstring section, issue #89) that never calls this
-    function for the surplus side either. Failing closed here, rather than
-    silently returning a one-sided (export-only) result for a case this
-    function was never validated against, is deliberate: whoever
-    eventually implements #89's proper two-sided calibration will need to
-    extend this function's signature anyway, at which point this guard
-    should be removed as part of that work, not before."""
+    issue #89: gen_scale > 1.0 (a production SURPLUS) IS now modeled, the
+    mirror image of the loss-side rule above: the surplus first reduces the
+    scenario's existing IMPORT (self-consumption absorbs it, avoiding
+    retail/NBC charges), interval by interval, floored so import never goes
+    negative (`np.minimum(imp_base, surplus)` -- an interval can never give
+    back more import than it actually has), and only once import is fully
+    exhausted does the remaining ("residual") surplus spill into MORE
+    export. This is why `imp_base` -- deliberately NOT an input to the
+    loss-side branch above (see the gen0-independent-of-imp_base reasoning
+    there) -- IS required here: a surplus's self-consumption offset is
+    bounded by each interval's own actual import, which the loss-side
+    branch never needs to know. A caller requesting gen_scale > 1.0 without
+    supplying imp_base fails closed rather than silently mishandling it.
+    Energy conservation holds per-interval here too: surplus ==
+    (import reduction) + (export increase), the same shape as the loss
+    side's (gen0 - new_export) + import_delta == loss identity."""
     if gen_scale > 1.0:
-        raise SystemExit(
-            "uncertainty_propagation.scale_production: gen_scale > 1.0 "
-            f"(got {gen_scale}) is not modeled -- a production surplus "
-            "should reduce import before increasing export, the mirror "
-            "of the loss-side rule this function implements, but doing "
-            "that needs imp_base as an input this function deliberately "
-            "does not take (see this function's own docstring). No "
-            "caller in this module currently needs this case; see issue "
-            "#89 for the proper two-sided fix before adding one.")
+        if imp_base is None:
+            raise SystemExit(
+                "uncertainty_propagation.scale_production: gen_scale > 1.0 "
+                f"(got {gen_scale}) needs imp_base -- a production surplus "
+                "reduces the scenario's own import first (self-consumption "
+                "absorbing it) before spilling into more export, so the "
+                "scenario's import series must be supplied; see this "
+                "function's own docstring.")
+        surplus = P * (gen_scale - 1.0)
+        absorbed_by_import = np.minimum(imp_base, surplus)
+        import_delta = -absorbed_by_import
+        residual_surplus = surplus - absorbed_by_import
+        new_export = gen0 + residual_surplus
+        return import_delta, new_export
     loss = P * (1.0 - gen_scale)
     new_export = np.maximum(gen0 - loss, 0.0)
     import_delta = np.maximum(loss - gen0, 0.0)
@@ -752,8 +755,9 @@ def dispatch_calibration():
     level read of usage.csv.
 
     Returns a dict: pre, mid (nominal marginals, $/yr), rte_slope,
-    soil_slope (fractional-factor slopes), and the raw calibration points
-    for the artifact's own "calibration" section.
+    soil_slope_loss/soil_slope_surplus (fractional-factor slopes, issue #89:
+    fit separately per side since scale_production() is asymmetric), and
+    the raw calibration points for the artifact's own "calibration" section.
     """
     import behavior_rebuild as br
     import battery_dispatch_policies as bp
@@ -770,10 +774,10 @@ def dispatch_calibration():
 
     # issue #60: gross production (P), reconstructed once from the real
     # measured year -- held fixed and reused for every gen_scale scenario
-    # below (soiling and, via save1_of()'s shared soil_slope routing,
-    # production-measurement-spread too), instead of the prior gen0*
-    # gen_scale approximation. The second return value (household load) is
-    # diagnostic-only (see reconstruct_gross_production()'s own docstring
+    # below (soiling and, via save1_of()'s shared soil_slope_loss/
+    # soil_slope_surplus routing, production-measurement-spread too),
+    # instead of the prior gen0*gen_scale approximation. The second return
+    # value (household load) is diagnostic-only (see reconstruct_gross_production()'s own docstring
     # and test_uncertainty_propagation.py's own nonnegative-load check),
     # not used below.
     P, _ = reconstruct_gross_production(d, imp0, gen0)
@@ -822,8 +826,15 @@ def dispatch_calibration():
         imp_base convention. At gen_scale=1.0 import_delta is exactly zero
         and gen equals gen0 exactly (see scale_production()'s own
         docstring), so this is a no-op at nominal -- the byte-identity
-        every existing committed figure depends on."""
-        import_delta, gen = scale_production(P, gen0, gen_scale)
+        every existing committed figure depends on.
+
+        Issue #89: gen_scale > 1.0 (a production SURPLUS) is now real too,
+        mirrored against this same scenario's own imp_base (passed through
+        to scale_production() below) so the surplus reduces THIS scenario's
+        import before spilling into more export -- imp_base is only ever
+        read here for that surplus branch; gen_scale <= 1.0 ignores it
+        exactly as before."""
+        import_delta, gen = scale_production(P, gen0, gen_scale, imp_base=imp_base)
         imp_base = np.maximum(imp_base + import_delta, 0.0)
         bill_base = bp.billed(d, imp_base, gen)
         eta = np.sqrt(rte)
@@ -881,13 +892,24 @@ def dispatch_calibration():
     rte_points_pre = {RTE_LO: marginal(imp0, rte=RTE_LO),
                       RTE_NOM: pre_nominal,
                       RTE_HI: marginal(imp0, rte=RTE_HI)}
-    # Only two DISTINCT points: lossA == 0.0 is the same state as the nominal
-    # (0.0) point by construction above, so including it a second time would
-    # be a duplicate dict key, not a third calibration point.
-    soil_points_mid = {0.0: mid_nominal,
-                       lossB: marginal(imp_sh, gen_scale=1 - lossB)}
-    soil_points_pre = {0.0: pre_nominal,
-                       lossB: marginal(imp0, gen_scale=1 - lossB)}
+    # lossA == 0.0 is the same state as the nominal (0.0) point by
+    # construction above, so including it a second time would be a
+    # duplicate dict key, not a third calibration point. Issue #89 adds the
+    # real THIRD point: the mirrored surplus scenario (gen_scale=1+lossB,
+    # keyed at -lossB to match save1_of()'s own (1 - prod_noise) sign
+    # convention for a surplus-like input) -- a genuine third real dispatch
+    # rerun, not an extrapolation, giving three points per side (surplus,
+    # nominal, loss) instead of two.
+    loss_point_mid = marginal(imp_sh, gen_scale=1 - lossB)
+    surplus_point_mid = marginal(imp_sh, gen_scale=1 + lossB)
+    loss_point_pre = marginal(imp0, gen_scale=1 - lossB)
+    surplus_point_pre = marginal(imp0, gen_scale=1 + lossB)
+    soil_points_mid = {-lossB: surplus_point_mid,
+                       0.0: mid_nominal,
+                       lossB: loss_point_mid}
+    soil_points_pre = {-lossB: surplus_point_pre,
+                       0.0: pre_nominal,
+                       lossB: loss_point_pre}
 
     def slope_of(points, nominal_x, nominal_y):
         xs = np.array(sorted(points))
@@ -900,8 +922,20 @@ def dispatch_calibration():
 
     rte_slope_mid = slope_of(rte_points_mid, RTE_NOM, mid_nominal)
     rte_slope_pre = slope_of(rte_points_pre, RTE_NOM, pre_nominal)
-    soil_slope_mid = slope_of(soil_points_mid, 0.0, mid_nominal)
-    soil_slope_pre = slope_of(soil_points_pre, 0.0, pre_nominal)
+    # issue #89: fit the loss-side and surplus-side slopes SEPARATELY, each
+    # from exactly the two relevant points (nominal + the one on that side)
+    # -- NOT a single 3-point line across both sides, since scale_
+    # production()'s physical model is genuinely piecewise (a loss reduces
+    # export first; a surplus reduces import first), not one straight line
+    # through all three points.
+    soil_slope_loss_mid = slope_of({0.0: mid_nominal, lossB: loss_point_mid},
+                                    0.0, mid_nominal)
+    soil_slope_surplus_mid = slope_of({-lossB: surplus_point_mid, 0.0: mid_nominal},
+                                       0.0, mid_nominal)
+    soil_slope_loss_pre = slope_of({0.0: pre_nominal, lossB: loss_point_pre},
+                                    0.0, pre_nominal)
+    soil_slope_surplus_pre = slope_of({-lossB: surplus_point_pre, 0.0: pre_nominal},
+                                       0.0, pre_nominal)
 
     # issue #60 AC2: verify the reallocation is energy-conserving, not just
     # plausible-looking -- every kWh the lossB scenario removes from GROSS
@@ -971,8 +1005,13 @@ def dispatch_calibration():
                           "runtime -- see this field's own docstring note"),
             },
             "new_gross_production_reallocation": {
-                "soil_slope_mid": soil_slope_mid,
-                "soil_slope_pre": soil_slope_pre,
+                # issue #89: this comparison is against the LOSS-side slope
+                # specifically (the directly analogous quantity to the old,
+                # single, loss-fit OLD_SOIL_SLOPE_MID/PRE_EXPORT_ONLY
+                # constants above) -- not the surplus-side slope, which has
+                # no counterpart in the pre-issue-60 export-only approach.
+                "soil_slope_mid": soil_slope_loss_mid,
+                "soil_slope_pre": soil_slope_loss_pre,
             },
             "note": (
                 "Confirms the issue's own 'likely understates' hypothesis, "
@@ -986,7 +1025,51 @@ def dispatch_calibration():
                 "billed at the lower NEM credit rate. The old approach both "
                 "undercounted the lost energy's magnitude (it only ever "
                 "saw the smaller export column) AND mispriced what it did "
-                "count (attributing it all to the export-credit rate)."),
+                "count (attributing it all to the export-credit rate). "
+                "soil_slope_mid/pre here are the LOSS-side slope "
+                "specifically -- the analogous quantity to the old, single "
+                "loss-fit figure -- not the surplus-side slope issue #89 "
+                "adds (see surplus_slope_fix below)."),
+        },
+        # issue #89 AC3: what the OLD one-sided approach (extrapolating the
+        # loss-fit slope to the surplus side) would have predicted at the
+        # real surplus point, versus what a REAL third dispatch rerun at
+        # that point (surplus_point_mid, gen_scale=1+lossB) actually shows
+        # -- quantifying the discrepancy this fix eliminates, not just
+        # asserting it shrinks.
+        "surplus_slope_fix": {
+            "method": (
+                "Before this fix, save1_of() applied ONE slope (fit only "
+                "from a loss-side dispatch rerun) linearly to both "
+                "directions, extrapolating it to the surplus side rather "
+                "than measuring the surplus side directly. This fix adds a "
+                "real third dispatch rerun at the mirrored surplus "
+                "scenario (gen_scale=1+lossB) and fits a genuinely separate "
+                "soil_slope_surplus from it. old_extrapolated_estimate "
+                "below is what the retired one-sided approach would have "
+                "predicted at that same surplus point -- "
+                "mid_nominal * (1 + soil_slope_loss_mid * (-lossB)) -- "
+                "compared against real_surplus_marginal, the REAL measured "
+                "value now used directly instead."),
+            "soil_slope_loss_mid": soil_slope_loss_mid,
+            "soil_slope_surplus_mid": soil_slope_surplus_mid,
+            "old_extrapolated_estimate": round(
+                mid_nominal * (1 + soil_slope_loss_mid * (-lossB)), 2),
+            "real_surplus_marginal": round(surplus_point_mid, 2),
+            "discrepancy_usd": round(
+                mid_nominal * (1 + soil_slope_loss_mid * (-lossB)) - surplus_point_mid, 2),
+            "discrepancy_pct_of_mid_nominal": round(
+                100 * (mid_nominal * (1 + soil_slope_loss_mid * (-lossB)) - surplus_point_mid)
+                / mid_nominal, 4),
+            "resolution": (
+                "Eliminated by construction, not merely reduced: save1_of() "
+                "now uses soil_slope_surplus, fit directly from this real "
+                "surplus dispatch rerun, for every surplus-like draw "
+                "(prod_noise > 1, i.e. (1 - prod_noise) < 0) instead of "
+                "linearly extrapolating the loss-side slope -- the "
+                "discrepancy above no longer exists in save1_of()'s output "
+                "for any draw, at any magnitude, not just at this "
+                "particular lossB point."),
         },
     }
 
@@ -1001,9 +1084,16 @@ def dispatch_calibration():
         "rte_slope": (rte_slope_mid + rte_slope_pre) / 2,
         "rte_slope_mid": rte_slope_mid,
         "rte_slope_pre": rte_slope_pre,
-        "soil_slope": (soil_slope_mid + soil_slope_pre) / 2,
-        "soil_slope_mid": soil_slope_mid,
-        "soil_slope_pre": soil_slope_pre,
+        # issue #89: one slope per SIDE (loss/surplus), each averaged across
+        # pre-/post-behavior exactly like the existing rte_slope convention
+        # -- no single undifferentiated soil_slope any more, since the
+        # physical relationship (scale_production()) is genuinely piecewise.
+        "soil_slope_loss": (soil_slope_loss_mid + soil_slope_loss_pre) / 2,
+        "soil_slope_loss_mid": soil_slope_loss_mid,
+        "soil_slope_loss_pre": soil_slope_loss_pre,
+        "soil_slope_surplus": (soil_slope_surplus_mid + soil_slope_surplus_pre) / 2,
+        "soil_slope_surplus_mid": soil_slope_surplus_mid,
+        "soil_slope_surplus_pre": soil_slope_surplus_pre,
         "rte_points_mid": rte_points_mid,
         "rte_points_pre": rte_points_pre,
         "soil_points_mid": soil_points_mid,
@@ -1109,56 +1199,76 @@ def draw_inputs(N, seed, rte_slope, soil_slope, lossA, lossB, prod_sigma):
     return esc, fade, price, c, rte, loss, prod_noise
 
 
-def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope):
+def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus):
     """prod_noise is a multiplicative factor on TRUE generation (1.0 = the
     measured value is right; >1 = true generation is higher than measured).
     Adversarial review pass 2, finding 2: an earlier draft multiplied prod_noise
     directly into the dollar saving, implicitly assuming a 1:1 saving response
-    to a generation change -- inconsistent with the CALIBRATED soil_slope,
+    to a generation change -- inconsistent with the CALIBRATED soil slopes,
     which found a real generation-scale change (soiling) moves the battery
-    marginal by only ~0.057x the fractional change, not 1:1 (most of a
+    marginal by only a fraction of the fractional change, not 1:1 (most of a
     generation swing changes exports/self-consumption directly, and only a
     damped fraction interacts with the battery's own arbitrage timing).
     Production-measurement uncertainty is uncertainty about the SAME physical
     quantity (true generation level) soiling calibration already measured the
-    sensitivity of, so it is routed through the identical soil_slope rather
-    than assumed proportional: a prod_noise of (1-x) is treated exactly like a
+    sensitivity of, so it is routed through the same calibration rather than
+    assumed proportional: a prod_noise of (1-x) is treated exactly like a
     soiling loss fraction of x, and a prod_noise of (1+x) like a loss of -x.
 
-    KNOWN LIMITATION (Codex review, issue #60, second pass; tracked as issue
-    #89): soil_slope is fit from exactly ONE direction -- a real dispatch
-    rerun at a production LOSS -- and applied linearly to both losses (x>0)
-    and surpluses (x<0, i.e. prod_noise>1, roughly half of this lever's own
-    Monte Carlo draws). Before issue #60 this was exact (the old gen0*
-    gen_scale approach was linear in gen_scale, so extrapolating its slope
-    cost nothing); issue #60's scale_production() is deliberately ASYMMETRIC
-    by physical design (a loss reduces export first; a surplus should reduce
-    import first), so the loss-fit slope is no longer an exact stand-in for
-    the surplus direction. Quantified, not guessed: a real third dispatch
-    rerun at the mirrored surplus point (gen_scale=1+lossB) gives slope_
-    surplus=-0.2311 vs slope_loss=-0.2176 (this module's own committed
-    lossB) -- extrapolating the loss slope to that point differs from the
-    real surplus figure by $1.60 (0.07%) on a ~$2,239 base, at the LARGEST
-    scenario magnitude actually used anywhere in this calibration (prod_
-    sigma, the production_measurement_spread lever's own real uncertainty,
-    is smaller than lossB, so typical draws see less than this). Real but
-    immaterial to the published payback/NPV percentiles at this household's
-    current evidence -- fitting a genuine second (surplus-side) slope from a
-    third real dispatch rerun is a model-design change, not a quick patch,
-    filed separately (issue #89) rather than expanding this issue's own
-    scope box further."""
+    PIECEWISE BY DESIGN (issue #89, resolving the KNOWN LIMITATION flagged in
+    issue #60's second review pass): a production loss and a production
+    surplus are no longer the same physical relationship since issue #60's
+    scale_production() made the loss/surplus reallocation deliberately
+    ASYMMETRIC (a loss reduces export first; a surplus reduces import
+    first). soil_slope_loss and soil_slope_surplus are each fit from a real
+    dispatch rerun on their own side (gen_scale=1-lossB and gen_scale=
+    1+lossB respectively, both against the SAME nominal point) -- not one
+    slope extrapolated across both. Both `loss` (always >= 0 by construction,
+    Triangular(lossA, lossA, lossB)) and `x = 1 - prod_noise` (either sign,
+    Normal(1.0, prod_sigma) centered at 0) select their slope by sign:
+    non-negative (loss-like) inputs use soil_slope_loss; negative
+    (surplus-like) inputs use soil_slope_surplus. np.where() makes this
+    vectorized-safe for both an array `loss`/`prod_noise` (the Monte Carlo's
+    own draw_inputs() output) and plain scalar floats (tornado(),
+    escalation_downside_sensitivity(), and this file's own direct test
+    calls) -- confirmed by both call shapes in test_uncertainty_propagation.py.
+    This household's own most recently regenerated calibration fit
+    soil_slope_loss_mid=+0.2176/soil_slope_loss_pre=+0.1695 and
+    soil_slope_surplus_mid=+0.3404/soil_slope_surplus_pre=+0.2807 -- see
+    data/uncertainty_results.json's calibration section for the current
+    values (the surplus-side slope came out genuinely steeper in magnitude
+    than the loss-side one here, roughly 1.56x -- confirmed against this
+    module's own real dispatch reruns, not assumed from issue #89's own
+    illustrative filing numbers, which used a smaller ~1.06x ballpark
+    before this fix's real third rerun existed to check it against);
+    dispatch_calibration()'s new surplus_slope_fix block shows what the
+    old one-sided extrapolation would have predicted at the real surplus
+    point versus the real measured value, and by how much this fix closes
+    that gap (to exactly zero, by construction, since the real surplus
+    point is now used directly rather than extrapolated)."""
     base_marginal = c * mid + (1 - c) * pre
     rte_factor = 1 + rte_slope * (rte - RTE_NOM)
-    soil_factor = 1 + soil_slope * loss
-    prod_factor = 1 + soil_slope * (1 - prod_noise)
+    loss_arr = np.asarray(loss)
+    soil_slope_for_loss = np.where(loss_arr >= 0, soil_slope_loss, soil_slope_surplus)
+    soil_factor = 1 + soil_slope_for_loss * loss
+    x = 1 - prod_noise
+    x_arr = np.asarray(x)
+    soil_slope_for_prod = np.where(x_arr >= 0, soil_slope_loss, soil_slope_surplus)
+    prod_factor = 1 + soil_slope_for_prod * x
     return base_marginal * rte_factor * soil_factor * prod_factor
 
 
-def full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma,
-                      N=5000, seed=43):
+def full_monte_carlo(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
+                      lossA, lossB, prod_sigma, N=5000, seed=43):
+    # draw_inputs()'s own `soil_slope` parameter is dead code (unused in its
+    # body -- confirmed by reading it -- out of scope for this issue to
+    # clean up). It can no longer take a single value, so it gets whichever
+    # of the two new slopes is more directly analogous to the old one
+    # (soil_slope_loss); still unused below.
     esc, fade, price, c, rte, loss, prod_noise = draw_inputs(
-        N, seed, rte_slope, soil_slope, lossA, lossB, prod_sigma)
-    save1 = save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope)
+        N, seed, rte_slope, soil_slope_loss, lossA, lossB, prod_sigma)
+    save1 = save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope,
+                      soil_slope_loss, soil_slope_surplus)
     if np.any(save1 <= 0):
         raise SystemExit("full_monte_carlo: a draw produced a non-positive "
                           "year-1 battery saving -- band too wide or a sign "
@@ -1257,7 +1367,7 @@ def full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma,
 # extended_findings.py's tornado_battery (hold everything else at a nominal
 # scenario, vary one lever across its own band, rank by payback-year swing)
 # ---------------------------------------------------------------------------
-def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
+def tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, lossB, prod_sigma):
     esc_nom = (ESC_LO + ESC_HI) / 2
     fade_nom = (FADE_LO + FADE_HI) / 2
     price_nom = (PRICE_LO + PRICE_HI) / 2
@@ -1267,7 +1377,8 @@ def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
     prod_nom = 1.0
 
     def save1(c=c_nom, rte=rte_nom, loss=loss_nom, prod=prod_nom):
-        return save1_of(c, rte, loss, prod, pre, mid, rte_slope, soil_slope)
+        return save1_of(c, rte, loss, prod, pre, mid, rte_slope,
+                        soil_slope_loss, soil_slope_surplus)
 
     def pb(save, esc=esc_nom, fade=fade_nom, price=price_nom):
         return payback_of(save, esc, fade, price)
@@ -1298,7 +1409,7 @@ def tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma):
 ESC_DOWNSIDE_GRID_PCT = (0.00, -0.03, -0.06, -0.09, -0.12)
 
 
-def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, lossB):
+def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, lossB):
     """Issue #59 (Codex adversarial review, third pass): documenting the 0%
     floor as an unproven, inherited assumption while the Monte Carlo can
     still never SAMPLE a negative escalation draw leaves a reader unable to
@@ -1324,7 +1435,8 @@ def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, loss
     price_nom = (PRICE_LO + PRICE_HI) / 2
     c_nom = EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B)
     loss_nom = (lossA + lossA + lossB) / 3
-    save1_nom = save1_of(c_nom, RTE_NOM, loss_nom, 1.0, pre, mid, rte_slope, soil_slope)
+    save1_nom = save1_of(c_nom, RTE_NOM, loss_nom, 1.0, pre, mid, rte_slope,
+                          soil_slope_loss, soil_slope_surplus)
     grid = {}
     for pct in ESC_DOWNSIDE_GRID_PCT:
         pb = payback_of(save1_nom, pct, fade_nom, price_nom)
@@ -1395,7 +1507,8 @@ def reconcile_tornado(new_tornado, old_tornado_battery):
 def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     calib = dispatch_calibration()
     pre, mid = calib["pre_nominal"], calib["mid_nominal"]
-    rte_slope, soil_slope = calib["rte_slope"], calib["soil_slope"]
+    rte_slope = calib["rte_slope"]
+    soil_slope_loss, soil_slope_surplus = calib["soil_slope_loss"], calib["soil_slope_surplus"]
     lossA, lossB = calib["lossA"], calib["lossB"]
 
     # cross-check against the committed dispatch artifact (same fail-loud
@@ -1433,10 +1546,12 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     prod_stats = production_spread_stats()
     prod_sigma = prod_stats["prod_sigma_used"]
 
-    mc = full_monte_carlo(pre, mid, rte_slope, soil_slope, lossA, lossB,
-                          prod_sigma, N=N_full, seed=seed_full)
-    tor = tornado(pre, mid, rte_slope, soil_slope, lossA, lossB, prod_sigma)
-    esc_downside = escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope, lossA, lossB)
+    mc = full_monte_carlo(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
+                          lossA, lossB, prod_sigma, N=N_full, seed=seed_full)
+    tor = tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
+                 lossA, lossB, prod_sigma)
+    esc_downside = escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope_loss,
+                                                   soil_slope_surplus, lossA, lossB)
 
     old_deep = _committed("deep_results.json")
     # deep_analyses.py's own _base_save() reads the COMMITTED, already-rounded
@@ -1637,43 +1752,48 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                 "below for the resolved method, an energy-conservation "
                 "check, and the old-vs-new comparison confirming the "
                 "'likely understates' hypothesis with a quantified "
-                "mechanism (soil_slope_mid rose from "
+                "mechanism (soil_slope_mid [loss-side] rose from "
                 f"{calib['production_reconstruction']['old_vs_new_soil_slope']['old_export_only_scaling']['soil_slope_mid']} "
-                f"to {calib['soil_slope_mid']:.4f})."),
+                f"to {calib['soil_slope_loss_mid']:.4f})."),
             "production_reconstruction": calib["production_reconstruction"],
-            "soil_slope_one_sided_extrapolation_limitation": (
-                "Codex review, issue #60, second pass (tracked as issue #89): "
-                "soil_slope_mid/pre are fit from a real dispatch rerun at "
-                "ONE production LOSS point and applied linearly to both "
-                "losses and surpluses (roughly half of production_"
-                "measurement_spread's own Monte Carlo draws, prod_noise>1). "
-                "Before issue #60 this cost nothing (the old gen0*gen_scale "
-                "approach was exactly linear); issue #60's scale_"
-                "production() is deliberately asymmetric by physical design "
-                "(a loss reduces export first; a surplus should reduce "
-                "import first), so this is now a real, quantified (not "
-                "guessed) approximation, checked once by hand -- a frozen "
-                "snapshot below, NOT recomputed at every build() (a third "
-                "real dispatch rerun every run is exactly the scope "
-                "expansion deferred to issue #89): a third real dispatch "
-                "rerun at the mirrored surplus point gave slope_surplus=-0.2311 vs this "
-                "artifact's own slope_loss (soil_slope_mid, -0.2176) -- "
-                "extrapolating the loss slope to that point differs from "
-                "the real surplus figure by $1.60 (0.07%) on a ~$2,239 "
-                "base, at the LARGEST magnitude actually used anywhere in "
-                "this calibration (production_measurement_spread's own real "
-                "prod_sigma is smaller than lossB, so typical draws see "
-                "less than this). Real but immaterial to the published "
-                "payback/NPV percentiles at this household's current "
-                "evidence -- fitting a genuine second (surplus-side) slope "
-                "is a model-design change, filed separately (issue #89) "
-                "rather than expanding this issue's own scope box further."),
+            "soil_slope_two_sided_fix": (
+                "Issue #89 (previously a stated limitation here, filed from "
+                "Codex review pass 2 on issue #60): soil_slope_mid/pre used "
+                "to be fit from a real dispatch rerun at ONE production LOSS "
+                "point and applied linearly to both losses and surpluses "
+                "(roughly half of production_measurement_spread's own Monte "
+                "Carlo draws, prod_noise>1) -- FIXED. dispatch_calibration() "
+                "now runs a real THIRD dispatch rerun at the mirrored "
+                "surplus scenario (gen_scale=1+lossB) every time it "
+                "regenerates, and fits soil_slope_surplus_mid/pre from it "
+                "directly instead of extrapolating the loss-side slope: "
+                f"soil_slope_loss_mid={calib['soil_slope_loss_mid']:.4f} vs "
+                f"soil_slope_surplus_mid={calib['soil_slope_surplus_mid']:.4f} "
+                "(the surplus-side slope is genuinely steeper in magnitude, "
+                "not a rounding artifact of the same underlying number). "
+                "See production_reconstruction.surplus_slope_fix for the "
+                "quantified before/after: extrapolating the old loss-side "
+                "slope to the real surplus point would have predicted "
+                f"${calib['production_reconstruction']['surplus_slope_fix']['old_extrapolated_estimate']:,.2f} "
+                "against the real measured "
+                f"${calib['production_reconstruction']['surplus_slope_fix']['real_surplus_marginal']:,.2f} "
+                "-- a "
+                f"${calib['production_reconstruction']['surplus_slope_fix']['discrepancy_usd']:,.2f} "
+                "("
+                f"{calib['production_reconstruction']['surplus_slope_fix']['discrepancy_pct_of_mid_nominal']:.2f}%) "
+                "gap that save1_of()'s new piecewise soil_slope_loss/"
+                "soil_slope_surplus routing eliminates by construction, for "
+                "every surplus-like draw at any magnitude, not just at this "
+                "particular lossB point."),
             "rte_slope_mid": calib["rte_slope_mid"],
             "rte_slope_pre": calib["rte_slope_pre"],
             "rte_slope_used": rte_slope,
-            "soil_slope_mid": calib["soil_slope_mid"],
-            "soil_slope_pre": calib["soil_slope_pre"],
-            "soil_slope_used": soil_slope,
+            "soil_slope_loss_mid": calib["soil_slope_loss_mid"],
+            "soil_slope_loss_pre": calib["soil_slope_loss_pre"],
+            "soil_slope_loss_used": soil_slope_loss,
+            "soil_slope_surplus_mid": calib["soil_slope_surplus_mid"],
+            "soil_slope_surplus_pre": calib["soil_slope_surplus_pre"],
+            "soil_slope_surplus_used": soil_slope_surplus,
             "lossA": lossA,
             "lossB": lossB,
             "rte_calibration_points_mid": calib["rte_points_mid"],
@@ -1684,9 +1804,21 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                       "least squares to 3 REAL dispatch reruns per lever per "
                       "behavior state (battery_dispatch_policies.run_batt/"
                       ".billed, ETA temporarily overridden for RTE draws, "
-                      "generation scaled for soiling draws), then averaged "
-                      "across the pre- and post-behavior calibration runs "
-                      "since both land on nearly identical fractional slopes"),
+                      "generation scaled for soiling/production draws), then "
+                      "averaged across the pre- and post-behavior calibration "
+                      "runs since both land on nearly identical fractional "
+                      "slopes. RTE's 3 points (RTE_LO/RTE_NOM/RTE_HI) fit ONE "
+                      "slope across the full range (RTE's response is "
+                      "expected to be one continuous relationship). Issue "
+                      "#89: soiling/production's 3 points (surplus at "
+                      "-lossB, nominal at 0, loss at +lossB) fit TWO "
+                      "separate 2-point slopes instead -- soil_slope_loss "
+                      "from {nominal, loss} and soil_slope_surplus from "
+                      "{surplus, nominal} -- because scale_production()'s "
+                      "own reallocation is genuinely piecewise (a loss "
+                      "reduces export first; a surplus reduces import "
+                      "first), not one straight line through all three "
+                      "points."),
         },
         "battery_marginal_only_full_model": mc,
         "tornado": {**tor, "reconciliation_vs_extended_results_tornado_battery": reconciliation},
