@@ -187,6 +187,37 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
     def _excludes_zero(ci):
         return ci is not None and not (ci[0] <= 0 <= ci[1])
 
+    # The docstring quotes exact rates/CIs/r-squared/distinct-levels; pin
+    # every one so a moderate (not just sign-flipping) drift in
+    # tou_spread.json fails this case too, not just a wholesale reversal
+    # (Codex review, issue #87: "either pin the quoted values or remove
+    # exact figures from the prose").
+    QUOTED = {
+        "winter_on_peak": {"escalation_pct_yr": 11.37, "escalation_ci95_pct_yr": [7.75, 15.11], "r2": 0.973},
+        "summer_on_peak": {"escalation_pct_yr": 7.66, "escalation_ci95_pct_yr": [1.73, 13.94]},
+        "summer_super_off_peak": {"escalation_ci95_pct_yr": [-61.89, 62.02]},
+        "winter_super_off_peak": {"escalation_ci95_pct_yr": [-49.24, 20.68]},
+    }
+    for cell_name, expected in QUOTED.items():
+        actual = cells[cell_name]
+        for field, exp_val in expected.items():
+            act_val = actual[field]
+            if isinstance(exp_val, list):
+                assert all(abs(a - e) < 0.01 for a, e in zip(act_val, exp_val)), (
+                    f"{cell_name}.{field} drifted from the quoted {exp_val} "
+                    f"to {act_val} -- update the docstring's cited figures")
+            else:
+                assert abs(act_val - exp_val) < 0.01, (
+                    f"{cell_name}.{field} drifted from the quoted {exp_val} "
+                    f"to {act_val} -- update the docstring's cited figures")
+    QUOTED_DISTINCT_LEVELS = {"summer": 3, "winter": 4}
+    for season, expected_levels in QUOTED_DISTINCT_LEVELS.items():
+        actual_levels = (spread[season].get("post_break") or {}).get("distinct_levels")
+        assert actual_levels == expected_levels, (
+            f"{season}'s post_break.distinct_levels drifted from the quoted "
+            f"{expected_levels} to {actual_levels} -- update the docstring's "
+            f"cited figures")
+
     for season in ("summer", "winter"):
         on_peak_ci = cells[f"{season}_on_peak"]["escalation_ci95_pct_yr"]
         assert _excludes_zero(on_peak_ci), (
