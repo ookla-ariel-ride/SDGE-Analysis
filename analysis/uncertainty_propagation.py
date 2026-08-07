@@ -251,8 +251,7 @@ a positive OR a zero-floored distribution.
   correlated per-cell trends into the dispatch engine would therefore just
   reproduce the SAME blended-rate assumption `esc` already makes, dressed
   up as period-specific inputs, not new evidence about the spread. Resolved
-  as
-  AC1's documented-gap branch: a longer bill corpus (tou_spread.py's own
+  as AC1's documented-gap branch: a longer bill corpus (tou_spread.py's own
   estimate: reaching into 2028 would roughly double the independent units)
   is needed before this is worth building. Guarded by
   test_uncertainty_propagation.py's case_spread_trend_is_still_not_
