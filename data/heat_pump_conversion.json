@@ -381,12 +381,12 @@
  "sensitivity_table": [
   {
    "annual_heating_kwh": 1387,
-   "annual_net_savings_usd": -156.75,
+   "annual_net_savings_usd": -112.45,
    "cop": "low_2.8",
    "electric_cost_increase_usd": 485.78,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "low",
    "install_cost_usd": 10000,
    "payback_years": null
@@ -405,24 +405,24 @@
   },
   {
    "annual_heating_kwh": 1387,
-   "annual_net_savings_usd": -3.37,
+   "annual_net_savings_usd": -11.79,
    "cop": "low_2.8",
    "electric_cost_increase_usd": 485.78,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "low",
    "install_cost_usd": 10000,
    "payback_years": null
   },
   {
    "annual_heating_kwh": 1387,
-   "annual_net_savings_usd": -156.75,
+   "annual_net_savings_usd": -112.45,
    "cop": "low_2.8",
    "electric_cost_increase_usd": 485.78,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "central",
    "install_cost_usd": 14529,
    "payback_years": null
@@ -441,24 +441,24 @@
   },
   {
    "annual_heating_kwh": 1387,
-   "annual_net_savings_usd": -3.37,
+   "annual_net_savings_usd": -11.79,
    "cop": "low_2.8",
    "electric_cost_increase_usd": 485.78,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "central",
    "install_cost_usd": 14529,
    "payback_years": null
   },
   {
    "annual_heating_kwh": 1387,
-   "annual_net_savings_usd": -156.75,
+   "annual_net_savings_usd": -112.45,
    "cop": "low_2.8",
    "electric_cost_increase_usd": 485.78,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "high",
    "install_cost_usd": 20000,
    "payback_years": null
@@ -477,24 +477,24 @@
   },
   {
    "annual_heating_kwh": 1387,
-   "annual_net_savings_usd": -3.37,
+   "annual_net_savings_usd": -11.79,
    "cop": "low_2.8",
    "electric_cost_increase_usd": 485.78,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "high",
    "install_cost_usd": 20000,
    "payback_years": null
   },
   {
    "annual_heating_kwh": 1110,
-   "annual_net_savings_usd": -59.52,
+   "annual_net_savings_usd": -15.22,
    "cop": "central_3.5",
    "electric_cost_increase_usd": 388.55,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "low",
    "install_cost_usd": 10000,
    "payback_years": null
@@ -513,24 +513,24 @@
   },
   {
    "annual_heating_kwh": 1110,
-   "annual_net_savings_usd": 93.86,
+   "annual_net_savings_usd": 85.44,
    "cop": "central_3.5",
    "electric_cost_increase_usd": 388.55,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "low",
    "install_cost_usd": 10000,
-   "payback_years": 106.5
+   "payback_years": 117.0
   },
   {
    "annual_heating_kwh": 1110,
-   "annual_net_savings_usd": -59.52,
+   "annual_net_savings_usd": -15.22,
    "cop": "central_3.5",
    "electric_cost_increase_usd": 388.55,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "central",
    "install_cost_usd": 14529,
    "payback_years": null
@@ -549,24 +549,24 @@
   },
   {
    "annual_heating_kwh": 1110,
-   "annual_net_savings_usd": 93.86,
+   "annual_net_savings_usd": 85.44,
    "cop": "central_3.5",
    "electric_cost_increase_usd": 388.55,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "central",
    "install_cost_usd": 14529,
-   "payback_years": 154.8
+   "payback_years": 170.0
   },
   {
    "annual_heating_kwh": 1110,
-   "annual_net_savings_usd": -59.52,
+   "annual_net_savings_usd": -15.22,
    "cop": "central_3.5",
    "electric_cost_increase_usd": 388.55,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "high",
    "install_cost_usd": 20000,
    "payback_years": null
@@ -585,27 +585,27 @@
   },
   {
    "annual_heating_kwh": 1110,
-   "annual_net_savings_usd": 93.86,
+   "annual_net_savings_usd": 85.44,
    "cop": "central_3.5",
    "electric_cost_increase_usd": 388.55,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "high",
    "install_cost_usd": 20000,
-   "payback_years": 213.1
+   "payback_years": 234.1
   },
   {
    "annual_heating_kwh": 925,
-   "annual_net_savings_usd": 5.28,
+   "annual_net_savings_usd": 49.58,
    "cop": "high_4.2",
    "electric_cost_increase_usd": 323.75,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "low",
    "install_cost_usd": 10000,
-   "payback_years": 1895.0
+   "payback_years": 201.7
   },
   {
    "annual_heating_kwh": 925,
@@ -621,27 +621,27 @@
   },
   {
    "annual_heating_kwh": 925,
-   "annual_net_savings_usd": 158.66,
+   "annual_net_savings_usd": 150.24,
    "cop": "high_4.2",
    "electric_cost_increase_usd": 323.75,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "low",
    "install_cost_usd": 10000,
-   "payback_years": 63.0
+   "payback_years": 66.6
   },
   {
    "annual_heating_kwh": 925,
-   "annual_net_savings_usd": 5.28,
+   "annual_net_savings_usd": 49.58,
    "cop": "high_4.2",
    "electric_cost_increase_usd": 323.75,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "central",
    "install_cost_usd": 14529,
-   "payback_years": 2753.3
+   "payback_years": 293.0
   },
   {
    "annual_heating_kwh": 925,
@@ -657,27 +657,27 @@
   },
   {
    "annual_heating_kwh": 925,
-   "annual_net_savings_usd": 158.66,
+   "annual_net_savings_usd": 150.24,
    "cop": "high_4.2",
    "electric_cost_increase_usd": 323.75,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "central",
    "install_cost_usd": 14529,
-   "payback_years": 91.6
+   "payback_years": 96.7
   },
   {
    "annual_heating_kwh": 925,
-   "annual_net_savings_usd": 5.28,
+   "annual_net_savings_usd": 49.58,
    "cop": "high_4.2",
    "electric_cost_increase_usd": 323.75,
    "gas_price": "low",
-   "gas_price_usd_per_therm": 1.9364,
-   "gas_savings_usd": 329.03,
+   "gas_price_usd_per_therm": 2.1971,
+   "gas_savings_usd": 373.33,
    "install_cost": "high",
    "install_cost_usd": 20000,
-   "payback_years": 3790.1
+   "payback_years": 403.4
   },
   {
    "annual_heating_kwh": 925,
@@ -693,15 +693,15 @@
   },
   {
    "annual_heating_kwh": 925,
-   "annual_net_savings_usd": 158.66,
+   "annual_net_savings_usd": 150.24,
    "cop": "high_4.2",
    "electric_cost_increase_usd": 323.75,
    "gas_price": "high",
-   "gas_price_usd_per_therm": 2.8391,
-   "gas_savings_usd": 482.41,
+   "gas_price_usd_per_therm": 2.7895,
+   "gas_savings_usd": 473.99,
    "install_cost": "high",
    "install_cost_usd": 20000,
-   "payback_years": 126.1
+   "payback_years": 133.1
   }
  ]
 }

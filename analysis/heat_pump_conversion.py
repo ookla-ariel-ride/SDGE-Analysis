@@ -65,16 +65,22 @@ first offsetting whatever export credit that period already had, only then
 spending on volumetric energy charges) come out of the SAME arithmetic the
 household's real bills are validated against, not a separate assumption.
 
-Gas savings are priced at each REAL billing period's own realized $/therm
-(data/bill_periods_gas.csv's total_gas_service / therms for that period --
-already inclusive of the period's own baseline/nonbaseline tier mix, public
-purpose programs and state fees, since total_gas_service is the all-in
-charged amount), not a single flat annual constant. A real gas bill PDF for
-this household's own GR-Residential rate (sdge_gas_2025-07-30.pdf) was read
-directly to confirm there is NO separate fixed/customer charge on this rate
-schedule -- every line item is per-therm or a percentage of the per-therm
-charge -- so eliminating heating gas usage removes that share of the bill in
-full, with no minimum floor left behind.
+Gas savings are priced at each REAL billing period's own TRUE MARGINAL-TIER
+rate (issue #98): the heating slice (modeled as the marginal, top slice of
+that period's usage) is priced at whichever Gas Service tier(s) it actually
+occupies (data/bill_periods_gas.csv's baseline_rate/nonbaseline_rate, split
+at that period's own printed baseline_allowance_therms) plus the separate,
+flat, untiered gas_energy_charge_rate every therm pays -- see
+gas_savings_by_period()'s and _heating_slice_cost()'s own docstrings for
+the full mechanism. This replaced an earlier blended-average approximation
+(total_gas_service / therms) once parse_bills.py started extracting the
+baseline allowance and energy-charge rate needed for the marginal-tier
+computation. A real gas bill PDF for this household's own GR-Residential
+rate (sdge_gas_2025-07-30.pdf) was read directly to confirm there is NO
+separate fixed/customer charge on this rate schedule -- every line item is
+per-therm or a percentage of the per-therm charge -- so eliminating heating
+gas usage removes that share of the bill in full, with no minimum floor
+left behind.
 
 Run AFTER behavior_rebuild.py in the same working directory (needs its
 staged usage.csv); writes data/heat_pump_conversion.json.
@@ -641,26 +647,36 @@ def payback_and_npv(annual_net_savings, install_cost, discount_rates, years):
     return {"payback_years": round(payback, 1), "npv": npv}
 
 
-def sensitivity_table(iso, electric, gas_realized_rate_avg):
+def sensitivity_table(iso, electric, gas_realized_rate_avg, gas_rows):
     """COP x install-cost x gas-price grid, each row a real payback/NPV, all
     on the PRIMARY (uniform) electric-distribution basis -- the on/off-peak
     bracket sensitivity is reported separately, alongside, not multiplied
     into this table (a 3x3x3x3 grid would bury the reader in scenarios no
     one asked to compare at once).
 
-    low/central/high gas prices all share the SAME basis -- the period's own
-    blended realized $/therm rate (total_gas_service / therms) that
-    gas_savings_by_period() actually bills at, never a mix of a single
-    tier's rate and a blended average (Codex adversarial review, issue #1,
-    pass 1: an earlier version compared a single-tier rate's low/high
-    against an all-in blended-rate central, which could and did invert the
-    ordering -- and a still-earlier attempt at using the nonbaseline tier
-    rate alone turned out to OMIT two real charge components entirely, see
-    gas_savings_by_period()'s own docstring). low/high come from the
-    observed range of that SAME per-period blended rate across this
-    household's own 25 real statements."""
-    all_periods = pd.read_csv(GAS_PERIODS_CSV)
-    per_period_rate = (all_periods["total_gas_service"] / all_periods["therms"]).dropna()
+    low/central/high gas prices all share the SAME basis -- the TRUE
+    MARGINAL-TIER realized rate gas_savings_by_period() actually bills a
+    heating period's slice at (gas_savings_usd / heating_therms_attributed,
+    the same per-period `realized_rate_usd_per_therm` figure in
+    data/heat_pump_conversion.json's own gas_savings_by_period array),
+    never a mix of that true-marginal rate and the period's blended
+    average (issue #98, Codex adversarial review round 1: an earlier
+    version of this function paired a true-marginal `central` against
+    low/high still drawn from the retired total_gas_service/therms blended
+    figure -- two different quantities, silently no longer sharing a basis
+    once gas_savings_by_period() stopped using the blended average itself.
+    Before that: Codex adversarial review, issue #1, pass 1, caught the
+    same class of bug in the PRIOR design -- an earlier version compared a
+    single-tier rate's low/high against an all-in blended-rate central,
+    which could and did invert the ordering -- and a still-earlier attempt
+    at using the nonbaseline tier rate alone turned out to OMIT two real
+    charge components entirely, see gas_savings_by_period()'s own
+    docstring). low/high come from the observed range of that SAME
+    per-period true-marginal rate across this household's own real heating
+    periods (periods with zero heating_therms_attributed have no realized
+    rate to observe and are excluded, not treated as a zero price)."""
+    per_period_rate = pd.Series([r["realized_rate_usd_per_therm"] for r in gas_rows
+                                 if r["heating_therms_attributed"] > 0])
     gas_price_lo, gas_price_hi = float(per_period_rate.min()), float(per_period_rate.max())
     assert gas_price_lo <= gas_realized_rate_avg <= gas_price_hi, (
         "sensitivity_table: low/central/high gas prices are not monotonically "
@@ -799,7 +815,7 @@ def build():
             ],
         },
         "payback": paybacks,
-        "sensitivity_table": sensitivity_table(iso_reconciled, electric, gas_realized_rate_avg),
+        "sensitivity_table": sensitivity_table(iso_reconciled, electric, gas_realized_rate_avg, gas_rows),
         "npv_horizon_years": NPV_HORIZON_YEARS,
         "discount_rates": list(DISCOUNT_RATES),
     }

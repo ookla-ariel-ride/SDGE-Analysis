@@ -886,6 +886,46 @@ def case_gas_energy_charge_multi_segment_and_detail_schema(tmp):
     assert gs[1]["segment_days"] == "28" and gs[1]["baseline_rate"] == "2.03321", gs[1]
     assert gs[0]["energy_rate"] == "" and gs[1]["nonbaseline_rate"] == "", \
         f"gas_service rows must leave Gas Energy Charge's column empty: {gs}"
+    return ("2025-07-30 gas_energy + gas_service segments -> bill_gas_detail.csv "
+           "schema and day counts verified against the real PDF text")
+
+
+def case_gas_rate_misread_caught_by_gas_charge_crossfoot(tmp):
+    """Issue #98 review: _gas_segments()'s cross-foot (each segment's own
+    printed 'Rate/Therm' x 'Therms used' must reproduce its own printed
+    '[N of M Days ]Charge ... = total' line) mirrors the electric parser's
+    issue #27 cross-foot, but had no negative test proving it actually
+    fires -- unlike the electric side's two dedicated cases. $1.55659/therm
+    is a real Gas Service baseline rate printed, unchanged, on multiple
+    2024 statements (a repeated vintage, same shape as the electric
+    common-mode test). Inject a systematic +$0.05 misread of that exact
+    value and confirm parse_bills.py refuses on the FIRST occurrence,
+    using nothing from any other statement -- the cross-foot checks this
+    segment's own printed charge line, which the injected bug never
+    touches."""
+    victim = _require(
+        tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2024-07-29.pdf")
+    src = (tmp / "analysis" / "parse_bills.py").read_text()
+    needle = "rate1 = _f(m.group(3))"
+    assert src.count(needle) == 1, "test needs updating: extraction line not found once"
+    patched = src.replace(
+        needle,
+        needle + "\n        if abs(rate1 - 1.55659) < 1e-9:\n"
+                  "            rate1 += 0.05  # simulated common-mode misread (issue #98)",
+        1)
+    assert patched != src, "test needs updating: patch did not apply"
+    (tmp / "analysis" / "parse_bills.py").write_text(patched)
+    r = _run(tmp)
+    assert r.returncode != 0, \
+        f"parser accepted a corpus with a misread gas rate:\n{r.stdout}"
+    assert victim.name in r.stderr, \
+        f"error does not name the first corrupted statement, {victim.name}:\n{r.stderr}"
+    assert "printed charge says" in r.stderr, \
+        f"error is not the gas charge-line cross-foot:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return ("common-mode +$0.05/therm shift of a repeated Gas Service rate -> "
+            "caught on the FIRST occurrence by _gas_segments()'s charge-line "
+            "cross-foot: " + r.stderr.strip().splitlines()[-1])
 
     total_gs_days = sum(int(d["segment_days"]) for d in gs)
     total_ge_days = sum(int(d["segment_days"]) for d in ge)
@@ -940,7 +980,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_fixed_charge_total_reconciles_real_statements,
                 case_gas_baseline_rate_previously_blank_now_populated,
                 case_gas_service_multi_segment_day_weighted_blend,
-                case_gas_energy_charge_multi_segment_and_detail_schema]
+                case_gas_energy_charge_multi_segment_and_detail_schema,
+                case_gas_rate_misread_caught_by_gas_charge_crossfoot]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean
