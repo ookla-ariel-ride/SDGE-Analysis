@@ -174,6 +174,7 @@ TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py",
 ABS_PATH = re.compile(r"""["'](/[A-Za-z0-9_.\-]+/[^"']*)["']""")
 
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
+COVERAGE_SCRIPT = ANALYSIS / "check_coverage.sh"
 
 
 class SkipCase(Exception):
@@ -786,24 +787,74 @@ def case_generators_run_on_the_real_archive():
             "artifact reproduces the committed copy byte-for-byte")
 
 
+_LITERAL_EXPR_RE = re.compile(r"^\$\{\{\s*(true|false)\s*\}\}$")
+
+
+def _literal_bool(cond):
+    """A YAML bool, or a bare/`${{ }}`-wrapped "true"/"false" string (any
+    internal whitespace around the braces) parsed to the same bool. Returns
+    None for anything else -- an expression this checker cannot and should
+    not try to evaluate (issue #102 review, Codex pass 3: the exact-string
+    forms "${{ true }}"/"${{ false }}" missed whitespace variants like
+    "${{true}}")."""
+    if isinstance(cond, bool):
+        return cond
+    if isinstance(cond, str):
+        s = cond.strip().lower()
+        if s in ("true", "false"):
+            return s == "true"
+        m = _LITERAL_EXPR_RE.match(s)
+        if m:
+            return m.group(1) == "true"
+    return None
+
+
+def _is_false_condition(cond):
+    return _literal_bool(cond) is False
+
+
+def _is_true_condition(cond):
+    return _literal_bool(cond) is True
+
+
 def _ci_wired_test_files(workflow_src):
     """Test files with a REAL, enabled `run: python analysis/X.py` step
     somewhere in jobs.*.steps -- parsed as actual YAML structure, not a bare
     substring or a line-shaped regex, so a commented-out line, an unrelated
-    mention of the filename in prose, or a step disabled with `if: false`
-    cannot satisfy this. (A bare-substring predecessor of this function is
-    what let VERIFIED_ELSEWHERE_IN_CI assert 15 covered generators when only
-    6 actually were -- the file existed and had SOME line mentioning it, but
-    that is not the same claim as "a job actually runs it".)"""
+    mention of the filename in prose, a step (or its whole job) disabled
+    with `if: false`, or a step OR JOB marked `continue-on-error: true`
+    cannot satisfy this (issue #102 review: pass 1 caught the missing
+    job-level `if` and step-level `continue-on-error`; pass 2 caught the
+    missing job-level `continue-on-error`, which GitHub Actions documents as
+    preventing a failing job from failing the workflow just like the
+    step-level flag). (A bare-substring predecessor of this function is what
+    let VERIFIED_ELSEWHERE_IN_CI assert 15 covered generators when only 6
+    actually were -- the file existed and had SOME line mentioning it, but
+    that is not the same claim as "a job actually runs it, and a failure
+    there fails CI".)
+
+    DELIBERATELY NOT HANDLED, to keep this a syntactic check rather than a
+    GitHub Actions expression evaluator (issue #102 review, Codex pass 2):
+    `if: failure()`/other status-check functions, a job skipped because a
+    dependency named in `needs:` was itself disabled, matrix/environment
+    conditions that only sometimes evaluate false, and jobs invoked via a
+    reusable workflow's `uses:` rather than a step's `run:`. None of these
+    shapes appear in this repo's tests.yml today; re-verify by hand if one
+    is ever introduced."""
     import yaml
     doc = yaml.safe_load(workflow_src) or {}
     found = set()
     for job in (doc.get("jobs") or {}).values():
+        if _is_false_condition(job.get("if")):
+            continue
+        if _is_true_condition(job.get("continue-on-error")):
+            continue
         for step in job.get("steps") or []:
             if not isinstance(step, dict):
                 continue
-            cond = step.get("if")
-            if cond is False or (isinstance(cond, str) and cond.strip().lower() == "false"):
+            if _is_false_condition(step.get("if")):
+                continue
+            if _is_true_condition(step.get("continue-on-error")):
                 continue
             run = step.get("run")
             if not isinstance(run, str):
@@ -812,6 +863,55 @@ def _ci_wired_test_files(workflow_src):
             if m:
                 found.add(m.group(1))
     return found
+
+
+def case_ci_wired_test_files_ignores_disabled_and_non_gating_steps():
+    """Regression for issue #102 review: pass 1 caught a false job-level
+    `if`, a false step-level `if`, and a step-level `continue-on-error:
+    true`; pass 2 caught a job-level `continue-on-error: true` (GitHub
+    Actions applies the same "can't fail the workflow" semantics there as
+    at the step level -- missed in the first fix); pass 3 caught that the
+    exact-string match for the `${{ true }}`/`${{ false }}` expression forms
+    missed whitespace variants like `${{false}}` (no spaces inside the
+    braces) -- both a false-if and a tolerated continue-on-error spelled
+    that way are planted below too. None of these seven shapes may count a
+    `run: python analysis/X.py` line as wired -- each represents a step
+    that either never executes or can never fail the job, so a suite living
+    only behind one of them could still reach main with CI green. Planted
+    directly, not inferred from the real tests.yml, so this fails if the
+    exclusion logic regresses even though the real workflow happens not to
+    use any of these shapes today."""
+    synthetic = """
+jobs:
+  disabled-job:
+    if: false
+    steps:
+      - run: python analysis/test_should_not_count_a.py
+  tolerated-job:
+    continue-on-error: true
+    steps:
+      - run: python analysis/test_should_not_count_d.py
+  disabled-job-tight-expr:
+    if: ${{false}}
+    steps:
+      - run: python analysis/test_should_not_count_e.py
+  mixed-job:
+    steps:
+      - run: python analysis/test_should_count.py
+      - if: "false"
+        run: python analysis/test_should_not_count_b.py
+      - continue-on-error: true
+        run: python analysis/test_should_not_count_c.py
+      - continue-on-error: ${{true}}
+        run: python analysis/test_should_not_count_f.py
+"""
+    wired = _ci_wired_test_files(synthetic)
+    assert wired == {"test_should_count.py"}, (
+        f"disabled/non-gating steps were wrongly counted as wired: {wired}")
+    return ("_ci_wired_test_files excludes a false job-level if, a false "
+            "step-level if, a step-level continue-on-error, a job-level "
+            "continue-on-error, and tight-whitespace ${{}} expression forms "
+            "of both")
 
 
 def _archive_free_root(tmp):
@@ -1015,6 +1115,49 @@ def case_publication_failure_leaves_artifacts_untouched():
     return "a publication failure leaves every committed artifact byte-untouched"
 
 
+def _coverage_suite_files(coverage_src):
+    """Test files (with `.py`) named in check_coverage.sh's own SUITE loop
+    (`for t in test_a test_b ... ; do`), parsed from the actual bash `for`
+    statement rather than assumed from prose, so a reordered or reformatted
+    list cannot silently desync this check from what the script really
+    runs. The list spans multiple lines with bash `\` line-continuations,
+    which must be stripped before splitting on whitespace -- otherwise a
+    bare `\` (sitting on its own between two names) survives as a spurious
+    token."""
+    m = re.search(r"for t in(.*?);\s*do", coverage_src, re.S)
+    assert m, f"{COVERAGE_SCRIPT.name}: no 'for t in ... ; do' SUITE loop found"
+    names = m.group(1).replace("\\", " ").split()
+    assert names, f"{COVERAGE_SCRIPT.name}: the SUITE loop parsed to zero names"
+    return {f"{name}.py" for name in names}
+
+
+def case_every_check_coverage_suite_is_wired_into_ci():
+    """Issue #102: check_coverage.sh's SUITE list is real, already-passing
+    local test coverage -- but a file can sit there for months with no
+    corresponding `run:` step in tests.yml, so a regression in it reaches
+    main with every CI check reporting green (found for test_extra_results.py
+    during issue #34's review, then confirmed pre-existing for eight more
+    files). Checked mechanically here, not by re-reading both lists by eye
+    on every future addition: every SUITE-list file must have a real,
+    enabled `run: python analysis/X.py` step somewhere in tests.yml (reusing
+    _ci_wired_test_files(), the same parser case_verified_elsewhere_mapping_
+    is_real_and_wired_into_ci already trusts for the same class of claim)."""
+    assert COVERAGE_SCRIPT.is_file(), f"{COVERAGE_SCRIPT} not found"
+    assert CI_WORKFLOW.is_file(), f"{CI_WORKFLOW} not found"
+    suite_files = _coverage_suite_files(COVERAGE_SCRIPT.read_text())
+    assert len(suite_files) > 30, (
+        f"only found {len(suite_files)} SUITE files -- the 'for t in ... ; do' "
+        "parse likely broke against a reformatted check_coverage.sh")
+    wired = _ci_wired_test_files(CI_WORKFLOW.read_text())
+    missing = sorted(f for f in suite_files if f not in wired)
+    assert not missing, (
+        f"{len(missing)} check_coverage.sh SUITE file(s) have no `run: python "
+        f"analysis/X.py` step in {CI_WORKFLOW.name}, so a regression in them "
+        f"reaches main with CI reporting green: {missing}")
+    return (f"all {len(suite_files)} check_coverage.sh SUITE files have a real "
+           f"CI step in {CI_WORKFLOW.name}")
+
+
 CASES = [
     case_manifest_is_complete_and_exact,
     case_no_two_generators_own_the_same_artifact,
@@ -1030,6 +1173,8 @@ CASES = [
     case_small_charger_refuses_ev_discrimination,
     case_publication_failure_leaves_artifacts_untouched,
     case_verified_elsewhere_mapping_is_real_and_wired_into_ci,
+    case_ci_wired_test_files_ignores_disabled_and_non_gating_steps,
+    case_every_check_coverage_suite_is_wired_into_ci,
     case_generators_run_on_the_real_archive,
 ]
 

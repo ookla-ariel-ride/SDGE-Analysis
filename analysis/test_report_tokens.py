@@ -291,6 +291,7 @@ def case_battery_charge_kw_tokens_match_the_dispatch_policies_source_constants()
     CHARGE_KW_WITH_EXPANSION constants, not just against the hardcoded literal, so a
     future edit to battery_dispatch_policies.py that changes the charge rating would
     be caught here rather than silently drifting from the cited value."""
+    _require_household()
     import battery_dispatch_policies as bp
     assert bp.CHARGE_KW == 5.0, bp.CHARGE_KW
     assert bp.CHARGE_KW_WITH_EXPANSION == 8.0, bp.CHARGE_KW_WITH_EXPANSION

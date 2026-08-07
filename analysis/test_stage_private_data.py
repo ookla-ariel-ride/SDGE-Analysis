@@ -261,15 +261,23 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
     """A minimal SRC tree the script can run against: just enough of
     analysis/household.py's own repo-root walk-up (analysis/+data/) for it
     to resolve correctly when imported with PYTHONPATH pointed at this
-    tree's own analysis/, plus a symlinked .venv (real PyYAML) and the
-    handful of private/1-raw-data/ files the script's non-gas cp lines
-    need so the whole run succeeds end to end, not just the has_gas branch."""
+    tree's own analysis/, plus a stand-in .venv/bin/python satisfying
+    stage-private-data.sh's own venv-exists guard, and the handful of
+    private/1-raw-data/ files the script's non-gas cp lines need so the
+    whole run succeeds end to end, not just the has_gas branch.
+
+    The stand-in points at sys.executable -- the interpreter already
+    running this test -- rather than symlinking ROOT/.venv: CI (tests.yml)
+    never runs `python -m venv`, it just `pip install`s into whatever
+    interpreter actions/setup-python provides, so ROOT/.venv does not exist
+    on a runner and a symlink to it would be dangling (issue #102 review)."""
     src = pathlib.Path(td) / "src"
     (src / "analysis").mkdir(parents=True)
     (src / "data").mkdir(parents=True)
     (src / "private" / "1-raw-data").mkdir(parents=True)
     shutil.copy2(ANALYSIS / "household.py", src / "analysis" / "household.py")
-    (src / ".venv").symlink_to(ROOT / ".venv")
+    (src / ".venv" / "bin").mkdir(parents=True)
+    (src / ".venv" / "bin" / "python").symlink_to(sys.executable)
     (src / "private" / "household.yaml").write_text(household_yaml_text)
     raw = src / "private" / "1-raw-data"
     (raw / "gas.csv").touch()
@@ -302,8 +310,16 @@ def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
             has_gas_bills_dir=True)
         dst = pathlib.Path(td) / "dst"
         import subprocess
+        # cwd=src: household.py's _repo_root() checks Path.cwd() BEFORE
+        # __file__, so without this the script's `import household` call
+        # would silently resolve to whatever real repo this test process
+        # happens to run from (finding a real, unrelated household.yaml
+        # there) instead of the synthetic one built above -- masking this
+        # case on any machine that already has private/household.yaml
+        # staged at the real repo root (issue #102 review).
         result = subprocess.run(
-            ["bash", str(SCRIPT), str(src), str(dst)], capture_output=True, text=True)
+            ["bash", str(SCRIPT), str(src), str(dst)], capture_output=True,
+            text=True, cwd=src)
         assert result.returncode == 0, (
             f"a real, pipeline-accepted household.yaml (capitalized True, "
             f"preceded by an unrelated comment mentioning has_gas:) must not "
@@ -327,9 +343,18 @@ def case_real_archive_stage_script_produces_every_required_path():
     with tempfile.TemporaryDirectory() as td:
         dst = pathlib.Path(td) / "dst"
         import subprocess
+        # cwd=src: same reason as the synthetic-fixture case above -- without
+        # it, household.py's _repo_root() (Path.cwd() checked before
+        # __file__) resolves against whatever repo this test process happens
+        # to be invoked from rather than `src`. Harmless when invoked from
+        # this same checkout's root, but this repo routinely runs from
+        # sibling git worktrees (limits-wt/sdge-issue-*) with their own
+        # unrelated household.yaml, where the mismatch produces a confusing,
+        # unrelated-looking failure instead of exercising this checkout's
+        # own archive (issue #102 review, round 2).
         result = subprocess.run(
             ["bash", str(SCRIPT), str(src), str(dst)],
-            capture_output=True, text=True)
+            capture_output=True, text=True, cwd=src)
         assert result.returncode == 0, (
             f"stage-private-data.sh exited {result.returncode}: {result.stderr}")
         # gas-bills only exists in the source archive for a has_gas:true

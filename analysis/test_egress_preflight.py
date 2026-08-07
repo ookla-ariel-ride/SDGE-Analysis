@@ -104,6 +104,7 @@ def case_refuses_a_private_path_even_when_mislabeled_template_file():
 # ---------------------------------------------------------------------------
 @case
 def case_accepts_a_real_committed_data_json_file():
+    _require_gitleaks()
     target = lp.ROOT / "data" / "package_results.json"
     assert target.is_file(), f"fixture assumption broken: {target} does not exist"
     result = lp.preflight([("data_file", str(target))], "clean body text")
@@ -112,6 +113,7 @@ def case_accepts_a_real_committed_data_json_file():
 
 @case
 def case_accepts_report_template_html_as_template_file():
+    _require_gitleaks()
     result = lp.preflight([("template_file", str(lp.rt.TEMPLATE))], "clean body text")
     assert result["ok"], result
     return "preflight() accepts report-template.html labeled template_file"
@@ -143,6 +145,7 @@ def case_refuses_a_data_file_path_outside_the_data_directory():
 @case
 def case_accepts_a_resolved_public_ok_household_token_as_a_string():
     _require_household()
+    _require_gitleaks()
     value = lp.rt.resolve_token("PANEL_COUNT")
     result = lp.preflight([("household_token", ("PANEL_COUNT", value))], "clean body text")
     assert result["ok"], result
@@ -219,6 +222,7 @@ def case_refuses_an_unknown_item_kind():
 
 @case
 def case_claude_excerpt_and_todo_text_kinds_accept_literal_strings():
+    _require_gitleaks()
     result = lp.preflight(
         [("claude_excerpt", "some CLAUDE.md section 10 excerpt text"),
          ("todo_text", "the TODO block's own comment text")],
