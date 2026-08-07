@@ -103,7 +103,7 @@
   "steady_state_vs_single_pass_note": "pre_nominal/mid_nominal use a steady-state-converged SOC boundary (Codex review pass 1, finding 2); pre_nominal_single_pass/mid_nominal_single_pass use the same single-pass method as the committed battery_dispatch_policies.json (which this issue does not modify) and are what the $1 tie-out below checks against -- the ~$1-2 gap between the two conventions is the known, expected size of this SOC-boundary effect, not a discrepancy to resolve further.",
   "committed_pre": 2328.0,
   "committed_mid": 2238.0,
-  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid rose from 0.05605402062021063 to 0.2176).",
+  "generation_proxy_limitation_resolved": "Issue #60 (previously a stated limitation here, filed from Codex review pass 1 finding 1 on issue #15): the soiling and production-measurement-spread calibrations previously scaled the Green Button 'Generation' column (net grid EXPORT, not gross PV production) directly, understating the true impact -- FIXED. See production_reconstruction below for the resolved method, an energy-conservation check, and the old-vs-new comparison confirming the 'likely understates' hypothesis with a quantified mechanism (soil_slope_mid [loss-side] rose from 0.05605402062021063 to 0.2176).",
   "production_reconstruction": {
    "method": "issue #60: gross production (P) reconstructed per hour from the SAM 8760 hourly series via P_hour = max(sam_load_hour - import_hour + export_hour, 0), the same identity threeway_production_validation.py's own derive_daily() uses (SAM's own hourly files are whole-home GROSS LOAD, not production directly) -- allocated within each hour so every net-exporting interval gets at least its own net export (keeping the diagnostic implied-household-load figure non-negative everywhere, not a flat per-quarter split); the two DST transition dates take a conservative fallback instead of a misaligned SAM join (SAM's export is a flat 24-hour clock, Green Button is true wall clock). A gen_scale (soiling/production-measurement) scenario reduces the MEASURED export (gen0) directly by the production shortfall (loss = P*(1-gen_scale)), floored at 0, spilling any remainder into import only once export is fully exhausted -- export is tied to production and absorbs a shortfall first; import is load-driven and only ever grows, never shrinks, from a production loss -- instead of scaling the Green Button Generation/export column proportionally, which could never spill into import at all.",
    "gross_production_kwh": 16521.4,
@@ -125,16 +125,29 @@
      "soil_slope_mid": 0.2176162131897935,
      "soil_slope_pre": 0.16951981803374996
     },
-    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 82 of 872 lost kWh/yr (~9%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate)."
+    "note": "Confirms the issue's own 'likely understates' hypothesis, with a quantified mechanism: at this household's lossB (0.0528), 82 of 872 lost kWh/yr (~9%) was being SELF-CONSUMED (invisible to the old export-only scaling), not exported -- losing it mostly increases IMPORT, billed near the full retail rate, not just export, billed at the lower NEM credit rate. The old approach both undercounted the lost energy's magnitude (it only ever saw the smaller export column) AND mispriced what it did count (attributing it all to the export-credit rate). soil_slope_mid/pre here are the LOSS-side slope specifically -- the analogous quantity to the old, single loss-fit figure -- not the surplus-side slope issue #89 adds (see surplus_slope_fix below)."
+   },
+   "surplus_slope_fix": {
+    "method": "Before this fix, save1_of() applied ONE slope (fit only from a loss-side dispatch rerun) linearly to both directions, extrapolating it to the surplus side rather than measuring the surplus side directly. This fix adds a real third dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) and fits a genuinely separate soil_slope_surplus from it. old_extrapolated_estimate below is what the retired one-sided approach would have predicted at that same surplus point -- mid_nominal * (1 + soil_slope_loss_mid * (-lossB)) -- compared against real_surplus_marginal, the REAL measured value now used directly instead.",
+    "soil_slope_loss_mid": 0.2176162131897935,
+    "soil_slope_surplus_mid": 0.3403634388877598,
+    "old_extrapolated_estimate": 2213.17,
+    "real_surplus_marginal": 2198.66,
+    "discrepancy_usd": 14.51,
+    "discrepancy_pct_of_mid_nominal": 0.648,
+    "resolution": "The ONE-SIDED EXTRAPOLATION discrepancy quantified above is eliminated by construction: save1_of() now uses soil_slope_surplus, fit directly from this real surplus dispatch rerun, for every surplus-like draw (prod_noise > 1, i.e. (1 - prod_noise) < 0) instead of linearly extrapolating the loss-side slope, for any draw magnitude -- not just at this particular lossB point. This does NOT mean save1_of()'s output exactly reproduces either the real mid or real pre surplus point at c=1/c=0: save1_of() applies ONE slope per side, averaged across mid/pre (matching this module's existing rte_slope convention, pre-dating this issue), to the ALREADY c-blended base_marginal -- a separate, pre-existing, much smaller residual (Codex review, issue #89, pass 2: ~$3.5, ~0.16% at this household's real surplus point, comparable in size to the analogous rte_slope-averaging residual, versus the $14.51/0.65% one-sided-extrapolation discrepancy this fix actually targets) that a genuine mid/pre-unaveraged slope architecture would remove for every slope-based lever, not just this one -- out of this issue's own scope box, filed as issue #107 rather than expanding it here."
    }
   },
-  "soil_slope_one_sided_extrapolation_limitation": "Codex review, issue #60, second pass (tracked as issue #89): soil_slope_mid/pre are fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1). Before issue #60 this cost nothing (the old gen0*gen_scale approach was exactly linear); issue #60's scale_production() is deliberately asymmetric by physical design (a loss reduces export first; a surplus should reduce import first), so this is now a real, quantified (not guessed) approximation, checked once by hand -- a frozen snapshot below, NOT recomputed at every build() (a third real dispatch rerun every run is exactly the scope expansion deferred to issue #89): a third real dispatch rerun at the mirrored surplus point gave slope_surplus=-0.2311 vs this artifact's own slope_loss (soil_slope_mid, -0.2176) -- extrapolating the loss slope to that point differs from the real surplus figure by $1.60 (0.07%) on a ~$2,239 base, at the LARGEST magnitude actually used anywhere in this calibration (production_measurement_spread's own real prod_sigma is smaller than lossB, so typical draws see less than this). Real but immaterial to the published payback/NPV percentiles at this household's current evidence -- fitting a genuine second (surplus-side) slope is a model-design change, filed separately (issue #89) rather than expanding this issue's own scope box further.",
+  "soil_slope_two_sided_fix": "Issue #89 (previously a stated limitation here, filed from Codex review pass 2 on issue #60): soil_slope_mid/pre used to be fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1) -- FIXED. dispatch_calibration() now runs a real THIRD dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) every time it regenerates, and fits soil_slope_surplus_mid/pre from it directly instead of extrapolating the loss-side slope: soil_slope_loss_mid=0.2176 vs soil_slope_surplus_mid=0.3404 (the surplus-side slope is genuinely steeper in magnitude, not a rounding artifact of the same underlying number). See production_reconstruction.surplus_slope_fix for the quantified before/after: extrapolating the old loss-side slope to the real surplus point would have predicted $2,213.17 against the real measured $2,198.66 -- a $14.51 (0.65%) gap that save1_of()'s new piecewise soil_slope_loss/soil_slope_surplus routing eliminates by construction, for every surplus-like draw at any magnitude, not just at this particular lossB point -- specifically the ONE-SIDED EXTRAPOLATION gap, not every discrepancy save1_of() has: a separate, pre-existing, much smaller residual (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16%) remains from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope has always used) -- see production_reconstruction.surplus_slope_fix's own resolution field for the precise distinction, filed as issue #107.",
   "rte_slope_mid": 0.5525170732494493,
   "rte_slope_pre": 0.5924853723365193,
   "rte_slope_used": 0.5725012227929843,
-  "soil_slope_mid": 0.2176162131897935,
-  "soil_slope_pre": 0.16951981803374996,
-  "soil_slope_used": 0.19356801561177173,
+  "soil_slope_loss_mid": 0.2176162131897935,
+  "soil_slope_loss_pre": 0.16951981803374996,
+  "soil_slope_loss_used": 0.19356801561177173,
+  "soil_slope_surplus_mid": 0.3403634388877598,
+  "soil_slope_surplus_pre": 0.2806992183344717,
+  "soil_slope_surplus_used": 0.31053132861111576,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
@@ -148,14 +161,16 @@
    "0.95": 2393.3797422262155
   },
   "soil_calibration_points_mid": {
+   "-0.05279410891383099": 2198.6612316833694,
    "0.0": 2238.892300422283,
    "0.05279410891383099": 2264.6146073191403
   },
   "soil_calibration_points_pre": {
+   "-0.05279410891383099": 2292.927777682357,
    "0.0": 2327.418408081455,
    "0.05279410891383099": 2348.247982968826
   },
-  "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes"
+  "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling/production draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes. RTE's 3 points (RTE_LO/RTE_NOM/RTE_HI) fit ONE slope across the full range (RTE's response is expected to be one continuous relationship). Issue #89: soiling/production's 3 points (surplus at -lossB, nominal at 0, loss at +lossB) fit TWO separate 2-point slopes instead -- soil_slope_loss from {nominal, loss} and soil_slope_surplus from {surplus, nominal} -- because scale_production()'s own reallocation is genuinely piecewise (a loss reduces export first; a surplus reduces import first), not one straight line through all three points."
  },
  "battery_marginal_only_full_model": {
   "N": 5000,
@@ -177,26 +192,26 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7510,
-     "p10": 3009,
-     "p90": 12877
+     "median": 7496,
+     "p10": 3006,
+     "p90": 12863
     },
     "15yr": {
-     "median": 18954,
-     "p10": 9731,
-     "p90": 32343
+     "median": 18948,
+     "p10": 9729,
+     "p90": 32320
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4359,
+     "median": 4357,
      "p10": 525,
-     "p90": 8794
+     "p90": 8788
     },
     "15yr": {
-     "median": 12298,
-     "p10": 5289,
-     "p90": 22078
+     "median": 12293,
+     "p10": 5286,
+     "p90": 22063
     }
    }
   },
@@ -212,49 +227,56 @@
      5.0,
      6.6
     ],
-    "swing_yr": 1.6
+    "swing_yr": 1.6,
+    "swing_yr_precise": 1.5672160270493585
    },
    "escalation": {
     "payback_range_yr": [
      5.2,
      6.8
     ],
-    "swing_yr": 1.6
+    "swing_yr": 1.6,
+    "swing_yr_precise": 1.5616402029415148
    },
    "degradation": {
     "payback_range_yr": [
      5.7,
      6.0
     ],
-    "swing_yr": 0.3
+    "swing_yr": 0.3,
+    "swing_yr_precise": 0.2700959709246362
    },
    "ev_persistence": {
     "payback_range_yr": [
      5.7,
      5.9
     ],
-    "swing_yr": 0.2
+    "swing_yr": 0.2,
+    "swing_yr_precise": 0.20126505168564623
    },
    "soiling": {
     "payback_range_yr": [
      5.8,
      5.8
     ],
-    "swing_yr": 0.1
+    "swing_yr": 0.1,
+    "swing_yr_precise": 0.053010894498095595
    },
    "round_trip_efficiency": {
     "payback_range_yr": [
      5.7,
      6.0
     ],
-    "swing_yr": 0.3
+    "swing_yr": 0.3,
+    "swing_yr_precise": 0.29923835566890045
    },
    "production_measurement_spread": {
     "payback_range_yr": [
      5.8,
      5.9
     ],
-    "swing_yr": 0.1
+    "swing_yr": 0.1,
+    "swing_yr_precise": 0.0761400301258579
    }
   },
   "ranked_by_swing": [
