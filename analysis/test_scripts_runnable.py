@@ -792,31 +792,49 @@ def _is_false_condition(cond):
                               in ("false", "${{ false }}"))
 
 
+def _is_true_condition(cond):
+    return cond is True or (isinstance(cond, str) and cond.strip().lower()
+                             in ("true", "${{ true }}"))
+
+
 def _ci_wired_test_files(workflow_src):
     """Test files with a REAL, enabled `run: python analysis/X.py` step
     somewhere in jobs.*.steps -- parsed as actual YAML structure, not a bare
     substring or a line-shaped regex, so a commented-out line, an unrelated
-    mention of the filename in prose, or a step (or its whole job) disabled
-    with `if: false` cannot satisfy this, and neither can a step marked
-    `continue-on-error: true` (issue #102 review round 2, Codex pass 1: the
-    original version checked step-level `if` only, missing a false job-level
-    `if` and a step that runs but can never fail the job). (A bare-substring
-    predecessor of this function is what let VERIFIED_ELSEWHERE_IN_CI assert
-    15 covered generators when only 6 actually were -- the file existed and
-    had SOME line mentioning it, but that is not the same claim as "a job
-    actually runs it, and a failure there fails CI".)"""
+    mention of the filename in prose, a step (or its whole job) disabled
+    with `if: false`, or a step OR JOB marked `continue-on-error: true`
+    cannot satisfy this (issue #102 review: pass 1 caught the missing
+    job-level `if` and step-level `continue-on-error`; pass 2 caught the
+    missing job-level `continue-on-error`, which GitHub Actions documents as
+    preventing a failing job from failing the workflow just like the
+    step-level flag). (A bare-substring predecessor of this function is what
+    let VERIFIED_ELSEWHERE_IN_CI assert 15 covered generators when only 6
+    actually were -- the file existed and had SOME line mentioning it, but
+    that is not the same claim as "a job actually runs it, and a failure
+    there fails CI".)
+
+    DELIBERATELY NOT HANDLED, to keep this a syntactic check rather than a
+    GitHub Actions expression evaluator (issue #102 review, Codex pass 2):
+    `if: failure()`/other status-check functions, a job skipped because a
+    dependency named in `needs:` was itself disabled, matrix/environment
+    conditions that only sometimes evaluate false, and jobs invoked via a
+    reusable workflow's `uses:` rather than a step's `run:`. None of these
+    shapes appear in this repo's tests.yml today; re-verify by hand if one
+    is ever introduced."""
     import yaml
     doc = yaml.safe_load(workflow_src) or {}
     found = set()
     for job in (doc.get("jobs") or {}).values():
         if _is_false_condition(job.get("if")):
             continue
+        if _is_true_condition(job.get("continue-on-error")):
+            continue
         for step in job.get("steps") or []:
             if not isinstance(step, dict):
                 continue
             if _is_false_condition(step.get("if")):
                 continue
-            if step.get("continue-on-error") is True:
+            if _is_true_condition(step.get("continue-on-error")):
                 continue
             run = step.get("run")
             if not isinstance(run, str):
@@ -828,21 +846,27 @@ def _ci_wired_test_files(workflow_src):
 
 
 def case_ci_wired_test_files_ignores_disabled_and_non_gating_steps():
-    """Regression for issue #102 review round 2, Codex pass 1: a synthetic
-    workflow with a false job-level `if`, a false step-level `if`, and a
-    `continue-on-error: true` step must NOT count any of their `run: python
-    analysis/X.py` lines as wired -- each represents a step that either
-    never executes or can never fail the job, so a suite living only in one
-    of these could still reach main with CI green. Planted directly, not
-    inferred from the real tests.yml, so this fails if the exclusion logic
-    regresses even though the real workflow happens not to use any of these
-    shapes today."""
+    """Regression for issue #102 review: pass 1 caught a false job-level
+    `if`, a false step-level `if`, and a step-level `continue-on-error:
+    true`; pass 2 caught a job-level `continue-on-error: true` (GitHub
+    Actions applies the same "can't fail the workflow" semantics there as
+    at the step level -- missed in the first fix). None of these five
+    shapes may count a `run: python analysis/X.py` line as wired -- each
+    represents a step that either never executes or can never fail the
+    job, so a suite living only behind one of them could still reach main
+    with CI green. Planted directly, not inferred from the real tests.yml,
+    so this fails if the exclusion logic regresses even though the real
+    workflow happens not to use any of these shapes today."""
     synthetic = """
 jobs:
   disabled-job:
     if: false
     steps:
       - run: python analysis/test_should_not_count_a.py
+  tolerated-job:
+    continue-on-error: true
+    steps:
+      - run: python analysis/test_should_not_count_d.py
   mixed-job:
     steps:
       - run: python analysis/test_should_count.py
@@ -855,7 +879,8 @@ jobs:
     assert wired == {"test_should_count.py"}, (
         f"disabled/non-gating steps were wrongly counted as wired: {wired}")
     return ("_ci_wired_test_files excludes a false job-level if, a false "
-            "step-level if, and a continue-on-error step")
+            "step-level if, a step-level continue-on-error, and a "
+            "job-level continue-on-error")
 
 
 def _archive_free_root(tmp):
