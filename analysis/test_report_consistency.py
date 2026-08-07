@@ -11,21 +11,40 @@ These cases fail instead. They need no private data, only the two committed file
 
 Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 """
+import calendar
+import datetime as dt
 import json
 import pathlib
 import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "analysis"))
-import generate_report as _gr  # noqa: E402 -- reuses its own mLabels derivation
-                               # (_month_labels_with_partial_marks) rather than
-                               # re-implementing the partial-month/abbreviation
-                               # logic a second time (issue #36)
 
 HTML = (ROOT / "index.html").read_text()
 RD = json.loads((ROOT / "data" / "report_data.json").read_text())
+BEHAVIOR = json.loads((ROOT / "data" / "behavior_rebuild.json").read_text())
 DISPATCH = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+
+_MONTH_ABBR = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+               7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
+
+
+def _expected_month_labels():
+    """Independently recomputes generate_report.py's own
+    _month_labels_with_partial_marks() from the same two committed artifacts,
+    without calling that function -- so a bug in its partial-month logic fails
+    this check too, not just a stale index.html copy (Codex review, issue #36)."""
+    bw = BEHAVIOR["window"]
+    start = dt.date.fromisoformat(bw["start"].split(" ")[0])
+    end = dt.date.fromisoformat(bw["end"].split(" ")[0])
+    labels = []
+    for lab in RD["monthly"]["labels"]:
+        year, month = (int(x) for x in lab.split("-"))
+        last_day = calendar.monthrange(year, month)[1]
+        month_start, month_end = dt.date(year, month, 1), dt.date(year, month, last_day)
+        partial = month_start < start or month_end > end
+        labels.append(f"{_MONTH_ABBR[month]}{str(year)[2:]}" + ("*" if partial else ""))
+    return labels
 
 # ---------------------------------------------------------------------------
 # FORK NOTE: the two lists below pin RETIRED figures from THIS dataset's
@@ -99,9 +118,11 @@ def case_monthly_series_match_their_artifact():
     m = re.search(r'mLabels:(\[[^\]]*\])', HTML)
     assert m, "mLabels not found in index.html"
     drawn_labels = json.loads(m.group(1))
-    assert drawn_labels == _gr._month_labels_with_partial_marks(), (
-        "mLabels disagrees with the same derivation generate_report.py uses "
-        "(report_data.json's monthly.labels + behavior_rebuild.json's window)")
+    assert drawn_labels == _expected_month_labels(), (
+        "mLabels disagrees with an independent recomputation from "
+        "report_data.json's monthly.labels and behavior_rebuild.json's window "
+        "(not generate_report.py's own _month_labels_with_partial_marks -- a "
+        "bug there must fail this check too, not just a stale html copy)")
     return "the monthly labels, import, export and cost series match report_data.json"
 
 
