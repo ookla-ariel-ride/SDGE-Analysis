@@ -227,49 +227,56 @@
      5.0,
      6.6
     ],
-    "swing_yr": 1.6
+    "swing_yr": 1.6,
+    "swing_yr_precise": 1.5672160270493585
    },
    "escalation": {
     "payback_range_yr": [
      5.2,
      6.8
     ],
-    "swing_yr": 1.6
+    "swing_yr": 1.6,
+    "swing_yr_precise": 1.5616402029415148
    },
    "degradation": {
     "payback_range_yr": [
      5.7,
      6.0
     ],
-    "swing_yr": 0.3
+    "swing_yr": 0.3,
+    "swing_yr_precise": 0.2700959709246362
    },
    "ev_persistence": {
     "payback_range_yr": [
      5.7,
      5.9
     ],
-    "swing_yr": 0.2
+    "swing_yr": 0.2,
+    "swing_yr_precise": 0.20126505168564623
    },
    "soiling": {
     "payback_range_yr": [
      5.8,
      5.8
     ],
-    "swing_yr": 0.1
+    "swing_yr": 0.1,
+    "swing_yr_precise": 0.053010894498095595
    },
    "round_trip_efficiency": {
     "payback_range_yr": [
      5.7,
      6.0
     ],
-    "swing_yr": 0.3
+    "swing_yr": 0.3,
+    "swing_yr_precise": 0.29923835566890045
    },
    "production_measurement_spread": {
     "payback_range_yr": [
      5.8,
      5.9
     ],
-    "swing_yr": 0.1
+    "swing_yr": 0.1,
+    "swing_yr_precise": 0.08892209748775581
    }
   },
   "ranked_by_swing": [

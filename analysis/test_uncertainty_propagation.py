@@ -436,6 +436,57 @@ def case_production_spread_and_soiling_get_consistent_generation_sensitivity():
 
 
 @case
+def case_save1_of_piecewise_routing_is_correct_on_vectorized_mixed_sign_arrays():
+    """Round 3 adversarial review, issue #89: every existing correctness
+    check above calls save1_of() with SCALAR loss/prod_noise. The actual
+    production hot path (full_monte_carlo(), 5000 draws) calls it with
+    numpy ARRAYS carrying a mix of loss-like and surplus-like values in the
+    SAME vectorized call -- np.where()'s array-broadcasting behavior is not
+    exercised by any scalar-only test. Builds a real mixed-sign array (loss
+    values and prod_noise-derived x both spanning positive and negative)
+    and checks the vectorized result against an elementwise scalar
+    recomputation, not just that it runs without crashing."""
+    pre, mid, rte_slope = 2329.0, 2238.0, 0.55
+    soil_slope_loss, soil_slope_surplus = 0.057, 0.091   # deliberately different
+    rng = np.random.default_rng(0)
+    N = 5000
+    loss = rng.uniform(-0.10, 0.10, N)          # mixed sign, like a real draw
+    prod_noise = rng.normal(1.0, 0.05, N)        # mixed sign via (1 - prod_noise)
+    c = np.full(N, 1.0)
+    rte = np.full(N, 0.90)
+
+    vectorized = up.save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope,
+                             soil_slope_loss, soil_slope_surplus)
+    assert loss.min() < 0 < loss.max(), "fixture must span both signs of loss"
+    assert (1 - prod_noise).min() < 0 < (1 - prod_noise).max(), (
+        "fixture must span both signs of (1 - prod_noise)")
+
+    scalar_recompute = np.array([
+        up.save1_of(1.0, 0.90, float(loss[i]), float(prod_noise[i]), pre, mid,
+                   rte_slope, soil_slope_loss, soil_slope_surplus)
+        for i in range(N)
+    ])
+    assert np.allclose(vectorized, scalar_recompute, atol=1e-9), (
+        f"vectorized save1_of() disagrees with an elementwise scalar "
+        f"recomputation -- max abs diff "
+        f"{np.max(np.abs(vectorized - scalar_recompute))}")
+
+    # And confirm the piecewise routing is REALLY happening inside the
+    # vectorized call, not just that it happens to agree with itself: at
+    # least some draws must differ from what the LOSS-side-only slope
+    # would have produced (the pre-#89 bug's exact shape).
+    all_loss_slope = up.save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope,
+                                 soil_slope_loss, soil_slope_loss)
+    assert not np.allclose(vectorized, all_loss_slope), (
+        "the vectorized result is indistinguishable from applying the "
+        "loss-side slope to everything -- piecewise routing isn't actually "
+        "differentiating surplus-like draws within the array")
+    return ("save1_of()'s vectorized np.where piecewise routing matches an "
+           "elementwise scalar recomputation on a 5000-element mixed-sign "
+           "array, and is verifiably distinct from a single-slope fallback")
+
+
+@case
 def case_scale_production_reproduces_measured_flows_exactly_at_gen_scale_1():
     """issue #60: the identity scale_production() depends on for byte-
     identity at nominal (gen_scale=1.0) -- loss=0, so new_export=gen0 and

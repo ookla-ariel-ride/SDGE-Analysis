@@ -1400,7 +1400,14 @@ def tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, los
     for name, (lo, hi) in levers.items():
         rng_lo, rng_hi = sorted((float(lo), float(hi)))
         tor[name] = {"payback_range_yr": [round(rng_lo, 1), round(rng_hi, 1)],
-                     "swing_yr": round(rng_hi - rng_lo, 1)}
+                     "swing_yr": round(rng_hi - rng_lo, 1),
+                     # issue #89: the two-sided soil-slope fix moves this
+                     # lever's swing at full precision (production_measurement_
+                     # spread: 0.0680 -> 0.0889 yr) but not at the published
+                     # 1dp rounding above -- exposed unrounded here so the
+                     # shift AC4 asks to "report explicitly" is visible in the
+                     # artifact itself, not just a commit message.
+                     "swing_yr_precise": rng_hi - rng_lo}
     ranked = sorted(tor, key=lambda k: -tor[k]["swing_yr"])
     return {"nominal_payback_yr": round(float(nominal_payback), 1), "levers": tor,
             "ranked_by_swing": ranked}
