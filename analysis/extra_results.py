@@ -85,11 +85,12 @@ OUT = DATA / "extra_results.json"
 FROZEN_KEYS = ("phantom", "price_map", "nbt", "cleaning", "trueup", "ev_fleet")
 
 # The RETIRED evening-only-dispatch base saving this ladder was seeded from
-# (TECHNICAL.md section 3.11, section 3.8). No longer reproducible from the
-# live pipeline -- battery_dispatch_policies.json's own current pw3.evening.save
-# is $1,720, not $1,743, a small drift most likely predating this project's
-# own EV-fix (see battery_dispatch_policies.py's module docstring) -- so this
-# is a dated historical constant, not a live read, same as
+# (TECHNICAL.md section 3.11, section 3.8) -- an earlier value of
+# behavior_rebuild.py's own evening-only-after-EV-behavior-shift marginal,
+# now $1,753, NOT battery_dispatch_policies.json's own, different,
+# pw3.evening.save scenario (see RETIRED_EVENING_BASE_SAVE_SOURCE below for
+# the full distinction). No longer reproducible from the live pipeline, so
+# this is a dated historical constant, not a live read, same as
 # nem3_grandfathering.py's own old_bracket constant and for the same reason:
 # recomputing from today's pipeline would silently change a number TECHNICAL.md
 # still quotes verbatim, trading one undocumented disagreement for another.
