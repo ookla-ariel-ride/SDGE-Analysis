@@ -24,8 +24,8 @@ def case(fn):
 
 
 class SkipCase(Exception):
-    """issue #102: this file had NO private-data gate at all -- the one case
-    that touches the real archive raised household.py's own fail-closed
+    """issue #102: this file had NO private-data gate at all -- the cases
+    that touch the real archive raised household.py's own fail-closed
     SystemExit on a checkout without private/household.yaml (a CI runner,
     matching test_report_tokens.py's own _require_household() convention),
     which main()'s `except Exception` cannot catch (SystemExit is a

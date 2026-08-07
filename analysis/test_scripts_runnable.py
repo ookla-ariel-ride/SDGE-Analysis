@@ -787,14 +787,34 @@ def case_generators_run_on_the_real_archive():
             "artifact reproduces the committed copy byte-for-byte")
 
 
+_LITERAL_EXPR_RE = re.compile(r"^\$\{\{\s*(true|false)\s*\}\}$")
+
+
+def _literal_bool(cond):
+    """A YAML bool, or a bare/`${{ }}`-wrapped "true"/"false" string (any
+    internal whitespace around the braces) parsed to the same bool. Returns
+    None for anything else -- an expression this checker cannot and should
+    not try to evaluate (issue #102 review, Codex pass 3: the exact-string
+    forms "${{ true }}"/"${{ false }}" missed whitespace variants like
+    "${{true}}")."""
+    if isinstance(cond, bool):
+        return cond
+    if isinstance(cond, str):
+        s = cond.strip().lower()
+        if s in ("true", "false"):
+            return s == "true"
+        m = _LITERAL_EXPR_RE.match(s)
+        if m:
+            return m.group(1) == "true"
+    return None
+
+
 def _is_false_condition(cond):
-    return cond is False or (isinstance(cond, str) and cond.strip().lower()
-                              in ("false", "${{ false }}"))
+    return _literal_bool(cond) is False
 
 
 def _is_true_condition(cond):
-    return cond is True or (isinstance(cond, str) and cond.strip().lower()
-                             in ("true", "${{ true }}"))
+    return _literal_bool(cond) is True
 
 
 def _ci_wired_test_files(workflow_src):
@@ -850,13 +870,17 @@ def case_ci_wired_test_files_ignores_disabled_and_non_gating_steps():
     `if`, a false step-level `if`, and a step-level `continue-on-error:
     true`; pass 2 caught a job-level `continue-on-error: true` (GitHub
     Actions applies the same "can't fail the workflow" semantics there as
-    at the step level -- missed in the first fix). None of these five
-    shapes may count a `run: python analysis/X.py` line as wired -- each
-    represents a step that either never executes or can never fail the
-    job, so a suite living only behind one of them could still reach main
-    with CI green. Planted directly, not inferred from the real tests.yml,
-    so this fails if the exclusion logic regresses even though the real
-    workflow happens not to use any of these shapes today."""
+    at the step level -- missed in the first fix); pass 3 caught that the
+    exact-string match for the `${{ true }}`/`${{ false }}` expression forms
+    missed whitespace variants like `${{false}}` (no spaces inside the
+    braces) -- both a false-if and a tolerated continue-on-error spelled
+    that way are planted below too. None of these seven shapes may count a
+    `run: python analysis/X.py` line as wired -- each represents a step
+    that either never executes or can never fail the job, so a suite living
+    only behind one of them could still reach main with CI green. Planted
+    directly, not inferred from the real tests.yml, so this fails if the
+    exclusion logic regresses even though the real workflow happens not to
+    use any of these shapes today."""
     synthetic = """
 jobs:
   disabled-job:
@@ -867,6 +891,10 @@ jobs:
     continue-on-error: true
     steps:
       - run: python analysis/test_should_not_count_d.py
+  disabled-job-tight-expr:
+    if: ${{false}}
+    steps:
+      - run: python analysis/test_should_not_count_e.py
   mixed-job:
     steps:
       - run: python analysis/test_should_count.py
@@ -874,13 +902,16 @@ jobs:
         run: python analysis/test_should_not_count_b.py
       - continue-on-error: true
         run: python analysis/test_should_not_count_c.py
+      - continue-on-error: ${{true}}
+        run: python analysis/test_should_not_count_f.py
 """
     wired = _ci_wired_test_files(synthetic)
     assert wired == {"test_should_count.py"}, (
         f"disabled/non-gating steps were wrongly counted as wired: {wired}")
     return ("_ci_wired_test_files excludes a false job-level if, a false "
-            "step-level if, a step-level continue-on-error, and a "
-            "job-level continue-on-error")
+            "step-level if, a step-level continue-on-error, a job-level "
+            "continue-on-error, and tight-whitespace ${{}} expression forms "
+            "of both")
 
 
 def _archive_free_root(tmp):
