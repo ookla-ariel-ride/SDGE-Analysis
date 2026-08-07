@@ -91,6 +91,7 @@ MANIFEST = {
     "quiet_night_floor.py": "generator",
     "threeway_production_validation.py": "generator",
     "heat_pump_conversion.py": "generator",
+    "extra_results.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -150,6 +151,7 @@ OWNS = {
     # writes directly into ROOT/data via its own repo_root() walk-up, same
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
+    "extra_results.py":             [("data", "extra_results.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -349,6 +351,11 @@ CI_RUNNABLE = {
     # recomputes its own CURRENT-structure figures fresh (no sibling artifact
     # read at all, unlike perfect_foresight_dispatch.py's optional cross-check)
     "tou_structure_stress.py",
+    # reads only the committed data/extra_results.json (a documented, dated
+    # historical constant stands in for what would otherwise need a private-
+    # data-requiring import -- see the module's own docstring), so it runs
+    # anywhere too (same shape as tou_spread.py above)
+    "extra_results.py",
 }
 # Generators that additionally need raw private inputs which have no synthetic
 # stand-in: the bill PDFs, the SAM 8760 exports, the monitoring history. These run

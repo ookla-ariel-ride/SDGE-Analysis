@@ -45,7 +45,8 @@
   "12%": {
    "payback_yr": 6.2,
    "npv10": 6973
-  }
+  },
+  "basis": "RETIRED variant: $14,500 installed, the superseded $1,743/yr evening-only base saving (TECHNICAL.md section 3.8/3.11: an earlier value of behavior_rebuild.py's own evening-only-dispatch-after-EV-behavior-shift marginal (currently $1,753/yr, not $1,743 -- NOT battery_dispatch_policies.json's own, different, pw3.evening.save scenario, which has no EV-behavior shift applied first). This figure predates whatever later change moved $1,743 to $1,753 and is frozen, not re-derived, so the committed ladder below never silently moves)), 1%/yr capacity fade, 5% discount. The CURRENT published ladder (report section 13) is data/battery_dispatch_policies.json -> escalation_greedy_pw3_post_behavior, rebased on the post-behavior $2,238/yr marginal -- the two ladders disagree by design, not by drift; see TECHNICAL.md section 3.11."
  },
  "price_map": {
   "S_on": {
