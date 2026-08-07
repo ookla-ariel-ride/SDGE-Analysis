@@ -11,15 +11,40 @@ These cases fail instead. They need no private data, only the two committed file
 
 Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 """
+import calendar
+import datetime as dt
 import json
 import pathlib
 import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
 HTML = (ROOT / "index.html").read_text()
 RD = json.loads((ROOT / "data" / "report_data.json").read_text())
+BEHAVIOR = json.loads((ROOT / "data" / "behavior_rebuild.json").read_text())
 DISPATCH = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
+
+_MONTH_ABBR = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+               7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
+
+
+def _expected_month_labels():
+    """Independently recomputes generate_report.py's own
+    _month_labels_with_partial_marks() from the same two committed artifacts,
+    without calling that function -- so a bug in its partial-month logic fails
+    this check too, not just a stale index.html copy (Codex review, issue #36)."""
+    bw = BEHAVIOR["window"]
+    start = dt.date.fromisoformat(bw["start"].split(" ")[0])
+    end = dt.date.fromisoformat(bw["end"].split(" ")[0])
+    labels = []
+    for lab in RD["monthly"]["labels"]:
+        year, month = (int(x) for x in lab.split("-"))
+        last_day = calendar.monthrange(year, month)[1]
+        month_start, month_end = dt.date(year, month, 1), dt.date(year, month, last_day)
+        partial = month_start < start or month_end > end
+        labels.append(f"{_MONTH_ABBR[month]}{str(year)[2:]}" + ("*" if partial else ""))
+    return labels
 
 # ---------------------------------------------------------------------------
 # FORK NOTE: the two lists below pin RETIRED figures from THIS dataset's
@@ -90,7 +115,15 @@ def case_monthly_series_match_their_artifact():
     _close(_array("mImp"), [round(v) for v in mon["imp"]], 1, "mImp")
     _close(_array("mExp"), [round(v) for v in mon["exp"]], 1, "mExp")
     _close(_array("mCost"), mon["cost"], 1, "mCost")
-    return "the monthly import, export and cost series match report_data.json"
+    m = re.search(r'mLabels:(\[[^\]]*\])', HTML)
+    assert m, "mLabels not found in index.html"
+    drawn_labels = json.loads(m.group(1))
+    assert drawn_labels == _expected_month_labels(), (
+        "mLabels disagrees with an independent recomputation from "
+        "report_data.json's monthly.labels and behavior_rebuild.json's window "
+        "(not generate_report.py's own _month_labels_with_partial_marks -- a "
+        "bug there must fail this check too, not just a stale html copy)")
+    return "the monthly labels, import, export and cost series match report_data.json"
 
 
 def case_hourly_profiles_match_their_artifact():
@@ -111,6 +144,19 @@ def case_battery_chart_series_match_their_artifacts():
     _close(_array("bat_pw3_S"), DISPATCH["pw3"]["greedy_profile_S"], 0.01, "bat_pw3_S")
     _close(_array("bat_pw3x_S"), DISPATCH["pw3x"]["greedy_profile_S"], 0.01, "bat_pw3x_S")
     return "all three battery chart series match their committed artifacts"
+
+
+def case_carb_chart_matches_its_artifact():
+    """issue #36: carb was the one const D array with no pin -- every other
+    array in that block is covered by a sibling case in this file. Both
+    sides are already rounded to 1dp in their own committed form, so the
+    tolerance only needs to absorb float-repr noise, not a real rounding
+    gap -- matching hourly_profiles' own 0.001, not a looser value that
+    could paper over a genuine last-digit drift."""
+    carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
+    _close(_array("carb"), carbon["intensity_kg_per_mwh"]["annual_avg_by_hour"],
+          0.001, "carb")
+    return "the §13 carbon chart's 24 hourly CO2-intensity values match carbon_fullyear_results.json"
 
 
 def _sparse(name):
@@ -611,6 +657,7 @@ CASES = [
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
     case_battery_chart_series_match_their_artifacts,
+    case_carb_chart_matches_its_artifact,
     case_spread_chart_series_match_their_artifact,
     case_every_lazy_chart_id_resolves_to_a_unique_canvas,
     case_headline_figures_present_and_stale_ones_absent,
