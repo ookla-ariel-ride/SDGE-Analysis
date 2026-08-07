@@ -2849,12 +2849,17 @@ to a residual of 0.0 (to float precision) at this household's own calibration
 (`calibration.mid_pre_slope_unaveraging_fix.soil_surplus_point_mid` in the artifact). The
 RTE lever is NOT exactly reproduced even by this fix: `rte_slope_mid`/`rte_slope_pre` are
 each fit by LEAST SQUARES across THREE points (`RTE_LO`/`RTE_NOM`/`RTE_HI`, not two), which
-leaves an inherent best-fit residual (~0.13% at this household's real calibration,
-`calibration.mid_pre_slope_unaveraging_fix.rte_points_mid` in the artifact) independent of
-mid/pre averaging — a single straight line generally cannot pass through three real
-(non-collinear) points exactly. This fix removes the mid/pre-averaging CONTRIBUTION to that
-gap (the specific thing this issue targets) but does not and cannot remove the 3-point-fit
-residual itself, documented rather than silently left unexplained. Downstream this is a
+leaves an inherent best-fit residual (well under 0.2% either way at this household's real
+calibration, `calibration.mid_pre_slope_unaveraging_fix.rte_points_mid` in the artifact)
+independent of mid/pre averaging — a single straight line generally cannot pass through
+three real (non-collinear) points exactly. This fix removes the mid/pre-averaging
+CONTRIBUTION to that gap (the specific thing this issue targets) but does not and cannot
+remove the 3-point-fit residual itself. That residual does NOT shrink uniformly at both
+RTE points (adversarial review, issue #107, round 1): it gets WORSE at `RTE_LO` (the old
+averaged-slope error happened to partially cancel the independent 3-point-fit residual
+there, by coincidence, not by design) and smaller at `RTE_HI` -- both directions disclosed
+live in the artifact's `rte_points_mid`/`rte_points_pre`, not summarized as uniformly
+small. Downstream this is a
 very small correction, smaller than issue #89's own: 10-yr NPV median at 4% discount $7,496
 → $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the published
 1dp rounding (5.8/5.1/6.8 yr).

@@ -1248,6 +1248,40 @@ def case_build_end_to_end_is_deterministic_and_self_consistent():
 
 
 @case
+def case_fresh_build_matches_the_committed_artifact_exactly():
+    """Issue #107 review round 1: every OTHER test of full_monte_carlo()/
+    tornado() passes IDENTICAL mid/pre slope values by fixture design (e.g.
+    rte_slope_mid=rte_slope_pre=0.5), so a caller-level argument-order swap
+    (e.g. build() passing rte_slope_pre where rte_slope_mid belongs) is
+    INVISIBLE to every other case in this file -- confirmed by actually
+    making that exact one-line swap, rerunning the full suite, and
+    observing all other cases still pass while the real dollar output
+    silently shifted (NPV $7,497/$4,360 -> $7,495/$4,356 at this
+    household's real, genuinely-different rte_slope_mid=0.5525/
+    rte_slope_pre=0.5925). This case closes that gap: it rebuilds fresh
+    against the REAL, distinct calibration values (not a symmetric
+    fixture) and checks the result against the committed artifact exactly,
+    not just for internal self-consistency."""
+    _require_archive()
+    fresh = _in_sandbox(up.build)
+    committed = _committed("uncertainty_results.json")
+    fresh_mc = fresh["battery_marginal_only_full_model"]
+    committed_mc = committed["battery_marginal_only_full_model"]
+    for key in ("payback_median", "payback_p10", "payback_p90"):
+        assert fresh_mc[key] == committed_mc[key], (
+            f"{key}: fresh build={fresh_mc[key]} vs committed={committed_mc[key]} "
+            "-- data/uncertainty_results.json is stale relative to this "
+            "checkout's real calibration, or a caller silently swapped/"
+            "mis-routed a per-side slope argument")
+    for dr in ("4pct", "7pct"):
+        for h in ("10yr", "15yr"):
+            for stat in ("median", "p10", "p90"):
+                f, c = fresh_mc["npv"][dr][h][stat], committed_mc["npv"][dr][h][stat]
+                assert f == c, f"npv.{dr}.{h}.{stat}: fresh={f} vs committed={c}"
+    return "a fresh build() against this checkout's real calibration matches the committed artifact exactly"
+
+
+@case
 def case_dispatch_adherence_and_escalation_sidedness_are_documented_not_modeled():
     """Issue #59: both scope questions from #15's review resolve to 'no new
     distribution, documented reasoning instead' -- checked here so the

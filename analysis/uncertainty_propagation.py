@@ -1141,10 +1141,16 @@ def dispatch_calibration():
             "through three non-collinear points exactly. This fix "
             "removes the mid/pre-AVERAGING contribution to that gap "
             "(what issue #107 targets) but does not and cannot remove "
-            "the separate least-squares-fit residual itself -- both "
-            "old and new RTE_LO/RTE_HI predictions above still differ "
-            "from 'real' by a similar small amount, for this reason, "
-            "not because the fix failed."),
+            "the separate least-squares-fit residual itself. That "
+            "residual does NOT shrink uniformly at both RTE points "
+            "(adversarial review, issue #107, round 1): at this "
+            "household's real calibration the fix makes RTE_LO's "
+            "residual WORSE (the old averaged-slope error happened to "
+            "partially cancel the independent 3-point-fit residual "
+            "there, by coincidence, not by design) while making RTE_HI's "
+            "residual smaller -- both remain well under 0.2% either way, "
+            "and see rte_points_mid/rte_points_pre above for the exact "
+            "old/new numbers, live, not summarized as uniformly small."),
     }
 
     return {
