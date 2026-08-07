@@ -2950,17 +2950,26 @@ rather than one blended scalar — was filed as issue #87 (a model-design change
 issue #59's own scope box).
 
 **Issue #87 resolved as "document the gap," not "build the model."** `tou_spread.json`'s
-`delivery_cell_escalation` actually resolves 5 of 6 individual TOU cells to tight,
-zero-excluding trends (e.g. winter on-peak: 11.37%/yr, CI [7.75, 15.11], r² 0.973) — only
-`summer_off_peak` is unresolved (1 vintage). The per-cell evidence isn't thin; the problem
-is those resolved cells move together and cancel in the SPREAD, the actual
-arbitrage-relevant quantity — the same conflation the earlier retraction above already
-found once. The spread-level structural-break test — the more rigorous tool for that exact
-question — already can't resolve a trend from the same underlying data (3 independent
-post-break price levels in summer, 4 in winter). A per-period model built from those
-individually-resolved-but-correlated per-cell trends would just reproduce `esc`'s existing
-blended-rate assumption dressed up as period-specific inputs, not new evidence about the
-spread — the documented-gap branch of #87's own acceptance criteria is the only
+`delivery_cell_escalation` resolves ON-PEAK to a tight, zero-excluding, POSITIVE trend in
+both seasons (winter 11.37%/yr, CI [7.75, 15.11], r² 0.973; summer 7.66%/yr, CI
+[1.73, 13.94]). SUPER-OFF-PEAK — the charging leg, the other side of the arbitrage spread —
+has a large negative point estimate in both seasons (~-21%/yr) but a CI wide enough to
+cross zero by a wide margin ([-61.89, 62.02] summer, [-49.24, 20.68] winter): a noisy
+estimate, not a resolved one (`summer_off_peak` is separately unresolved: 1 vintage).
+Combining a confidently-known on-peak trend with an unresolved super-off-peak point
+estimate to build a per-period spread trend would manufacture a specific-looking widening
+number that is really just whichever central estimate the noisy leg happened to land on —
+the same per-cell-as-clean-input error the earlier retraction above already caught once,
+applied to a trend instead of a level. The spread-level structural-break test — which
+differences the two legs directly, so the wide super-off-peak uncertainty carries straight
+through instead of hiding inside a confident-looking on-peak number — is the honest
+version of the same question, and it already can't resolve a trend from the same
+underlying data (3 independent post-break price levels in summer, 4 in winter). A
+per-period model built from these per-cell trends would not be mathematically equivalent
+to `esc`'s existing blended scalar — the two legs' point estimates plainly differ — but it
+would inherit at least as much uncertainty as the direct spread test already found
+inadequate, since super-off-peak's own wide-crossing-zero CI is the actual bottleneck
+either way — the documented-gap branch of #87's own acceptance criteria is the only
 evidence-based choice today. A longer bill corpus is needed first (`tou_spread.py`'s own
 estimate: reaching into 2028 would roughly double the independent units).
 `test_uncertainty_propagation.py`'s
