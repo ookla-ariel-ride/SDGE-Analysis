@@ -1121,6 +1121,24 @@ def dispatch_calibration():
                      "a slope that was half pre-behavior at a pure-mid "
                      "(c=1) scenario."),
         },
+        # issue #107 review, round 2: the pre-side (c=0) exactness claim
+        # was asserted in prose ("symmetrically at c=0") but never actually
+        # quantified anywhere in the artifact -- this block closes that gap
+        # with the same structure as the mid-side block above, using
+        # pre_nominal/soil_slope_surplus_pre instead of mid_nominal/
+        # soil_slope_surplus_mid.
+        "soil_surplus_point_pre": {
+            "real": round(surplus_point_pre, 2),
+            "old_averaged_slope_prediction": round(
+                pre_nominal * (1 + ((soil_slope_surplus_mid + soil_slope_surplus_pre) / 2)
+                               * (-lossB)), 2),
+            "new_own_side_slope_prediction": round(
+                pre_nominal * (1 + soil_slope_surplus_pre * (-lossB)), 2),
+            "note": ("the pre-side mirror of soil_surplus_point_mid above, "
+                     "at c=0 (pure pre-behavior) instead of c=1: the new "
+                     "prediction matches 'real' exactly for the identical "
+                     "exact-2-point-fit reason."),
+        },
         "rte_points_mid": {
             rte: {
                 "real": round(v, 2),
@@ -1130,6 +1148,16 @@ def dispatch_calibration():
                 "new_own_side_slope_prediction": round(
                     mid_nominal * (1 + rte_slope_mid * (rte - RTE_NOM)), 2),
             } for rte, v in rte_points_mid.items()
+        },
+        "rte_points_pre": {
+            rte: {
+                "real": round(v, 2),
+                "old_averaged_slope_prediction": round(
+                    pre_nominal * (1 + ((rte_slope_mid + rte_slope_pre) / 2)
+                                   * (rte - RTE_NOM)), 2),
+                "new_own_side_slope_prediction": round(
+                    pre_nominal * (1 + rte_slope_pre * (rte - RTE_NOM)), 2),
+            } for rte, v in rte_points_pre.items()
         },
         "rte_residual_note": (
             "Unlike the soil slopes, RTE_LO/RTE_NOM/RTE_HI are fit "
@@ -1150,7 +1178,11 @@ def dispatch_calibration():
             "there, by coincidence, not by design) while making RTE_HI's "
             "residual smaller -- both remain well under 0.2% either way, "
             "and see rte_points_mid/rte_points_pre above for the exact "
-            "old/new numbers, live, not summarized as uniformly small."),
+            "old/new numbers, live, not summarized as uniformly small. "
+            "The symmetric soil_surplus_point_pre/rte_points_pre blocks "
+            "(issue #107 review, round 2) confirm the c=0 side is exact "
+            "for soil_slope_surplus the same way c=1 is, not just asserted "
+            "in prose without a matching quantification."),
     }
 
     return {
@@ -1626,6 +1658,17 @@ def escalation_downside_sensitivity(pre, mid, rte_slope_mid, rte_slope_pre,
             "weighted negative-escalation input is modeled instead."),
         "base_case": "the exact same nominal save1/fade/price tornado()'s escalation lever sweeps (Beta(2,1)-blended EV persistence, nominal RTE/soiling/production) -- this grid's +0% point equals tornado()'s escalation lever's ESC_LO payback endpoint by construction, not tornado()'s overall nominal_payback_yr (which uses esc=6%, not 0%, for the escalation dimension)",
         "grid": grid,
+        # issue #107 review, round 2: grid's own payback_yr is rounded to
+        # 1dp, which can hide a real but small caller-level bug (e.g. a
+        # mid/pre slope argument swap) if it happens not to cross a
+        # rounding boundary for a given household's own calibration
+        # numbers -- confirmed directly: swapping soil_slope_loss_mid/pre
+        # at this function's own call site shifts save1_nom by ~$0.61 at
+        # this household's real calibration, with EVERY grid point's
+        # rounded payback_yr unchanged. Exposed here unrounded, mirroring
+        # tornado()'s existing swing_yr_precise convention for the
+        # identical reason.
+        "save1_nom_precise": save1_nom,
     }
 
 

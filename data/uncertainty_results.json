@@ -93,7 +93,8 @@
     "payback_yr": 13.9,
     "within_10yr_warranty": false
    }
-  }
+  },
+  "save1_nom_precise": 2276.4314683843495
  },
  "calibration": {
   "pre_nominal": 2327.42,
@@ -147,6 +148,12 @@
     "new_own_side_slope_prediction": 2198.66,
     "note": "the new prediction matches 'real' exactly (both sides of a 2-point fit, {nominal, surplus}, pass through both points by construction) -- the old averaged-slope prediction does not, since it used a slope that was half pre-behavior at a pure-mid (c=1) scenario."
    },
+   "soil_surplus_point_pre": {
+    "real": 2292.93,
+    "old_averaged_slope_prediction": 2289.26,
+    "new_own_side_slope_prediction": 2292.93,
+    "note": "the pre-side mirror of soil_surplus_point_mid above, at c=0 (pure pre-behavior) instead of c=1: the new prediction matches 'real' exactly for the identical exact-2-point-fit reason."
+   },
    "rte_points_mid": {
     "0.85": {
      "real": 2174.05,
@@ -164,7 +171,24 @@
      "new_own_side_slope_prediction": 2300.74
     }
    },
-   "rte_residual_note": "Unlike the soil slopes, RTE_LO/RTE_NOM/RTE_HI are fit together by LEAST SQUARES across all THREE points (not two separate 2-point fits), so even the new own-side slope does not exactly reproduce RTE_LO/RTE_HI -- a real dispatch relationship is not perfectly linear across all three RTE draws, and a single best-fit line cannot pass through three non-collinear points exactly. This fix removes the mid/pre-AVERAGING contribution to that gap (what issue #107 targets) but does not and cannot remove the separate least-squares-fit residual itself -- both old and new RTE_LO/RTE_HI predictions above still differ from 'real' by a similar small amount, for this reason, not because the fix failed."
+   "rte_points_pre": {
+    "0.85": {
+     "real": 2255.48,
+     "old_averaged_slope_prediction": 2260.8,
+     "new_own_side_slope_prediction": 2258.47
+    },
+    "0.9": {
+     "real": 2327.42,
+     "old_averaged_slope_prediction": 2327.42,
+     "new_own_side_slope_prediction": 2327.42
+    },
+    "0.95": {
+     "real": 2393.38,
+     "old_averaged_slope_prediction": 2394.04,
+     "new_own_side_slope_prediction": 2396.37
+    }
+   },
+   "rte_residual_note": "Unlike the soil slopes, RTE_LO/RTE_NOM/RTE_HI are fit together by LEAST SQUARES across all THREE points (not two separate 2-point fits), so even the new own-side slope does not exactly reproduce RTE_LO/RTE_HI -- a real dispatch relationship is not perfectly linear across all three RTE draws, and a single best-fit line cannot pass through three non-collinear points exactly. This fix removes the mid/pre-AVERAGING contribution to that gap (what issue #107 targets) but does not and cannot remove the separate least-squares-fit residual itself. That residual does NOT shrink uniformly at both RTE points (adversarial review, issue #107, round 1): at this household's real calibration the fix makes RTE_LO's residual WORSE (the old averaged-slope error happened to partially cancel the independent 3-point-fit residual there, by coincidence, not by design) while making RTE_HI's residual smaller -- both remain well under 0.2% either way, and see rte_points_mid/rte_points_pre above for the exact old/new numbers, live, not summarized as uniformly small. The symmetric soil_surplus_point_pre/rte_points_pre blocks (issue #107 review, round 2) confirm the c=0 side is exact for soil_slope_surplus the same way c=1 is, not just asserted in prose without a matching quantification."
   },
   "rte_slope_mid": 0.5525170732494493,
   "rte_slope_pre": 0.5924853723365193,

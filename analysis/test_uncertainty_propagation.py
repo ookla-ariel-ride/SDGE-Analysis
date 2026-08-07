@@ -1193,32 +1193,39 @@ def case_save1_of_exactly_reproduces_soil_calibration_points_at_c_endpoints():
 def case_mid_pre_slope_unaveraging_fix_is_disclosed_in_the_artifact():
     """issue #107: the artifact must disclose the mid/pre-averaging fix the
     same way #89's own surplus_slope_fix disclosed ITS fix -- a live
-    quantification, not a commit-message-only claim."""
+    quantification, not a commit-message-only claim. Checks BOTH sides
+    (mid AND pre, issue #107 review round 2): the prose claims exactness
+    "symmetrically at c=0" too, so the pre-side quantification must
+    actually exist and hold, not just be asserted."""
     if not DATA.joinpath("uncertainty_results.json").is_file():
         raise SkipCase("needs the committed uncertainty_results.json")
     result = _committed("uncertainty_results.json")
     fix = result["calibration"]["mid_pre_slope_unaveraging_fix"]
-    soil = fix["soil_surplus_point_mid"]
-    assert soil["new_own_side_slope_prediction"] == soil["real"], (
-        "the new own-side-slope prediction must match the real surplus "
-        f"point exactly: {soil}")
-    assert soil["old_averaged_slope_prediction"] != soil["real"], (
-        "the retired averaged-slope prediction must NOT match the real "
-        f"point -- otherwise nothing here demonstrates a real fix: {soil}")
-    rte_points = fix["rte_points_mid"]
-    assert len(rte_points) == 3, f"expected all 3 RTE calibration points, got {rte_points}"
-    for rte_key, point in rte_points.items():
-        if abs(float(rte_key) - up.RTE_NOM) < 1e-9:
-            continue
-        assert point["new_own_side_slope_prediction"] != point["real"], (
-            f"rte={rte_key}: the RTE residual is expected to remain "
-            f"(a separate least-squares-fit artifact, not this fix's "
-            f"target) -- an exact match here would be suspicious: {point}")
+    for side in ("mid", "pre"):
+        soil = fix[f"soil_surplus_point_{side}"]
+        assert soil["new_own_side_slope_prediction"] == soil["real"], (
+            f"{side}: the new own-side-slope prediction must match the real "
+            f"surplus point exactly: {soil}")
+        assert soil["old_averaged_slope_prediction"] != soil["real"], (
+            f"{side}: the retired averaged-slope prediction must NOT match "
+            f"the real point -- otherwise nothing here demonstrates a real "
+            f"fix: {soil}")
+        rte_points = fix[f"rte_points_{side}"]
+        assert len(rte_points) == 3, (
+            f"{side}: expected all 3 RTE calibration points, got {rte_points}")
+        for rte_key, point in rte_points.items():
+            if abs(float(rte_key) - up.RTE_NOM) < 1e-9:
+                continue
+            assert point["new_own_side_slope_prediction"] != point["real"], (
+                f"{side}, rte={rte_key}: the RTE residual is expected to "
+                f"remain (a separate least-squares-fit artifact, not this "
+                f"fix's target) -- an exact match here would be suspicious: "
+                f"{point}")
     assert "issue #107" in fix["method"] or "107" in str(result["calibration"].get(
         "soil_slope_two_sided_fix", "")), (
         "the artifact must attribute this fix to issue #107 somewhere in "
         "the calibration section")
-    return "the mid/pre-averaging fix is disclosed in the artifact with a live, verified quantification"
+    return "the mid/pre-averaging fix is disclosed in the artifact with a live, verified quantification on both sides"
 
 
 @case
@@ -1278,7 +1285,42 @@ def case_fresh_build_matches_the_committed_artifact_exactly():
             for stat in ("median", "p10", "p90"):
                 f, c = fresh_mc["npv"][dr][h][stat], committed_mc["npv"][dr][h][stat]
                 assert f == c, f"npv.{dr}.{h}.{stat}: fresh={f} vs committed={c}"
-    return "a fresh build() against this checkout's real calibration matches the committed artifact exactly"
+    # issue #107 review, round 2: this case originally checked ONLY
+    # battery_marginal_only_full_model (full_monte_carlo()'s output) --
+    # confirmed by the reviewer to leave tornado()'s and escalation_
+    # downside_sensitivity()'s own slope routing completely unchecked. A
+    # mid/pre argument swap isolated to EITHER of those two call sites in
+    # build() passed 36/36 with only the MC-block assertions above.
+    # Extended to cover both.
+    fresh_tor, committed_tor = fresh["tornado"], committed["tornado"]
+    assert fresh_tor["nominal_payback_yr"] == committed_tor["nominal_payback_yr"], (
+        f"tornado.nominal_payback_yr: fresh={fresh_tor['nominal_payback_yr']} "
+        f"vs committed={committed_tor['nominal_payback_yr']}")
+    assert fresh_tor["ranked_by_swing"] == committed_tor["ranked_by_swing"], (
+        f"tornado.ranked_by_swing: fresh={fresh_tor['ranked_by_swing']} "
+        f"vs committed={committed_tor['ranked_by_swing']}")
+    for lever, committed_lever in committed_tor["levers"].items():
+        fresh_lever = fresh_tor["levers"][lever]
+        for field in ("payback_range_yr", "swing_yr", "swing_yr_precise"):
+            f, c = fresh_lever[field], committed_lever[field]
+            assert f == c, f"tornado.levers.{lever}.{field}: fresh={f} vs committed={c}"
+    fresh_esc = fresh["escalation_downside_sensitivity"]
+    committed_esc = committed["escalation_downside_sensitivity"]
+    assert fresh_esc["grid"] == committed_esc["grid"], (
+        f"escalation_downside_sensitivity.grid: fresh={fresh_esc['grid']} vs "
+        f"committed={committed_esc['grid']}")
+    # issue #107 review, round 2: grid's own payback_yr is rounded to 1dp,
+    # which does NOT move for a real (confirmed directly: ~$0.61) but small
+    # caller-level slope-argument swap at this household's own calibration
+    # -- save1_nom_precise is the exact, unrounded quantity that shift
+    # would actually move, so compare it too.
+    assert fresh_esc["save1_nom_precise"] == committed_esc["save1_nom_precise"], (
+        f"escalation_downside_sensitivity.save1_nom_precise: "
+        f"fresh={fresh_esc['save1_nom_precise']} vs "
+        f"committed={committed_esc['save1_nom_precise']}")
+    return ("a fresh build() against this checkout's real calibration matches "
+           "the committed artifact exactly, across the Monte Carlo, tornado, "
+           "and escalation-downside blocks")
 
 
 @case
