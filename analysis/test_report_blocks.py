@@ -23,6 +23,22 @@ def case(fn):
     return fn
 
 
+class SkipCase(Exception):
+    """issue #102: this file had NO private-data gate at all -- the one case
+    that touches the real archive raised household.py's own fail-closed
+    SystemExit on a checkout without private/household.yaml (a CI runner,
+    matching test_report_tokens.py's own _require_household() convention),
+    which main()'s `except Exception` cannot catch (SystemExit is a
+    BaseException), aborting the whole file before any later case could run
+    or a clean SKIP could print."""
+
+
+def _require_household():
+    if not rt.hh.PATH.is_file():
+        raise SkipCase(f"needs private/household.yaml ({rt.hh.PATH}), which this "
+                       "checkout does not have")
+
+
 # ---------------------------------------------------------------------------
 # AC: every one of the (currently 105) TODO blocks the template actually
 # contains is classified, and the classification covers the template EXACTLY
@@ -166,6 +182,7 @@ _ROW_BUILDER_IDS = {"s3#2", "s4#2", "s6#2", "s6#5", "s6#7", "s11#2", "s12#2",
 
 @case
 def case_row_builders_produce_at_least_one_row_against_the_real_archive():
+    _require_household()
     for bid in sorted(_ROW_BUILDER_IDS):
         out = rb.DATA_BUILDERS[bid]()
         assert "<tr>" in out, f"{bid}: no <tr> in builder output: {out!r}"
@@ -243,6 +260,7 @@ def case_price_map_rows_cover_the_five_remaining_season_period_combos():
 
 @case
 def case_plan_and_battery_plan_rows_exclude_the_current_best_plan():
+    _require_household()
     current = rt.hh1("household.plan")
     s3_rows = rb.DATA_BUILDERS["s3#2"]()
     s4_rows = rb.DATA_BUILDERS["s4#2"]()
@@ -281,19 +299,23 @@ def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (
         f"CASES lists a case twice: {sorted(n for n in listed if listed.count(n) > 1)}")
-    ran = 0
+    ran = skipped = 0
     for fn in CASES:
         try:
             msg = fn()
             print(f"PASS {fn.__name__}\n     {msg}")
             ran += 1
+        except SkipCase as e:
+            print(f"SKIP {fn.__name__}\n     {e}")
+            skipped += 1
         except AssertionError as e:
             print(f"FAIL {fn.__name__}\n     AssertionError: {e}")
             raise SystemExit(1)
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL {fn.__name__}\n     {type(exc).__name__}: {exc}")
             raise SystemExit(1)
-    print(f"\n{ran}/{len(CASES)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{ran}/{len(CASES)} passed{tail}")
 
 
 if __name__ == "__main__":
