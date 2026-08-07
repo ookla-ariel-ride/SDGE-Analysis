@@ -2831,6 +2831,21 @@ few dollars (10-yr NPV median at 4% discount $7,510 → $7,496, at 7% discount $
 $4,357) — soiling and production-measurement-spread remain low-swing tornado levers either
 way, dominated by install cost, escalation and degradation.
 
+**Combining loss and prod_noise before selecting a slope side (Codex review, issue #89,
+pass 1).** `loss` and `prod_noise` both perturb the SAME physical quantity (true generation
+relative to nominal). A first draft of the piecewise design applied them as two INDEPENDENT
+multiplicative factors, each separately selecting its own slope side by its own sign — exact
+while both sides shared one slope (pre-#89), but with genuinely different loss/surplus
+slopes that introduces a first-order spurious bias whenever the two draws partially offset
+(e.g. a soiling-loss draw coinciding with an equal-and-opposite production-measurement-
+surplus draw). Quantified at this household's real `prod_sigma`/`lossB` via a 2M-draw
+simulation: a +0.28% mean bias across the Monte Carlo's own draw distribution — real, not
+Codex's constructed edge case alone. Fixed by combining the two into ONE exact shortfall
+variable before any slope is selected: `true_relative_generation = (1 - loss) * prod_noise`,
+so `combined_x = loss + x - loss*x` where `x = 1 - prod_noise` — one slope side, one factor.
+The figures above (swing 0.0761 yr, NPV $7,496/$4,357) are this corrected version's own
+output, not the intermediate biased one.
+
 **Mid/pre slope averaging (issue #107, resolved).** Every slope-based lever (`rte_slope`,
 and — after issue #89 — `soil_slope_loss`/`soil_slope_surplus`) used to be averaged across
 the mid- and pre-behavior calibration runs into ONE value, then applied to the ALREADY
@@ -2863,21 +2878,6 @@ small. Downstream this is a
 very small correction, smaller than issue #89's own: 10-yr NPV median at 4% discount $7,496
 → $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the published
 1dp rounding (5.8/5.1/6.8 yr).
-
-**Combining loss and prod_noise before selecting a slope side (Codex review, issue #89,
-pass 1).** `loss` and `prod_noise` both perturb the SAME physical quantity (true generation
-relative to nominal). A first draft of the piecewise design applied them as two INDEPENDENT
-multiplicative factors, each separately selecting its own slope side by its own sign — exact
-while both sides shared one slope (pre-#89), but with genuinely different loss/surplus
-slopes that introduces a first-order spurious bias whenever the two draws partially offset
-(e.g. a soiling-loss draw coinciding with an equal-and-opposite production-measurement-
-surplus draw). Quantified at this household's real `prod_sigma`/`lossB` via a 2M-draw
-simulation: a +0.28% mean bias across the Monte Carlo's own draw distribution — real, not
-Codex's constructed edge case alone. Fixed by combining the two into ONE exact shortfall
-variable before any slope is selected: `true_relative_generation = (1 - loss) * prod_noise`,
-so `combined_x = loss + x - loss*x` where `x = 1 - prod_noise` — one slope side, one factor.
-The figures above (swing 0.0761 yr, NPV $7,496/$4,357) are this corrected version's own
-output, not the intermediate biased one.
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this
