@@ -684,7 +684,11 @@ $9,853/yr vs the modeled $4,904/yr baseline. Caveat: the rate-index scaling of h
 value is approximate; treat the crossover dates as **±10%** (several months either way).
 
 **`data/extra_results.json` keys** (all from in-session computations on the same
-15-minute dataset and bill-validated rates):
+15-minute dataset and bill-validated rates, except `escalation` — issue #34 found it
+had no committed generator at all and was drifting toward looking like an error
+rather than a documented historical comparison; `analysis/extra_results.py` now
+reproduces it from the same dated constant described below, byte-identical to what
+was already committed, and copies the other six keys through unchanged):
 
 - `phantom` — baseload decomposed from **44 EV-free quiet nights**: median **1.025 kW**
   (p10 0.785, p90 1.36); `monthly_kw` seasonal profile peaking Sep–Oct (1.37 kW) with a May
