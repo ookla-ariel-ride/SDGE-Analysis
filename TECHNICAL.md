@@ -2949,15 +2949,21 @@ model built from real dispatch reruns at each period's own separately-measured r
 rather than one blended scalar — was filed as issue #87 (a model-design change, out of
 issue #59's own scope box).
 
-**Issue #87 resolved as "document the gap," not "build the model."** Each TOU cell in
-`tou_spread.json`'s `delivery_cell_escalation` rests on only 4-5 distinct rate-change
-vintages (`summer_off_peak` has just 1, undefined); the spread-level structural-break test
-already can't resolve a trend from that same data (3 independent post-break price levels
-in summer, 4 in winter). A per-period escalation model fit to those same 3-5 points would
-be curve-fitting noise, not new evidence — the documented-gap branch of #87's own
-acceptance criteria is the only evidence-based choice today. A longer bill corpus is
-needed first (`tou_spread.py`'s own estimate: reaching into 2028 would roughly double the
-independent units). `test_uncertainty_propagation.py`'s
+**Issue #87 resolved as "document the gap," not "build the model."** `tou_spread.json`'s
+`delivery_cell_escalation` actually resolves 5 of 6 individual TOU cells to tight,
+zero-excluding trends (e.g. winter on-peak: 11.37%/yr, CI [7.75, 15.11], r² 0.973) — only
+`summer_off_peak` is unresolved (1 vintage). The per-cell evidence isn't thin; the problem
+is those resolved cells move together and cancel in the SPREAD, the actual
+arbitrage-relevant quantity — the same conflation the earlier retraction above already
+found once. The spread-level structural-break test — the more rigorous tool for that exact
+question — already can't resolve a trend from the same underlying data (3 independent
+post-break price levels in summer, 4 in winter). A per-period model built from those
+individually-resolved-but-correlated per-cell trends would just reproduce `esc`'s existing
+blended-rate assumption dressed up as period-specific inputs, not new evidence about the
+spread — the documented-gap branch of #87's own acceptance criteria is the only
+evidence-based choice today. A longer bill corpus is needed first (`tou_spread.py`'s own
+estimate: reaching into 2028 would roughly double the independent units).
+`test_uncertainty_propagation.py`'s
 `case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar` guards this: it
 reads `tou_spread.json`'s own verdict and `post_break.adequate` fields and fails once the
 corpus grows enough to resolve them, which is the signal to revisit #87 for real.

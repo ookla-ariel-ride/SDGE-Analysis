@@ -161,10 +161,11 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
             f"grown enough to resolve it; issue #87's per-period escalation "
             f"model should be revisited with this new evidence, not deferred "
             f"again")
-        assert s["post_break"]["adequate"] is False, (
+        post_break = s.get("post_break") or {}
+        assert post_break.get("adequate") is False, (
             f"tou_spread.json's {season} post-break spread estimate is now "
-            f"'adequate' -- same signal as above, issue #87 should be "
-            f"revisited")
+            f"'adequate' (or post_break's shape changed to {post_break!r}) -- "
+            f"same signal as above, issue #87 should be revisited")
     return ("the spread trend remains 'not determined' in both seasons, so "
             "esc's single blended scalar (issue #87) is still the only "
             "evidence-based choice")
