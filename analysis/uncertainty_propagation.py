@@ -235,6 +235,23 @@ a positive OR a zero-floored distribution.
   are out of this issue's own scope box (a dispatch-rerun-based escalation
   model is a design change to how `esc` works, not a distribution-tuning
   fix); filed as a follow-up (issue #87) rather than attempted here.
+  ISSUE #87 RESOLUTION: investigated implementing the per-TOU-period model.
+  data/tou_spread.json's own delivery_cell_escalation shows each TOU cell
+  rests on only 4-5 distinct rate-change vintages (summer_off_peak has just
+  1, undefined); the spread-level structural-break test -- the more
+  rigorous tool for this exact question -- already fails to resolve a trend
+  from that same data (3 independent post-break price levels in summer, 4
+  in winter; too few to both locate a breakpoint and estimate a slope).
+  Fitting a per-period escalation model on the same 3-5 points would be
+  curve-fitting noise dressed up as a model, not new evidence. Resolved as
+  AC1's documented-gap branch: a longer bill corpus (tou_spread.py's own
+  estimate: reaching into 2028 would roughly double the independent units)
+  is needed before this is worth building. Guarded by
+  test_uncertainty_propagation.py's case_spread_trend_is_still_not_
+  determined_so_esc_stays_a_blended_scalar, which reads tou_spread.json's
+  own verdict and post_break.adequate fields and FAILS once the corpus
+  grows enough to resolve them -- that failure, not a calendar date, is the
+  signal to revisit this with a real per-period model.
 
 CALIBRATION: RTE- AND SOILING-SAVING SENSITIVITY, FROM THE REAL ENGINE
 -----------------------------------------------------------------------------

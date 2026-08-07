@@ -2946,8 +2946,21 @@ one unproven assumption for another, not improve on it. `data/uncertainty_result
 `escalation_two_sided_evidence_note` carries this reasoning, including the retraction, and
 what would actually settle the underlying question — a per-TOU-period battery-savings
 model built from real dispatch reruns at each period's own separately-measured rate path,
-rather than one blended scalar — is filed as issue #87 rather than attempted here (a
-model-design change, out of issue #59's own scope box).
+rather than one blended scalar — was filed as issue #87 (a model-design change, out of
+issue #59's own scope box).
+
+**Issue #87 resolved as "document the gap," not "build the model."** Each TOU cell in
+`tou_spread.json`'s `delivery_cell_escalation` rests on only 4-5 distinct rate-change
+vintages (`summer_off_peak` has just 1, undefined); the spread-level structural-break test
+already can't resolve a trend from that same data (3 independent post-break price levels
+in summer, 4 in winter). A per-period escalation model fit to those same 3-5 points would
+be curve-fitting noise, not new evidence — the documented-gap branch of #87's own
+acceptance criteria is the only evidence-based choice today. A longer bill corpus is
+needed first (`tou_spread.py`'s own estimate: reaching into 2028 would roughly double the
+independent units). `test_uncertainty_propagation.py`'s
+`case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar` guards this: it
+reads `tou_spread.json`'s own verdict and `post_break.adequate` fields and fails once the
+corpus grows enough to resolve them, which is the signal to revisit #87 for real.
 
 **Showing the downside's consequence, not just documenting its existence (Codex
 adversarial review, issue #59, third pass).** Labeling the 0% floor as unproven while the

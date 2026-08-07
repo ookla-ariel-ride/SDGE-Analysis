@@ -138,6 +138,39 @@ def case_esc_hi_matches_committed_tou_spread_ladder_ceiling():
 
 
 @case
+def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
+    """Issue #87: `esc` scales save1 by ONE blended factor rather than each
+    TOU period's own separately-measured rate path, because
+    data/tou_spread.json's dedicated structural-break test for the SPREAD
+    trend -- the decision-relevant quantity, not any one period's absolute
+    level (see the (b) docstring above payback_of/npv_of) -- currently
+    returns "not determined" in both seasons: only 3 (summer) / 4 (winter)
+    independent post-break price levels exist, too few to both locate a
+    breakpoint and estimate a slope from. Fitting a per-period escalation
+    model on that same data would be curve-fitting noise, not evidence, so
+    issue #87 resolved as "document the gap" rather than "build the model".
+    If a longer bill corpus ever gives tou_spread.py's test enough power to
+    determine the spread trend, THIS CHECK FAILS -- that is the signal to
+    revisit #87 for real per-period modeling, not to update this assertion."""
+    spread = _committed("tou_spread.json")["delivery_spread"]
+    for season in ("summer", "winter"):
+        s = spread[season]
+        assert s["verdict"] == "not determined", (
+            f"tou_spread.json's {season} spread trend is no longer "
+            f"'not determined' (now {s['verdict']!r}) -- the bill corpus has "
+            f"grown enough to resolve it; issue #87's per-period escalation "
+            f"model should be revisited with this new evidence, not deferred "
+            f"again")
+        assert s["post_break"]["adequate"] is False, (
+            f"tou_spread.json's {season} post-break spread estimate is now "
+            f"'adequate' -- same signal as above, issue #87 should be "
+            f"revisited")
+    return ("the spread trend remains 'not determined' in both seasons, so "
+            "esc's single blended scalar (issue #87) is still the only "
+            "evidence-based choice")
+
+
+@case
 def case_production_spread_stats_from_committed_csv():
     """AC1's production-measurement-spread input: sanity-check the empirical
     stats computed from the real, committed three-way validation CSV (no
