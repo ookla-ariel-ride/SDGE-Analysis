@@ -438,23 +438,28 @@ def gas_savings_by_period(iso):
     _heating_slice_cost()'s flat per-therm term.
 
     JUDGMENT CALL (stated per CLAUDE.md section 8): baseline_rate/
-    nonbaseline_rate/gas_energy_charge_rate are read from bill_periods_gas.
-    csv's PERIOD-LEVEL day-weighted blend, not from bill_gas_detail.csv's
-    per-segment detail, even though Gas Service can itself split into two
-    segments with different tier rates within one period (a mid-cycle rate
-    change, independent of the heating attribution's own day-level HDD
-    weighting). This issue's own acceptance criteria ask for energy-charge-
-    level marginal correctness on top of tier correctness, not segment-level
-    Gas Service precision within a period -- the tier boundary
-    (baseline vs. nonbaseline) is what determines which $/therm a heating
-    therm pays, and getting that boundary right matters far more than which
-    of a period's one or two Gas Service rate sub-segments it nets out to.
-    Splitting heating therms across Gas Service's own sub-period segments
-    would require deciding which CALENDAR DAYS within the period the
-    heating slice occupies, a level of precision this function's HDD
-    allocation does not carry (it allocates by period, not by sub-period
-    segment) -- left as a further refinement if ever needed, not attempted
-    here with a day-assignment this script has no basis for.
+    nonbaseline_rate/gas_energy_charge_rate/other_fees_rate are read from
+    bill_periods_gas.csv's PERIOD-LEVEL blend, not from bill_gas_detail.
+    csv's per-segment detail, even though Gas Service can itself split into
+    two segments with different tier rates within one period (a mid-cycle
+    rate change, independent of the heating attribution's own day-level HDD
+    weighting). Quantified, not hand-waved (Codex review, issue #98, pass
+    2): only 3 of this household's 25 real periods have BOTH a Gas Service
+    mid-cycle split AND nonzero heating attribution (2025-10-29, 2026-01-29,
+    2026-03-31); for the largest, Feb 27 - Mar 27 2026, the period-level
+    model attributes 11.10 heating therms across the whole period, while a
+    segment-respecting allocation (each rate segment's own real calendar
+    days and HDD share) caps the heating-attributable therms in the
+    genuinely cold segment at roughly 9.85 -- a real, small mispricing this
+    approximation carries, bounded well below the $23/yr the OTHER-FEES fix
+    above closed, since only 3 periods are affected and per-period tier-
+    rate deltas are ~$0.30-0.40/therm. Splitting heating therms across Gas
+    Service's own sub-period segments requires allocating BOTH the heating
+    slice and the non-heating floor to each segment's own chronological day
+    range first, then applying that segment's own tier boundary -- a
+    genuine redesign of this function's allocation granularity (currently
+    period-level), not a quick patch, filed as issue #109 rather than
+    expanding this issue's own scope box further.
     """
     periods = pd.read_csv(GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
