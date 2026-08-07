@@ -1229,6 +1229,45 @@ def case_mid_pre_slope_unaveraging_fix_is_disclosed_in_the_artifact():
 
 
 @case
+def case_rte_residual_direction_is_not_uniform_across_mid_and_pre_sides():
+    """Codex review, issue #107, pass 1: an earlier version of this fix's
+    own documentation claimed the RTE residual "gets worse at RTE_LO,
+    better at RTE_HI" -- checked and true ONLY on the mid side; the pre
+    side is the OPPOSITE direction, and the docs stated this as if it were
+    universal. This case pins the actual, asymmetric relationship
+    mechanically, so a future regeneration that silently reverses one
+    side's direction (a real drift, not just a mis-stated claim) is
+    caught, not just re-described in prose after the fact."""
+    if not DATA.joinpath("uncertainty_results.json").is_file():
+        raise SkipCase("needs the committed uncertainty_results.json")
+    result = _committed("uncertainty_results.json")
+    fix = result["calibration"]["mid_pre_slope_unaveraging_fix"]
+
+    def residual(point):
+        return abs(point["real"] - point["old_averaged_slope_prediction"]), \
+               abs(point["real"] - point["new_own_side_slope_prediction"])
+
+    mid_lo_old, mid_lo_new = residual(fix["rte_points_mid"]["0.85"])
+    mid_hi_old, mid_hi_new = residual(fix["rte_points_mid"]["0.95"])
+    pre_lo_old, pre_lo_new = residual(fix["rte_points_pre"]["0.85"])
+    pre_hi_old, pre_hi_new = residual(fix["rte_points_pre"]["0.95"])
+
+    assert mid_lo_new > mid_lo_old, (
+        f"mid RTE_LO: expected the fix to make this residual WORSE, "
+        f"old={mid_lo_old} new={mid_lo_new}")
+    assert mid_hi_new < mid_hi_old, (
+        f"mid RTE_HI: expected the fix to make this residual BETTER, "
+        f"old={mid_hi_old} new={mid_hi_new}")
+    assert pre_lo_new < pre_lo_old, (
+        f"pre RTE_LO: expected the fix to make this residual BETTER "
+        f"(opposite of mid), old={pre_lo_old} new={pre_lo_new}")
+    assert pre_hi_new > pre_hi_old, (
+        f"pre RTE_HI: expected the fix to make this residual WORSE "
+        f"(opposite of mid), old={pre_hi_old} new={pre_hi_new}")
+    return "the RTE residual direction is confirmed asymmetric across mid/pre sides, matching the documented (corrected) claim exactly"
+
+
+@case
 def case_build_end_to_end_is_deterministic_and_self_consistent():
     _require_archive()
     out1 = _in_sandbox(up.build)

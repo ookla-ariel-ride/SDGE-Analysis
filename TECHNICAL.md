@@ -2679,12 +2679,16 @@ review pass 1, finding 1: an earlier draft billed the scaled-generation battery 
 an unscaled-generation baseline, which folded the direct cost of lost solar into what was
 supposed to be an isolated battery effect and pulled the soiling slope sharply, spuriously
 negative). A linear factor(x) = 1 + slope·(x - nominal) is fit by least squares to each
-lever's points. The pre- and post-behavior calibration runs land on nearly identical
-fractional slopes (RTE: +0.552 vs +0.592 per unit RTE; soiling: +0.0565 vs +0.0568 per unit
-loss fraction, both small and positive once correctly isolated — soiling's realistic
-1.3-6.6% loss range moves the battery marginal by well under 1%) — evidence that averaging
-the two into a single slope, applied to whichever pre/post-behavior blend a given Monte
-Carlo draw lands on, is a reasonable simplification rather than a fabricated shortcut.
+lever's points, kept SEPARATE per side (issue #107, resolved — see "Mid/pre slope
+averaging" below; an earlier version of this paragraph described averaging the pre- and
+post-behavior slopes into one value before applying it, on the strength of the two sides'
+slopes landing close together, e.g. RTE +0.552 vs +0.592 per unit RTE — that architecture is
+retired: each side's own slope is now applied to that side's own nominal value first, then
+the two dollar results are blended by `c`). Soiling is likewise no longer one
+undifferentiated slope: issue #89 splits it into a loss-side and a genuinely steeper
+surplus-side slope (`soil_slope_loss_mid` +0.2176/`_pre` +0.1695, `soil_slope_surplus_mid`
++0.3404/`_pre` +0.2807 at this household's calibration — both small enough that soiling's
+realistic 1.3-6.6% loss range moves the battery marginal by well under 1% either way).
 Every calibration point runs `run_batt` to a converged, steady-annual-cycle SOC boundary
 (iterating with each pass's ending SOC fed forward as the next pass's starting SOC until
 they agree within 0.01 kWh) rather than the single one-time pass from a fixed `cap/2` start
@@ -2869,12 +2873,16 @@ calibration, `calibration.mid_pre_slope_unaveraging_fix.rte_points_mid` in the a
 independent of mid/pre averaging — a single straight line generally cannot pass through
 three real (non-collinear) points exactly. This fix removes the mid/pre-averaging
 CONTRIBUTION to that gap (the specific thing this issue targets) but does not and cannot
-remove the 3-point-fit residual itself. That residual does NOT shrink uniformly at both
-RTE points (adversarial review, issue #107, round 1): it gets WORSE at `RTE_LO` (the old
-averaged-slope error happened to partially cancel the independent 3-point-fit residual
-there, by coincidence, not by design) and smaller at `RTE_HI` -- both directions disclosed
-live in the artifact's `rte_points_mid`/`rte_points_pre`, not summarized as uniformly
-small. Downstream this is a
+remove the 3-point-fit residual itself. That residual does NOT shrink uniformly, and the
+direction is NOT even consistent between the mid and pre sides (Codex review, issue #107,
+pass 1 caught that an earlier version of this note, checked only on the mid side, stated
+the pre side's direction backwards too): at this household's real calibration, the mid
+side gets WORSE at `RTE_LO` and BETTER at `RTE_HI`, while the pre side is the OPPOSITE —
+BETTER at `RTE_LO` and WORSE at `RTE_HI` (the old averaged-slope error happens to partially
+cancel the independent 3-point-fit residual on whichever side/point it coincidentally
+lines up with, no consistent pattern across sides). Both sides remain well under 0.2%
+either way regardless of direction — see the artifact's `rte_points_mid`/`rte_points_pre`
+for the exact old/new numbers, live, not summarized as uniformly anything. Downstream this is a
 very small correction, smaller than issue #89's own: 10-yr NPV median at 4% discount $7,496
 → $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the published
 1dp rounding (5.8/5.1/6.8 yr).
