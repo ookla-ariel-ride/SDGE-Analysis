@@ -174,6 +174,7 @@ TOU_EXEMPT = {"rates.py", "analyze.py", "analyze_norelief.py", "tou_audit.py",
 ABS_PATH = re.compile(r"""["'](/[A-Za-z0-9_.\-]+/[^"']*)["']""")
 
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
+COVERAGE_SCRIPT = ANALYSIS / "check_coverage.sh"
 
 
 class SkipCase(Exception):
@@ -1015,6 +1016,49 @@ def case_publication_failure_leaves_artifacts_untouched():
     return "a publication failure leaves every committed artifact byte-untouched"
 
 
+def _coverage_suite_files(coverage_src):
+    """Test files (with `.py`) named in check_coverage.sh's own SUITE loop
+    (`for t in test_a test_b ... ; do`), parsed from the actual bash `for`
+    statement rather than assumed from prose, so a reordered or reformatted
+    list cannot silently desync this check from what the script really
+    runs. The list spans multiple lines with bash `\` line-continuations,
+    which must be stripped before splitting on whitespace -- otherwise a
+    bare `\` (sitting on its own between two names) survives as a spurious
+    token."""
+    m = re.search(r"for t in(.*?);\s*do", coverage_src, re.S)
+    assert m, f"{COVERAGE_SCRIPT.name}: no 'for t in ... ; do' SUITE loop found"
+    names = m.group(1).replace("\\", " ").split()
+    assert names, f"{COVERAGE_SCRIPT.name}: the SUITE loop parsed to zero names"
+    return {f"{name}.py" for name in names}
+
+
+def case_every_check_coverage_suite_is_wired_into_ci():
+    """Issue #102: check_coverage.sh's SUITE list is real, already-passing
+    local test coverage -- but a file can sit there for months with no
+    corresponding `run:` step in tests.yml, so a regression in it reaches
+    main with every CI check reporting green (found for test_extra_results.py
+    during issue #34's review, then confirmed pre-existing for eight more
+    files). Checked mechanically here, not by re-reading both lists by eye
+    on every future addition: every SUITE-list file must have a real,
+    enabled `run: python analysis/X.py` step somewhere in tests.yml (reusing
+    _ci_wired_test_files(), the same parser case_verified_elsewhere_mapping_
+    is_real_and_wired_into_ci already trusts for the same class of claim)."""
+    assert COVERAGE_SCRIPT.is_file(), f"{COVERAGE_SCRIPT} not found"
+    assert CI_WORKFLOW.is_file(), f"{CI_WORKFLOW} not found"
+    suite_files = _coverage_suite_files(COVERAGE_SCRIPT.read_text())
+    assert len(suite_files) > 30, (
+        f"only found {len(suite_files)} SUITE files -- the 'for t in ... ; do' "
+        "parse likely broke against a reformatted check_coverage.sh")
+    wired = _ci_wired_test_files(CI_WORKFLOW.read_text())
+    missing = sorted(f for f in suite_files if f not in wired)
+    assert not missing, (
+        f"{len(missing)} check_coverage.sh SUITE file(s) have no `run: python "
+        f"analysis/X.py` step in {CI_WORKFLOW.name}, so a regression in them "
+        f"reaches main with CI reporting green: {missing}")
+    return (f"all {len(suite_files)} check_coverage.sh SUITE files have a real "
+           f"CI step in {CI_WORKFLOW.name}")
+
+
 CASES = [
     case_manifest_is_complete_and_exact,
     case_no_two_generators_own_the_same_artifact,
@@ -1030,6 +1074,7 @@ CASES = [
     case_small_charger_refuses_ev_discrimination,
     case_publication_failure_leaves_artifacts_untouched,
     case_verified_elsewhere_mapping_is_real_and_wired_into_ci,
+    case_every_check_coverage_suite_is_wired_into_ci,
     case_generators_run_on_the_real_archive,
 ]
 

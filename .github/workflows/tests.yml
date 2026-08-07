@@ -99,6 +99,25 @@ jobs:
       # The real-value scan runs in the local pre-commit hook (CLAUDE.md §4).
       - name: intake privacy tiers — contract and synthetic controls (real-value scan SKIPS, no private data on a runner)
         run: python analysis/test_privacy_tiers.py
+      # issue #102: these seven were real, already-passing local suites in
+      # check_coverage.sh's SUITE list with no CI step of their own -- a
+      # regression in any of them could reach main with every check green.
+      # None need the private archive to run for real (each gates its own
+      # optional archive-dependent cases behind SkipCase).
+      - name: LLM egress-preflight guard tests
+        run: python analysis/test_egress_preflight.py
+      - name: report-generation guard tests
+        run: python analysis/test_generate_report.py
+      - name: LLM provider adapter guard tests (no real network calls)
+        run: python analysis/test_llm_providers.py
+      - name: report prose-lint guard tests
+        run: python analysis/test_prose_lint.py
+      - name: report TODO-block classification guard tests
+        run: python analysis/test_report_blocks.py
+      - name: report-token resolution guard tests
+        run: python analysis/test_report_tokens.py
+      - name: stage-private-data.sh guard tests
+        run: python analysis/test_stage_private_data.py
 
   archive-only-generators:
     # issue #44: these generators used to sit in test_scripts_runnable.py's
@@ -138,3 +157,9 @@ jobs:
         run: python analysis/test_reprice_by_vintage.py
       - name: quiet-night-floor guard tests
         run: python analysis/test_quiet_night_floor.py
+      # issue #102: real, already-passing local coverage with no CI step of
+      # its own -- mostly hand-computable synthetic fixtures (matching this
+      # job's own convention), plus a few real-archive cases that gate
+      # behind SkipCase and simply skip here.
+      - name: heat-pump conversion guard tests
+        run: python analysis/test_heat_pump_conversion.py
