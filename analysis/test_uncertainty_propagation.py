@@ -236,8 +236,10 @@ def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
 
     return ("the spread trend remains 'not determined' in both seasons, "
             "on-peak stays a resolved positive trend and super-off-peak "
-            "stays unresolved, so esc's single blended scalar (issue #87) "
-            "is still the only evidence-based choice")
+            "stays unresolved, so deferring a per-TOU-period escalation "
+            "model (issue #87) remains the evidence-based call -- esc's "
+            "single blended scalar stays the explicitly-flagged, unproven "
+            "INHERITED assumption it already was, not itself proven correct")
 
 
 @case
