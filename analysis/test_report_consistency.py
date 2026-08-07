@@ -127,11 +127,15 @@ def case_battery_chart_series_match_their_artifacts():
 
 def case_carb_chart_matches_its_artifact():
     """issue #36: carb was the one const D array with no pin -- every other
-    array in that block is covered by a sibling case in this file."""
+    array in that block is covered by a sibling case in this file. Both
+    sides are already rounded to 1dp in their own committed form, so the
+    tolerance only needs to absorb float-repr noise, not a real rounding
+    gap -- matching hourly_profiles' own 0.001, not a looser value that
+    could paper over a genuine last-digit drift."""
     carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
     _close(_array("carb"), carbon["intensity_kg_per_mwh"]["annual_avg_by_hour"],
-          0.05, "carb")
-    return "the §13 carbon chart's hourly array matches carbon_fullyear_results.json"
+          0.001, "carb")
+    return "the §13 carbon chart's 24 hourly CO2-intensity values match carbon_fullyear_results.json"
 
 
 def _sparse(name):
