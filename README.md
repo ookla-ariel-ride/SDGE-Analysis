@@ -273,6 +273,7 @@ schema and pipeline in depth.
 | `data/lifetime_payback.json` | Cumulative value of metered production against the install invoice, with the crossover dates and the blended rates it was derived from |
 | `data/service_headroom.json` | Electrical service headroom under NEC 220.87: the measured demand basis, the calculated existing load it implies, what is left against the main breaker and the busbar, and the 120%-rule check on the existing PV backfeed |
 | `data/irreducible_bill.json` | The strict floor of the annual electric bill that no purchase can remove (the per-day fixed charge alone), reported separately from non-bypassable charges — real, currently owed, but usage-dependent, not fixed: per-period extraction (cross-checked against an independently sourced TOU-table computation), the trailing-12-month figures, each component's share of each `package_results.json` package's projected bill, and the minimum-bill-provision and NBC-on-gross-kWh checks behind it |
+| `data/heat_pump_conversion.json` | Replacing the gas furnace + AC with a heat pump: furnace therms isolated two independent ways and cross-checked, the added electric load re-billed on real 15-minute intervals across the measured year, gas savings priced at each real billing period's own realized rate, payback and NPV (standalone and marginal-over-AC-replacement) across a COP × install-cost × gas-price sensitivity grid |
 
 </details>
 
@@ -306,12 +307,13 @@ schema and pipeline in depth.
 | `analysis/lifetime_payback.py` | Lifetime solar payback: cumulative production value vs install invoice, with crossover dates |
 | `analysis/service_headroom.py` | Electrical service headroom from measured demand: takes the peak interval demand out of the Green Button export, applies the NEC 220.87 existing-dwelling method (measured maximum demand × 125%), and checks the result and the existing PV backfeed against the panel facts in `private/household.yaml` → `data/service_headroom.json` |
 | `analysis/irreducible_bill.py` | Splits every electric billing period into a fixed daily charge, non-bypassable charges billed on gross imported kWh, taxes/fees and a residual energy bucket; cross-checks the residual against an independently sourced TOU-table computation, states the fixed daily charge alone as the strict floor over the trailing 12-month bill window (non-bypassable charges are reported separately — real, but usage-dependent, not fixed), and expresses each component as a share of each package's projected bill → `data/irreducible_bill.json` |
+| `analysis/heat_pump_conversion.py` | Heat-pump conversion scenario model: isolates furnace therms from the gas meter two independent ways, sizes the heat pump's replacement electricity by COP scenario, adds it into real 15-minute intervals and re-bills the measured year with the canonical NEM engine, and prices displaced gas at each real billing period's own realized rate → `data/heat_pump_conversion.json` |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/extended-research-notes.md` | AB 205 / DSGS-VPP / outage-exposure / fuel-constant research (sources + captured figures) backing the extended findings |
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |
 | `analysis/parse_bills.py` | Parses the detailed bill PDFs into the per-period and TOU artifacts, and regenerates the two legacy bill summaries as its own reproduction gate. Reads `household.has_gas` — the flag, not the presence of a directory, decides whether gas is expected |
-| `analysis/test_*.py` | **Sixteen test suites**, run by CI on every push. They are mostly *negative* tests: each one injects the defect it claims to catch and proves the code refuses. `test_scripts_runnable.py` additionally executes every generator and byte-diffs each committed artifact against a fresh run — the §9 gate, folded into the suite |
+| `analysis/test_*.py` | **42 test suites**, run by CI on every push. They are mostly *negative* tests: each one injects the defect it claims to catch and proves the code refuses. `test_scripts_runnable.py` additionally executes every generator and byte-diffs each committed artifact against a fresh run — the §9 gate, folded into the suite |
 | `analysis/check_coverage.sh` | Local coverage gate (≥90% statement coverage across the analysis package); needs the private archive, so it does not run in CI |
 | `analysis/household.py` | Loader for `private/household.yaml` — analysis scripts read per-house facts (invoice, dates, charger kW, vehicle specs…) through it and **fail closed** with a run-the-intake-interview message if the file or a required key is missing |
 
@@ -371,8 +373,8 @@ where the `private/verify` flow expects them.
    single source of truth all current models import. If the household changed (vehicle,
    charger, cleaning event, appliance), update `private/household.yaml` too.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
-   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. Run the twelve
-   test suites as well — `test_scripts_runnable.py` performs the byte-diff across every owned
+   each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. Run the test
+   suites as well — `test_scripts_runnable.py` performs the byte-diff across every owned
    artifact in one pass. For the strictest check, clone fresh, stage the private inputs with
    `stage-private-data.sh`, and run the same gates there: the pipeline reproduces
    byte-identically from a clean clone.
@@ -392,4 +394,4 @@ each with a privacy checklist so nothing personal lands in a public thread.
 
 ---
 
-*Last reviewed: 2026-07-30, against commit `62c1c87`.*
+*Last reviewed: 2026-08-06, against commit `f47ab67`.*
