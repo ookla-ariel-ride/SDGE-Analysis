@@ -17,6 +17,12 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "analysis"))
+import generate_report as _gr  # noqa: E402 -- reuses its own mLabels derivation
+                               # (_month_labels_with_partial_marks) rather than
+                               # re-implementing the partial-month/abbreviation
+                               # logic a second time (issue #36)
+
 HTML = (ROOT / "index.html").read_text()
 RD = json.loads((ROOT / "data" / "report_data.json").read_text())
 DISPATCH = json.loads((ROOT / "data" / "battery_dispatch_policies.json").read_text())
@@ -90,7 +96,13 @@ def case_monthly_series_match_their_artifact():
     _close(_array("mImp"), [round(v) for v in mon["imp"]], 1, "mImp")
     _close(_array("mExp"), [round(v) for v in mon["exp"]], 1, "mExp")
     _close(_array("mCost"), mon["cost"], 1, "mCost")
-    return "the monthly import, export and cost series match report_data.json"
+    m = re.search(r'mLabels:(\[[^\]]*\])', HTML)
+    assert m, "mLabels not found in index.html"
+    drawn_labels = json.loads(m.group(1))
+    assert drawn_labels == _gr._month_labels_with_partial_marks(), (
+        "mLabels disagrees with the same derivation generate_report.py uses "
+        "(report_data.json's monthly.labels + behavior_rebuild.json's window)")
+    return "the monthly labels, import, export and cost series match report_data.json"
 
 
 def case_hourly_profiles_match_their_artifact():
@@ -111,6 +123,15 @@ def case_battery_chart_series_match_their_artifacts():
     _close(_array("bat_pw3_S"), DISPATCH["pw3"]["greedy_profile_S"], 0.01, "bat_pw3_S")
     _close(_array("bat_pw3x_S"), DISPATCH["pw3x"]["greedy_profile_S"], 0.01, "bat_pw3x_S")
     return "all three battery chart series match their committed artifacts"
+
+
+def case_carb_chart_matches_its_artifact():
+    """issue #36: carb was the one const D array with no pin -- every other
+    array in that block is covered by a sibling case in this file."""
+    carbon = json.loads((ROOT / "data" / "carbon_fullyear_results.json").read_text())
+    _close(_array("carb"), carbon["intensity_kg_per_mwh"]["annual_avg_by_hour"],
+          0.05, "carb")
+    return "the §13 carbon chart's hourly array matches carbon_fullyear_results.json"
 
 
 def _sparse(name):
@@ -611,6 +632,7 @@ CASES = [
     case_monthly_series_match_their_artifact,
     case_hourly_profiles_match_their_artifact,
     case_battery_chart_series_match_their_artifacts,
+    case_carb_chart_matches_its_artifact,
     case_spread_chart_series_match_their_artifact,
     case_every_lazy_chart_id_resolves_to_a_unique_canvas,
     case_headline_figures_present_and_stale_ones_absent,
