@@ -260,6 +260,7 @@ def case_gas_savings_price_heating_slice_at_true_marginal_tier():
             "nonbaseline_rate": [2.3],
             "baseline_allowance_therms": [40.0],
             "gas_energy_charge_rate": [0.5],
+            "other_fees_rate": [0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -306,6 +307,7 @@ def case_gas_savings_heating_slice_entirely_within_baseline_tier():
             "nonbaseline_rate": [np.nan],
             "baseline_allowance_therms": [11.0],
             "gas_energy_charge_rate": [0.39416],
+            "other_fees_rate": [0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -346,6 +348,7 @@ def case_gas_savings_fails_closed_when_nonbaseline_rate_missing_but_needed():
             "nonbaseline_rate": [np.nan],   # inconsistent: usage crosses the allowance below
             "baseline_allowance_therms": [40.0],
             "gas_energy_charge_rate": [0.5],
+            "other_fees_rate": [0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -491,6 +494,7 @@ def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
             "nonbaseline_rate": [np.nan, np.nan, np.nan],
             "baseline_allowance_therms": [999.0, 999.0, 999.0],
             "gas_energy_charge_rate": [0.0, 0.0, 0.0],
+            "other_fees_rate": [0.0, 0.0, 0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -533,6 +537,7 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
             "nonbaseline_rate": [np.nan, np.nan, np.nan],
             "baseline_allowance_therms": [999.0, 999.0, 999.0],
             "gas_energy_charge_rate": [0.0, 0.0, 0.0],
+            "other_fees_rate": [0.0, 0.0, 0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -578,6 +583,7 @@ def case_gas_savings_reserves_the_non_heating_floor_before_capping():
             "nonbaseline_rate": [np.nan],
             "baseline_allowance_therms": [999.0],
             "gas_energy_charge_rate": [0.0],
+            "other_fees_rate": [0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -621,6 +627,7 @@ def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
             "nonbaseline_rate": [2.37552, 2.37552],
             "baseline_allowance_therms": [11.0, 19.0],
             "gas_energy_charge_rate": [0.32597, 0.45779],
+            "other_fees_rate": [0.0, 0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)

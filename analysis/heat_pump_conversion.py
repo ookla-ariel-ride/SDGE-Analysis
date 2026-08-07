@@ -70,11 +70,12 @@ rate (issue #98): the heating slice (modeled as the marginal, top slice of
 that period's usage) is priced at whichever Gas Service tier(s) it actually
 occupies (data/bill_periods_gas.csv's baseline_rate/nonbaseline_rate, split
 at that period's own printed baseline_allowance_therms) plus the separate,
-flat, untiered gas_energy_charge_rate every therm pays -- see
+flat, untiered gas_energy_charge_rate AND other_fees_rate (Public Purpose
+Programs + State Regulatory Fee combined) every therm pays -- see
 gas_savings_by_period()'s and _heating_slice_cost()'s own docstrings for
 the full mechanism. This replaced an earlier blended-average approximation
 (total_gas_service / therms) once parse_bills.py started extracting the
-baseline allowance and energy-charge rate needed for the marginal-tier
+baseline allowance and per-therm fee rates needed for the marginal-tier
 computation. A real gas bill PDF for this household's own GR-Residential
 rate (sdge_gas_2025-07-30.pdf) was read directly to confirm there is NO
 separate fixed/customer charge on this rate schedule -- every line item is
@@ -337,7 +338,8 @@ def isolate_heating_therms():
 
 
 def _heating_slice_cost(total_therms, heating_therms, baseline_allowance,
-                         baseline_rate, nonbaseline_rate, energy_rate, context):
+                         baseline_rate, nonbaseline_rate, energy_rate,
+                         other_fees_rate, context):
     """True marginal-tier price of the TOP `heating_therms` of a period's
     `total_therms` (issue #98) -- i.e. what those specific therms cost given
     where they sit in the tariff's two-tier ladder, not the period's blended
@@ -352,11 +354,18 @@ def _heating_slice_cost(total_therms, heating_therms, baseline_allowance,
     it at the nonbaseline rate, so the heating slice occupies the tariff's
     MORE expensive tier first, working down, until the slice is exhausted:
         - the therms strictly above `max(baseline_allowance, non_heat_therms)`
-          are nonbaseline-tier (priced at nonbaseline_rate + energy_rate);
+          are nonbaseline-tier (priced at nonbaseline_rate + energy_rate +
+          other_fees_rate);
         - whatever of the slice remains below that line is baseline-tier
-          (priced at baseline_rate + energy_rate).
-    The flat Gas Energy Charge (energy_rate) applies to EVERY therm
-    regardless of tier, so it is added on both slices rather than tiered.
+          (priced at baseline_rate + energy_rate + other_fees_rate).
+    The flat Gas Energy Charge (energy_rate) AND the flat Public Purpose
+    Programs + State Regulatory Fee combined rate (other_fees_rate, Codex
+    review, issue #98, pass 1: omitting these understated a therm's true
+    marginal cost by their combined rate, the one respect in which the
+    RETIRED blended-average approach -- total_gas_service / therms, which IS
+    all-in -- was actually more complete than an earlier draft of this true-
+    marginal-tier engine) both apply to EVERY therm regardless of tier, so
+    both are added on both slices rather than tiered.
 
     A period whose blended nonbaseline_rate came out blank (bill_periods_gas.
     csv: every segment's own Gas Service was single-tier, i.e. this period
@@ -382,7 +391,7 @@ def _heating_slice_cost(total_therms, heating_therms, baseline_allowance,
             f"the bill.")
     nonbaseline_rate = 0.0 if pd.isna(nonbaseline_rate) else nonbaseline_rate
     tier_cost = overlap_baseline * baseline_rate + overlap_nonbaseline * nonbaseline_rate
-    energy_cost = heating_therms * energy_rate
+    energy_cost = heating_therms * (energy_rate + other_fees_rate)
     return tier_cost + energy_cost
 
 
@@ -391,29 +400,42 @@ def gas_savings_by_period(iso):
     annual heating therms (from that period's OWN days' HDD, never a flat
     annual average) priced at that period's own TRUE MARGINAL rate (issue
     #98) -- the tier(s) the heating slice actually sits in, plus the flat
-    Gas Energy Charge every therm pays -- rather than the period's blended
-    average $/therm.
+    Gas Energy Charge and Public Purpose Programs/State Regulatory Fee every
+    therm pays -- rather than the period's blended average $/therm.
 
     HISTORY (why this replaced a blended-average approximation, Codex
     adversarial review, issue #1, two passes). Two real gas bill PDFs for
     this household's own GR-Residential rate were read directly
     (sdge_gas_2025-07-30.pdf, a low-usage summer statement; sdge_gas_2025-
     12-30.pdf, a 61-therm winter statement) to see what a gas bill actually
-    contains: THREE separate charges. "Gas Service" is the two-tier
+    contains: FOUR separate charges. "Gas Service" is the two-tier
     baseline/nonbaseline rate (baseline_rate/nonbaseline_rate); a SEPARATE
     "Gas Energy Charge" line prices EVERY therm (baseline and nonbaseline
     alike) at a third, flat, untiered rate (gas_energy_charge_rate, ~
-    $0.50/therm on the December statement); Public Purpose Programs and a
-    State Regulatory Fee add a further ~$0.12/therm (folded into
-    total_gas_service, not separately modeled here). Pricing heating therms
-    at nonbaseline_rate ALONE would OMIT the Gas Energy Charge and the tax
-    surcharge entirely. parse_bills.py (issue #98) now extracts
-    baseline_allowance_therms and a day-weighted blended
-    gas_energy_charge_rate into data/bill_periods_gas.csv (plus full
-    per-segment detail into data/bill_gas_detail.csv), which is what makes
-    the true marginal-tier pricing below possible -- the predecessor of this
-    function used total_gas_service / therms (an all-in blended average)
-    specifically because neither figure was available yet.
+    $0.50/therm on the December statement); "Public Purpose Programs" and a
+    "State Regulatory Fee" add a further, similarly flat, untiered
+    other_fees_rate (~$0.12-0.16/therm across this corpus). Pricing heating
+    therms at nonbaseline_rate ALONE would OMIT the Gas Energy Charge and
+    the other two fees entirely. parse_bills.py (issue #98) extracts
+    baseline_allowance_therms and day-weighted-blended gas_energy_charge_rate
+    into data/bill_periods_gas.csv (plus full per-segment detail into
+    data/bill_gas_detail.csv), which is what makes the true marginal-tier
+    pricing below possible -- the predecessor of this function used
+    total_gas_service / therms (an all-in blended average) specifically
+    because none of these figures were available yet.
+
+    A first version of this fix (Codex review, issue #98, pass 1) extracted
+    baseline_allowance_therms and gas_energy_charge_rate but NOT
+    other_fees_rate, meaning it omitted a real, quantified ~$23/yr of Public
+    Purpose Programs/State Regulatory Fee charges the OLD blended-average
+    approach had actually captured correctly (being all-in by construction)
+    -- the one respect in which the retired approximation was MORE complete
+    than the first true-marginal-tier draft. Fixed by extracting
+    other_fees_rate (parse_bills.py's _gas_other_fees(), therm-weighted
+    across however many segments that charge type has -- it splits by THERM
+    COUNT on a mid-cycle rate change, not by day, unlike Gas Service/Gas
+    Energy Charge) and adding it alongside energy_rate in
+    _heating_slice_cost()'s flat per-therm term.
 
     JUDGMENT CALL (stated per CLAUDE.md section 8): baseline_rate/
     nonbaseline_rate/gas_energy_charge_rate are read from bill_periods_gas.
@@ -491,6 +513,7 @@ def gas_savings_by_period(iso):
             baseline_rate=row["baseline_rate"],
             nonbaseline_rate=row["nonbaseline_rate"],
             energy_rate=row["gas_energy_charge_rate"],
+            other_fees_rate=row["other_fees_rate"],
             context=f"{row['statement_date']} [{row['period']}]")
         all_in_rate = (savings / heating_therms_attributed
                        if heating_therms_attributed > 0 else 0.0)

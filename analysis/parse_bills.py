@@ -28,30 +28,41 @@ OUTPUTS (committed, de-identified)
     data/bill_periods_gas.csv       one row per gas billing period. baseline_rate/
                                     nonbaseline_rate/gas_energy_charge_rate are each a
                                     DAY-WEIGHTED BLEND across however many rate segments
-                                    the period has (1 or 2 — see bill_gas_detail.csv
-                                    below for the segment-level detail this collapses).
+                                    the period has (1 or 2); other_fees_rate (Public
+                                    Purpose Programs + State Regulatory Fee combined) is
+                                    a THERM-WEIGHTED blend, since that charge type splits
+                                    by therm count, not days (issue #98 Codex review) —
+                                    see bill_gas_detail.csv below for the segment-level
+                                    detail these collapse.
     data/bill_tou_detail.csv        long format: per period × section × season × TOU
                                     period → kWh and $/kWh as printed on the bill
     data/bill_gas_detail.csv        long format: per period × charge_type × segment →
-                                    the segment's own day count and $/therm rate(s), for
-                                    BOTH "Gas Service" (baseline/nonbaseline tiers) and
-                                    "Gas Energy Charge" (flat, untiered) rows. The two
+                                    the segment's own day/therm count and $/therm
+                                    rate(s), for "Gas Service" (baseline/nonbaseline
+                                    tiers, day-based segments), "Gas Energy Charge"
+                                    (flat, untiered, day-based segments), and
+                                    "other_fees" (Public Purpose Programs + State
+                                    Regulatory Fee combined, flat, untiered, THERM-based
+                                    segments — issue #98 Codex review) rows. The three
                                     charge types have INDEPENDENT segment counts within
-                                    the same period (a mid-cycle Gas Service rate change
-                                    and a mid-cycle Gas Energy Charge rate change do not
-                                    always land in the same bill, or split into the same
-                                    number of segments, even though when BOTH split in
-                                    one bill they split on the identical day — issue #98)
-                                    — collapsing them into bill_periods_gas.csv's single
+                                    the same period (a mid-cycle rate change in one does
+                                    not always land in the same bill, or split into the
+                                    same number of segments, as a mid-cycle change in
+                                    another, even though Gas Service/Gas Energy Charge
+                                    split on the identical day when both split, and
+                                    Public Purpose Programs/State Regulatory Fee split
+                                    into identical therm counts when both split) —
+                                    collapsing them into bill_periods_gas.csv's single
                                     blended row would discard exactly what a true
                                     marginal-tier rebilling needs. Schema: statement_date,
-                                    period, charge_type ("gas_service"|"gas_energy"),
-                                    segment (0-based), segment_days, baseline_rate,
-                                    nonbaseline_rate, energy_rate — only the columns
+                                    period, charge_type ("gas_service"|"gas_energy"|
+                                    "other_fees"), segment (0-based), segment_days,
+                                    segment_therms, baseline_rate, nonbaseline_rate,
+                                    energy_rate, other_fees_rate — only the columns
                                     relevant to `charge_type` are populated, the rest are
-                                    empty. A consumer reconstructs the true per-day
-                                    marginal rate for any therm by combining a period's
-                                    gas_energy segments (flat, every therm) with its
+                                    empty. A consumer reconstructs the true marginal rate
+                                    for any therm by combining a period's gas_energy and
+                                    other_fees segments (both flat, every therm) with its
                                     gas_service segments (tiered against
                                     baseline_allowance_therms) — see
                                     heat_pump_conversion.py's gas_savings_by_period() for
@@ -474,7 +485,7 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
 GAS_PERIOD_COLS = ["statement_date", "period", "period_end_month", "therms",
                    "total_gas_service", "billed_amount", "baseline_rate",
                    "nonbaseline_rate", "baseline_allowance_therms",
-                   "gas_energy_charge_rate"]
+                   "gas_energy_charge_rate", "other_fees_rate"]
 GAS_SUMMARY_COLS = ["file_month", "therms", "total_gas_service",
                     "baseline_rate", "nonbaseline_rate"]
 # Long format (issue #98), mirroring bill_tou_detail.csv's precedent: one row per
@@ -483,7 +494,8 @@ GAS_SUMMARY_COLS = ["file_month", "therms", "total_gas_service",
 # charge_type is the discriminator and only the columns relevant to it are populated —
 # see the module docstring's OUTPUTS entry for the full schema rationale.
 GAS_DETAIL_COLS = ["statement_date", "period", "charge_type", "segment",
-                   "segment_days", "baseline_rate", "nonbaseline_rate", "energy_rate"]
+                   "segment_days", "segment_therms", "baseline_rate",
+                   "nonbaseline_rate", "energy_rate", "other_fees_rate"]
 
 # Each gas charge-type segment is anchored on its own "<label> (Details below) N
 # Therms" header line — printed once per rate segment, whether or not the period
@@ -594,6 +606,83 @@ def _day_weighted_blend(segs, field):
     return round(num / den, 5) if den else None
 
 
+# Codex review, issue #98, pass 1: baseline_rate + nonbaseline_rate + energy_rate
+# alone do NOT reproduce total_gas_service -- every real bill also levies "Public
+# Purpose Programs" and a "State Regulatory Fee", two further FLAT, untiered
+# $/therm charges (2025-12-30: $.115410/therm and $.002500/therm respectively, on
+# every one of that period's 61 therms), printed one line each under "TAXES & FEES
+# ON GAS CHARGES":
+#   Public Purpose Programs 61 Therms x $.115410 7.04
+#   State Regulatory Fee 61 Therms x $.002500 .15
+# Omitting them understated the true marginal cost of a therm by their combined
+# rate (observed $.116-$.156/therm across this corpus) -- exactly the OLD blended-
+# average approach's one virtue (it WAS all-in) that the new true-marginal-tier
+# engine had silently dropped.
+#
+# Unlike Gas Service/Gas Energy Charge, a mid-period rate change here splits by
+# THERM COUNT, not by day: e.g. 2025-01-29 (97 total therms) prints "15 Therms x
+# $.101330" then "82 Therms x $.115410" -- 15+82=97, the therms billed before/after
+# the rate-change date, not a day fraction of the period. Verified against the
+# full 25-bill corpus: Public Purpose Programs and State Regulatory Fee always
+# split into the IDENTICAL therm counts when both split (2025-01-29: 15/82 for
+# both; 2026-01-29: 11/61 for both), and each segment's own therms x rate
+# reproduces its own printed dollar amount to the cent in every case -- so the two
+# fees are combined into one per-segment "other_fees_rate" here (summed, since
+# both are simple additive per-therm charges on the SAME therm segmentation), and
+# blended by THERM COUNT (not days) across however many segments exist.
+GAS_OTHER_FEE_RE = re.compile(
+    r"(Public Purpose Programs|State Regulatory Fee)\s+(" + _NUM +
+    r")\s+Therms x\s+\$(" + _NUM + r")\s+(" + _NUM + r")")
+
+
+def _gas_other_fees(txt, path, period, total_therms):
+    """Public Purpose Programs + State Regulatory Fee, one dict per therm-count
+    segment (see the module-level comment above GAS_OTHER_FEE_RE for the format
+    and the therm-based, not day-based, segmentation this charge type uses)."""
+    by_label = {"Public Purpose Programs": [], "State Regulatory Fee": []}
+    for m in GAS_OTHER_FEE_RE.finditer(txt):
+        label, seg_therms, rate, amount = m.group(1), _f(m.group(2)), _f(m.group(3)), _f(m.group(4))
+        expect = seg_therms * rate
+        if abs(expect - amount) > CHARGE_CROSSFOOT_TOLERANCE_USD:
+            raise SystemExit(
+                f"{path.name} [{period}] {label}: {seg_therms:g} therms x ${rate:.6f} "
+                f"= ${expect:.2f}, but the statement's own printed amount says "
+                f"${amount:.2f} (residual ${expect - amount:+.4f}) — fix the parser, "
+                f"never hand-correct the rate.")
+        by_label[label].append((seg_therms, rate))
+    for label, segs in by_label.items():
+        if not segs:
+            raise SystemExit(f"{path.name} [{period}]: no '{label}' line found — "
+                              f"bill layout changed; see the applicability envelope "
+                              f"in the module docstring.")
+    pp_segs, sr_segs = by_label["Public Purpose Programs"], by_label["State Regulatory Fee"]
+    if [t for t, _ in pp_segs] != [t for t, _ in sr_segs]:
+        raise SystemExit(
+            f"{path.name} [{period}]: Public Purpose Programs and State Regulatory "
+            f"Fee split into different therm segments ({pp_segs} vs {sr_segs}) — "
+            f"the two fees are assumed to share identical segmentation whenever "
+            f"this corpus splits either; verified true on all 25 real bills, but "
+            f"not true here — the combined other_fees_rate below would be wrong.")
+    total_seg_therms = sum(t for t, _ in pp_segs)
+    if abs(total_seg_therms - total_therms) > 1e-6:
+        raise SystemExit(
+            f"{path.name} [{period}]: Public Purpose Programs/State Regulatory Fee "
+            f"segments sum to {total_seg_therms:g} therms, not the period's own "
+            f"{total_therms:g} billed therms — a segment is missing or double-counted.")
+    return [dict(segment=i, segment_therms=t, rate=pp_rate + sr_rate)
+            for i, ((t, pp_rate), (_, sr_rate)) in enumerate(zip(pp_segs, sr_segs))]
+
+
+def _therm_weighted_blend(segs):
+    """Therm-weighted average other_fees rate across segments -- Public Purpose
+    Programs/State Regulatory Fee split by THERM COUNT, not days (see
+    _gas_other_fees's own docstring), so the natural weight is each segment's own
+    therm count, not segment_days."""
+    num = sum(s["segment_therms"] * s["rate"] for s in segs)
+    den = sum(s["segment_therms"] for s in segs)
+    return round(num / den, 5) if den else None
+
+
 def parse_gas(path):
     txt = _text(path)
     stmt = _statement_date(path)
@@ -654,16 +743,31 @@ def parse_gas(path):
     nonbaseline = _day_weighted_blend(gs_segs, "rate2")
     energy_rate = _day_weighted_blend(ge_segs, "rate1")
 
+    # Public Purpose Programs + State Regulatory Fee (Codex review, issue #98, pass
+    # 1): a further flat, untiered $/therm charge total_gas_service includes that
+    # baseline_rate/nonbaseline_rate/energy_rate alone do not reproduce -- see
+    # _gas_other_fees's own module-level comment.
+    of_segs = _gas_other_fees(txt, path, period, therms)
+    other_fees_rate = _therm_weighted_blend(of_segs)
+
     detail_rows = [
         dict(statement_date=stmt, period=period, charge_type="gas_service",
-             segment=s["segment"], segment_days=s["segment_days"],
-             baseline_rate=s["rate1"], nonbaseline_rate=s["rate2"], energy_rate=None)
+             segment=s["segment"], segment_days=s["segment_days"], segment_therms=None,
+             baseline_rate=s["rate1"], nonbaseline_rate=s["rate2"], energy_rate=None,
+             other_fees_rate=None)
         for s in gs_segs
     ] + [
         dict(statement_date=stmt, period=period, charge_type="gas_energy",
-             segment=s["segment"], segment_days=s["segment_days"],
-             baseline_rate=None, nonbaseline_rate=None, energy_rate=s["rate1"])
+             segment=s["segment"], segment_days=s["segment_days"], segment_therms=None,
+             baseline_rate=None, nonbaseline_rate=None, energy_rate=s["rate1"],
+             other_fees_rate=None)
         for s in ge_segs
+    ] + [
+        dict(statement_date=stmt, period=period, charge_type="other_fees",
+             segment=s["segment"], segment_days=None, segment_therms=s["segment_therms"],
+             baseline_rate=None, nonbaseline_rate=None, energy_rate=None,
+             other_fees_rate=s["rate"])
+        for s in of_segs
     ]
 
     mm, dd, yyyy = re.match(r"([A-Za-z]{3})\w* (\d{1,2}), (\d{4})", end_s).groups()
@@ -676,6 +780,7 @@ def parse_gas(path):
         baseline_rate=baseline, nonbaseline_rate=nonbaseline,
         baseline_allowance_therms=baseline_allowance,
         gas_energy_charge_rate=energy_rate,
+        other_fees_rate=other_fees_rate,
     )
     return period_row, detail_rows
 
@@ -799,11 +904,14 @@ def _validate(elec, gas, tou, gas_detail=None):
                 f"[{period}]: delivery TOU kWh {d[period]:,.0f} does not reconcile with "
                 f"net usage {net:,.0f} — the TOU blocks and the usage total disagree.")
 
-    # 6. bill_gas_detail.csv (issue #98): every period needs BOTH charge types'
-    #    segments, no duplicate (period, charge_type, segment) keys, and each charge
-    #    type's own segment days must sum to exactly the period's calendar days — the
-    #    same "tile with no gap or overlap" property check 3 enforces across periods,
-    #    applied within a period across its own rate segments.
+    # 6. bill_gas_detail.csv (issue #98): every period needs all THREE charge types'
+    #    segments, no duplicate (period, charge_type, segment) keys. gas_service/
+    #    gas_energy's own segment days must sum to exactly the period's calendar
+    #    days — the same "tile with no gap or overlap" property check 3 enforces
+    #    across periods, applied within a period across its own rate segments.
+    #    other_fees splits by THERM COUNT, not days (see _gas_other_fees's own
+    #    docstring), so its own segments are checked against the period's billed
+    #    therms instead.
     if gas_detail is not None:
         if gas_detail.empty:
             raise SystemExit(
@@ -816,12 +924,14 @@ def _validate(elec, gas, tou, gas_detail=None):
                 f"duplicate gas detail keys parsed ({'/'.join(dup_keys)}): "
                 f"{dup[dup_keys].to_dict('records')}")
         period_days = {}
+        period_therms = dict(zip(gas.period, gas.therms))
         for period in gas.period:
             s, e = period.split(" - ")
             sd = pd.to_datetime(s, format="%b %d, %Y")
             ed = pd.to_datetime(e, format="%b %d, %Y")
             period_days[period] = (ed - sd).days + 1
-        for (period, charge_type), grp in gas_detail.groupby(["period", "charge_type"]):
+        day_based = gas_detail[gas_detail.charge_type.isin(["gas_service", "gas_energy"])]
+        for (period, charge_type), grp in day_based.groupby(["period", "charge_type"]):
             total = int(grp.segment_days.sum())
             want = period_days[period]
             if total != want:
@@ -829,9 +939,18 @@ def _validate(elec, gas, tou, gas_detail=None):
                     f"[{period}] {charge_type}: segment days sum to {total}, but the "
                     f"period covers {want} calendar days — a segment's day count is "
                     f"missing or misread.")
+        other_fees = gas_detail[gas_detail.charge_type == "other_fees"]
+        for period, grp in other_fees.groupby("period"):
+            total = float(grp.segment_therms.sum())
+            want = period_therms[period]
+            if abs(total - want) > 1e-6:
+                raise SystemExit(
+                    f"[{period}] other_fees: segment therms sum to {total:g}, but "
+                    f"the period billed {want:g} therms — a segment's therm count "
+                    f"is missing or misread.")
         have_types = gas_detail.groupby("period").charge_type.apply(set)
         for period in gas.period:
-            missing_types = {"gas_service", "gas_energy"} - have_types.get(period, set())
+            missing_types = {"gas_service", "gas_energy", "other_fees"} - have_types.get(period, set())
             if missing_types:
                 raise SystemExit(
                     f"[{period}]: no {sorted(missing_types)} segments parsed into "
@@ -1059,6 +1178,16 @@ def main():
             gas_detail_rows.extend(detail_rows)
         gas = pd.DataFrame(gas_rows).sort_values("statement_date")[GAS_PERIOD_COLS]
         gas_detail = pd.DataFrame(gas_detail_rows)[GAS_DETAIL_COLS]
+        # segment_days is only ever populated for gas_service/gas_energy rows and
+        # segment_therms only for other_fees rows, so each column mixes real integer
+        # counts with nulls from the OTHER charge types' rows -- pandas silently
+        # upcasts a column with any null to float64, reformatting every real day/
+        # therm count as "4.0" instead of "4" in the published CSV. Cast to the
+        # nullable Int64 dtype (blank stays blank, real counts stay integer-
+        # formatted) -- issue #98, Codex review; this bill corpus never prints a
+        # fractional day or therm count for these fields.
+        gas_detail["segment_days"] = gas_detail["segment_days"].astype("Int64")
+        gas_detail["segment_therms"] = gas_detail["segment_therms"].astype("Int64")
 
     elec = pd.DataFrame(elec_rows)
     # Sort chronologically by the period's start date. Sorting on the period STRING

@@ -397,11 +397,11 @@ def case_gas_flag_false_retires_gas_artifacts(tmp):
     assert (tmp / "data" / "bill_periods_gas.csv").read_bytes() == (
         b"statement_date,period,period_end_month,therms,total_gas_service,"
         b"billed_amount,baseline_rate,nonbaseline_rate,baseline_allowance_therms,"
-        b"gas_energy_charge_rate\n"), \
+        b"gas_energy_charge_rate,other_fees_rate\n"), \
         "bill_periods_gas.csv is not the expected header-only CSV"
     assert (tmp / "data" / "bill_gas_detail.csv").read_bytes() == (
-        b"statement_date,period,charge_type,segment,segment_days,baseline_rate,"
-        b"nonbaseline_rate,energy_rate\n"), \
+        b"statement_date,period,charge_type,segment,segment_days,segment_therms,"
+        b"baseline_rate,nonbaseline_rate,energy_rate,other_fees_rate\n"), \
         "bill_gas_detail.csv is not the expected header-only CSV"
     assert (tmp / "data" / "gas_bill_summary.csv").read_bytes() == (
         b"file_month,therms,total_gas_service,baseline_rate,nonbaseline_rate\r\n"), \
@@ -897,6 +897,44 @@ def case_gas_energy_charge_multi_segment_and_detail_schema(tmp):
            "schema and day counts verified against the real PDF text")
 
 
+def case_other_fees_multi_segment_therm_weighted_blend(tmp):
+    """Codex review, issue #98, pass 1: Public Purpose Programs and the State
+    Regulatory Fee are a further flat, untiered $/therm charge omitted from the
+    first draft of this fix entirely -- baseline_rate + nonbaseline_rate +
+    energy_rate alone do not reproduce total_gas_service. Unlike Gas Service/Gas
+    Energy Charge, a mid-cycle rate change here splits by THERM COUNT, not days.
+
+    sdge_gas_2025-01-29.pdf's own printed text (97 total therms): 'Public Purpose
+    Programs 15 Therms x $.101330 1.52' then 'Public Purpose Programs 82 Therms x
+    $.115410 9.46'; 'State Regulatory Fee 15 Therms x $.001000 .02' then '82
+    Therms x $.002500 .21' -- the SAME 15/82 therm split for both fees. Combined
+    per segment: .101330+.001000=.10233 (15 therms), .115410+.002500=.11791 (82
+    therms)."""
+    _require(tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2025-01-29.pdf")
+    r = _run(tmp)
+    assert r.returncode == 0, f"healthy corpus failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_gas.csv")
+    row = next(p for p in periods if p["statement_date"] == "2025-01-29")
+    expect_blend = (15 * 0.10233 + 82 * 0.11791) / 97
+    assert abs(float(row["other_fees_rate"]) - expect_blend) < 0.00001, row
+
+    detail = _rows(tmp / "data" / "bill_gas_detail.csv")
+    of = sorted((d for d in detail if d["statement_date"] == "2025-01-29"
+                 and d["charge_type"] == "other_fees"), key=lambda d: int(d["segment"]))
+    assert len(of) == 2, f"expected 2 other_fees segments, got {of}"
+    assert of[0]["segment_therms"] == "15" and of[0]["other_fees_rate"] == "0.10233", of[0]
+    assert of[1]["segment_therms"] == "82" and of[1]["other_fees_rate"] == "0.11791", of[1]
+    assert of[0]["segment_days"] == "" and of[0]["baseline_rate"] == "" and \
+        of[0]["energy_rate"] == "", \
+        f"other_fees rows must leave the day-based charge types' columns empty: {of[0]}"
+    total_of_therms = sum(int(d["segment_therms"]) for d in of)
+    assert total_of_therms == 97, \
+        f"other_fees segment therms sum to {total_of_therms}, not the period's 97 therms"
+    return ("2025-01-29 other_fees (Public Purpose Programs + State Regulatory "
+           "Fee) segments -> therm-weighted blend and bill_gas_detail.csv schema "
+           "verified against the real PDF text")
+
+
 def case_gas_rate_misread_caught_by_gas_charge_crossfoot(tmp):
     """Issue #98 review: _gas_segments()'s cross-foot (each segment's own
     printed 'Rate/Therm' x 'Therms used' must reproduce its own printed
@@ -979,6 +1017,7 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_gas_baseline_rate_previously_blank_now_populated,
                 case_gas_service_multi_segment_day_weighted_blend,
                 case_gas_energy_charge_multi_segment_and_detail_schema,
+                case_other_fees_multi_segment_therm_weighted_blend,
                 case_gas_rate_misread_caught_by_gas_charge_crossfoot]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
