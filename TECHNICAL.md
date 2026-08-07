@@ -2816,8 +2816,14 @@ steeper than the loss-side slope (`soil_slope_loss_mid` +0.2176, ratio ≈1.56 �
 this issue's own filing ballpark of ~1.06, which was a pre-fix estimate rather than a real
 dispatch rerun of the self-consumption-first surplus model this fix implements).
 Extrapolating the old loss-fit slope to the real surplus point would have predicted
-$2,213.17 against the real measured $2,198.66 — a $14.51 (0.65%) gap now eliminated by
-construction (`calibration.production_reconstruction.surplus_slope_fix` in the artifact).
+$2,213.17 against the real measured $2,198.66 — a $14.51 (0.65%) ONE-SIDED-EXTRAPOLATION gap
+now eliminated by construction (`calibration.production_reconstruction.surplus_slope_fix` in
+the artifact) — specifically that gap, not every discrepancy `save1_of()` has. A separate,
+pre-existing, much smaller residual remains (Codex review, issue #89, pass 2-3: ~$3.5,
+~0.16% at this household's real surplus point) from averaging `soil_slope_loss`/`surplus`
+across mid/pre before applying them to the `c`-blended `base_marginal` — the same convention
+`rte_slope` has always used, unrelated to this fix, and out of its scope box (filed as issue
+#107 rather than expanding this one).
 Downstream this is a small correction: `production_measurement_spread`'s own tornado swing
 widens from 0.0680 yr to 0.0761 yr at full precision (both round to the same 0.1 yr in the
 published, rounded artifact field), and the full Monte Carlo's NPV percentiles shift by a

@@ -1838,7 +1838,16 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                 "gap that save1_of()'s new piecewise soil_slope_loss/"
                 "soil_slope_surplus routing eliminates by construction, for "
                 "every surplus-like draw at any magnitude, not just at this "
-                "particular lossB point."),
+                "particular lossB point -- specifically the ONE-SIDED "
+                "EXTRAPOLATION gap, not every discrepancy save1_of() has: a "
+                "separate, pre-existing, much smaller residual (Codex "
+                "review, issue #89, pass 2-3: ~$3.5, ~0.16%) remains from "
+                "averaging soil_slope_loss/surplus across mid/pre before "
+                "applying them to the c-blended base_marginal (the same "
+                "convention rte_slope has always used) -- see "
+                "production_reconstruction.surplus_slope_fix's own "
+                "resolution field for the precise distinction, filed as "
+                "issue #107."),
             "rte_slope_mid": calib["rte_slope_mid"],
             "rte_slope_pre": calib["rte_slope_pre"],
             "rte_slope_used": rte_slope,
