@@ -4151,14 +4151,15 @@ billing periods are read from the PDF text, never inferred from the filename.
 | File | Contents |
 |---|---|
 | `data/bill_periods_electric.csv` | one row per electric billing period: `statement_date, period, days, generation_provider, net_kwh, gross_kwh, sdge_delivery, cca_generation, current_charges, base_services_charge` |
-| `data/bill_periods_gas.csv` | one row per gas period: `statement_date, period, period_end_month, therms, total_gas_service, billed_amount, baseline_rate, nonbaseline_rate` |
+| `data/bill_periods_gas.csv` | one row per gas period: `statement_date, period, period_end_month, therms, total_gas_service, billed_amount, baseline_rate, nonbaseline_rate, baseline_allowance_therms, gas_energy_charge_rate, other_fees_rate` — `baseline_rate`/`nonbaseline_rate`/`gas_energy_charge_rate` are each a day-weighted blend across however many rate segments the period has (issue #98; see `bill_gas_detail.csv` below for the segment-level detail this collapses); `other_fees_rate` (Public Purpose Programs + State Regulatory Fee combined — Codex review, issue #98, pass 1) is a THERM-weighted blend instead, since that charge type splits by therm count on a mid-period rate change, not days |
 | `data/bill_tou_detail.csv` | long format: `statement_date, period, section (delivery/generation), season, tou_period, kwh, rate_per_kwh` — the rates as printed on each bill |
+| `data/bill_gas_detail.csv` | long format (issue #98): `statement_date, period, charge_type (gas_service/gas_energy/other_fees), segment, segment_days, segment_therms, baseline_rate, nonbaseline_rate, energy_rate, other_fees_rate` — one row per rate segment for EACH gas charge type. "Gas Service" (the tiered baseline/non-baseline rate) and "Gas Energy Charge" (a flat, untiered $/therm charge on every therm) split by DAY on a mid-period rate change; "other_fees" (Public Purpose Programs + State Regulatory Fee combined — Codex review, issue #98, pass 1) is also flat and untiered but splits by THERM COUNT instead. All three charge types have INDEPENDENT segment counts within one period, so `charge_type` is the discriminator and only the columns relevant to it are populated. This is what a true marginal-tier gas rebilling needs and `bill_periods_gas.csv`'s blended columns cannot provide — see `heat_pump_conversion.py`'s `gas_savings_by_period()` for the reference consumer |
 | `data/electric_bill_summary.csv`, `data/gas_bill_summary.csv` | regenerated in their original schemas |
 
 **Reproduction gate.** The script rewrites the two legacy summaries from the same parse.
 `gas_bill_summary.csv` regenerates byte-identically to the version committed before the
 script existed, and `electric_bill_summary.csv` reproduces 12 of its 13 rows exactly. The
-regeneration command in `CLAUDE.md` runs the parser and diffs all five artifacts.
+regeneration command in `CLAUDE.md` runs the parser and diffs all six artifacts.
 
 **One correction the gate surfaced.** The thirteenth row differed: the original in-session
 extraction recorded `gross_kwh` = 1,344 for the `10/1/25 - 10/27/25` period, but the
@@ -4202,7 +4203,7 @@ coverage, and the $3,282.22 annual total are unchanged.
   duplicate check cannot see them), requires TOU rows for every period with unique
   `period/section/season/segment/tou_period` keys, and reconciles delivery TOU kWh against
   each period's net usage.
-- *Transactional publication.* The five artifacts are one evidence set. Each is staged to a
+- *Transactional publication.* The six artifacts are one evidence set. Each is staged to a
   `.tmp` and swapped in only after every validation passes; if any swap fails, the ones
   already swapped are restored from backups, so a failed run leaves the committed set
   exactly as it was rather than half-updated. Each rollback is attempted independently, so

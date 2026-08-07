@@ -232,30 +232,35 @@ def case_afue_below_one_reduces_required_heat_pump_kwh():
 
 
 @case
-def case_gas_savings_use_the_periods_own_blended_realized_rate():
-    """Codex adversarial review, issue #1: two real gas bill PDFs read
-    directly show total_gas_service also embeds a separate, untiered "Gas
-    Energy Charge" plus taxes that neither baseline_rate nor
-    nonbaseline_rate captures alone -- an earlier attempt at pricing
-    heating therms at nonbaseline_rate ALONE (tried during review) turned
-    out to OMIT those real charges entirely, understating savings more than
-    the blended average's own tier-dilution ever did. This proves the
-    fixture's own blended rate correctly exceeds either tier's bare Gas
-    Service rate."""
+def case_gas_savings_price_heating_slice_at_true_marginal_tier():
+    """Issue #98: heating therms are now priced at the TRUE marginal tier(s)
+    they actually occupy -- baseline_rate + gas_energy_charge_rate below the
+    period's own baseline_allowance_therms, nonbaseline_rate +
+    gas_energy_charge_rate above it -- not the period's blended average
+    $/therm (total_gas_service / therms) the predecessor of this function
+    used before parse_bills.py started extracting baseline_allowance_therms
+    and gas_energy_charge_rate into data/bill_periods_gas.csv.
+
+    A period bills 60 therms against a 40-therm baseline allowance; with a
+    zero non-heating floor the HDD share attributes 50 heating therms (the
+    MARGINAL, i.e. TOP, 50 of the 60 billed) -- so the 10 non-heating therms
+    occupy the bottom of the baseline tier, leaving 30 baseline-tier therms
+    and all 20 nonbaseline-tier therms in the heating slice:
+        30 x (1.8 baseline + 0.5 energy) + 20 x (2.3 nonbaseline + 0.5 energy)
+        = 30 x 2.3 + 20 x 2.8 = 69 + 56 = 125.00
+    hand-computed and cross-checked against the function's own output."""
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         periods = pd.DataFrame({
             "statement_date": ["2026-01-31"],
             "period": ["Jan 1, 2026 - Jan 31, 2026"],
             "therms": [60.0],
-            # blended average deliberately does NOT equal either tier rate on
-            # its own: total_gas_service also embeds the real Gas Energy
-            # Charge + tax components neither rate column captures (see the
-            # function's own docstring) -- 172.8/60 = 2.88/therm, above BOTH
-            # the baseline and nonbaseline Gas Service rates alone
-            "total_gas_service": [172.8],
+            "total_gas_service": [999.0],  # not read by the marginal-tier pricing path
             "baseline_rate": [1.8],
             "nonbaseline_rate": [2.3],
+            "baseline_allowance_therms": [40.0],
+            "gas_energy_charge_rate": [0.5],
+            "other_fees_rate": [0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -269,13 +274,102 @@ def case_gas_savings_use_the_periods_own_blended_realized_rate():
         finally:
             hpc.GAS_PERIODS_CSV = real_path
     row = rows[0]
-    blended_rate = 172.8 / 60.0
-    assert abs(row["realized_rate_usd_per_therm"] - blended_rate) < 1e-9, row
-    # the whole point: the blended rate exceeds EITHER tier's own Gas Service
-    # rate alone, because it also carries the Gas Energy Charge + taxes that
-    # neither baseline_rate nor nonbaseline_rate captures on their own
-    assert blended_rate > 2.3 > 1.8, blended_rate
-    return "gas savings use the period's own blended realized rate, which correctly exceeds either tier's Gas Service rate alone"
+    assert row["heating_therms_attributed"] == 50.0, row
+    expect_savings = 30 * (1.8 + 0.5) + 20 * (2.3 + 0.5)
+    assert abs(row["gas_savings_usd"] - expect_savings) < 1e-6, (row, expect_savings)
+    assert abs(row["realized_rate_usd_per_therm"] - expect_savings / 50.0) < 1e-6, row
+    # the whole point: the true marginal rate here (2.5/therm) sits ABOVE the
+    # period's blended total_gas_service/therms would have been on the old
+    # (predecessor) basis for this same fixture (172.8/60 = 2.88 was the old
+    # fixture's own illustrative blended figure) -- tiered pricing and blended
+    # averaging are genuinely different numbers, not the same value relabeled
+    assert abs(total_savings - expect_savings) < 1e-6, total_savings
+    return ("heating slice priced at its true marginal tier(s) plus the flat "
+            "Gas Energy Charge, matching a hand computation exactly")
+
+
+@case
+def case_gas_savings_heating_slice_entirely_within_baseline_tier():
+    """A period whose Gas Service never crossed its baseline allowance
+    prints no nonbaseline rate at all (bill_periods_gas.csv leaves
+    nonbaseline_rate blank/NaN for that period -- issue #98's parse_bills.py
+    fix leaves it genuinely blank rather than inventing a value). The
+    heating slice here must price entirely at baseline_rate + energy_rate
+    without ever touching the missing nonbaseline_rate."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        periods = pd.DataFrame({
+            "statement_date": ["2026-07-31"],
+            "period": ["Jul 1, 2026 - Jul 31, 2026"],
+            "therms": [9.0],
+            "total_gas_service": [22.94],
+            "baseline_rate": [2.03477],
+            "nonbaseline_rate": [np.nan],
+            "baseline_allowance_therms": [11.0],
+            "gas_energy_charge_rate": [0.39416],
+            "other_fees_rate": [0.0],
+        })
+        csv_path = tmp / "bill_periods_gas.csv"
+        periods.to_csv(csv_path, index=False)
+        real_path = hpc.GAS_PERIODS_CSV
+        hpc.GAS_PERIODS_CSV = str(csv_path)
+        try:
+            hdd_by_day = pd.Series({dt.date(2026, 7, d): 10.0 for d in range(1, 32)})
+            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+                  "annual_heating_therms": 4.0, "floor_therms_per_day": 0.0}
+            rows, _, _ = hpc.gas_savings_by_period(iso)
+        finally:
+            hpc.GAS_PERIODS_CSV = real_path
+    row = rows[0]
+    assert row["heating_therms_attributed"] == 4.0, row
+    expect = 4.0 * (2.03477 + 0.39416)
+    # gas_savings_usd is rounded to the cent by gas_savings_by_period() itself
+    assert abs(row["gas_savings_usd"] - expect) < 0.005, (row, expect)
+    return ("a period that never crossed its baseline allowance prices its "
+            "whole heating slice at baseline_rate + energy_rate, never "
+            "touching a missing nonbaseline_rate")
+
+
+@case
+def case_gas_savings_fails_closed_when_nonbaseline_rate_missing_but_needed():
+    """Issue #98's marginal-tier pricing must fail closed, not silently treat
+    a missing nonbaseline_rate as zero, when the heating slice actually needs
+    it: a period billing more therms than its own baseline_allowance_therms,
+    with an inconsistent (blank) nonbaseline_rate -- upstream data that
+    disagrees with itself rather than a real single-tier bill."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        periods = pd.DataFrame({
+            "statement_date": ["2026-01-31"],
+            "period": ["Jan 1, 2026 - Jan 31, 2026"],
+            "therms": [60.0],
+            "total_gas_service": [999.0],
+            "baseline_rate": [1.8],
+            "nonbaseline_rate": [np.nan],   # inconsistent: usage crosses the allowance below
+            "baseline_allowance_therms": [40.0],
+            "gas_energy_charge_rate": [0.5],
+            "other_fees_rate": [0.0],
+        })
+        csv_path = tmp / "bill_periods_gas.csv"
+        periods.to_csv(csv_path, index=False)
+        real_path = hpc.GAS_PERIODS_CSV
+        hpc.GAS_PERIODS_CSV = str(csv_path)
+        try:
+            hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
+            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+                  "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
+            try:
+                hpc.gas_savings_by_period(iso)
+            except SystemExit as e:
+                msg = str(e)
+            else:
+                raise AssertionError(
+                    "a period needing a nonbaseline rate it does not have was "
+                    "silently priced instead of failing closed")
+        finally:
+            hpc.GAS_PERIODS_CSV = real_path
+    assert "nonbaseline_rate" in msg, msg
+    return "missing nonbaseline_rate needed by the heating slice -> fails closed, not silently zero"
 
 
 @case
@@ -390,7 +484,17 @@ def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
             "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
                       "Mar 1, 2026 - Mar 31, 2026"],
             "therms": [50.0, 50.0, 50.0],
-            "total_gas_service": [135.0, 135.0, 135.0],   # $2.70/therm flat, hand-checkable
+            "total_gas_service": [135.0, 135.0, 135.0],   # not read by the marginal-tier path
+            # baseline_allowance_therms set well above any period's own therms so
+            # the heating slice never crosses into the nonbaseline tier -- this
+            # fixture is about the ALLOCATION arithmetic (does the sum of period
+            # shares reproduce the annual estimate), not the tier-pricing logic,
+            # which has its own dedicated tests above.
+            "baseline_rate": [2.70, 2.70, 2.70],
+            "nonbaseline_rate": [np.nan, np.nan, np.nan],
+            "baseline_allowance_therms": [999.0, 999.0, 999.0],
+            "gas_energy_charge_rate": [0.0, 0.0, 0.0],
+            "other_fees_rate": [0.0, 0.0, 0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -428,7 +532,12 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
             "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
                       "Mar 1, 2026 - Mar 31, 2026"],
             "therms": [40.0, 35.0, 20.0],   # March's 20 is less than its own HDD share would imply
-            "total_gas_service": [108.0, 94.5, 54.0],
+            "total_gas_service": [108.0, 94.5, 54.0],   # not read by the marginal-tier path
+            "baseline_rate": [2.70, 2.70, 2.70],
+            "nonbaseline_rate": [np.nan, np.nan, np.nan],
+            "baseline_allowance_therms": [999.0, 999.0, 999.0],
+            "gas_energy_charge_rate": [0.0, 0.0, 0.0],
+            "other_fees_rate": [0.0, 0.0, 0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -469,7 +578,12 @@ def case_gas_savings_reserves_the_non_heating_floor_before_capping():
             "statement_date": ["2026-04-28"],
             "period": ["Apr 1, 2026 - Apr 28, 2026"],
             "therms": [15.0],
-            "total_gas_service": [40.5],
+            "total_gas_service": [40.5],   # not read by the marginal-tier path
+            "baseline_rate": [2.70],
+            "nonbaseline_rate": [np.nan],
+            "baseline_allowance_therms": [999.0],
+            "gas_energy_charge_rate": [0.0],
+            "other_fees_rate": [0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
@@ -508,7 +622,12 @@ def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
             "statement_date": ["2025-10-29", "2025-11-28"],
             "period": ["Sep 26, 2025 - Oct 27, 2025", "Oct 28, 2025 - Nov 25, 2025"],
             "therms": [14.0, 34.0],
-            "total_gas_service": [35.61, 93.57],
+            "total_gas_service": [35.61, 93.57],   # not read; this test only checks period_hdd
+            "baseline_rate": [2.02361, 2.02136],
+            "nonbaseline_rate": [2.37552, 2.37552],
+            "baseline_allowance_therms": [11.0, 19.0],
+            "gas_energy_charge_rate": [0.32597, 0.45779],
+            "other_fees_rate": [0.0, 0.0],
         })
         csv_path = tmp / "bill_periods_gas.csv"
         periods.to_csv(csv_path, index=False)
