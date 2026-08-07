@@ -2819,11 +2819,26 @@ Extrapolating the old loss-fit slope to the real surplus point would have predic
 $2,213.17 against the real measured $2,198.66 — a $14.51 (0.65%) gap now eliminated by
 construction (`calibration.production_reconstruction.surplus_slope_fix` in the artifact).
 Downstream this is a small correction: `production_measurement_spread`'s own tornado swing
-widens from 0.0680 yr to 0.0889 yr at full precision (both round to the same 0.1 yr in the
-published, rounded artifact field), and the full Monte Carlo's `save1`/NPV percentiles
-shift by a few dollars (`save1_median` $2,274 → $2,272; 10-yr NPV median at 4% discount
-$7,510 → $7,477) — soiling and production-measurement-spread remain low-swing tornado
-levers either way, dominated by install cost, escalation and degradation.
+widens from 0.0680 yr to 0.0761 yr at full precision (both round to the same 0.1 yr in the
+published, rounded artifact field), and the full Monte Carlo's NPV percentiles shift by a
+few dollars (10-yr NPV median at 4% discount $7,510 → $7,496, at 7% discount $4,359 →
+$4,357) — soiling and production-measurement-spread remain low-swing tornado levers either
+way, dominated by install cost, escalation and degradation.
+
+**Combining loss and prod_noise before selecting a slope side (Codex review, issue #89,
+pass 1).** `loss` and `prod_noise` both perturb the SAME physical quantity (true generation
+relative to nominal). A first draft of the piecewise design applied them as two INDEPENDENT
+multiplicative factors, each separately selecting its own slope side by its own sign — exact
+while both sides shared one slope (pre-#89), but with genuinely different loss/surplus
+slopes that introduces a first-order spurious bias whenever the two draws partially offset
+(e.g. a soiling-loss draw coinciding with an equal-and-opposite production-measurement-
+surplus draw). Quantified at this household's real `prod_sigma`/`lossB` via a 2M-draw
+simulation: a +0.28% mean bias across the Monte Carlo's own draw distribution — real, not
+Codex's constructed edge case alone. Fixed by combining the two into ONE exact shortfall
+variable before any slope is selected: `true_relative_generation = (1 - loss) * prod_noise`,
+so `combined_x = loss + x - loss*x` where `x = 1 - prod_noise` — one slope side, one factor.
+The figures above (swing 0.0761 yr, NPV $7,496/$4,357) are this corrected version's own
+output, not the intermediate biased one.
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this

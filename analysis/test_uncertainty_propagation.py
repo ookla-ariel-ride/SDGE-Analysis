@@ -487,6 +487,65 @@ def case_save1_of_piecewise_routing_is_correct_on_vectorized_mixed_sign_arrays()
 
 
 @case
+def case_save1_of_combines_loss_and_prod_noise_before_selecting_a_slope_side():
+    """Codex review, issue #89, pass 1: loss and prod_noise both perturb the
+    SAME physical quantity (true generation relative to nominal). A first
+    draft applied them as two INDEPENDENT multiplicative factors, each
+    separately selecting its own slope side by its own sign -- exact while
+    both sides shared one slope (pre-#89), but with genuinely different
+    loss/surplus slopes that introduces a first-order spurious bias
+    whenever the two draws partially offset. This is the gap that let the
+    bug through: every OTHER test above holds one of loss/prod_noise at
+    its neutral value (0 or 1.0) while varying the other, so combined_x
+    trivially degenerates to the single active driver and can't expose a
+    combination bug -- this case is the one that actually varies BOTH
+    simultaneously and checks the exact combined formula by hand."""
+    pre, mid, rte_slope = 2329.0, 2238.0, 0.55
+    soil_slope_loss, soil_slope_surplus = 0.057, 0.091   # deliberately different
+
+    def hand_computed(loss, prod_noise):
+        base_marginal = mid   # c=1.0
+        x = 1 - prod_noise
+        combined_x = loss + x - loss * x   # exact, not a first-order approx
+        slope = soil_slope_loss if combined_x >= 0 else soil_slope_surplus
+        return base_marginal * (1 + slope * combined_x)
+
+    # A near-canceling pair (Codex's own constructed example, scaled to a
+    # realistic magnitude): a soiling loss and an opposing production
+    # surplus of comparable size should net close to the UNPERTURBED
+    # marginal, not show the spurious ~0.5-0.7% deviation the old two-
+    # independent-factors design produced at this exact shape.
+    loss, prod_noise = 0.03, 1 / (1 - 0.03)
+    got = up.save1_of(1.0, up.RTE_NOM, loss, prod_noise, pre, mid, rte_slope,
+                      soil_slope_loss, soil_slope_surplus)
+    want = hand_computed(loss, prod_noise)
+    assert abs(got - want) < 1e-9, (
+        f"save1_of()'s combined result ({got}) disagrees with the hand-"
+        f"computed exact combination ({want}) for a near-canceling "
+        f"loss/prod_noise pair")
+    deviation_from_unperturbed = abs(got - mid) / mid
+    assert deviation_from_unperturbed < 0.002, (
+        f"a near-canceling loss/prod_noise pair should net close to the "
+        f"unperturbed marginal, not the ~0.5-0.7% spurious deviation the "
+        f"pre-fix two-independent-factors design produced -- got "
+        f"{deviation_from_unperturbed:.4%}")
+
+    # A second, non-canceling pair (both loss-like) to confirm the
+    # combination isn't just coincidentally right at x=0.
+    loss2, prod_noise2 = 0.02, 1.01   # x2 = -0.01, both loss-like once combined
+    got2 = up.save1_of(1.0, up.RTE_NOM, loss2, prod_noise2, pre, mid, rte_slope,
+                       soil_slope_loss, soil_slope_surplus)
+    want2 = hand_computed(loss2, prod_noise2)
+    assert abs(got2 - want2) < 1e-9, (
+        f"save1_of()'s combined result ({got2}) disagrees with the hand-"
+        f"computed exact combination ({want2}) for a non-canceling pair")
+    return ("save1_of() combines loss and prod_noise into one exact "
+           "shortfall variable before selecting a slope side, matching a "
+           "hand-computed reference and eliminating the near-canceling-"
+           "pair bias two independent factors produced")
+
+
+@case
 def case_scale_production_reproduces_measured_flows_exactly_at_gen_scale_1():
     """issue #60: the identity scale_production() depends on for byte-
     identity at nominal (gen_scale=1.0) -- loss=0, so new_export=gen0 and

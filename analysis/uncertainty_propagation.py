@@ -1212,8 +1212,7 @@ def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope_loss, soi
     Production-measurement uncertainty is uncertainty about the SAME physical
     quantity (true generation level) soiling calibration already measured the
     sensitivity of, so it is routed through the same calibration rather than
-    assumed proportional: a prod_noise of (1-x) is treated exactly like a
-    soiling loss fraction of x, and a prod_noise of (1+x) like a loss of -x.
+    assumed proportional.
 
     PIECEWISE BY DESIGN (issue #89, resolving the KNOWN LIMITATION flagged in
     issue #60's second review pass): a production loss and a production
@@ -1223,39 +1222,72 @@ def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope_loss, soi
     first). soil_slope_loss and soil_slope_surplus are each fit from a real
     dispatch rerun on their own side (gen_scale=1-lossB and gen_scale=
     1+lossB respectively, both against the SAME nominal point) -- not one
-    slope extrapolated across both. Both `loss` (always >= 0 by construction,
-    Triangular(lossA, lossA, lossB)) and `x = 1 - prod_noise` (either sign,
-    Normal(1.0, prod_sigma) centered at 0) select their slope by sign:
-    non-negative (loss-like) inputs use soil_slope_loss; negative
-    (surplus-like) inputs use soil_slope_surplus. np.where() makes this
-    vectorized-safe for both an array `loss`/`prod_noise` (the Monte Carlo's
-    own draw_inputs() output) and plain scalar floats (tornado(),
+    slope extrapolated across both. This household's own most recently
+    regenerated calibration fit soil_slope_loss_mid=+0.2176/
+    soil_slope_loss_pre=+0.1695 and soil_slope_surplus_mid=+0.3404/
+    soil_slope_surplus_pre=+0.2807 -- see data/uncertainty_results.json's
+    calibration section for the current values (the surplus-side slope
+    came out genuinely steeper in magnitude than the loss-side one here,
+    roughly 1.56x -- confirmed against this module's own real dispatch
+    reruns, not assumed from issue #89's own illustrative filing numbers,
+    which used a smaller ~1.06x ballpark before this fix's real third
+    rerun existed to check it against); dispatch_calibration()'s new
+    surplus_slope_fix block shows what the old one-sided extrapolation
+    would have predicted at the real surplus point versus the real
+    measured value, and by how much this fix closes that gap (to exactly
+    zero, by construction, since the real surplus point is now used
+    directly rather than extrapolated).
+
+    COMBINED BEFORE SELECTING A SIDE (Codex review, issue #89, pass 1):
+    `loss` and `prod_noise` both perturb the SAME physical quantity (true
+    generation relative to nominal) -- a first draft of this piecewise
+    design applied them as two INDEPENDENT multiplicative factors, each
+    separately choosing its own slope side by its own sign. That was exact
+    while both sides shared one slope (pre-#89), but with genuinely
+    different loss/surplus slopes it introduces a first-order spurious
+    bias whenever the two draws partially offset (e.g. a soiling-loss draw
+    coinciding with an equal-and-opposite production-measurement-surplus
+    draw): quantified at this household's real prod_sigma/lossB via a
+    2M-draw simulation, a +0.28% mean bias across the Monte Carlo's own
+    draw distribution. Fixed by combining them into ONE shortfall variable
+    BEFORE any slope is selected: true_relative_generation =
+    (1 - loss) * prod_noise (soiling reduces true generation by `loss`;
+    prod_noise then represents how far the MEASURED baseline sits from
+    that true value), so combined_x = 1 - true_relative_generation =
+    loss + x - loss*x where x = 1 - prod_noise (the exact combination, not
+    a first-order approximation) -- ONE slope side is selected from
+    combined_x's own sign, and ONE factor is applied. np.where() makes
+    this vectorized-safe for both an array `loss`/`prod_noise` (the Monte
+    Carlo's own draw_inputs() output) and plain scalar floats (tornado(),
     escalation_downside_sensitivity(), and this file's own direct test
-    calls) -- confirmed by both call shapes in test_uncertainty_propagation.py.
-    This household's own most recently regenerated calibration fit
-    soil_slope_loss_mid=+0.2176/soil_slope_loss_pre=+0.1695 and
-    soil_slope_surplus_mid=+0.3404/soil_slope_surplus_pre=+0.2807 -- see
-    data/uncertainty_results.json's calibration section for the current
-    values (the surplus-side slope came out genuinely steeper in magnitude
-    than the loss-side one here, roughly 1.56x -- confirmed against this
-    module's own real dispatch reruns, not assumed from issue #89's own
-    illustrative filing numbers, which used a smaller ~1.06x ballpark
-    before this fix's real third rerun existed to check it against);
-    dispatch_calibration()'s new surplus_slope_fix block shows what the
-    old one-sided extrapolation would have predicted at the real surplus
-    point versus the real measured value, and by how much this fix closes
-    that gap (to exactly zero, by construction, since the real surplus
-    point is now used directly rather than extrapolated)."""
+    calls) -- confirmed by both call shapes in test_uncertainty_
+    propagation.py."""
     base_marginal = c * mid + (1 - c) * pre
     rte_factor = 1 + rte_slope * (rte - RTE_NOM)
-    loss_arr = np.asarray(loss)
-    soil_slope_for_loss = np.where(loss_arr >= 0, soil_slope_loss, soil_slope_surplus)
-    soil_factor = 1 + soil_slope_for_loss * loss
+    # Codex review, issue #89, pass 1: loss and prod_noise both perturb the
+    # SAME physical quantity (true generation relative to nominal), so they
+    # must be combined into ONE shortfall variable before a slope side is
+    # selected, not applied as two independent multiplicative factors each
+    # choosing its own side. Before this fix (equal slopes on both sides)
+    # this cost nothing; with genuinely different loss/surplus slopes, two
+    # independent factors introduce a first-order spurious bias whenever
+    # loss and prod_noise partially offset (e.g. a soiling loss coinciding
+    # with an equal-and-opposite production-measurement surplus draw) --
+    # quantified at this household's real prod_sigma/lossB: a +0.28% mean
+    # bias across the Monte Carlo's own draw distribution, confirmed by a
+    # 2M-draw simulation, eliminated by this combination.
+    # true_relative_generation = (1 - loss) * prod_noise (soiling reduces
+    # the true physical generation by `loss`; prod_noise then represents
+    # how far the MEASURED baseline is from that true value) ->
+    # combined_x = 1 - true_relative_generation = loss + x - loss*x, the
+    # exact (not first-order-approximated) combined shortfall, where
+    # x = 1 - prod_noise.
     x = 1 - prod_noise
-    x_arr = np.asarray(x)
-    soil_slope_for_prod = np.where(x_arr >= 0, soil_slope_loss, soil_slope_surplus)
-    prod_factor = 1 + soil_slope_for_prod * x
-    return base_marginal * rte_factor * soil_factor * prod_factor
+    combined_x = loss + x - loss * x
+    combined_x_arr = np.asarray(combined_x)
+    soil_slope_for = np.where(combined_x_arr >= 0, soil_slope_loss, soil_slope_surplus)
+    soil_factor = 1 + soil_slope_for * combined_x
+    return base_marginal * rte_factor * soil_factor
 
 
 def full_monte_carlo(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
@@ -1401,12 +1433,14 @@ def tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, los
         rng_lo, rng_hi = sorted((float(lo), float(hi)))
         tor[name] = {"payback_range_yr": [round(rng_lo, 1), round(rng_hi, 1)],
                      "swing_yr": round(rng_hi - rng_lo, 1),
-                     # issue #89: the two-sided soil-slope fix moves this
-                     # lever's swing at full precision (production_measurement_
-                     # spread: 0.0680 -> 0.0889 yr) but not at the published
-                     # 1dp rounding above -- exposed unrounded here so the
-                     # shift AC4 asks to "report explicitly" is visible in the
-                     # artifact itself, not just a commit message.
+                     # issue #89: the two-sided soil-slope fix (plus the
+                     # Codex-review combined-shortfall correction, pass 1)
+                     # moves this lever's swing at full precision
+                     # (production_measurement_spread: 0.0680 -> 0.0761 yr)
+                     # but not at the published 1dp rounding above -- exposed
+                     # unrounded here so the shift AC4 asks to "report
+                     # explicitly" is visible in the artifact itself, not
+                     # just a commit message.
                      "swing_yr_precise": rng_hi - rng_lo}
     ranked = sorted(tor, key=lambda k: -tor[k]["swing_yr"])
     return {"nominal_payback_yr": round(float(nominal_payback), 1), "levers": tor,
