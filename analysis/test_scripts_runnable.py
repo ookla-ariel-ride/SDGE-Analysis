@@ -787,24 +787,36 @@ def case_generators_run_on_the_real_archive():
             "artifact reproduces the committed copy byte-for-byte")
 
 
+def _is_false_condition(cond):
+    return cond is False or (isinstance(cond, str) and cond.strip().lower()
+                              in ("false", "${{ false }}"))
+
+
 def _ci_wired_test_files(workflow_src):
     """Test files with a REAL, enabled `run: python analysis/X.py` step
     somewhere in jobs.*.steps -- parsed as actual YAML structure, not a bare
     substring or a line-shaped regex, so a commented-out line, an unrelated
-    mention of the filename in prose, or a step disabled with `if: false`
-    cannot satisfy this. (A bare-substring predecessor of this function is
-    what let VERIFIED_ELSEWHERE_IN_CI assert 15 covered generators when only
-    6 actually were -- the file existed and had SOME line mentioning it, but
-    that is not the same claim as "a job actually runs it".)"""
+    mention of the filename in prose, or a step (or its whole job) disabled
+    with `if: false` cannot satisfy this, and neither can a step marked
+    `continue-on-error: true` (issue #102 review round 2, Codex pass 1: the
+    original version checked step-level `if` only, missing a false job-level
+    `if` and a step that runs but can never fail the job). (A bare-substring
+    predecessor of this function is what let VERIFIED_ELSEWHERE_IN_CI assert
+    15 covered generators when only 6 actually were -- the file existed and
+    had SOME line mentioning it, but that is not the same claim as "a job
+    actually runs it, and a failure there fails CI".)"""
     import yaml
     doc = yaml.safe_load(workflow_src) or {}
     found = set()
     for job in (doc.get("jobs") or {}).values():
+        if _is_false_condition(job.get("if")):
+            continue
         for step in job.get("steps") or []:
             if not isinstance(step, dict):
                 continue
-            cond = step.get("if")
-            if cond is False or (isinstance(cond, str) and cond.strip().lower() == "false"):
+            if _is_false_condition(step.get("if")):
+                continue
+            if step.get("continue-on-error") is True:
                 continue
             run = step.get("run")
             if not isinstance(run, str):
@@ -813,6 +825,37 @@ def _ci_wired_test_files(workflow_src):
             if m:
                 found.add(m.group(1))
     return found
+
+
+def case_ci_wired_test_files_ignores_disabled_and_non_gating_steps():
+    """Regression for issue #102 review round 2, Codex pass 1: a synthetic
+    workflow with a false job-level `if`, a false step-level `if`, and a
+    `continue-on-error: true` step must NOT count any of their `run: python
+    analysis/X.py` lines as wired -- each represents a step that either
+    never executes or can never fail the job, so a suite living only in one
+    of these could still reach main with CI green. Planted directly, not
+    inferred from the real tests.yml, so this fails if the exclusion logic
+    regresses even though the real workflow happens not to use any of these
+    shapes today."""
+    synthetic = """
+jobs:
+  disabled-job:
+    if: false
+    steps:
+      - run: python analysis/test_should_not_count_a.py
+  mixed-job:
+    steps:
+      - run: python analysis/test_should_count.py
+      - if: "false"
+        run: python analysis/test_should_not_count_b.py
+      - continue-on-error: true
+        run: python analysis/test_should_not_count_c.py
+"""
+    wired = _ci_wired_test_files(synthetic)
+    assert wired == {"test_should_count.py"}, (
+        f"disabled/non-gating steps were wrongly counted as wired: {wired}")
+    return ("_ci_wired_test_files excludes a false job-level if, a false "
+            "step-level if, and a continue-on-error step")
 
 
 def _archive_free_root(tmp):
@@ -1074,6 +1117,7 @@ CASES = [
     case_small_charger_refuses_ev_discrimination,
     case_publication_failure_leaves_artifacts_untouched,
     case_verified_elsewhere_mapping_is_real_and_wired_into_ci,
+    case_ci_wired_test_files_ignores_disabled_and_non_gating_steps,
     case_every_check_coverage_suite_is_wired_into_ci,
     case_generators_run_on_the_real_archive,
 ]
