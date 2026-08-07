@@ -886,6 +886,13 @@ def case_gas_energy_charge_multi_segment_and_detail_schema(tmp):
     assert gs[1]["segment_days"] == "28" and gs[1]["baseline_rate"] == "2.03321", gs[1]
     assert gs[0]["energy_rate"] == "" and gs[1]["nonbaseline_rate"] == "", \
         f"gas_service rows must leave Gas Energy Charge's column empty: {gs}"
+
+    total_gs_days = sum(int(d["segment_days"]) for d in gs)
+    total_ge_days = sum(int(d["segment_days"]) for d in ge)
+    assert total_gs_days == 32, \
+        f"gas_service segment days sum to {total_gs_days}, not the period's 32 days"
+    assert total_ge_days == 32, \
+        f"gas_energy segment days sum to {total_ge_days}, not the period's 32 days"
     return ("2025-07-30 gas_energy + gas_service segments -> bill_gas_detail.csv "
            "schema and day counts verified against the real PDF text")
 
@@ -926,15 +933,6 @@ def case_gas_rate_misread_caught_by_gas_charge_crossfoot(tmp):
     return ("common-mode +$0.05/therm shift of a repeated Gas Service rate -> "
             "caught on the FIRST occurrence by _gas_segments()'s charge-line "
             "cross-foot: " + r.stderr.strip().splitlines()[-1])
-
-    total_gs_days = sum(int(d["segment_days"]) for d in gs)
-    total_ge_days = sum(int(d["segment_days"]) for d in ge)
-    assert total_gs_days == 32, \
-        f"gas_service segment days sum to {total_gs_days}, not the period's 32 days"
-    assert total_ge_days == 32, \
-        f"gas_energy segment days sum to {total_ge_days}, not the period's 32 days"
-    return ("2025-07-30 gas_energy + gas_service segments -> bill_gas_detail.csv "
-            "schema and day counts verified against the real PDF text")
 
 
 def case_fixed_charge_total_reconciles_real_statements(tmp):
