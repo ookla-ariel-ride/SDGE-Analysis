@@ -652,6 +652,41 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     return "the §10 heat-pump-conversion section matches the live artifact, including the full sign-flip bracket"
 
 
+def case_monte_carlo_paragraph_matches_uncertainty_results():
+    """issue #106: uncertainty_results.json had zero pinning cases despite
+    the §6 Monte Carlo paragraph quoting its payback median/p10/p90 and
+    10-yr NPV at two discount rates in running prose -- found only by an
+    adversarial review pass re-deriving the numbers by hand during issue
+    #89's own soil-slope fix, which shifted these exact figures and nothing
+    caught it. Regex-extracts the prose's own numbers (not the other way
+    around) so a stale hand-edit in either direction fails this."""
+    ur = json.loads((ROOT / "data" / "uncertainty_results.json").read_text())
+    m = ur["battery_marginal_only_full_model"]
+    pb_re = re.search(
+        r"battery-alone payback of ([\d.]+)-yr median \(p10–p90 "
+        r"([\d.]+)–([\d.]+) yr\)", HTML)
+    assert pb_re, "Monte Carlo payback median/p10/p90 sentence not found in index.html"
+    median, p10, p90 = (float(x) for x in pb_re.groups())
+    # round(..., 1) rather than exact ==: the artifact is written at 1dp
+    # today, but this pin shouldn't start failing a legitimate regeneration
+    # over unrelated float noise if that ever changes upstream (adversarial
+    # review, issue #106).
+    assert median == round(m["payback_median"], 1), (median, m["payback_median"])
+    assert p10 == round(m["payback_p10"], 1), (p10, m["payback_p10"])
+    assert p90 == round(m["payback_p90"], 1), (p90, m["payback_p90"])
+
+    npv_re = re.search(
+        r"10-yr NPV: \$([\d,]+) median at 4% discount, \$([\d,]+) at 7%", HTML)
+    assert npv_re, "Monte Carlo 10-yr NPV sentence not found in index.html"
+    npv_4pct, npv_7pct = (int(x.replace(",", "")) for x in npv_re.groups())
+    assert npv_4pct == m["npv"]["4pct"]["10yr"]["median"], (
+        npv_4pct, m["npv"]["4pct"]["10yr"]["median"])
+    assert npv_7pct == m["npv"]["7pct"]["10yr"]["median"], (
+        npv_7pct, m["npv"]["7pct"]["10yr"]["median"])
+    return ("the §6 Monte Carlo paragraph's payback median/p10/p90 and "
+            "10-yr NPV at 4%/7% all match uncertainty_results.json")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -672,6 +707,7 @@ CASES = [
     case_tou_structure_stress_table_matches_the_artifact,
     case_dsgs_prestaged_sensitivity_matches_the_artifact,
     case_heat_pump_conversion_section_matches_the_artifact,
+    case_monte_carlo_paragraph_matches_uncertainty_results,
 ]
 
 
