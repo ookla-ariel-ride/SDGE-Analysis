@@ -78,7 +78,7 @@ def _build(tmp):
     _set_flag(tmp, have_gas_corpus)
     # Pre-existing artifacts, so each case can assert they were not modified.
     for name in ("bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
-                 "electric_bill_summary.csv", "gas_bill_summary.csv"):
+                 "bill_gas_detail.csv", "electric_bill_summary.csv", "gas_bill_summary.csv"):
         (tmp / "data" / name).write_text("SENTINEL\n")
     return tmp
 
@@ -91,7 +91,7 @@ def _run(tmp):
 def _artifacts_untouched(tmp):
     return all((tmp / "data" / n).read_text() == "SENTINEL\n" for n in (
         "bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
-        "electric_bill_summary.csv", "gas_bill_summary.csv"))
+        "bill_gas_detail.csv", "electric_bill_summary.csv", "gas_bill_summary.csv"))
 
 
 def _statement_date(path):
@@ -177,7 +177,7 @@ def case_partial_overlap_corpus_fails(tmp):
 
 
 def case_healthy_corpus(tmp):
-    """Control: the real corpus must parse and write all five artifacts."""
+    """Control: the real corpus must parse and write all six artifacts."""
     r = _run(tmp)
     assert r.returncode == 0, f"healthy corpus failed:\n{r.stderr}"
     assert not _artifacts_untouched(tmp), "healthy run wrote nothing"
@@ -396,8 +396,13 @@ def case_gas_flag_false_retires_gas_artifacts(tmp):
     # exactly the real artifacts' schemas and line endings.
     assert (tmp / "data" / "bill_periods_gas.csv").read_bytes() == (
         b"statement_date,period,period_end_month,therms,total_gas_service,"
-        b"billed_amount,baseline_rate,nonbaseline_rate\n"), \
+        b"billed_amount,baseline_rate,nonbaseline_rate,baseline_allowance_therms,"
+        b"gas_energy_charge_rate\n"), \
         "bill_periods_gas.csv is not the expected header-only CSV"
+    assert (tmp / "data" / "bill_gas_detail.csv").read_bytes() == (
+        b"statement_date,period,charge_type,segment,segment_days,baseline_rate,"
+        b"nonbaseline_rate,energy_rate\n"), \
+        "bill_gas_detail.csv is not the expected header-only CSV"
     assert (tmp / "data" / "gas_bill_summary.csv").read_bytes() == (
         b"file_month,therms,total_gas_service,baseline_rate,nonbaseline_rate\r\n"), \
         "gas_bill_summary.csv is not the expected header-only CSV"
@@ -780,6 +785,118 @@ def case_both_fixed_charge_labels_present_prefers_bsc():
             "deterministically")
 
 
+# --- Gas rate extraction (issue #98) -----------------------------------------------
+#
+# All three cases below run against the REAL corpus (private/1-raw-data/gas-bills/),
+# not synthetic fixtures: the real 25-bill corpus already covers every case named in
+# the issue (single-tier, multi-segment Gas Service, multi-segment Gas Energy
+# Charge), so there is no need to invent bill text. Expected values are hand-computed
+# from the PDF's own printed "Rate/Therm"/day-split lines, quoted in each docstring.
+
+def case_gas_baseline_rate_previously_blank_now_populated(tmp):
+    """Issue #98: fixes the pre-existing bug where a single global two-$-value regex
+    (r"Rate/Therm\\s+\\$NUM\\s+\\$NUM") left baseline_rate/nonbaseline_rate BLANK on a
+    period whose Gas Service never crossed its baseline allowance -- every segment's
+    own "Rate/Therm" line then carries only ONE $ value, which the old two-value
+    regex never matched anywhere in the statement.
+
+    sdge_gas_2025-07-30.pdf's period is exactly this case (confirmed against the
+    committed data/bill_periods_gas.csv before this fix: baseline_rate and
+    nonbaseline_rate were both blank for statement_date 2025-07-30). Its Gas Service
+    prints two single-tier segments: "4 of 32 Days" at $2.04568/therm, "28 of 32
+    Days" at $2.03321/therm (read directly off the PDF text) -- day-weighted blend
+    (4*2.04568 + 28*2.03321) / 32 = 2.03477."""
+    _require(tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2025-07-30.pdf")
+    r = _run(tmp)
+    assert r.returncode == 0, f"healthy corpus failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_gas.csv")
+    row = next(p for p in periods if p["statement_date"] == "2025-07-30")
+    expect_baseline = (4 * 2.04568 + 28 * 2.03321) / 32
+    assert abs(float(row["baseline_rate"]) - expect_baseline) < 0.00001, row
+    assert row["nonbaseline_rate"] == "", \
+        f"period never crossed its baseline allowance; nonbaseline_rate should " \
+        f"stay blank, not a hand-invented number: {row}"
+    assert row["baseline_allowance_therms"] == "11.0", row
+    return "2025-07-30 (previously blank baseline_rate) -> now day-weighted blended"
+
+
+def case_gas_service_multi_segment_day_weighted_blend(tmp):
+    """Issue #98: fixes the pre-existing bug where the same global regex matched only
+    the FIRST Gas Service rate segment when a mid-cycle rate change split a period
+    into two TWO-VALUE (baseline/non-baseline) segments -- the second segment's rate
+    was silently dropped.
+
+    sdge_gas_2025-01-29.pdf splits Gas Service on day 6 of a 32-day period: "5 of 32
+    Days" at baseline $1.56901/nonbaseline $1.87417/therm, "27 of 32 Days" at
+    baseline $1.61980/nonbaseline $1.91783/therm (read directly off the PDF text).
+    The committed artifact before this fix carried only the FIRST segment's rate
+    (1.56901/1.87417) for the whole period."""
+    _require(tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2025-01-29.pdf")
+    r = _run(tmp)
+    assert r.returncode == 0, f"healthy corpus failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_gas.csv")
+    row = next(p for p in periods if p["statement_date"] == "2025-01-29")
+    expect_baseline = (5 * 1.56901 + 27 * 1.61980) / 32
+    expect_nonbaseline = (5 * 1.87417 + 27 * 1.91783) / 32
+    assert abs(float(row["baseline_rate"]) - expect_baseline) < 0.00001, row
+    assert abs(float(row["nonbaseline_rate"]) - expect_nonbaseline) < 0.00001, row
+    assert row["baseline_rate"] != "1.56901", \
+        "regression: baseline_rate is the FIRST segment only, second segment dropped"
+    assert row["baseline_allowance_therms"] == "39.0", row
+    return ("2025-01-29 (previously first-segment-only) -> now day-weighted across "
+            "both Gas Service segments")
+
+
+def case_gas_energy_charge_multi_segment_and_detail_schema(tmp):
+    """Issue #98: the flat, untiered Gas Energy Charge (a SEPARATE line item from the
+    two-tier Gas Service rate, priced on every therm regardless of baseline/
+    non-baseline) was not extracted into any committed artifact at all before this
+    fix. Verifies both the period-level day-weighted blend
+    (bill_periods_gas.csv's gas_energy_charge_rate) and the new long-format detail
+    (bill_gas_detail.csv), including that each charge type's own segment day counts
+    sum to the period's real calendar days.
+
+    sdge_gas_2025-07-30.pdf's own printed text: Gas Energy Charge splits on day 5 of
+    its 32-day period -- "4 of 32 Days" at $.33603/therm, "28 of 32 Days" at
+    $.40247/therm; Gas Service splits on the SAME day into two single-tier segments
+    (4 days at $2.04568/therm, 28 days at $2.03321/therm) -- confirming the two
+    charge types split on the identical day here while still being extracted as
+    independent segment schedules."""
+    _require(tmp / "private" / "1-raw-data" / "gas-bills" / "sdge_gas_2025-07-30.pdf")
+    r = _run(tmp)
+    assert r.returncode == 0, f"healthy corpus failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_gas.csv")
+    row = next(p for p in periods if p["statement_date"] == "2025-07-30")
+    expect_energy = (4 * 0.33603 + 28 * 0.40247) / 32
+    assert abs(float(row["gas_energy_charge_rate"]) - expect_energy) < 0.00001, row
+
+    detail = _rows(tmp / "data" / "bill_gas_detail.csv")
+    ge = sorted((d for d in detail if d["statement_date"] == "2025-07-30"
+                 and d["charge_type"] == "gas_energy"), key=lambda d: int(d["segment"]))
+    assert len(ge) == 2, f"expected 2 gas_energy segments, got {ge}"
+    assert ge[0]["segment_days"] == "4" and ge[0]["energy_rate"] == "0.33603", ge[0]
+    assert ge[1]["segment_days"] == "28" and ge[1]["energy_rate"] == "0.40247", ge[1]
+    assert ge[0]["baseline_rate"] == "" and ge[0]["nonbaseline_rate"] == "", \
+        f"gas_energy rows must leave Gas Service columns empty: {ge[0]}"
+
+    gs = sorted((d for d in detail if d["statement_date"] == "2025-07-30"
+                 and d["charge_type"] == "gas_service"), key=lambda d: int(d["segment"]))
+    assert len(gs) == 2, f"expected 2 gas_service segments, got {gs}"
+    assert gs[0]["segment_days"] == "4" and gs[0]["baseline_rate"] == "2.04568", gs[0]
+    assert gs[1]["segment_days"] == "28" and gs[1]["baseline_rate"] == "2.03321", gs[1]
+    assert gs[0]["energy_rate"] == "" and gs[1]["nonbaseline_rate"] == "", \
+        f"gas_service rows must leave Gas Energy Charge's column empty: {gs}"
+
+    total_gs_days = sum(int(d["segment_days"]) for d in gs)
+    total_ge_days = sum(int(d["segment_days"]) for d in ge)
+    assert total_gs_days == 32, \
+        f"gas_service segment days sum to {total_gs_days}, not the period's 32 days"
+    assert total_ge_days == 32, \
+        f"gas_energy segment days sum to {total_ge_days}, not the period's 32 days"
+    return ("2025-07-30 gas_energy + gas_service segments -> bill_gas_detail.csv "
+            "schema and day counts verified against the real PDF text")
+
+
 def case_fixed_charge_total_reconciles_real_statements(tmp):
     """End-to-end proof against the real corpus: fixed_charge_total must equal the
     correct label's REAL dollar amount on both sides of the 2025-10-01 transition —
@@ -820,7 +937,10 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_gas_flag_false_with_dir_present_fails,
                 case_fork_summary_built_from_own_corpus,
                 case_partial_overlap_corpus_fails,
-                case_fixed_charge_total_reconciles_real_statements]
+                case_fixed_charge_total_reconciles_real_statements,
+                case_gas_baseline_rate_previously_blank_now_populated,
+                case_gas_service_multi_segment_day_weighted_blend,
+                case_gas_energy_charge_multi_segment_and_detail_schema]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean

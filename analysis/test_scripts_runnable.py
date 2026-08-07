@@ -100,7 +100,7 @@ MANIFEST = {
 # documented gate compares that copy against data/), "data" = written into
 # ROOT/data directly. Drives the real-tier byte-diff and the no-two-owners check.
 # Not listed: gitignored run products (stats.json, *_relief*) and parse_bills.py,
-# whose five artifacts have their own transactional gate and test suite.
+# whose six artifacts have their own transactional gate and test suite.
 OWNS = {
     "rates_history.py":             [("data", "rate_vintages.csv"),
                                      ("data", "rate_rebilling_residuals.csv")],

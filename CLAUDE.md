@@ -53,7 +53,8 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 # two legacy summaries as its own reproduction gate — they must not change:
 ../../.venv/bin/python parse_bills.py && git diff --exit-code ../../data/electric_bill_summary.csv \
     ../../data/gas_bill_summary.csv ../../data/bill_periods_electric.csv \
-    ../../data/bill_periods_gas.csv ../../data/bill_tou_detail.csv
+    ../../data/bill_periods_gas.csv ../../data/bill_tou_detail.csv \
+    ../../data/bill_gas_detail.csv
 # Its fail-closed behaviour has negative tests (missing statement, corpus gaps, TOU
 # layout drift, mid-write failure). Run them after touching the parser:
 ./.venv/bin/python analysis/test_parse_bills.py     # from the repo root
