@@ -156,6 +156,34 @@ def case_missing_escalation_key_aborts():
 
 
 @case
+def case_unexpected_new_top_level_key_aborts():
+    """Codex review, issue #34, pass 2: a NEW, unrecognized top-level key
+    must not be silently passed through unvalidated -- that would let a
+    future addition become an effectively-owned-but-never-investigated
+    field, exactly the kind of unowned content this issue was opened to
+    stop. A new key must be deliberately added to FROZEN_KEYS (if it is
+    another one-time measurement) or given its own generator, never
+    accepted by default."""
+    real_out = er.OUT
+    with tempfile.TemporaryDirectory() as td:
+        tmp_out = pathlib.Path(td) / "extra_results.json"
+        content = {k: {} for k in er.FROZEN_KEYS}
+        content["escalation"] = {}
+        content["brand_new_unvetted_key"] = {"surprise": True}
+        _write(tmp_out, content)
+        er.OUT = tmp_out
+        try:
+            er.build()
+        except SystemExit as exc:
+            assert "brand_new_unvetted_key" in str(exc), f"wrong refusal: {exc}"
+            return "an unexpected new top-level key aborts the run rather than passing through silently"
+        else:
+            raise AssertionError("a file with an unrecognized new key was silently accepted")
+        finally:
+            er.OUT = real_out
+
+
+@case
 def case_real_archive_regenerates_byte_identically():
     """No private data needed -- the only real input (data/extra_results.json)
     is a committed, public artifact."""

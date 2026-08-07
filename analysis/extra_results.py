@@ -130,15 +130,19 @@ def build():
                          "does not create one from scratch (see the module "
                          "docstring: most of the file has no other source)")
     existing = json.loads(OUT.read_text())
-    for key in FROZEN_KEYS:
-        if key not in existing:
-            raise SystemExit(f"extra_results.py: committed {OUT} is missing "
-                             f"the {key!r} key this script expects to preserve "
-                             "-- the file's own shape changed; update FROZEN_KEYS")
-    if "escalation" not in existing:
-        raise SystemExit("extra_results.py: committed file has no "
-                         "'escalation' key at all -- update this script's "
-                         "assumption about the file's shape")
+    expected = set(FROZEN_KEYS) | {"escalation"}
+    actual = set(existing)
+    if actual != expected:
+        missing = expected - actual
+        extra = actual - expected
+        raise SystemExit(
+            f"extra_results.py: committed {OUT}'s top-level keys no longer "
+            f"match what this script expects -- missing: {sorted(missing) or 'none'}, "
+            f"unexpected new keys: {sorted(extra) or 'none'}. A NEW key must be "
+            f"investigated and either added to FROZEN_KEYS (if it is another "
+            f"one-time measurement with no other source, like the other six) "
+            f"or given its own real generator -- it cannot be silently passed "
+            f"through unvalidated (Codex review, issue #34, pass 2).")
 
     escalation = _escalation_ladder(RETIRED_EVENING_BASE_SAVE_USD)
     escalation["basis"] = (
