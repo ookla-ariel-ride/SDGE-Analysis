@@ -262,9 +262,11 @@ def case_full_monte_carlo_is_deterministic_given_seed():
     """Byte-identical regeneration (AC8) depends on the RNG stream being
     fully determined by the seed and nothing else -- checked directly here on
     synthetic calibration inputs (no archive needed)."""
-    kwargs = dict(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
-                  soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066,
-                  prod_sigma=0.02, N=500, seed=99)
+    kwargs = dict(pre=2329.0, mid=2238.0,
+                  rte_slope_mid=0.5, rte_slope_pre=0.5,
+                  soil_slope_loss_mid=-1.0, soil_slope_loss_pre=-1.0,
+                  soil_slope_surplus_mid=-1.2, soil_slope_surplus_pre=-1.2,
+                  lossA=0.013, lossB=0.066, prod_sigma=0.02, N=500, seed=99)
     r1 = up.full_monte_carlo(**kwargs)
     r2 = up.full_monte_carlo(**kwargs)
     assert r1 == r2, "two full_monte_carlo() calls with the same seed must match exactly"
@@ -275,9 +277,11 @@ def case_full_monte_carlo_is_deterministic_given_seed():
 def case_full_monte_carlo_reports_required_probabilities_and_npv_shape():
     """AC3 (warranty/15yr/never probabilities) and AC4 (NPV at two discount
     rates) as a structural contract, on synthetic calibration inputs."""
-    r = up.full_monte_carlo(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
-                            soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066,
-                            prod_sigma=0.02, N=500, seed=7)
+    r = up.full_monte_carlo(pre=2329.0, mid=2238.0,
+                            rte_slope_mid=0.5, rte_slope_pre=0.5,
+                            soil_slope_loss_mid=-1.0, soil_slope_loss_pre=-1.0,
+                            soil_slope_surplus_mid=-1.2, soil_slope_surplus_pre=-1.2,
+                            lossA=0.013, lossB=0.066, prod_sigma=0.02, N=500, seed=7)
     for k in ("prob_within_warranty_10yr", "prob_within_15yr", "prob_never_within_25yr"):
         assert k in r, f"missing required probability field {k!r}"
         assert 0.0 <= r[k] <= 1.0, f"{k}={r[k]} not a probability"
@@ -297,8 +301,11 @@ def case_tornado_reconciles_against_extended_results_tornado_battery():
     """AC6: reconcile against data/extended_results.json's own tornado_battery
     ranking (a real, committed artifact -- no private archive needed)."""
     old_tb = _committed("extended_results.json")["tornado_battery"]
-    tor = up.tornado(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
-                     soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066, prod_sigma=0.02)
+    tor = up.tornado(pre=2329.0, mid=2238.0,
+                     rte_slope_mid=0.5, rte_slope_pre=0.5,
+                     soil_slope_loss_mid=-1.0, soil_slope_loss_pre=-1.0,
+                     soil_slope_surplus_mid=-1.2, soil_slope_surplus_pre=-1.2,
+                     lossA=0.013, lossB=0.066, prod_sigma=0.02)
     rec = up.reconcile_tornado(tor, old_tb)
     assert rec["old_ranked_by_swing"] == old_tb["ranked_by_swing"]
     assert rec["new_ranked_by_swing"] == tor["ranked_by_swing"]
@@ -311,8 +318,11 @@ def case_tornado_reconciles_against_extended_results_tornado_battery():
 
 @case
 def case_tornado_levers_cover_all_seven_ac1_inputs():
-    tor = up.tornado(pre=2329.0, mid=2238.0, rte_slope=0.5, soil_slope_loss=-1.0,
-                     soil_slope_surplus=-1.2, lossA=0.013, lossB=0.066, prod_sigma=0.02)
+    tor = up.tornado(pre=2329.0, mid=2238.0,
+                     rte_slope_mid=0.5, rte_slope_pre=0.5,
+                     soil_slope_loss_mid=-1.0, soil_slope_loss_pre=-1.0,
+                     soil_slope_surplus_mid=-1.2, soil_slope_surplus_pre=-1.2,
+                     lossA=0.013, lossB=0.066, prod_sigma=0.02)
     expected = {"install_cost", "escalation", "degradation", "ev_persistence",
                 "soiling", "round_trip_efficiency", "production_measurement_spread"}
     assert set(tor["levers"]) == expected, (
@@ -360,8 +370,10 @@ def case_full_monte_carlo_rejects_a_non_positive_saving_draw():
     refuse to publish a payback computed against it rather than silently
     emitting an infinite or nonsensical payback."""
     try:
-        up.full_monte_carlo(pre=2329.0, mid=2238.0, rte_slope=-1000.0,
-                            soil_slope_loss=-1000.0, soil_slope_surplus=-1000.0,
+        up.full_monte_carlo(pre=2329.0, mid=2238.0,
+                            rte_slope_mid=-1000.0, rte_slope_pre=-1000.0,
+                            soil_slope_loss_mid=-1000.0, soil_slope_loss_pre=-1000.0,
+                            soil_slope_surplus_mid=-1000.0, soil_slope_surplus_pre=-1000.0,
                             lossA=0.013, lossB=0.066, prod_sigma=0.02, N=50, seed=1)
     except SystemExit as e:
         assert "non-positive" in str(e)
@@ -394,27 +406,46 @@ def case_production_spread_and_soiling_get_consistent_generation_sensitivity():
     caught, not hidden by both slopes happening to match."""
     pre, mid, rte_slope = 2329.0, 2238.0, 0.55
     soil_slope_loss, soil_slope_surplus = 0.057, 0.091   # deliberately different
+    # c=1.0 throughout this test (only the mid-side factor is exercised), so
+    # rte_slope_pre/soil_slope_*_pre are set equal to their mid counterparts
+    # -- this test is about loss/surplus routing, not mid/pre blending
+    # (issue #107's own dedicated case covers that).
+    rte_slope_mid = rte_slope_pre = rte_slope
+    soil_slope_loss_mid = soil_slope_loss_pre = soil_slope_loss
+    soil_slope_surplus_mid = soil_slope_surplus_pre = soil_slope_surplus
     for x in (0.0, 0.02, 0.0568, 0.10):
         via_soiling = up.save1_of(c=1.0, rte=0.90, loss=x, prod_noise=1.0,
-                                  pre=pre, mid=mid, rte_slope=rte_slope,
-                                  soil_slope_loss=soil_slope_loss,
-                                  soil_slope_surplus=soil_slope_surplus)
+                                  pre=pre, mid=mid,
+                                  rte_slope_mid=rte_slope_mid, rte_slope_pre=rte_slope_pre,
+                                  soil_slope_loss_mid=soil_slope_loss_mid,
+                                  soil_slope_loss_pre=soil_slope_loss_pre,
+                                  soil_slope_surplus_mid=soil_slope_surplus_mid,
+                                  soil_slope_surplus_pre=soil_slope_surplus_pre)
         via_prod_shortfall = up.save1_of(c=1.0, rte=0.90, loss=0.0, prod_noise=1 - x,
-                                         pre=pre, mid=mid, rte_slope=rte_slope,
-                                         soil_slope_loss=soil_slope_loss,
-                                         soil_slope_surplus=soil_slope_surplus)
+                                         pre=pre, mid=mid,
+                                         rte_slope_mid=rte_slope_mid, rte_slope_pre=rte_slope_pre,
+                                         soil_slope_loss_mid=soil_slope_loss_mid,
+                                         soil_slope_loss_pre=soil_slope_loss_pre,
+                                         soil_slope_surplus_mid=soil_slope_surplus_mid,
+                                         soil_slope_surplus_pre=soil_slope_surplus_pre)
         via_prod_surplus = up.save1_of(c=1.0, rte=0.90, loss=0.0, prod_noise=1 + x,
-                                       pre=pre, mid=mid, rte_slope=rte_slope,
-                                       soil_slope_loss=soil_slope_loss,
-                                       soil_slope_surplus=soil_slope_surplus)
+                                       pre=pre, mid=mid,
+                                       rte_slope_mid=rte_slope_mid, rte_slope_pre=rte_slope_pre,
+                                       soil_slope_loss_mid=soil_slope_loss_mid,
+                                       soil_slope_loss_pre=soil_slope_loss_pre,
+                                       soil_slope_surplus_mid=soil_slope_surplus_mid,
+                                       soil_slope_surplus_pre=soil_slope_surplus_pre)
         assert abs(via_soiling - via_prod_shortfall) < 1e-9, (
             f"x={x}: soiling loss and an equal-fraction prod_noise shortfall "
             f"must produce the identical save1 ({via_soiling} vs {via_prod_shortfall}) "
             "-- both are loss-like (>= 0) inputs and must route to soil_slope_loss")
         via_soiling_negative = up.save1_of(c=1.0, rte=0.90, loss=-x, prod_noise=1.0,
-                                           pre=pre, mid=mid, rte_slope=rte_slope,
-                                           soil_slope_loss=soil_slope_loss,
-                                           soil_slope_surplus=soil_slope_surplus)
+                                           pre=pre, mid=mid,
+                                           rte_slope_mid=rte_slope_mid, rte_slope_pre=rte_slope_pre,
+                                           soil_slope_loss_mid=soil_slope_loss_mid,
+                                           soil_slope_loss_pre=soil_slope_loss_pre,
+                                           soil_slope_surplus_mid=soil_slope_surplus_mid,
+                                           soil_slope_surplus_pre=soil_slope_surplus_pre)
         assert abs(via_soiling_negative - via_prod_surplus) < 1e-9, (
             f"x={x}: a negative loss (generation surplus) and an equal-fraction "
             f"prod_noise surplus must produce the identical save1 "
@@ -448,6 +479,12 @@ def case_save1_of_piecewise_routing_is_correct_on_vectorized_mixed_sign_arrays()
     recomputation, not just that it runs without crashing."""
     pre, mid, rte_slope = 2329.0, 2238.0, 0.55
     soil_slope_loss, soil_slope_surplus = 0.057, 0.091   # deliberately different
+    # c=1.0 throughout (see array below), so only the mid-side factor is
+    # exercised -- rte_slope_pre/soil_slope_*_pre set equal to mid, matching
+    # this test's own routing-not-blending purpose.
+    rte_slope_mid = rte_slope_pre = rte_slope
+    soil_slope_loss_mid = soil_slope_loss_pre = soil_slope_loss
+    soil_slope_surplus_mid = soil_slope_surplus_pre = soil_slope_surplus
     rng = np.random.default_rng(0)
     N = 5000
     loss = rng.uniform(-0.10, 0.10, N)          # mixed sign, like a real draw
@@ -455,15 +492,19 @@ def case_save1_of_piecewise_routing_is_correct_on_vectorized_mixed_sign_arrays()
     c = np.full(N, 1.0)
     rte = np.full(N, 0.90)
 
-    vectorized = up.save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope,
-                             soil_slope_loss, soil_slope_surplus)
+    vectorized = up.save1_of(c, rte, loss, prod_noise, pre, mid,
+                             rte_slope_mid, rte_slope_pre,
+                             soil_slope_loss_mid, soil_slope_loss_pre,
+                             soil_slope_surplus_mid, soil_slope_surplus_pre)
     assert loss.min() < 0 < loss.max(), "fixture must span both signs of loss"
     assert (1 - prod_noise).min() < 0 < (1 - prod_noise).max(), (
         "fixture must span both signs of (1 - prod_noise)")
 
     scalar_recompute = np.array([
         up.save1_of(1.0, 0.90, float(loss[i]), float(prod_noise[i]), pre, mid,
-                   rte_slope, soil_slope_loss, soil_slope_surplus)
+                   rte_slope_mid, rte_slope_pre,
+                   soil_slope_loss_mid, soil_slope_loss_pre,
+                   soil_slope_surplus_mid, soil_slope_surplus_pre)
         for i in range(N)
     ])
     assert np.allclose(vectorized, scalar_recompute, atol=1e-9), (
@@ -475,8 +516,10 @@ def case_save1_of_piecewise_routing_is_correct_on_vectorized_mixed_sign_arrays()
     # vectorized call, not just that it happens to agree with itself: at
     # least some draws must differ from what the LOSS-side-only slope
     # would have produced (the pre-#89 bug's exact shape).
-    all_loss_slope = up.save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope,
-                                 soil_slope_loss, soil_slope_loss)
+    all_loss_slope = up.save1_of(c, rte, loss, prod_noise, pre, mid,
+                                 rte_slope_mid, rte_slope_pre,
+                                 soil_slope_loss_mid, soil_slope_loss_pre,
+                                 soil_slope_loss_mid, soil_slope_loss_pre)
     assert not np.allclose(vectorized, all_loss_slope), (
         "the vectorized result is indistinguishable from applying the "
         "loss-side slope to everything -- piecewise routing isn't actually "
@@ -502,6 +545,11 @@ def case_save1_of_combines_loss_and_prod_noise_before_selecting_a_slope_side():
     simultaneously and checks the exact combined formula by hand."""
     pre, mid, rte_slope = 2329.0, 2238.0, 0.55
     soil_slope_loss, soil_slope_surplus = 0.057, 0.091   # deliberately different
+    # c=1.0 throughout (see hand_computed's own base_marginal = mid), so
+    # only the mid-side factor is exercised.
+    rte_slope_mid = rte_slope_pre = rte_slope
+    soil_slope_loss_mid = soil_slope_loss_pre = soil_slope_loss
+    soil_slope_surplus_mid = soil_slope_surplus_pre = soil_slope_surplus
 
     def hand_computed(loss, prod_noise):
         base_marginal = mid   # c=1.0
@@ -516,8 +564,10 @@ def case_save1_of_combines_loss_and_prod_noise_before_selecting_a_slope_side():
     # marginal, not show the spurious ~0.5-0.7% deviation the old two-
     # independent-factors design produced at this exact shape.
     loss, prod_noise = 0.03, 1 / (1 - 0.03)
-    got = up.save1_of(1.0, up.RTE_NOM, loss, prod_noise, pre, mid, rte_slope,
-                      soil_slope_loss, soil_slope_surplus)
+    got = up.save1_of(1.0, up.RTE_NOM, loss, prod_noise, pre, mid,
+                      rte_slope_mid, rte_slope_pre,
+                      soil_slope_loss_mid, soil_slope_loss_pre,
+                      soil_slope_surplus_mid, soil_slope_surplus_pre)
     want = hand_computed(loss, prod_noise)
     assert abs(got - want) < 1e-9, (
         f"save1_of()'s combined result ({got}) disagrees with the hand-"
@@ -533,8 +583,10 @@ def case_save1_of_combines_loss_and_prod_noise_before_selecting_a_slope_side():
     # A second, non-canceling pair (both loss-like) to confirm the
     # combination isn't just coincidentally right at x=0.
     loss2, prod_noise2 = 0.02, 1.01   # x2 = -0.01, both loss-like once combined
-    got2 = up.save1_of(1.0, up.RTE_NOM, loss2, prod_noise2, pre, mid, rte_slope,
-                       soil_slope_loss, soil_slope_surplus)
+    got2 = up.save1_of(1.0, up.RTE_NOM, loss2, prod_noise2, pre, mid,
+                       rte_slope_mid, rte_slope_pre,
+                       soil_slope_loss_mid, soil_slope_loss_pre,
+                       soil_slope_surplus_mid, soil_slope_surplus_pre)
     want2 = hand_computed(loss2, prod_noise2)
     assert abs(got2 - want2) < 1e-9, (
         f"save1_of()'s combined result ({got2}) disagrees with the hand-"
@@ -1082,6 +1134,91 @@ def case_soil_slope_two_sided_fix_is_disclosed_and_matches_the_live_check():
         "the artifact's own loss/surplus slopes must be genuinely distinct "
         "-- the whole point of this fix")
     return "the two-sided soil-slope fix is disclosed in the artifact, citing the live regenerated discrepancy figure"
+
+
+@case
+def case_save1_of_exactly_reproduces_soil_calibration_points_at_c_endpoints():
+    """Issue #107: save1_of() used to average each lever's slope across
+    mid/pre BEFORE applying it to the already c-blended base_marginal, so
+    at c=1 (pure mid) or c=0 (pure pre) it never exactly reproduced the
+    real calibration point on that side -- a $3.53/0.16% gap at this
+    household's real soil-surplus point (Codex review, issue #89, pass 2).
+    Fixed by applying each side's OWN slope to that side's OWN nominal
+    value first, then blending by c. soil_slope_loss/surplus are each fit
+    from an EXACT 2-point line ({nominal, loss} or {surplus, nominal}), so
+    this fix makes save1_of() reproduce those real calibration points to
+    float precision at c=1/c=0 -- checked directly against the live
+    calibration, not a frozen number, so a regression in EITHER the fix's
+    architecture or the underlying calibration numbers fails this."""
+    _require_archive()
+    calib = _in_sandbox(up.dispatch_calibration)
+    mid, pre = calib["mid_nominal"], calib["pre_nominal"]
+    rte_slope_mid, rte_slope_pre = calib["rte_slope_mid"], calib["rte_slope_pre"]
+    sl_mid, sl_pre = calib["soil_slope_loss_mid"], calib["soil_slope_loss_pre"]
+    ss_mid, ss_pre = calib["soil_slope_surplus_mid"], calib["soil_slope_surplus_pre"]
+
+    for c, nominal, points in ((1.0, mid, calib["soil_points_mid"]),
+                               (0.0, pre, calib["soil_points_pre"])):
+        for x, real in points.items():
+            loss = 0.0 if x >= 0 else x
+            prod_noise = 1.0 - (0.0 if x < 0 else x)
+            got = up.save1_of(c, up.RTE_NOM, loss, prod_noise, pre, mid,
+                              rte_slope_mid, rte_slope_pre, sl_mid, sl_pre, ss_mid, ss_pre)
+            assert abs(got - real) < 1e-6, (
+                f"c={c}, x={x}: save1_of() gave {got} but the real calibration "
+                f"point is {real} -- expected exact reproduction (both from "
+                f"an exact 2-point slope fit), not just close")
+
+    # RTE_LO/RTE_HI are NOT exactly reproduced even by this fix (a separate,
+    # unrelated least-squares-fit residual across 3 points -- see save1_of()'s
+    # own docstring) -- confirm that residual EXISTS and is small, not that
+    # it's zero, so a future change that claims to eliminate it too would
+    # need its own evidence, not silently pass this test by coincidence.
+    for rte, real in calib["rte_points_mid"].items():
+        got = up.save1_of(1.0, rte, 0.0, 1.0, pre, mid,
+                          rte_slope_mid, rte_slope_pre, sl_mid, sl_pre, ss_mid, ss_pre)
+        if rte == up.RTE_NOM:
+            assert abs(got - real) < 1e-6, "the nominal RTE point must still be exact"
+        else:
+            rel_gap = abs(got - real) / real
+            assert 0 < rel_gap < 0.01, (
+                f"rte={rte}: expected a small (<1%) but nonzero residual from "
+                f"the inherent 3-point least-squares RTE fit, got {rel_gap:.4%}")
+    return ("save1_of() exactly reproduces the real soil loss/surplus "
+           "calibration points at c=1/c=0, and the separate RTE 3-point-fit "
+           "residual remains small and nonzero as expected")
+
+
+@case
+def case_mid_pre_slope_unaveraging_fix_is_disclosed_in_the_artifact():
+    """issue #107: the artifact must disclose the mid/pre-averaging fix the
+    same way #89's own surplus_slope_fix disclosed ITS fix -- a live
+    quantification, not a commit-message-only claim."""
+    if not DATA.joinpath("uncertainty_results.json").is_file():
+        raise SkipCase("needs the committed uncertainty_results.json")
+    result = _committed("uncertainty_results.json")
+    fix = result["calibration"]["mid_pre_slope_unaveraging_fix"]
+    soil = fix["soil_surplus_point_mid"]
+    assert soil["new_own_side_slope_prediction"] == soil["real"], (
+        "the new own-side-slope prediction must match the real surplus "
+        f"point exactly: {soil}")
+    assert soil["old_averaged_slope_prediction"] != soil["real"], (
+        "the retired averaged-slope prediction must NOT match the real "
+        f"point -- otherwise nothing here demonstrates a real fix: {soil}")
+    rte_points = fix["rte_points_mid"]
+    assert len(rte_points) == 3, f"expected all 3 RTE calibration points, got {rte_points}"
+    for rte_key, point in rte_points.items():
+        if abs(float(rte_key) - up.RTE_NOM) < 1e-9:
+            continue
+        assert point["new_own_side_slope_prediction"] != point["real"], (
+            f"rte={rte_key}: the RTE residual is expected to remain "
+            f"(a separate least-squares-fit artifact, not this fix's "
+            f"target) -- an exact match here would be suspicious: {point}")
+    assert "issue #107" in fix["method"] or "107" in str(result["calibration"].get(
+        "soil_slope_two_sided_fix", "")), (
+        "the artifact must attribute this fix to issue #107 somewhere in "
+        "the calibration section")
+    return "the mid/pre-averaging fix is disclosed in the artifact with a live, verified quantification"
 
 
 @case

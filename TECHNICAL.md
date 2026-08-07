@@ -2819,17 +2819,45 @@ Extrapolating the old loss-fit slope to the real surplus point would have predic
 $2,213.17 against the real measured $2,198.66 — a $14.51 (0.65%) ONE-SIDED-EXTRAPOLATION gap
 now eliminated by construction (`calibration.production_reconstruction.surplus_slope_fix` in
 the artifact) — specifically that gap, not every discrepancy `save1_of()` has. A separate,
-pre-existing, much smaller residual remains (Codex review, issue #89, pass 2-3: ~$3.5,
-~0.16% at this household's real surplus point) from averaging `soil_slope_loss`/`surplus`
-across mid/pre before applying them to the `c`-blended `base_marginal` — the same convention
-`rte_slope` has always used, unrelated to this fix, and out of its scope box (filed as issue
-#107 rather than expanding this one).
+smaller residual that USED TO remain (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16% at
+this household's real surplus point) from averaging `soil_slope_loss`/`surplus` across
+mid/pre before applying them to the `c`-blended `base_marginal` — the same convention
+`rte_slope` used to follow — is now resolved; see "Mid/pre slope averaging (issue #107,
+resolved)" below.
 Downstream this is a small correction: `production_measurement_spread`'s own tornado swing
 widens from 0.0680 yr to 0.0761 yr at full precision (both round to the same 0.1 yr in the
 published, rounded artifact field), and the full Monte Carlo's NPV percentiles shift by a
 few dollars (10-yr NPV median at 4% discount $7,510 → $7,496, at 7% discount $4,359 →
 $4,357) — soiling and production-measurement-spread remain low-swing tornado levers either
 way, dominated by install cost, escalation and degradation.
+
+**Mid/pre slope averaging (issue #107, resolved).** Every slope-based lever (`rte_slope`,
+and — after issue #89 — `soil_slope_loss`/`soil_slope_surplus`) used to be averaged across
+the mid- and pre-behavior calibration runs into ONE value, then applied to the ALREADY
+`c`-blended `base_marginal = c*mid + (1-c)*pre`. At `c=1` (pure post-behavior) this used a
+slope that was half pre-behavior; the real mid-only calibration point was never exactly
+reproduced, and symmetrically at `c=0`. Quantified at this household's real soil-surplus
+point: the old averaged-slope prediction was $2,202.19 against the real measured $2,198.66
+— the $3.53 (0.16%) gap issue #89's own review pass first surfaced. **Fixed**: `save1_of()`
+now applies each side's OWN slope to that side's OWN nominal value FIRST
+(`mid*factor_mid`, `pre*factor_pre`), THEN blends the two resulting dollar figures by `c`
+(`c*mid_adjusted + (1-c)*pre_adjusted`) instead of blending the two marginals before
+applying one averaged factor. Because `soil_slope_loss`/`soil_slope_surplus` are each fit
+from an EXACT 2-point line (`{nominal, loss}` or `{surplus, nominal}`), this makes
+`save1_of()` reproduce the real soil calibration points EXACTLY at `c=1`/`c=0` — confirmed
+to a residual of 0.0 (to float precision) at this household's own calibration
+(`calibration.mid_pre_slope_unaveraging_fix.soil_surplus_point_mid` in the artifact). The
+RTE lever is NOT exactly reproduced even by this fix: `rte_slope_mid`/`rte_slope_pre` are
+each fit by LEAST SQUARES across THREE points (`RTE_LO`/`RTE_NOM`/`RTE_HI`, not two), which
+leaves an inherent best-fit residual (~0.13% at this household's real calibration,
+`calibration.mid_pre_slope_unaveraging_fix.rte_points_mid` in the artifact) independent of
+mid/pre averaging — a single straight line generally cannot pass through three real
+(non-collinear) points exactly. This fix removes the mid/pre-averaging CONTRIBUTION to that
+gap (the specific thing this issue targets) but does not and cannot remove the 3-point-fit
+residual itself, documented rather than silently left unexplained. Downstream this is a
+very small correction, smaller than issue #89's own: 10-yr NPV median at 4% discount $7,496
+→ $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the published
+1dp rounding (5.8/5.1/6.8 yr).
 
 **Combining loss and prod_noise before selecting a slope side (Codex review, issue #89,
 pass 1).** `loss` and `prod_noise` both perturb the SAME physical quantity (true generation

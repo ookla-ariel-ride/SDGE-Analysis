@@ -291,11 +291,15 @@ runtime override CLAUDE.md's read-only convention for existing generators is
 meant to allow (no line of battery_dispatch_policies.py is modified, and its
 own committed artifact never touches this script). The resulting six-to-eight
 real dispatch reruns fit a linear factor(x) = 1 + slope*(x - nominal) for
-each lever; both pre- and post-behavior calibration runs land on nearly
-identical fractional slopes (see the "calibration" block of the output
-artifact for the actual numbers), which is itself the evidence that a single
-slope, applied to whichever pre/post-behavior blend a given Monte Carlo draw
-lands on, is a reasonable simplification rather than a fabricated shortcut.
+each lever, SEPARATELY for the pre- and post-behavior calibration runs (issue
+#107: previously averaged into one slope and applied to the already
+c-blended base_marginal, which never exactly reproduced either real
+calibration point at c=0/c=1 -- see save1_of()'s own docstring and the
+"calibration.mid_pre_slope_unaveraging_fix" block of the output artifact for
+the quantified before/after). Each side's own slope is applied to that
+side's own nominal value FIRST, and the two resulting dollar figures are
+blended by c afterward, so a c=1 (pure post-behavior) draw uses ONLY the
+mid-behavior calibration, never a value contaminated by pre-behavior data.
 
 CORRELATION STRUCTURE: ASSUMED INDEPENDENT — STATED BIAS DIRECTION
 -----------------------------------------------------------------------------
@@ -754,10 +758,15 @@ def dispatch_calibration():
     touches private data, exactly mirroring deep_analyses.py's own module-
     level read of usage.csv.
 
-    Returns a dict: pre, mid (nominal marginals, $/yr), rte_slope,
-    soil_slope_loss/soil_slope_surplus (fractional-factor slopes, issue #89:
-    fit separately per side since scale_production() is asymmetric), and
-    the raw calibration points for the artifact's own "calibration" section.
+    Returns a dict: pre, mid (nominal marginals, $/yr), rte_slope_mid/pre and
+    soil_slope_loss_mid/pre / soil_slope_surplus_mid/pre (fractional-factor
+    slopes, kept separate per mid/pre side -- issue #89: soil slopes also
+    split by loss/surplus side since scale_production() is asymmetric; issue
+    #107: no averaged single slope per lever any more, each side's own
+    slope is applied to that side's own nominal value before save1_of()
+    blends the two dollar figures by c), the raw calibration points, and
+    mid_pre_slope_unaveraging_fix (issue #107's own before/after
+    quantification) for the artifact's own "calibration" section.
     """
     import behavior_rebuild as br
     import battery_dispatch_policies as bp
@@ -1068,22 +1077,74 @@ def dispatch_calibration():
                 "dispatch rerun, for every surplus-like draw (prod_noise > "
                 "1, i.e. (1 - prod_noise) < 0) instead of linearly "
                 "extrapolating the loss-side slope, for any draw magnitude "
-                "-- not just at this particular lossB point. This does NOT "
-                "mean save1_of()'s output exactly reproduces either the "
-                "real mid or real pre surplus point at c=1/c=0: save1_of() "
-                "applies ONE slope per side, averaged across mid/pre "
-                "(matching this module's existing rte_slope convention, "
-                "pre-dating this issue), to the ALREADY c-blended "
-                "base_marginal -- a separate, pre-existing, much smaller "
-                "residual (Codex review, issue #89, pass 2: ~$3.5, ~0.16% "
-                "at this household's real surplus point, comparable in "
-                "size to the analogous rte_slope-averaging residual, versus "
-                "the $14.51/0.65% one-sided-extrapolation discrepancy this "
-                "fix actually targets) that a genuine mid/pre-unaveraged "
-                "slope architecture would remove for every slope-based "
-                "lever, not just this one -- out of this issue's own scope "
-                "box, filed as issue #107 rather than expanding it here."),
+                "-- not just at this particular lossB point. A SEPARATE, "
+                "smaller residual from averaging soil_slope_loss/surplus "
+                "across mid/pre before applying them to the c-blended "
+                "base_marginal (the same convention rte_slope used to "
+                "follow) is now ALSO fixed -- see mid_pre_slope_"
+                "unaveraging_fix below (issue #107)."),
         },
+    }
+
+    # issue #107: quantifies the mid/pre-averaging residual save1_of() used
+    # to carry for EVERY slope-based lever (not just soil), and what
+    # applying each side's own slope to that side's own nominal value --
+    # rather than one averaged slope to the c-blended base_marginal --
+    # actually closes. Computed here, live, from the same real calibration
+    # points surplus_slope_fix above uses, not hand-typed from a prior run.
+    # A top-level sibling of production_reconstruction, not nested inside
+    # it, since this covers RTE too, not just soiling/production.
+    mid_pre_slope_unaveraging_fix = {
+        "method": (
+            "Before this fix, save1_of() computed ONE slope per lever "
+            "(rte_slope, soil_slope_loss, soil_slope_surplus), each "
+            "averaged across the mid- and pre-behavior calibration "
+            "runs, and applied it to the ALREADY c-blended "
+            "base_marginal = c*mid + (1-c)*pre. At c=1 (pure post-"
+            "behavior) this used a slope that was HALF pre-behavior; "
+            "the real mid-only calibration point was never exactly "
+            "reproduced. Fixed by applying each side's OWN slope to "
+            "that side's OWN nominal value FIRST, then blending the "
+            "two resulting dollar figures by c: c*(mid*factor_mid) + "
+            "(1-c)*(pre*factor_pre)."),
+        "soil_surplus_point_mid": {
+            "real": round(surplus_point_mid, 2),
+            "old_averaged_slope_prediction": round(
+                mid_nominal * (1 + ((soil_slope_surplus_mid + soil_slope_surplus_pre) / 2)
+                               * (-lossB)), 2),
+            "new_own_side_slope_prediction": round(
+                mid_nominal * (1 + soil_slope_surplus_mid * (-lossB)), 2),
+            "note": ("the new prediction matches 'real' exactly (both "
+                     "sides of a 2-point fit, {nominal, surplus}, pass "
+                     "through both points by construction) -- the old "
+                     "averaged-slope prediction does not, since it used "
+                     "a slope that was half pre-behavior at a pure-mid "
+                     "(c=1) scenario."),
+        },
+        "rte_points_mid": {
+            rte: {
+                "real": round(v, 2),
+                "old_averaged_slope_prediction": round(
+                    mid_nominal * (1 + ((rte_slope_mid + rte_slope_pre) / 2)
+                                   * (rte - RTE_NOM)), 2),
+                "new_own_side_slope_prediction": round(
+                    mid_nominal * (1 + rte_slope_mid * (rte - RTE_NOM)), 2),
+            } for rte, v in rte_points_mid.items()
+        },
+        "rte_residual_note": (
+            "Unlike the soil slopes, RTE_LO/RTE_NOM/RTE_HI are fit "
+            "together by LEAST SQUARES across all THREE points (not two "
+            "separate 2-point fits), so even the new own-side slope "
+            "does not exactly reproduce RTE_LO/RTE_HI -- a real "
+            "dispatch relationship is not perfectly linear across all "
+            "three RTE draws, and a single best-fit line cannot pass "
+            "through three non-collinear points exactly. This fix "
+            "removes the mid/pre-AVERAGING contribution to that gap "
+            "(what issue #107 targets) but does not and cannot remove "
+            "the separate least-squares-fit residual itself -- both "
+            "old and new RTE_LO/RTE_HI predictions above still differ "
+            "from 'real' by a similar small amount, for this reason, "
+            "not because the fix failed."),
     }
 
     return {
@@ -1094,17 +1155,18 @@ def dispatch_calibration():
         "behavior_save": float(base - b_sh),
         "lossA": lossA,
         "lossB": lossB,
-        "rte_slope": (rte_slope_mid + rte_slope_pre) / 2,
+        # issue #107: no averaged single slope per lever any more -- each
+        # side (mid/pre) keeps its own slope, applied to that side's own
+        # nominal value before the two dollar figures are blended by c (see
+        # save1_of()'s own docstring). issue #89: soil_slope_loss/surplus
+        # were already split by SIDE (loss/surplus) rather than one
+        # undifferentiated soil_slope, since scale_production()'s physical
+        # relationship is genuinely piecewise; issue #107 additionally stops
+        # averaging each side's own mid/pre pair.
         "rte_slope_mid": rte_slope_mid,
         "rte_slope_pre": rte_slope_pre,
-        # issue #89: one slope per SIDE (loss/surplus), each averaged across
-        # pre-/post-behavior exactly like the existing rte_slope convention
-        # -- no single undifferentiated soil_slope any more, since the
-        # physical relationship (scale_production()) is genuinely piecewise.
-        "soil_slope_loss": (soil_slope_loss_mid + soil_slope_loss_pre) / 2,
         "soil_slope_loss_mid": soil_slope_loss_mid,
         "soil_slope_loss_pre": soil_slope_loss_pre,
-        "soil_slope_surplus": (soil_slope_surplus_mid + soil_slope_surplus_pre) / 2,
         "soil_slope_surplus_mid": soil_slope_surplus_mid,
         "soil_slope_surplus_pre": soil_slope_surplus_pre,
         "rte_points_mid": rte_points_mid,
@@ -1112,6 +1174,7 @@ def dispatch_calibration():
         "soil_points_mid": soil_points_mid,
         "soil_points_pre": soil_points_pre,
         "production_reconstruction": production_reconstruction,
+        "mid_pre_slope_unaveraging_fix": mid_pre_slope_unaveraging_fix,
     }
 
 
@@ -1212,7 +1275,10 @@ def draw_inputs(N, seed, rte_slope, soil_slope, lossA, lossB, prod_sigma):
     return esc, fade, price, c, rte, loss, prod_noise
 
 
-def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus):
+def save1_of(c, rte, loss, prod_noise, pre, mid,
+             rte_slope_mid, rte_slope_pre,
+             soil_slope_loss_mid, soil_slope_loss_pre,
+             soil_slope_surplus_mid, soil_slope_surplus_pre):
     """prod_noise is a multiplicative factor on TRUE generation (1.0 = the
     measured value is right; >1 = true generation is higher than measured).
     Adversarial review pass 2, finding 2: an earlier draft multiplied prod_noise
@@ -1274,9 +1340,38 @@ def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope_loss, soi
     Carlo's own draw_inputs() output) and plain scalar floats (tornado(),
     escalation_downside_sensitivity(), and this file's own direct test
     calls) -- confirmed by both call shapes in test_uncertainty_
-    propagation.py."""
-    base_marginal = c * mid + (1 - c) * pre
-    rte_factor = 1 + rte_slope * (rte - RTE_NOM)
+    propagation.py.
+
+    MID/PRE WEIGHTED BY c, NOT AVERAGED BEFORE BLENDING (issue #107): every
+    slope-based factor used to be averaged across mid/pre
+    (rte_slope=(rte_slope_mid+rte_slope_pre)/2, same pattern for the soil
+    slopes) and applied to the ALREADY c-blended base_marginal
+    (c*mid+(1-c)*pre) -- so at c=1 (pure post-behavior), the result used a
+    slope that was HALF pre-behavior, and never exactly reproduced the real
+    mid-only calibration point; symmetrically at c=0. Fixed by applying
+    each side's OWN slope to that side's OWN nominal value first, THEN
+    blending the two resulting dollar figures by c:
+    c*(mid*factor_mid) + (1-c)*(pre*factor_pre) instead of
+    (c*mid+(1-c)*pre)*factor_avg. At c=1/c=0 this exactly reproduces the
+    real soil_slope_loss/soil_slope_surplus calibration points (each fit
+    from exactly 2 real dispatch points -- {nominal, loss} or {surplus,
+    nominal} -- so a 2-point line always passes through both exactly):
+    confirmed to residual 0.0 (to float precision) at this household's own
+    calibration, versus the old averaged-slope approach's ~$3.53/0.16% gap
+    at the real surplus point. The RTE lever is NOT exactly reproduced at
+    RTE_LO/RTE_HI even with this fix: rte_slope_mid/rte_slope_pre are each
+    fit by LEAST SQUARES across THREE points (RTE_LO/RTE_NOM/RTE_HI, not
+    two), which leaves an inherent best-fit residual (~0.13% at this
+    household's real calibration) independent of mid/pre averaging -- a
+    single straight line generally cannot pass through three real
+    (non-collinear) points exactly. This fix removes the mid/pre-averaging
+    contribution to that gap (the specific thing issue #107 targets) but
+    does not and cannot remove the 3-point-fit residual itself; see
+    dispatch_calibration()'s own docstring and data/uncertainty_results.
+    json's calibration.mid_pre_slope_unaveraging_fix for the quantified
+    before/after at both RTE and soil calibration points."""
+    rte_factor_mid = 1 + rte_slope_mid * (rte - RTE_NOM)
+    rte_factor_pre = 1 + rte_slope_pre * (rte - RTE_NOM)
     # Codex review, issue #89, pass 1: loss and prod_noise both perturb the
     # SAME physical quantity (true generation relative to nominal), so they
     # must be combined into ONE shortfall variable before a slope side is
@@ -1298,22 +1393,30 @@ def save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope, soil_slope_loss, soi
     x = 1 - prod_noise
     combined_x = loss + x - loss * x
     combined_x_arr = np.asarray(combined_x)
-    soil_slope_for = np.where(combined_x_arr >= 0, soil_slope_loss, soil_slope_surplus)
-    soil_factor = 1 + soil_slope_for * combined_x
-    return base_marginal * rte_factor * soil_factor
+    soil_slope_mid_for = np.where(combined_x_arr >= 0, soil_slope_loss_mid, soil_slope_surplus_mid)
+    soil_slope_pre_for = np.where(combined_x_arr >= 0, soil_slope_loss_pre, soil_slope_surplus_pre)
+    soil_factor_mid = 1 + soil_slope_mid_for * combined_x
+    soil_factor_pre = 1 + soil_slope_pre_for * combined_x
+    mid_adjusted = mid * rte_factor_mid * soil_factor_mid
+    pre_adjusted = pre * rte_factor_pre * soil_factor_pre
+    return c * mid_adjusted + (1 - c) * pre_adjusted
 
 
-def full_monte_carlo(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
+def full_monte_carlo(pre, mid, rte_slope_mid, rte_slope_pre,
+                      soil_slope_loss_mid, soil_slope_loss_pre,
+                      soil_slope_surplus_mid, soil_slope_surplus_pre,
                       lossA, lossB, prod_sigma, N=5000, seed=43):
-    # draw_inputs()'s own `soil_slope` parameter is dead code (unused in its
-    # body -- confirmed by reading it -- out of scope for this issue to
-    # clean up). It can no longer take a single value, so it gets whichever
-    # of the two new slopes is more directly analogous to the old one
-    # (soil_slope_loss); still unused below.
+    # draw_inputs()'s own `rte_slope`/`soil_slope` parameters are dead code
+    # (unused in its body -- confirmed by reading it -- out of scope for
+    # this issue to clean up). It can no longer take a single value per
+    # lever, so it gets whichever of the two new slopes per lever is more
+    # directly analogous to the old ones (the mid-side); still unused below.
     esc, fade, price, c, rte, loss, prod_noise = draw_inputs(
-        N, seed, rte_slope, soil_slope_loss, lossA, lossB, prod_sigma)
-    save1 = save1_of(c, rte, loss, prod_noise, pre, mid, rte_slope,
-                      soil_slope_loss, soil_slope_surplus)
+        N, seed, rte_slope_mid, soil_slope_loss_mid, lossA, lossB, prod_sigma)
+    save1 = save1_of(c, rte, loss, prod_noise, pre, mid,
+                      rte_slope_mid, rte_slope_pre,
+                      soil_slope_loss_mid, soil_slope_loss_pre,
+                      soil_slope_surplus_mid, soil_slope_surplus_pre)
     if np.any(save1 <= 0):
         raise SystemExit("full_monte_carlo: a draw produced a non-positive "
                           "year-1 battery saving -- band too wide or a sign "
@@ -1412,7 +1515,10 @@ def full_monte_carlo(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
 # extended_findings.py's tornado_battery (hold everything else at a nominal
 # scenario, vary one lever across its own band, rank by payback-year swing)
 # ---------------------------------------------------------------------------
-def tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, lossB, prod_sigma):
+def tornado(pre, mid, rte_slope_mid, rte_slope_pre,
+            soil_slope_loss_mid, soil_slope_loss_pre,
+            soil_slope_surplus_mid, soil_slope_surplus_pre,
+            lossA, lossB, prod_sigma):
     esc_nom = (ESC_LO + ESC_HI) / 2
     fade_nom = (FADE_LO + FADE_HI) / 2
     price_nom = (PRICE_LO + PRICE_HI) / 2
@@ -1422,8 +1528,10 @@ def tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, los
     prod_nom = 1.0
 
     def save1(c=c_nom, rte=rte_nom, loss=loss_nom, prod=prod_nom):
-        return save1_of(c, rte, loss, prod, pre, mid, rte_slope,
-                        soil_slope_loss, soil_slope_surplus)
+        return save1_of(c, rte, loss, prod, pre, mid,
+                        rte_slope_mid, rte_slope_pre,
+                        soil_slope_loss_mid, soil_slope_loss_pre,
+                        soil_slope_surplus_mid, soil_slope_surplus_pre)
 
     def pb(save, esc=esc_nom, fade=fade_nom, price=price_nom):
         return payback_of(save, esc, fade, price)
@@ -1463,7 +1571,10 @@ def tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, los
 ESC_DOWNSIDE_GRID_PCT = (0.00, -0.03, -0.06, -0.09, -0.12)
 
 
-def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus, lossA, lossB):
+def escalation_downside_sensitivity(pre, mid, rte_slope_mid, rte_slope_pre,
+                                     soil_slope_loss_mid, soil_slope_loss_pre,
+                                     soil_slope_surplus_mid, soil_slope_surplus_pre,
+                                     lossA, lossB):
     """Issue #59 (Codex adversarial review, third pass): documenting the 0%
     floor as an unproven, inherited assumption while the Monte Carlo can
     still never SAMPLE a negative escalation draw leaves a reader unable to
@@ -1489,8 +1600,10 @@ def escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope_loss, soil_s
     price_nom = (PRICE_LO + PRICE_HI) / 2
     c_nom = EV_PERSIST_A / (EV_PERSIST_A + EV_PERSIST_B)
     loss_nom = (lossA + lossA + lossB) / 3
-    save1_nom = save1_of(c_nom, RTE_NOM, loss_nom, 1.0, pre, mid, rte_slope,
-                          soil_slope_loss, soil_slope_surplus)
+    save1_nom = save1_of(c_nom, RTE_NOM, loss_nom, 1.0, pre, mid,
+                          rte_slope_mid, rte_slope_pre,
+                          soil_slope_loss_mid, soil_slope_loss_pre,
+                          soil_slope_surplus_mid, soil_slope_surplus_pre)
     grid = {}
     for pct in ESC_DOWNSIDE_GRID_PCT:
         pb = payback_of(save1_nom, pct, fade_nom, price_nom)
@@ -1561,8 +1674,14 @@ def reconcile_tornado(new_tornado, old_tornado_battery):
 def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     calib = dispatch_calibration()
     pre, mid = calib["pre_nominal"], calib["mid_nominal"]
-    rte_slope = calib["rte_slope"]
-    soil_slope_loss, soil_slope_surplus = calib["soil_slope_loss"], calib["soil_slope_surplus"]
+    # issue #107: mid-/pre-specific slopes, no longer averaged into one
+    # value before being applied to the c-blended base_marginal -- see
+    # save1_of()'s own docstring for why this matters.
+    rte_slope_mid, rte_slope_pre = calib["rte_slope_mid"], calib["rte_slope_pre"]
+    soil_slope_loss_mid, soil_slope_loss_pre = (
+        calib["soil_slope_loss_mid"], calib["soil_slope_loss_pre"])
+    soil_slope_surplus_mid, soil_slope_surplus_pre = (
+        calib["soil_slope_surplus_mid"], calib["soil_slope_surplus_pre"])
     lossA, lossB = calib["lossA"], calib["lossB"]
 
     # cross-check against the committed dispatch artifact (same fail-loud
@@ -1600,12 +1719,18 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
     prod_stats = production_spread_stats()
     prod_sigma = prod_stats["prod_sigma_used"]
 
-    mc = full_monte_carlo(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
+    mc = full_monte_carlo(pre, mid, rte_slope_mid, rte_slope_pre,
+                          soil_slope_loss_mid, soil_slope_loss_pre,
+                          soil_slope_surplus_mid, soil_slope_surplus_pre,
                           lossA, lossB, prod_sigma, N=N_full, seed=seed_full)
-    tor = tornado(pre, mid, rte_slope, soil_slope_loss, soil_slope_surplus,
+    tor = tornado(pre, mid, rte_slope_mid, rte_slope_pre,
+                 soil_slope_loss_mid, soil_slope_loss_pre,
+                 soil_slope_surplus_mid, soil_slope_surplus_pre,
                  lossA, lossB, prod_sigma)
-    esc_downside = escalation_downside_sensitivity(pre, mid, rte_slope, soil_slope_loss,
-                                                   soil_slope_surplus, lossA, lossB)
+    esc_downside = escalation_downside_sensitivity(pre, mid, rte_slope_mid, rte_slope_pre,
+                                                   soil_slope_loss_mid, soil_slope_loss_pre,
+                                                   soil_slope_surplus_mid, soil_slope_surplus_pre,
+                                                   lossA, lossB)
 
     old_deep = _committed("deep_results.json")
     # deep_analyses.py's own _base_save() reads the COMMITTED, already-rounded
@@ -1840,23 +1965,19 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                 "every surplus-like draw at any magnitude, not just at this "
                 "particular lossB point -- specifically the ONE-SIDED "
                 "EXTRAPOLATION gap, not every discrepancy save1_of() has: a "
-                "separate, pre-existing, much smaller residual (Codex "
-                "review, issue #89, pass 2-3: ~$3.5, ~0.16%) remains from "
-                "averaging soil_slope_loss/surplus across mid/pre before "
-                "applying them to the c-blended base_marginal (the same "
-                "convention rte_slope has always used) -- see "
-                "production_reconstruction.surplus_slope_fix's own "
-                "resolution field for the precise distinction, filed as "
-                "issue #107."),
+                "separate, smaller residual (Codex review, issue #89, pass "
+                "2-3: ~$3.5, ~0.16%) that USED TO remain from averaging "
+                "soil_slope_loss/surplus across mid/pre before applying "
+                "them to the c-blended base_marginal (the same convention "
+                "rte_slope used to follow) is now RESOLVED -- see "
+                "mid_pre_slope_unaveraging_fix below (issue #107)."),
+            "mid_pre_slope_unaveraging_fix": calib["mid_pre_slope_unaveraging_fix"],
             "rte_slope_mid": calib["rte_slope_mid"],
             "rte_slope_pre": calib["rte_slope_pre"],
-            "rte_slope_used": rte_slope,
             "soil_slope_loss_mid": calib["soil_slope_loss_mid"],
             "soil_slope_loss_pre": calib["soil_slope_loss_pre"],
-            "soil_slope_loss_used": soil_slope_loss,
             "soil_slope_surplus_mid": calib["soil_slope_surplus_mid"],
             "soil_slope_surplus_pre": calib["soil_slope_surplus_pre"],
-            "soil_slope_surplus_used": soil_slope_surplus,
             "lossA": lossA,
             "lossB": lossB,
             "rte_calibration_points_mid": calib["rte_points_mid"],
@@ -1867,21 +1988,29 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
                       "least squares to 3 REAL dispatch reruns per lever per "
                       "behavior state (battery_dispatch_policies.run_batt/"
                       ".billed, ETA temporarily overridden for RTE draws, "
-                      "generation scaled for soiling/production draws), then "
-                      "averaged across the pre- and post-behavior calibration "
-                      "runs since both land on nearly identical fractional "
-                      "slopes. RTE's 3 points (RTE_LO/RTE_NOM/RTE_HI) fit ONE "
-                      "slope across the full range (RTE's response is "
-                      "expected to be one continuous relationship). Issue "
-                      "#89: soiling/production's 3 points (surplus at "
-                      "-lossB, nominal at 0, loss at +lossB) fit TWO "
-                      "separate 2-point slopes instead -- soil_slope_loss "
+                      "generation scaled for soiling/production draws). "
+                      "Issue #107: each side's (mid/pre) own slope is kept "
+                      "separate and applied to that side's own nominal "
+                      "value, then the two resulting dollar figures are "
+                      "blended by c -- no longer averaged into one slope "
+                      "before being applied to an already c-blended "
+                      "base_marginal (see save1_of()'s own docstring and "
+                      "mid_pre_slope_unaveraging_fix above). RTE's 3 points "
+                      "(RTE_LO/RTE_NOM/RTE_HI) fit ONE slope across the "
+                      "full range per side (RTE's response is expected to "
+                      "be one continuous relationship) -- this fit is not "
+                      "exact through all 3 points (see mid_pre_slope_"
+                      "unaveraging_fix.rte_residual_note), unrelated to the "
+                      "mid/pre-averaging issue #107 fixes. Issue #89: "
+                      "soiling/production's 3 points (surplus at -lossB, "
+                      "nominal at 0, loss at +lossB) fit TWO separate "
+                      "2-point slopes per side instead -- soil_slope_loss "
                       "from {nominal, loss} and soil_slope_surplus from "
-                      "{surplus, nominal} -- because scale_production()'s "
-                      "own reallocation is genuinely piecewise (a loss "
-                      "reduces export first; a surplus reduces import "
-                      "first), not one straight line through all three "
-                      "points."),
+                      "{surplus, nominal}, each exact by construction -- "
+                      "because scale_production()'s own reallocation is "
+                      "genuinely piecewise (a loss reduces export first; a "
+                      "surplus reduces import first), not one straight "
+                      "line through all three points."),
         },
         "battery_marginal_only_full_model": mc,
         "tornado": {**tor, "reconciliation_vs_extended_results_tornado_battery": reconciliation},
