@@ -235,6 +235,43 @@ a positive OR a zero-floored distribution.
   are out of this issue's own scope box (a dispatch-rerun-based escalation
   model is a design change to how `esc` works, not a distribution-tuning
   fix); filed as a follow-up (issue #87) rather than attempted here.
+  ISSUE #87 RESOLUTION: investigated implementing the per-TOU-period model.
+  data/tou_spread.json's own delivery_cell_escalation resolves ON-PEAK to a
+  tight, zero-excluding, POSITIVE trend in both seasons (winter 11.37%/yr,
+  CI [7.75, 15.11], r-squared 0.973; summer 7.66%/yr, CI [1.73, 13.94]).
+  SUPER-OFF-PEAK -- the charging leg, and the other side of the arbitrage
+  spread a battery captures -- has a large NEGATIVE point estimate in both
+  seasons (~-21%/yr) but a CI so wide it crosses zero by a wide margin
+  ([-61.89, 62.02] summer, [-49.24, 20.68] winter): not a resolved trend,
+  just a noisy one. (summer_off_peak is separately unresolved: 1 vintage.)
+  Combining a confidently-known on-peak trend with an unresolved
+  super-off-peak point estimate to build a per-period spread trend would
+  manufacture a specific-looking widening number that is really just
+  whichever central estimate the noisy leg happened to land on -- exactly
+  the per-cell-as-clean-input error the (b) retraction above already caught
+  once, applied to a trend instead of a level. The spread-level
+  structural-break test -- which differences the two legs directly, so
+  common-mode shocks cancel and the wide super-off-peak uncertainty carries
+  straight through rather than getting hidden inside a confident-looking
+  on-peak number -- is the honest version of this same question, and it
+  already can't resolve a trend from the same underlying data (only 3
+  independent post-break price levels in summer, 4 in winter; too few to
+  both locate a breakpoint and estimate a slope). A per-period model built
+  from these per-cell trends would not be mathematically equivalent to
+  `esc`'s existing blended scalar -- the two legs' point estimates plainly
+  differ -- but it would inherit AT LEAST as much uncertainty as the direct
+  spread test already found inadequate, since super-off-peak's own
+  wide-crossing-zero CI is the actual bottleneck either way. Building it
+  now would trade one blended, honestly-labeled-as-unproven scalar for a
+  differently-shaped but no-more-resolved number. Resolved as AC1's
+  documented-gap branch: a longer bill corpus (tou_spread.py's own
+  estimate: reaching into 2028 would roughly double the independent units)
+  is needed before this is worth building. Guarded by
+  test_uncertainty_propagation.py's case_spread_trend_is_still_not_
+  determined_so_esc_stays_a_blended_scalar, which reads tou_spread.json's
+  own verdict and post_break.adequate fields and FAILS once the corpus
+  grows enough to resolve them -- that failure, not a calendar date, is the
+  signal to revisit this with a real per-period model.
 
 CALIBRATION: RTE- AND SOILING-SAVING SENSITIVITY, FROM THE REAL ENGINE
 -----------------------------------------------------------------------------
@@ -1557,9 +1594,17 @@ def build(N_full=5000, seed_full=43, N_legacy=5000, seed_legacy=42):
             "unevidenced negative number (self-invented or borrowed from "
             "PG&E) would trade one unproven assumption for another. See "
             "this module's own docstring, section 'ISSUE #59', part (b) "
-            "for the full check, and issue #87 for the follow-up (a real "
-            "per-TOU-period dispatch-rerun escalation model) this is out of "
-            "scope to implement here. Because documenting this limitation is "
+            "for the full check, and section 'ISSUE #87 RESOLUTION' for why "
+            "a real per-TOU-period dispatch-rerun escalation model was "
+            "investigated and deferred (not built): on-peak resolves to a "
+            "confident positive trend but super-off-peak's own trend is "
+            "unresolved (a large negative point estimate, wide-crossing-"
+            "zero CI), so a per-period model would inherit at least as "
+            "much uncertainty as the direct spread test already found "
+            "inadequate, not less; guarded by "
+            "test_uncertainty_propagation.py's case_spread_trend_is_still_"
+            "not_determined_so_esc_stays_a_blended_scalar, which fails once "
+            "that changes. Because documenting this limitation is "
             "not the same as showing its consequence (Codex adversarial "
             "review, issue #59, third pass), see escalation_downside_"
             "sensitivity below for what a range of negative escalation "

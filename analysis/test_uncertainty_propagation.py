@@ -138,6 +138,111 @@ def case_esc_hi_matches_committed_tou_spread_ladder_ceiling():
 
 
 @case
+def case_spread_trend_is_still_not_determined_so_esc_stays_a_blended_scalar():
+    """Issue #87: `esc` scales save1 by ONE blended factor rather than each
+    TOU period's own separately-measured rate path. On-peak resolves to a
+    tight, zero-excluding, POSITIVE trend in both seasons (winter
+    11.37%/yr, CI [7.75, 15.11]; summer 7.66%/yr, CI [1.73, 13.94]).
+    Super-off-peak -- the charging leg, the other side of the arbitrage
+    spread -- has a large NEGATIVE point estimate (~-21%/yr) but a CI wide
+    enough to cross zero by a wide margin in both seasons: noisy, not
+    resolved. Combining a confident on-peak trend with an unresolved
+    super-off-peak point estimate to build a per-period spread trend would
+    manufacture a specific-looking number that is really just whichever
+    central estimate the noisy leg landed on. The spread-level
+    structural-break test -- which differences the two legs directly, so
+    that uncertainty carries through instead of hiding inside a confident
+    on-peak number (see the (b) docstring above payback_of/npv_of) --
+    currently returns "not determined" in both seasons: only 3 (summer) /
+    4 (winter) independent post-break price levels exist, too few to both
+    locate a breakpoint and estimate a slope from. A per-period model built
+    from these per-cell trends would not be equivalent to esc's blended
+    scalar -- the two legs' point estimates plainly differ -- but it would
+    inherit at least as much uncertainty as the direct spread test already
+    found inadequate, so issue #87 resolved as "document the gap" rather
+    than "build the model". If a longer bill corpus ever gives
+    tou_spread.py's test enough power to determine the spread trend,
+    THIS CHECK FAILS -- that is the signal to revisit #87 for real
+    per-period modeling, not to update this assertion."""
+    spread = _committed("tou_spread.json")["delivery_spread"]
+    for season in ("summer", "winter"):
+        s = spread[season]
+        assert s["verdict"] == "not determined", (
+            f"tou_spread.json's {season} spread trend is no longer "
+            f"'not determined' (now {s['verdict']!r}) -- the bill corpus has "
+            f"grown enough to resolve it; issue #87's per-period escalation "
+            f"model should be revisited with this new evidence, not deferred "
+            f"again")
+        post_break = s.get("post_break") or {}
+        assert post_break.get("adequate") is False, (
+            f"tou_spread.json's {season} post-break spread estimate is now "
+            f"'adequate' (or post_break's shape changed to {post_break!r}) -- "
+            f"same signal as above, issue #87 should be revisited")
+
+    # The docstring's own claim -- on-peak is resolved and positive,
+    # super-off-peak is unresolved -- verified against the cells directly
+    # (Codex review, issue #87: "the test never verifies it").
+    cells = _committed("tou_spread.json")["delivery_cell_escalation"]
+
+    def _excludes_zero(ci):
+        return ci is not None and not (ci[0] <= 0 <= ci[1])
+
+    # The docstring quotes exact rates/CIs/r-squared/distinct-levels; pin
+    # every one so a moderate (not just sign-flipping) drift in
+    # tou_spread.json fails this case too, not just a wholesale reversal
+    # (Codex review, issue #87: "either pin the quoted values or remove
+    # exact figures from the prose").
+    QUOTED = {
+        "winter_on_peak": {"escalation_pct_yr": 11.37, "escalation_ci95_pct_yr": [7.75, 15.11], "r2": 0.973},
+        "summer_on_peak": {"escalation_pct_yr": 7.66, "escalation_ci95_pct_yr": [1.73, 13.94]},
+        "summer_super_off_peak": {"escalation_ci95_pct_yr": [-61.89, 62.02]},
+        "winter_super_off_peak": {"escalation_ci95_pct_yr": [-49.24, 20.68]},
+    }
+    for cell_name, expected in QUOTED.items():
+        actual = cells[cell_name]
+        for field, exp_val in expected.items():
+            act_val = actual[field]
+            if isinstance(exp_val, list):
+                assert all(abs(a - e) < 0.01 for a, e in zip(act_val, exp_val)), (
+                    f"{cell_name}.{field} drifted from the quoted {exp_val} "
+                    f"to {act_val} -- update the docstring's cited figures")
+            else:
+                assert abs(act_val - exp_val) < 0.01, (
+                    f"{cell_name}.{field} drifted from the quoted {exp_val} "
+                    f"to {act_val} -- update the docstring's cited figures")
+    QUOTED_DISTINCT_LEVELS = {"summer": 3, "winter": 4}
+    for season, expected_levels in QUOTED_DISTINCT_LEVELS.items():
+        actual_levels = (spread[season].get("post_break") or {}).get("distinct_levels")
+        assert actual_levels == expected_levels, (
+            f"{season}'s post_break.distinct_levels drifted from the quoted "
+            f"{expected_levels} to {actual_levels} -- update the docstring's "
+            f"cited figures")
+
+    for season in ("summer", "winter"):
+        on_peak_ci = cells[f"{season}_on_peak"]["escalation_ci95_pct_yr"]
+        assert _excludes_zero(on_peak_ci), (
+            f"{season}_on_peak's CI {on_peak_ci} no longer excludes zero -- "
+            f"the docstring's 'on-peak is a resolved, positive trend' claim "
+            f"needs re-checking")
+        assert cells[f"{season}_on_peak"]["escalation_pct_yr"] > 0, (
+            f"{season}_on_peak's point estimate is no longer positive -- "
+            f"same re-check")
+        sop_ci = cells[f"{season}_super_off_peak"]["escalation_ci95_pct_yr"]
+        assert not _excludes_zero(sop_ci), (
+            f"{season}_super_off_peak's CI {sop_ci} now excludes zero -- it "
+            f"has become a RESOLVED trend, not the noisy one this docstring "
+            f"describes; issue #87's per-period model should be revisited "
+            f"with this new evidence")
+
+    return ("the spread trend remains 'not determined' in both seasons, "
+            "on-peak stays a resolved positive trend and super-off-peak "
+            "stays unresolved, so deferring a per-TOU-period escalation "
+            "model (issue #87) remains the evidence-based call -- esc's "
+            "single blended scalar stays the explicitly-flagged, unproven "
+            "INHERITED assumption it already was, not itself proven correct")
+
+
+@case
 def case_production_spread_stats_from_committed_csv():
     """AC1's production-measurement-spread input: sanity-check the empirical
     stats computed from the real, committed three-way validation CSV (no
