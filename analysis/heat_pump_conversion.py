@@ -541,6 +541,63 @@ def _segment_heat_from_days(day_ranges, capped_days):
     return shares
 
 
+def _segment_real_or_proxy_therms(start, end, therms, period_days, gas_daily,
+                                  heat_s, context):
+    """A Gas Service segment's own TOTAL billed therms (issue #109 round 5,
+    Codex `review` pass 2): summed from REAL per-day meter readings
+    (`gas_daily`) across the segment's own real day range wherever gas.csv
+    covers every one of those days, rather than a fabricated day-
+    proportional share of the period's own printed total.
+
+    Round 4 fixed `heat_s` (a segment's own attributed HEATING therms) to
+    come from real daily data via _capacity_capped_days(); it left `t_s`
+    (that SAME segment's own TOTAL therms, used only for tier placement)
+    still fabricated by day-proportion -- a real-data numerator against a
+    proxy denominator context, which _gas_service_segment_tier_cost() uses
+    to decide the baseline/nonbaseline split point, so an inaccurate `t_s`
+    can misplace real heating therms in the wrong tariff tier. Quantified
+    before fixing, not assumed: on the 3 real periods with a Gas Service
+    split, the day-proportional proxy and the real daily sum disagree by up
+    to 44% on one segment (2026-01-29's 5-day segment: proxy 11.25 therms,
+    real 16.24).
+
+    Falls back to the day-proportional proxy when `gas_daily` is None
+    entirely (no real daily data available for this run at all -- the same
+    legitimate synthetic-unit-test case _capacity_capped_days() documents).
+    When `gas_daily` IS supplied but doesn't cover every day of this
+    segment, this fails closed -- but ONLY when the segment's own `heat_s`
+    is actually nonzero, mirroring _gas_service_segment_tier_cost()'s own
+    missing-nonbaseline-rate convention (a value only needs to be real when
+    it actually changes the output: `t_s` multiplies through to zero cost
+    whenever `heat_s` is zero -- see _gas_service_segment_tier_cost()'s own
+    arithmetic -- so an unreliable `t_s` on a zero-heat segment can never
+    misprice anything)."""
+    seg_days = (end - start).days + 1
+    proxy = therms * seg_days / period_days
+    if gas_daily is None:
+        return proxy
+    d, missing, total = start, [], 0.0
+    while d <= end:
+        if d in gas_daily.index:
+            total += float(gas_daily.loc[d])
+        else:
+            missing.append(d)
+        d += dt.timedelta(days=1)
+    if missing:
+        if heat_s > 1e-9:
+            extra = f" (and {len(missing) - 1} more day(s))" if len(missing) > 1 else ""
+            raise SystemExit(
+                f"heat_pump_conversion.py: {context} needs real daily gas "
+                f"usage for {missing[0]}{extra} to price this Gas Service "
+                f"segment's own true total therms -- it has {heat_s:.2f} "
+                f"nonzero heating therms of its own, so a fabricated "
+                f"day-proportional total could misplace them in the wrong "
+                f"tariff tier; investigate the gas.csv coverage gap before "
+                f"pricing this period.")
+        return proxy
+    return total
+
+
 def _other_fees_day_ranges(gs_ranges, ge_ranges, of_segs, context):
     """Day ranges for other_fees's (Public Purpose Programs + State
     Regulatory Fee) own segments, or None if it never split (the common
@@ -742,21 +799,29 @@ def gas_savings_by_period(iso):
     count (parse_bills.py's _gas_segments() reads and cross-foots it against
     the bill's own printed charge but does not persist it -- out of this
     issue's own scope box to add, since that is parse_bills.py's territory).
-    Each Gas Service segment's own total_therms and baseline_allowance are
-    therefore estimated by DAY-PROPORTION of the period's own printed totals
-    (segment_days / period_days) rather than read directly. This proxy is
-    validated, not merely assumed: it is the SAME implicit assumption
-    bill_gas_detail.csv's own other_fees segments confirm independently in
-    the two real periods where other_fees actually splits (2025-01-29,
-    2026-01-29) -- both times a 5-of-32-days first segment implies (by day
-    proportion) 15.2 and 11.3 therms respectively, against the bill's own
-    printed other_fees segment_therms of 15 and 11, agreement within half a
-    therm in both real cross-checks. The SAME uniform-per-day proxy also
-    underlies `heating_capable_per_day` above (round 2): under day-
+    Each Gas Service segment's own baseline_allowance (a_s) is therefore
+    estimated by DAY-PROPORTION of the period's own printed
+    baseline_allowance_therms (segment_days / period_days) rather than read
+    directly, and has NO better alternative: gas.csv records actual metered
+    CONSUMPTION, not the tariff's own baseline-allowance ENTITLEMENT (set by
+    rate schedule and billing-cycle length, not by measured usage), so there
+    is no real daily reading to substitute the way round 5 substitutes real
+    data for a segment's own total_therms (t_s, see
+    _segment_real_or_proxy_therms()) below. This day-proportion proxy is
+    validated, not merely assumed, everywhere it's still used: it is the
+    SAME implicit assumption bill_gas_detail.csv's own other_fees segments
+    confirm independently in the two real periods where other_fees actually
+    splits (2025-01-29, 2026-01-29) -- both times a 5-of-32-days first
+    segment implies (by day proportion) 15.2 and 11.3 therms respectively,
+    against the bill's own printed other_fees segment_therms of 15 and 11,
+    agreement within half a therm in both real cross-checks. The SAME
+    uniform-per-day proxy also underlies `heating_capable_per_day` above
+    (round 3) as the fallback for a day gas.csv doesn't cover: under day-
     proportion, every real day of a period is assumed to bill the identical
-    `therms / period_days`, which is exactly why a single per-day capacity
-    ceiling is valid to reuse across EVERY charge type's own cells
-    regardless of which charge type's segmentation produced them.
+    `therms / period_days` absent better information, which is exactly why
+    a single per-day capacity ceiling was ever valid to reuse across EVERY
+    charge type's own days in the first place, before round 4 replaced it
+    with real per-day data wherever available.
     """
     periods = pd.read_csv(GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
@@ -854,13 +919,24 @@ def gas_savings_by_period(iso):
         ge_shares = _segment_heat_from_days(ge_ranges, capped_days)
 
         # Gas Service: tiered, so each segment needs its OWN total_therms and
-        # baseline_allowance -- estimated by day-proportion of the period's
-        # own printed totals (see this function's own JUDGMENT CALL docstring
-        # paragraph for the validation against other_fees's real segments).
+        # baseline_allowance. total_therms (t_s) now comes from REAL daily
+        # gas.csv readings wherever they cover this segment's own days
+        # (_segment_real_or_proxy_therms(), issue #109 round 5 -- Codex
+        # `review` pass 2 caught round 4 leaving this one fabricated even
+        # after heat_s itself was fixed to use real data). baseline_allowance
+        # (a_s) has NO real-data analog to fall back on -- gas.csv records
+        # actual metered CONSUMPTION, not the tariff's own baseline-
+        # allowance ENTITLEMENT, which SDG&E sets by rate schedule and
+        # billing-cycle length, not by measured usage -- so it is still
+        # estimated by day-proportion of the period's own printed total
+        # (see this function's own JUDGMENT CALL docstring paragraph for the
+        # validation against other_fees's real segments).
         gs_cost = 0.0
         for (seg_start, seg_end), heat_s, seg in zip(gs_ranges, gs_shares, gs_segs):
             seg_days = (seg_end - seg_start).days + 1
-            t_s = therms * seg_days / period_days
+            t_s = _segment_real_or_proxy_therms(
+                seg_start, seg_end, therms, period_days, gas_daily, heat_s,
+                context=f"{context} gas_service segment {seg['segment']}")
             a_s = row["baseline_allowance_therms"] * seg_days / period_days
             gs_cost += _gas_service_segment_tier_cost(
                 total_therms=t_s, heating_therms=heat_s, baseline_allowance=a_s,

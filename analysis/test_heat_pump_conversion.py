@@ -1022,6 +1022,43 @@ def case_capacity_cap_fails_closed_when_gas_daily_missing_a_needed_day():
 
 
 @case
+def case_segment_total_therms_use_real_daily_data_not_the_uniform_proxy():
+    """Issue #109 round 5 (Codex `review` pass 2, verified independently
+    before this test was written, not trusted on Codex's own say-so).
+    Round 4 fixed heat_s (a Gas Service segment's own HEATING therms) to
+    come from real gas.csv data; it left t_s (that SAME segment's own TOTAL
+    therms, used only to place heat_s in the right tariff tier) still
+    fabricated by day-proportion. Verified directly against this
+    household's own real archive: the real 2026-01-29 period's Gas Service
+    segment 0 (Dec 27-31, 2025, 5 of the period's 32 days):
+        proxy (day-proportion): 72 x 5/32 = 11.25 therms
+        real (this household's own gas.csv, re-derived here from the
+            committed archive): 3.045 + 4.060 + 4.060 + 3.045 + 2.030
+            = 16.24 therms
+    A 44% gap -- material, not rounding noise. _segment_real_or_proxy_therms()
+    must return the real 16.24, not the proxy's 11.25; reverting it to
+    ignore gas_daily (as round 4 left it) would make this fail (manually
+    verified while writing this test: mutating the function to always
+    return the day-proportional branch reproduces exactly 11.25 here, and
+    the assertion below catches it)."""
+    _require_archive()
+    iso = hpc.isolate_heating_therms()
+    gas_daily = iso["gas_daily"]
+    start, end = dt.date(2025, 12, 27), dt.date(2025, 12, 31)
+    proxy = 72.0 * 5 / 32
+    assert abs(proxy - 11.25) < 1e-9, proxy   # sanity on the fixture's own arithmetic
+    t_s = hpc._segment_real_or_proxy_therms(
+        start, end, therms=72.0, period_days=32, gas_daily=gas_daily,
+        heat_s=1.0, context="test")
+    assert abs(t_s - 16.24) < 0.005, t_s
+    assert t_s > proxy * 1.3, (t_s, proxy, "expected a large (>30%) real-vs-proxy "
+                              "gap on this household's own real 2026-01-29 period")
+    return (f"Gas Service segment total_therms priced from real gas.csv data "
+           f"({t_s} therms), not the {proxy}-therm day-proportional proxy "
+           f"round 4 would still have used")
+
+
+@case
 def case_other_fees_borrows_gas_energy_day_ranges_when_segment_counts_match():
     """Issue #109: other_fees splits by THERM COUNT, not days, so it has no
     day-range of its own -- when it splits into the SAME number of segments
