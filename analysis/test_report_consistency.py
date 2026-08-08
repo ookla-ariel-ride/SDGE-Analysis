@@ -746,16 +746,25 @@ def case_backup_endurance_table_matches_the_artifact():
         assert len(cells) == 3, f"{label}: expected 3 cells, got {cells}"
         assert cells[0] == label, f"row order drifted: expected {label!r}, found {cells[0]!r}"
         t1, t2 = be[f"{key}|t1"], be[f"{key}|t2"]
-        assert fmt_hours(t1["median_h"]) in cells[1], (
+        # issue #112 Codex review: `in` is a bare substring check -- an
+        # artifact median of "7 h" would also match a stale cell reading
+        # "17 h". Require the duration at a word boundary so a stale digit
+        # prefix/suffix can't slip through.
+        median1 = re.escape(fmt_hours(t1["median_h"]))
+        assert re.search(rf"(?<!\d){median1}(?!\d)", cells[1]), (
             f"{label} essentials cell {cells[1]!r} does not contain the artifact's "
-            f"median ({fmt_hours(t1['median_h'])})")
+            f"median ({fmt_hours(t1['median_h'])}) at a word boundary")
         assert cells[2] == fmt_hours(t2["median_h"]), (
             f"{label} house-minus-EV cell {cells[2]!r} != {fmt_hours(t2['median_h'])!r}")
-
-    # PW3's own worst-case (p10) essentials-window hours are called out specifically
-    pw3_p10 = be["PW3|t1"]["p10_h"]
-    assert f"({pw3_p10} h worst-case)" in table_html, (
-        f"PW3's p10_h ({pw3_p10}) worst-case annotation not found in the table")
+        if key == "PW3":
+            # issue #112 Codex review: the worst-case annotation was
+            # searched across the whole table, so it could pass even if
+            # moved onto a different config's row. Bind it to PW3's own
+            # essentials cell specifically.
+            pw3_p10 = be["PW3|t1"]["p10_h"]
+            assert f"({pw3_p10} h worst-case)" in cells[1], (
+                f"PW3's p10_h ({pw3_p10}) worst-case annotation not found in PW3's own "
+                f"essentials cell {cells[1]!r}")
     return "the §6 outage-endurance table's hour/day figures match the live backup_endurance artifact"
 
 
@@ -861,8 +870,13 @@ def case_bill_decomposition_finding_matches_the_artifact():
     end = HTML.index("</div>", start) + len("</div>")
     section = HTML[start:end]
 
-    assert _fmt_usd2(base["current_charges"]) in section, "base bill total not found"
-    assert _fmt_usd2(current["current_charges"]) in section, "current bill total not found"
+    # issue #112 Codex review: two separate presence checks don't enforce
+    # DIRECTION -- "$398.56 became $48.25" would satisfy both equally.
+    # Joined into the ordered "A $X ... became $Y" claim the report prints.
+    assert (f"A {_fmt_usd2(base['current_charges'])} early-summer bill became "
+            f"{_fmt_usd2(current['current_charges'])}") in section, (
+        "the ordered 'A $base became $current' claim not found -- bill totals may be "
+        "reversed or stale")
 
     def fmt_signed_bare(v):
         return f"−{abs(v):.2f}" if v < 0 else f"{v:.2f}"
@@ -1273,14 +1287,25 @@ def case_nem3_grandfathering_section_matches_the_artifact():
     assert m, "§13 NEM-2.0-grandfathering subsection not found in index.html"
     section = m.group(0)
 
-    checks = [
-        _fmt_usd2(nem2),
-        _fmt_usd2(nbt["annual_bill_usd"]),
-        f"{_fmt_usd2(nbt['grandfathering_value_usd'])}/yr",
-        f"{_fmt_usd2(alt['grandfathering_value_usd'])}/yr",
-    ]
-    for value in checks:
-        assert value in section, f"§13 NEM-2.0-grandfathering subsection: {value!r} not found in it"
+    # issue #112 Codex review: bare presence checks don't associate each
+    # total with its own scenario (NEM 2.0 vs NBT) or the two grandfathering
+    # values with their own basis (primary vs Delivery-only) -- reversing
+    # either pair left every check satisfied. Anchored to the report's own
+    # labels (the two bill totals) and sequential document order (the two
+    # grandfathering values, which share no distinguishing label of their
+    # own in the prose).
+    assert f"from {_fmt_usd2(nem2)} (NEM 2.0) to {_fmt_usd2(nbt['annual_bill_usd'])} (NBT)" in section, (
+        "the ordered 'from $X (NEM 2.0) to $Y (NBT)' bill-total claim not found -- "
+        "the two scenarios' totals may be reversed or stale")
+    cursor = section.index("(NBT)")
+    gap_idx = section.find("a gap of", cursor)
+    assert gap_idx != -1, "'a gap of' clause not found after the NEM2/NBT bill totals"
+    assert f"{_fmt_usd2(nbt['grandfathering_value_usd'])}/yr" in section[gap_idx:gap_idx + 60], (
+        "the primary grandfathering-value gap not found within its own clause")
+    alt_idx = section.find("prices the same measured year at", gap_idx)
+    assert alt_idx != -1, "'prices the same measured year at' (Delivery-only) clause not found"
+    assert f"{_fmt_usd2(alt['grandfathering_value_usd'])}/yr" in section[alt_idx:alt_idx + 60], (
+        "the Delivery-only alternative grandfathering value not found within its own clause")
     return "the §13 NEM-2.0-grandfathering subsection matches nem3_grandfathering.json"
 
 
@@ -1381,8 +1406,13 @@ def case_weather_regression_paragraph_matches_the_artifact():
         f"~{round(wr['base_kwh_day'])} kWh/day",
         f"{wr['kwh_per_cdd65']} kWh per cooling-degree-day",
         f"{round10(wr['annual_cooling_kwh']):,} kWh/yr",
-        f"${round10(wr['precool_shift_value'])}/yr",
-        f"${round10(wr['setpoint_value'])}/yr",
+        # issue #112 Codex review: two bare "$X/yr" values (pre-cooling vs
+        # setpoint) with no label of their own baked in would still pass
+        # if swapped. Joined into the ordered "Pre-cooling ... $A/yr; ...
+        # setpoint ... $B/yr" clause the report actually prints.
+        (f"Pre-cooling in the 10am–2pm super-off-peak window (shifting ~half of "
+         f"on-peak cooling) is worth ≈ <b>${round10(wr['precool_shift_value'])}/yr</b>; "
+         f"a modest efficiency/setpoint improvement another ≈ <b>${round10(wr['setpoint_value'])}/yr"),
     ]
     for value in checks:
         assert value in para, f"§9 weather-regression paragraph: {value!r} not found in it"
