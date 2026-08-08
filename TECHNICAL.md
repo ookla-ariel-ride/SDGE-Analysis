@@ -2935,10 +2935,11 @@ physical input), `post_behavior` (a 2-point sensitivity: G vs G_POST), and
 `escalation_5yr_avg` (an average-uplift approximation over a narrower 0-8% band). This
 script's own ranking, most-to-least swing on the real measured year: **install_cost** and
 **escalation** (1.6 yr each, over $12.5-17k and 0-12% respectively), **degradation** and
-**round_trip_efficiency** (0.3 yr each), **ev_persistence** (0.2 yr), **soiling** and
-**production_measurement_spread** (0.1 yr each — both route through the same calibrated
-generation-sensitivity, see below, which shrinks their realistic-range effect to close to a
-tenth of a year, not below it: 0.055 and 0.079 yr at full precision, issue #116).
+**round_trip_efficiency** (0.3 yr each), **ev_persistence** (0.2 yr), **production_
+measurement_spread** and **soiling** (0.1 yr each at published precision — both route
+through the same calibrated generation-sensitivity, see below, which shrinks their
+realistic-range effect BELOW a tenth of a year at full precision (0.079 and 0.055 yr
+respectively, issue #116) even though both round up to 0.1 at the published 1dp).
 Reconciliation: `install_cost` (the
 one directly shared lever, same band) matches closely (old 2.1 yr vs new 1.6 yr — both root
 in the same `post_behavior.mid.battery_marginal`-derived base case); `escalation`'s larger
