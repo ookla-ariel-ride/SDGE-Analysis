@@ -965,9 +965,14 @@ def case_tornado_battery_sensitivity_matches_extended_results():
     checks = [
         f"{tb['base_payback_yr']}-yr base",
         f"{tb['levers']['dispatch_policy']['swing_yr']}-yr swing",
-        f"({tb['levers']['install_cost']['swing_yr']} yr)",
-        f"({tb['levers']['escalation_5yr_avg']['swing_yr']})",
-        f"({tb['levers']['post_behavior']['swing_yr']})",
+        # issue #112 adversarial review, self-swept: three bare "(N)"/
+        # "(N yr)" swing values with no lever name of their own baked in
+        # would still pass if reordered among the three levers. Joined
+        # into the one ordered "install quote (A yr), escalation (B), and
+        # EV-fix (C)" clause the report actually prints.
+        (f"the install quote ({tb['levers']['install_cost']['swing_yr']} yr), "
+         f"rate escalation ({tb['levers']['escalation_5yr_avg']['swing_yr']}), and "
+         f"the EV-fix interaction ({tb['levers']['post_behavior']['swing_yr']})"),
     ]
     for value in checks:
         assert value in para, f"§6 tornado sentence: {value!r} not found in it"
@@ -1022,13 +1027,17 @@ def case_gas_hdd_decomposition_matches_extended_results():
     m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>", HTML, re.S)
     assert m, "§9 HDD gas-decomposition paragraph not found in index.html"
     para = m.group(0)
+    # issue #112 adversarial review, self-swept: floor_therms_day/annual_
+    # floor_therms, slope_therms_per_hdd/annual_heating_therms, and
+    # heating_gas_cost_yr/hpwh_saving_yr are each a same-shaped pair (both
+    # "N therms/yr", or both "~$N/yr") that would still pass if swapped
+    # within their own pair. Joined into the ordered clauses the report
+    # actually prints.
     checks = [
-        f"{gd['floor_therms_day']} therms/day",
-        f"{gd['annual_floor_therms']} therms/yr",
-        f"{gd['slope_therms_per_hdd']} therms/HDD",
-        f"{gd['annual_heating_therms']} therms/yr",
-        f"~{_fmt_usd(gd['heating_gas_cost_yr'])}/yr",
-        f"~{_fmt_usd(gd['hpwh_saving_yr'])}/yr",
+        f"{gd['floor_therms_day']} therms/day → {gd['annual_floor_therms']} therms/yr",
+        (f"{gd['slope_therms_per_hdd']} therms/HDD → {gd['annual_heating_therms']} therms/yr</b> "
+         f"of space heating (~{_fmt_usd(gd['heating_gas_cost_yr'])}/yr at bill rates)"),
+        f"~{_fmt_usd(gd['hpwh_saving_yr'])}/yr</b> priced the same midday-timer way",
     ]
     for value in checks:
         assert value in para, f"§9 HDD gas-decomposition paragraph: {value!r} not found in it"
@@ -1146,8 +1155,14 @@ def case_gross_import_decomposition_section_matches_the_artifact():
     section = m.group(0)
 
     checks = [
-        f"{bgt['period_2024']['gross_kwh']:,.0f} kWh",
-        f"{bgt['period_2026']['gross_kwh']:,.0f} kWh",
+        # issue #112 adversarial review, self-swept: bare "X kWh"/"Y kWh"
+        # checked separately would pass even if the report swapped which
+        # year rose and which fell (the underlying claim of this whole
+        # subsection). Joined into the one ordered "2024-figure ... to
+        # 2026-figure" clause the report actually prints.
+        (f"{bgt['period_2024']['gross_kwh']:,.0f} kWh "
+         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) to "
+         f"{bgt['period_2026']['gross_kwh']:,.0f} kWh"),
         f"{bgt['period_2024']['net_kwh']:,.0f} → {bgt['period_2026']['net_kwh']:,.0f} kWh",
         f"{bgt['observed_delta_gross_kwh']:,.0f} kWh",
         f"+{dec['consumption_term_kwh']:,.0f} kWh consumption against +{dec['production_term_kwh']:,.0f} kWh production",
@@ -1184,9 +1199,16 @@ def case_irreducible_bill_figures_match_the_artifact():
         f"{_fmt_usd2(pf['LOW']['non_bypassable_usd'])} for LOW",
         f"{_fmt_usd2(pf['MID']['non_bypassable_usd'])} for MID",
         f"{_fmt_usd2(pf['HIGH']['non_bypassable_usd'])} for HIGH",
-        f"{round(pf['LOW']['combined_fraction_of_projected_bill'] * 100, 1)}%",
-        f"{round(pf['MID']['combined_fraction_of_projected_bill'] * 100, 1)}%",
-        f"{round(pf['HIGH']['combined_fraction_of_projected_bill'] * 100, 1)}%",
+        # issue #112 adversarial review, self-swept (same pattern Codex
+        # found elsewhere in this file): these three bare percentages have
+        # no LOW/MID/HIGH label of their own baked into the string, unlike
+        # the checks above -- but the report always prints them together,
+        # in this exact order, in one "X% / Y% / Z%" clause, so checking
+        # the joined literal (not three separate substring checks) enforces
+        # that order and catches a swap between any pair of them.
+        (f"{round(pf['LOW']['combined_fraction_of_projected_bill'] * 100, 1)}% / "
+         f"{round(pf['MID']['combined_fraction_of_projected_bill'] * 100, 1)}% / "
+         f"{round(pf['HIGH']['combined_fraction_of_projected_bill'] * 100, 1)}%"),
     ]
     for value in checks:
         assert value in section, f"§7 irreducible-bill paragraphs: {value!r} not found in it"
@@ -1224,8 +1246,11 @@ def case_lifetime_payback_recovered_figures_match_the_artifact():
         f"{lp['crossover']['gross']['year']}",
         str(lp["crossover"]["net_itc"]["year"]),
         f"${lp['nosolar_bill_usd']:,}/yr",
-        f"${lp['blended_new_tou']:.2f}/kWh",
-        f"${lp['blended_old_tou']:.2f}/kWh",
+        # issue #112 adversarial review, self-swept: two bare "$X.XX/kWh"
+        # values (current-rate vs pre-2026-TOU) with no label of their own
+        # baked in would still both pass if swapped. Joined into the one
+        # ordered "blended ~$A/kWh; ~$B/kWh under the pre-2026" clause.
+        f"blended ~${lp['blended_new_tou']:.2f}/kWh; ~${lp['blended_old_tou']:.2f}/kWh under the pre-2026",
     ]
     for value in checks:
         assert value in box, f"§11 lifetime-payback box: {value!r} not found in it"
