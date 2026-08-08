@@ -3784,6 +3784,190 @@ the night-floor extraction, both pricing methods individually, the reconciliatio
 the falsifying test above), the sensitivity calculation, the confidence-label distinction,
 and byte-identical artifact regeneration.
 
+### 3.29 `analysis/all_electric_endgame.py` — costing the all-electric endgame (`data/all_electric_endgame.json`)
+
+**Purpose (issue #20).** Appliance-by-appliance paybacks understate the last gas conversion,
+because only the final one could ever release a per-meter fixed charge. This script prices
+the remaining two gas conversions (water heater, furnace) as ordered steps, checks whether a
+per-meter charge exists to release at all, enumerates every remaining gas end use, checks
+service headroom, and researches meter removal — reusing `heat_pump_conversion.py` (issue
+#1/#109) and `service_headroom.py` (issue #6) rather than reimplementing either.
+
+**AC1 — fixed vs. volumetric charges.** Two real gas bill PDFs were read directly (a 9-therm
+summer statement and a 61-therm winter statement, `FIXED_CHARGE_EVIDENCE`): every line item
+on both is a $/therm rate or a percentage of one — no fixed/customer charge exists on this
+household's GR-Residential rate at all. `fixed_charge_regression()` puts a real number on
+index.html's existing qualitative "near-zero fixed floor" claim: fitting all 25 real billed
+periods' own `(therms, billed_amount)` pairs gives an intercept of **−$2.46 ± $3.55** — within
+about one standard error of zero. There is no tension between that regression and a per-meter
+charge to resolve: the regression is correct because the charge genuinely does not exist,
+confirmed independently by the bill PDFs, not merely inferred from the regression's own
+intercept.
+
+**AC2 — remaining gas end uses.** `gas_end_use_enumeration()` reuses `heat_pump_conversion.
+isolate_heating_therms()` unmodified: the HDD regression's floor (137 therms/yr) and heating
+slope (205 therms/yr) sum to the annual total by construction (a regression's own intercept
+and slope are complementary components of the same fit). A SECOND, genuinely independent
+cross-check was added here: the trailing 12 real gas *statements'* own printed therms sum to
+341, against the daily meter file's 342 — two different meter-read processes (a monthly
+statement read vs. a 15-minute-resolution daily export) agreeing to 0.3%.
+
+What the floor actually *is*, beyond "at least the water heater," is reported here as **not
+determined** — not corrected from a private inference. An earlier version of this script read
+`private/household.yaml -> panel.schedule` and `panel.no_dryer_or_water_heater_circuit`
+directly (both read from equipment photos for issue #6) to argue cooking is electric here, and
+the repo's own pre-commit privacy gate correctly refused that commit: TECHNICAL.md §11.3 tiers
+both fields `private-only` precisely because "the same fact... is available publicly from
+`appliance_fuels`, which is where an artifact takes it from," and publishing a panel-derived
+inference in a committed artifact would leak private intake detail regardless of how strong
+the private evidence looked — CLAUDE.md §4 forbids that outright. `cooking_fuel_evidence()`
+was rewritten to read *only* `household.appliance_fuels` (DATA-SOURCES-CHEATSHEET.md's own
+direct-answer, public-ok field for this exact question), which was never filled in
+`private/household.yaml`, so the function — and every downstream section that depends on it —
+reports the fuel mix as genuinely unknown rather than inferring it.
+
+That has a real, honestly-narrowed consequence for AC6/AC7: it is **not determined** whether a
+third gas end use (cooking, a clothes dryer, or both) remains unconverted after the two
+conversions the issue's own body names. `third_end_use_gap()` sizes only the *possibility* of
+a clothes dryer's own usage (a national, uncited-to-this-household benchmark bracket of
+3.2–9 therms/month, "estimated" tier — never asserted as evidence one exists here) and states
+that the gas meter cannot be confirmed removable after only the two named conversions until
+`household.appliance_fuels` is answered directly. A fully costed dryer conversion, if one
+turns out to be needed, is out of this issue's own scope box and is named as a follow-up.
+
+**AC3/AC4 — water-heater costing and real-interval electric rebilling.** The floor's own gas
+savings are priced by `floor_savings_by_period()`, a sibling of `heat_pump_conversion.
+gas_savings_by_period()` built by reusing that module's own segment-tier-pricing helpers
+(`_flat_segment_cost`, `_segment_day_ranges`, `_segment_real_or_proxy_therms`,
+`_other_fees_day_ranges`, `_segment_heat_from_days`, `load_gas_detail`) rather than
+reimplementing them. The one genuinely new piece is `_floor_segment_tier_cost`: the floor
+occupies the *bottom* of each Gas Service segment's tier ladder (billed at the cheaper
+baseline tier first), the opposite end from heating's own marginal-top-slice treatment —
+reusing the heating-side tier function with the floor's own therms in its `heating_therms`
+argument would silently invert that placement.
+
+Two real-data traps were found and fixed while building this, both worth naming since they
+would otherwise recur in any future per-day gas-cost allocation:
+
+- **Day-level capping against the daily meter export amplifies read-date noise.** An early
+  version capped the floor at `min(floor_per_day, that day's real gas.csv reading)`, mirroring
+  heating's own `_capacity_capped_days()`. 143 of 365 real days in `gas.csv` read *below*
+  `floor_per_day` (0.376 therms/day), 88 of them at exactly 0.00 — ordinary meter-read-date
+  batching noise, not zero usage. Applying a day-level cap against that noise understated the
+  annual floor by roughly 40% (quantified, not assumed, before the fix landed). `floor_per_day`
+  is already a regression output, smoothed across a full year of exactly this same noise, so it
+  is applied uniformly per day; `gas.csv`'s own daily resolution is not consulted for the
+  floor's own capacity at all (`_floor_capped_days()`'s own docstring has the full account).
+- **An uncapped floor can exceed a low-usage period's own real billed total.** With the
+  day-level cap removed, the lowest-usage statement in the corpus (2025-07-30, 9 real billed
+  therms over 32 days) would have been assigned 10.5 floor-therms by the annual-average
+  constant alone — more floor gas than the meter actually read that month, since the
+  regression's floor is a year-round average and this household's real non-heating usage is
+  not perfectly flat month to month. `_floor_capped_days()` caps at the *period's own real
+  billed total* (`bill_periods_gas.csv`'s own `therms` column) divided evenly across its days
+  instead — the real, non-noisy meter read, not the noisy daily export.
+
+Restricted throughout to the trailing 12 real statements (the same window `heat_pump_
+conversion.py`'s own $416.25/yr heating figure implicitly resolves to, and the same window
+that independently reproduces index.html's existing $922.34/yr all-in gas total exactly),
+`floor_savings_by_period()` gives **$340.04/yr** (134.2 floor-therms/yr) as the current annual
+gas cost of the *whole* non-heating floor. Because that floor's own composition beyond the
+water heater is not determined (above) and cannot be separated from a single, unsplit gas
+meter regardless, this is reported as an explicit **upper bound** on the water heater step's
+own true savings, not a precise water-heater-only figure
+(`water_heater_conversion.upper_bound_caveat`).
+
+Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
+`electric_cost_scenarios` exactly — absorb existing solar first, spill into new grid import
+only once that interval's export is exhausted, re-bill the whole measured year with
+`rates.bill_nem()` (CLAUDE.md §1b) — with a different day-weighting (`build_wh_load_series`):
+the floor runs at a roughly constant daily rate, so each real calendar day gets an equal
+share, spread `uniform` / concentrated in `midday` (super-off-peak, a HPWH's realistic
+discretionary-timer placement) / concentrated `on_peak` (the high-cost bracket partner).
+Efficiency is UEF (Uniform Energy Factor — the correct metric for a storage-type heat-pump
+water heater; it already folds in standby loss, unlike a furnace heat pump's COP), from a
+real, cited product family (Rheem ProTerra, UEF 3.5–4.0, 2026-08). The existing gas water
+heater's own efficiency (needed to convert metered therms into delivered heat, the quantity a
+HPWH actually replaces — the same role `FURNACE_AFUE` plays for the furnace) is DOE's federal
+minimum UEF for a residential gas storage water heater (0.60, the low end of the 0.59–0.64
+band found) — the assumption most favorable to the heat pump, the same convention
+`FURNACE_AFUE`'s own comment establishes.
+
+At the headline UEF (3.88) and `uniform` distribution: electric cost increase **$224.11/yr**,
+net savings **$115.93/yr**, central-install ($4,200) payback **36.2 yr**. The `midday` lean is
+far better ($72.18/yr electric increase, net $267.86/yr) and the `on_peak` lean erases savings
+entirely ($432.86/yr electric increase, net **negative**) — the same real-interval-billing
+sensitivity `heat_pump_conversion.py` already established for the furnace, now shown for the
+water heater too. Install-cost bracket ($2,800–$8,000, central $4,200) is general
+contractor-pricing guidance (Angi/Fixr/HomeGuide/hotwater.com, 2026), not a CA-specific
+engineering study the way the furnace's figure is — "estimated" tier, stated as such. SGIP,
+the one CPUC incentive program covering heat-pump water heaters specifically, closed its
+ratepayer budgets 2025-12-31 regardless of appliance type (re-cited from `heat_pump_
+conversion.INCENTIVE_USD`'s own sources, not re-verified) — `WH_INCENTIVE_USD = 0`.
+
+**AC5 — service headroom.** Reuses `data/service_headroom.json`'s own already-committed
+`heat_pump_only` case (`fixed_added_load_a=0`, i.e. panel-wide spare capacity before *any*
+new 240 V load: 37.03 A conservative / 76.46 A measured) as the ampacity baseline — the
+furnace conversion reuses the existing A/C circuit (`heat_pump_replaces_ac`, verdict `pass`)
+and contributes no net-new demand in that case's own summer-coincident-peak basis, so the
+water heater's own new 30 A/240 V circuit (NEC 422.13, 125% of a 4,500 W backup element =
+23.44 A) is checked against that same spare capacity. Ampacity passes on both bases
+(13.59 A / 53.02 A remaining). **Physical panel space does not**: `service_headroom.
+physical_fit()` is called directly (not reimplemented) with the panel's own already-committed
+`spaces_free=1` — a new 240 V circuit needs 2 adjacent spaces, and only 1 remains. This is a
+hard blocker, stated plainly, independent of the ampacity result and not relieved by the
+furnace conversion (which frees no space of its own). The same summer-only measurement-window
+gap `heat_pump_conversion.py`'s own docstring already names for the furnace's winter-season
+demand applies here too, inherited rather than resolved.
+
+**AC6 — meter removal.** WebSearch findings, each cited with a URL and fetch date
+(`METER_REMOVAL_RESEARCH`): no fee to remove/cap a gas meter in most circumstances (a
+consumer-advocacy source, not SDG&E's own tariff book); SDG&E's own Rule 11.H (the ELECTRIC
+tariff — the analogous GAS Rule 11 PDF could not be located at a working URL) requires only
+≥2 business days' notice for a customer-requested discontinuance, no fee named; SDG&E
+eliminated residential reconnection fees for *nonpayment* disconnections in 2020 (a different
+scenario). The cost of *re-establishing* gas service after a full removal is marked **NOT
+DETERMINED**: a secondary source cited a $5.85 "Schedule SE" figure that could not be verified
+against a current, fetchable SDG&E tariff PDF, and it is unclear whether that figure (if
+current) would cover a licensed plumber's line inspection/pressure test — flagged explicitly
+per CLAUDE.md §0 rather than guessed, with what would settle it named.
+
+**AC7 — sequencing and two paybacks.** AC1's own $0-fixed-charge finding makes the issue's
+own "credit the release only to the final step" rule trivially satisfied either way —
+crediting $0 to whichever step is last changes nothing — so `sequencing_and_paybacks()`
+orders steps by cost-effectiveness (shorter marginal payback first) instead, and reports the
+final step's own payback both with and without the (zero) credit explicitly, so that
+triviality is checkable rather than silently elided. Complete-transition payback: combined
+install $18,729, combined net savings $200.21/yr (water heater + furnace + $0 credit),
+**93.5 yr**. Final step alone (furnace, the longer-payback step and so ordered last): standalone
+payback **172.4 yr**, identical with and without the credit. Neither payback represents a confirmed
+meter removal — whether a third end use (AC2) remains unpriced and unconverted is not
+determined.
+
+**AC8 — reconciliation.** The furnace figures are cited directly from `heat_pump_
+conversion.json`, not recomputed, so they agree exactly by construction. The water heater
+figure is compared against `extended_results.json -> gas_decomposition`'s own older
+`hpwh_saving_yr` ($205/yr, a flat "midday solar timer" rate estimate): this script's own
+real-interval-billed net savings ($115.93/yr at the headline UEF/uniform basis) is $89.07/yr
+lower — expected, since the two price the same conversion by genuinely different methods, one
+at this repo's own established real-interval rigor and one at a flat-rate proxy. A THIRD
+reconciliation, not previously computed anywhere in this repo: `heat_pump_conversion.py`'s
+own module docstring already documents that its day-level capacity cap excludes 59.81
+therms/yr of HDD-regression heating signal it cannot pin to a specific real day (205 raw vs.
+145.19 reconciled) — this script puts a DOLLAR figure on that gap for the first time
+(**$166.05/yr**, trailing-12 billed total minus this script's own floor savings minus
+`heat_pump_conversion.json`'s own heating savings), and states explicitly that it is credited
+to neither conversion step, matching `heat_pump_conversion.py`'s own conservative treatment of
+the underlying therms.
+
+**Reproduction.** `all_electric_endgame.json` is written directly to `data/` (repo-root
+discovery via `heat_pump_conversion.ROOT`, atomic tmp-then-replace, the same convention every
+other generator in this section uses); `test_all_electric_endgame.py` covers every pure
+function against synthetic fixtures (including two "tests must fail on the defect they name"
+positive controls — a synthetic corpus with a genuine $15 fixed charge that the regression
+must actually recover, and a large tier-boundary overflow that must actually fail closed) plus
+real-archive cases (end-to-end `build()`, byte-identical regeneration) gated behind `SkipCase`.
+
 ---
 
 ## 4. Battery simulation methodology
