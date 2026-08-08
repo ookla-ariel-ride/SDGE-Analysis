@@ -3751,14 +3751,22 @@ one of the 365 measured nights:
 
 **Conclusion:** the exact night(s) and exact rule behind the 44-vs-43 gap are not recoverable
 from currently available evidence — stated honestly rather than guessed (CLAUDE.md §0), and
-corrected from this investigation's own first pass, which overclaimed a "falsified" verdict
-from an under-powered test. What IS established: an EV-session-absence rule is a live,
-count-plausible candidate for phantom's own "EV-free" description, but EV-absence alone
-doesn't reproduce phantom's median/p10 shape, so the true rule — if recoverable at all —
-combines EV-detection with some other filter neither this script's demand gate nor a pure
-EV-free rule alone captures. No artifact was changed: this script's 43/1.03 kW figures are
-its own honest, independently reproducible measurement, and `phantom` stays frozen per the
-already-documented issue #34/PR #103 decision.
+corrected TWICE from this investigation's own first pass (Codex adversarial review round 1
+caught an overclaimed "falsified" verdict from an under-powered test; round 2 caught a
+factually wrong "12 kW or higher" claim used to rule out a demand-gate explanation). What IS
+established: an EV-session-absence rule is a live, count-plausible candidate for phantom's
+own "EV-free" description (several tested windows land within a few nights of 43/44), and
+EV-absence alone does NOT reproduce phantom's own median/p10 shape (every tested window comes
+out measurably above phantom's 1.025/0.785 kW). What this evidence does NOT establish is WHY
+— whether the original rule combined EV-detection with something else, used a different
+EV-detection method than `detect_sessions`, or was not EV-based at all despite the "EV-free"
+label; the evidence bounds the space of plausible explanations without selecting one. No
+artifact was changed as a result of the investigation's own conclusion (the new
+`issue_114_investigation` diagnostic field IS a real artifact addition, committed so these
+counts, sweep values, and boundary nights are pinned by a test rather than hand-typed prose):
+`quiet_night_floor.json`'s own 43/1.03 kW figures remain its honest, independently
+reproducible measurement, and `phantom` stays frozen per the already-documented issue
+#34/PR #103 decision.
 
 **Reproduction.** `price_map_from_rates()` computes the price map straight from `rates.py`
 (the canonical module) and cross-checks it against the committed `data/extra_results.json ->

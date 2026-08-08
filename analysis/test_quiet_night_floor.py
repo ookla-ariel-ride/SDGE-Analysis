@@ -512,6 +512,49 @@ def case_night_floor_cross_checks_the_published_phantom_figure():
 
 
 @case
+def case_issue_114_investigation_matches_the_committed_artifact():
+    """Issue #114: this module's own docstring and TECHNICAL.md 3.28 cite
+    specific EV-absence counts, a July gate-sweep table, and two boundary
+    nights' 1-5am max power -- two rounds of Codex adversarial review each
+    caught a factual error in an earlier, hand-computed version of these
+    same claims (no test existed to catch them). Pins the real, executed
+    values -- both against a fresh run AND against the committed artifact,
+    so neither can silently drift from the other or from what the prose
+    actually says."""
+    _require_archive()
+    files = sorted(glob.glob(USAGE_GLOB))
+    br.CSV = files[0]
+    d = br.load()
+    fresh = QNF.issue_114_investigation(d)
+
+    # the two specific dates a prior draft of the investigation wrongly
+    # claimed were "12 kW or higher" -- pinned by exact value so that
+    # specific error can never be silently reintroduced
+    assert fresh["july_boundary_nights"]["2026-07-09"] == 4.4, fresh["july_boundary_nights"]
+    assert fresh["july_boundary_nights"]["2025-07-25"] == 6.64, fresh["july_boundary_nights"]
+
+    # the EV-absence window counts cited in prose (all computed independently
+    # of this module's own HIGH_DEMAND_GATE_KW rule)
+    expected_n = {"1-5h": 69, "0-5h": 49, "0-6h": 42, "1-6h": 59, "21-6h(+1d)": 40}
+    got_n = {k: v["n"] for k, v in fresh["ev_absence_by_window"].items()}
+    assert got_n == expected_n, got_n
+
+    # the July gate-sweep's own headline transition: the current 2.0 kW gate
+    # gives the real 43/365 total with July still at 3; a 4th July quiet
+    # night only appears at >=4.5 kW, where the total overshoots to 62
+    by_gate = {row["gate_kw"]: row for row in fresh["july_gate_sweep"]}
+    assert by_gate[2.0]["n_total"] == 43 and by_gate[2.0]["n_july"] == 3, by_gate[2.0]
+    assert by_gate[4.4]["n_july"] == 3, by_gate[4.4]
+    assert by_gate[4.5]["n_july"] == 4 and by_gate[4.5]["n_total"] == 62, by_gate[4.5]
+
+    if not ARTIFACT.exists():
+        raise SkipCase(f"{ARTIFACT} not committed in this checkout")
+    committed = json.loads(ARTIFACT.read_text())["night_floor"]["issue_114_investigation"]
+    assert committed == fresh, "committed issue_114_investigation drifted from a fresh run"
+    return "issue #114's EV-absence counts, July gate-sweep, and boundary-night values all match a fresh run and the committed artifact"
+
+
+@case
 def case_reconciliation_gap_is_small_on_the_real_measured_year():
     _require_archive()
     if not ARTIFACT.exists():

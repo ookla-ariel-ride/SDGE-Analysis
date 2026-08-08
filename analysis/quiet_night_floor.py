@@ -165,14 +165,21 @@ already accepted by HIGH_DEMAND_GATE_KW.
     reproducible record of.
   Conclusion: the exact night(s) and exact rule responsible for the 44-vs-43
   gap are NOT recoverable from currently available evidence -- honestly
-  stated here rather than guessed, and corrected from this investigation's
-  own first pass, which overclaimed a "falsified" verdict from an
-  under-powered test. What IS established with evidence: (a) an EV-session-
-  absence rule is a live, count-plausible candidate for phantom's own
-  "EV-free" description, not a ruled-out one, but (b) EV-absence alone
-  doesn't reproduce phantom's median/p10 shape, so the true rule -- if it is
-  recoverable at all -- combines EV-detection with some other filter neither
-  this script's demand gate nor a pure EV-free rule alone captures. No
+  stated here rather than guessed, and corrected TWICE from this
+  investigation's own first pass (Codex adversarial review round 1 caught an
+  overclaimed "falsified" verdict from an under-powered test; round 2 caught
+  a factually wrong "12 kW or higher" claim used to rule out a demand-gate
+  explanation). What IS established with evidence: an EV-session-absence
+  rule is a live, count-plausible candidate for phantom's "EV-free"
+  description (several tested windows land within a few nights of 43/44),
+  and EV-absence alone does NOT reproduce phantom's own median/p10 shape on
+  its own (every tested window's median/p10 comes out measurably above
+  phantom's 1.025/0.785 kW). What this evidence does NOT establish is WHY --
+  whether the original rule combined EV-detection with something else,
+  used a different EV-detection method/threshold than `detect_sessions`
+  entirely, or was not EV-based at all despite the "EV-free" label. The
+  available evidence bounds the space of plausible explanations; it does not
+  select a single one, and this docstring does not claim otherwise. No
   artifact was changed as a result of this investigation -- this script's own
   43/1.03 figures are its own honest, reproducible measurement, and `phantom`
   stays frozen per issue #34/PR #103's deliberate decision (CLAUDE.md section
@@ -400,6 +407,104 @@ def cross_check_night_floor(root, stats):
                 "with its own independently-designed per-night rule (see "
                 "night_floor.selection_caveat and the module docstring), "
                 "rather than reading that figure as an input"),
+    }
+
+
+# Boundary/sweep values quoted in this module's own docstring (issue #114's
+# investigation) and in TECHNICAL.md's 3.28 -- committed here as real code,
+# not hand-typed prose, after two rounds of Codex adversarial review each
+# caught a factual error in a hand-computed claim that had no committed
+# script backing it (CLAUDE.md section 9: "a script per headline number").
+EV_ABSENCE_WINDOWS = ((1, 5), (0, 5), (0, 6), (1, 6), (21, 6))
+JULY_GATE_SWEEP_KW = (2.0, 2.5, 3.0, 3.5, 4.0, 4.4, 4.5, 5.0, 6.0, 6.64, 7.0)
+
+
+def issue_114_investigation(d):
+    """Issue #114: reproduces, as real executed code (not prose), every
+    number this module's own docstring and TECHNICAL.md 3.28 cite about the
+    43-vs-44 quiet-night discrepancy -- so those figures can be pinned by a
+    test and can't silently go stale or be wrong the way this investigation's
+    own first two hand-computed passes each were (both caught by Codex
+    adversarial review, not by any test, because no test existed).
+
+    `ev_absence_by_window`: for each (start_h, end_h) in EV_ABSENCE_WINDOWS
+    (a `end_h` >= 21 wraps to the next calendar day, matching "9pm-6am"), the
+    count of the 365 measured nights with ZERO EV-session kWh in that window
+    -- classified independently of this module's own HIGH_DEMAND_GATE_KW
+    gate, i.e. a pure EV-absence rule, not this script's demand-magnitude
+    rule. Includes median/p10 for the closest-by-count (0-6am) window, since
+    that's the one the docstrings cite by shape, not just count.
+
+    `july_gate_sweep`: for each gate in JULY_GATE_SWEEP_KW, applied to this
+    module's own 1-5am-window/demand-gate rule (not the EV-absence rule
+    above), the resulting total quiet-night count and July-only count/median
+    -- the evidence for why a uniform gate change can't reach a 4th July
+    quiet night without also overshooting the total count.
+
+    `july_boundary_nights`: the two real nights (2026-07-09, 2025-07-25)
+    whose 1-5am max power an earlier draft of this investigation wrongly
+    claimed were "12 kW or higher" -- their real values, from this same
+    run, so that specific error can never be silently reintroduced."""
+    d = d.copy()
+    d["date"] = d.dt.dt.date
+    d["kw"] = d.Consumption.astype(float) * 4.0
+    ev, _ = br.detect_sessions(d)
+    d["evkw"] = ev
+
+    def ev_free_count(start_h, end_h):
+        wraps = start_h > end_h  # e.g. (21, 6) means 9pm today through 6am tomorrow
+        free = []
+        for date, g in d.groupby("date"):
+            if wraps:
+                mask = ((d["date"] == date) & (d["hour"] >= start_h)) | \
+                       ((d["date"] == date + dt.timedelta(days=1)) & (d["hour"] < end_h))
+                night = d[mask]
+            else:
+                night = g[(g["hour"] >= start_h) & (g["hour"] < end_h)]
+            if not night.empty and night["evkw"].sum() == 0:
+                free.append((date, float(night["kw"].median())))
+        return free
+
+    ev_absence_by_window = {}
+    for start_h, end_h in EV_ABSENCE_WINDOWS:
+        wraps = start_h > end_h
+        label = f"{start_h}-{end_h}h" + ("(+1d)" if wraps else "")
+        free = ev_free_count(start_h, end_h)
+        entry = {"n": len(free)}
+        if start_h == 0 and end_h == 6:  # the closest-by-count window the docstrings cite by shape
+            meds = np.array([m for _, m in free])
+            entry["median_kw"] = round(float(np.median(meds)), 4)
+            entry["p10_kw"] = round(float(np.percentile(meds, 10)), 4)
+        ev_absence_by_window[label] = entry
+
+    def gate_sweep_row(gate_kw):
+        quiet = []
+        for date, g in d.groupby("date"):
+            night = g[(g["hour"] >= 1) & (g["hour"] < 5)]
+            if not night.empty and night["kw"].max() < gate_kw:
+                quiet.append((date, float(night["kw"].median())))
+        meds = np.array([m for _, m in quiet])
+        july = np.array([m for dd, m in quiet if dd.month == 7])
+        return {
+            "gate_kw": gate_kw,
+            "n_total": len(quiet),
+            "median_kw": round(float(np.median(meds)), 4) if len(meds) else None,
+            "n_july": len(july),
+            "median_july_kw": round(float(np.median(july)), 4) if len(july) else None,
+        }
+
+    def night_max_1_5am(date_str):
+        target = dt.date.fromisoformat(date_str)
+        night = d[(d["date"] == target) & (d["hour"] >= 1) & (d["hour"] < 5)]
+        return round(float(night["kw"].max()), 2) if not night.empty else None
+
+    return {
+        "ev_absence_by_window": ev_absence_by_window,
+        "july_gate_sweep": [gate_sweep_row(g) for g in JULY_GATE_SWEEP_KW],
+        "july_boundary_nights": {
+            "2026-07-09": night_max_1_5am("2026-07-09"),
+            "2025-07-25": night_max_1_5am("2025-07-25"),
+        },
     }
 
 
@@ -873,6 +978,7 @@ def main():
 
     daily_series, night_stats = night_floor_series(d)
     night_cross_check = cross_check_night_floor(root, night_stats)
+    issue_114 = issue_114_investigation(d)
 
     window_start = (br.WINDOW_END - dt.timedelta(days=365)).date()
     window_end = br.WINDOW_END.date()
@@ -905,7 +1011,8 @@ def main():
         "method": __doc__.strip().split("\n\n")[0],
         "window": {"start": str(window_start), "end": str(window_end)},
         "night_floor": {**night_stats, "daily_series": daily_series,
-                        "cross_check_extra_results_json": night_cross_check},
+                        "cross_check_extra_results_json": night_cross_check,
+                        "issue_114_investigation": issue_114},
         "hour_of_day": {"profile": hour_profile, **hour_stats},
         "pricing": {
             "floor_kw_priced": round(floor_kw, 4),
