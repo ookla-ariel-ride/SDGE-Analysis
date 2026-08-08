@@ -104,6 +104,96 @@ Methodology, acceptance-criterion by acceptance-criterion (issue #17):
    replace, the same convention tou_structure_stress.py and rates_history.py
    use) so the CLAUDE.md section 9 gate applies unchanged.
 
+The 43-vs-44 quiet-night discrepancy (issue #114), investigated -- including a
+correction to this investigation's own first pass (Codex adversarial review):
+that pass checked EV presence only WITHIN the 43 nights this script's own gate
+already selected, which cannot test what an independently-applied EV-free rule
+would select from all 365 nights, and its "would cut the count to 5" claim was
+wrong as a result. Re-run correctly below: `behavior_rebuild.detect_sessions`
+cross-referenced against EVERY one of the 365 measured nights, not just the 43
+already accepted by HIGH_DEMAND_GATE_KW.
+  - TECHNICAL.md 3.11's "44 EV-free quiet nights" phrasing suggests phantom's
+    rule is EV-charging-session absence, not (or not only) this script's own
+    demand-magnitude gate. Classifying nights by "zero EV kWh in the window"
+    ALONE (no demand gate at all) gives: 1-5am window 69 (of 365 eligible),
+    0-5am 49 (365), 0-6am 42 (365), 1-6am 59 (365), 9pm-6am -- the literal
+    "overnight" reading -- 40 (of only 364 eligible: this wrapped window's
+    own final calendar date has no "next day" data to read, so it's excluded
+    as ineligible, not counted as non-quiet; see issue_114_investigation's
+    own n_eligible_nights field) -- several of these land close to 43/44 in
+    COUNT, which is the opposite of "falsified": a pure EV-absence rule is a
+    live, plausible candidate, not a ruled-out one. But none of these
+    EV-free-only variants reproduces phantom's own median/p10 (1.025/0.785
+    kW): every one comes out
+    higher on both (e.g. the closest-by-count 0-6am variant gives median
+    1.08, p10 0.822 -- notably above phantom's 1.025/0.785), so EV-absence
+    ALONE is not a sufficient rule either; some further filtering (a demand
+    component, a different EV-detection threshold, or something else) would
+    still be needed to land on phantom's own reported shape, not just its
+    count.
+  - A real gate-boundary case exists (verified as committed code, see
+    `may_boundary_night` below -- /review found this was still hand-typed
+    prose, the exact defect class this whole issue was filed over):
+    2026-05-03's 04:45 interval reads exactly 0.500 kWh (2.00 kW at the 4x
+    scaling here), landing exactly ON `HIGH_DEMAND_GATE_KW` under this
+    script's `>=` comparison, which excludes it. A `>` comparison (or an
+    equally defensible rule using a gate a hundredth of a kW higher) would
+    flip this one night to quiet -- a concrete illustration of how a single
+    interval's exact metered value can move the count by one at this
+    threshold. It is NOT confirmed as THE night phantom's original rule kept
+    differently: including it moves May's monthly median from 0.845 kW to
+    0.85 kW, while phantom's own May figure (monthly_kw["5"]) is 0.845 --
+    the same value this script already reproduces exactly without that
+    night. Since the issue's own diff of the two artifacts singles out JULY
+    as the one month whose median differs (1.04 here vs 1.035 published),
+    the missing 44th night -- if there is a single one -- more likely falls
+    in July, not May.
+  - A 1-5am gate sweep (Codex adversarial review caught this investigation's
+    own first-pass claim -- "every other July night's max power sits at 12 kW
+    or higher" -- as factually wrong on the committed dataset: 2026-07-09
+    peaks at 4.40 kW and 2025-07-25 at 6.64 kW, both well under 12).
+    Re-run and actually executed, not hand-estimated: raising the gate DOES
+    add a 4th July quiet night, but only at >=4.5 kW, where it also grows the
+    TOTAL count to 62 (median 1.05, July median 1.045) -- far past phantom's
+    44. The current 2.0 kW gate is the only value tested that keeps the total
+    near phantom's 44 (43) while July stays at 3, not 4. Gate values in
+    between (2.5-4.4 kW) grow the total (51-61) without ever adding a 4th
+    July night. So a SINGLE uniform gate change cannot reach phantom's July
+    figure without also blowing the total count far past 44 -- if phantom's
+    rule really does differ from this script's specifically in July, it is
+    not a simple uniform-gate difference; a per-month or non-gate mechanism
+    would be needed, which was not tested here.
+  - `phantom` has no lost script to recover: `git log --diff-filter=A` on
+    `data/extra_results.json` shows it was added directly as a data file
+    (commit 29f8573, "Add soiling, cleaning-study, carbon, and extras data
+    outputs") with no accompanying generator, ever, in this repo's history --
+    consistent with `analysis/extra_results.py`'s own documentation that
+    `phantom` is a one-time in-session computation this repo has no
+    reproducible record of.
+  Conclusion: the exact night(s) and exact rule responsible for the 44-vs-43
+  gap are NOT recoverable from currently available evidence -- honestly
+  stated here rather than guessed, and corrected TWICE from this
+  investigation's own first pass (Codex adversarial review round 1 caught an
+  overclaimed "falsified" verdict from an under-powered test; round 2 caught
+  a factually wrong "12 kW or higher" claim used to rule out a demand-gate
+  explanation). What IS established with evidence: an EV-session-absence
+  rule is a live, count-plausible candidate for phantom's "EV-free"
+  description (several tested windows land within a few nights of 43/44),
+  and EV-absence alone does NOT reproduce phantom's own median/p10 shape on
+  its own (every tested window's median/p10 comes out measurably above
+  phantom's 1.025/0.785 kW). What this evidence does NOT establish is WHY --
+  whether the original rule combined EV-detection with something else,
+  used a different EV-detection method/threshold than `detect_sessions`
+  entirely, or was not EV-based at all despite the "EV-free" label. The
+  available evidence bounds the space of plausible explanations; it does not
+  select a single one, and this docstring does not claim otherwise. No
+  artifact was changed as a result of this investigation -- this script's own
+  43/1.03 figures are its own honest, reproducible measurement, and `phantom`
+  stays frozen per issue #34/PR #103's deliberate decision (CLAUDE.md section
+  0: a discrepancy this small, once genuinely investigated and found
+  unreconcilable with available evidence, gets documented, not papered over
+  or guessed away in either direction).
+
 Inputs (same working-directory convention as every other generator in this
 package): usage.csv (behavior_rebuild.load()), samA.csv/samB.csv (Enphase SAM
 8760, current/prior calendar year), and the committed data/extra_results.json
@@ -294,7 +384,18 @@ def night_floor_series(d):
 def cross_check_night_floor(root, stats):
     """Compares this fresh measurement against the already-published (but
     generator-less, per TECHNICAL.md 3.11) `phantom` figures -- not a
-    dependency, a corroboration reported alongside the fresh numbers."""
+    dependency, a corroboration reported alongside the fresh numbers. The two
+    are ALLOWED to disagree (this script's 43-quiet-night rule is a new,
+    independently-designed per-night gate -- see night_floor_series's
+    docstring -- not a reimplementation of whatever produced `phantom`). The
+    resulting small gap (43 vs 44 nights, ~0.005 kW on the median) was
+    investigated for issue #114; see the module docstring's "43-vs-44
+    quiet-night discrepancy" section for the evidence gathered (a pure
+    EV-session-absence rule is count-plausible but doesn't reproduce
+    phantom's own median/p10 shape on its own; the exact rule and night(s)
+    are not recoverable from available evidence, since `phantom` predates
+    this repo's generator convention and no prior script for it exists
+    anywhere in this repo's git history)."""
     path = root / "data" / "extra_results.json"
     if not path.exists():
         return None
@@ -313,6 +414,197 @@ def cross_check_night_floor(root, stats):
                 "with its own independently-designed per-night rule (see "
                 "night_floor.selection_caveat and the module docstring), "
                 "rather than reading that figure as an input"),
+    }
+
+
+# Boundary/sweep values quoted in this module's own docstring (issue #114's
+# investigation) and in TECHNICAL.md's 3.28 -- committed here as real code,
+# not hand-typed prose, after two rounds of Codex adversarial review each
+# caught a factual error in a hand-computed claim that had no committed
+# script backing it (CLAUDE.md section 9: "a script per headline number").
+EV_ABSENCE_WINDOWS = ((1, 5), (0, 5), (0, 6), (1, 6), (21, 6))
+JULY_GATE_SWEEP_KW = (2.0, 2.5, 3.0, 3.5, 4.0, 4.4, 4.5, 5.0, 6.0, 6.64, 7.0)
+
+
+def issue_114_investigation(d):
+    """Issue #114: reproduces, as real executed code (not prose), every
+    number this module's own docstring and TECHNICAL.md 3.28 cite about the
+    43-vs-44 quiet-night discrepancy -- so those figures can be pinned by a
+    test and can't silently go stale or be wrong the way this investigation's
+    own first two hand-computed passes each were (both caught by Codex
+    adversarial review, not by any test, because no test existed).
+
+    `ev_absence_by_window`: for each (start_h, end_h) in EV_ABSENCE_WINDOWS
+    (a window where `start_h > end_h`, e.g. (21, 6), wraps to the next
+    calendar day, matching "9pm-6am"), the count of nights with ZERO
+    EV-session kWh in that window -- classified independently of this
+    module's own HIGH_DEMAND_GATE_KW gate, i.e. a pure EV-absence rule, not
+    this script's demand-magnitude rule. Each entry's own `n_eligible_nights`
+    states its real denominator: 365 for every non-wrapped window, but only
+    364 for the wrapped one, whose own final calendar date has no "next day"
+    to read (see `n` below) -- do not assume every window's `n` is out of
+    the same 365. Includes median/p10 for the closest-by-count (0-6am)
+    window, since that's the one the docstrings cite by shape, not just
+    count.
+
+    `july_gate_sweep`: for each gate in JULY_GATE_SWEEP_KW, applied to this
+    module's own 1-5am-window/demand-gate rule (not the EV-absence rule
+    above), the resulting total quiet-night count and July-only count/median
+    -- the evidence for why a uniform gate change can't reach a 4th July
+    quiet night without also overshooting the total count.
+
+    `july_boundary_nights`: the two real nights (2026-07-09, 2025-07-25)
+    whose 1-5am max power an earlier draft of this investigation wrongly
+    claimed were "12 kW or higher" -- their real values, from this same
+    run, so that specific error can never be silently reintroduced.
+
+    `may_boundary_night`: the 2026-05-03 gate-boundary case this
+    investigation's own docstring cites by hand (04:45's exact 1-5am kWh
+    reading, and this script's real May quiet-night median with and without
+    that night included) -- committed as real code (/review found this one
+    was still hand-typed prose, the exact defect class this whole issue was
+    filed over) rather than left unverified."""
+    d = d.copy()
+    d["date"] = d.dt.dt.date
+    d["kw"] = d.Consumption.astype(float) * 4.0
+    ev, _ = br.detect_sessions(d)
+    d["evkw"] = ev
+
+    all_dates = set(d["date"].unique())
+
+    def ev_free_count(start_h, end_h):
+        # Codex review round 1: the wrapped (21, 6)-style window's LAST
+        # calendar date in the dataset has no "next day" data to read (the
+        # archive ends at midnight on its own final date), so its own window
+        # is truncated (observed: 2026-07-23 has 12 intervals, not the full
+        # 36) -- counting that as a complete "EV-free night" would be an
+        # artifact of where the data happens to end, not a real observation.
+        #
+        # Codex review round 2: a FIXED "hours * 4" expected-interval count
+        # is the wrong test for that -- it also rejects genuine, complete
+        # DST-transition nights (2025-11-02 fall-back has 20 real intervals
+        # in a nominal 4-hour window; 2026-03-08 spring-forward has 12),
+        # which are real, complete observations that happen to be a
+        # different wall-clock length that day, not missing data. The two
+        # cases look identical by interval COUNT alone but need opposite
+        # handling, so check the actual cause instead: for a wrapped window,
+        # exclude only when the NEXT calendar date isn't in the dataset at
+        # all (the real archive-boundary case); DST-shortened/lengthened
+        # nights always have their next date present and are kept, matching
+        # night_floor_series()'s own convention of using whatever real
+        # intervals a night actually has.
+        wraps = start_h > end_h  # e.g. (21, 6) means 9pm today through 6am tomorrow
+        free = []
+        eligible = 0
+        for date, g in d.groupby("date"):
+            if wraps:
+                if (date + dt.timedelta(days=1)) not in all_dates:
+                    continue  # real archive-boundary truncation, not DST -- not eligible
+                mask = ((d["date"] == date) & (d["hour"] >= start_h)) | \
+                       ((d["date"] == date + dt.timedelta(days=1)) & (d["hour"] < end_h))
+                night = d[mask]
+            else:
+                night = g[(g["hour"] >= start_h) & (g["hour"] < end_h)]
+            if night.empty:
+                continue
+            eligible += 1
+            if night["evkw"].sum() == 0:
+                free.append((date, float(night["kw"].median())))
+        return free, eligible
+
+    ev_absence_by_window = {}
+    for start_h, end_h in EV_ABSENCE_WINDOWS:
+        wraps = start_h > end_h
+        label = f"{start_h}-{end_h}h" + ("(+1d)" if wraps else "")
+        free, eligible = ev_free_count(start_h, end_h)
+        # Codex review round 3: the wrapped window's own archive-boundary
+        # exclusion (above) means its `n` is drawn from 364 eligible nights,
+        # not the full 365 -- reporting `n` alone next to the other windows'
+        # 365-night counts would silently compare different denominators.
+        # `n_eligible_nights` makes that explicit rather than letting a
+        # reader assume every window's denominator is the same 365.
+        entry = {"n": len(free), "n_eligible_nights": eligible}
+        if start_h == 0 and end_h == 6:  # the closest-by-count window the docstrings cite by shape
+            meds = np.array([m for _, m in free])
+            entry["median_kw"] = round(float(np.median(meds)), 4)
+            entry["p10_kw"] = round(float(np.percentile(meds, 10)), 4)
+        ev_absence_by_window[label] = entry
+
+    def gate_sweep_row(gate_kw):
+        quiet = []
+        for date, g in d.groupby("date"):
+            night = g[(g["hour"] >= 1) & (g["hour"] < 5)]
+            if not night.empty and night["kw"].max() < gate_kw:
+                quiet.append((date, float(night["kw"].median())))
+        meds = np.array([m for _, m in quiet])
+        july = np.array([m for dd, m in quiet if dd.month == 7])
+        return {
+            "gate_kw": gate_kw,
+            "n_total": len(quiet),
+            "median_kw": round(float(np.median(meds)), 4) if len(meds) else None,
+            "n_july": len(july),
+            "median_july_kw": round(float(np.median(july)), 4) if len(july) else None,
+        }
+
+    def night_max_1_5am(date_str):
+        target = dt.date.fromisoformat(date_str)
+        night = d[(d["date"] == target) & (d["hour"] >= 1) & (d["hour"] < 5)]
+        return round(float(night["kw"].max()), 2) if not night.empty else None
+
+    def may_boundary_night():
+        """This module's own gate (HIGH_DEMAND_GATE_KW, the SAME rule
+        night_floor_series() uses, not the EV-absence or July-sweep rules
+        above): 2026-05-03's 04:45 interval and its effect on May's own
+        quiet-night median if that one night's `>=` gate exclusion were
+        relaxed to `>`."""
+        target = dt.date(2026, 5, 3)
+        night = d[(d["date"] == target) & (d["hour"] >= 1) & (d["hour"] < 5)]
+        if night.empty:
+            return None
+        interval_045 = night[night["hour"] == 4.75]  # `hour` is a fractional-hour
+                                                     # float (4.75 == 4:45), not a
+                                                     # separate hour/minute pair
+        max_kw = float(night["kw"].max())
+        median_kw = round(float(night["kw"].median()), 4)
+
+        daily_series, _ = night_floor_series(d)
+        may_meds_without = [r["median_kw"] for r in daily_series
+                            if r["date"].startswith("2026-05") and r["median_kw"] is not None]
+        may_median_without = round(float(np.median(may_meds_without)), 4) if may_meds_without else None
+        may_median_with = round(float(np.median(may_meds_without + [median_kw])), 4) \
+            if may_meds_without else None
+
+        # /review found the prose's "this ONE night" phrasing (below) was an
+        # unasserted uniqueness claim -- computed here, not just eyeballed,
+        # so a future archive regeneration that adds a second night at
+        # exactly the gate value elsewhere in the year fails the pin instead
+        # of silently falsifying the docstring's "one night" framing.
+        n_at_exact_gate = sum(
+            1 for date, g in d.groupby("date")
+            if not (n2 := g[(g["hour"] >= 1) & (g["hour"] < 5)]).empty
+            and float(n2["kw"].max()) == HIGH_DEMAND_GATE_KW
+        )
+
+        return {
+            "interval_04:45_kwh": round(float(interval_045["kw"].iloc[0]) / 4, 4)
+                                 if not interval_045.empty else None,
+            "night_max_kw": round(max_kw, 4),
+            "night_median_kw_if_included": median_kw,
+            "gate_kw": HIGH_DEMAND_GATE_KW,
+            "excluded_under_current_gte_gate": max_kw >= HIGH_DEMAND_GATE_KW,
+            "n_nights_at_exact_gate": n_at_exact_gate,
+            "may_median_kw_without_this_night": may_median_without,
+            "may_median_kw_with_this_night": may_median_with,
+        }
+
+    return {
+        "ev_absence_by_window": ev_absence_by_window,
+        "july_gate_sweep": [gate_sweep_row(g) for g in JULY_GATE_SWEEP_KW],
+        "may_boundary_night": may_boundary_night(),
+        "july_boundary_nights": {
+            "2026-07-09": night_max_1_5am("2026-07-09"),
+            "2025-07-25": night_max_1_5am("2025-07-25"),
+        },
     }
 
 
@@ -786,6 +1078,7 @@ def main():
 
     daily_series, night_stats = night_floor_series(d)
     night_cross_check = cross_check_night_floor(root, night_stats)
+    issue_114 = issue_114_investigation(d)
 
     window_start = (br.WINDOW_END - dt.timedelta(days=365)).date()
     window_end = br.WINDOW_END.date()
@@ -818,7 +1111,8 @@ def main():
         "method": __doc__.strip().split("\n\n")[0],
         "window": {"start": str(window_start), "end": str(window_end)},
         "night_floor": {**night_stats, "daily_series": daily_series,
-                        "cross_check_extra_results_json": night_cross_check},
+                        "cross_check_extra_results_json": night_cross_check,
+                        "issue_114_investigation": issue_114},
         "hour_of_day": {"profile": hour_profile, **hour_stats},
         "pricing": {
             "floor_kw_priced": round(floor_kw, 4),

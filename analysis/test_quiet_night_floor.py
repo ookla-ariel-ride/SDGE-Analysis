@@ -512,6 +512,82 @@ def case_night_floor_cross_checks_the_published_phantom_figure():
 
 
 @case
+def case_issue_114_investigation_matches_the_committed_artifact():
+    """Issue #114: this module's own docstring and TECHNICAL.md 3.28 cite
+    specific EV-absence counts, a July gate-sweep table, and two boundary
+    nights' 1-5am max power -- two rounds of Codex adversarial review each
+    caught a factual error in an earlier, hand-computed version of these
+    same claims (no test existed to catch them). Pins the real, executed
+    values -- both against a fresh run AND against the committed artifact,
+    so neither can silently drift from the other or from what the prose
+    actually says."""
+    _require_archive()
+    files = sorted(glob.glob(USAGE_GLOB))
+    br.CSV = files[0]
+    d = br.load()
+    fresh = QNF.issue_114_investigation(d)
+
+    # the two specific dates a prior draft of the investigation wrongly
+    # claimed were "12 kW or higher" -- pinned by exact value so that
+    # specific error can never be silently reintroduced
+    assert fresh["july_boundary_nights"]["2026-07-09"] == 4.4, fresh["july_boundary_nights"]
+    assert fresh["july_boundary_nights"]["2025-07-25"] == 6.64, fresh["july_boundary_nights"]
+
+    # the EV-absence window counts cited in prose (all computed independently
+    # of this module's own HIGH_DEMAND_GATE_KW rule).
+    expected_n = {"1-5h": 69, "0-5h": 49, "0-6h": 42, "1-6h": 59, "21-6h(+1d)": 40}
+    got_n = {k: v["n"] for k, v in fresh["ev_absence_by_window"].items()}
+    assert got_n == expected_n, got_n
+    # Codex review round 3: the wrapped window's own archive-boundary
+    # exclusion means its denominator is 364, not the 365 every other
+    # window uses -- pin that explicitly so a reader (or future prose edit)
+    # can't silently treat "40" as directly comparable to the 365-night
+    # counts above it.
+    expected_eligible = {"1-5h": 365, "0-5h": 365, "0-6h": 365, "1-6h": 365, "21-6h(+1d)": 364}
+    got_eligible = {k: v["n_eligible_nights"] for k, v in fresh["ev_absence_by_window"].items()}
+    assert got_eligible == expected_eligible, got_eligible
+    # Codex review round 2's DST-vs-archive-boundary fix is NOT independently
+    # exercised by this pinning check on this household's real data: the two
+    # DST-transition nights checked directly (2025-11-01/2026-03-07's own
+    # wrapped 21-6h windows, spanning 2025-11-02's fall-back and 2026-03-08's
+    # spring-forward) both have real EV energy present regardless, so they'd
+    # be excluded from the "free" count either way and the buggy vs. fixed
+    # completeness check happens to agree on this specific dataset. The fix
+    # is correct by direct inspection (verified: the broken hours*4 check
+    # would wrongly reject those two dates' real, complete windows as
+    # "truncated"), not by this test's own mutation-sensitivity -- stated
+    # honestly rather than claiming coverage this check doesn't actually have.
+
+    # the July gate-sweep's own headline transition: the current 2.0 kW gate
+    # gives the real 43/365 total with July still at 3; a 4th July quiet
+    # night only appears at >=4.5 kW, where the total overshoots to 62
+    by_gate = {row["gate_kw"]: row for row in fresh["july_gate_sweep"]}
+    assert by_gate[2.0]["n_total"] == 43 and by_gate[2.0]["n_july"] == 3, by_gate[2.0]
+    assert by_gate[4.4]["n_july"] == 3, by_gate[4.4]
+    assert by_gate[4.5]["n_july"] == 4 and by_gate[4.5]["n_total"] == 62, by_gate[4.5]
+
+    # the 2026-05-03 gate-boundary case (/review found this was still
+    # hand-typed prose, not committed code -- exactly the defect class this
+    # issue was filed over)
+    may = fresh["may_boundary_night"]
+    assert may["interval_04:45_kwh"] == 0.5, may
+    assert may["night_max_kw"] == 2.0 and may["excluded_under_current_gte_gate"] is True, may
+    assert may["may_median_kw_without_this_night"] == 0.845, may
+    assert may["may_median_kw_with_this_night"] == 0.85, may
+    # /review found the docstring's "this ONE night" phrasing was an
+    # unasserted uniqueness claim -- pin it so a future archive adding a
+    # second night at exactly the gate value elsewhere in the year fails
+    # this test instead of silently falsifying the prose
+    assert may["n_nights_at_exact_gate"] == 1, may
+
+    if not ARTIFACT.exists():
+        raise SkipCase(f"{ARTIFACT} not committed in this checkout")
+    committed = json.loads(ARTIFACT.read_text())["night_floor"]["issue_114_investigation"]
+    assert committed == fresh, "committed issue_114_investigation drifted from a fresh run"
+    return "issue #114's EV-absence counts, July gate-sweep, and boundary-night values all match a fresh run and the committed artifact"
+
+
+@case
 def case_reconciliation_gap_is_small_on_the_real_measured_year():
     _require_archive()
     if not ARTIFACT.exists():
