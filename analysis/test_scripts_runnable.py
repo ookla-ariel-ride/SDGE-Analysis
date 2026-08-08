@@ -92,6 +92,7 @@ MANIFEST = {
     "threeway_production_validation.py": "generator",
     "heat_pump_conversion.py": "generator",
     "extra_results.py": "generator",
+    "all_electric_endgame.py": "generator",
     "carbon_timing.py": "retired",
 }
 
@@ -152,6 +153,9 @@ OWNS = {
     # convention as threeway_production_validation.py/quiet_night_floor.py
     "heat_pump_conversion.py":      [("data", "heat_pump_conversion.json")],
     "extra_results.py":             [("data", "extra_results.json")],
+    # writes directly into ROOT/data via heat_pump_conversion.ROOT's own
+    # repo_root() walk-up, same convention as heat_pump_conversion.py itself
+    "all_electric_endgame.py":      [("data", "all_electric_endgame.json")],
 }
 
 # Modules allowed to express TOU windows themselves. The legacy ranking pair keeps
@@ -393,6 +397,12 @@ NEEDS_PRIVATE_ARCHIVE = {
                                "synthetic stand-in exists, and the isolation methods "
                                "need a real, physically plausible year of gas usage "
                                "to cross-check against real weather, not an invented one"),
+    "all_electric_endgame.py": ("the same raw gas Green Button export as "
+                               "heat_pump_conversion.py, plus data/heat_pump_"
+                               "conversion.json and data/service_headroom.json "
+                               "(read directly, not recomputed) -- both real, "
+                               "committed artifacts a synthetic CI checkout does "
+                               "not have"),
     "cca_rate_extraction.py": ("the bill PDF corpus (every CCA-era statement's own "
                                "per-TOU generation-charge lines are printed nowhere "
                                "else)"),

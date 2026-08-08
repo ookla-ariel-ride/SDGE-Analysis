@@ -1,0 +1,746 @@
+#!/usr/bin/env python3
+"""Tests for all_electric_endgame.py (issue #20).
+
+Same pattern as test_heat_pump_conversion.py: point household.PATH at a
+synthetic household BEFORE importing so this file always imports cleanly,
+and gate archive-dependent cases (the real measured year, the real gas
+export, byte-identical regeneration) behind SkipCase rather than failing.
+
+Run from the repo root:  ./.venv/bin/python analysis/test_all_electric_endgame.py
+"""
+import datetime as dt
+import glob
+import json
+import pathlib
+import sys
+import tempfile
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+import household as _hh
+_HH_DIR = tempfile.TemporaryDirectory()
+_hh.PATH = pathlib.Path(_HH_DIR.name) / "household.yaml"
+_hh.PATH.write_text(
+    "household:\n  pto_date: 2019-12-01\n  has_ev: true\n  has_gas: true\n"
+    "location:\n  lat: 33.0\n"
+    "solar:\n  install_invoice_usd: 30000\n  install_paid_date: 2019-12-01\n"
+    "charger:\n  kw: 11.5\ncleaning_history: []\n"
+    "misc:\n  miles_per_year: 12000\n  supercharge_kwh_yr: 500\n")
+_hh._cache = None
+# Deliberately no panel: block, and no appliance_fuels key -- this module's
+# own cooking_fuel_evidence() must read ONLY the public-ok household.
+# appliance_fuels field, never panel.schedule or panel.no_dryer_or_water_
+# heater_circuit (both private-only, TECHNICAL.md section 11.3). An earlier
+# version of the fixture carried a synthetic panel.schedule whose label text
+# ('Oven', 'Range (30-2P)...') happened to coincide with this household's
+# own REAL panel labels and tripped the repo's own pre-commit privacy gate
+# on this test file -- removed along with the code that read it.
+
+import rates as R                        # noqa: E402
+import behavior_rebuild as br            # noqa: E402
+import heat_pump_conversion as hpc       # noqa: E402
+import service_headroom as sh            # noqa: E402
+import all_electric_endgame as A         # noqa: E402
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+USAGE_GLOB = str(ROOT / "private" / "1-raw-data" / "Electric_15_Minute_*.csv")
+HOUSEHOLD_YAML = ROOT / "private" / "household.yaml"
+REAL_GAS_CSV = ROOT / "private" / "1-raw-data" / "gas.csv"
+
+CASES = []
+
+
+def case(fn):
+    CASES.append(fn)
+    return fn
+
+
+class SkipCase(Exception):
+    """Raised by a case whose preconditions this checkout cannot meet."""
+
+
+def _require_archive():
+    files = sorted(glob.glob(USAGE_GLOB))
+    if not files or not HOUSEHOLD_YAML.is_file() or not REAL_GAS_CSV.is_file():
+        raise SkipCase(f"needs the private archive ({USAGE_GLOB}), "
+                       f"{HOUSEHOLD_YAML} and {REAL_GAS_CSV}, which this "
+                       "checkout does not have")
+    br.CSV = files[0]
+    return files[0]
+
+
+# ---------------------------------------------------------------------------
+# Synthetic gas/weather fixtures (mirrors test_heat_pump_conversion.py's own)
+# ---------------------------------------------------------------------------
+def _synthetic_gas_and_weather(tmp_path, floor=0.4, slope=0.15, days=365,
+                               start=dt.date(2025, 1, 1)):
+    dates = [start + dt.timedelta(days=i) for i in range(days)]
+    rows_gas = ["Name,Test\nAddress,Test\nAccount Number,0\nDisclaimer,x\n"
+               "Title,x\nResource,Gas\nMeter Number,1\nInterval UOM,Day\n"
+               "Reading Start,x\nReading End,x\nTotal Duration,x\n"
+               "Total Usage,x\nUOM,Therms\n"
+               "Meter Number,Date,Start Time,Duration,Consumption\n"]
+    rows_w = ["header\n"]
+    for i, d in enumerate(dates):
+        frac = abs((i - days / 2) / (days / 2))
+        hdd = 30 * frac
+        tf = 65 - hdd
+        therms = floor + slope * hdd
+        rows_gas.append(f'"1","{d.month}/{d.day}/{d.year}","6:59 AM","Day","{therms:.4f}"\n')
+        rows_w.append(f"{d.isoformat()},{tf:.2f}\n")
+    (tmp_path / "gas.csv").write_text("".join(rows_gas))
+    (tmp_path / "weather_daily_tmean.csv").write_text("".join(rows_w))
+
+
+class _GasWeatherFixture:
+    def __init__(self, tmp, **kw):
+        self.tmp = tmp
+        self.kw = kw
+
+    def __enter__(self):
+        _synthetic_gas_and_weather(self.tmp, **self.kw)
+        self._real = (hpc.GAS_CSV, hpc.WEATHER_CSV)
+        hpc.GAS_CSV = str(self.tmp / "gas.csv")
+        hpc.WEATHER_CSV = str(self.tmp / "weather_daily_tmean.csv")
+        return self
+
+    def __exit__(self, *exc):
+        hpc.GAS_CSV, hpc.WEATHER_CSV = self._real
+        return False
+
+
+def _gas_detail_rows(statement_date, period, gas_service, gas_energy, other_fees):
+    rows = []
+    for i, (days, bl_rate, nb_rate) in enumerate(gas_service):
+        rows.append(dict(statement_date=statement_date, period=period,
+                         charge_type="gas_service", segment=i, segment_days=days,
+                         segment_therms=np.nan, baseline_rate=bl_rate, nonbaseline_rate=nb_rate,
+                         energy_rate=np.nan, other_fees_rate=np.nan))
+    for i, (days, er) in enumerate(gas_energy):
+        rows.append(dict(statement_date=statement_date, period=period,
+                         charge_type="gas_energy", segment=i, segment_days=days,
+                         segment_therms=np.nan, baseline_rate=np.nan, nonbaseline_rate=np.nan,
+                         energy_rate=er, other_fees_rate=np.nan))
+    for i, (therms, ofr) in enumerate(other_fees):
+        rows.append(dict(statement_date=statement_date, period=period,
+                         charge_type="other_fees", segment=i, segment_days=np.nan,
+                         segment_therms=therms, baseline_rate=np.nan, nonbaseline_rate=np.nan,
+                         energy_rate=np.nan, other_fees_rate=ofr))
+    return rows
+
+
+def _single_segment_detail(statement_date, period, period_days, therms,
+                           baseline_rate, nonbaseline_rate, energy_rate, other_fees_rate):
+    return _gas_detail_rows(
+        statement_date, period,
+        gas_service=[(period_days, baseline_rate, nonbaseline_rate)],
+        gas_energy=[(period_days, energy_rate)],
+        other_fees=[(therms, other_fees_rate)])
+
+
+class _GasDetailFixture:
+    """Points hpc.GAS_PERIODS_CSV/GAS_DETAIL_CSV (all_electric_endgame.py's
+    own floor_savings_by_period() reads these through the hpc module, not
+    its own copies) at a temporary fixture pair."""
+
+    def __init__(self, periods_df, detail_rows):
+        self.periods_df = periods_df
+        self.detail_rows = detail_rows
+
+    def __enter__(self):
+        self._td = tempfile.TemporaryDirectory()
+        tmp = pathlib.Path(self._td.name)
+        periods_csv = tmp / "bill_periods_gas.csv"
+        detail_csv = tmp / "bill_gas_detail.csv"
+        self.periods_df.to_csv(periods_csv, index=False)
+        pd.DataFrame(self.detail_rows).to_csv(detail_csv, index=False)
+        self._real = (hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV)
+        hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = str(periods_csv), str(detail_csv)
+        return self
+
+    def __exit__(self, *exc):
+        hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = self._real
+        self._td.cleanup()
+        return False
+
+
+def _make_periods_df(rows):
+    """rows: [(statement_date, period_str, therms, billed_amount,
+    baseline_allowance_therms), ...]"""
+    return pd.DataFrame([{
+        "statement_date": r[0], "period": r[1], "period_end_month": "x",
+        "therms": r[2], "total_gas_service": r[3], "billed_amount": r[3],
+        "baseline_rate": 2.0, "nonbaseline_rate": 2.4,
+        "baseline_allowance_therms": r[4], "gas_energy_charge_rate": 0.5,
+        "other_fees_rate": 0.12,
+    } for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# AC1 -- fixed_charge_regression
+# ---------------------------------------------------------------------------
+@case
+def case_fixed_charge_regression_recovers_a_known_zero_intercept():
+    """A synthetic corpus built as EXACTLY slope*therms (zero intercept, no
+    noise) must recover an intercept indistinguishable from zero -- the
+    positive control for the near-zero-fixed-charge claim."""
+    rows = [(f"2025-{m:02d}-01", f"p{m}", float(t), round(2.6 * t, 2), 11.0)
+            for m, t in enumerate(range(5, 30), start=1)]
+    df = _make_periods_df(rows)
+    with _GasDetailFixture(df, []):
+        result = A.fixed_charge_regression()
+    assert abs(result["intercept_usd"]) < 0.05, result
+    assert result["n_periods"] == len(rows)
+    assert abs(result["slope_usd_per_therm"] - 2.6) < 0.01, result
+    return f"zero-intercept synthetic corpus recovers intercept={result['intercept_usd']} (true 0)"
+
+
+@case
+def case_fixed_charge_regression_detects_a_real_fixed_charge():
+    """The same synthetic corpus, but with a genuine $15 fixed charge added
+    to every statement, must recover an intercept near $15 -- proves this
+    regression would actually catch a real fixed charge if this rate had
+    one, not just report near-zero regardless of the input (tests must fail
+    on the defect they name)."""
+    rows = [(f"2025-{m:02d}-01", f"p{m}", float(t), round(2.6 * t + 15.0, 2), 11.0)
+            for m, t in enumerate(range(5, 30), start=1)]
+    df = _make_periods_df(rows)
+    with _GasDetailFixture(df, []):
+        result = A.fixed_charge_regression()
+    assert abs(result["intercept_usd"] - 15.0) < 0.05, result
+    return f"a genuine $15 fixed charge is recovered as intercept={result['intercept_usd']}"
+
+
+# ---------------------------------------------------------------------------
+# AC2 -- cooking_fuel_evidence / third_end_use_gap / gas_end_use_enumeration
+# ---------------------------------------------------------------------------
+@case
+def case_cooking_fuel_evidence_not_determined_without_appliance_fuels():
+    """The default fixture household has no appliance_fuels key (the common,
+    real-world case for this household) -- cooking_fuel_evidence() must
+    report 'not determined', never infer a fuel mix from panel.schedule or
+    panel.no_dryer_or_water_heater_circuit, both of which are private-only
+    and MUST NOT be read by this function at all (a prior version read them
+    directly and was blocked by the repo's own pre-commit privacy gate --
+    this test is the regression guard for that fix)."""
+    ev = A.cooking_fuel_evidence()
+    assert ev["verdict"] == "not determined", ev
+    assert ev["appliance_fuels_field_present"] is False, ev
+    assert "electric_cooking_circuits_found" not in ev, (
+        "cooking_fuel_evidence() must not read or report panel-schedule "
+        "derived detail at all -- that key's mere presence would mean this "
+        "function is reading a private-only field again")
+    assert "no_dryer_or_water_heater_circuit" not in ev
+    return "with no appliance_fuels answer, cooking_fuel_evidence() reports 'not determined', reading no private-only panel field"
+
+
+@case
+def case_cooking_fuel_evidence_reads_only_the_public_appliance_fuels_field():
+    """When household.appliance_fuels IS answered (a different household's
+    intake, or this one's own future state once answered), the function
+    must report it as determined -- proving it actually reads that field,
+    not just always returning 'not determined' regardless of input."""
+    real_path, real_cache = _hh.PATH, _hh._cache
+    tmp_dir = tempfile.TemporaryDirectory()
+    try:
+        _hh.PATH = pathlib.Path(tmp_dir.name) / "household.yaml"
+        _hh.PATH.write_text(
+            "household:\n  has_gas: true\n"
+            "appliance_fuels: 'pool: none, water heater: gas, heating: gas, cooking: electric'\n")
+        _hh._cache = None
+        ev = A.cooking_fuel_evidence()
+        assert ev["verdict"] == "recorded at intake", ev
+        assert ev["appliance_fuels_field_present"] is True, ev
+    finally:
+        _hh.PATH, _hh._cache = real_path, real_cache
+        tmp_dir.cleanup()
+    return "a real appliance_fuels answer is read and reported as 'recorded at intake'"
+
+
+@case
+def case_third_end_use_gap_bracket_arithmetic():
+    cooking_fuel = {"appliance_fuels_field_present": False}
+    gap = A.third_end_use_gap(137, cooking_fuel)
+    lo, hi = A.DRYER_THERMS_PER_MONTH_RANGE
+    assert gap["possible_dryer_rough_magnitude_therms_yr"] == [round(lo * 12), round(hi * 12)]
+    assert gap["not_priced_here"] is True
+    assert gap["possible_dryer_pct_of_floor_range"][0] < gap["possible_dryer_pct_of_floor_range"][1]
+    assert "NOT DETERMINED" in gap["gap"]
+    return "third_end_use_gap reports a bracket, not a point estimate, and states NOT DETERMINED when appliance_fuels is unanswered"
+
+
+@case
+def case_third_end_use_gap_defers_to_appliance_fuels_when_present():
+    cooking_fuel = {"appliance_fuels_field_present": True}
+    gap = A.third_end_use_gap(137, cooking_fuel)
+    assert "NOT DETERMINED" not in gap["gap"], gap
+    assert "appliance_fuels" in gap["gap"]
+    return "third_end_use_gap defers to a real appliance_fuels answer rather than guessing when one exists"
+
+
+@case
+def case_gas_end_use_enumeration_sums_to_the_metered_total():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        with _GasWeatherFixture(tmp, floor=0.4, slope=0.15):
+            iso = hpc.isolate_heating_therms()
+            periods_df = _make_periods_df([
+                (f"2025-{m:02d}-01", f"p{m}", 20.0, 50.0, 11.0) for m in range(1, 13)])
+            with _GasDetailFixture(periods_df, []):
+                enum_ = A.gas_end_use_enumeration(iso)
+    assert enum_["sum_check"]["pct_of_metered_total"] == 100.0, enum_["sum_check"]
+    assert enum_["non_heating_floor"]["floor_composition"].startswith(
+        "not determined from committed public data"), enum_["non_heating_floor"]
+    return "floor + heating sum to exactly 100% of the metered annual total"
+
+
+# ---------------------------------------------------------------------------
+# AC3/AC4 -- _floor_segment_tier_cost / _floor_capped_days / floor_savings_by_period
+# ---------------------------------------------------------------------------
+@case
+def case_floor_segment_tier_cost_baseline_only():
+    cost = A._floor_segment_tier_cost(
+        floor_therms=5.0, baseline_allowance=11.0, baseline_rate=2.0,
+        nonbaseline_rate=2.4, context="test")
+    assert abs(cost - 10.0) < 1e-9, cost
+    return "floor entirely within baseline allowance prices at baseline_rate only"
+
+
+@case
+def case_floor_segment_tier_cost_spills_into_nonbaseline():
+    cost = A._floor_segment_tier_cost(
+        floor_therms=15.0, baseline_allowance=11.0, baseline_rate=2.0,
+        nonbaseline_rate=2.4, context="test")
+    expected = 11.0 * 2.0 + 4.0 * 2.4
+    assert abs(cost - expected) < 1e-9, cost
+    return "floor exceeding the segment's own baseline allowance spills into nonbaseline"
+
+
+@case
+def case_floor_segment_tier_cost_small_overflow_folds_back_to_baseline():
+    """A tiny overflow (within FLOOR_OVERFLOW_TOLERANCE_THERMS) against a
+    segment whose real bill never crossed into nonbaseline (nonbaseline_rate
+    is None) must NOT fail closed -- it is day-proportion estimation noise,
+    per this function's own docstring."""
+    cost = A._floor_segment_tier_cost(
+        floor_therms=11.05, baseline_allowance=11.0, baseline_rate=2.0,
+        nonbaseline_rate=None, context="test")
+    assert abs(cost - 11.05 * 2.0) < 1e-9, cost
+    return "a small overflow against a never-crossed segment folds back to baseline, no failure"
+
+
+@case
+def case_floor_segment_tier_cost_large_overflow_fails_closed():
+    """A LARGE overflow against a segment with no nonbaseline_rate at all
+    must fail closed -- proves the tolerance has a real ceiling (tests must
+    fail on the defect they name: a version of this function with the
+    tolerance check removed, or set absurdly high, would NOT catch this)."""
+    try:
+        A._floor_segment_tier_cost(
+            floor_therms=20.0, baseline_allowance=11.0, baseline_rate=2.0,
+            nonbaseline_rate=None, context="test-context-marker")
+        raise AssertionError("a 9-therm overflow with no nonbaseline_rate was silently accepted")
+    except SystemExit as e:
+        assert "test-context-marker" in str(e), e
+        assert "nonbaseline" in str(e), e
+    return "a large overflow against a never-crossed segment fails closed"
+
+
+@case
+def case_floor_capped_days_caps_at_the_periods_own_real_total():
+    """A period whose real billed total is LESS than floor_per_day times
+    its own day count must cap the floor at that real total, not silently
+    attribute more floor gas than the meter actually read that period."""
+    start, end = dt.date(2025, 7, 1), dt.date(2025, 7, 31)
+    period_days = (end - start).days + 1
+    floor_per_day = 0.376
+    # period only billed 9 therms total -- far under 31*0.376=11.66
+    days = A._floor_capped_days(start, end, floor_per_day, period_total_therms=9.0)
+    assert len(days) == period_days
+    total = sum(f for _, f in days)
+    assert abs(total - 9.0) < 1e-9, total
+    return "a low-usage period caps the floor at its own real billed total, not the annual average"
+
+
+@case
+def case_floor_capped_days_uncapped_when_period_total_is_generous():
+    start, end = dt.date(2025, 12, 1), dt.date(2025, 12, 31)
+    period_days = (end - start).days + 1
+    floor_per_day = 0.376
+    days = A._floor_capped_days(start, end, floor_per_day, period_total_therms=70.0)
+    total = sum(f for _, f in days)
+    assert abs(total - floor_per_day * period_days) < 1e-9, total
+    return "a generously-billed period is not capped -- the full floor_per_day constant is used"
+
+
+@case
+def case_floor_savings_by_period_never_split_segment_matches_hand_calc():
+    """The trivial, never-split case (one segment per charge type, the
+    common case): floor_savings_by_period()'s own output must match a
+    hand-computed figure exactly, the same regression-safety shape
+    test_heat_pump_conversion.py's own _single_segment_detail fixture is
+    built for."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        with _GasWeatherFixture(tmp, floor=0.4, slope=0.15, days=365):
+            iso = hpc.isolate_heating_therms()
+            period = "Jun 1, 2025 - Jun 30, 2025"
+            periods_df = pd.DataFrame([{
+                "statement_date": "2025-06-30", "period": period,
+                "period_end_month": "jun 2025", "therms": 12.0,
+                "total_gas_service": 30.0, "billed_amount": 30.0,
+                "baseline_rate": 2.0, "nonbaseline_rate": 2.4,
+                "baseline_allowance_therms": 11.0, "gas_energy_charge_rate": 0.5,
+                "other_fees_rate": 0.12,
+            }])
+            detail = _single_segment_detail(
+                "2025-06-30", period, period_days=30, therms=12.0,
+                baseline_rate=2.0, nonbaseline_rate=2.4, energy_rate=0.5,
+                other_fees_rate=0.12)
+            with _GasDetailFixture(periods_df, detail):
+                rows, total_savings, total_therms = A.floor_savings_by_period(iso, n_trailing=1)
+    # floor=0.4/day * 30 days = 12.0, capped at the period's own real total
+    # (12.0) -- exactly at the cap, uncapped. All 12 therms are baseline
+    # (allowance 11.0 < 12.0, so 1 therm spills to nonbaseline).
+    expected_gs = 11.0 * 2.0 + 1.0 * 2.4
+    expected_ge = 12.0 * 0.5
+    expected_of = 12.0 * 0.12
+    expected = round(expected_gs + expected_ge + expected_of, 2)
+    assert len(rows) == 1, rows
+    assert abs(total_therms - 12.0) < 1e-6, total_therms
+    assert abs(total_savings - expected) < 0.01, (total_savings, expected)
+    return f"never-split-segment floor pricing matches hand calc: ${total_savings} (expected ${expected})"
+
+
+# ---------------------------------------------------------------------------
+# AC4 -- build_wh_load_series / wh_electric_cost_scenarios (energy
+# conservation, real-interval placement)
+# ---------------------------------------------------------------------------
+def _synthetic_frame(n_days=10):
+    rows = []
+    start = dt.datetime(2026, 1, 5)   # a Monday
+    for day in range(n_days):
+        for slot in range(96):
+            ts = start + dt.timedelta(days=day, minutes=15 * slot)
+            rows.append(ts)
+    d = pd.DataFrame({"dt": rows})
+    d["Consumption"] = 0.1
+    d["Generation"] = 0.05
+    d["p"] = [R.period_at(t) for t in d["dt"]]
+    d["seas"] = np.where(d["dt"].dt.month.isin(sorted(R.SUMMER_MONTHS)), "S", "W")
+    d["ym"] = d["dt"].dt.to_period("M")
+    return d
+
+
+@case
+def case_build_wh_load_series_conserves_energy_across_distributions():
+    d = _synthetic_frame()
+    ann_kwh = 600.0
+    added, fallback = A.build_wh_load_series(d, ann_kwh)
+    for key, series in added.items():
+        total = float(series.sum())
+        assert abs(total - ann_kwh) < 0.01, (key, total)
+    return "uniform/midday/on_peak water-heater load series each conserve the same annual kWh"
+
+
+@case
+def case_build_wh_load_series_falls_back_when_a_day_has_no_sop_or_on_intervals():
+    """A day with only 'off' period intervals (no super-off-peak, no
+    on-peak -- e.g. certain weekend afternoons under some TOU rules) must
+    fall back to a uniform placement for that one day, not silently drop
+    its own share of the annual kWh."""
+    rows = []
+    start = dt.datetime(2026, 6, 1)   # a Monday, summer
+    for slot in range(96):
+        ts = start + dt.timedelta(minutes=15 * slot)
+        rows.append(ts)
+    d = pd.DataFrame({"dt": rows})
+    d["Consumption"] = 0.1
+    d["Generation"] = 0.05
+    d["p"] = "off"   # force every interval to 'off' -- no sop, no on at all
+    ann_kwh = 10.0
+    added, fallback = A.build_wh_load_series(d, ann_kwh)
+    assert fallback["midday"] == 1, fallback
+    assert fallback["on_peak"] == 1, fallback
+    assert abs(float(added["midday"].sum()) - ann_kwh) < 0.01
+    assert abs(float(added["on_peak"].sum()) - ann_kwh) < 0.01
+    return "a day with no sop/on-peak intervals falls back to uniform, energy still conserved"
+
+
+@case
+def case_build_wh_load_series_fails_closed_on_an_empty_frame():
+    d = pd.DataFrame({"dt": pd.to_datetime([]), "p": []})
+    try:
+        A.build_wh_load_series(d, 100.0)
+        raise AssertionError("an empty frame was silently accepted")
+    except SystemExit:
+        pass
+    return "an empty frame with no dates to place load into fails closed"
+
+
+@case
+def case_service_headroom_check_fails_closed_on_missing_service_headroom_json():
+    with tempfile.TemporaryDirectory() as td:
+        real_data = A.DATA
+        A.DATA = td
+        try:
+            A.service_headroom_check()
+            raise AssertionError("a missing service_headroom.json was silently accepted")
+        except SystemExit as e:
+            assert "service_headroom.json" in str(e)
+        finally:
+            A.DATA = real_data
+    return "a missing data/service_headroom.json fails closed rather than crashing obscurely"
+
+
+@case
+def case_build_fails_closed_on_missing_heat_pump_conversion_json():
+    """build() cites heat_pump_conversion.json directly rather than
+    recomputing it -- if it is missing, this must fail with a clear
+    message pointing at issue #1/#109, not an opaque KeyError deep inside
+    the function."""
+    _require_archive()
+    real_data_hpc, real_data_a = hpc.DATA, A.DATA
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        A.DATA = str(tmp)
+        try:
+            try:
+                A.build()
+                raise AssertionError("a missing heat_pump_conversion.json was silently accepted")
+            except SystemExit as e:
+                assert "heat_pump_conversion.json" in str(e), e
+        finally:
+            A.DATA = real_data_a
+    return "build() fails closed when data/heat_pump_conversion.json is missing"
+
+
+@case
+def case_wh_electric_cost_scenarios_conserves_energy_and_bills():
+    d = _synthetic_frame()
+    electric, base_bill = A.wh_electric_cost_scenarios(d, floor_therms_yr=137.0)
+    assert set(electric.keys()) == set(A.HPWH_UEF_SCENARIOS.keys())
+    for uef_key, scen in electric.items():
+        for dist_key in ("uniform", "midday", "on_peak"):
+            assert "electric_cost_increase_usd" in scen[dist_key]
+            assert scen[dist_key]["added_kwh"] > 0
+    return "wh_electric_cost_scenarios runs energy-conserving netting across every UEF x distribution cell"
+
+
+# ---------------------------------------------------------------------------
+# AC5 -- service_headroom_check (reuses service_headroom.physical_fit()
+# directly and a synthetic service_headroom.json)
+# ---------------------------------------------------------------------------
+def _write_synthetic_service_headroom_json(tmp, spaces_free, conservative_a, measured_a,
+                                           hp_replaces_ac_verdict="pass"):
+    data = {
+        "cases": [
+            {"case": "heat_pump_only", "fixed_added_load_a": 0.0,
+             "spaces": {"spaces_free": spaces_free},
+             "remaining_headroom_a": {
+                 "conservative_basis": {"binding": conservative_a},
+                 "measured_basis": {"binding": measured_a}}},
+            {"case": "heat_pump_replaces_ac", "fixed_added_load_a": 0.0,
+             "ampacity_verdict": hp_replaces_ac_verdict,
+             "spaces": {"spaces_free": spaces_free},
+             "remaining_headroom_a": {
+                 "conservative_basis": {"binding": conservative_a},
+                 "measured_basis": {"binding": measured_a}}},
+        ],
+    }
+    path = tmp / "service_headroom.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
+@case
+def case_service_headroom_check_flags_physical_space_hard_blocker():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        _write_synthetic_service_headroom_json(tmp, spaces_free=1, conservative_a=40,
+                                               measured_a=80)
+        real_data = A.DATA
+        A.DATA = str(tmp)
+        try:
+            result = A.service_headroom_check()
+        finally:
+            A.DATA = real_data
+    assert result["physical_fit_verdict"] == "fail", result
+    assert result["hard_blocker"] is True, result
+    assert "1 free full-size space" in result["hard_blocker_note"]
+    return "one free space with a new-240V-circuit need of two is flagged as a hard blocker"
+
+
+@case
+def case_service_headroom_check_not_determined_with_enough_spaces_but_no_adjacency_data():
+    """Enough free spaces (4) is NOT itself a 'pass' -- service_headroom.
+    physical_fit()'s own contract requires knowing the free spaces are
+    ADJACENT, which this household's intake never records (schedule_
+    confidence: 'position map partial'), so the honest verdict is
+    'not_determined', not 'pass' -- this test would catch a reimplementation
+    that conflated 'enough spaces' with 'a confirmed fit'."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        _write_synthetic_service_headroom_json(tmp, spaces_free=4, conservative_a=40,
+                                               measured_a=80)
+        real_data = A.DATA
+        A.DATA = str(tmp)
+        try:
+            result = A.service_headroom_check()
+        finally:
+            A.DATA = real_data
+    assert result["physical_fit_verdict"] == "not_determined", result
+    assert result["hard_blocker"] is False, result
+    assert result["ampacity_verdict"] == "pass", result
+    return "enough free spaces without adjacency data reports not_determined, not a false pass"
+
+
+@case
+def case_service_headroom_check_ampacity_fails_when_code_load_exceeds_conservative_spare():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        # conservative spare (5 A) is under the water heater's own 23.44 A
+        # code load on BOTH bases -- must report a real 'fail', not 'pass'.
+        _write_synthetic_service_headroom_json(tmp, spaces_free=4, conservative_a=5,
+                                               measured_a=10)
+        real_data = A.DATA
+        A.DATA = str(tmp)
+        try:
+            result = A.service_headroom_check()
+        finally:
+            A.DATA = real_data
+    assert result["ampacity_verdict"] == "fail", result
+    return "insufficient spare amperage on both bases reports a real ampacity fail"
+
+
+# ---------------------------------------------------------------------------
+# AC7 -- sequencing_and_paybacks
+# ---------------------------------------------------------------------------
+@case
+def case_sequencing_orders_by_shorter_payback_first():
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
+        furnace_payback_years=280.0)
+    assert result["order"] == ["water_heater", "furnace"], result["order"]
+    assert result["last_step"] == "furnace"
+    assert result["fixed_charge_release_usd"] == 0.0
+    return "the shorter-payback step (water heater) sorts first"
+
+
+@case
+def case_sequencing_reorders_when_furnace_pays_back_faster():
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=5, wh_payback_years=800.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=2000,
+        furnace_payback_years=7.0)
+    assert result["order"] == ["furnace", "water_heater"], result["order"]
+    assert result["last_step"] == "water_heater"
+    return "sequencing genuinely reorders on the input economics, not hardcoded to one order"
+
+
+@case
+def case_sequencing_final_step_identical_with_and_without_zero_credit():
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
+        furnace_payback_years=280.0)
+    fsa = result["final_step_alone_payback"]
+    assert fsa["with_fixed_charge_credit"] == fsa["without_fixed_charge_credit"], fsa
+    assert fsa["identical_because_credit_is_zero"] is True
+    return "final-step-alone payback is identical with/without the (zero) fixed-charge credit"
+
+
+@case
+def case_sequencing_combined_payback_sums_install_and_savings():
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
+        furnace_payback_years=280.0)
+    ct = result["complete_transition_payback"]
+    assert ct["combined_install_usd"] == 18000, ct
+    assert abs(ct["combined_annual_net_savings_usd"] - 250) < 0.01, ct
+    return "complete-transition payback combines both steps' install cost and net savings"
+
+
+@case
+def case_sequencing_raises_if_fixed_charge_is_nonzero():
+    """This function is deliberately written to assume AC1's own $0 finding
+    -- calling it with fixed_charge_verdict_is_zero=False must fail loudly
+    rather than silently apply zero-credit logic to a nonzero-charge rate."""
+    try:
+        A.sequencing_and_paybacks(
+            fixed_charge_verdict_is_zero=False,
+            wh_install_usd=1, wh_annual_net_savings_usd=1, wh_payback_years=1.0,
+            furnace_install_usd=1, furnace_annual_net_savings_usd=1,
+            furnace_payback_years=1.0)
+        raise AssertionError("a nonzero fixed-charge verdict was silently accepted")
+    except SystemExit:
+        pass
+    return "a nonzero fixed-charge verdict fails closed rather than silently reusing zero-credit logic"
+
+
+# ---------------------------------------------------------------------------
+# Archive-dependent: build() end to end, byte-identical regeneration.
+# ---------------------------------------------------------------------------
+@case
+def case_build_end_to_end_on_the_real_archive():
+    _require_archive()
+    out = A.build()
+    assert out["applicable"] is True
+    assert out["fixed_charge_check"]["verdict"].startswith("confirmed")
+    enum_ = out["gas_end_use_enumeration"]
+    assert enum_["sum_check"]["pct_of_metered_total"] == 100.0
+    assert enum_["independent_bill_cross_check"]["pct_difference"] < 5.0
+    wh = out["water_heater_conversion"]
+    assert wh["floor_savings_annual_usd"] > 0
+    assert out["furnace_conversion"]["gas_savings_annual_usd"] > 0
+    seq = out["sequencing_and_paybacks"]
+    assert seq["fixed_charge_release_usd"] == 0.0
+    hr = out["service_headroom_check"]
+    assert hr["ampacity_verdict"] in ("pass", "fail", "not_determined")
+    return "build() runs end to end on the real archive and every section is internally consistent"
+
+
+@case
+def case_byte_identical_regeneration():
+    _require_archive()
+    import all_electric_endgame as mod
+    out1 = mod.build()
+    out2 = mod.build()
+    s1 = json.dumps(out1, indent=1, sort_keys=True)
+    s2 = json.dumps(out2, indent=1, sort_keys=True)
+    assert s1 == s2, "build() is not deterministic across two runs"
+    return "build() produces byte-identical output across two runs on the real archive"
+
+
+def main():
+    passed, skipped, failed = 0, 0, 0
+    for fn in CASES:
+        name = fn.__name__
+        try:
+            msg = fn()
+            print(f"PASS  {name}: {msg}")
+            passed += 1
+        except SkipCase as e:
+            print(f"SKIP  {name}: {e}")
+            skipped += 1
+        except Exception as e:
+            print(f"FAIL  {name}: {e!r}")
+            failed += 1
+            raise
+    print(f"\n{passed} passed, {skipped} skipped, {failed} failed "
+         f"(of {len(CASES)} cases)")
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

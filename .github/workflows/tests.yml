@@ -163,3 +163,7 @@ jobs:
       # behind SkipCase and simply skip here.
       - name: heat-pump conversion guard tests
         run: python analysis/test_heat_pump_conversion.py
+      # issue #20: same pattern -- synthetic fixtures for every pure
+      # function, real-archive cases gated behind SkipCase.
+      - name: all-electric endgame guard tests
+        run: python analysis/test_all_electric_endgame.py
