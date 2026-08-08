@@ -853,6 +853,62 @@ def case_non_heating_floor_is_reserved_per_segment_not_once_per_period():
 
 
 @case
+def case_cold_day_cannot_borrow_a_hot_days_unused_capacity_within_one_segment():
+    """Issue #109, round 3 (two independent Codex adversarial-review passes
+    on round 2; closes issue #118). Round 2 reserved the non-heating floor
+    once per charge-type SEGMENT, which can still be several real days
+    wide -- so a cold day inside an otherwise-unsplit (single-segment)
+    period could still silently borrow a hot day's unused capacity, the
+    identical bug round 2 fixed ACROSS segments, one granularity down
+    WITHIN a segment. This fixture is built so NO charge type splits at
+    all (a single 2-day segment for every charge type), isolating the
+    within-segment gap specifically -- the round-2 fixture above
+    (case_non_heating_floor_is_reserved_per_segment_not_once_per_period)
+    cannot catch this, since its own cold segment spreads HDD uniformly
+    across its days and so cannot distinguish day-level from segment-level
+    capping.
+
+    A 2-day period, 10 total therms, floor 3 therms/day:
+        heating_capable_per_day = 10/2 - 3 = 2.0 therms
+    Day 1 is HOT (zero HDD, zero heating demand). Day 2 is COLD, with a
+    raw HDD-proportional demand of 8 therms (deliberately far above its
+    own 2.0-therm capacity, so the cap binds hard).
+        day-level (correct): day 1 contributes 0 (no demand to cap, and
+            its own unused 2.0-therm capacity heads nowhere); day 2 caps at
+            min(8, 2.0) = 2.0 -> period total = 2.0
+        segment-level (round 2, the bug this case guards against
+            reverting to): the WHOLE segment's own capacity is
+            max(0, 10 - 3x2) = 4.0, letting day 2 draw on day 1's own
+            2.0 therms of never-needed capacity -> min(8, 4.0) = 4.0,
+            DOUBLE the correct figure."""
+    period = "Jan 1, 2026 - Jan 2, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-02"], "period": [period], "therms": [10.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-02", period, 2, 10.0, 1.0, np.nan, 0.0, 0.0)
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 1, 1): 0.0, dt.date(2026, 1, 2): 50.0})
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 8.0, "floor_therms_per_day": 3.0}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
+    row = rows[0]
+    segment_level_cap = max(0.0, 10.0 - 3.0 * 2)
+    assert abs(segment_level_cap - 4.0) < 1e-9, segment_level_cap   # sanity on the fixture itself
+    assert abs(row["heating_therms_attributed"] - 2.0) < 0.01, row
+    assert row["heating_therms_attributed"] < segment_level_cap, (
+        row, segment_level_cap, "day-level floor reservation must cap below what a "
+        "segment-level-only reservation would allow when one day in the segment is "
+        "hot and unused capacity could otherwise be silently loaned to a cold day")
+    return (f"a cold day's heating attribution ({row['heating_therms_attributed']} "
+           f"therms) cannot borrow a hot day's unused capacity within the same "
+           f"unsplit segment -- {segment_level_cap} is what a segment-level-only "
+           f"reservation would have wrongly allowed")
+
+
+@case
 def case_other_fees_borrows_gas_energy_day_ranges_when_segment_counts_match():
     """Issue #109: other_fees splits by THERM COUNT, not days, so it has no
     day-range of its own -- when it splits into the SAME number of segments
