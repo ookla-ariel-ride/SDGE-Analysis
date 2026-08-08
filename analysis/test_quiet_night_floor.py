@@ -566,6 +566,15 @@ def case_issue_114_investigation_matches_the_committed_artifact():
     assert by_gate[4.4]["n_july"] == 3, by_gate[4.4]
     assert by_gate[4.5]["n_july"] == 4 and by_gate[4.5]["n_total"] == 62, by_gate[4.5]
 
+    # the 2026-05-03 gate-boundary case (/review found this was still
+    # hand-typed prose, not committed code -- exactly the defect class this
+    # issue was filed over)
+    may = fresh["may_boundary_night"]
+    assert may["interval_04:45_kwh"] == 0.5, may
+    assert may["night_max_kw"] == 2.0 and may["excluded_under_current_gte_gate"] is True, may
+    assert may["may_median_kw_without_this_night"] == 0.845, may
+    assert may["may_median_kw_with_this_night"] == 0.85, may
+
     if not ARTIFACT.exists():
         raise SkipCase(f"{ARTIFACT} not committed in this checkout")
     committed = json.loads(ARTIFACT.read_text())["night_floor"]["issue_114_investigation"]

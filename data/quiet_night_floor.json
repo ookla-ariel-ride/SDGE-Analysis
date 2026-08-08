@@ -2337,6 +2337,15 @@
      "median_july_kw": 1.05
     }
    ],
+   "may_boundary_night": {
+    "interval_04:45_kwh": 0.5,
+    "night_max_kw": 2.0,
+    "night_median_kw_if_included": 1.02,
+    "gate_kw": 2.0,
+    "excluded_under_current_gte_gate": true,
+    "may_median_kw_without_this_night": 0.845,
+    "may_median_kw_with_this_night": 0.85
+   },
    "july_boundary_nights": {
     "2026-07-09": 4.4,
     "2025-07-25": 6.64
