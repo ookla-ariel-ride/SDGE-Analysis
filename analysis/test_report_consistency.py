@@ -1171,6 +1171,36 @@ def case_extra_results_phantom_baseload_matches_the_artifact():
     return "the §13 phantom-baseload paragraph's nights/kW figures match extra_results.json's phantom"
 
 
+def case_away_days_finding_matches_the_artifact():
+    """issue #113: the 'Away-days corroborate the baseload floor' bullet
+    said 12 strictly-away days while extended_results.json's away_days.
+    n_away has always said 11 (confirmed byte-identical on regeneration,
+    so this was never a stale artifact, only a hand-typed prose count that
+    drifted from it) -- a plain transcription error, since the bullet's
+    own median/occupied/implied-kW figures already matched the artifact
+    exactly. Pins the count, and joins the two same-shaped 'N kWh/day'
+    median figures with their own away/occupied labels so they can't
+    silently swap (the same defect class issue #112's own review found
+    repeatedly elsewhere in this file)."""
+    er_path = ROOT / "data" / "extended_results.json"
+    assert er_path.exists(), f"{er_path} is committed public data and must exist"
+    er = json.loads(er_path.read_text())
+    aw = er["away_days"]
+
+    m = re.search(r"<li><b>Away-days corroborate the baseload floor.*?</li>", HTML, re.S)
+    assert m, "'Away-days corroborate the baseload floor' bullet not found in index.html"
+    bullet = m.group(0)
+
+    assert f"the {aw['n_away']} strictly-away days" in bullet, (
+        f"away_days.n_away ({aw['n_away']}) not cited as 'the N strictly-away days'")
+    assert (f"import a median <b>{aw['away_median_import_kwh_day']} kWh/day "
+            f"≈ {aw['implied_unattended_kw']} kW of unattended draw</b> "
+            f"(occupied days: {aw['occupied_median_import_kwh_day']} kWh/day)") in bullet, (
+        "the away/occupied median kWh-day figures and implied unattended kW "
+        "not found together in their own ordered clause -- may be stale or swapped")
+    return "the away-days finding's day count and median figures match extended_results.json"
+
+
 def case_gross_import_decomposition_section_matches_the_artifact():
     """issue #112: the §9 'Gross imports are climbing' subsection is
     hand-written, not templated -- lock its bill-ground-truth kWh figures
@@ -1495,6 +1525,7 @@ CASES = [
     case_extra_results_cleaning_cadence_matches_the_artifact,
     case_extra_results_trueup_ledger_matches_the_artifact,
     case_extra_results_phantom_baseload_matches_the_artifact,
+    case_away_days_finding_matches_the_artifact,
     case_gross_import_decomposition_section_matches_the_artifact,
     case_irreducible_bill_figures_match_the_artifact,
     case_lifetime_payback_recovered_figures_match_the_artifact,
