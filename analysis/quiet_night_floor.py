@@ -452,7 +452,16 @@ def issue_114_investigation(d):
     d["evkw"] = ev
 
     def ev_free_count(start_h, end_h):
+        # Codex review: the wrapped (21, 6)-style window's LAST calendar date
+        # in the dataset has no "next day" data to read (the archive ends at
+        # midnight on its own final date), so its own window is truncated
+        # (observed: 2026-07-23 has 12 intervals, not the full 36) --
+        # counting a truncated window as a complete "EV-free night" would be
+        # an artifact of where the data happens to end, not a real
+        # observation. Require the full expected interval count.
         wraps = start_h > end_h  # e.g. (21, 6) means 9pm today through 6am tomorrow
+        hours = (24 - start_h + end_h) if wraps else (end_h - start_h)
+        expected_intervals = hours * 4  # 15-minute intervals
         free = []
         for date, g in d.groupby("date"):
             if wraps:
@@ -461,7 +470,9 @@ def issue_114_investigation(d):
                 night = d[mask]
             else:
                 night = g[(g["hour"] >= start_h) & (g["hour"] < end_h)]
-            if not night.empty and night["evkw"].sum() == 0:
+            if len(night) != expected_intervals:
+                continue  # truncated window (dataset boundary) -- not a real observation
+            if night["evkw"].sum() == 0:
                 free.append((date, float(night["kw"].median())))
         return free
 
