@@ -694,7 +694,11 @@ was already committed, and copies the other six keys through unchanged):
   (p10 0.785, p90 1.36); `monthly_kw` seasonal profile peaking Sep–Oct (1.37 kW) with a May
   low (0.845); `cycling_std_kw` 0.142 (compressor-like duty cycling present);
   `annual_kwh_at_median` 8,979; `lowest5_daily_import_kwh` — the lowest occupied-day import
-  floor is ~10.7–11.7 kWh/day.
+  floor is ~10.7–11.7 kWh/day. `analysis/quiet_night_floor.py` (§3.28) independently
+  re-measures the same physical quantity and gets 43 quiet nights / median 1.03 kW — a small,
+  investigated (issue #114) disagreement; see §3.28's closing paragraph for what was checked
+  and what could not be recovered. "EV-free" here should not be read literally: issue #114
+  found the two counts do NOT differ by an EV-charging filter (see §3.28).
 - `escalation` — **RETIRED variant** of the battery rate-escalation ladder ($14,500
   installed, the superseded $1,743/yr evening-only base saving from §3.8, 1%/yr capacity
   fade, 5% discount): 3%/yr → 7.8 yr payback / NPV10 +$102; 5% → 7.3 / +$1,373;
@@ -3695,6 +3699,53 @@ the attested CAUSE (owner's word only, report prose — not independently verifi
 plug-meter study), and separately labels the pricing and battery-interaction sections as
 modeled (both assume the measured floor magnitude holds constant across all 8,760 hours of
 the year).
+
+**The 43-vs-44 quiet-night discrepancy (issue #114), investigated.** This script's own
+measurement (43 quiet nights, median 1.03 kW) and §3.11's `phantom` figures (44 nights,
+1.025 kW) are allowed to disagree by design — `cross_check_night_floor` reports the gap as a
+corroboration, not an assertion of equality. Issue #114 asked for the SPECIFIC mechanism
+behind the 1-night gap, evidenced rather than guessed. What was checked, cross-referencing
+`behavior_rebuild.detect_sessions`'s EV-session detection night-by-night against this
+script's own classification on the real measured year:
+- §3.11's "44 EV-free quiet nights" phrasing suggests an EV-charging filter distinguishes the
+  two counts. Direct evidence says otherwise: all 43 of this script's quiet nights already
+  have zero EV kWh inside the 1-5am window (an EV session is exactly the kind of high-power
+  event `HIGH_DEMAND_GATE_KW` is built to catch, so a night that survives the gate has
+  already excluded EV charging in that window). Widening to the more literal reading —
+  no EV session anywhere in a 9pm-6am overnight window — is far MORE restrictive than this
+  script's rule: 38 of the 43 quiet nights have an EV session somewhere in that broader
+  window, so an EV-free-overnight filter would cut the count to 5, not raise it to 44. The
+  EV-session-presence hypothesis is falsified by this evidence, not confirmed.
+- A genuine gate-boundary case exists on 2026-05-03: one interval reads exactly 0.500 kWh
+  (2.00 kW), landing exactly on `HIGH_DEMAND_GATE_KW` under this script's `>=` comparison,
+  which excludes the night. A `>` comparison would flip it to quiet — illustrating the KIND
+  of sensitivity that could produce a 1-night gap, but not confirmed as the specific missing
+  night: including it moves May's monthly median from 0.845 kW to 0.85 kW, while `phantom`'s
+  own May figure is 0.845 kW, the value this script already reproduces exactly without that
+  night. Since July is the one month whose median actually differs between the two artifacts
+  (1.04 here vs 1.035 published), the missing 44th night, if there is a single one, more
+  likely sits in July.
+- Every window/gate variant tried (0-6am, 1-6am, 0-5am windows; 1.9/2.5 kW gates) leaves
+  July's quiet-night count at 3 or 0 — no tested variant produces a 4th July quiet night, and
+  every non-quiet July night's 1-5am max power sits at 12 kW or higher, nowhere near a
+  plausible gate value. The July gap is not a simple threshold or window tweak on this
+  script's own rule.
+- `phantom` has no lost generator to recover: `git log --diff-filter=A -- data/
+  extra_results.json` shows it was added directly as a data file (commit 29f8573, "Add
+  soiling, cleaning-study, carbon, and extras data outputs") with no generator script ever
+  committed alongside it, consistent with `analysis/extra_results.py`'s own documentation
+  that `phantom` is a one-time in-session computation this repo has no reproducible record
+  of (issue #34/PR #103's deliberate decision to freeze it rather than reverse-engineer a
+  methodology that cannot be verified).
+
+**Conclusion:** the exact night(s) behind the 44-vs-43 gap are not recoverable from
+currently available evidence — stated honestly rather than guessed (CLAUDE.md §0). What IS
+established is that the literal EV-session-presence story is wrong, and that the two
+measurements' true reconciliation is some form of gate/window-boundary sensitivity, on a gap
+small enough (~2% of the quiet-night count, ~0.5% of the median) that neither artifact was
+changed: this script's 43/1.03 kW figures are its own honest, independently reproducible
+measurement, and `phantom` stays frozen per the already-documented issue #34/PR #103
+decision.
 
 **Reproduction.** `price_map_from_rates()` computes the price map straight from `rates.py`
 (the canonical module) and cross-checks it against the committed `data/extra_results.json ->
