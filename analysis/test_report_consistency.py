@@ -671,6 +671,30 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     return "the §10 heat-pump-conversion section matches the live artifact, including the full sign-flip bracket"
 
 
+def case_all_electric_paragraph_furnace_savings_matches_the_artifact():
+    """Issue #109 round 3 (Codex adversarial review, pass 3): the §10
+    "Going all-electric" paragraph cites the furnace's own annual gas
+    savings a SECOND time, independently of the main heat-pump-conversion
+    subsection case above -- and that case's own regex deliberately stops
+    right before this paragraph starts (it ends the section at "<p><b>Going
+    all-electric"), so a re-based gas_savings_annual_usd drifted there
+    silently: three rounds of fixes updated the main subsection's own
+    citation but left this second one at the pre-#109 $483/yr for two
+    commits before Codex's third adversarial-review pass caught it. This
+    pins the second citation independently so that gap can't reopen."""
+    hpc = json.loads((ROOT / "data" / "heat_pump_conversion.json").read_text())
+    if not hpc["applicable"]:
+        raise SkipCase("household.has_gas is false")
+    m = re.search(r"<p><b>Going all-electric.*?</p>", HTML, re.S)
+    assert m, "the 'Going all-electric' paragraph was not found in index.html"
+    rounded = round(hpc["gas_savings_annual_usd"])
+    assert f"~${rounded}/yr heating gas" in m.group(0), (
+        f"the 'Going all-electric' paragraph's own furnace-savings citation "
+        f"must match the live gas_savings_annual_usd ({rounded}), not a "
+        f"stale copy from an earlier regeneration")
+    return "the 'Going all-electric' paragraph's furnace gas-savings citation matches the live heat-pump artifact"
+
+
 def case_monte_carlo_paragraph_matches_uncertainty_results():
     """issue #106: uncertainty_results.json had zero pinning cases despite
     the §6 Monte Carlo paragraph quoting its payback median/p10/p90 and
@@ -726,6 +750,7 @@ CASES = [
     case_tou_structure_stress_table_matches_the_artifact,
     case_dsgs_prestaged_sensitivity_matches_the_artifact,
     case_heat_pump_conversion_section_matches_the_artifact,
+    case_all_electric_paragraph_furnace_savings_matches_the_artifact,
     case_monte_carlo_paragraph_matches_uncertainty_results,
 ]
 
