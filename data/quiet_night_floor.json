@@ -2236,21 +2236,26 @@
   "issue_114_investigation": {
    "ev_absence_by_window": {
     "1-5h": {
-     "n": 69
+     "n": 69,
+     "n_eligible_nights": 365
     },
     "0-5h": {
-     "n": 49
+     "n": 49,
+     "n_eligible_nights": 365
     },
     "0-6h": {
      "n": 42,
+     "n_eligible_nights": 365,
      "median_kw": 1.08,
      "p10_kw": 0.822
     },
     "1-6h": {
-     "n": 59
+     "n": 59,
+     "n_eligible_nights": 365
     },
     "21-6h(+1d)": {
-     "n": 40
+     "n": 40,
+     "n_eligible_nights": 364
     }
    },
    "july_gate_sweep": [

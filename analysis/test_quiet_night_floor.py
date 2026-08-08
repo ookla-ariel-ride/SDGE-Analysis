@@ -538,6 +538,14 @@ def case_issue_114_investigation_matches_the_committed_artifact():
     expected_n = {"1-5h": 69, "0-5h": 49, "0-6h": 42, "1-6h": 59, "21-6h(+1d)": 40}
     got_n = {k: v["n"] for k, v in fresh["ev_absence_by_window"].items()}
     assert got_n == expected_n, got_n
+    # Codex review round 3: the wrapped window's own archive-boundary
+    # exclusion means its denominator is 364, not the 365 every other
+    # window uses -- pin that explicitly so a reader (or future prose edit)
+    # can't silently treat "40" as directly comparable to the 365-night
+    # counts above it.
+    expected_eligible = {"1-5h": 365, "0-5h": 365, "0-6h": 365, "1-6h": 365, "21-6h(+1d)": 364}
+    got_eligible = {k: v["n_eligible_nights"] for k, v in fresh["ev_absence_by_window"].items()}
+    assert got_eligible == expected_eligible, got_eligible
     # Codex review round 2's DST-vs-archive-boundary fix is NOT independently
     # exercised by this pinning check on this household's real data: the two
     # DST-transition nights checked directly (2025-11-01/2026-03-07's own

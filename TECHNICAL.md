@@ -3713,13 +3713,16 @@ would select from all 365 nights — and wrongly concluded that hypothesis was "
 Re-run correctly below, cross-referencing `behavior_rebuild.detect_sessions` against EVERY
 one of the 365 measured nights:
 - §3.11's "44 EV-free quiet nights" phrasing suggests phantom's rule is EV-session absence,
-  not (or not only) a demand-magnitude gate. Classifying all 365 nights by "zero EV kWh in
-  the window" ALONE (no demand gate at all) gives: 1-5am window 69 nights, 0-5am 49, 0-6am
-  42, 1-6am 59, 9pm-6am (the literal "overnight" reading) 40 — several land close to 43/44 in
-  COUNT, the opposite of "falsified": EV-absence is a live, plausible candidate. But none of
-  these EV-free-only variants reproduces phantom's own median/p10 (1.025/0.785 kW) — the
-  closest-by-count 0-6am variant gives median 1.08, p10 0.822, both above phantom's figures —
-  so EV-absence alone is not a sufficient rule either.
+  not (or not only) a demand-magnitude gate. Classifying nights by "zero EV kWh in the
+  window" ALONE (no demand gate at all) gives: 1-5am window 69 (of 365 eligible nights),
+  0-5am 49 (365), 0-6am 42 (365), 1-6am 59 (365), 9pm-6am — the literal "overnight" reading —
+  40 (of only 364 eligible: this wrapped window's own final calendar date has no "next day"
+  data to read, so it's excluded as ineligible, not counted as non-quiet; see the committed
+  `issue_114_investigation.ev_absence_by_window.*.n_eligible_nights` field) — several land
+  close to 43/44 in COUNT, the opposite of "falsified": EV-absence is a live, plausible
+  candidate. But none of these EV-free-only variants reproduces phantom's own median/p10
+  (1.025/0.785 kW) — the closest-by-count 0-6am variant gives median 1.08, p10 0.822, both
+  above phantom's figures — so EV-absence alone is not a sufficient rule either.
 - A genuine gate-boundary case exists on 2026-05-03: one interval reads exactly 0.500 kWh
   (2.00 kW), landing exactly on `HIGH_DEMAND_GATE_KW` under this script's `>=` comparison,
   which excludes the night. A `>` comparison would flip it to quiet — illustrating the KIND

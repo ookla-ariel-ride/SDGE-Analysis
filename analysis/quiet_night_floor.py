@@ -114,13 +114,17 @@ cross-referenced against EVERY one of the 365 measured nights, not just the 43
 already accepted by HIGH_DEMAND_GATE_KW.
   - TECHNICAL.md 3.11's "44 EV-free quiet nights" phrasing suggests phantom's
     rule is EV-charging-session absence, not (or not only) this script's own
-    demand-magnitude gate. Classifying all 365 nights by "zero EV kWh in the
-    window" ALONE (no demand gate at all) gives: 1-5am window 69 nights,
-    0-5am 49, 0-6am 42, 1-6am 59, 9pm-6am (the literal "overnight" reading)
-    40 -- several of these land close to 43/44 in COUNT, which is the
-    opposite of "falsified": a pure EV-absence rule is a live, plausible
-    candidate, not a ruled-out one. But none of these EV-free-only variants
-    reproduces phantom's own median/p10 (1.025/0.785 kW): every one comes out
+    demand-magnitude gate. Classifying nights by "zero EV kWh in the window"
+    ALONE (no demand gate at all) gives: 1-5am window 69 (of 365 eligible),
+    0-5am 49 (365), 0-6am 42 (365), 1-6am 59 (365), 9pm-6am -- the literal
+    "overnight" reading -- 40 (of only 364 eligible: this wrapped window's
+    own final calendar date has no "next day" data to read, so it's excluded
+    as ineligible, not counted as non-quiet; see issue_114_investigation's
+    own n_eligible_nights field) -- several of these land close to 43/44 in
+    COUNT, which is the opposite of "falsified": a pure EV-absence rule is a
+    live, plausible candidate, not a ruled-out one. But none of these
+    EV-free-only variants reproduces phantom's own median/p10 (1.025/0.785
+    kW): every one comes out
     higher on both (e.g. the closest-by-count 0-6am variant gives median
     1.08, p10 0.822 -- notably above phantom's 1.025/0.785), so EV-absence
     ALONE is not a sufficient rule either; some further filtering (a demand
@@ -476,10 +480,11 @@ def issue_114_investigation(d):
         # intervals a night actually has.
         wraps = start_h > end_h  # e.g. (21, 6) means 9pm today through 6am tomorrow
         free = []
+        eligible = 0
         for date, g in d.groupby("date"):
             if wraps:
                 if (date + dt.timedelta(days=1)) not in all_dates:
-                    continue  # real archive-boundary truncation, not DST
+                    continue  # real archive-boundary truncation, not DST -- not eligible
                 mask = ((d["date"] == date) & (d["hour"] >= start_h)) | \
                        ((d["date"] == date + dt.timedelta(days=1)) & (d["hour"] < end_h))
                 night = d[mask]
@@ -487,16 +492,23 @@ def issue_114_investigation(d):
                 night = g[(g["hour"] >= start_h) & (g["hour"] < end_h)]
             if night.empty:
                 continue
+            eligible += 1
             if night["evkw"].sum() == 0:
                 free.append((date, float(night["kw"].median())))
-        return free
+        return free, eligible
 
     ev_absence_by_window = {}
     for start_h, end_h in EV_ABSENCE_WINDOWS:
         wraps = start_h > end_h
         label = f"{start_h}-{end_h}h" + ("(+1d)" if wraps else "")
-        free = ev_free_count(start_h, end_h)
-        entry = {"n": len(free)}
+        free, eligible = ev_free_count(start_h, end_h)
+        # Codex review round 3: the wrapped window's own archive-boundary
+        # exclusion (above) means its `n` is drawn from 364 eligible nights,
+        # not the full 365 -- reporting `n` alone next to the other windows'
+        # 365-night counts would silently compare different denominators.
+        # `n_eligible_nights` makes that explicit rather than letting a
+        # reader assume every window's denominator is the same 365.
+        entry = {"n": len(free), "n_eligible_nights": eligible}
         if start_h == 0 and end_h == 6:  # the closest-by-count window the docstrings cite by shape
             meds = np.array([m for _, m in free])
             entry["median_kw"] = round(float(np.median(meds)), 4)
