@@ -1013,9 +1013,14 @@ def case_ev_fleet_fuel_cost_matches_extended_results():
         f"{_fmt_usd(ed['supercharge_cost_est'])} of supercharging",
         f"{ed['supercharge_kwh']:,} kWh at ~${sc['sc_price_est']}/kWh",
         f"{_fmt_usd(ed['gas_counterfactual_cost'])}/yr",
-        f"~{_fmt_usd(ed['dividend_yr'])}/yr",
-        f"{_fmt_usd(ed['home_ev_cost_if_all_sop'])}/yr",
-        f"~{_fmt_usd(ed['dividend_yr_post_fix'])}/yr",
+        # issue #112 Codex review round 2: the current-behavior and
+        # post-fix dividend figures (both bare "~$X/yr") could swap
+        # without detection. Joined into the ordered "dividend of ~$A/yr
+        # ... falls to $B/yr) it rises to ~$C/yr" clause.
+        (f"electrification dividend of ~{_fmt_usd(ed['dividend_yr'])}/yr</b>, and once charging is "
+         f"fully super-off-peak (home charging cost falls to "
+         f"{_fmt_usd(ed['home_ev_cost_if_all_sop'])}/yr) it rises to <b>"
+         f"~{_fmt_usd(ed['dividend_yr_post_fix'])}/yr"),
     ]
     for value in checks:
         assert value in para, f"§9 electrification-dividend paragraph: {value!r} not found in it"
@@ -1080,8 +1085,12 @@ def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
     v5c = nbt["battery_marginal_under_nbt"]["5c"]["battery_marginal_yr"]
     v8c = nbt["battery_marginal_under_nbt"]["8c"]["battery_marginal_yr"]
     checks = [
-        f"{_fmt_usd2(real_hourly['battery_marginal_usd_yr'])}/yr",
-        f"${nbt['battery_marginal_under_nem2']:,}/yr",
+        # issue #112 Codex review round 2: these two values were bare
+        # presence checks -- swapping which figure is cited "under NBT"
+        # vs "under NEM 2.0" would still pass. Joined into the ordered
+        # "rises to $A/yr under NBT vs $B/yr under NEM 2.0" clause.
+        (f"rises</i> to <b>{_fmt_usd2(real_hourly['battery_marginal_usd_yr'])}/yr</b> under NBT vs "
+         f"<b>${nbt['battery_marginal_under_nem2']:,}/yr</b> under NEM 2.0"),
         f"${v8c:,}–{v3c:,}/yr",  # the bracket, low (8c) to high (3c)
         f"3¢→${v3c:,}/yr",
         f"5¢→${v5c:,}/yr",
@@ -1230,9 +1239,18 @@ def case_irreducible_bill_figures_match_the_artifact():
     m2 = re.search(r'<p class="small"><b>That \$4,904/yr already includes the floor.*?</p>', HTML, re.S)
     assert m2, "§7 baseline-floor recap sentence not found in index.html"
     recap = m2.group(0)
+    # issue #112 Codex review round 2: each amount/percentage pair was
+    # already internally ordered, but nothing tied the FIXED-charge pair
+    # to its own "is the fixed daily charge" label vs the non-bypassable
+    # pair's "is non-bypassable charges" label -- swapping which pair gets
+    # which label would still pass. Each check now includes its own label.
     recap_checks = [
-        f"{_fmt_usd2(base['strictly_irreducible_usd'])}/yr ({round(base['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}%)",
-        f"{_fmt_usd2(base['non_bypassable_usd'])}/yr ({round(base['non_bypassable_fraction_of_projected_bill'] * 100, 1)}%)",
+        (f"{_fmt_usd2(base['strictly_irreducible_usd'])}/yr "
+         f"({round(base['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}%) is the "
+         f"fixed daily charge"),
+        (f"{_fmt_usd2(base['non_bypassable_usd'])}/yr "
+         f"({round(base['non_bypassable_fraction_of_projected_bill'] * 100, 1)}%) is "
+         f"non-bypassable charges"),
         f"{_fmt_usd2(base['combined_usd'])}/yr",
         f"{round(base['combined_fraction_of_projected_bill'] * 100, 1)}%",
     ]
