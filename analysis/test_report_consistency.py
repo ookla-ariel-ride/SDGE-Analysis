@@ -927,8 +927,14 @@ def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
     # document-ordered preceding phrases (as case_reprice_by_vintage_note_
     # matches_the_artifact does above) so each value is tied to its own
     # clause, not just present somewhere in a paragraph this dense.
+    # issue #112 /review: abs() drops the sign, so the check below only
+    # pinned the magnitude, not the "above"/"below" direction word that
+    # carries this paragraph's actual conclusion (cost-dispatch EMITS MORE
+    # than the no-battery baseline) -- a flipped direction word would still
+    # pass. Bound to the direction the artifact's own sign implies.
+    a_direction = "above" if A["co2_avoided_vs_baseline_kg"] < 0 else "below"
     checks = [
-        ("comes out", f"{abs(A['co2_avoided_vs_baseline_kg']):.1f} kg/yr"),
+        ("comes out", f"{abs(A['co2_avoided_vs_baseline_kg']):.1f} kg/yr <b>{a_direction}</b>"),
         ("baseline (", f"{A['net_co2_kg']:,.1f} vs {base['net_co2_kg']:,.1f} kg/yr"),
         ("sized to the same", f"{round(th['target_clean_frac'] * 100, 1)}%/{round(th['target_dirty_frac'] * 100, 1)}%"),
         ("thresholds (", f"{th['kg_per_mwh']:.1f} vs {round(th['discharge_kg_per_mwh'], 1)} kg/MWh"),
@@ -1153,8 +1159,12 @@ def case_extra_results_phantom_baseload_matches_the_artifact():
     para = m.group(0)
     checks = [
         f"the {ph['quiet_nights']} nights",
-        f"{ph['baseload_kw_median']} kW",
-        f"(p10 {ph['baseload_kw_p10']}, p90 {ph['baseload_kw_p90']})",
+        # issue #112 /review: a bare "{median} kW" check would still pass
+        # if the median got swapped with the paragraph's own seasonal
+        # figures (also bare "N kW", e.g. "Sep-Oct nights run 1.37 kW") --
+        # joined with its own "median" label and its own p10/p90 pair.
+        f"median <b>{ph['baseload_kw_median']} kW</b> (p10 {ph['baseload_kw_p10']}, p90 {ph['baseload_kw_p90']})",
+        f"Sep–Oct nights run {ph['monthly_kw']['9']} kW vs {ph['monthly_kw']['5']} kW in May",
     ]
     for value in checks:
         assert value in para, f"§13 phantom-baseload paragraph: {value!r} not found in it"
