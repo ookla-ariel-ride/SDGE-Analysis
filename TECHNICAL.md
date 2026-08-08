@@ -3024,7 +3024,7 @@ in BOTH seasons (`battery.per_period`) — genuinely unknown, not evidence for e
 positive or a zero-floored range.
 
 An earlier draft of this section argued per-TOU-cell absolute-level trends (on-peak
-delivery rates rising, individually, with 95% CIs excluding zero: summer +7.63%/yr,
+delivery rates rising, individually, with 95% CIs excluding zero: summer +7.66%/yr,
 winter +11.3%/yr) PROVED the 0% floor correct. **Retracted** (Codex adversarial review,
 issue #59, first pass): that conflates "the price level in each period has risen" with
 "the arbitrage margin has risen" — two different quantities. Winter on-peak and winter
@@ -3034,7 +3034,7 @@ case where both periods rising together leaves the SPREAD roughly flat, not evid
 widened. What remains true, stated more carefully: no cell or spread-level figure in this
 repo, at any rigor, shows a statistically significant NEGATIVE trend for this household's
 own tariff (super-off-peak's negative point estimate, ~-21%/yr both seasons, has a 95% CI
-crossing zero in both — [-61.54, 60.62] summer, [-49.31, 20.86] winter). Externally
+crossing zero in both — [-61.89, 62.02] summer, [-49.24, 20.68] winter). Externally
 (WebSearch, 2026-08), California IOU electric rates HAVE fallen in a real, documented
 multi-year episode: PG&E's residential rates dropped in several separate 2024-2025 rate
 actions, ~$12/mo lower by October 2025 for a typical customer (pge.com/en/newsroom/
