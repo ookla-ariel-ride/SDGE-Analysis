@@ -573,6 +573,18 @@ def issue_114_investigation(d):
         may_median_without = round(float(np.median(may_meds_without)), 4) if may_meds_without else None
         may_median_with = round(float(np.median(may_meds_without + [median_kw])), 4) \
             if may_meds_without else None
+
+        # /review found the prose's "this ONE night" phrasing (below) was an
+        # unasserted uniqueness claim -- computed here, not just eyeballed,
+        # so a future archive regeneration that adds a second night at
+        # exactly the gate value elsewhere in the year fails the pin instead
+        # of silently falsifying the docstring's "one night" framing.
+        n_at_exact_gate = sum(
+            1 for date, g in d.groupby("date")
+            if not (n2 := g[(g["hour"] >= 1) & (g["hour"] < 5)]).empty
+            and float(n2["kw"].max()) == HIGH_DEMAND_GATE_KW
+        )
+
         return {
             "interval_04:45_kwh": round(float(interval_045["kw"].iloc[0]) / 4, 4)
                                  if not interval_045.empty else None,
@@ -580,6 +592,7 @@ def issue_114_investigation(d):
             "night_median_kw_if_included": median_kw,
             "gate_kw": HIGH_DEMAND_GATE_KW,
             "excluded_under_current_gte_gate": max_kw >= HIGH_DEMAND_GATE_KW,
+            "n_nights_at_exact_gate": n_at_exact_gate,
             "may_median_kw_without_this_night": may_median_without,
             "may_median_kw_with_this_night": may_median_with,
         }

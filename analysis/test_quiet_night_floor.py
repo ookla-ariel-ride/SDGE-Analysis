@@ -574,6 +574,11 @@ def case_issue_114_investigation_matches_the_committed_artifact():
     assert may["night_max_kw"] == 2.0 and may["excluded_under_current_gte_gate"] is True, may
     assert may["may_median_kw_without_this_night"] == 0.845, may
     assert may["may_median_kw_with_this_night"] == 0.85, may
+    # /review found the docstring's "this ONE night" phrasing was an
+    # unasserted uniqueness claim -- pin it so a future archive adding a
+    # second night at exactly the gate value elsewhere in the year fails
+    # this test instead of silently falsifying the prose
+    assert may["n_nights_at_exact_gate"] == 1, may
 
     if not ARTIFACT.exists():
         raise SkipCase(f"{ARTIFACT} not committed in this checkout")
