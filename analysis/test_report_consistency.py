@@ -711,6 +711,756 @@ def case_monte_carlo_paragraph_matches_uncertainty_results():
             "10-yr NPV at 4%/7% all match uncertainty_results.json")
 
 
+def _fmt_usd2(x):
+    return f"${x:,.2f}"
+
+
+def case_backup_endurance_table_matches_the_artifact():
+    """issue #112: the §6 outage-endurance table is hand-written, not
+    templated -- lock every cited hour/day figure against the live
+    artifact so a regeneration can't silently drift them."""
+    be_path = ROOT / "data" / "backup_endurance.json"
+    assert be_path.exists(), f"{be_path} is committed public data and must exist"
+    be = json.loads(be_path.read_text())
+
+    start = HTML.index("<h3>Outage endurance")
+    end = HTML.index("</table>", start) + len("</table>")
+    table_html = HTML[start:end]
+
+    tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
+    td_re = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+    tag_re = re.compile(r"<[^>]+>")
+
+    def fmt_hours(h):
+        h = int(h)
+        if h % 24 == 0 and h >= 24:
+            return f"{h // 24} d"
+        return f"{h} h"
+
+    rows = [m.group(1) for m in tr_re.finditer(table_html)][1:]  # skip <thead> row
+    configs = [("IQ 5P", "IQ 5P"), ("IQ 10C", "IQ 10C"), ("PW3", "PW3"), ("PW3 + Exp", "PW3+Exp")]
+    assert len(rows) == len(configs), f"expected {len(configs)} config rows, found {len(rows)}"
+
+    for (label, key), row_html in zip(configs, rows):
+        cells = [tag_re.sub("", c).strip() for c in td_re.findall(row_html)]
+        assert len(cells) == 3, f"{label}: expected 3 cells, got {cells}"
+        assert cells[0] == label, f"row order drifted: expected {label!r}, found {cells[0]!r}"
+        t1, t2 = be[f"{key}|t1"], be[f"{key}|t2"]
+        # issue #112 Codex review: `in` is a bare substring check -- an
+        # artifact median of "7 h" would also match a stale cell reading
+        # "17 h". Require the duration at a word boundary so a stale digit
+        # prefix/suffix can't slip through.
+        median1 = re.escape(fmt_hours(t1["median_h"]))
+        assert re.search(rf"(?<!\d){median1}(?!\d)", cells[1]), (
+            f"{label} essentials cell {cells[1]!r} does not contain the artifact's "
+            f"median ({fmt_hours(t1['median_h'])}) at a word boundary")
+        assert cells[2] == fmt_hours(t2["median_h"]), (
+            f"{label} house-minus-EV cell {cells[2]!r} != {fmt_hours(t2['median_h'])!r}")
+        if key == "PW3":
+            # issue #112 Codex review: the worst-case annotation was
+            # searched across the whole table, so it could pass even if
+            # moved onto a different config's row. Bind it to PW3's own
+            # essentials cell specifically.
+            pw3_p10 = be["PW3|t1"]["p10_h"]
+            assert f"({pw3_p10} h worst-case)" in cells[1], (
+                f"PW3's p10_h ({pw3_p10}) worst-case annotation not found in PW3's own "
+                f"essentials cell {cells[1]!r}")
+    return "the §6 outage-endurance table's hour/day figures match the live backup_endurance artifact"
+
+
+def case_battery_plan_matrix_table_matches_the_artifact():
+    """issue #112: the §4 battery×plan matrix table and its canonical
+    cross-check paragraph are hand-written, not templated -- lock every
+    cited dollar figure against the live artifact."""
+    bpm_path = ROOT / "data" / "battery_plan_matrix.json"
+    assert bpm_path.exists(), f"{bpm_path} is committed public data and must exist"
+    bpm = json.loads(bpm_path.read_text())
+    plans = bpm["plans"]
+
+    start = HTML.index('<h2 id="s4">')
+    table_end = HTML.index("</table>", start) + len("</table>")
+    table_html = HTML[start:table_end]
+    tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
+    td_re = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+    tag_re = re.compile(r"<[^>]+>")
+    rows = [m.group(1) for m in tr_re.finditer(table_html)][1:]
+    plan_order = ["EV-TOU-5", "EV-TOU-2", "TOU-ELEC"]
+    assert len(rows) == len(plan_order), f"expected {len(plan_order)} plan rows, found {len(rows)}"
+    for plan, row_html in zip(plan_order, rows):
+        cells = [tag_re.sub("", c).strip() for c in td_re.findall(row_html)]
+        assert cells[0] == plan, f"row order drifted: expected {plan!r}, found {cells[0]!r}"
+        p = plans[plan]
+        assert cells[1] == _fmt_usd(p["no_battery"]), (plan, "no_battery", cells[1])
+        assert cells[2] == _fmt_usd(p["with_battery"]), (plan, "with_battery", cells[2])
+        assert cells[3] == f"{_fmt_usd(p['battery_value'])}/yr", (plan, "battery_value", cells[3])
+
+    # issue #112 adversarial review (Codex): the canonical-crosscheck prose
+    # sentence lives in the <p class="small"> right AFTER the table, not
+    # inside it -- searching the whole HTML document for these bare dollar
+    # figures (as an earlier version of this case did) would still pass if
+    # that entire crosscheck sentence were deleted, since $4,904/$2,328 are
+    # also cited elsewhere in the report (e.g. §11's own baseline-bill
+    # figure). Bound the search to the crosscheck paragraph specifically.
+    crosscheck_start = HTML.index('<p class="small">', table_end)
+    crosscheck_end = HTML.index("</p>", crosscheck_start) + len("</p>")
+    crosscheck_html = HTML[crosscheck_start:crosscheck_end]
+    cc = bpm["canonical_crosscheck_ev_tou_5"]
+    assert f"${cc['no_battery']:,}" in crosscheck_html, (
+        f"cross-check no_battery {cc['no_battery']} not cited in the §4 crosscheck paragraph")
+    assert f"${cc['battery_value']:,}/yr" in crosscheck_html, (
+        f"cross-check battery_value {cc['battery_value']} not cited in the §4 crosscheck paragraph")
+    return "the §4 battery×plan matrix table and its canonical cross-check figures match battery_plan_matrix.json"
+
+
+def case_battery_hardware_sizing_table_matches_battery_sim_artifact():
+    """issue #112: the §6 'Arbitrage value (current behavior)' table is
+    hand-written, not templated -- lock its four cited configs' kWh/kW and
+    savings-per-year figures against the live artifact."""
+    bs_path = ROOT / "data" / "battery_sim.json"
+    assert bs_path.exists(), f"{bs_path} is committed public data and must exist"
+    bs = {row["config"]: row for row in json.loads(bs_path.read_text())}
+
+    start = HTML.index("<h3>Arbitrage value (current behavior)</h3>")
+    end = HTML.index("</table>", start) + len("</table>")
+    table_html = HTML[start:end]
+    tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
+    td_re = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+    tag_re = re.compile(r"<[^>]+>")
+    rows = [m.group(1) for m in tr_re.finditer(table_html)][1:]
+
+    labels = [("1× Enphase IQ 5P", "1x Enphase IQ 5P"),
+              ("1× Enphase IQ 10C", "1x Enphase IQ 10C"),
+              ("1× Tesla PW3", "1x Tesla Powerwall 3"),
+              ("PW3 + Expansion", "PW3 + 1 Expansion")]
+    assert len(rows) == len(labels), f"expected {len(labels)} config rows, found {len(rows)}"
+
+    def fmt_kwh(v):
+        return str(int(v)) if v == int(v) else str(v)
+
+    for (row_label, json_key), row_html in zip(labels, rows):
+        cells = [tag_re.sub("", c).strip() for c in td_re.findall(row_html)]
+        assert cells[0] == row_label, f"row order drifted: expected {row_label!r}, found {cells[0]!r}"
+        row = bs[json_key]
+        expected_kwh_kw = f"{fmt_kwh(row['usable_kwh'])} / {round(row['power_kw'], 1)}"
+        assert cells[1] == expected_kwh_kw, (row_label, cells[1], expected_kwh_kw)
+        assert cells[2] == _fmt_usd(row["net_annual_savings"]), (row_label, cells[2])
+    return "the §6 arbitrage-value table's kWh/kW and savings figures match battery_sim.json"
+
+
+def case_bill_decomposition_finding_matches_the_artifact():
+    """issue #112: the §10 '$48.25 became $398.56' finding is hand-written,
+    not templated -- lock its two bill totals and the applied-NEM-credit
+    swing that drives them against the live artifact.
+
+    Issue #112 adversarial review (Codex, round 2): an earlier version of
+    this case abs()'d both NEM-credit values and checked their presence
+    anywhere in the whole finding block -- it could not tell base_usd from
+    current_usd, or a credit from a charge, so REVERSING the row
+    ("-128.39 -> -5.06" printed as "-5.06 -> -128.39") or flipping both
+    signs positive still passed. Parses the actual table row -- the same
+    "applied NEM generation credit" row -- and asserts its cells in their
+    real signed, ordered form."""
+    bd_path = ROOT / "data" / "bill_decomposition.json"
+    assert bd_path.exists(), f"{bd_path} is committed public data and must exist"
+    bd = json.loads(bd_path.read_text())
+    base, current = bd["periods"]["base"], bd["periods"]["current"]
+    nem = next(t for t in bd["non_energy_bridge"] if t["term"] == "applied_nem_generation_credit")
+
+    start = HTML.index('<div class="finding"><p class="claim">A $48.25')
+    end = HTML.index("</div>", start) + len("</div>")
+    section = HTML[start:end]
+
+    # issue #112 Codex review: two separate presence checks don't enforce
+    # DIRECTION -- "$398.56 became $48.25" would satisfy both equally.
+    # Joined into the ordered "A $X ... became $Y" claim the report prints.
+    assert (f"A {_fmt_usd2(base['current_charges'])} early-summer bill became "
+            f"{_fmt_usd2(current['current_charges'])}") in section, (
+        "the ordered 'A $base became $current' claim not found -- bill totals may be "
+        "reversed or stale")
+
+    def fmt_signed_bare(v):
+        return f"−{abs(v):.2f}" if v < 0 else f"{v:.2f}"
+
+    tr_re = re.compile(r"<tr>\s*<td>applied NEM generation credit</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>\s*</tr>")
+    m = tr_re.search(section)
+    assert m, "the 'applied NEM generation credit' table row was not found in its expected form"
+    quantity_cell, change_cell = m.group(1), m.group(2)
+    expected_quantity = f"{fmt_signed_bare(nem['base_usd'])} → {fmt_signed_bare(nem['current_usd'])}"
+    assert quantity_cell == expected_quantity, (
+        f"applied NEM generation credit row: expected {expected_quantity!r}, found {quantity_cell!r} "
+        "-- base_usd/current_usd may be reversed, sign-flipped, or stale")
+    expected_change = f"+{nem['change_usd']:.2f}" if nem["change_usd"] >= 0 else fmt_signed_bare(nem["change_usd"])
+    assert change_cell == expected_change, (
+        f"applied NEM generation credit row: expected change {expected_change!r}, found {change_cell!r}")
+    return "the §10 bill-decomposition finding's dollar figures, including the signed/ordered NEM-credit row, match bill_decomposition.json"
+
+
+def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
+    """issue #112: the §13 cost-vs-carbon dispatch tradeoff paragraph is
+    hand-written, not templated -- lock every cited figure (thresholds,
+    per-policy CO2/savings, the tradeoff penalties, and the union policy's
+    comparison ratios) against the live artifact."""
+    cdt_path = ROOT / "data" / "carbon_dispatch_tradeoff.json"
+    assert cdt_path.exists(), f"{cdt_path} is committed public data and must exist"
+    cdt = json.loads(cdt_path.read_text())
+    th = cdt["threshold"]
+    base = cdt["baseline"]
+    A, B, C = cdt["policies"]["A_cost_min"], cdt["policies"]["B_carbon_min"], cdt["policies"]["C_union"]
+    tr = cdt["tradeoff"]
+    rca = cdt["run_c_analysis"]
+
+    m = re.search(r"<p>The price-aware dispatch this report recommends throughout.*?</p>", HTML, re.S)
+    assert m, "§13 carbon-vs-cost dispatch paragraph not found in index.html"
+    para = m.group(0)
+
+    b_vs_c_gap_kg = round(B["co2_avoided_vs_baseline_kg"] - C["co2_avoided_vs_baseline_kg"], 1)
+    ratio_c_vs_b = round(C["savings_vs_baseline_usd"] / B["savings_vs_baseline_usd"], 1)
+    c_pct_of_a = round(C["savings_vs_baseline_usd"] / A["savings_vs_baseline_usd"] * 100)
+
+    # issue #112 adversarial review, round 3 (Codex): an earlier version of
+    # this case checked each formatted value's presence ANYWHERE in the
+    # paragraph -- five of these values share the identical "X kg/yr" shape
+    # (policy A's/B's/C's own avoided-CO2 figures, the cost-penalty-of-clean
+    # figure, and the B-vs-C gap), so swapping e.g. policy B's 244.1 with
+    # policy C's 181.1 left every check satisfied despite publishing the
+    # wrong figure against the wrong policy. Anchored to sequential,
+    # document-ordered preceding phrases (as case_reprice_by_vintage_note_
+    # matches_the_artifact does above) so each value is tied to its own
+    # clause, not just present somewhere in a paragraph this dense.
+    # issue #112 /review: abs() drops the sign, so the check below only
+    # pinned the magnitude, not the "above"/"below" direction word that
+    # carries this paragraph's actual conclusion (cost-dispatch EMITS MORE
+    # than the no-battery baseline) -- a flipped direction word would still
+    # pass. Bound to the direction the artifact's own sign implies.
+    a_direction = "above" if A["co2_avoided_vs_baseline_kg"] < 0 else "below"
+    checks = [
+        ("comes out", f"{abs(A['co2_avoided_vs_baseline_kg']):.1f} kg/yr <b>{a_direction}</b>"),
+        ("baseline (", f"{A['net_co2_kg']:,.1f} vs {base['net_co2_kg']:,.1f} kg/yr"),
+        ("sized to the same", f"{round(th['target_clean_frac'] * 100, 1)}%/{round(th['target_dirty_frac'] * 100, 1)}%"),
+        ("thresholds (", f"{th['kg_per_mwh']:.1f} vs {round(th['discharge_kg_per_mwh'], 1)} kg/MWh"),
+        ("avoids", f"{B['co2_avoided_vs_baseline_kg']:.1f} kg/yr net against that baseline but keeps only"),
+        ("but keeps only", _fmt_usd2(B["savings_vs_baseline_usd"])),
+        ("cost-minimizing policy's", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/yr saving"),
+        ("saving —", f"{_fmt_usd2(tr['cost_penalty_of_clean_policy_usd'])}/yr cost penalty"),
+        ("cost penalty (", f"{round(tr['cost_penalty_of_clean_policy_usd_per_kwh_cycled'] * 100, 1)}¢"),
+        ("cheapness carries a", f"{tr['co2_penalty_of_cheap_policy_kg']:.1f} kg/yr net carbon penalty"),
+        ("carbon penalty (", f"{round(tr['co2_penalty_of_cheap_policy_kg_per_kwh_cycled'], 3)} kg"),
+        ("recovers", f"{_fmt_usd2(C['savings_vs_baseline_usd'])}/yr ("),
+        ("/yr (", f"{c_pct_of_a}%"),
+        ("still avoiding", f"{C['co2_avoided_vs_baseline_kg']:.1f} kg/yr net"),
+        ("a stated", f"{round(rca['meaningful_threshold_pct'] * 100)}%-on-both-metrics"),
+        ("sits within", f"{round(rca['pct_diff_co2_vs_b'] * 100, 1)}%"),
+        ("but small", f"{b_vs_c_gap_kg:.1f} kg/yr"),
+        ("capture roughly", f"{ratio_c_vs_b} times"),
+        ("cost-minimizing run cycles", f"{round(A['kwh_cycled_thru']):,} kWh/yr"),
+        ("carbon-minimizing run's", f"{round(B['kwh_cycled_thru']):,}"),
+        ("agrees with its", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/${cdt['cross_check']['run_a_computed_save_usd']:,}"),
+    ]
+    cursor = 0
+    for anchor, value in checks:
+        anchor_idx = para.find(anchor, cursor)
+        assert anchor_idx != -1, f"§13 carbon-dispatch-tradeoff paragraph: anchor phrase {anchor!r} not found (in order) after position {cursor}"
+        window = para[anchor_idx:anchor_idx + 100]
+        assert value in window, (
+            f"§13 carbon-dispatch-tradeoff paragraph: {value!r} not found within 100 chars "
+            f"after anchor {anchor!r} -- either drifted from its own artifact field or been "
+            f"swapped with a same-shaped sibling figure")
+        cursor = anchor_idx + len(anchor)
+    return "the §13 carbon-vs-cost dispatch paragraph matches carbon_dispatch_tradeoff.json"
+
+
+def case_tornado_battery_sensitivity_matches_extended_results():
+    """issue #112: the §6 payback-sensitivity (tornado) sentence is
+    hand-written, not templated -- lock its base payback and all four
+    levers' swing years against the live artifact."""
+    er_path = ROOT / "data" / "extended_results.json"
+    assert er_path.exists(), f"{er_path} is committed public data and must exist"
+    er = json.loads(er_path.read_text())
+    tb = er["tornado_battery"]
+
+    m = re.search(r"<p class=\"small\"><b>Payback sensitivity \(tornado\).*?</p>", HTML, re.S)
+    assert m, "§6 tornado payback-sensitivity sentence not found in index.html"
+    para = m.group(0)
+
+    checks = [
+        f"{tb['base_payback_yr']}-yr base",
+        f"{tb['levers']['dispatch_policy']['swing_yr']}-yr swing",
+        # issue #112 adversarial review, self-swept: three bare "(N)"/
+        # "(N yr)" swing values with no lever name of their own baked in
+        # would still pass if reordered among the three levers. Joined
+        # into the one ordered "install quote (A yr), escalation (B), and
+        # EV-fix (C)" clause the report actually prints.
+        (f"the install quote ({tb['levers']['install_cost']['swing_yr']} yr), "
+         f"rate escalation ({tb['levers']['escalation_5yr_avg']['swing_yr']}), and "
+         f"the EV-fix interaction ({tb['levers']['post_behavior']['swing_yr']})"),
+    ]
+    for value in checks:
+        assert value in para, f"§6 tornado sentence: {value!r} not found in it"
+    return "the §6 tornado payback-sensitivity sentence matches extended_results.json's tornado_battery"
+
+
+def case_ev_fleet_fuel_cost_matches_extended_results():
+    """issue #112: the §9 EV-fleet fuel-cost paragraph and its supercharging
+    upper-bound bullet are hand-written, not templated -- lock every cited
+    dollar and kWh figure against the live artifact."""
+    er_path = ROOT / "data" / "extended_results.json"
+    assert er_path.exists(), f"{er_path} is committed public data and must exist"
+    er = json.loads(er_path.read_text())
+    ed = er["electrification_dividend"]
+    sc = er["supercharge_delta"]
+
+    m = re.search(r"<p>The fleet.s ~34,000 mi/yr costs.*?</p>", HTML, re.S)
+    assert m, "§9 electrification-dividend paragraph not found in index.html"
+    para = m.group(0)
+    checks = [
+        f"{_fmt_usd(ed['total_ev_fuel_cost'])}/yr in fuel",
+        f"{_fmt_usd(ed['home_ev_cost_current_rates'])} of home charging",
+        f"{ed['home_ev_kwh']:,} kWh priced at current rates",
+        f"{_fmt_usd(ed['supercharge_cost_est'])} of supercharging",
+        f"{ed['supercharge_kwh']:,} kWh at ~${sc['sc_price_est']}/kWh",
+        f"{_fmt_usd(ed['gas_counterfactual_cost'])}/yr",
+        # issue #112 Codex review round 2: the current-behavior and
+        # post-fix dividend figures (both bare "~$X/yr") could swap
+        # without detection. Joined into the ordered "dividend of ~$A/yr
+        # ... falls to $B/yr) it rises to ~$C/yr" clause.
+        (f"electrification dividend of ~{_fmt_usd(ed['dividend_yr'])}/yr</b>, and once charging is "
+         f"fully super-off-peak (home charging cost falls to "
+         f"{_fmt_usd(ed['home_ev_cost_if_all_sop'])}/yr) it rises to <b>"
+         f"~{_fmt_usd(ed['dividend_yr_post_fix'])}/yr"),
+    ]
+    for value in checks:
+        assert value in para, f"§9 electrification-dividend paragraph: {value!r} not found in it"
+
+    m2 = re.search(r"<li><b>Supercharging shift.*?</li>", HTML, re.S)
+    assert m2, "§9 supercharging-shift bullet not found in index.html"
+    bullet = m2.group(0)
+    assert f"{sc['sc_kwh']:,} kWh/yr" in bullet, "supercharge_delta.sc_kwh not cited in the bullet"
+    assert f"≤{_fmt_usd(sc['full_shift_value_yr'])}/yr" in bullet, (
+        "supercharge_delta.full_shift_value_yr not cited in the bullet")
+    return "the §9 EV-fleet fuel-cost paragraph and supercharging bullet match extended_results.json"
+
+
+def case_gas_hdd_decomposition_matches_extended_results():
+    """issue #112: the §9 HDD gas-decomposition paragraph is hand-written,
+    not templated -- lock its floor/slope regression figures against the
+    live artifact."""
+    er_path = ROOT / "data" / "extended_results.json"
+    assert er_path.exists(), f"{er_path} is committed public data and must exist"
+    er = json.loads(er_path.read_text())
+    gd = er["gas_decomposition"]
+
+    m = re.search(r"<p><b>The HDD decomposition agrees with the bills.*?</p>", HTML, re.S)
+    assert m, "§9 HDD gas-decomposition paragraph not found in index.html"
+    para = m.group(0)
+    # issue #112 adversarial review, self-swept: floor_therms_day/annual_
+    # floor_therms, slope_therms_per_hdd/annual_heating_therms, and
+    # heating_gas_cost_yr/hpwh_saving_yr are each a same-shaped pair (both
+    # "N therms/yr", or both "~$N/yr") that would still pass if swapped
+    # within their own pair. Joined into the ordered clauses the report
+    # actually prints.
+    checks = [
+        f"{gd['floor_therms_day']} therms/day → {gd['annual_floor_therms']} therms/yr",
+        (f"{gd['slope_therms_per_hdd']} therms/HDD → {gd['annual_heating_therms']} therms/yr</b> "
+         f"of space heating (~{_fmt_usd(gd['heating_gas_cost_yr'])}/yr at bill rates)"),
+        f"~{_fmt_usd(gd['hpwh_saving_yr'])}/yr</b> priced the same midday-timer way",
+    ]
+    for value in checks:
+        assert value in para, f"§9 HDD gas-decomposition paragraph: {value!r} not found in it"
+    return "the §9 HDD gas-decomposition paragraph matches extended_results.json's gas_decomposition"
+
+
+def case_nbt_flat_credit_sensitivity_matches_the_artifacts():
+    """issue #112: the §13 NBT-2039 flat-credit-sensitivity paragraph is
+    hand-written, not templated -- lock its real-hourly figure (from
+    nem3_grandfathering.json) and its flat 3/5/8¢ bracket (from
+    extended_results.json's nbt_2039) against the live artifacts."""
+    er_path = ROOT / "data" / "extended_results.json"
+    n3_path = ROOT / "data" / "nem3_grandfathering.json"
+    assert er_path.exists(), f"{er_path} is committed public data and must exist"
+    assert n3_path.exists(), f"{n3_path} is committed public data and must exist"
+    er = json.loads(er_path.read_text())
+    n3 = json.loads(n3_path.read_text())
+    nbt = er["nbt_2039"]
+    real_hourly = n3["battery_marginal_reconciliation_vs_nbt_2039"]["battery_marginal_real_hourly_usd_yr"]["NBT26"]
+
+    m = re.search(r"<p>NEM 2\.0 runs to ~Dec 2039.*?</p>", HTML, re.S)
+    assert m, "§13 NBT-2039 flat-credit-sensitivity paragraph not found in index.html"
+    para = m.group(0)
+
+    v3c = nbt["battery_marginal_under_nbt"]["3c"]["battery_marginal_yr"]
+    v5c = nbt["battery_marginal_under_nbt"]["5c"]["battery_marginal_yr"]
+    v8c = nbt["battery_marginal_under_nbt"]["8c"]["battery_marginal_yr"]
+    checks = [
+        # issue #112 Codex review round 2: these two values were bare
+        # presence checks -- swapping which figure is cited "under NBT"
+        # vs "under NEM 2.0" would still pass. Joined into the ordered
+        # "rises to $A/yr under NBT vs $B/yr under NEM 2.0" clause.
+        (f"rises</i> to <b>{_fmt_usd2(real_hourly['battery_marginal_usd_yr'])}/yr</b> under NBT vs "
+         f"<b>${nbt['battery_marginal_under_nem2']:,}/yr</b> under NEM 2.0"),
+        f"${v8c:,}–{v3c:,}/yr",  # the bracket, low (8c) to high (3c)
+        f"3¢→${v3c:,}/yr",
+        f"5¢→${v5c:,}/yr",
+        f"8¢→${v8c:,}/yr",
+    ]
+    for value in checks:
+        assert value in para, f"§13 NBT-2039 flat-credit-sensitivity paragraph: {value!r} not found in it"
+    return "the §13 NBT-2039 flat-credit-sensitivity paragraph matches nem3_grandfathering.json and extended_results.json"
+
+
+def case_extra_results_cleaning_cadence_matches_the_artifact():
+    """issue #112: the §12 cleaning-cadence paragraph is hand-written, not
+    templated -- lock its second-cleaning marginal-value range and its
+    full-blended-value best case against the live artifact."""
+    xr_path = ROOT / "data" / "extra_results.json"
+    assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
+    xr = json.loads(xr_path.read_text())
+    cleaning = xr["cleaning"]
+    marginals = [v["marginal2nd"] for v in cleaning.values()]
+    best_case = cleaning["2.4"]["save1"]
+
+    m = re.search(r"<p>Modeling soiling accumulation over the Apr–Nov dry season.*?</p>", HTML, re.S)
+    assert m, "§12 cleaning-cadence paragraph not found in index.html"
+    para = m.group(0)
+    assert f"${min(marginals)}–{max(marginals)}/yr" in para, (
+        f"second-cleaning marginal range ${min(marginals)}-{max(marginals)}/yr not found")
+    assert f"${best_case}/yr" in para, f"best-case cleaning save1 (${best_case}/yr) not found"
+    return "the §12 cleaning-cadence paragraph's marginal range and best case match extra_results.json's cleaning"
+
+
+def case_extra_results_trueup_ledger_matches_the_artifact():
+    """issue #112: the §13 true-up ledger cross-check sentence is
+    hand-written, not templated -- lock its charges/credits/net figures
+    against the live artifact."""
+    xr_path = ROOT / "data" / "extra_results.json"
+    assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
+    xr = json.loads(xr_path.read_text())
+    tu = xr["trueup"]
+
+    m = re.search(r"True-up ledger cross-check:.*?reconcile exactly", HTML, re.S)
+    assert m, "§13 true-up ledger cross-check sentence not found in index.html"
+    sentence = m.group(0)
+    assert f"{_fmt_usd2(tu['charges'])} charges" in sentence, "trueup.charges not cited"
+    assert f"{_fmt_usd2(tu['credits'])} credits" in sentence, "trueup.credits not cited"
+    assert f"{_fmt_usd2(tu['net'])} net" in sentence, "trueup.net not cited"
+    return "the §13 true-up ledger cross-check sentence matches extra_results.json's trueup"
+
+
+def case_extra_results_phantom_baseload_matches_the_artifact():
+    """issue #112: the §13 phantom-baseload paragraph is hand-written, not
+    templated -- lock its quiet-night count and baseload kW percentiles
+    against the live artifact."""
+    xr_path = ROOT / "data" / "extra_results.json"
+    assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
+    xr = json.loads(xr_path.read_text())
+    ph = xr["phantom"]
+
+    m = re.search(r"<p>On the 44 nights with zero EV charging.*?</p>", HTML, re.S)
+    assert m, "§13 phantom-baseload paragraph not found in index.html"
+    para = m.group(0)
+    checks = [
+        f"the {ph['quiet_nights']} nights",
+        # issue #112 /review: a bare "{median} kW" check would still pass
+        # if the median got swapped with the paragraph's own seasonal
+        # figures (also bare "N kW", e.g. "Sep-Oct nights run 1.37 kW") --
+        # joined with its own "median" label and its own p10/p90 pair.
+        f"median <b>{ph['baseload_kw_median']} kW</b> (p10 {ph['baseload_kw_p10']}, p90 {ph['baseload_kw_p90']})",
+        f"Sep–Oct nights run {ph['monthly_kw']['9']} kW vs {ph['monthly_kw']['5']} kW in May",
+    ]
+    for value in checks:
+        assert value in para, f"§13 phantom-baseload paragraph: {value!r} not found in it"
+    return "the §13 phantom-baseload paragraph's nights/kW figures match extra_results.json's phantom"
+
+
+def case_gross_import_decomposition_section_matches_the_artifact():
+    """issue #112: the §9 'Gross imports are climbing' subsection is
+    hand-written, not templated -- lock its bill-ground-truth kWh figures
+    and both shape-assumption decomposition splits against the live
+    artifact."""
+    gd_path = ROOT / "data" / "gross_import_decomposition.json"
+    assert gd_path.exists(), f"{gd_path} is committed public data and must exist"
+    gd = json.loads(gd_path.read_text())
+    bgt = gd["bill_ground_truth"]
+    dec = gd["decomposition"]
+    robust = gd["decomposition_identifiability_robustness_check"]
+
+    m = re.search(r"<h3>Gross imports are climbing.*?</p>", HTML, re.S)
+    assert m, "§9 'Gross imports are climbing' subsection not found in index.html"
+    section = m.group(0)
+
+    checks = [
+        # issue #112 adversarial review, self-swept: bare "X kWh"/"Y kWh"
+        # checked separately would pass even if the report swapped which
+        # year rose and which fell (the underlying claim of this whole
+        # subsection). Joined into the one ordered "2024-figure ... to
+        # 2026-figure" clause the report actually prints.
+        (f"{bgt['period_2024']['gross_kwh']:,.0f} kWh "
+         f"({bgt['period_2024']['period'].replace(' - ', '–')}, {bgt['period_2024']['days']} days) to "
+         f"{bgt['period_2026']['gross_kwh']:,.0f} kWh"),
+        f"{bgt['period_2024']['net_kwh']:,.0f} → {bgt['period_2026']['net_kwh']:,.0f} kWh",
+        f"{bgt['observed_delta_gross_kwh']:,.0f} kWh",
+        f"+{dec['consumption_term_kwh']:,.0f} kWh consumption against +{dec['production_term_kwh']:,.0f} kWh production",
+        (f"+{round(robust['consumption_term_kwh_this_scenario']):,} kWh consumption against "
+         f"+{round(robust['production_term_kwh_this_scenario']):,} kWh production"),
+    ]
+    for value in checks:
+        assert value in section, f"§9 gross-imports section: {value!r} not found in it"
+    return "the §9 'Gross imports are climbing' subsection matches gross_import_decomposition.json"
+
+
+def case_irreducible_bill_figures_match_the_artifact():
+    """issue #112: the §7 irreducible-bill-floor paragraphs are
+    hand-written, not templated -- lock the baseline floor, the per-package
+    fixed/non-bypassable dollar figures, and every package's own share
+    fractions against the live artifact."""
+    ib_path = ROOT / "data" / "irreducible_bill.json"
+    assert ib_path.exists(), f"{ib_path} is committed public data and must exist"
+    ib = json.loads(ib_path.read_text())
+    base = ib["baseline_floor"]
+    pf = ib["package_floor_fractions"]
+
+    m = re.search(
+        r'<p class="small"><b>\$264\.10.*?</p>\s*<p class="small">Priced at each package.*?</p>',
+        HTML, re.S)
+    assert m, "§7 irreducible-bill-floor paragraphs not found in index.html"
+    section = m.group(0)
+
+    checks = [
+        _fmt_usd2(base["strictly_irreducible_usd"]),
+        f"{round(pf['LOW']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of LOW's bill",
+        f"{round(pf['MID']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of MID's",
+        f"{round(pf['HIGH']['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}% of HIGH's",
+        f"{_fmt_usd2(pf['LOW']['non_bypassable_usd'])} for LOW",
+        f"{_fmt_usd2(pf['MID']['non_bypassable_usd'])} for MID",
+        f"{_fmt_usd2(pf['HIGH']['non_bypassable_usd'])} for HIGH",
+        # issue #112 adversarial review, self-swept (same pattern Codex
+        # found elsewhere in this file): these three bare percentages have
+        # no LOW/MID/HIGH label of their own baked into the string, unlike
+        # the checks above -- but the report always prints them together,
+        # in this exact order, in one "X% / Y% / Z%" clause, so checking
+        # the joined literal (not three separate substring checks) enforces
+        # that order and catches a swap between any pair of them.
+        (f"{round(pf['LOW']['combined_fraction_of_projected_bill'] * 100, 1)}% / "
+         f"{round(pf['MID']['combined_fraction_of_projected_bill'] * 100, 1)}% / "
+         f"{round(pf['HIGH']['combined_fraction_of_projected_bill'] * 100, 1)}%"),
+    ]
+    for value in checks:
+        assert value in section, f"§7 irreducible-bill paragraphs: {value!r} not found in it"
+
+    m2 = re.search(r'<p class="small"><b>That \$4,904/yr already includes the floor.*?</p>', HTML, re.S)
+    assert m2, "§7 baseline-floor recap sentence not found in index.html"
+    recap = m2.group(0)
+    # issue #112 Codex review round 2: each amount/percentage pair was
+    # already internally ordered, but nothing tied the FIXED-charge pair
+    # to its own "is the fixed daily charge" label vs the non-bypassable
+    # pair's "is non-bypassable charges" label -- swapping which pair gets
+    # which label would still pass. Each check now includes its own label.
+    recap_checks = [
+        (f"{_fmt_usd2(base['strictly_irreducible_usd'])}/yr "
+         f"({round(base['strictly_irreducible_fraction_of_projected_bill'] * 100, 1)}%) is the "
+         f"fixed daily charge"),
+        (f"{_fmt_usd2(base['non_bypassable_usd'])}/yr "
+         f"({round(base['non_bypassable_fraction_of_projected_bill'] * 100, 1)}%) is "
+         f"non-bypassable charges"),
+        f"{_fmt_usd2(base['combined_usd'])}/yr",
+        f"{round(base['combined_fraction_of_projected_bill'] * 100, 1)}%",
+    ]
+    for value in recap_checks:
+        assert value in recap, f"§7 baseline-floor recap sentence: {value!r} not found in it"
+    return "the §7 irreducible-bill-floor paragraphs match irreducible_bill.json"
+
+
+def case_lifetime_payback_recovered_figures_match_the_artifact():
+    """issue #112: the §11 lifetime-payback recommendation box is
+    hand-written, not templated -- lock the invoice cost, the crossover
+    dates, the no-solar counterfactual bill, and the blended $/kWh figures
+    against the live artifact."""
+    lp_path = ROOT / "data" / "lifetime_payback.json"
+    assert lp_path.exists(), f"{lp_path} is committed public data and must exist"
+    lp = json.loads(lp_path.read_text())
+
+    m = re.search(r'<div class="rec"><b>The \$37,845 gross cost was recovered.*?</div>', HTML, re.S)
+    assert m, "§11 lifetime-payback recommendation box not found in index.html"
+    box = m.group(0)
+
+    checks = [
+        f"${lp['invoice_usd']:,}",
+        f"{round(lp['crossover']['gross']['fraction_through_year'] * 100)}% of the way through "
+        f"{lp['crossover']['gross']['year']}",
+        str(lp["crossover"]["net_itc"]["year"]),
+        f"${lp['nosolar_bill_usd']:,}/yr",
+        # issue #112 adversarial review, self-swept: two bare "$X.XX/kWh"
+        # values (current-rate vs pre-2026-TOU) with no label of their own
+        # baked in would still both pass if swapped. Joined into the one
+        # ordered "blended ~$A/kWh; ~$B/kWh under the pre-2026" clause.
+        f"blended ~${lp['blended_new_tou']:.2f}/kWh; ~${lp['blended_old_tou']:.2f}/kWh under the pre-2026",
+    ]
+    for value in checks:
+        assert value in box, f"§11 lifetime-payback box: {value!r} not found in it"
+    return "the §11 lifetime-payback recommendation box matches lifetime_payback.json"
+
+
+def case_nem3_grandfathering_section_matches_the_artifact():
+    """issue #112: the §13 'What NEM 2.0 grandfathering is worth' subsection
+    is hand-written, not templated -- lock its NEM-2.0/NBT bill totals, the
+    grandfathering-value gap, and the Delivery-only alternative against the
+    live artifact."""
+    n3_path = ROOT / "data" / "nem3_grandfathering.json"
+    assert n3_path.exists(), f"{n3_path} is committed public data and must exist"
+    n3 = json.loads(n3_path.read_text())
+    nem2 = n3["nem2"]["annual_bill_usd_modeled"]
+    nbt = n3["nbt_counterfactual"]["NBT26"]
+    alt = n3["generation_component_sensitivity"]["alternative_bills"]["NBT26"]
+
+    m = re.search(r"<h3>What NEM 2\.0 grandfathering is worth.*?</p>", HTML, re.S)
+    assert m, "§13 NEM-2.0-grandfathering subsection not found in index.html"
+    section = m.group(0)
+
+    # issue #112 Codex review round 3: the <h3> heading itself independently
+    # cites this same primary-to-Delivery-only range ("What NEM 2.0
+    # grandfathering is worth: $A-$B/yr") -- a stale/swapped HEADING would
+    # go undetected by the paragraph-body checks below, since the body's
+    # own correct copy of the same two numbers (found anywhere in the whole
+    # `section`, heading included) would already satisfy them regardless of
+    # what the heading itself said. Scoped explicitly to the heading text.
+    heading_end = section.index("</h3>")
+    heading = section[:heading_end]
+    expected_heading_range = f"{_fmt_usd2(nbt['grandfathering_value_usd'])}–{_fmt_usd2(alt['grandfathering_value_usd'])}/yr"
+    assert expected_heading_range in heading, (
+        f"the <h3> heading's own '{expected_heading_range}' range not found -- it may have "
+        f"drifted from, or been swapped independently of, the paragraph body's own figures")
+
+    # issue #112 Codex review: bare presence checks don't associate each
+    # total with its own scenario (NEM 2.0 vs NBT) or the two grandfathering
+    # values with their own basis (primary vs Delivery-only) -- reversing
+    # either pair left every check satisfied. Anchored to the report's own
+    # labels (the two bill totals) and sequential document order (the two
+    # grandfathering values, which share no distinguishing label of their
+    # own in the prose).
+    assert f"from {_fmt_usd2(nem2)} (NEM 2.0) to {_fmt_usd2(nbt['annual_bill_usd'])} (NBT)" in section, (
+        "the ordered 'from $X (NEM 2.0) to $Y (NBT)' bill-total claim not found -- "
+        "the two scenarios' totals may be reversed or stale")
+    cursor = section.index("(NBT)")
+    gap_idx = section.find("a gap of", cursor)
+    assert gap_idx != -1, "'a gap of' clause not found after the NEM2/NBT bill totals"
+    assert f"{_fmt_usd2(nbt['grandfathering_value_usd'])}/yr" in section[gap_idx:gap_idx + 60], (
+        "the primary grandfathering-value gap not found within its own clause")
+    alt_idx = section.find("prices the same measured year at", gap_idx)
+    assert alt_idx != -1, "'prices the same measured year at' (Delivery-only) clause not found"
+    assert f"{_fmt_usd2(alt['grandfathering_value_usd'])}/yr" in section[alt_idx:alt_idx + 60], (
+        "the Delivery-only alternative grandfathering value not found within its own clause")
+    return "the §13 NEM-2.0-grandfathering subsection matches nem3_grandfathering.json"
+
+
+def case_reprice_by_vintage_note_matches_the_artifact():
+    """issue #112: the §7 'Model vs. actual' note is hand-written, not
+    templated -- lock every one of its six decomposition terms and the
+    residual, plus the totals they reconcile against, to the live
+    artifact.
+
+    Issue #112 adversarial review (Codex): an earlier version of this case
+    checked each formatted value's presence ANYWHERE in the note, with no
+    link to its own label -- two same-shaped values (e.g. the fixed-charge
+    and delivery-vintage effects, both small negative dollar figures) could
+    be silently swapped in the prose and this case would still pass, since
+    both formatted strings still appear somewhere in the note. Each check
+    below is anchored to a short, unique phrase of its own surrounding
+    prose (drawn from the report's own wording) immediately before the
+    number, so a swap breaks the anchor-plus-value pairing even though
+    both values remain present in the note somewhere."""
+    rv_path = ROOT / "data" / "reprice_by_vintage.json"
+    assert rv_path.exists(), f"{rv_path} is committed public data and must exist"
+    rv = json.loads(rv_path.read_text())
+
+    m = re.search(r'<div class="note" data-label="Model vs\. actual">.*?</div>', HTML, re.S)
+    assert m, "§7 'Model vs. actual' note not found in index.html"
+    note = m.group(0)
+
+    checks = [
+        ("365 days and", _fmt_usd2(rv["actual_total_sum"])),
+        ("native 365-day window at", _fmt_usd2(rv["native_window_total"])),
+        ("accounts for only", f"-{_fmt_usd2(abs(rv['window_effect']))}"),
+        ("The largest correction,", f"-{_fmt_usd2(abs(rv['generation_tou_window_effect']))}"),
+        ("generation dollars specifically (", f"-{_fmt_usd2(abs(rv['generation_clean_tou_effect']))}"),
+        ("a disclosed", f"+{_fmt_usd2(rv['delivery_pcia_restart_artifact_usd'])}"),
+        ('"Clean Impact Plus" product adder (', f"+{_fmt_usd2(rv['cip_adder_usd'])}"),
+        ("a per-period state surcharge tax (", f"+{_fmt_usd2(rv['state_surcharge_tax_usd'])}"),
+        ("Base Services Charge moves the total by", f"-{_fmt_usd2(abs(rv['fixed_charge_vintage_effect']))}"),
+        ("moves the total by a further", f"-{_fmt_usd2(abs(rv['delivery_vintage_effect']))}"),
+        ("accounts for only", f"-{_fmt_usd2(abs(rv['total_vintage_effect']))}"),
+        ("The remaining", f"-{_fmt_usd2(abs(rv['residual_total']))}"),
+    ]
+    # Each anchor is searched for STARTING right after the previous anchor's
+    # own position (not from the top of the note each time), and its value
+    # must appear within a short window after it -- this both disambiguates
+    # anchor phrases that legitimately repeat (e.g. "accounts for only"
+    # appears twice: once for window_effect, once for total_vintage_effect)
+    # and, per the finding above, defeats a swap: a value printed next to
+    # the WRONG anchor's own nearby text fails the windowed search even
+    # though it's still present somewhere else in the note.
+    cursor = 0
+    for anchor, value in checks:
+        anchor_idx = note.find(anchor, cursor)
+        assert anchor_idx != -1, f"§7 'Model vs. actual' note: anchor phrase {anchor!r} not found (in order) after position {cursor}"
+        window = note[anchor_idx:anchor_idx + 120]
+        assert value in window, (
+            f"§7 'Model vs. actual' note: {value!r} not found within 120 chars "
+            f"after anchor {anchor!r} -- either drifted from its own artifact "
+            f"field or been swapped with a neighboring figure")
+        cursor = anchor_idx + len(anchor)
+    return "the §7 'Model vs. actual' note's decomposition terms match reprice_by_vintage.json"
+
+
+def case_soiling_annual_economics_matches_the_artifact():
+    """issue #112: the §12 soiling-range paragraph is hand-written, not
+    templated -- lock its $/yr loss bracket against the live artifact's
+    two scenario estimates."""
+    sr_path = ROOT / "data" / "soiling_results.json"
+    assert sr_path.exists(), f"{sr_path} is committed public data and must exist"
+    sr = json.loads(sr_path.read_text())
+    lo = sr["annual_economics"]["scenario_A_this_years_evidence"]["annual_lost_usd_at_0.315"]
+    hi = sr["annual_economics"]["scenario_B_2024_cleaning_evidence"]["annual_lost_usd_at_0.315"]
+
+    m = re.search(r"<p>An independent soiling study.*?</p>", HTML, re.S)
+    assert m, "§12 soiling-range paragraph not found in index.html"
+    para = m.group(0)
+    assert f"${round(lo)}–{round(hi)}/yr" in para, (
+        f"soiling loss bracket ${round(lo)}-{round(hi)}/yr not found in the §12 paragraph")
+    return "the §12 soiling-range paragraph's $/yr loss bracket matches soiling_results.json"
+
+
+def case_weather_regression_paragraph_matches_the_artifact():
+    """issue #112: the §9 weather-regression paragraph is hand-written, not
+    templated -- lock its base load, cooling-degree-day coefficient, annual
+    cooling kWh, and pre-cooling/setpoint dollar values against the live
+    artifact."""
+    wr_path = ROOT / "data" / "weather_results.json"
+    assert wr_path.exists(), f"{wr_path} is committed public data and must exist"
+    wr = json.loads(wr_path.read_text())
+
+    m = re.search(r"<p>Regressing daily non-EV load against local daily temperatures.*?</p>", HTML, re.S)
+    assert m, "§9 weather-regression paragraph not found in index.html"
+    para = m.group(0)
+
+    def round10(v):
+        return int(round(v / 10.0)) * 10
+
+    checks = [
+        f"~{round(wr['base_kwh_day'])} kWh/day",
+        f"{wr['kwh_per_cdd65']} kWh per cooling-degree-day",
+        f"{round10(wr['annual_cooling_kwh']):,} kWh/yr",
+        # issue #112 Codex review: two bare "$X/yr" values (pre-cooling vs
+        # setpoint) with no label of their own baked in would still pass
+        # if swapped. Joined into the ordered "Pre-cooling ... $A/yr; ...
+        # setpoint ... $B/yr" clause the report actually prints.
+        (f"Pre-cooling in the 10am–2pm super-off-peak window (shifting ~half of "
+         f"on-peak cooling) is worth ≈ <b>${round10(wr['precool_shift_value'])}/yr</b>; "
+         f"a modest efficiency/setpoint improvement another ≈ <b>${round10(wr['setpoint_value'])}/yr"),
+    ]
+    for value in checks:
+        assert value in para, f"§9 weather-regression paragraph: {value!r} not found in it"
+    return "the §9 weather-regression paragraph matches weather_results.json"
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -733,6 +1483,25 @@ CASES = [
     case_heat_pump_conversion_section_matches_the_artifact,
     case_all_electric_paragraph_furnace_savings_matches_the_artifact,
     case_monte_carlo_paragraph_matches_uncertainty_results,
+    case_backup_endurance_table_matches_the_artifact,
+    case_battery_plan_matrix_table_matches_the_artifact,
+    case_battery_hardware_sizing_table_matches_battery_sim_artifact,
+    case_bill_decomposition_finding_matches_the_artifact,
+    case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact,
+    case_tornado_battery_sensitivity_matches_extended_results,
+    case_ev_fleet_fuel_cost_matches_extended_results,
+    case_gas_hdd_decomposition_matches_extended_results,
+    case_nbt_flat_credit_sensitivity_matches_the_artifacts,
+    case_extra_results_cleaning_cadence_matches_the_artifact,
+    case_extra_results_trueup_ledger_matches_the_artifact,
+    case_extra_results_phantom_baseload_matches_the_artifact,
+    case_gross_import_decomposition_section_matches_the_artifact,
+    case_irreducible_bill_figures_match_the_artifact,
+    case_lifetime_payback_recovered_figures_match_the_artifact,
+    case_nem3_grandfathering_section_matches_the_artifact,
+    case_reprice_by_vintage_note_matches_the_artifact,
+    case_soiling_annual_economics_matches_the_artifact,
+    case_weather_regression_paragraph_matches_the_artifact,
 ]
 
 
