@@ -395,9 +395,10 @@ KNOWN_GAPS = {
         "export value) -- same gap, no committed script or artifact computes it"),
     "ELECTRIFICATION_VERDICT_SHORT": (
         "data/heat_pump_conversion.json now prices the space-heating side "
-        "(install cost, three COP scenarios, real per-interval-billed net "
-        "savings ranging from modestly positive at COP 3.5/4.2 to slightly "
-        "negative at COP 2.8, not the flat gas_decomposition:"
+        "(install cost, three COP scenarios, real per-interval-billed "
+        "midpoint net savings positive at every COP tested -- from barely "
+        "so at COP 2.8 (within this model's own precision) to modestly so "
+        "at COP 3.5/4.2 -- not the flat gas_decomposition:"
         "hp_heating_saving_yr figure the pre-issue-#1 comparison used), but "
         "hpwh_saving_yr (205) still has no committed install-cost source -- "
         "'which appliance pencils' needs BOTH sides costed the same way, "

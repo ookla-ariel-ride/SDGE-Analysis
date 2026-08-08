@@ -66,26 +66,31 @@ spending on volumetric energy charges) come out of the SAME arithmetic the
 household's real bills are validated against, not a separate assumption.
 
 Gas savings are priced at each REAL billing period's own TRUE MARGINAL-TIER
-rate (issue #98): the heating slice (modeled as the marginal, top slice of
-that period's usage) is priced at whichever Gas Service tier(s) it actually
-occupies (data/bill_periods_gas.csv's baseline_rate/nonbaseline_rate, split
-at that period's own printed baseline_allowance_therms) plus the separate,
-flat, untiered gas_energy_charge_rate AND other_fees_rate (Public Purpose
-Programs + State Regulatory Fee combined) every therm pays -- see
-gas_savings_by_period()'s and _heating_slice_cost()'s own docstrings for
-the full mechanism. This replaced an earlier blended-average approximation
-(total_gas_service / therms) once parse_bills.py started extracting the
-baseline allowance and per-therm fee rates needed for the marginal-tier
-computation. A real gas bill PDF for this household's own GR-Residential
-rate (sdge_gas_2025-07-30.pdf) was read directly to confirm there is NO
-separate fixed/customer charge on this rate schedule -- every line item is
-per-therm or a percentage of the per-therm charge -- so eliminating heating
-gas usage removes that share of the bill in full, with no minimum floor
-left behind.
+rate, generalized to SEGMENT level (issue #109, on top of issue #98's
+period-level version): the heating slice (modeled as the marginal, top
+slice of usage) is allocated, by real day-by-day HDD share, across each
+charge type's own chronological rate segments (data/bill_gas_detail.csv),
+then priced at whichever Gas Service tier(s) that segment's own slice
+actually occupies (split at that segment's own day-proportional share of
+the period's printed baseline_allowance_therms) plus the separate, flat,
+untiered Gas Energy Charge AND other_fees rate (Public Purpose Programs +
+State Regulatory Fee combined) each segment's own slice pays -- see
+gas_savings_by_period()'s, _gas_service_segment_tier_cost()'s, and
+_other_fees_day_ranges()'s own docstrings for the full mechanism. This
+replaced an earlier period-level blended-rate approximation (issue #98's own
+version, which itself replaced a still-earlier total_gas_service / therms
+blend) once parse_bills.py started extracting per-segment detail into
+bill_gas_detail.csv. A real gas bill PDF for this household's own
+GR-Residential rate (sdge_gas_2025-07-30.pdf) was read directly to confirm
+there is NO separate fixed/customer charge on this rate schedule -- every
+line item is per-therm or a percentage of the per-therm charge -- so
+eliminating heating gas usage removes that share of the bill in full, with
+no minimum floor left behind.
 
 Run AFTER behavior_rebuild.py in the same working directory (needs its
 staged usage.csv); writes data/heat_pump_conversion.json.
 """
+import datetime as dt
 import json
 import os
 import sys
@@ -114,6 +119,7 @@ DATA = os.path.join(ROOT, "data")
 GAS_CSV = os.path.join(ROOT, "private", "1-raw-data", "gas.csv")
 WEATHER_CSV = os.path.join(DATA, "weather_daily_tmean.csv")
 GAS_PERIODS_CSV = os.path.join(DATA, "bill_periods_gas.csv")
+GAS_DETAIL_CSV = os.path.join(DATA, "bill_gas_detail.csv")
 
 KWH_PER_THERM = 29.3   # same conversion extended_findings.py uses (EIA/DOE standard)
 
@@ -334,46 +340,54 @@ def isolate_heating_therms():
         "floor_therms_per_day": floor_day_hdd,
         "hdd_by_day": hdd_by_day,
         "total_hdd": float(hdd_by_day.sum()),
+        # issue #109 round 4: the REAL per-day meter readings, so
+        # gas_savings_by_period()'s day-level capacity cap can be built from
+        # actual measured daily therms where they exist, rather than only
+        # the day-proportional (therms/period_days) proxy every day used to
+        # share. Not JSON-serialized (excluded from build()'s "isolation"
+        # output the same way hdd_by_day is).
+        "gas_daily": gas_daily,
     }
 
 
-def _heating_slice_cost(total_therms, heating_therms, baseline_allowance,
-                         baseline_rate, nonbaseline_rate, energy_rate,
-                         other_fees_rate, context):
-    """True marginal-tier price of the TOP `heating_therms` of a period's
-    `total_therms` (issue #98) -- i.e. what those specific therms cost given
-    where they sit in the tariff's two-tier ladder, not the period's blended
-    average $/therm.
+def _gas_service_segment_tier_cost(total_therms, heating_therms, baseline_allowance,
+                                    baseline_rate, nonbaseline_rate, context):
+    """True marginal-tier price of the TOP `heating_therms` of a SINGLE Gas
+    Service rate SEGMENT's own `total_therms` and `baseline_allowance` (issue
+    #109 -- segment-level generalization of issue #98's period-level rule) --
+    i.e. what those specific therms cost given where they sit in that
+    segment's own two-tier ladder, not a period-wide blended average $/therm.
+    Called once per Gas Service segment by gas_savings_by_period(); a period
+    that never split still has exactly one segment (its own whole self), so
+    this is the ONLY tiering implementation now -- there is no separate
+    period-level path to keep in sync.
 
-    Heating is modeled as the MARGINAL (highest) slice of usage: the
-    non-heating "floor" (water heating, cooking -- floor_per_day in
-    gas_savings_by_period) runs every day regardless, so the heating-specific
-    therms are the ones a heat pump would remove FROM THE TOP of what was
-    actually billed, not an arbitrary subset spread across both tiers. SDG&E
-    bills the baseline allowance first (cheapest) and only the therms beyond
-    it at the nonbaseline rate, so the heating slice occupies the tariff's
-    MORE expensive tier first, working down, until the slice is exhausted:
+    Heating is modeled as the MARGINAL (highest) slice of usage WITHIN THIS
+    SEGMENT: the non-heating "floor" runs every day regardless, so the
+    heating-specific therms are the ones a heat pump would remove FROM THE
+    TOP of what this segment actually billed, not an arbitrary subset spread
+    across both tiers. SDG&E bills the baseline allowance first (cheapest)
+    and only the therms beyond it at the nonbaseline rate, so the heating
+    slice occupies the tariff's MORE expensive tier first, working down,
+    until the slice is exhausted:
         - the therms strictly above `max(baseline_allowance, non_heat_therms)`
-          are nonbaseline-tier (priced at nonbaseline_rate + energy_rate +
-          other_fees_rate);
+          are nonbaseline-tier (priced at nonbaseline_rate);
         - whatever of the slice remains below that line is baseline-tier
-          (priced at baseline_rate + energy_rate + other_fees_rate).
-    The flat Gas Energy Charge (energy_rate) AND the flat Public Purpose
-    Programs + State Regulatory Fee combined rate (other_fees_rate, Codex
-    review, issue #98, pass 1: omitting these understated a therm's true
-    marginal cost by their combined rate, the one respect in which the
-    RETIRED blended-average approach -- total_gas_service / therms, which IS
-    all-in -- was actually more complete than an earlier draft of this true-
-    marginal-tier engine) both apply to EVERY therm regardless of tier, so
-    both are added on both slices rather than tiered.
+          (priced at baseline_rate).
+    The flat Gas Energy Charge and Public Purpose Programs/State Regulatory
+    Fee rates are NOT part of this function any more (issue #109): each has
+    its own, independent segment structure (see gas_savings_by_period()) and
+    is priced separately by _flat_segment_cost(), then summed alongside this
+    function's own per-segment result.
 
-    A period whose blended nonbaseline_rate came out blank (bill_periods_gas.
-    csv: every segment's own Gas Service was single-tier, i.e. this period
-    never crossed its baseline allowance) must therefore have its ENTIRE
-    heating slice fall in the baseline tier -- if it doesn't, something
-    upstream (baseline_allowance_therms or the heating attribution itself)
-    is inconsistent with the bill, and this fails closed rather than
-    treating a missing rate as zero.
+    A segment whose own nonbaseline_rate came out blank (bill_gas_detail.csv:
+    this segment's own printed Gas Service block was single-column, i.e. it
+    never crossed its own share of the baseline allowance) must therefore
+    have its ENTIRE heating slice fall in the baseline tier -- if it doesn't,
+    something upstream (the day-proportional total_therms/baseline_allowance
+    estimate below, or the heating attribution itself) is inconsistent with
+    the bill, and this fails closed rather than treating a missing rate as
+    zero.
     """
     non_heat_therms = max(0.0, total_therms - heating_therms)
     baseline_ceiling = min(baseline_allowance, total_therms)
@@ -384,94 +398,445 @@ def _heating_slice_cost(total_therms, heating_therms, baseline_allowance,
         raise SystemExit(
             f"heat_pump_conversion.py: {context} needs "
             f"{overlap_nonbaseline:.2f} nonbaseline-tier heating therms "
-            f"(total {total_therms:g} therms, baseline allowance "
-            f"{baseline_allowance:g}) but bill_periods_gas.csv has no "
-            f"nonbaseline_rate for this period -- baseline_allowance_therms, "
-            f"the heating attribution, or the rate extraction disagree with "
-            f"the bill.")
+            f"(segment total {total_therms:g} therms, segment baseline "
+            f"allowance {baseline_allowance:g}) but bill_gas_detail.csv has "
+            f"no nonbaseline_rate for this Gas Service segment -- "
+            f"baseline_allowance_therms, the heating attribution, or the "
+            f"rate extraction disagree with the bill.")
     nonbaseline_rate = 0.0 if pd.isna(nonbaseline_rate) else nonbaseline_rate
-    tier_cost = overlap_baseline * baseline_rate + overlap_nonbaseline * nonbaseline_rate
-    energy_cost = heating_therms * (energy_rate + other_fees_rate)
-    return tier_cost + energy_cost
+    return overlap_baseline * baseline_rate + overlap_nonbaseline * nonbaseline_rate
+
+
+def _flat_segment_cost(heating_therms, rate):
+    """Cost of `heating_therms` at a single flat, untiered per-therm `rate`
+    (a Gas Energy Charge or Public Purpose Programs/State Regulatory Fee
+    segment, each priced on every therm regardless of tier) -- trivial
+    multiplication, factored out only so every flat-rate segment (gas_energy
+    and other_fees alike) shares one obviously-correct implementation."""
+    return heating_therms * rate
+
+
+def _segment_day_ranges(period_start, period_end, seg_days_list, context):
+    """Chronological (start, end) inclusive date tuples, one per entry of
+    `seg_days_list`, partitioning [period_start, period_end] in order --
+    segment 0 is the EARLIEST calendar days of the period (the OLDER rate,
+    before a mid-cycle change), matching bill_gas_detail.csv's own segment
+    numbering (parse_bills.py prints/extracts segments in the order they
+    appear on the bill, which is chronological). Fails closed if the
+    segment day counts don't sum to the period's own real day span --
+    bill_gas_detail.csv disagreeing with bill_periods_gas.csv's own printed
+    period range is a real data inconsistency, not something to silently
+    paper over by rescaling."""
+    period_days = (period_end - period_start).days + 1
+    total = sum(int(d) for d in seg_days_list)
+    if total != period_days:
+        raise SystemExit(
+            f"heat_pump_conversion.py: {context} segment day counts "
+            f"{list(seg_days_list)} sum to {total}, not the period's own "
+            f"{period_days} days ({period_start} - {period_end}) -- "
+            f"bill_gas_detail.csv disagrees with bill_periods_gas.csv's own "
+            f"period range.")
+    ranges = []
+    cur = period_start
+    for days in seg_days_list:
+        end = cur + dt.timedelta(days=int(days) - 1)
+        ranges.append((cur, end))
+        cur = end + dt.timedelta(days=1)
+    return ranges
+
+
+def _capacity_capped_days(period_start, period_end, hdd_by_day, total_hdd, ann_heat,
+                          heating_capable_per_day, floor_per_day, gas_daily, context):
+    """One (day, heating_therms) pair per REAL CALENDAR DAY of the period
+    (issue #109, round 3 -- closing issue #118, two independent Codex
+    adversarial-review passes on round 2): each day's own real HDD share of
+    the ANNUAL heating estimate, capped at that SAME day's own heating-
+    capable ceiling.
+
+    Round 2 capped once per charge-type SEGMENT (often several real days
+    wide) instead of once per real day -- within a multi-day segment, a
+    cold day could still silently borrow a warm day's unused capacity. That
+    gap was real and material on the real archive (round 2's segment-level
+    cap credited 166.15 heating-therms/yr; the true day-level cap credits
+    146.79, a 13% overstatement, independently reproduced by two Codex
+    passes and by hand before that fix, not a rounding-noise concern).
+
+    ROUND 4 (issue #109, Codex `review` pass, not adversarial-review): round
+    3's own per-day ceiling was `heating_capable_per_day`, itself only a
+    day-PROPORTIONAL estimate (the period's printed total therms divided
+    evenly across its own real days) -- a fabricated uniform split, even
+    though this module already has REAL per-day meter readings available
+    (`load_gas_daily()`, the Green Button daily export). Fixed by pricing
+    each real day's own capacity from its OWN real metered therms
+    (`gas_daily`) wherever gas.csv actually covers that day: `max(0,
+    real_day_therms - floor_per_day)`, not the period-wide proxy. This
+    household's real gas.csv covers 2025-07-25 through 2026-07-24, and
+    every one of the 25 real billing periods with nonzero HDD on any of its
+    own days (the only periods where this cap can ever bind, since a day
+    with zero HDD has zero demand regardless of its own capacity) falls
+    entirely inside that window -- verified before this fix landed, not
+    assumed. `heating_capable_per_day` is kept ONLY as the fallback for (a)
+    a day `gas_daily` genuinely has no reading for, when `gas_daily` itself
+    is None (see below), or (b) the rare zero-demand day where which
+    ceiling applies cannot matter (`min(0, anything) == 0`).
+
+    `gas_daily` is None in two legitimate cases, each documented at its own
+    call site rather than silently treated the same: `isolate_heating_
+    therms()` always populates it from the real gas.csv when called for a
+    real run (so it is never None in build()'s own pipeline), but a unit
+    test can construct `iso` by hand without it to deliberately exercise
+    the proxy-only path on a fixture that has no real daily data to give.
+    When `gas_daily` IS provided (real run, or a test that supplies
+    synthetic daily data) but is missing a reading for a day that actually
+    has nonzero heating demand, this fails closed (mirrors
+    _gas_service_segment_tier_cost()'s missing-nonbaseline-rate convention:
+    a value that's actually NEEDED for a nonzero computation must be
+    real, never silently defaulted) rather than quietly falling back to
+    the coarser proxy for that one day and mispricing a real dollar figure.
+
+    This is the ONLY place a cap is applied -- every charge type's own
+    segment allocation downstream (_segment_heat_from_days()) just SUMS the
+    relevant days, so no charge type's own total can silently disagree with
+    another's (every charge type's own segments are sums of one or more of
+    these SAME real days by construction), and the period's
+    `heating_therms_attributed` (the sum of every day here) can only shrink
+    relative to a coarser-grained cap, never grow (each day's own capacity
+    sums exactly to the coarser cap's own total capacity, and min() is
+    subadditive)."""
+    out = []
+    d = period_start
+    while d <= period_end:
+        hdd = float(hdd_by_day.get(d, 0.0))
+        demand = ann_heat * (hdd / total_hdd) if total_hdd > 0 else 0.0
+        if gas_daily is not None and d in gas_daily.index:
+            capacity = max(0.0, float(gas_daily.loc[d]) - floor_per_day)
+        elif gas_daily is not None and demand > 1e-9:
+            raise SystemExit(
+                f"heat_pump_conversion.py: {context} needs {d}'s own real "
+                f"metered daily gas usage (that day's HDD implies "
+                f"{demand:.4f} therms of heating demand) but gas.csv has no "
+                f"reading for {d} -- falling back to the period-wide "
+                f"day-proportional proxy for just this one day would "
+                f"silently misprice a real dollar figure; investigate the "
+                f"gas.csv coverage gap (or this period's own date range) "
+                f"before pricing this period.")
+        else:
+            capacity = heating_capable_per_day
+        out.append((d, min(demand, capacity)))
+        d += dt.timedelta(days=1)
+    return out
+
+
+def _segment_heat_from_days(day_ranges, capped_days):
+    """Each of `day_ranges`' own already-capacity-capped heating therms --
+    the sum of every real day (from _capacity_capped_days()) whose date
+    falls inside it. Every charge type's own day_ranges are built from real
+    segment boundaries applied to the SAME real calendar days
+    _capacity_capped_days() iterates, so this is an exact regrouping of an
+    already-computed per-day total, not a second, independent estimate that
+    could drift from it."""
+    shares = []
+    for start, end in day_ranges:
+        shares.append(sum(h for d, h in capped_days if start <= d <= end))
+    return shares
+
+
+def _segment_real_or_proxy_therms(start, end, therms, period_days, gas_daily,
+                                  heat_s, context):
+    """A Gas Service segment's own TOTAL billed therms (issue #109 round 5,
+    Codex `review` pass 2): summed from REAL per-day meter readings
+    (`gas_daily`) across the segment's own real day range wherever gas.csv
+    covers every one of those days, rather than a fabricated day-
+    proportional share of the period's own printed total.
+
+    Round 4 fixed `heat_s` (a segment's own attributed HEATING therms) to
+    come from real daily data via _capacity_capped_days(); it left `t_s`
+    (that SAME segment's own TOTAL therms, used only for tier placement)
+    still fabricated by day-proportion -- a real-data numerator against a
+    proxy denominator context, which _gas_service_segment_tier_cost() uses
+    to decide the baseline/nonbaseline split point, so an inaccurate `t_s`
+    can misplace real heating therms in the wrong tariff tier. Quantified
+    before fixing, not assumed: on the 3 real periods with a Gas Service
+    split, the day-proportional proxy and the real daily sum disagree by up
+    to 44% on one segment (2026-01-29's 5-day segment: proxy 11.25 therms,
+    real 16.24).
+
+    Falls back to the day-proportional proxy when `gas_daily` is None
+    entirely (no real daily data available for this run at all -- the same
+    legitimate synthetic-unit-test case _capacity_capped_days() documents).
+    When `gas_daily` IS supplied but doesn't cover every day of this
+    segment, this fails closed -- but ONLY when the segment's own `heat_s`
+    is actually nonzero, mirroring _gas_service_segment_tier_cost()'s own
+    missing-nonbaseline-rate convention (a value only needs to be real when
+    it actually changes the output: `t_s` multiplies through to zero cost
+    whenever `heat_s` is zero -- see _gas_service_segment_tier_cost()'s own
+    arithmetic -- so an unreliable `t_s` on a zero-heat segment can never
+    misprice anything)."""
+    seg_days = (end - start).days + 1
+    proxy = therms * seg_days / period_days
+    if gas_daily is None:
+        return proxy
+    d, missing, total = start, [], 0.0
+    while d <= end:
+        if d in gas_daily.index:
+            total += float(gas_daily.loc[d])
+        else:
+            missing.append(d)
+        d += dt.timedelta(days=1)
+    if missing:
+        if heat_s > 1e-9:
+            extra = f" (and {len(missing) - 1} more day(s))" if len(missing) > 1 else ""
+            raise SystemExit(
+                f"heat_pump_conversion.py: {context} needs real daily gas "
+                f"usage for {missing[0]}{extra} to price this Gas Service "
+                f"segment's own true total therms -- it has {heat_s:.2f} "
+                f"nonzero heating therms of its own, so a fabricated "
+                f"day-proportional total could misplace them in the wrong "
+                f"tariff tier; investigate the gas.csv coverage gap before "
+                f"pricing this period.")
+        return proxy
+    return total
+
+
+def _other_fees_day_ranges(gs_ranges, ge_ranges, of_segs, context):
+    """Day ranges for other_fees's (Public Purpose Programs + State
+    Regulatory Fee) own segments, or None if it never split (the common
+    case -- 23 of this household's 25 real periods).
+
+    Unlike Gas Service/Gas Energy Charge, other_fees splits mid-cycle by
+    THERM COUNT, not real calendar days (parse_bills.py's _gas_other_fees()
+    docstring) -- there is no day-count column in bill_gas_detail.csv to
+    build a range from directly for this charge type. This household's real
+    25-bill corpus shows other_fees only ever splits (2 of 25 periods,
+    2025-01-29 and 2026-01-29) when Gas Service AND Gas Energy Charge ALSO
+    split into the SAME number of segments, and in both cases the
+    day-proportional share the Gas Service/Energy day split implies (5 of
+    32 period days) reproduces other_fees's own printed segment_therms split
+    (15 of 97, 11 of 72 -- both within half a therm of 5/32 x the period
+    total) almost exactly -- real evidence the same underlying rate-change
+    date drives all three charge types' segmentation even though only two of
+    them print it in days.
+
+    Reused here ONLY when the segment counts actually match a day-based
+    charge type's own segment count for the SAME period (Gas Energy Charge
+    preferred, since it splits on nearly every bill in this corpus and so is
+    almost always available; Gas Service as a fallback). A mismatch means
+    this corpus's own pattern does not hold for that period and there is no
+    reliable calendar-day basis to allocate HDD against other_fees's
+    segments -- this fails closed rather than inventing a mapping
+    (CLAUDE.md section 0), since a wrong mapping would silently misprice
+    real dollars, not just look temporarily wrong."""
+    if len(of_segs) == 1:
+        return None
+    if len(ge_ranges) == len(of_segs):
+        return ge_ranges
+    if len(gs_ranges) == len(of_segs):
+        return gs_ranges
+    raise SystemExit(
+        f"heat_pump_conversion.py: {context} other_fees split into "
+        f"{len(of_segs)} segments, matching neither Gas Energy Charge's "
+        f"{len(ge_ranges)} nor Gas Service's {len(gs_ranges)} segment count -- "
+        f"no reliable day-boundary basis to allocate heating therms across "
+        f"other_fees's own segments for this period; investigate before "
+        f"pricing it (see _other_fees_day_ranges's own docstring).")
+
+
+def load_gas_detail():
+    """{statement_date_str: {charge_type: [segment dict, ...]}}, each segment
+    dict sorted by its own `segment` column (chronological order, per
+    parse_bills.py's own construction -- segment 0 is always the earliest
+    calendar days/therms of the period). Every real period has at least one
+    segment per charge type (parse_bills.py prints one even when a charge
+    type never splits mid-cycle), so gas_savings_by_period() can go through
+    this segment-level path uniformly -- there is no separate period-level
+    fallback to keep in sync (issue #109)."""
+    if not os.path.exists(GAS_DETAIL_CSV):
+        raise SystemExit(
+            f"heat_pump_conversion.py: {GAS_DETAIL_CSV} not found -- "
+            "gas_savings_by_period() needs it for segment-level pricing "
+            "(issue #109); run parse_bills.py first.")
+    detail = pd.read_csv(GAS_DETAIL_CSV)
+    out = {}
+    for stmt, g in detail.groupby("statement_date"):
+        out[str(stmt)] = {ct: g2.sort_values("segment").to_dict("records")
+                          for ct, g2 in g.groupby("charge_type")}
+    return out
 
 
 def gas_savings_by_period(iso):
     """Real per-statement gas savings: each billed period's own share of
     annual heating therms (from that period's OWN days' HDD, never a flat
-    annual average) priced at that period's own TRUE MARGINAL rate (issue
-    #98) -- the tier(s) the heating slice actually sits in, plus the flat
-    Gas Energy Charge and Public Purpose Programs/State Regulatory Fee every
-    therm pays -- rather than the period's blended average $/therm.
+    annual average) priced at each of the period's own charge-type SEGMENTS'
+    own TRUE MARGINAL rate (issue #109, generalizing issue #98's period-level
+    marginal-tier pricing to segment level) -- the tier(s) the heating slice
+    actually sits in within EACH Gas Service segment, plus the flat Gas
+    Energy Charge and Public Purpose Programs/State Regulatory Fee rate each
+    of THEIR OWN segments charges every therm -- rather than a period-wide
+    blended average $/therm for any of the three charge types.
 
-    HISTORY (why this replaced a blended-average approximation, Codex
-    adversarial review, issue #1, two passes). Two real gas bill PDFs for
-    this household's own GR-Residential rate were read directly
-    (sdge_gas_2025-07-30.pdf, a low-usage summer statement; sdge_gas_2025-
-    12-30.pdf, a 61-therm winter statement) to see what a gas bill actually
-    contains: FOUR separate charges. "Gas Service" is the two-tier
-    baseline/nonbaseline rate (baseline_rate/nonbaseline_rate); a SEPARATE
-    "Gas Energy Charge" line prices EVERY therm (baseline and nonbaseline
-    alike) at a third, flat, untiered rate (gas_energy_charge_rate, ~
-    $0.50/therm on the December statement); "Public Purpose Programs" and a
-    "State Regulatory Fee" add a further, similarly flat, untiered
-    other_fees_rate (~$0.12-0.16/therm across this corpus). Pricing heating
-    therms at nonbaseline_rate ALONE would OMIT the Gas Energy Charge and
-    the other two fees entirely. parse_bills.py (issue #98) extracts
-    baseline_allowance_therms and day-weighted-blended gas_energy_charge_rate
-    into data/bill_periods_gas.csv (plus full per-segment detail into
-    data/bill_gas_detail.csv), which is what makes the true marginal-tier
-    pricing below possible -- the predecessor of this function used
-    total_gas_service / therms (an all-in blended average) specifically
-    because none of these figures were available yet.
+    HISTORY (why this exists, Codex adversarial review, issue #1 then #98,
+    several passes). Two real gas bill PDFs for this household's own
+    GR-Residential rate were read directly (sdge_gas_2025-07-30.pdf, a
+    low-usage summer statement; sdge_gas_2025-12-30.pdf, a 61-therm winter
+    statement) to see what a gas bill actually contains: FOUR separate
+    charges. "Gas Service" is the two-tier baseline/nonbaseline rate
+    (baseline_rate/nonbaseline_rate); a SEPARATE "Gas Energy Charge" line
+    prices EVERY therm (baseline and nonbaseline alike) at a third, flat,
+    untiered rate (~$0.50/therm on the December statement); "Public Purpose
+    Programs" and a "State Regulatory Fee" add a further, similarly flat,
+    untiered other_fees_rate (~$0.12-0.16/therm across this corpus). Pricing
+    heating therms at nonbaseline_rate ALONE would OMIT the Gas Energy
+    Charge and the other two fees entirely (issue #98, pass 1: a first
+    version did exactly this and omitted a real, quantified ~$23/yr).
+    parse_bills.py extracts baseline_allowance_therms and day-weighted-
+    blended per-period rates into data/bill_periods_gas.csv, plus full
+    per-segment detail (each charge type's own chronological rate segments,
+    with their own day or therm counts and their own rates) into
+    data/bill_gas_detail.csv.
 
-    A first version of this fix (Codex review, issue #98, pass 1) extracted
-    baseline_allowance_therms and gas_energy_charge_rate but NOT
-    other_fees_rate, meaning it omitted a real, quantified ~$23/yr of Public
-    Purpose Programs/State Regulatory Fee charges the OLD blended-average
-    approach had actually captured correctly (being all-in by construction)
-    -- the one respect in which the retired approximation was MORE complete
-    than the first true-marginal-tier draft. Fixed by extracting
-    other_fees_rate (parse_bills.py's _gas_other_fees(), therm-weighted
-    across however many segments that charge type has -- it splits by THERM
-    COUNT on a mid-cycle rate change, not by day, unlike Gas Service/Gas
-    Energy Charge) and adding it alongside energy_rate in
-    _heating_slice_cost()'s flat per-therm term.
+    Issue #98 priced every therm at bill_periods_gas.csv's PERIOD-LEVEL
+    blend, even though EVERY charge type can split into segments with
+    different rates within one period (a mid-cycle rate change, independent
+    of the heating attribution's own day-level HDD weighting) --
+    quantified as small (issue #98's own closing note, then issue #109's own
+    body): a Gas Service tier-boundary channel affecting 3 of 25 real
+    periods, and a Gas Energy Charge flat-rate-averaging channel affecting
+    all 9 real heating periods, together bounded well under the $23/yr the
+    other-fees fix above had already closed. This function now allocates the
+    heating slice AND the non-heating floor to each charge type's OWN
+    chronological segments first (day-range boundaries for Gas Service/Gas
+    Energy Charge, straight from bill_gas_detail.csv's own segment_days;
+    Public Purpose Programs/State Regulatory Fee borrows Gas Energy
+    Charge's or Gas Service's day ranges when their segment counts match,
+    the only case this real corpus ever produces -- see
+    _other_fees_day_ranges()), then prices each segment's own attributed
+    heating therms at that segment's own rate (tiered for Gas Service via
+    _gas_service_segment_tier_cost(), flat for Gas Energy Charge/other_fees
+    via _flat_segment_cost()) before summing to the period total. A period
+    whose charge types never split still resolves to exactly one segment
+    each, covering the whole period -- algebraically identical to the old
+    period-level computation, not a separate code path that could drift
+    from it.
 
-    JUDGMENT CALL (stated per CLAUDE.md section 8): baseline_rate/
-    nonbaseline_rate/gas_energy_charge_rate/other_fees_rate are read from
-    bill_periods_gas.csv's PERIOD-LEVEL blend, not from bill_gas_detail.
-    csv's per-segment detail, even though EVERY charge type can split into
-    segments with different rates within one period (a mid-cycle rate
-    change, independent of the heating attribution's own day-level HDD
-    weighting). Quantified, not hand-waved (Codex review, issue #98, passes
-    2 and 3 -- pass 2's own first estimate below only counted Gas Service
-    splits and understated the channel, caught and corrected before this
-    issue closed): the TIER-boundary channel affects only 3 of 25 real
-    periods (2025-10-29, 2026-01-29, 2026-03-31, the ones with BOTH a Gas
-    Service mid-cycle split AND nonzero heating attribution -- e.g. Feb 27
-    - Mar 27 2026 attributes 11.10 heating therms period-wide, while a
-    segment-respecting allocation caps the genuinely cold segment at
-    roughly 9.85); the FLAT-RATE-averaging channel (Gas Energy Charge,
-    which splits mid-cycle on 9 of 9 real heating periods, not just 3)
-    affects every heating period, but its own worst-case bound -- heating
-    therms x (that period's highest segment rate minus its own day-
-    weighted blend), summed across all 9 -- is $5.41/yr total, computed
-    directly from the committed artifacts. Combined, both channels remain
-    small next to the $23/yr the OTHER-FEES fix above closed. Splitting
-    heating therms across EVERY charge type's own sub-period segments
-    requires allocating BOTH the heating slice and the non-heating floor to
-    each segment's own chronological day range first, then applying that
-    segment's own rate (tiered for Gas Service, flat for Gas Energy Charge/
-    other_fees) -- a genuine redesign of this function's allocation
-    granularity (currently period-level), not a quick patch, filed as
-    issue #109 rather than expanding this issue's own scope box further.
+    ROUND 2 (issue #109, adversarial re-review): the first version of this
+    fix allocated the heating slice across segments by day-level HDD share,
+    but still capped the PERIOD's total heating attribution once, at the
+    period level (`therms - floor_per_day * period_days`), before doing
+    that allocation -- so a period whose heating HDD concentrates almost
+    entirely in one segment could still borrow spare capacity from a
+    DIFFERENT segment that had no heating demand to justify it (this
+    household's real 2026-03-31 period does exactly this: a 2-day segment
+    with zero HDD, a 27-day segment with all of it). The issue's own text
+    asks for the floor to be reserved "at the SEGMENT level for every
+    charge type", not just the pricing -- this was a real gap against that
+    text, not merely an interpretation choice. Fixed (in that round) by
+    reserving the floor once per multi-day CELL of the finest partition
+    every day-based charge type's own segments agreed on.
+
+    ROUND 3 (issue #109, two independent Codex adversarial-review passes;
+    closes issue #118): round 2's cell was still often several real days
+    wide (whichever charge type split least often set the cell width), so
+    a cold day inside one cell could still silently borrow a warm day's
+    unused capacity WITHIN that same cell -- the identical bug one
+    granularity level down. Quantified before fixing, not assumed: round
+    2's cell-level cap credited 166.15 heating-therms/yr on the real
+    archive; the true day-level cap credits 146.78, a 19.37-therm (13%)
+    overstatement, reproduced independently by two Codex passes and by
+    hand. Fixed by reserving the floor (and capping heating demand against
+    it) once per REAL CALENDAR DAY (_capacity_capped_days()) -- the finest
+    granularity this model's own day-proportional-usage proxy can support,
+    since `heating_capable_per_day` is already a single constant for the
+    whole period under that proxy (a period's printed total therms divided
+    evenly across its own real days), so per-day capping needs no merged
+    multi-charge-type partition at all: every charge type's own segments
+    are sums of one or more of the SAME real days by construction
+    (_segment_heat_from_days()), so they always sum back to the SAME
+    period total regardless of which charge type's segmentation produced
+    them -- there is no risk of Gas Service crediting a different total
+    than Gas Energy Charge for the same period. Each round's cap can only
+    shrink `heating_therms_attributed` relative to the previous, coarser
+    round's (never grow it: a finer partition's own total capacity always
+    sums to the coarser partition's, and summing a per-partition-cell
+    minimum can never exceed the minimum of the sums), and that SAME
+    shrunk total is what downstream reconciliation (build()) and the
+    electric heat-pump load sizing use -- displaced heating therms are not
+    reallocated to a different, non-heating-demand day; the model's belief
+    about how much heating this period actually delivered legitimately
+    shrinks, which is the whole point of reserving the floor per real day
+    rather than once per period or once per multi-day segment.
+
+    ROUND 4 (issue #109, plain Codex `review` pass, not adversarial-review):
+    round 3's own per-day ceiling (`heating_capable_per_day`) was itself
+    still a fabricated uniform proxy -- the period's printed total therms
+    divided evenly across its own real days -- even though this module
+    already loads REAL per-day meter readings elsewhere (load_gas_daily(),
+    the Green Button daily export) for the HDD regression. Fixed by pricing
+    each real day's own capacity from ITS OWN real metered therms wherever
+    gas.csv covers that day (`max(0, real_day_therms - floor_per_day)`),
+    falling back to the day-proportional proxy only for a day gas.csv
+    genuinely has no reading for. Verified before fixing, not assumed: this
+    household's real gas.csv (2025-07-25 through 2026-07-24) fully covers
+    every real billing period that has any nonzero HDD on any of its own
+    days -- the only periods this cap can ever affect, since a zero-HDD day
+    has zero demand regardless of which ceiling applies -- so the real
+    archive never touches the proxy fallback for a day that matters, and
+    the fail-closed path below is exercised only by a deliberately-gapped
+    test fixture, never by this household's own real run. Real metered
+    days' own totals don't exactly reproduce their period's own printed
+    bill total (ordinary meter-read-date-vs-billing-date noise -- across
+    every fully-gas.csv-covered period in this household's real corpus, the
+    gap ranges from 0.01 therms up to 1.83 (2026-03-02: billed 58.0,
+    real daily readings sum to 59.83) and 1.39 (2025-11-28: billed 34.0,
+    real sum 32.61) -- not uniformly small) -- used as-is per day, not
+    rescaled to match the bill, since it's each day's own reading, not the
+    bill's total, that determines that day's own capacity.
+    `reconciled_heating_therms_yr` moves from 146.79 (round 3's
+    day-proportional proxy) to 145.19 (round 4's real daily data) -- a
+    smaller shift than round 3's own correction, as expected once the
+    finest defensible granularity (a real day) is reached and the only
+    remaining question is which number describes that same day, not how
+    many further days to split it into.
+
+    JUDGMENT CALL (stated per CLAUDE.md section 8): bill_gas_detail.csv does
+    not carry each Gas Service/Gas Energy Charge segment's own billed therm
+    count (parse_bills.py's _gas_segments() reads and cross-foots it against
+    the bill's own printed charge but does not persist it -- out of this
+    issue's own scope box to add, since that is parse_bills.py's territory).
+    Each Gas Service segment's own baseline_allowance (a_s) is therefore
+    estimated by DAY-PROPORTION of the period's own printed
+    baseline_allowance_therms (segment_days / period_days) rather than read
+    directly, and has NO better alternative: gas.csv records actual metered
+    CONSUMPTION, not the tariff's own baseline-allowance ENTITLEMENT (set by
+    rate schedule and billing-cycle length, not by measured usage), so there
+    is no real daily reading to substitute the way round 5 substitutes real
+    data for a segment's own total_therms (t_s, see
+    _segment_real_or_proxy_therms()) below. This day-proportion proxy is
+    validated, not merely assumed, everywhere it's still used: it is the
+    SAME implicit assumption bill_gas_detail.csv's own other_fees segments
+    confirm independently in the two real periods where other_fees actually
+    splits (2025-01-29, 2026-01-29) -- both times a 5-of-32-days first
+    segment implies (by day proportion) 15.2 and 11.3 therms respectively,
+    against the bill's own printed other_fees segment_therms of 15 and 11,
+    agreement within half a therm in both real cross-checks. The SAME
+    uniform-per-day proxy also underlies `heating_capable_per_day` above
+    (round 3) as the fallback for a day gas.csv doesn't cover: under day-
+    proportion, every real day of a period is assumed to bill the identical
+    `therms / period_days` absent better information, which is exactly why
+    a single per-day capacity ceiling was ever valid to reuse across EVERY
+    charge type's own days in the first place, before round 4 replaced it
+    with real per-day data wherever available.
     """
     periods = pd.read_csv(GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
+    gas_detail = load_gas_detail()
     hdd_by_day = iso["hdd_by_day"]
     total_hdd = iso["total_hdd"]
     ann_heat = iso["annual_heating_therms"]
     floor_per_day = iso["floor_therms_per_day"]
+    # None for a unit test's hand-built iso that deliberately has no real
+    # daily gas data (see _capacity_capped_days()'s own docstring); always
+    # populated in a real run, since isolate_heating_therms() always loads it.
+    gas_daily = iso.get("gas_daily")
 
     # Each period's own REAL service dates come straight from the CSV's own
     # "period" column ("Mon DD, YYYY - Mon DD, YYYY", the exact range SDG&E
@@ -504,27 +869,103 @@ def gas_savings_by_period(iso):
     total_allocated_heat = 0.0
     for i, row in periods.iterrows():
         start, end = row["period_start"], row["period_end"]
+        context = f"{row['statement_date']} [{row['period']}]"
         period_hdd = hdd_by_day[(hdd_by_day.index >= start) & (hdd_by_day.index <= end)].sum()
         heat_share = ann_heat * (period_hdd / total_hdd) if total_hdd > 0 else 0.0
         therms = row["therms"]
-        # Codex review, issue #1, pass 2: capping at total period therms
-        # alone still lets a shoulder-season period attribute nearly ALL its
-        # usage to heating, when this same model's own non-heating floor
-        # (water heating/cooking, floor_per_day) had to run every one of
-        # those days too. Reserve that floor's share of the period before
-        # capping, so heating attribution can never exceed what's left after
-        # the model's own non-heating usage is accounted for.
         period_days = (end - start).days + 1
-        heating_capable_therms = max(0.0, therms - floor_per_day * period_days)
-        heating_therms_attributed = min(heat_share, heating_capable_therms)
-        savings = _heating_slice_cost(
-            total_therms=therms, heating_therms=heating_therms_attributed,
-            baseline_allowance=row["baseline_allowance_therms"],
-            baseline_rate=row["baseline_rate"],
-            nonbaseline_rate=row["nonbaseline_rate"],
-            energy_rate=row["gas_energy_charge_rate"],
-            other_fees_rate=row["other_fees_rate"],
-            context=f"{row['statement_date']} [{row['period']}]")
+
+        detail = gas_detail.get(str(row["statement_date"]))
+        if not detail or not all(ct in detail for ct in
+                                 ("gas_service", "gas_energy", "other_fees")):
+            raise SystemExit(
+                f"heat_pump_conversion.py: {context} is missing one or more "
+                f"of gas_service/gas_energy/other_fees in bill_gas_detail.csv "
+                f"-- every real period must have all three (parse_bills.py "
+                f"prints one segment even when a charge type never splits).")
+        gs_segs, ge_segs, of_segs = (detail["gas_service"], detail["gas_energy"],
+                                     detail["other_fees"])
+
+        gs_ranges = _segment_day_ranges(
+            start, end, [s["segment_days"] for s in gs_segs], f"{context} gas_service")
+        ge_ranges = _segment_day_ranges(
+            start, end, [s["segment_days"] for s in ge_segs], f"{context} gas_energy")
+
+        # Codex review, issue #1, pass 2 (period-level); issue #109 round 2
+        # (multi-day segment level); issue #109 round 3 / issue #118 (real
+        # calendar day level -- two independent Codex adversarial-review
+        # passes on round 2 caught the same gap one granularity down: a
+        # cold day could still borrow a warm day's unused capacity within
+        # the same multi-day segment); issue #109 round 4 (each day's own
+        # capacity ceiling now comes from that REAL day's own metered
+        # therms, gas_daily, wherever gas.csv covers it -- a plain Codex
+        # `review` pass, not adversarial-review, caught round 3's ceiling
+        # still being a fabricated uniform per-day proxy even though real
+        # daily meter data was already loaded elsewhere in this file).
+        # Capping at total period therms alone still lets a shoulder-season
+        # period attribute nearly ALL its usage to heating, when this same
+        # model's own non-heating floor (water heating/cooking, floor_per_
+        # day) had to run every one of those days too. Reserve that floor's
+        # share of EVERY REAL DAY, against that day's OWN real usage where
+        # it's known, before capping -- applied once per real calendar day
+        # (_capacity_capped_days()), not once per period or once per
+        # multi-day segment, so heating attribution can never borrow spare
+        # capacity from a real day that had no heating demand to justify
+        # it, even when the period (or the segment) AS A WHOLE had room.
+        heating_capable_per_day = max(0.0, therms / period_days - floor_per_day)
+        capped_days = _capacity_capped_days(start, end, hdd_by_day, total_hdd, ann_heat,
+                                            heating_capable_per_day, floor_per_day,
+                                            gas_daily, context)
+        heating_therms_attributed = sum(h for _, h in capped_days)
+
+        gs_shares = _segment_heat_from_days(gs_ranges, capped_days)
+        ge_shares = _segment_heat_from_days(ge_ranges, capped_days)
+
+        # Gas Service: tiered, so each segment needs its OWN total_therms and
+        # baseline_allowance. total_therms (t_s) now comes from REAL daily
+        # gas.csv readings wherever they cover this segment's own days
+        # (_segment_real_or_proxy_therms(), issue #109 round 5 -- Codex
+        # `review` pass 2 caught round 4 leaving this one fabricated even
+        # after heat_s itself was fixed to use real data). baseline_allowance
+        # (a_s) has NO real-data analog to fall back on -- gas.csv records
+        # actual metered CONSUMPTION, not the tariff's own baseline-
+        # allowance ENTITLEMENT, which SDG&E sets by rate schedule and
+        # billing-cycle length, not by measured usage -- so it is still
+        # estimated by day-proportion of the period's own printed total
+        # (see this function's own JUDGMENT CALL docstring paragraph for the
+        # validation against other_fees's real segments).
+        gs_cost = 0.0
+        for (seg_start, seg_end), heat_s, seg in zip(gs_ranges, gs_shares, gs_segs):
+            seg_days = (seg_end - seg_start).days + 1
+            t_s = _segment_real_or_proxy_therms(
+                seg_start, seg_end, therms, period_days, gas_daily, heat_s,
+                context=f"{context} gas_service segment {seg['segment']}")
+            a_s = row["baseline_allowance_therms"] * seg_days / period_days
+            gs_cost += _gas_service_segment_tier_cost(
+                total_therms=t_s, heating_therms=heat_s, baseline_allowance=a_s,
+                baseline_rate=seg["baseline_rate"], nonbaseline_rate=seg["nonbaseline_rate"],
+                context=f"{context} gas_service segment {seg['segment']}")
+
+        # Gas Energy Charge: flat, so each segment just needs its own
+        # attributed heating therms and its own printed rate.
+        ge_cost = sum(_flat_segment_cost(heat_s, seg["energy_rate"])
+                     for heat_s, seg in zip(ge_shares, ge_segs))
+
+        # Public Purpose Programs/State Regulatory Fee (other_fees): flat,
+        # but segmented by therm count, not days -- borrow a day-based
+        # charge type's ranges when the segment counts match (see
+        # _other_fees_day_ranges()'s own docstring), or price the whole
+        # period at its one rate when other_fees never split.
+        of_ranges = _other_fees_day_ranges(gs_ranges, ge_ranges, of_segs, context)
+        if of_ranges is None:
+            of_cost = _flat_segment_cost(heating_therms_attributed,
+                                         of_segs[0]["other_fees_rate"])
+        else:
+            of_shares = _segment_heat_from_days(of_ranges, capped_days)
+            of_cost = sum(_flat_segment_cost(heat_s, seg["other_fees_rate"])
+                         for heat_s, seg in zip(of_shares, of_segs))
+
+        savings = gs_cost + ge_cost + of_cost
         all_in_rate = (savings / heating_therms_attributed
                        if heating_therms_attributed > 0 else 0.0)
         total_savings += savings
@@ -795,7 +1236,7 @@ def build():
                   "(canonical NEM engine, never a lump-sum multiply); gas "
                   "savings priced at each real billing period's own "
                   "realized $/therm"),
-        "isolation": {k: v for k, v in iso.items() if k not in ("hdd_by_day",)},
+        "isolation": {k: v for k, v in iso.items() if k not in ("hdd_by_day", "gas_daily")},
         "reconciled_heating_therms_yr": reconciled_heat_therms,
         "gas_savings_by_period": gas_rows,
         "gas_savings_annual_usd": gas_savings_annual,
