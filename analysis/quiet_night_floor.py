@@ -141,15 +141,21 @@ already accepted by HIGH_DEMAND_GATE_KW.
     two artifacts singles out JULY as the one month whose median differs
     (1.04 here vs 1.035 published), the missing 44th night -- if there is a
     single one -- more likely falls in July, not May.
-  - Every demand-gate/window variant tried on top of this script's own rule
-    (0-6am, 1-6am, 0-5am windows; gate 1.9/2.5 kW) leaves July's quiet-night
-    count at exactly 3 or drops it to 0 -- no tested variant produces a 4th
-    July quiet night that way. Every other July night's 1-5am max power sits
-    at 12 kW or higher, nowhere near any plausible demand-gate value, so the
-    July gap is not a simple threshold/window tweak on the DEMAND-GATE axis
-    specifically -- it may still be reachable on the EV-detection axis (a
-    different EV-session threshold or window than tried above), which was
-    not exhaustively swept.
+  - A 1-5am gate sweep (Codex adversarial review caught this investigation's
+    own first-pass claim -- "every other July night's max power sits at 12 kW
+    or higher" -- as factually wrong on the committed dataset: 2026-07-09
+    peaks at 4.40 kW and 2025-07-25 at 6.64 kW, both well under 12).
+    Re-run and actually executed, not hand-estimated: raising the gate DOES
+    add a 4th July quiet night, but only at >=4.5 kW, where it also grows the
+    TOTAL count to 62 (median 1.05, July median 1.045) -- far past phantom's
+    44. The current 2.0 kW gate is the only value tested that keeps the total
+    near phantom's 44 (43) while July stays at 3, not 4. Gate values in
+    between (2.5-4.4 kW) grow the total (51-61) without ever adding a 4th
+    July night. So a SINGLE uniform gate change cannot reach phantom's July
+    figure without also blowing the total count far past 44 -- if phantom's
+    rule really does differ from this script's specifically in July, it is
+    not a simple uniform-gate difference; a per-month or non-gate mechanism
+    would be needed, which was not tested here.
   - `phantom` has no lost script to recover: `git log --diff-filter=A` on
     `data/extra_results.json` shows it was added directly as a data file
     (commit 29f8573, "Add soiling, cleaning-study, carbon, and extras data
