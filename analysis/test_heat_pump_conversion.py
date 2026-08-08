@@ -101,6 +101,81 @@ def _months_of(dates_map, months):
     return [d for d in dates_map if d.month in months]
 
 
+# ---------------------------------------------------------------------------
+# bill_gas_detail.csv fixtures (issue #109) -- gas_savings_by_period() now
+# requires a companion segment-detail file alongside bill_periods_gas.csv;
+# every case below builds both together so a period that never split (the
+# common case) reproduces the old period-level numbers exactly (one segment
+# covering the whole period, per charge type).
+# ---------------------------------------------------------------------------
+def _gas_detail_rows(statement_date, period, gas_service, gas_energy, other_fees):
+    """gas_service: [(segment_days, baseline_rate, nonbaseline_rate), ...]
+    gas_energy:  [(segment_days, energy_rate), ...]
+    other_fees:  [(segment_therms, other_fees_rate), ...]
+    -- one dict per row, matching bill_gas_detail.csv's real schema."""
+    rows = []
+    for i, (days, bl_rate, nb_rate) in enumerate(gas_service):
+        rows.append(dict(statement_date=statement_date, period=period,
+                         charge_type="gas_service", segment=i, segment_days=days,
+                         segment_therms=np.nan, baseline_rate=bl_rate, nonbaseline_rate=nb_rate,
+                         energy_rate=np.nan, other_fees_rate=np.nan))
+    for i, (days, er) in enumerate(gas_energy):
+        rows.append(dict(statement_date=statement_date, period=period,
+                         charge_type="gas_energy", segment=i, segment_days=days,
+                         segment_therms=np.nan, baseline_rate=np.nan, nonbaseline_rate=np.nan,
+                         energy_rate=er, other_fees_rate=np.nan))
+    for i, (therms, ofr) in enumerate(other_fees):
+        rows.append(dict(statement_date=statement_date, period=period,
+                         charge_type="other_fees", segment=i, segment_days=np.nan,
+                         segment_therms=therms, baseline_rate=np.nan, nonbaseline_rate=np.nan,
+                         energy_rate=np.nan, other_fees_rate=ofr))
+    return rows
+
+
+def _single_segment_detail(statement_date, period, period_days, therms,
+                           baseline_rate, nonbaseline_rate, energy_rate, other_fees_rate):
+    """The trivial, never-split case: one segment per charge type, covering
+    the whole period -- algebraically identical to the old period-level
+    computation (this is the regression-safety fixture shape)."""
+    return _gas_detail_rows(
+        statement_date, period,
+        gas_service=[(period_days, baseline_rate, nonbaseline_rate)],
+        gas_energy=[(period_days, energy_rate)],
+        other_fees=[(therms, other_fees_rate)])
+
+
+def _write_gas_fixture(tmp, periods_df, detail_rows):
+    periods_csv = tmp / "bill_periods_gas.csv"
+    detail_csv = tmp / "bill_gas_detail.csv"
+    periods_df.to_csv(periods_csv, index=False)
+    pd.DataFrame(detail_rows).to_csv(detail_csv, index=False)
+    return periods_csv, detail_csv
+
+
+class _GasFixture:
+    """Context manager: points hpc.GAS_PERIODS_CSV/GAS_DETAIL_CSV at a
+    temporary fixture pair for the duration of the `with` block, restoring
+    the real paths afterward -- used by every gas_savings_by_period() case
+    below instead of hand-rolling the same try/finally each time."""
+
+    def __init__(self, periods_df, detail_rows):
+        self.periods_df = periods_df
+        self.detail_rows = detail_rows
+
+    def __enter__(self):
+        self._td = tempfile.TemporaryDirectory()
+        tmp = pathlib.Path(self._td.name)
+        periods_csv, detail_csv = _write_gas_fixture(tmp, self.periods_df, self.detail_rows)
+        self._real = (hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV)
+        hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = str(periods_csv), str(detail_csv)
+        return self
+
+    def __exit__(self, *exc):
+        hpc.GAS_PERIODS_CSV, hpc.GAS_DETAIL_CSV = self._real
+        self._td.cleanup()
+        return False
+
+
 @case
 def case_summer_baseline_recovers_the_known_floor():
     with tempfile.TemporaryDirectory() as td:
@@ -248,31 +323,29 @@ def case_gas_savings_price_heating_slice_at_true_marginal_tier():
     and all 20 nonbaseline-tier therms in the heating slice:
         30 x (1.8 baseline + 0.5 energy) + 20 x (2.3 nonbaseline + 0.5 energy)
         = 30 x 2.3 + 20 x 2.8 = 69 + 56 = 125.00
-    hand-computed and cross-checked against the function's own output."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            "statement_date": ["2026-01-31"],
-            "period": ["Jan 1, 2026 - Jan 31, 2026"],
-            "therms": [60.0],
-            "total_gas_service": [999.0],  # not read by the marginal-tier pricing path
-            "baseline_rate": [1.8],
-            "nonbaseline_rate": [2.3],
-            "baseline_allowance_therms": [40.0],
-            "gas_energy_charge_rate": [0.5],
-            "other_fees_rate": [0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
-        try:
-            hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
-            rows, total_savings, _ = hpc.gas_savings_by_period(iso)
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+    hand-computed and cross-checked against the function's own output. This
+    period's own bill_gas_detail.csv fixture is the trivial never-split case
+    (one segment per charge type, spanning the whole period) -- segment-level
+    pricing (issue #109) is algebraically identical to the old period-level
+    computation here, so the hand computation is unaffected."""
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-31"],
+        "period": ["Jan 1, 2026 - Jan 31, 2026"],
+        "therms": [60.0],
+        "total_gas_service": [999.0],  # not read by the marginal-tier pricing path
+        "baseline_rate": [1.8],
+        "nonbaseline_rate": [2.3],
+        "baseline_allowance_therms": [40.0],
+        "gas_energy_charge_rate": [0.5],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-31", "Jan 1, 2026 - Jan 31, 2026", 31,
+                                    60.0, 1.8, 2.3, 0.5, 0.0)
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
+        rows, total_savings, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     assert row["heating_therms_attributed"] == 50.0, row
     expect_savings = 30 * (1.8 + 0.5) + 20 * (2.3 + 0.5)
@@ -296,30 +369,24 @@ def case_gas_savings_heating_slice_entirely_within_baseline_tier():
     fix leaves it genuinely blank rather than inventing a value). The
     heating slice here must price entirely at baseline_rate + energy_rate
     without ever touching the missing nonbaseline_rate."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            "statement_date": ["2026-07-31"],
-            "period": ["Jul 1, 2026 - Jul 31, 2026"],
-            "therms": [9.0],
-            "total_gas_service": [22.94],
-            "baseline_rate": [2.03477],
-            "nonbaseline_rate": [np.nan],
-            "baseline_allowance_therms": [11.0],
-            "gas_energy_charge_rate": [0.39416],
-            "other_fees_rate": [0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
-        try:
-            hdd_by_day = pd.Series({dt.date(2026, 7, d): 10.0 for d in range(1, 32)})
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 4.0, "floor_therms_per_day": 0.0}
-            rows, _, _ = hpc.gas_savings_by_period(iso)
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+    periods = pd.DataFrame({
+        "statement_date": ["2026-07-31"],
+        "period": ["Jul 1, 2026 - Jul 31, 2026"],
+        "therms": [9.0],
+        "total_gas_service": [22.94],
+        "baseline_rate": [2.03477],
+        "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [11.0],
+        "gas_energy_charge_rate": [0.39416],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-07-31", "Jul 1, 2026 - Jul 31, 2026", 31,
+                                    9.0, 2.03477, np.nan, 0.39416, 0.0)
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 7, d): 10.0 for d in range(1, 32)})
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 4.0, "floor_therms_per_day": 0.0}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     assert row["heating_therms_attributed"] == 4.0, row
     expect = 4.0 * (2.03477 + 0.39416)
@@ -337,37 +404,31 @@ def case_gas_savings_fails_closed_when_nonbaseline_rate_missing_but_needed():
     it: a period billing more therms than its own baseline_allowance_therms,
     with an inconsistent (blank) nonbaseline_rate -- upstream data that
     disagrees with itself rather than a real single-tier bill."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            "statement_date": ["2026-01-31"],
-            "period": ["Jan 1, 2026 - Jan 31, 2026"],
-            "therms": [60.0],
-            "total_gas_service": [999.0],
-            "baseline_rate": [1.8],
-            "nonbaseline_rate": [np.nan],   # inconsistent: usage crosses the allowance below
-            "baseline_allowance_therms": [40.0],
-            "gas_energy_charge_rate": [0.5],
-            "other_fees_rate": [0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-31"],
+        "period": ["Jan 1, 2026 - Jan 31, 2026"],
+        "therms": [60.0],
+        "total_gas_service": [999.0],
+        "baseline_rate": [1.8],
+        "nonbaseline_rate": [np.nan],   # inconsistent: usage crosses the allowance below
+        "baseline_allowance_therms": [40.0],
+        "gas_energy_charge_rate": [0.5],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-31", "Jan 1, 2026 - Jan 31, 2026", 31,
+                                    60.0, 1.8, np.nan, 0.5, 0.0)
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
         try:
-            hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
-            try:
-                hpc.gas_savings_by_period(iso)
-            except SystemExit as e:
-                msg = str(e)
-            else:
-                raise AssertionError(
-                    "a period needing a nonbaseline rate it does not have was "
-                    "silently priced instead of failing closed")
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+            hpc.gas_savings_by_period(iso)
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError(
+                "a period needing a nonbaseline rate it does not have was "
+                "silently priced instead of failing closed")
     assert "nonbaseline_rate" in msg, msg
     return "missing nonbaseline_rate needed by the heating slice -> fails closed, not silently zero"
 
@@ -473,45 +534,44 @@ def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
     synthetic hdd_by_day: the sum of each period's own allocated heating
     therms must reproduce the annual heating estimate (the same
     reconciliation check build() itself runs), not merely look plausible."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            # billed therms comfortably exceed each period's own attributed
-            # heating share (computed below) so the "never credit more than
-            # was billed" cap never binds -- this fixture checks the
-            # allocation arithmetic itself, not the separate capping rule
-            "statement_date": ["2026-01-31", "2026-02-28", "2026-03-31"],
-            "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
-                      "Mar 1, 2026 - Mar 31, 2026"],
-            "therms": [50.0, 50.0, 50.0],
-            "total_gas_service": [135.0, 135.0, 135.0],   # not read by the marginal-tier path
-            # baseline_allowance_therms set well above any period's own therms so
-            # the heating slice never crosses into the nonbaseline tier -- this
-            # fixture is about the ALLOCATION arithmetic (does the sum of period
-            # shares reproduce the annual estimate), not the tier-pricing logic,
-            # which has its own dedicated tests above.
-            "baseline_rate": [2.70, 2.70, 2.70],
-            "nonbaseline_rate": [np.nan, np.nan, np.nan],
-            "baseline_allowance_therms": [999.0, 999.0, 999.0],
-            "gas_energy_charge_rate": [0.0, 0.0, 0.0],
-            "other_fees_rate": [0.0, 0.0, 0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
-        try:
-            hdd_by_day = pd.Series({
-                dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
-            hdd_by_day = pd.concat([hdd_by_day, pd.Series({
-                dt.date(2026, 2, d): 10.0 for d in range(1, 29)})])
-            hdd_by_day = pd.concat([hdd_by_day, pd.Series({
-                dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
-            rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+    periods = pd.DataFrame({
+        # billed therms comfortably exceed each period's own attributed
+        # heating share (computed below) so the "never credit more than
+        # was billed" cap never binds -- this fixture checks the
+        # allocation arithmetic itself, not the separate capping rule
+        "statement_date": ["2026-01-31", "2026-02-28", "2026-03-31"],
+        "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
+                  "Mar 1, 2026 - Mar 31, 2026"],
+        "therms": [50.0, 50.0, 50.0],
+        "total_gas_service": [135.0, 135.0, 135.0],   # not read by the marginal-tier path
+        # baseline_allowance_therms set well above any period's own therms so
+        # the heating slice never crosses into the nonbaseline tier -- this
+        # fixture is about the ALLOCATION arithmetic (does the sum of period
+        # shares reproduce the annual estimate), not the tier-pricing logic,
+        # which has its own dedicated tests above.
+        "baseline_rate": [2.70, 2.70, 2.70],
+        "nonbaseline_rate": [np.nan, np.nan, np.nan],
+        "baseline_allowance_therms": [999.0, 999.0, 999.0],
+        "gas_energy_charge_rate": [0.0, 0.0, 0.0],
+        "other_fees_rate": [0.0, 0.0, 0.0],
+    })
+    detail = (
+        _single_segment_detail("2026-01-31", "Jan 1, 2026 - Jan 31, 2026", 31, 50.0,
+                               2.70, np.nan, 0.0, 0.0)
+        + _single_segment_detail("2026-02-28", "Feb 1, 2026 - Feb 28, 2026", 28, 50.0,
+                                 2.70, np.nan, 0.0, 0.0)
+        + _single_segment_detail("2026-03-31", "Mar 1, 2026 - Mar 31, 2026", 31, 50.0,
+                                 2.70, np.nan, 0.0, 0.0))
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({
+            dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
+        hdd_by_day = pd.concat([hdd_by_day, pd.Series({
+            dt.date(2026, 2, d): 10.0 for d in range(1, 29)})])
+        hdd_by_day = pd.concat([hdd_by_day, pd.Series({
+            dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
+        rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
     assert abs(total_allocated - 95) <= 1, total_allocated
     assert abs(total_savings - 95 * 2.70) < 5, total_savings
     for r in rows:
@@ -525,35 +585,34 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
     billed therms (a short, low-usage statement during an otherwise heavy
     heating stretch) must be capped at that period's own therms, not
     publish a heating share the household never actually paid for."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            "statement_date": ["2026-01-31", "2026-02-28", "2026-03-31"],
-            "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
-                      "Mar 1, 2026 - Mar 31, 2026"],
-            "therms": [40.0, 35.0, 20.0],   # March's 20 is less than its own HDD share would imply
-            "total_gas_service": [108.0, 94.5, 54.0],   # not read by the marginal-tier path
-            "baseline_rate": [2.70, 2.70, 2.70],
-            "nonbaseline_rate": [np.nan, np.nan, np.nan],
-            "baseline_allowance_therms": [999.0, 999.0, 999.0],
-            "gas_energy_charge_rate": [0.0, 0.0, 0.0],
-            "other_fees_rate": [0.0, 0.0, 0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
-        try:
-            hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
-            hdd_by_day = pd.concat([hdd_by_day, pd.Series({
-                dt.date(2026, 2, d): 10.0 for d in range(1, 29)})])
-            hdd_by_day = pd.concat([hdd_by_day, pd.Series({
-                dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
-            rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-31", "2026-02-28", "2026-03-31"],
+        "period": ["Jan 1, 2026 - Jan 31, 2026", "Feb 1, 2026 - Feb 28, 2026",
+                  "Mar 1, 2026 - Mar 31, 2026"],
+        "therms": [40.0, 35.0, 20.0],   # March's 20 is less than its own HDD share would imply
+        "total_gas_service": [108.0, 94.5, 54.0],   # not read by the marginal-tier path
+        "baseline_rate": [2.70, 2.70, 2.70],
+        "nonbaseline_rate": [np.nan, np.nan, np.nan],
+        "baseline_allowance_therms": [999.0, 999.0, 999.0],
+        "gas_energy_charge_rate": [0.0, 0.0, 0.0],
+        "other_fees_rate": [0.0, 0.0, 0.0],
+    })
+    detail = (
+        _single_segment_detail("2026-01-31", "Jan 1, 2026 - Jan 31, 2026", 31, 40.0,
+                               2.70, np.nan, 0.0, 0.0)
+        + _single_segment_detail("2026-02-28", "Feb 1, 2026 - Feb 28, 2026", 28, 35.0,
+                                 2.70, np.nan, 0.0, 0.0)
+        + _single_segment_detail("2026-03-31", "Mar 1, 2026 - Mar 31, 2026", 31, 20.0,
+                                 2.70, np.nan, 0.0, 0.0))
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
+        hdd_by_day = pd.concat([hdd_by_day, pd.Series({
+            dt.date(2026, 2, d): 10.0 for d in range(1, 29)})])
+        hdd_by_day = pd.concat([hdd_by_day, pd.Series({
+            dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
+        rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
     march = next(r for r in rows if r["statement_date"] == "2026-03-31")
     assert march["heating_therms_attributed"] == 20.0, march   # capped at its own billed therms
     # total_allocated is the RAW (uncapped) share, still ~95 -- the cap only
@@ -572,33 +631,27 @@ def case_gas_savings_reserves_the_non_heating_floor_before_capping():
     one of those days too. A 28-day period billing 15 therms with a
     0.3 therm/day floor can credit at most 15 - (0.3*28) = 6.6 therms to
     heating, never the full 15 even if the HDD-weighted share implies more."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            "statement_date": ["2026-04-28"],
-            "period": ["Apr 1, 2026 - Apr 28, 2026"],
-            "therms": [15.0],
-            "total_gas_service": [40.5],   # not read by the marginal-tier path
-            "baseline_rate": [2.70],
-            "nonbaseline_rate": [np.nan],
-            "baseline_allowance_therms": [999.0],
-            "gas_energy_charge_rate": [0.0],
-            "other_fees_rate": [0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
-        try:
-            hdd_by_day = pd.Series({dt.date(2026, 4, d): 10.0 for d in range(1, 29)})
-            # HDD share alone would credit the full 15 therms to heating
-            # (annual_heating_therms == total_hdd's sum means 100% share)
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": float(hdd_by_day.sum()),
-                  "floor_therms_per_day": 0.3}
-            rows, total_savings, _ = hpc.gas_savings_by_period(iso)
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+    periods = pd.DataFrame({
+        "statement_date": ["2026-04-28"],
+        "period": ["Apr 1, 2026 - Apr 28, 2026"],
+        "therms": [15.0],
+        "total_gas_service": [40.5],   # not read by the marginal-tier path
+        "baseline_rate": [2.70],
+        "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0],
+        "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-04-28", "Apr 1, 2026 - Apr 28, 2026", 28, 15.0,
+                                    2.70, np.nan, 0.0, 0.0)
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 4, d): 10.0 for d in range(1, 29)})
+        # HDD share alone would credit the full 15 therms to heating
+        # (annual_heating_therms == total_hdd's sum means 100% share)
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": float(hdd_by_day.sum()),
+              "floor_therms_per_day": 0.3}
+        rows, total_savings, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     expected_cap = 15.0 - 0.3 * 28
     assert abs(row["heating_therms_attributed"] - expected_cap) < 1e-9, (row, expected_cap)
@@ -616,43 +669,40 @@ def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
     days off, pulling in some of December's colder HDD and excluding some
     of late October's. This proves the real printed dates are what the
     period_hdd sum is actually computed from."""
-    with tempfile.TemporaryDirectory() as td:
-        tmp = pathlib.Path(td)
-        periods = pd.DataFrame({
-            "statement_date": ["2025-10-29", "2025-11-28"],
-            "period": ["Sep 26, 2025 - Oct 27, 2025", "Oct 28, 2025 - Nov 25, 2025"],
-            "therms": [14.0, 34.0],
-            "total_gas_service": [35.61, 93.57],   # not read; this test only checks period_hdd
-            "baseline_rate": [2.02361, 2.02136],
-            "nonbaseline_rate": [2.37552, 2.37552],
-            "baseline_allowance_therms": [11.0, 19.0],
-            "gas_energy_charge_rate": [0.32597, 0.45779],
-            "other_fees_rate": [0.0, 0.0],
-        })
-        csv_path = tmp / "bill_periods_gas.csv"
-        periods.to_csv(csv_path, index=False)
-        real_path = hpc.GAS_PERIODS_CSV
-        hpc.GAS_PERIODS_CSV = str(csv_path)
-        try:
-            # 1 HDD/day everywhere EXCEPT a spike (100) on Oct 26-28 and Nov
-            # 26-30 -- days that straddle the REAL Nov period's boundary
-            # (Oct 28 - Nov 25) closely enough that a same-statement-date
-            # reconstruction (which would have bounded it roughly Oct 30 -
-            # Nov 28 instead, per Codex's own named example) misattributes
-            # some of them. Built as one dict (last write wins per date),
-            # never pd.concat of overlapping Series, which would duplicate
-            # rather than overwrite an index label.
-            values = {dt.date(2025, 9, d): 1.0 for d in range(26, 31)}
-            values.update({dt.date(2025, 10, d): 1.0 for d in range(1, 32)})
-            values.update({dt.date(2025, 11, d): 1.0 for d in range(1, 26)})
-            values.update({dt.date(2025, 10, d): 100.0 for d in (26, 27, 28)})
-            values.update({dt.date(2025, 11, d): 100.0 for d in (26, 27, 28, 29, 30)})
-            hdd_by_day = pd.Series(values)
-            iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
-                  "annual_heating_therms": 30.0, "floor_therms_per_day": 0.0}
-            rows, _, _ = hpc.gas_savings_by_period(iso)
-        finally:
-            hpc.GAS_PERIODS_CSV = real_path
+    periods = pd.DataFrame({
+        "statement_date": ["2025-10-29", "2025-11-28"],
+        "period": ["Sep 26, 2025 - Oct 27, 2025", "Oct 28, 2025 - Nov 25, 2025"],
+        "therms": [14.0, 34.0],
+        "total_gas_service": [35.61, 93.57],   # not read; this test only checks period_hdd
+        "baseline_rate": [2.02361, 2.02136],
+        "nonbaseline_rate": [2.37552, 2.37552],
+        "baseline_allowance_therms": [11.0, 19.0],
+        "gas_energy_charge_rate": [0.32597, 0.45779],
+        "other_fees_rate": [0.0, 0.0],
+    })
+    detail = (
+        _single_segment_detail("2025-10-29", "Sep 26, 2025 - Oct 27, 2025", 32, 14.0,
+                               2.02361, 2.37552, 0.32597, 0.0)
+        + _single_segment_detail("2025-11-28", "Oct 28, 2025 - Nov 25, 2025", 29, 34.0,
+                                 2.02136, 2.37552, 0.45779, 0.0))
+    with _GasFixture(periods, detail):
+        # 1 HDD/day everywhere EXCEPT a spike (100) on Oct 26-28 and Nov
+        # 26-30 -- days that straddle the REAL Nov period's boundary
+        # (Oct 28 - Nov 25) closely enough that a same-statement-date
+        # reconstruction (which would have bounded it roughly Oct 30 -
+        # Nov 28 instead, per Codex's own named example) misattributes
+        # some of them. Built as one dict (last write wins per date),
+        # never pd.concat of overlapping Series, which would duplicate
+        # rather than overwrite an index label.
+        values = {dt.date(2025, 9, d): 1.0 for d in range(26, 31)}
+        values.update({dt.date(2025, 10, d): 1.0 for d in range(1, 32)})
+        values.update({dt.date(2025, 11, d): 1.0 for d in range(1, 26)})
+        values.update({dt.date(2025, 10, d): 100.0 for d in (26, 27, 28)})
+        values.update({dt.date(2025, 11, d): 100.0 for d in (26, 27, 28, 29, 30)})
+        hdd_by_day = pd.Series(values)
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 30.0, "floor_therms_per_day": 0.0}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
     nov = next(r for r in rows if r["statement_date"] == "2025-11-28")
     oct_ = next(r for r in rows if r["statement_date"] == "2025-10-29")
     # the real Nov period (Oct 28 - Nov 25, inclusive) contains one spike day
@@ -667,6 +717,164 @@ def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
     # x100) -- must NOT include Oct 28 (belongs to the Nov period, not this one)
     assert oct_["period_hdd"] == 230.0, oct_
     return "gas savings correctly use the real printed period dates, not a statement-date reconstruction"
+
+
+@case
+def case_gas_service_segment_tiering_differs_from_period_level_blend():
+    """Issue #109: when Gas Service splits mid-cycle into two day-segments
+    with different rates, and ALL of a period's heating HDD falls in one
+    segment, a segment-respecting allocation prices the heating slice
+    differently from the retired period-level blend -- hand-computed here
+    so the direction and magnitude of the shift is independently
+    verifiable, not just internally self-consistent.
+
+    Period: 30 days, 39 total therms, baseline_allowance_therms=18 (period-
+    level, unsegmented -- parse_bills.py doesn't segment this figure).
+    Gas Service splits 10/20 days: segment 0 (10 days) never crosses its
+    own share of the allowance (single-column, no nonbaseline_rate
+    printed); segment 1 (20 days) does (baseline_rate=1.60,
+    nonbaseline_rate=2.00). ALL 24 heating-attributed therms fall in
+    segment 1 (its HDD share is 100% of the period's, by construction).
+    Gas Energy Charge splits on the identical 10/20 days (0.30, 0.45);
+    other_fees never splits (flat 0.20/therm).
+
+    Segment-level (this function): segment 1's own day-proportional totals
+    are T_s=39x20/30=26, A_s=18x20/30=12; its 24 heating therms leave 2
+    non-heating, so baseline_ceiling=min(12,26)=12, overlap_baseline=
+    12-2=10, overlap_nonbaseline=24-10=14:
+        Gas Service: 10 x 1.60 + 14 x 2.00 = 16.00 + 28.00 = 44.00
+        Gas Energy:  0 x 0.30 + 24 x 0.45 =            10.80
+        other_fees:  24 x 0.20 =                        4.80
+        total = 59.60
+    Period-level (the retired computation, shown for contrast only -- NOT
+    asserted, since that code path no longer exists): day-weighted
+    baseline_rate=(10x1.50+20x1.60)/30=1.56667, nonbaseline_rate=2.00 (only
+    segment 1 ever prints one), energy_rate=(10x0.30+20x0.45)/30=0.40:
+    non_heat=39-24=15; baseline_ceiling=min(18,39)=18; overlap_baseline=
+    18-15=3; overlap_nonbaseline=24-3=21:
+        3 x 1.56667 + 21 x 2.00 = 4.70 + 42.00 = 46.70, plus
+        24 x (0.40 + 0.20) = 14.40 -> 61.10 total -- $1.50 MORE than the
+        segment-level result, because the period blend spreads segment 0's
+        unused (by heating) baseline headroom thin across the whole period
+        instead of crediting it, correctly, to the segment that actually
+        used it."""
+    period = "Jan 1, 2026 - Jan 30, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-30"], "period": [period], "therms": [39.0],
+        "total_gas_service": [999.0],
+        # period-level blend columns are no longer read by this function's
+        # own pricing path (issue #109) -- present only for schema shape
+        "baseline_rate": [(10 * 1.50 + 20 * 1.60) / 30],
+        "nonbaseline_rate": [2.00],
+        "baseline_allowance_therms": [18.0],
+        "gas_energy_charge_rate": [(10 * 0.30 + 20 * 0.45) / 30],
+        "other_fees_rate": [0.20],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-30", period,
+        gas_service=[(10, 1.50, np.nan), (20, 1.60, 2.00)],
+        gas_energy=[(10, 0.30), (20, 0.45)],
+        other_fees=[(39.0, 0.20)])
+    with _GasFixture(periods, detail):
+        hdd = {dt.date(2026, 1, d): 0.0 for d in range(1, 11)}
+        hdd.update({dt.date(2026, 1, d): 10.0 for d in range(11, 31)})
+        hdd_by_day = pd.Series(hdd)
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 24.0, "floor_therms_per_day": 0.0}
+        rows, total_savings, _ = hpc.gas_savings_by_period(iso)
+    row = rows[0]
+    assert row["heating_therms_attributed"] == 24.0, row
+    assert abs(row["gas_savings_usd"] - 59.60) < 0.01, row
+    assert abs(total_savings - 59.60) < 0.01, total_savings
+    return (f"segment-level Gas Service tiering prices this period's heating "
+           f"slice at ${row['gas_savings_usd']}, $1.50 below the $61.10 a "
+           f"period-blended computation would give on the same fixture -- "
+           f"hand-verified direction and size")
+
+
+@case
+def case_other_fees_borrows_gas_energy_day_ranges_when_segment_counts_match():
+    """Issue #109: other_fees splits by THERM COUNT, not days, so it has no
+    day-range of its own -- when it splits into the SAME number of segments
+    as Gas Energy Charge (which this household's real 25-bill corpus shows
+    is the only pattern that ever occurs, see _other_fees_day_ranges()'s own
+    docstring), it borrows Gas Energy Charge's day boundaries to allocate
+    heating HDD-share across its own segments. Gas Service here never splits
+    (1 segment), so this also proves Gas Energy Charge is preferred over Gas
+    Service as the day-range source when both could theoretically match.
+
+    20-day period, all 15 heating-attributed therms concentrated (by HDD
+    construction) in the SECOND 10 days. Gas Energy Charge/other_fees both
+    split 10/10 days; other_fees's second segment (0.25/therm) must be what
+    prices the whole heating slice, not its first (0.10/therm):
+        other_fees cost = 15 x 0.25 = 3.75, not 15 x 0.10 = 1.50."""
+    period = "Jan 1, 2026 - Jan 20, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-20"], "period": [period], "therms": [30.0],
+        "total_gas_service": [999.0], "baseline_rate": [0.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.175],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-20", period,
+        gas_service=[(20, 0.0, np.nan)],
+        gas_energy=[(10, 0.0), (10, 0.0)],
+        other_fees=[(15.0, 0.10), (15.0, 0.25)])
+    with _GasFixture(periods, detail):
+        hdd = {dt.date(2026, 1, d): 0.0 for d in range(1, 11)}
+        hdd.update({dt.date(2026, 1, d): 10.0 for d in range(11, 21)})
+        hdd_by_day = pd.Series(hdd)
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 15.0, "floor_therms_per_day": 0.0}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
+    row = rows[0]
+    assert row["heating_therms_attributed"] == 15.0, row
+    # Gas Service contributes 0 (baseline_rate x 15, nonbaseline never
+    # touched since baseline_allowance is huge); Gas Energy contributes 0
+    # (rate 0.0 both segments); only other_fees's own second-segment rate
+    # (0.25, not 0.10) should show up in the total.
+    assert abs(row["gas_savings_usd"] - 15.0 * 0.25) < 0.01, row
+    return ("other_fees's second segment (0.25/therm), borrowed from Gas "
+           "Energy Charge's own day boundaries, prices the whole heating "
+           "slice -- not its first segment's 0.10/therm")
+
+
+@case
+def case_other_fees_fails_closed_when_no_segment_count_matches():
+    """Issue #109: if other_fees ever split into a segment count matching
+    NEITHER Gas Energy Charge's nor Gas Service's own segment count for the
+    same period, there is no reliable day-boundary basis to allocate heating
+    HDD-share across its segments -- this must fail closed (CLAUDE.md
+    section 0) rather than silently guess a mapping. Not observed in this
+    household's real 25-bill corpus (see _other_fees_day_ranges()'s own
+    docstring), but the function must still refuse rather than mis-price."""
+    period = "Jan 1, 2026 - Jan 30, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-30"], "period": [period], "therms": [30.0],
+        "total_gas_service": [999.0], "baseline_rate": [2.00], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.15],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-30", period,
+        gas_service=[(30, 2.00, np.nan)],                       # 1 segment
+        gas_energy=[(15, 0.0), (15, 0.0)],                       # 2 segments
+        other_fees=[(10.0, 0.1), (10.0, 0.2), (10.0, 0.3)])      # 3 segments -- matches neither
+    with _GasFixture(periods, detail):
+        hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 31)})
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 15.0, "floor_therms_per_day": 0.0}
+        try:
+            hpc.gas_savings_by_period(iso)
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError(
+                "other_fees split into a segment count matching neither "
+                "day-based charge type, but was priced anyway instead of "
+                "failing closed")
+    assert "other_fees" in msg and "3 segments" in msg, msg
+    return "other_fees segment count matching neither day-based charge type -> fails closed"
 
 
 @case
