@@ -61,23 +61,12 @@ def _expected_month_labels():
 # of each figure's current artifact-derived form.
 RETIRED_FIGURES = [
     "560 charging sessions",   # pre-correction EV session count
-    "$2,325",                  # pre-correction PW3 price-aware annual save (always
-                               # printed bare/positive -- see PW3_RETIRED_FIGURE_EXEMPT_PREFIXES
-                               # below for why a NEGATIVE "$2,325" doesn't count)
+    "$2,325",                  # pre-correction PW3 price-aware annual save
     "$3,438",                  # pre-correction MID package savings
     "$4,884",                  # pre-correction baseline bill at current rates
     "9.4-yr median",           # pre-correction Monte Carlo payback (now 6.0)
     "median 9.4 yr",           # same retired figure, its other prose form
 ]
-
-# issue #109: the heat-pump-conversion section's own 15-yr NPV can coincidentally
-# land on the exact same digits as the retired PW3 figure above (it did:
-# "-$2,325" at COP 4.2/4%) -- a real, current, correctly-derived figure, not a
-# stale one. The retired PW3 figure was always printed as a bare positive
-# save ("$2,325"), never negative, so a "$2,325" preceded by a minus sign
-# (U+2212, this report's negative-number glyph) is unambiguously the live
-# heat-pump figure, not the retired PW3 one.
-PW3_RETIRED_FIGURE_EXEMPT_PREFIX = "−"
 
 # The retired holiday-convention explanation; checked absent in
 # case_no_retired_holiday_discrepancy_note. Both pipelines now share the
@@ -244,15 +233,7 @@ def case_headline_figures_present_and_stale_ones_absent():
     for new_form in current:
         assert new_form in HTML, f"current figure missing from the report: {new_form!r}"
     for old_form in RETIRED_FIGURES:
-        start = 0
-        while True:
-            idx = HTML.find(old_form, start)
-            if idx == -1:
-                break
-            exempt = (old_form == "$2,325" and idx > 0
-                      and HTML[idx - 1] == PW3_RETIRED_FIGURE_EXEMPT_PREFIX)
-            assert exempt, f"stale figure survives in the report: {old_form!r}"
-            start = idx + 1
+        assert old_form not in HTML, f"stale figure survives in the report: {old_form!r}"
     return "headline figures per artifact class are present and their stale forms absent"
 
 

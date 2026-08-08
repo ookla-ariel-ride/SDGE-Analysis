@@ -783,11 +783,14 @@ def gas_savings_by_period(iso):
     the fail-closed path below is exercised only by a deliberately-gapped
     test fixture, never by this household's own real run. Real metered
     days' own totals don't exactly reproduce their period's own printed
-    bill total (ordinary meter-read-date-vs-billing-date noise, e.g.
-    2026-01-29: billed 72.0 therms, the real daily readings sum to 72.01) --
-    used as-is per day, not rescaled to match the bill, since it's each
-    day's own reading, not the bill's total, that determines that day's own
-    capacity. `reconciled_heating_therms_yr` moves from 146.79 (round 3's
+    bill total (ordinary meter-read-date-vs-billing-date noise -- across
+    every fully-gas.csv-covered period in this household's real corpus, the
+    gap ranges from 0.01 therms up to 1.83 (2026-03-02: billed 58.0,
+    real daily readings sum to 59.83) and 1.39 (2025-11-28: billed 34.0,
+    real sum 32.61) -- not uniformly small) -- used as-is per day, not
+    rescaled to match the bill, since it's each day's own reading, not the
+    bill's total, that determines that day's own capacity.
+    `reconciled_heating_therms_yr` moves from 146.79 (round 3's
     day-proportional proxy) to 145.19 (round 4's real daily data) -- a
     smaller shift than round 3's own correction, as expected once the
     finest defensible granularity (a real day) is reached and the only

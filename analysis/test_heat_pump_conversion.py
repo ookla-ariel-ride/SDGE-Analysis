@@ -1022,6 +1022,132 @@ def case_capacity_cap_fails_closed_when_gas_daily_missing_a_needed_day():
 
 
 @case
+def case_capacity_cap_does_not_fail_closed_on_a_zero_demand_day_missing_from_gas_daily():
+    """Issue #109 round 5 (test-coverage gap found in /review, PR #120):
+    the fail-closed check above is gated on `demand > 1e-9`. This must NOT
+    raise: a day with no demand can't be mispriced by which capacity
+    ceiling would have applied to it (min(0, anything) = 0), so falling
+    through to the period-wide proxy for that one irrelevant day is
+    correct, not a silent misprice. Mirrors _segment_real_or_proxy_therms()'s
+    own "a value only needs to be real when it actually changes the
+    output" convention from the other direction.
+
+    TWO Gas Service segments (day 1 alone; days 2-3 together) so the
+    missing day sits in a segment whose own heat_s is ALSO zero -- with
+    only one segment, round 5's own t_s fail-closed check would fire first
+    (that segment's heat_s is nonzero, aggregating the whole period) before
+    this exemption could be isolated at all."""
+    period = "Jan 1, 2026 - Jan 3, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-03"], "period": [period], "therms": [11.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-03", period,
+        gas_service=[(1, 1.0, np.nan), (2, 1.0, np.nan)],
+        gas_energy=[(3, 0.0)],
+        other_fees=[(11.0, 0.0)])
+    hdd_by_day = pd.Series({dt.date(2026, 1, 1): 0.0, dt.date(2026, 1, 2): 100.0,
+                            dt.date(2026, 1, 3): 0.0})
+    # day 1 (zero HDD, zero demand, its own whole segment) is missing from
+    # gas_daily -- days 2/3 (the second segment, carrying all the real
+    # demand) are fully covered
+    gas_daily = pd.Series({dt.date(2026, 1, 2): 5.0, dt.date(2026, 1, 3): 5.0})
+    with _GasFixture(periods, detail):
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 50.0, "floor_therms_per_day": 0.5,
+              "gas_daily": gas_daily}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
+    # day 2's own real capacity: 5.0 - 0.5 = 4.5, capping the 50-therm
+    # demand there; day 1/3 contribute 0 regardless of which capacity
+    # source applied, since their own demand is 0.
+    assert abs(rows[0]["heating_therms_attributed"] - 4.5) < 0.01, rows[0]
+    return "a zero-demand day missing from gas_daily falls through to the proxy without raising, since no demand exists there to misprice"
+
+
+@case
+def case_segment_total_therms_does_not_fail_closed_on_a_zero_heat_segment_missing_coverage():
+    """Issue #109 round 5 (test-coverage gap found in /review, PR #120):
+    the mirror-image case of _segment_real_or_proxy_therms()'s own
+    fail-closed check, gated on `heat_s > 1e-9`. A Gas Service segment
+    whose own attributed heating share is zero (the SAME shape as the
+    capacity-cap case above, one level up) can't be mispriced by an
+    unreliable t_s, since t_s multiplies through to zero cost whenever
+    heat_s is zero -- so a gas_daily coverage gap on that one zero-heat
+    segment must fall through to the proxy, not raise.
+
+    Two Gas Service segments (5 days, 25 days); all heating HDD
+    concentrated in the SECOND segment via hdd_by_day construction, so the
+    FIRST segment's own heat_s is exactly 0. gas_daily is missing a day
+    inside that first (zero-heat) segment only."""
+    period = "Jan 1, 2026 - Jan 30, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-30"], "period": [period], "therms": [30.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-30", period,
+        gas_service=[(5, 1.0, np.nan), (25, 1.0, np.nan)],
+        gas_energy=[(30, 0.0)],
+        other_fees=[(30.0, 0.0)])
+    hdd = {dt.date(2026, 1, d): 0.0 for d in range(1, 6)}         # segment 0: zero HDD
+    hdd.update({dt.date(2026, 1, d): 10.0 for d in range(6, 31)})  # segment 1: all HDD
+    hdd_by_day = pd.Series(hdd)
+    # day 3 (inside the zero-heat first segment) missing from gas_daily;
+    # every day of the second (heating) segment is fully covered
+    gas_daily = pd.Series({d: 1.0 for d in hdd_by_day.index if d != dt.date(2026, 1, 3)})
+    with _GasFixture(periods, detail):
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 25.0, "floor_therms_per_day": 0.0,
+              "gas_daily": gas_daily}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
+    assert rows[0]["heating_therms_attributed"] == 25.0, rows[0]
+    return "a gas_daily coverage gap inside a zero-heat segment falls through to the proxy without raising, since t_s can't misprice a zero heat_s"
+
+
+@case
+def case_other_fees_borrows_gas_service_day_ranges_when_only_that_count_matches():
+    """Issue #109 (test-coverage gap found in /review, PR #120): the
+    existing borrowing test above only exercises the Gas-Energy-preferred
+    path. This proves the Gas-Service fallback branch
+    (`len(gs_ranges) == len(of_segs)`) actually returns gs_ranges, not just
+    that it's unreachable dead code -- Gas Energy Charge here splits into a
+    DIFFERENT segment count (3) than other_fees (2), so it cannot match;
+    Gas Service's own segment count (2) does.
+
+    30-day period, all 20 heating-attributed therms concentrated in the
+    LAST 20 days (Gas Service's own second segment). other_fees's second
+    segment (0.30/therm) must price the whole heating slice, not its first
+    (0.05/therm): other_fees cost = 20 x 0.30 = 6.00, not 20 x 0.05 = 1.00."""
+    period = "Jan 1, 2026 - Jan 30, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-30"], "period": [period], "therms": [30.0],
+        "total_gas_service": [999.0], "baseline_rate": [0.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-30", period,
+        gas_service=[(10, 0.0, np.nan), (20, 0.0, np.nan)],   # 2 segments
+        gas_energy=[(10, 0.0), (10, 0.0), (10, 0.0)],         # 3 segments -- won't match other_fees
+        other_fees=[(10.0, 0.05), (20.0, 0.30)])              # 2 segments -- matches Gas Service
+    hdd = {dt.date(2026, 1, d): 0.0 for d in range(1, 11)}
+    hdd.update({dt.date(2026, 1, d): 10.0 for d in range(11, 31)})
+    hdd_by_day = pd.Series(hdd)
+    with _GasFixture(periods, detail):
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 20.0, "floor_therms_per_day": 0.0}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
+    assert rows[0]["heating_therms_attributed"] == 20.0, rows[0]
+    assert abs(rows[0]["gas_savings_usd"] - 20.0 * 0.30) < 0.01, rows[0]
+    return "other_fees borrows Gas Service's own day ranges when only Gas Service's segment count matches, not Gas Energy Charge's"
+
+
+@case
 def case_segment_total_therms_use_real_daily_data_not_the_uniform_proxy():
     """Issue #109 round 5 (Codex `review` pass 2, verified independently
     before this test was written, not trusted on Codex's own say-so).
