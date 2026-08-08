@@ -841,7 +841,16 @@ def case_battery_hardware_sizing_table_matches_battery_sim_artifact():
 def case_bill_decomposition_finding_matches_the_artifact():
     """issue #112: the §10 '$48.25 became $398.56' finding is hand-written,
     not templated -- lock its two bill totals and the applied-NEM-credit
-    swing that drives them against the live artifact."""
+    swing that drives them against the live artifact.
+
+    Issue #112 adversarial review (Codex, round 2): an earlier version of
+    this case abs()'d both NEM-credit values and checked their presence
+    anywhere in the whole finding block -- it could not tell base_usd from
+    current_usd, or a credit from a charge, so REVERSING the row
+    ("-128.39 -> -5.06" printed as "-5.06 -> -128.39") or flipping both
+    signs positive still passed. Parses the actual table row -- the same
+    "applied NEM generation credit" row -- and asserts its cells in their
+    real signed, ordered form."""
     bd_path = ROOT / "data" / "bill_decomposition.json"
     assert bd_path.exists(), f"{bd_path} is committed public data and must exist"
     bd = json.loads(bd_path.read_text())
@@ -852,16 +861,24 @@ def case_bill_decomposition_finding_matches_the_artifact():
     end = HTML.index("</div>", start) + len("</div>")
     section = HTML[start:end]
 
-    checks = [
-        _fmt_usd2(base["current_charges"]),
-        _fmt_usd2(current["current_charges"]),
-        _fmt_usd2(abs(nem["base_usd"])),
-        _fmt_usd2(abs(nem["current_usd"])),
-        _fmt_usd2(nem["change_usd"]),
-    ]
-    for value in checks:
-        assert value in section, f"§10 bill-decomposition finding: {value!r} not found in it"
-    return "the §10 bill-decomposition finding's dollar figures match bill_decomposition.json"
+    assert _fmt_usd2(base["current_charges"]) in section, "base bill total not found"
+    assert _fmt_usd2(current["current_charges"]) in section, "current bill total not found"
+
+    def fmt_signed_bare(v):
+        return f"−{abs(v):.2f}" if v < 0 else f"{v:.2f}"
+
+    tr_re = re.compile(r"<tr>\s*<td>applied NEM generation credit</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>\s*</tr>")
+    m = tr_re.search(section)
+    assert m, "the 'applied NEM generation credit' table row was not found in its expected form"
+    quantity_cell, change_cell = m.group(1), m.group(2)
+    expected_quantity = f"{fmt_signed_bare(nem['base_usd'])} → {fmt_signed_bare(nem['current_usd'])}"
+    assert quantity_cell == expected_quantity, (
+        f"applied NEM generation credit row: expected {expected_quantity!r}, found {quantity_cell!r} "
+        "-- base_usd/current_usd may be reversed, sign-flipped, or stale")
+    expected_change = f"+{nem['change_usd']:.2f}" if nem["change_usd"] >= 0 else fmt_signed_bare(nem["change_usd"])
+    assert change_cell == expected_change, (
+        f"applied NEM generation credit row: expected change {expected_change!r}, found {change_cell!r}")
+    return "the §10 bill-decomposition finding's dollar figures, including the signed/ordered NEM-credit row, match bill_decomposition.json"
 
 
 def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
