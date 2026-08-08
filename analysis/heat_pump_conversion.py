@@ -340,6 +340,13 @@ def isolate_heating_therms():
         "floor_therms_per_day": floor_day_hdd,
         "hdd_by_day": hdd_by_day,
         "total_hdd": float(hdd_by_day.sum()),
+        # issue #109 round 4: the REAL per-day meter readings, so
+        # gas_savings_by_period()'s day-level capacity cap can be built from
+        # actual measured daily therms where they exist, rather than only
+        # the day-proportional (therms/period_days) proxy every day used to
+        # share. Not JSON-serialized (excluded from build()'s "isolation"
+        # output the same way hdd_by_day is).
+        "gas_daily": gas_daily,
     }
 
 
@@ -439,24 +446,53 @@ def _segment_day_ranges(period_start, period_end, seg_days_list, context):
 
 
 def _capacity_capped_days(period_start, period_end, hdd_by_day, total_hdd, ann_heat,
-                          heating_capable_per_day):
+                          heating_capable_per_day, floor_per_day, gas_daily, context):
     """One (day, heating_therms) pair per REAL CALENDAR DAY of the period
     (issue #109, round 3 -- closing issue #118, two independent Codex
     adversarial-review passes on round 2): each day's own real HDD share of
-    the ANNUAL heating estimate, capped at that SAME day's own share of the
-    period's implied per-day heating-capable ceiling (`heating_capable_per_
-    day` -- the period's printed total therms, day-prorated, minus the
-    non-heating floor; the SAME reservation-before-capping rule this module
-    has always applied, now at the finest granularity its own day-
-    proportional-usage proxy can support).
+    the ANNUAL heating estimate, capped at that SAME day's own heating-
+    capable ceiling.
 
     Round 2 capped once per charge-type SEGMENT (often several real days
     wide) instead of once per real day -- within a multi-day segment, a
     cold day could still silently borrow a warm day's unused capacity. That
     gap was real and material on the real archive (round 2's segment-level
     cap credited 166.15 heating-therms/yr; the true day-level cap credits
-    146.78 -- a 13% overstatement, independently reproduced by two Codex
-    passes and by hand before this fix, not a rounding-noise concern).
+    146.79, a 13% overstatement, independently reproduced by two Codex
+    passes and by hand before that fix, not a rounding-noise concern).
+
+    ROUND 4 (issue #109, Codex `review` pass, not adversarial-review): round
+    3's own per-day ceiling was `heating_capable_per_day`, itself only a
+    day-PROPORTIONAL estimate (the period's printed total therms divided
+    evenly across its own real days) -- a fabricated uniform split, even
+    though this module already has REAL per-day meter readings available
+    (`load_gas_daily()`, the Green Button daily export). Fixed by pricing
+    each real day's own capacity from its OWN real metered therms
+    (`gas_daily`) wherever gas.csv actually covers that day: `max(0,
+    real_day_therms - floor_per_day)`, not the period-wide proxy. This
+    household's real gas.csv covers 2025-07-25 through 2026-07-24, and
+    every one of the 25 real billing periods with nonzero HDD on any of its
+    own days (the only periods where this cap can ever bind, since a day
+    with zero HDD has zero demand regardless of its own capacity) falls
+    entirely inside that window -- verified before this fix landed, not
+    assumed. `heating_capable_per_day` is kept ONLY as the fallback for (a)
+    a day `gas_daily` genuinely has no reading for, when `gas_daily` itself
+    is None (see below), or (b) the rare zero-demand day where which
+    ceiling applies cannot matter (`min(0, anything) == 0`).
+
+    `gas_daily` is None in two legitimate cases, each documented at its own
+    call site rather than silently treated the same: `isolate_heating_
+    therms()` always populates it from the real gas.csv when called for a
+    real run (so it is never None in build()'s own pipeline), but a unit
+    test can construct `iso` by hand without it to deliberately exercise
+    the proxy-only path on a fixture that has no real daily data to give.
+    When `gas_daily` IS provided (real run, or a test that supplies
+    synthetic daily data) but is missing a reading for a day that actually
+    has nonzero heating demand, this fails closed (mirrors
+    _gas_service_segment_tier_cost()'s missing-nonbaseline-rate convention:
+    a value that's actually NEEDED for a nonzero computation must be
+    real, never silently defaulted) rather than quietly falling back to
+    the coarser proxy for that one day and mispricing a real dollar figure.
 
     This is the ONLY place a cap is applied -- every charge type's own
     segment allocation downstream (_segment_heat_from_days()) just SUMS the
@@ -472,7 +508,21 @@ def _capacity_capped_days(period_start, period_end, hdd_by_day, total_hdd, ann_h
     while d <= period_end:
         hdd = float(hdd_by_day.get(d, 0.0))
         demand = ann_heat * (hdd / total_hdd) if total_hdd > 0 else 0.0
-        out.append((d, min(demand, heating_capable_per_day)))
+        if gas_daily is not None and d in gas_daily.index:
+            capacity = max(0.0, float(gas_daily.loc[d]) - floor_per_day)
+        elif gas_daily is not None and demand > 1e-9:
+            raise SystemExit(
+                f"heat_pump_conversion.py: {context} needs {d}'s own real "
+                f"metered daily gas usage (that day's HDD implies "
+                f"{demand:.4f} therms of heating demand) but gas.csv has no "
+                f"reading for {d} -- falling back to the period-wide "
+                f"day-proportional proxy for just this one day would "
+                f"silently misprice a real dollar figure; investigate the "
+                f"gas.csv coverage gap (or this period's own date range) "
+                f"before pricing this period.")
+        else:
+            capacity = heating_capable_per_day
+        out.append((d, min(demand, capacity)))
         d += dt.timedelta(days=1)
     return out
 
@@ -658,6 +708,35 @@ def gas_savings_by_period(iso):
     shrinks, which is the whole point of reserving the floor per real day
     rather than once per period or once per multi-day segment.
 
+    ROUND 4 (issue #109, plain Codex `review` pass, not adversarial-review):
+    round 3's own per-day ceiling (`heating_capable_per_day`) was itself
+    still a fabricated uniform proxy -- the period's printed total therms
+    divided evenly across its own real days -- even though this module
+    already loads REAL per-day meter readings elsewhere (load_gas_daily(),
+    the Green Button daily export) for the HDD regression. Fixed by pricing
+    each real day's own capacity from ITS OWN real metered therms wherever
+    gas.csv covers that day (`max(0, real_day_therms - floor_per_day)`),
+    falling back to the day-proportional proxy only for a day gas.csv
+    genuinely has no reading for. Verified before fixing, not assumed: this
+    household's real gas.csv (2025-07-25 through 2026-07-24) fully covers
+    every real billing period that has any nonzero HDD on any of its own
+    days -- the only periods this cap can ever affect, since a zero-HDD day
+    has zero demand regardless of which ceiling applies -- so the real
+    archive never touches the proxy fallback for a day that matters, and
+    the fail-closed path below is exercised only by a deliberately-gapped
+    test fixture, never by this household's own real run. Real metered
+    days' own totals don't exactly reproduce their period's own printed
+    bill total (ordinary meter-read-date-vs-billing-date noise, e.g.
+    2026-01-29: billed 72.0 therms, the real daily readings sum to 72.01) --
+    used as-is per day, not rescaled to match the bill, since it's each
+    day's own reading, not the bill's total, that determines that day's own
+    capacity. `reconciled_heating_therms_yr` moves from 146.79 (round 3's
+    day-proportional proxy) to 145.19 (round 4's real daily data) -- a
+    smaller shift than round 3's own correction, as expected once the
+    finest defensible granularity (a real day) is reached and the only
+    remaining question is which number describes that same day, not how
+    many further days to split it into.
+
     JUDGMENT CALL (stated per CLAUDE.md section 8): bill_gas_detail.csv does
     not carry each Gas Service/Gas Energy Charge segment's own billed therm
     count (parse_bills.py's _gas_segments() reads and cross-foots it against
@@ -686,6 +765,10 @@ def gas_savings_by_period(iso):
     total_hdd = iso["total_hdd"]
     ann_heat = iso["annual_heating_therms"]
     floor_per_day = iso["floor_therms_per_day"]
+    # None for a unit test's hand-built iso that deliberately has no real
+    # daily gas data (see _capacity_capped_days()'s own docstring); always
+    # populated in a real run, since isolate_heating_therms() always loads it.
+    gas_daily = iso.get("gas_daily")
 
     # Each period's own REAL service dates come straight from the CSV's own
     # "period" column ("Mon DD, YYYY - Mon DD, YYYY", the exact range SDG&E
@@ -745,19 +828,26 @@ def gas_savings_by_period(iso):
         # calendar day level -- two independent Codex adversarial-review
         # passes on round 2 caught the same gap one granularity down: a
         # cold day could still borrow a warm day's unused capacity within
-        # the same multi-day segment). Capping at total period therms alone
-        # still lets a shoulder-season period attribute nearly ALL its
-        # usage to heating, when this same model's own non-heating floor
-        # (water heating/cooking, floor_per_day) had to run every one of
-        # those days too. Reserve that floor's share of EVERY REAL DAY
-        # before capping -- applied once per real calendar day
+        # the same multi-day segment); issue #109 round 4 (each day's own
+        # capacity ceiling now comes from that REAL day's own metered
+        # therms, gas_daily, wherever gas.csv covers it -- a plain Codex
+        # `review` pass, not adversarial-review, caught round 3's ceiling
+        # still being a fabricated uniform per-day proxy even though real
+        # daily meter data was already loaded elsewhere in this file).
+        # Capping at total period therms alone still lets a shoulder-season
+        # period attribute nearly ALL its usage to heating, when this same
+        # model's own non-heating floor (water heating/cooking, floor_per_
+        # day) had to run every one of those days too. Reserve that floor's
+        # share of EVERY REAL DAY, against that day's OWN real usage where
+        # it's known, before capping -- applied once per real calendar day
         # (_capacity_capped_days()), not once per period or once per
         # multi-day segment, so heating attribution can never borrow spare
         # capacity from a real day that had no heating demand to justify
         # it, even when the period (or the segment) AS A WHOLE had room.
         heating_capable_per_day = max(0.0, therms / period_days - floor_per_day)
         capped_days = _capacity_capped_days(start, end, hdd_by_day, total_hdd, ann_heat,
-                                            heating_capable_per_day)
+                                            heating_capable_per_day, floor_per_day,
+                                            gas_daily, context)
         heating_therms_attributed = sum(h for _, h in capped_days)
 
         gs_shares = _segment_heat_from_days(gs_ranges, capped_days)
@@ -1067,7 +1157,7 @@ def build():
                   "(canonical NEM engine, never a lump-sum multiply); gas "
                   "savings priced at each real billing period's own "
                   "realized $/therm"),
-        "isolation": {k: v for k, v in iso.items() if k not in ("hdd_by_day",)},
+        "isolation": {k: v for k, v in iso.items() if k not in ("hdd_by_day", "gas_daily")},
         "reconciled_heating_therms_yr": reconciled_heat_therms,
         "gas_savings_by_period": gas_rows,
         "gas_savings_annual_usd": gas_savings_annual,

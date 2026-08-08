@@ -820,7 +820,15 @@ def case_non_heating_floor_is_reserved_per_segment_not_once_per_period():
     respecting figure, because it let segment 0's unused (zero-HDD)
     capacity paper over segment 1's own shortfall. 10.8 < 12.0 is the
     regression this case guards: reverting to a period-level-only floor
-    reservation would silently pass 12.0 again."""
+    reservation would silently pass 12.0 again.
+
+    Deliberately supplies no `gas_daily` (issue #109 round 4): this fixture
+    has no real daily meter data to give, so it exercises the day-
+    proportional PROXY capacity path on purpose (`iso.get("gas_daily")`
+    is None), not the real-metered-day path -- see
+    case_real_daily_data_overrides_the_uniform_proxy_when_available for a
+    fixture that supplies synthetic daily data and proves the real path is
+    actually used when it's available."""
     period = "Jan 1, 2026 - Jan 30, 2026"
     periods = pd.DataFrame({
         "statement_date": ["2026-01-30"], "period": [period], "therms": [30.0],
@@ -880,7 +888,14 @@ def case_cold_day_cannot_borrow_a_hot_days_unused_capacity_within_one_segment():
             reverting to): the WHOLE segment's own capacity is
             max(0, 10 - 3x2) = 4.0, letting day 2 draw on day 1's own
             2.0 therms of never-needed capacity -> min(8, 4.0) = 4.0,
-            DOUBLE the correct figure."""
+            DOUBLE the correct figure.
+
+    Deliberately supplies no `gas_daily` (issue #109 round 4): this fixture
+    tests the day-proportional PROXY ceiling's own within-segment
+    granularity specifically (`heating_capable_per_day` computed from
+    `therms / period_days`), not real metered data -- see
+    case_real_daily_data_overrides_the_uniform_proxy_when_available for the
+    real-data path's own equivalent test."""
     period = "Jan 1, 2026 - Jan 2, 2026"
     periods = pd.DataFrame({
         "statement_date": ["2026-01-02"], "period": [period], "therms": [10.0],
@@ -906,6 +921,104 @@ def case_cold_day_cannot_borrow_a_hot_days_unused_capacity_within_one_segment():
            f"therms) cannot borrow a hot day's unused capacity within the same "
            f"unsplit segment -- {segment_level_cap} is what a segment-level-only "
            f"reservation would have wrongly allowed")
+
+
+@case
+def case_real_daily_data_overrides_the_uniform_proxy_when_available():
+    """Issue #109, round 4 (plain Codex `review` pass, not adversarial-
+    review). Round 3's per-day capacity ceiling was itself a fabricated
+    uniform proxy -- the period's printed total therms divided evenly
+    across its own real days -- even though this module already has real
+    per-day meter readings (load_gas_daily()) available elsewhere. This
+    fixture supplies a synthetic `gas_daily` (via `iso["gas_daily"]`,
+    exactly what isolate_heating_therms() populates in a real run) whose
+    real per-day therms are FAR from uniform, and proves the day-level cap
+    is built from that real data, not the period average, by running the
+    SAME period fixture with and without it and checking the results
+    genuinely differ in the expected direction.
+
+    A 3-day period, real daily therms 5 / 1 / 5 (11 total, average
+    3.667/day), floor 0.5 therms/day. All the HDD (hence all the raw
+    heating demand) falls on day 2 -- the LOW-usage real day:
+        proxy ceiling (no gas_daily): 11/3 - 0.5 = 3.1667/day, uniform ->
+            day 2 caps at min(50, 3.1667) = 3.1667
+        real ceiling (gas_daily supplied): day 2's own real 1.0 therms -
+            0.5 = 0.5 -> day 2 caps at min(50, 0.5) = 0.5
+    0.5 << 3.1667: the real day's own actual low usage caps it far below
+    what the period-wide average would have allowed, because day 2's real
+    metered therms are well below the period's own mean."""
+    period = "Jan 1, 2026 - Jan 3, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-03"], "period": [period], "therms": [11.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-03", period, 3, 11.0, 1.0, np.nan, 0.0, 0.0)
+    hdd_by_day = pd.Series({dt.date(2026, 1, 1): 0.0, dt.date(2026, 1, 2): 100.0,
+                            dt.date(2026, 1, 3): 0.0})
+    gas_daily = pd.Series({dt.date(2026, 1, 1): 5.0, dt.date(2026, 1, 2): 1.0,
+                           dt.date(2026, 1, 3): 5.0})
+    with _GasFixture(periods, detail):
+        iso_proxy = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+                    "annual_heating_therms": 50.0, "floor_therms_per_day": 0.5}
+        rows_proxy, _, _ = hpc.gas_savings_by_period(iso_proxy)
+        iso_real = {**iso_proxy, "gas_daily": gas_daily}
+        rows_real, _, _ = hpc.gas_savings_by_period(iso_real)
+    proxy_therms = rows_proxy[0]["heating_therms_attributed"]
+    real_therms = rows_real[0]["heating_therms_attributed"]
+    assert abs(proxy_therms - 3.17) < 0.01, proxy_therms
+    assert abs(real_therms - 0.5) < 0.01, real_therms
+    assert real_therms < proxy_therms, (
+        real_therms, proxy_therms, "the real day's own low metered usage must cap "
+        "heating attribution below what the period-wide proxy average would allow")
+    return (f"supplying real daily gas data caps this period's heating attribution "
+           f"at {real_therms} therms (that cold day's own real usage), not the "
+           f"{proxy_therms} therms the period-average proxy would have allowed")
+
+
+@case
+def case_capacity_cap_fails_closed_when_gas_daily_missing_a_needed_day():
+    """Issue #109, round 4. When `gas_daily` IS supplied (a real run, or a
+    test deliberately exercising this path) but has no reading for a real
+    day that actually has nonzero heating demand, silently falling back to
+    the period-wide proxy for just that one day would misprice a real
+    dollar figure without any signal that it happened -- mirrors
+    _gas_service_segment_tier_cost()'s own missing-nonbaseline-rate
+    convention (a value actually NEEDED for a nonzero computation must be
+    real, never silently defaulted). This must fail closed rather than
+    quietly use the proxy for the gapped day.
+
+    Same 3-day/11-therm/0.5-floor-per-day shape as the override case above,
+    but `gas_daily` is missing day 2 specifically -- the SAME day that
+    carries all of this fixture's own HDD (and so has nonzero demand)."""
+    period = "Jan 1, 2026 - Jan 3, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-03"], "period": [period], "therms": [11.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-03", period, 3, 11.0, 1.0, np.nan, 0.0, 0.0)
+    hdd_by_day = pd.Series({dt.date(2026, 1, 1): 0.0, dt.date(2026, 1, 2): 100.0,
+                            dt.date(2026, 1, 3): 0.0})
+    # day 2 (the only day with any HDD/demand) is missing from gas_daily --
+    # a real coverage gap on the exact day that would need it
+    gas_daily = pd.Series({dt.date(2026, 1, 1): 5.0, dt.date(2026, 1, 3): 5.0})
+    with _GasFixture(periods, detail):
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 50.0, "floor_therms_per_day": 0.5,
+              "gas_daily": gas_daily}
+        try:
+            hpc.gas_savings_by_period(iso)
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError(
+                "a real calendar day with nonzero heating demand and no gas_daily "
+                "coverage was silently priced via the proxy instead of failing closed")
+    assert "gas.csv" in msg and "2026-01-02" in msg, msg
+    return "a real day with nonzero heating demand and no gas_daily coverage fails closed, not silently priced via the proxy"
 
 
 @case
