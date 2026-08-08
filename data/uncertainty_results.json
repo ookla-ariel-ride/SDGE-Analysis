@@ -93,7 +93,8 @@
     "payback_yr": 13.9,
     "within_10yr_warranty": false
    }
-  }
+  },
+  "save1_nom_precise": 2276.4314683843495
  },
  "calibration": {
   "pre_nominal": 2327.42,
@@ -135,19 +136,66 @@
     "real_surplus_marginal": 2198.66,
     "discrepancy_usd": 14.51,
     "discrepancy_pct_of_mid_nominal": 0.648,
-    "resolution": "The ONE-SIDED EXTRAPOLATION discrepancy quantified above is eliminated by construction: save1_of() now uses soil_slope_surplus, fit directly from this real surplus dispatch rerun, for every surplus-like draw (prod_noise > 1, i.e. (1 - prod_noise) < 0) instead of linearly extrapolating the loss-side slope, for any draw magnitude -- not just at this particular lossB point. This does NOT mean save1_of()'s output exactly reproduces either the real mid or real pre surplus point at c=1/c=0: save1_of() applies ONE slope per side, averaged across mid/pre (matching this module's existing rte_slope convention, pre-dating this issue), to the ALREADY c-blended base_marginal -- a separate, pre-existing, much smaller residual (Codex review, issue #89, pass 2: ~$3.5, ~0.16% at this household's real surplus point, comparable in size to the analogous rte_slope-averaging residual, versus the $14.51/0.65% one-sided-extrapolation discrepancy this fix actually targets) that a genuine mid/pre-unaveraged slope architecture would remove for every slope-based lever, not just this one -- out of this issue's own scope box, filed as issue #107 rather than expanding it here."
+    "resolution": "The ONE-SIDED EXTRAPOLATION discrepancy quantified above is eliminated by construction: save1_of() now uses soil_slope_surplus, fit directly from this real surplus dispatch rerun, for every surplus-like draw (prod_noise > 1, i.e. (1 - prod_noise) < 0) instead of linearly extrapolating the loss-side slope, for any draw magnitude -- not just at this particular lossB point. A SEPARATE, smaller residual from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope used to follow) is now ALSO fixed -- see mid_pre_slope_unaveraging_fix below (issue #107)."
    }
   },
-  "soil_slope_two_sided_fix": "Issue #89 (previously a stated limitation here, filed from Codex review pass 2 on issue #60): soil_slope_mid/pre used to be fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1) -- FIXED. dispatch_calibration() now runs a real THIRD dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) every time it regenerates, and fits soil_slope_surplus_mid/pre from it directly instead of extrapolating the loss-side slope: soil_slope_loss_mid=0.2176 vs soil_slope_surplus_mid=0.3404 (the surplus-side slope is genuinely steeper in magnitude, not a rounding artifact of the same underlying number). See production_reconstruction.surplus_slope_fix for the quantified before/after: extrapolating the old loss-side slope to the real surplus point would have predicted $2,213.17 against the real measured $2,198.66 -- a $14.51 (0.65%) gap that save1_of()'s new piecewise soil_slope_loss/soil_slope_surplus routing eliminates by construction, for every surplus-like draw at any magnitude, not just at this particular lossB point -- specifically the ONE-SIDED EXTRAPOLATION gap, not every discrepancy save1_of() has: a separate, pre-existing, much smaller residual (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16%) remains from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope has always used) -- see production_reconstruction.surplus_slope_fix's own resolution field for the precise distinction, filed as issue #107.",
+  "soil_slope_two_sided_fix": "Issue #89 (previously a stated limitation here, filed from Codex review pass 2 on issue #60): soil_slope_mid/pre used to be fit from a real dispatch rerun at ONE production LOSS point and applied linearly to both losses and surpluses (roughly half of production_measurement_spread's own Monte Carlo draws, prod_noise>1) -- FIXED. dispatch_calibration() now runs a real THIRD dispatch rerun at the mirrored surplus scenario (gen_scale=1+lossB) every time it regenerates, and fits soil_slope_surplus_mid/pre from it directly instead of extrapolating the loss-side slope: soil_slope_loss_mid=0.2176 vs soil_slope_surplus_mid=0.3404 (the surplus-side slope is genuinely steeper in magnitude, not a rounding artifact of the same underlying number). See production_reconstruction.surplus_slope_fix for the quantified before/after: extrapolating the old loss-side slope to the real surplus point would have predicted $2,213.17 against the real measured $2,198.66 -- a $14.51 (0.65%) gap that save1_of()'s new piecewise soil_slope_loss/soil_slope_surplus routing eliminates by construction, for every surplus-like draw at any magnitude, not just at this particular lossB point -- specifically the ONE-SIDED EXTRAPOLATION gap, not every discrepancy save1_of() has: a separate, smaller residual (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16%) that USED TO remain from averaging soil_slope_loss/surplus across mid/pre before applying them to the c-blended base_marginal (the same convention rte_slope used to follow) is now RESOLVED -- see mid_pre_slope_unaveraging_fix below (issue #107).",
+  "mid_pre_slope_unaveraging_fix": {
+   "method": "Before this fix, save1_of() computed ONE slope per lever (rte_slope, soil_slope_loss, soil_slope_surplus), each averaged across the mid- and pre-behavior calibration runs, and applied it to the ALREADY c-blended base_marginal = c*mid + (1-c)*pre. At c=1 (pure post-behavior) this used a slope that was HALF pre-behavior; the real mid-only calibration point was never exactly reproduced. Fixed by applying each side's OWN slope to that side's OWN nominal value FIRST, then blending the two resulting dollar figures by c: c*(mid*factor_mid) + (1-c)*(pre*factor_pre).",
+   "soil_surplus_point_mid": {
+    "real": 2198.66,
+    "old_averaged_slope_prediction": 2202.19,
+    "new_own_side_slope_prediction": 2198.66,
+    "note": "the new prediction matches 'real' exactly (both sides of a 2-point fit, {nominal, surplus}, pass through both points by construction) -- the old averaged-slope prediction does not, since it used a slope that was half pre-behavior at a pure-mid (c=1) scenario."
+   },
+   "soil_surplus_point_pre": {
+    "real": 2292.93,
+    "old_averaged_slope_prediction": 2289.26,
+    "new_own_side_slope_prediction": 2292.93,
+    "note": "the pre-side mirror of soil_surplus_point_mid above, at c=0 (pure pre-behavior) instead of c=1: the new prediction matches 'real' exactly for the identical exact-2-point-fit reason."
+   },
+   "rte_points_mid": {
+    "0.85": {
+     "real": 2174.05,
+     "old_averaged_slope_prediction": 2174.8,
+     "new_own_side_slope_prediction": 2177.04
+    },
+    "0.9": {
+     "real": 2238.89,
+     "old_averaged_slope_prediction": 2238.89,
+     "new_own_side_slope_prediction": 2238.89
+    },
+    "0.95": {
+     "real": 2297.75,
+     "old_averaged_slope_prediction": 2302.98,
+     "new_own_side_slope_prediction": 2300.74
+    }
+   },
+   "rte_points_pre": {
+    "0.85": {
+     "real": 2255.48,
+     "old_averaged_slope_prediction": 2260.8,
+     "new_own_side_slope_prediction": 2258.47
+    },
+    "0.9": {
+     "real": 2327.42,
+     "old_averaged_slope_prediction": 2327.42,
+     "new_own_side_slope_prediction": 2327.42
+    },
+    "0.95": {
+     "real": 2393.38,
+     "old_averaged_slope_prediction": 2394.04,
+     "new_own_side_slope_prediction": 2396.37
+    }
+   },
+   "rte_residual_note": "Unlike the soil slopes, RTE_LO/RTE_NOM/RTE_HI are fit together by LEAST SQUARES across all THREE points (not two separate 2-point fits), so even the new own-side slope does not exactly reproduce RTE_LO/RTE_HI -- a real dispatch relationship is not perfectly linear across all three RTE draws, and a single best-fit line cannot pass through three non-collinear points exactly. This fix removes the mid/pre-AVERAGING contribution to that gap (what issue #107 targets) but does not and cannot remove the separate least-squares-fit residual itself. That residual does NOT shrink uniformly, and the direction is NOT even consistent between the mid and pre sides (Codex review, issue #107, pass 1 -- round 1's own claim was checked only on the mid side and was WRONG for pre, the exact class of error this project's own review process exists to catch): at this household's real calibration, the mid side gets WORSE at RTE_LO and BETTER at RTE_HI, while the pre side is the OPPOSITE -- BETTER at RTE_LO and WORSE at RTE_HI (the old averaged-slope error happens to partially cancel the independent 3-point-fit residual on whichever side/point it coincidentally lines up with, with no consistent pattern across sides). Both sides remain well under 0.2% either way regardless of direction -- see rte_points_mid/rte_points_pre above for the exact old/new numbers, live, not summarized as uniformly anything. The symmetric soil_surplus_point_pre/rte_points_pre blocks (issue #107 review, round 2) confirm the c=0 side is exact for soil_slope_surplus the same way c=1 is, not just asserted in prose without a matching quantification."
+  },
   "rte_slope_mid": 0.5525170732494493,
   "rte_slope_pre": 0.5924853723365193,
-  "rte_slope_used": 0.5725012227929843,
   "soil_slope_loss_mid": 0.2176162131897935,
   "soil_slope_loss_pre": 0.16951981803374996,
-  "soil_slope_loss_used": 0.19356801561177173,
   "soil_slope_surplus_mid": 0.3403634388877598,
   "soil_slope_surplus_pre": 0.2806992183344717,
-  "soil_slope_surplus_used": 0.31053132861111576,
   "lossA": 0.0,
   "lossB": 0.05279410891383099,
   "rte_calibration_points_mid": {
@@ -170,7 +218,7 @@
    "0.0": 2327.418408081455,
    "0.05279410891383099": 2348.247982968826
   },
-  "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling/production draws), then averaged across the pre- and post-behavior calibration runs since both land on nearly identical fractional slopes. RTE's 3 points (RTE_LO/RTE_NOM/RTE_HI) fit ONE slope across the full range (RTE's response is expected to be one continuous relationship). Issue #89: soiling/production's 3 points (surplus at -lossB, nominal at 0, loss at +lossB) fit TWO separate 2-point slopes instead -- soil_slope_loss from {nominal, loss} and soil_slope_surplus from {surplus, nominal} -- because scale_production()'s own reallocation is genuinely piecewise (a loss reduces export first; a surplus reduces import first), not one straight line through all three points."
+  "method": "linear factor(x) = 1 + slope*(x - nominal) fit by least squares to 3 REAL dispatch reruns per lever per behavior state (battery_dispatch_policies.run_batt/.billed, ETA temporarily overridden for RTE draws, generation scaled for soiling/production draws). Issue #107: each side's (mid/pre) own slope is kept separate and applied to that side's own nominal value, then the two resulting dollar figures are blended by c -- no longer averaged into one slope before being applied to an already c-blended base_marginal (see save1_of()'s own docstring and mid_pre_slope_unaveraging_fix above). RTE's 3 points (RTE_LO/RTE_NOM/RTE_HI) fit ONE slope across the full range per side (RTE's response is expected to be one continuous relationship) -- this fit is not exact through all 3 points (see mid_pre_slope_unaveraging_fix.rte_residual_note), unrelated to the mid/pre-averaging issue #107 fixes. Issue #89: soiling/production's 3 points (surplus at -lossB, nominal at 0, loss at +lossB) fit TWO separate 2-point slopes per side instead -- soil_slope_loss from {nominal, loss} and soil_slope_surplus from {surplus, nominal}, each exact by construction -- because scale_production()'s own reallocation is genuinely piecewise (a loss reduces export first; a surplus reduces import first), not one straight line through all three points."
  },
  "battery_marginal_only_full_model": {
   "N": 5000,
@@ -192,31 +240,31 @@
   "npv": {
    "4pct": {
     "10yr": {
-     "median": 7496,
-     "p10": 3006,
-     "p90": 12863
+     "median": 7497,
+     "p10": 3007,
+     "p90": 12865
     },
     "15yr": {
-     "median": 18948,
-     "p10": 9729,
-     "p90": 32320
+     "median": 18954,
+     "p10": 9725,
+     "p90": 32322
     }
    },
    "7pct": {
     "10yr": {
-     "median": 4357,
-     "p10": 525,
-     "p90": 8788
+     "median": 4360,
+     "p10": 528,
+     "p90": 8793
     },
     "15yr": {
-     "median": 12293,
-     "p10": 5286,
-     "p90": 22063
+     "median": 12297,
+     "p10": 5294,
+     "p90": 22068
     }
    }
   },
-  "save1_median": 2274,
-  "save1_p10": 2216,
+  "save1_median": 2273,
+  "save1_p10": 2217,
   "save1_p90": 2333
  },
  "tornado": {
@@ -228,7 +276,7 @@
      6.6
     ],
     "swing_yr": 1.6,
-    "swing_yr_precise": 1.5672160270493585
+    "swing_yr_precise": 1.567037586443666
    },
    "escalation": {
     "payback_range_yr": [
@@ -236,7 +284,7 @@
      6.8
     ],
     "swing_yr": 1.6,
-    "swing_yr_precise": 1.5616402029415148
+    "swing_yr_precise": 1.5612231577628988
    },
    "degradation": {
     "payback_range_yr": [
@@ -244,7 +292,7 @@
      6.0
     ],
     "swing_yr": 0.3,
-    "swing_yr_precise": 0.2700959709246362
+    "swing_yr_precise": 0.2700252667146037
    },
    "ev_persistence": {
     "payback_range_yr": [
@@ -252,7 +300,7 @@
      5.9
     ],
     "swing_yr": 0.2,
-    "swing_yr_precise": 0.20126505168564623
+    "swing_yr_precise": 0.1968865164236666
    },
    "soiling": {
     "payback_range_yr": [
@@ -260,7 +308,7 @@
      5.8
     ],
     "swing_yr": 0.1,
-    "swing_yr_precise": 0.053010894498095595
+    "swing_yr_precise": 0.05507008881279418
    },
    "round_trip_efficiency": {
     "payback_range_yr": [
@@ -268,7 +316,7 @@
      6.0
     ],
     "swing_yr": 0.3,
-    "swing_yr_precise": 0.29923835566890045
+    "swing_yr_precise": 0.2958889885513303
    },
    "production_measurement_spread": {
     "payback_range_yr": [
@@ -276,7 +324,7 @@
      5.9
     ],
     "swing_yr": 0.1,
-    "swing_yr_precise": 0.0761400301258579
+    "swing_yr_precise": 0.07888787266554864
    }
   },
   "ranked_by_swing": [

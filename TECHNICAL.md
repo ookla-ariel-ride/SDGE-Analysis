@@ -2679,12 +2679,20 @@ review pass 1, finding 1: an earlier draft billed the scaled-generation battery 
 an unscaled-generation baseline, which folded the direct cost of lost solar into what was
 supposed to be an isolated battery effect and pulled the soiling slope sharply, spuriously
 negative). A linear factor(x) = 1 + slope·(x - nominal) is fit by least squares to each
-lever's points. The pre- and post-behavior calibration runs land on nearly identical
-fractional slopes (RTE: +0.552 vs +0.592 per unit RTE; soiling: +0.0565 vs +0.0568 per unit
-loss fraction, both small and positive once correctly isolated — soiling's realistic
-1.3-6.6% loss range moves the battery marginal by well under 1%) — evidence that averaging
-the two into a single slope, applied to whichever pre/post-behavior blend a given Monte
-Carlo draw lands on, is a reasonable simplification rather than a fabricated shortcut.
+lever's points, kept SEPARATE per side (issue #107, resolved — see "Mid/pre slope
+averaging" below; an earlier version of this paragraph described averaging the pre- and
+post-behavior slopes into one value before applying it, on the strength of the two sides'
+slopes landing close together, e.g. RTE +0.552 vs +0.592 per unit RTE — that architecture is
+retired: each side's own slope is now applied to that side's own nominal value first, then
+the two dollar results are blended by `c`). Soiling is likewise no longer one
+undifferentiated slope: issue #89 splits it into a loss-side and a genuinely steeper
+surplus-side slope (`soil_slope_loss_mid` +0.2176/`_pre` +0.1695, `soil_slope_surplus_mid`
++0.3404/`_pre` +0.2807 at this household's calibration — at this household's real `lossB`
+(5.28%, the Monte Carlo's actual 0-`lossB` range, superseding an earlier draft's stale
+1.3-6.6% figure from before issue #60's soiling-calibration rework), the four slopes move
+the battery marginal by roughly 0.9-1.8% at the top of that range — `soil_slope_loss_pre`
+the smallest effect, `soil_slope_surplus_mid` the largest — not the "well under 1%" an
+earlier draft claimed).
 Every calibration point runs `run_batt` to a converged, steady-annual-cycle SOC boundary
 (iterating with each pass's ending SOC fed forward as the next pass's starting SOC until
 they agree within 0.01 kWh) rather than the single one-time pass from a fixed `cap/2` start
@@ -2819,11 +2827,11 @@ Extrapolating the old loss-fit slope to the real surplus point would have predic
 $2,213.17 against the real measured $2,198.66 — a $14.51 (0.65%) ONE-SIDED-EXTRAPOLATION gap
 now eliminated by construction (`calibration.production_reconstruction.surplus_slope_fix` in
 the artifact) — specifically that gap, not every discrepancy `save1_of()` has. A separate,
-pre-existing, much smaller residual remains (Codex review, issue #89, pass 2-3: ~$3.5,
-~0.16% at this household's real surplus point) from averaging `soil_slope_loss`/`surplus`
-across mid/pre before applying them to the `c`-blended `base_marginal` — the same convention
-`rte_slope` has always used, unrelated to this fix, and out of its scope box (filed as issue
-#107 rather than expanding this one).
+smaller residual that USED TO remain (Codex review, issue #89, pass 2-3: ~$3.5, ~0.16% at
+this household's real surplus point) from averaging `soil_slope_loss`/`surplus` across
+mid/pre before applying them to the `c`-blended `base_marginal` — the same convention
+`rte_slope` used to follow — is now resolved; see "Mid/pre slope averaging (issue #107,
+resolved)" below.
 Downstream this is a small correction: `production_measurement_spread`'s own tornado swing
 widens from 0.0680 yr to 0.0761 yr at full precision (both round to the same 0.1 yr in the
 published, rounded artifact field), and the full Monte Carlo's NPV percentiles shift by a
@@ -2843,8 +2851,48 @@ simulation: a +0.28% mean bias across the Monte Carlo's own draw distribution �
 Codex's constructed edge case alone. Fixed by combining the two into ONE exact shortfall
 variable before any slope is selected: `true_relative_generation = (1 - loss) * prod_noise`,
 so `combined_x = loss + x - loss*x` where `x = 1 - prod_noise` — one slope side, one factor.
-The figures above (swing 0.0761 yr, NPV $7,496/$4,357) are this corrected version's own
-output, not the intermediate biased one.
+The figures above (swing 0.0761 yr, NPV $7,496/$4,357) were this corrected version's own
+output, not the intermediate biased one, as of issue #89's own resolution — issue #107
+(below) shifts them once more; see that section for the current published values.
+
+**Mid/pre slope averaging (issue #107, resolved).** Every slope-based lever (`rte_slope`,
+and — after issue #89 — `soil_slope_loss`/`soil_slope_surplus`) used to be averaged across
+the mid- and pre-behavior calibration runs into ONE value, then applied to the ALREADY
+`c`-blended `base_marginal = c*mid + (1-c)*pre`. At `c=1` (pure post-behavior) this used a
+slope that was half pre-behavior; the real mid-only calibration point was never exactly
+reproduced, and symmetrically at `c=0`. Quantified at this household's real soil-surplus
+point: the old averaged-slope prediction was $2,202.19 against the real measured $2,198.66
+— the $3.53 (0.16%) gap issue #89's own review pass first surfaced. **Fixed**: `save1_of()`
+now applies each side's OWN slope to that side's OWN nominal value FIRST
+(`mid*factor_mid`, `pre*factor_pre`), THEN blends the two resulting dollar figures by `c`
+(`c*mid_adjusted + (1-c)*pre_adjusted`) instead of blending the two marginals before
+applying one averaged factor. Because `soil_slope_loss`/`soil_slope_surplus` are each fit
+from an EXACT 2-point line (`{nominal, loss}` or `{surplus, nominal}`), this makes
+`save1_of()` reproduce the real soil calibration points EXACTLY at `c=1`/`c=0` — confirmed
+to a residual of 0.0 (to float precision) at this household's own calibration
+(`calibration.mid_pre_slope_unaveraging_fix.soil_surplus_point_mid` in the artifact). The
+RTE lever is NOT exactly reproduced even by this fix: `rte_slope_mid`/`rte_slope_pre` are
+each fit by LEAST SQUARES across THREE points (`RTE_LO`/`RTE_NOM`/`RTE_HI`, not two), which
+leaves an inherent best-fit residual (well under 0.2% either way at this household's real
+calibration, `calibration.mid_pre_slope_unaveraging_fix.rte_points_mid` in the artifact)
+independent of mid/pre averaging — a single straight line generally cannot pass through
+three real (non-collinear) points exactly. This fix removes the mid/pre-averaging
+CONTRIBUTION to that gap (the specific thing this issue targets) but does not and cannot
+remove the 3-point-fit residual itself. That residual does NOT shrink uniformly, and the
+direction is NOT even consistent between the mid and pre sides (Codex review, issue #107,
+pass 1 caught that an earlier version of this note, checked only on the mid side, stated
+the pre side's direction backwards too): at this household's real calibration, the mid
+side gets WORSE at `RTE_LO` and BETTER at `RTE_HI`, while the pre side is the OPPOSITE —
+BETTER at `RTE_LO` and WORSE at `RTE_HI` (the old averaged-slope error happens to partially
+cancel the independent 3-point-fit residual on whichever side/point it coincidentally
+lines up with, no consistent pattern across sides). Both sides remain well under 0.2%
+either way regardless of direction — see the artifact's `rte_points_mid`/`rte_points_pre`
+for the exact old/new numbers, live, not summarized as uniformly anything. Downstream this is a
+very small correction, smaller than issue #89's own: `production_measurement_spread`'s own
+tornado swing widens again, from 0.0761 yr to 0.0789 yr at full precision (both still round
+to the same 0.1 yr in the published, rounded artifact field); 10-yr NPV median at 4% discount
+$7,496 → $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the
+published 1dp rounding (5.8/5.1/6.8 yr).
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this
