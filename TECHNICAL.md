@@ -2687,8 +2687,12 @@ retired: each side's own slope is now applied to that side's own nominal value f
 the two dollar results are blended by `c`). Soiling is likewise no longer one
 undifferentiated slope: issue #89 splits it into a loss-side and a genuinely steeper
 surplus-side slope (`soil_slope_loss_mid` +0.2176/`_pre` +0.1695, `soil_slope_surplus_mid`
-+0.3404/`_pre` +0.2807 at this household's calibration — both small enough that soiling's
-realistic 1.3-6.6% loss range moves the battery marginal by well under 1% either way).
++0.3404/`_pre` +0.2807 at this household's calibration — at this household's real `lossB`
+(5.28%, the Monte Carlo's actual 0-`lossB` range, superseding an earlier draft's stale
+1.3-6.6% figure from before issue #60's soiling-calibration rework), the four slopes move
+the battery marginal by roughly 0.9-1.8% at the top of that range — `soil_slope_loss_pre`
+the smallest effect, `soil_slope_surplus_mid` the largest — not the "well under 1%" an
+earlier draft claimed).
 Every calibration point runs `run_batt` to a converged, steady-annual-cycle SOC boundary
 (iterating with each pass's ending SOC fed forward as the next pass's starting SOC until
 they agree within 0.01 kWh) rather than the single one-time pass from a fixed `cap/2` start
