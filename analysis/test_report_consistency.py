@@ -903,31 +903,49 @@ def case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact():
     ratio_c_vs_b = round(C["savings_vs_baseline_usd"] / B["savings_vs_baseline_usd"], 1)
     c_pct_of_a = round(C["savings_vs_baseline_usd"] / A["savings_vs_baseline_usd"] * 100)
 
+    # issue #112 adversarial review, round 3 (Codex): an earlier version of
+    # this case checked each formatted value's presence ANYWHERE in the
+    # paragraph -- five of these values share the identical "X kg/yr" shape
+    # (policy A's/B's/C's own avoided-CO2 figures, the cost-penalty-of-clean
+    # figure, and the B-vs-C gap), so swapping e.g. policy B's 244.1 with
+    # policy C's 181.1 left every check satisfied despite publishing the
+    # wrong figure against the wrong policy. Anchored to sequential,
+    # document-ordered preceding phrases (as case_reprice_by_vintage_note_
+    # matches_the_artifact does above) so each value is tied to its own
+    # clause, not just present somewhere in a paragraph this dense.
     checks = [
-        f"{th['kg_per_mwh']:.1f} vs {round(th['discharge_kg_per_mwh'], 1)} kg/MWh",
-        f"{round(th['target_clean_frac'] * 100, 1)}%/{round(th['target_dirty_frac'] * 100, 1)}%",
-        f"{abs(A['co2_avoided_vs_baseline_kg']):.1f} kg/yr",
-        f"{A['net_co2_kg']:,.1f} vs {base['net_co2_kg']:,.1f} kg/yr",
-        f"{B['co2_avoided_vs_baseline_kg']:.1f} kg/yr",
-        _fmt_usd2(B["savings_vs_baseline_usd"]),
-        f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/yr",
-        f"{_fmt_usd2(tr['cost_penalty_of_clean_policy_usd'])}/yr",
-        f"{round(tr['cost_penalty_of_clean_policy_usd_per_kwh_cycled'] * 100, 1)}¢",
-        f"{tr['co2_penalty_of_cheap_policy_kg']:.1f} kg/yr",
-        f"{round(tr['co2_penalty_of_cheap_policy_kg_per_kwh_cycled'], 3)} kg",
-        f"{_fmt_usd2(C['savings_vs_baseline_usd'])}/yr",
-        f"{c_pct_of_a}%",
-        f"{C['co2_avoided_vs_baseline_kg']:.1f} kg/yr",
-        f"{round(rca['meaningful_threshold_pct'] * 100)}%-on-both-metrics",
-        f"{round(rca['pct_diff_co2_vs_b'] * 100, 1)}%",
-        f"{b_vs_c_gap_kg:.1f} kg/yr",
-        f"{ratio_c_vs_b}",
-        f"{round(A['kwh_cycled_thru']):,} kWh/yr",
-        f"{round(B['kwh_cycled_thru']):,}",
-        f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/${cdt['cross_check']['run_a_computed_save_usd']:,}",
+        ("comes out", f"{abs(A['co2_avoided_vs_baseline_kg']):.1f} kg/yr"),
+        ("baseline (", f"{A['net_co2_kg']:,.1f} vs {base['net_co2_kg']:,.1f} kg/yr"),
+        ("sized to the same", f"{round(th['target_clean_frac'] * 100, 1)}%/{round(th['target_dirty_frac'] * 100, 1)}%"),
+        ("thresholds (", f"{th['kg_per_mwh']:.1f} vs {round(th['discharge_kg_per_mwh'], 1)} kg/MWh"),
+        ("avoids", f"{B['co2_avoided_vs_baseline_kg']:.1f} kg/yr net against that baseline but keeps only"),
+        ("but keeps only", _fmt_usd2(B["savings_vs_baseline_usd"])),
+        ("cost-minimizing policy's", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/yr saving"),
+        ("saving —", f"{_fmt_usd2(tr['cost_penalty_of_clean_policy_usd'])}/yr cost penalty"),
+        ("cost penalty (", f"{round(tr['cost_penalty_of_clean_policy_usd_per_kwh_cycled'] * 100, 1)}¢"),
+        ("cheapness carries a", f"{tr['co2_penalty_of_cheap_policy_kg']:.1f} kg/yr net carbon penalty"),
+        ("carbon penalty (", f"{round(tr['co2_penalty_of_cheap_policy_kg_per_kwh_cycled'], 3)} kg"),
+        ("recovers", f"{_fmt_usd2(C['savings_vs_baseline_usd'])}/yr ("),
+        ("/yr (", f"{c_pct_of_a}%"),
+        ("still avoiding", f"{C['co2_avoided_vs_baseline_kg']:.1f} kg/yr net"),
+        ("a stated", f"{round(rca['meaningful_threshold_pct'] * 100)}%-on-both-metrics"),
+        ("sits within", f"{round(rca['pct_diff_co2_vs_b'] * 100, 1)}%"),
+        ("but small", f"{b_vs_c_gap_kg:.1f} kg/yr"),
+        ("capture roughly", f"{ratio_c_vs_b} times"),
+        ("cost-minimizing run cycles", f"{round(A['kwh_cycled_thru']):,} kWh/yr"),
+        ("carbon-minimizing run's", f"{round(B['kwh_cycled_thru']):,}"),
+        ("agrees with its", f"{_fmt_usd2(A['savings_vs_baseline_usd'])}/${cdt['cross_check']['run_a_computed_save_usd']:,}"),
     ]
-    for value in checks:
-        assert value in para, f"§13 carbon-dispatch-tradeoff paragraph: {value!r} not found in it"
+    cursor = 0
+    for anchor, value in checks:
+        anchor_idx = para.find(anchor, cursor)
+        assert anchor_idx != -1, f"§13 carbon-dispatch-tradeoff paragraph: anchor phrase {anchor!r} not found (in order) after position {cursor}"
+        window = para[anchor_idx:anchor_idx + 100]
+        assert value in window, (
+            f"§13 carbon-dispatch-tradeoff paragraph: {value!r} not found within 100 chars "
+            f"after anchor {anchor!r} -- either drifted from its own artifact field or been "
+            f"swapped with a same-shaped sibling figure")
+        cursor = anchor_idx + len(anchor)
     return "the §13 carbon-vs-cost dispatch paragraph matches carbon_dispatch_tradeoff.json"
 
 
