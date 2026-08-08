@@ -769,8 +769,8 @@ def case_battery_plan_matrix_table_matches_the_artifact():
     plans = bpm["plans"]
 
     start = HTML.index('<h2 id="s4">')
-    end = HTML.index("</table>", start) + len("</table>")
-    table_html = HTML[start:end]
+    table_end = HTML.index("</table>", start) + len("</table>")
+    table_html = HTML[start:table_end]
     tr_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
     td_re = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
     tag_re = re.compile(r"<[^>]+>")
@@ -785,9 +785,21 @@ def case_battery_plan_matrix_table_matches_the_artifact():
         assert cells[2] == _fmt_usd(p["with_battery"]), (plan, "with_battery", cells[2])
         assert cells[3] == f"{_fmt_usd(p['battery_value'])}/yr", (plan, "battery_value", cells[3])
 
+    # issue #112 adversarial review (Codex): the canonical-crosscheck prose
+    # sentence lives in the <p class="small"> right AFTER the table, not
+    # inside it -- searching the whole HTML document for these bare dollar
+    # figures (as an earlier version of this case did) would still pass if
+    # that entire crosscheck sentence were deleted, since $4,904/$2,328 are
+    # also cited elsewhere in the report (e.g. §11's own baseline-bill
+    # figure). Bound the search to the crosscheck paragraph specifically.
+    crosscheck_start = HTML.index('<p class="small">', table_end)
+    crosscheck_end = HTML.index("</p>", crosscheck_start) + len("</p>")
+    crosscheck_html = HTML[crosscheck_start:crosscheck_end]
     cc = bpm["canonical_crosscheck_ev_tou_5"]
-    assert f"${cc['no_battery']:,}" in HTML, f"cross-check no_battery {cc['no_battery']} not cited"
-    assert f"${cc['battery_value']:,}/yr" in HTML, f"cross-check battery_value {cc['battery_value']} not cited"
+    assert f"${cc['no_battery']:,}" in crosscheck_html, (
+        f"cross-check no_battery {cc['no_battery']} not cited in the §4 crosscheck paragraph")
+    assert f"${cc['battery_value']:,}/yr" in crosscheck_html, (
+        f"cross-check battery_value {cc['battery_value']} not cited in the §4 crosscheck paragraph")
     return "the §4 battery×plan matrix table and its canonical cross-check figures match battery_plan_matrix.json"
 
 
@@ -1216,7 +1228,18 @@ def case_reprice_by_vintage_note_matches_the_artifact():
     """issue #112: the §7 'Model vs. actual' note is hand-written, not
     templated -- lock every one of its six decomposition terms and the
     residual, plus the totals they reconcile against, to the live
-    artifact."""
+    artifact.
+
+    Issue #112 adversarial review (Codex): an earlier version of this case
+    checked each formatted value's presence ANYWHERE in the note, with no
+    link to its own label -- two same-shaped values (e.g. the fixed-charge
+    and delivery-vintage effects, both small negative dollar figures) could
+    be silently swapped in the prose and this case would still pass, since
+    both formatted strings still appear somewhere in the note. Each check
+    below is anchored to a short, unique phrase of its own surrounding
+    prose (drawn from the report's own wording) immediately before the
+    number, so a swap breaks the anchor-plus-value pairing even though
+    both values remain present in the note somewhere."""
     rv_path = ROOT / "data" / "reprice_by_vintage.json"
     assert rv_path.exists(), f"{rv_path} is committed public data and must exist"
     rv = json.loads(rv_path.read_text())
@@ -1226,21 +1249,37 @@ def case_reprice_by_vintage_note_matches_the_artifact():
     note = m.group(0)
 
     checks = [
-        _fmt_usd2(rv["actual_total_sum"]),
-        _fmt_usd2(rv["native_window_total"]),
-        f"-{_fmt_usd2(abs(rv['window_effect']))}",
-        f"-{_fmt_usd2(abs(rv['generation_tou_window_effect']))}",
-        f"-{_fmt_usd2(abs(rv['generation_clean_tou_effect']))}",
-        f"+{_fmt_usd2(rv['delivery_pcia_restart_artifact_usd'])}",
-        f"+{_fmt_usd2(rv['cip_adder_usd'])}",
-        f"+{_fmt_usd2(rv['state_surcharge_tax_usd'])}",
-        f"-{_fmt_usd2(abs(rv['fixed_charge_vintage_effect']))}",
-        f"-{_fmt_usd2(abs(rv['delivery_vintage_effect']))}",
-        f"-{_fmt_usd2(abs(rv['total_vintage_effect']))}",
-        f"-{_fmt_usd2(abs(rv['residual_total']))}",
+        ("365 days and", _fmt_usd2(rv["actual_total_sum"])),
+        ("native 365-day window at", _fmt_usd2(rv["native_window_total"])),
+        ("accounts for only", f"-{_fmt_usd2(abs(rv['window_effect']))}"),
+        ("The largest correction,", f"-{_fmt_usd2(abs(rv['generation_tou_window_effect']))}"),
+        ("generation dollars specifically (", f"-{_fmt_usd2(abs(rv['generation_clean_tou_effect']))}"),
+        ("a disclosed", f"+{_fmt_usd2(rv['delivery_pcia_restart_artifact_usd'])}"),
+        ('"Clean Impact Plus" product adder (', f"+{_fmt_usd2(rv['cip_adder_usd'])}"),
+        ("a per-period state surcharge tax (", f"+{_fmt_usd2(rv['state_surcharge_tax_usd'])}"),
+        ("Base Services Charge moves the total by", f"-{_fmt_usd2(abs(rv['fixed_charge_vintage_effect']))}"),
+        ("moves the total by a further", f"-{_fmt_usd2(abs(rv['delivery_vintage_effect']))}"),
+        ("accounts for only", f"-{_fmt_usd2(abs(rv['total_vintage_effect']))}"),
+        ("The remaining", f"-{_fmt_usd2(abs(rv['residual_total']))}"),
     ]
-    for value in checks:
-        assert value in note, f"§7 'Model vs. actual' note: {value!r} not found in it"
+    # Each anchor is searched for STARTING right after the previous anchor's
+    # own position (not from the top of the note each time), and its value
+    # must appear within a short window after it -- this both disambiguates
+    # anchor phrases that legitimately repeat (e.g. "accounts for only"
+    # appears twice: once for window_effect, once for total_vintage_effect)
+    # and, per the finding above, defeats a swap: a value printed next to
+    # the WRONG anchor's own nearby text fails the windowed search even
+    # though it's still present somewhere else in the note.
+    cursor = 0
+    for anchor, value in checks:
+        anchor_idx = note.find(anchor, cursor)
+        assert anchor_idx != -1, f"§7 'Model vs. actual' note: anchor phrase {anchor!r} not found (in order) after position {cursor}"
+        window = note[anchor_idx:anchor_idx + 120]
+        assert value in window, (
+            f"§7 'Model vs. actual' note: {value!r} not found within 120 chars "
+            f"after anchor {anchor!r} -- either drifted from its own artifact "
+            f"field or been swapped with a neighboring figure")
+        cursor = anchor_idx + len(anchor)
     return "the §7 'Model vs. actual' note's decomposition terms match reprice_by_vintage.json"
 
 
