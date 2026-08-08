@@ -1305,6 +1305,20 @@ def case_nem3_grandfathering_section_matches_the_artifact():
     assert m, "§13 NEM-2.0-grandfathering subsection not found in index.html"
     section = m.group(0)
 
+    # issue #112 Codex review round 3: the <h3> heading itself independently
+    # cites this same primary-to-Delivery-only range ("What NEM 2.0
+    # grandfathering is worth: $A-$B/yr") -- a stale/swapped HEADING would
+    # go undetected by the paragraph-body checks below, since the body's
+    # own correct copy of the same two numbers (found anywhere in the whole
+    # `section`, heading included) would already satisfy them regardless of
+    # what the heading itself said. Scoped explicitly to the heading text.
+    heading_end = section.index("</h3>")
+    heading = section[:heading_end]
+    expected_heading_range = f"{_fmt_usd2(nbt['grandfathering_value_usd'])}–{_fmt_usd2(alt['grandfathering_value_usd'])}/yr"
+    assert expected_heading_range in heading, (
+        f"the <h3> heading's own '{expected_heading_range}' range not found -- it may have "
+        f"drifted from, or been swapped independently of, the paragraph body's own figures")
+
     # issue #112 Codex review: bare presence checks don't associate each
     # total with its own scenario (NEM 2.0 vs NBT) or the two grandfathering
     # values with their own basis (primary vs Delivery-only) -- reversing
