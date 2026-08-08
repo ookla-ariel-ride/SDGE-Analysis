@@ -2851,8 +2851,9 @@ simulation: a +0.28% mean bias across the Monte Carlo's own draw distribution �
 Codex's constructed edge case alone. Fixed by combining the two into ONE exact shortfall
 variable before any slope is selected: `true_relative_generation = (1 - loss) * prod_noise`,
 so `combined_x = loss + x - loss*x` where `x = 1 - prod_noise` — one slope side, one factor.
-The figures above (swing 0.0761 yr, NPV $7,496/$4,357) are this corrected version's own
-output, not the intermediate biased one.
+The figures above (swing 0.0761 yr, NPV $7,496/$4,357) were this corrected version's own
+output, not the intermediate biased one, as of issue #89's own resolution — issue #107
+(below) shifts them once more; see that section for the current published values.
 
 **Mid/pre slope averaging (issue #107, resolved).** Every slope-based lever (`rte_slope`,
 and — after issue #89 — `soil_slope_loss`/`soil_slope_surplus`) used to be averaged across
@@ -2887,9 +2888,11 @@ cancel the independent 3-point-fit residual on whichever side/point it coinciden
 lines up with, no consistent pattern across sides). Both sides remain well under 0.2%
 either way regardless of direction — see the artifact's `rte_points_mid`/`rte_points_pre`
 for the exact old/new numbers, live, not summarized as uniformly anything. Downstream this is a
-very small correction, smaller than issue #89's own: 10-yr NPV median at 4% discount $7,496
-→ $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the published
-1dp rounding (5.8/5.1/6.8 yr).
+very small correction, smaller than issue #89's own: `production_measurement_spread`'s own
+tornado swing widens again, from 0.0761 yr to 0.0789 yr at full precision (both still round
+to the same 0.1 yr in the published, rounded artifact field); 10-yr NPV median at 4% discount
+$7,496 → $7,497, at 7% discount $4,357 → $4,360; payback median/p10/p90 unchanged at the
+published 1dp rounding (5.8/5.1/6.8 yr).
 
 **Correlation structure: assumed independent, stated bias direction.** All seven draws are
 independent random variables. No correlation between them is measured anywhere in this

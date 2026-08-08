@@ -1190,6 +1190,60 @@ def case_save1_of_exactly_reproduces_soil_calibration_points_at_c_endpoints():
 
 
 @case
+def case_save1_of_blends_per_side_dollar_adjustments_not_per_side_factors():
+    """The c=0/c=1 endpoint checks above can't tell the correct formula
+    (each side's OWN slope applied to that side's OWN nominal FIRST, then
+    the two dollar results blended by c) apart from a plausible-looking
+    regression that blends the mid/pre NOMINALS and the mid/pre FACTORS
+    separately before multiplying them together -- the two agree exactly
+    at c=0 and c=1 (only one side's factor is used at either endpoint) but
+    diverge at any interior c. Uses synthetic, deliberately distinct
+    mid/pre nominals and slopes (not this household's real calibration --
+    a pure arithmetic check of save1_of()'s blend order, so it needs no
+    private archive) and an oracle computed independently of save1_of()'s
+    own code, not by calling any of its internals."""
+    mid, pre = 1000.0, 800.0
+    rte_slope_mid, rte_slope_pre = 0.5, 0.3
+    soil_slope_loss_mid, soil_slope_loss_pre = 0.2, 0.1
+    soil_slope_surplus_mid, soil_slope_surplus_pre = 0.6, 0.4
+    rte, loss, prod_noise = up.RTE_NOM, 0.02, 0.98  # combined_x > 0 -> loss-side slopes
+
+    x = 1 - prod_noise
+    combined_x = loss + x - loss * x
+    rte_factor_mid = 1 + rte_slope_mid * (rte - up.RTE_NOM)
+    rte_factor_pre = 1 + rte_slope_pre * (rte - up.RTE_NOM)
+    soil_factor_mid = 1 + soil_slope_loss_mid * combined_x
+    soil_factor_pre = 1 + soil_slope_loss_pre * combined_x
+    mid_adjusted = mid * rte_factor_mid * soil_factor_mid
+    pre_adjusted = pre * rte_factor_pre * soil_factor_pre
+
+    for c in (0.0, 0.3, 0.5, 0.7, 1.0):
+        correct = c * mid_adjusted + (1 - c) * pre_adjusted
+        # the regression this test guards against: blend nominals and
+        # factors separately, then multiply -- wrong at every interior c.
+        blended_nominal = c * mid + (1 - c) * pre
+        blended_rte_factor = c * rte_factor_mid + (1 - c) * rte_factor_pre
+        blended_soil_factor = c * soil_factor_mid + (1 - c) * soil_factor_pre
+        wrong = blended_nominal * blended_rte_factor * blended_soil_factor
+
+        got = up.save1_of(c, rte, loss, prod_noise, pre, mid,
+                          rte_slope_mid, rte_slope_pre,
+                          soil_slope_loss_mid, soil_slope_loss_pre,
+                          soil_slope_surplus_mid, soil_slope_surplus_pre)
+        assert abs(got - correct) < 1e-9, (
+            f"c={c}: save1_of() gave {got}, hand-computed per-side-then-blend "
+            f"oracle gives {correct} -- these must match exactly")
+        if 0 < c < 1:
+            assert abs(correct - wrong) > 1e-6, (
+                f"c={c}: the correct and blend-then-multiply-wrong values "
+                f"({correct} vs {wrong}) must differ at an interior c, or "
+                "this test can't actually distinguish the two formulas")
+    return ("save1_of() matches an independently hand-computed oracle at "
+           "interior c values, and is confirmed to genuinely diverge from "
+           "the blend-then-multiply regression shape at those same points")
+
+
+@case
 def case_mid_pre_slope_unaveraging_fix_is_disclosed_in_the_artifact():
     """issue #107: the artifact must disclose the mid/pre-averaging fix the
     same way #89's own surplus_slope_fix disclosed ITS fix -- a live
