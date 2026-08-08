@@ -793,6 +793,66 @@ def case_gas_service_segment_tiering_differs_from_period_level_blend():
 
 
 @case
+def case_non_heating_floor_is_reserved_per_segment_not_once_per_period():
+    """Issue #109, round 2 (adversarial re-review). The first version of
+    this fix allocated an already period-level-capped heating total across
+    segments by HDD share, but the non-heating-floor reservation that
+    produces that cap was still computed ONCE for the whole period -- so a
+    period whose heating HDD concentrates almost entirely in one segment
+    could still borrow spare capacity from a DIFFERENT segment with no
+    heating demand to justify it. This household's real 2026-03-31 period
+    does exactly this: a 2-day Gas Service segment with zero HDD, a 27-day
+    segment with all of it -- the period-level-only cap credited 11.10
+    heating therms; a segment-respecting floor reservation caps the real
+    27-day segment's own capacity at 10.33 (hand-verified independently
+    against the committed real-archive artifact).
+
+    This fixture reproduces the same SHAPE with clean numbers so the cap is
+    hand-computable: a 30-day period, 30 total therms, split 3/27 days (the
+    first 3 days carry zero HDD, the last 27 carry all of it), floor
+    0.6 therms/day.
+        heating_capable_per_day = 30/30 - 0.6 = 0.4
+        segment 1's own capacity = 0.4 x 27 = 10.8
+        raw HDD-proportional demand (all in segment 1) = 20 (> capacity)
+        -> heating_therms_attributed = min(20, 10.8) = 10.8
+    The OLD period-level-only cap would have allowed
+    max(0, 30 - 0.6x30) = 12.0 -- 1.2 therms MORE than the segment-
+    respecting figure, because it let segment 0's unused (zero-HDD)
+    capacity paper over segment 1's own shortfall. 10.8 < 12.0 is the
+    regression this case guards: reverting to a period-level-only floor
+    reservation would silently pass 12.0 again."""
+    period = "Jan 1, 2026 - Jan 30, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-30"], "period": [period], "therms": [30.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _gas_detail_rows(
+        "2026-01-30", period,
+        gas_service=[(3, 1.0, np.nan), (27, 1.0, np.nan)],
+        gas_energy=[(3, 0.0), (27, 0.0)],
+        other_fees=[(30.0, 0.0)])
+    with _GasFixture(periods, detail):
+        hdd = {dt.date(2026, 1, d): 0.0 for d in range(1, 4)}
+        hdd.update({dt.date(2026, 1, d): 10.0 for d in range(4, 31)})
+        hdd_by_day = pd.Series(hdd)
+        iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+              "annual_heating_therms": 20.0, "floor_therms_per_day": 0.6}
+        rows, _, _ = hpc.gas_savings_by_period(iso)
+    row = rows[0]
+    old_period_level_cap = max(0.0, 30.0 - 0.6 * 30)
+    assert abs(old_period_level_cap - 12.0) < 1e-9, old_period_level_cap   # sanity on the fixture itself
+    assert abs(row["heating_therms_attributed"] - 10.8) < 0.01, row
+    assert row["heating_therms_attributed"] < old_period_level_cap, (
+        row, old_period_level_cap, "segment-level floor reservation must cap below "
+        "the old period-level-only figure on a fixture built to make it bind")
+    return (f"non-heating floor reserved per segment caps this period's heating "
+           f"attribution at {row['heating_therms_attributed']} therms, not the "
+           f"{old_period_level_cap} a period-level-only reservation would allow")
+
+
+@case
 def case_other_fees_borrows_gas_energy_day_ranges_when_segment_counts_match():
     """Issue #109: other_fees splits by THERM COUNT, not days, so it has no
     day-range of its own -- when it splits into the SAME number of segments

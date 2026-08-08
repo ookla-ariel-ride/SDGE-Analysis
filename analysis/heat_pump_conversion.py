@@ -438,29 +438,75 @@ def _segment_day_ranges(period_start, period_end, seg_days_list, context):
     return ranges
 
 
-def _segment_heat_shares(day_ranges, hdd_by_day, period_hdd, heating_therms_attributed):
-    """Split a period's OWN already-determined `heating_therms_attributed`
-    (period-level HDD share, capped by that period's own billed-therms-minus-
-    non-heating-floor -- computed exactly as before this issue, unchanged)
-    across `day_ranges` proportional to each range's own real per-day HDD
-    share of the period's total HDD -- the segment-respecting allocation
-    issue #109 asks for ("split each period's real day-by-day HDD series ...
-    across each charge type's own segment day ranges"), applied to whichever
-    charge type's own day boundaries are passed in.
+def _finest_day_partition(period_start, period_end, *segment_lists):
+    """The single finest partition of [period_start, period_end] into
+    non-overlapping day ranges that respects EVERY real segment boundary
+    from every day-based charge type passed in (each `segment_lists` entry
+    a list of (start, end) tuples from _segment_day_ranges()) -- issue #109
+    (round 2): the non-heating floor is a property of REAL calendar days,
+    not of any one charge type's own billing segmentation, so reserving it
+    against Gas Service's own segment boundaries while ignoring Gas Energy
+    Charge's (or vice versa) would let one charge type's floor-capacity cap
+    silently disagree with another's about how much heating a given real day
+    could have delivered. Merging every day-based charge type's own real
+    segmentation into their common finest partition FIRST, then capping
+    ONCE per cell (see _capacity_capped_cells()), guarantees every charge
+    type's own segments -- each necessarily a union of one or more of these
+    cells, since every charge type's own boundaries are among the ones
+    merged in -- sum back to the exact same period total, however many
+    segments that charge type happens to have."""
+    breaks = {period_start, period_end + dt.timedelta(days=1)}
+    for ranges in segment_lists:
+        for start, end in ranges:
+            breaks.add(start)
+            breaks.add(end + dt.timedelta(days=1))
+    edges = sorted(breaks)
+    return [(edges[i], edges[i + 1] - dt.timedelta(days=1)) for i in range(len(edges) - 1)]
 
-    This does NOT re-derive or re-cap the period's total heating estimate --
-    it only redistributes the SAME total across sub-period day ranges, so it
-    sums back to `heating_therms_attributed` exactly (day_ranges partition
-    the period exactly, and hdd_by_day sums over that partition equal
-    period_hdd exactly) and every existing period-level reconciliation and
-    downstream figure (the annual total, the electric load sizing) is
-    untouched by this allocation."""
-    if period_hdd <= 0:
-        return [0.0 for _ in day_ranges]
+
+def _capacity_capped_cells(cells, hdd_by_day, total_hdd, ann_heat, heating_capable_per_day):
+    """One (start, end, heating_therms) tuple per cell of a period's finest
+    day partition (issue #109, round 2): each cell's own real HDD share of
+    the ANNUAL heating estimate, capped at that cell's own real day count
+    times the period's own implied per-day heating-capable ceiling
+    (`heating_capable_per_day` -- the period's printed total therms, day-
+    prorated, minus the non-heating floor; the SAME reservation-before-
+    capping rule this module has always applied at the period level,
+    now applied once per cell instead of once for the whole period, closing
+    the gap the period-level version left: a period whose heating demand
+    concentrates in a FEW real days can no longer borrow spare capacity from
+    OTHER real days that had no heating demand to justify it, even though
+    the period AS A WHOLE had room).
+
+    This is the ONLY place a cap is applied -- every charge type's own
+    segment allocation downstream (_segment_heat_from_cells()) just SUMS the
+    relevant cells, so no charge type's own total can silently disagree
+    with another's, and the period's `heating_therms_attributed` (the sum of
+    every cell here) can only shrink relative to the old period-level-only
+    cap, never grow (each cell's own capacity sums exactly to the old
+    period-level capacity, and min() is subadditive)."""
+    out = []
+    for start, end in cells:
+        days = (end - start).days + 1
+        hdd = hdd_by_day[(hdd_by_day.index >= start) & (hdd_by_day.index <= end)].sum()
+        demand = ann_heat * (hdd / total_hdd) if total_hdd > 0 else 0.0
+        capacity = heating_capable_per_day * days
+        out.append((start, end, min(demand, capacity)))
+    return out
+
+
+def _segment_heat_from_cells(day_ranges, cells):
+    """Each of `day_ranges`' own already-capacity-capped heating therms --
+    the sum of every cell (from _capacity_capped_cells()) whose own range
+    falls inside it. Cells are always a subset-or-equal partition of any one
+    charge type's own day_ranges (both are built from the SAME real segment
+    boundaries via _finest_day_partition()), so this is an exact regrouping
+    of an already-computed total, not a second, independent estimate that
+    could drift from it."""
     shares = []
     for start, end in day_ranges:
-        seg_hdd = hdd_by_day[(hdd_by_day.index >= start) & (hdd_by_day.index <= end)].sum()
-        shares.append(heating_therms_attributed * (seg_hdd / period_hdd))
+        shares.append(sum(h for c_start, c_end, h in cells
+                          if c_start >= start and c_end <= end))
     return shares
 
 
@@ -584,6 +630,40 @@ def gas_savings_by_period(iso):
     period-level computation, not a separate code path that could drift
     from it.
 
+    ROUND 2 (issue #109, adversarial re-review): the first version of this
+    fix allocated the heating slice across segments by day-level HDD share,
+    but still capped the PERIOD's total heating attribution once, at the
+    period level (`therms - floor_per_day * period_days`), before doing
+    that allocation -- so a period whose heating HDD concentrates almost
+    entirely in one segment could still borrow spare capacity from a
+    DIFFERENT segment that had no heating demand to justify it (this
+    household's real 2026-03-31 period does exactly this: a 2-day segment
+    with zero HDD, a 27-day segment with all of it). The issue's own text
+    asks for the floor to be reserved "at the SEGMENT level for every
+    charge type", not just the pricing -- this was a real gap against that
+    text, not merely an interpretation choice. Fixed by reserving the floor
+    (and capping heating demand against it) once per CELL of the finest
+    partition every day-based charge type's own segments agree on
+    (_finest_day_partition(), _capacity_capped_cells()) -- floor-capacity is
+    a property of real calendar days, not of any one charge type's own
+    billing segmentation, so capping per Gas Service's segments while
+    ignoring Gas Energy Charge's (or vice versa) would let the two charge
+    types silently disagree about how much heating a given day could have
+    delivered. Every charge type's own segments are unions of one or more
+    of these cells by construction, so they always sum back to the SAME
+    period total (_segment_heat_from_cells()) -- there is no risk of Gas
+    Service crediting a different total than Gas Energy Charge for the same
+    period. This can only shrink `heating_therms_attributed` relative to
+    the period-level-only cap (never grow it: each cell's own capacity
+    sums exactly to the old period-level capacity, and summing a per-cell
+    minimum can never exceed the minimum of the sums), and that SAME
+    shrunk total is what downstream reconciliation (build()) and the
+    electric heat-pump load sizing use -- displaced heating therms are not
+    reallocated to a different, non-heating-demand day; the model's belief
+    about how much heating this period actually delivered legitimately
+    shrinks, which is the whole point of reserving the floor per real day
+    rather than once per period.
+
     JUDGMENT CALL (stated per CLAUDE.md section 8): bill_gas_detail.csv does
     not carry each Gas Service/Gas Energy Charge segment's own billed therm
     count (parse_bills.py's _gas_segments() reads and cross-foots it against
@@ -598,7 +678,12 @@ def gas_savings_by_period(iso):
     2026-01-29) -- both times a 5-of-32-days first segment implies (by day
     proportion) 15.2 and 11.3 therms respectively, against the bill's own
     printed other_fees segment_therms of 15 and 11, agreement within half a
-    therm in both real cross-checks.
+    therm in both real cross-checks. The SAME uniform-per-day proxy also
+    underlies `heating_capable_per_day` above (round 2): under day-
+    proportion, every real day of a period is assumed to bill the identical
+    `therms / period_days`, which is exactly why a single per-day capacity
+    ceiling is valid to reuse across EVERY charge type's own cells
+    regardless of which charge type's segmentation produced them.
     """
     periods = pd.read_csv(GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
@@ -643,16 +728,7 @@ def gas_savings_by_period(iso):
         period_hdd = hdd_by_day[(hdd_by_day.index >= start) & (hdd_by_day.index <= end)].sum()
         heat_share = ann_heat * (period_hdd / total_hdd) if total_hdd > 0 else 0.0
         therms = row["therms"]
-        # Codex review, issue #1, pass 2: capping at total period therms
-        # alone still lets a shoulder-season period attribute nearly ALL its
-        # usage to heating, when this same model's own non-heating floor
-        # (water heating/cooking, floor_per_day) had to run every one of
-        # those days too. Reserve that floor's share of the period before
-        # capping, so heating attribution can never exceed what's left after
-        # the model's own non-heating usage is accounted for.
         period_days = (end - start).days + 1
-        heating_capable_therms = max(0.0, therms - floor_per_day * period_days)
-        heating_therms_attributed = min(heat_share, heating_capable_therms)
 
         detail = gas_detail.get(str(row["statement_date"]))
         if not detail or not all(ct in detail for ct in
@@ -669,10 +745,26 @@ def gas_savings_by_period(iso):
             start, end, [s["segment_days"] for s in gs_segs], f"{context} gas_service")
         ge_ranges = _segment_day_ranges(
             start, end, [s["segment_days"] for s in ge_segs], f"{context} gas_energy")
-        gs_shares = _segment_heat_shares(gs_ranges, hdd_by_day, period_hdd,
-                                         heating_therms_attributed)
-        ge_shares = _segment_heat_shares(ge_ranges, hdd_by_day, period_hdd,
-                                         heating_therms_attributed)
+
+        # Codex review, issue #1, pass 2 (period-level); issue #109 round 2
+        # (segment level). Capping at total period therms alone still lets a
+        # shoulder-season period attribute nearly ALL its usage to heating,
+        # when this same model's own non-heating floor (water heating/
+        # cooking, floor_per_day) had to run every one of those days too.
+        # Reserve that floor's share of EVERY REAL DAY before capping --
+        # applied once per cell of the finest partition every day-based
+        # charge type's own segments agree on (_finest_day_partition()), not
+        # once for the whole period, so heating attribution can never borrow
+        # spare capacity from a real day that had no heating demand to
+        # justify it, even when the period AS A WHOLE had room.
+        heating_capable_per_day = max(0.0, therms / period_days - floor_per_day)
+        cells = _finest_day_partition(start, end, gs_ranges, ge_ranges)
+        cell_heats = _capacity_capped_cells(cells, hdd_by_day, total_hdd, ann_heat,
+                                            heating_capable_per_day)
+        heating_therms_attributed = sum(h for _, _, h in cell_heats)
+
+        gs_shares = _segment_heat_from_cells(gs_ranges, cell_heats)
+        ge_shares = _segment_heat_from_cells(ge_ranges, cell_heats)
 
         # Gas Service: tiered, so each segment needs its OWN total_therms and
         # baseline_allowance -- estimated by day-proportion of the period's
@@ -703,8 +795,7 @@ def gas_savings_by_period(iso):
             of_cost = _flat_segment_cost(heating_therms_attributed,
                                          of_segs[0]["other_fees_rate"])
         else:
-            of_shares = _segment_heat_shares(of_ranges, hdd_by_day, period_hdd,
-                                             heating_therms_attributed)
+            of_shares = _segment_heat_from_cells(of_ranges, cell_heats)
             of_cost = sum(_flat_segment_cost(heat_s, seg["other_fees_rate"])
                          for heat_s, seg in zip(of_shares, of_segs))
 
