@@ -2936,9 +2936,10 @@ physical input), `post_behavior` (a 2-point sensitivity: G vs G_POST), and
 script's own ranking, most-to-least swing on the real measured year: **install_cost** and
 **escalation** (1.6 yr each, over $12.5-17k and 0-12% respectively), **degradation** and
 **round_trip_efficiency** (0.3 yr each), **ev_persistence** (0.2 yr), **soiling** and
-**production_measurement_spread** (0.0 yr each — both route through the same calibrated
-generation-sensitivity, see below, which shrinks their realistic-range effect to well under
-a tenth of a year). Reconciliation: `install_cost` (the
+**production_measurement_spread** (0.1 yr each — both route through the same calibrated
+generation-sensitivity, see below, which shrinks their realistic-range effect to close to a
+tenth of a year, not below it: 0.055 and 0.079 yr at full precision, issue #116).
+Reconciliation: `install_cost` (the
 one directly shared lever, same band) matches closely (old 2.1 yr vs new 1.6 yr — both root
 in the same `post_behavior.mid.battery_marginal`-derived base case); `escalation`'s larger
 swing here (1.6 yr vs the old model's 0.9 yr) is an expected reordering, not a disagreement
@@ -2954,7 +2955,7 @@ anywhere else in the repo. The full numeric comparison is regenerated into the a
 own `tornado.reconciliation_vs_extended_results_tornado_battery` field, not hand-copied here.
 
 **The comprehensive result (`battery_marginal_only_full_model`, N=5,000, seed 43, on the
-real measured year).** Payback median 5.8 yr (p10-p90 5.1-6.9 yr); under this model's stated
+real measured year).** Payback median 5.8 yr (p10-p90 5.1-6.8 yr); under this model's stated
 assumptions, 5,000 of 5,000 draws repay within the 10-yr warranty and within 15 years; 0 of
 5,000 draws never repaid within the 25-year horizon this script treats as the outer bound of
 "never" (the same horizon `deep_analyses.py`'s own loop already uses, `range(1, 26)`). A
@@ -2968,8 +2969,8 @@ uncertainty in whether those distributions or their independence assumption are 
 correct, several of which are labeled "estimated" rather than "measured" above; the artifact
 records this distinction explicitly in a dedicated `epistemic_caveat` field, separate from
 the sampling-only `finite_sample_caveat`, and the report states the result as conditional on
-the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,474 at
-a 4% discount rate ($4,318 at 7%); 15-yr median $18,875 at 4% ($12,215 at 7%) — reported per
+the model rather than as an unconditional real-world guarantee. NPV: 10-yr median $7,497 at
+a 4% discount rate ($4,360 at 7%); 15-yr median $18,954 at 4% ($12,297 at 7%) — reported per
 draw as the standard `-price + PV(savings)`, unlike the old artifact's own
 `npv10_at_4pct_median` (a `median(npv) - median(price)` convention, reproduced exactly but
 only inside `legacy_reproduction()` for special-case matching, not used for this
@@ -3097,7 +3098,7 @@ This grid's +0% point is now identical, by construction, to `tornado()`'s own es
 lever's ESC_LO payback endpoint (6.8 yr) — not to `tornado()`'s overall
 `nominal_payback_yr` (5.8 yr), which uses 6%, not 0%, escalation, a genuinely different
 scenario. The result: payback stays within the 10-yr warranty down to -6%/yr (8.5 yr), but
-misses it at -9%/yr (10.2 yr) and worse at -12%/yr (14.0 yr) — a concrete, computed answer
+misses it at -9%/yr (10.2 yr) and worse at -12%/yr (13.9 yr) — a concrete, computed answer
 to "how much downside would it take to matter," reported as a labeled sensitivity, the same
 pattern `dsgs_vpp_backtest.py`'s own additive sensitivities already established in this
 repo, never folded into the Monte Carlo's own percentile claims.
