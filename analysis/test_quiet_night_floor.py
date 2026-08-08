@@ -534,10 +534,21 @@ def case_issue_114_investigation_matches_the_committed_artifact():
     assert fresh["july_boundary_nights"]["2025-07-25"] == 6.64, fresh["july_boundary_nights"]
 
     # the EV-absence window counts cited in prose (all computed independently
-    # of this module's own HIGH_DEMAND_GATE_KW rule)
+    # of this module's own HIGH_DEMAND_GATE_KW rule).
     expected_n = {"1-5h": 69, "0-5h": 49, "0-6h": 42, "1-6h": 59, "21-6h(+1d)": 40}
     got_n = {k: v["n"] for k, v in fresh["ev_absence_by_window"].items()}
     assert got_n == expected_n, got_n
+    # Codex review round 2's DST-vs-archive-boundary fix is NOT independently
+    # exercised by this pinning check on this household's real data: the two
+    # DST-transition nights checked directly (2025-11-01/2026-03-07's own
+    # wrapped 21-6h windows, spanning 2025-11-02's fall-back and 2026-03-08's
+    # spring-forward) both have real EV energy present regardless, so they'd
+    # be excluded from the "free" count either way and the buggy vs. fixed
+    # completeness check happens to agree on this specific dataset. The fix
+    # is correct by direct inspection (verified: the broken hours*4 check
+    # would wrongly reject those two dates' real, complete windows as
+    # "truncated"), not by this test's own mutation-sensitivity -- stated
+    # honestly rather than claiming coverage this check doesn't actually have.
 
     # the July gate-sweep's own headline transition: the current 2.0 kW gate
     # gives the real 43/365 total with July still at 3; a 4th July quiet

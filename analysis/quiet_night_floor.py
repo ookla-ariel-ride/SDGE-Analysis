@@ -451,27 +451,42 @@ def issue_114_investigation(d):
     ev, _ = br.detect_sessions(d)
     d["evkw"] = ev
 
+    all_dates = set(d["date"].unique())
+
     def ev_free_count(start_h, end_h):
-        # Codex review: the wrapped (21, 6)-style window's LAST calendar date
-        # in the dataset has no "next day" data to read (the archive ends at
-        # midnight on its own final date), so its own window is truncated
-        # (observed: 2026-07-23 has 12 intervals, not the full 36) --
-        # counting a truncated window as a complete "EV-free night" would be
-        # an artifact of where the data happens to end, not a real
-        # observation. Require the full expected interval count.
+        # Codex review round 1: the wrapped (21, 6)-style window's LAST
+        # calendar date in the dataset has no "next day" data to read (the
+        # archive ends at midnight on its own final date), so its own window
+        # is truncated (observed: 2026-07-23 has 12 intervals, not the full
+        # 36) -- counting that as a complete "EV-free night" would be an
+        # artifact of where the data happens to end, not a real observation.
+        #
+        # Codex review round 2: a FIXED "hours * 4" expected-interval count
+        # is the wrong test for that -- it also rejects genuine, complete
+        # DST-transition nights (2025-11-02 fall-back has 20 real intervals
+        # in a nominal 4-hour window; 2026-03-08 spring-forward has 12),
+        # which are real, complete observations that happen to be a
+        # different wall-clock length that day, not missing data. The two
+        # cases look identical by interval COUNT alone but need opposite
+        # handling, so check the actual cause instead: for a wrapped window,
+        # exclude only when the NEXT calendar date isn't in the dataset at
+        # all (the real archive-boundary case); DST-shortened/lengthened
+        # nights always have their next date present and are kept, matching
+        # night_floor_series()'s own convention of using whatever real
+        # intervals a night actually has.
         wraps = start_h > end_h  # e.g. (21, 6) means 9pm today through 6am tomorrow
-        hours = (24 - start_h + end_h) if wraps else (end_h - start_h)
-        expected_intervals = hours * 4  # 15-minute intervals
         free = []
         for date, g in d.groupby("date"):
             if wraps:
+                if (date + dt.timedelta(days=1)) not in all_dates:
+                    continue  # real archive-boundary truncation, not DST
                 mask = ((d["date"] == date) & (d["hour"] >= start_h)) | \
                        ((d["date"] == date + dt.timedelta(days=1)) & (d["hour"] < end_h))
                 night = d[mask]
             else:
                 night = g[(g["hour"] >= start_h) & (g["hour"] < end_h)]
-            if len(night) != expected_intervals:
-                continue  # truncated window (dataset boundary) -- not a real observation
+            if night.empty:
+                continue
             if night["evkw"].sum() == 0:
                 free.append((date, float(night["kw"].median())))
         return free
