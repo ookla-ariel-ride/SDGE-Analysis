@@ -1298,6 +1298,14 @@ def _s0_verdict(ctx):
     mid = _json("package_results.json")["packages"]["MID"]
     lo, hi = sorted((mid["battery_alone_payback_yr"],
                      mid["battery_alone_payback_post_fix_yr"]))
+    # Both ends are cost/annual-saving quotients: a battery that saved nothing
+    # (or lost money) would come back zero, infinite or NEGATIVE and still be
+    # printed here as a payback range under "a sound optional buy". Refuse.
+    if not (0 < lo <= hi < float("inf")):
+        raise SystemExit(
+            f"report_tokens: S0_VERDICT refuses to call the battery a sound optional buy "
+            f"at a {lo}–{hi}-year payback -- data/package_results.json:packages.MID's "
+            f"battery-alone paybacks must both be positive and finite")
     # "hardware-alone" is deliberate: CLAUDE.md section 2 forbids crediting
     # the free behavior saving to the hardware, and both ends of this range
     # are package_results.json's OWN battery-alone paybacks.
@@ -1369,13 +1377,23 @@ def _s1_verdict(ctx):
             f"report_tokens: S1_VERDICT refuses to claim all {ab['buckets']} billed TOU "
             f"buckets rebuild -- data/tou_audit_summary.json:rules.as_billed reports "
             f"{ab['buckets_failing']} failing bucket(s): {ab.get('failing_buckets')}")
+    # Same reason, second claim: a correlation coefficient is a signed ratio,
+    # and at r <= 0 the weakest pair does not agree at all -- printing "agree
+    # at -0.1300 daily correlation" states the opposite of what the number
+    # says. Only a positive r supports the word "agree".
+    r = _min_pairwise_daily_correlation()
+    if r <= 0:
+        raise SystemExit(
+            f"report_tokens: S1_VERDICT refuses to say the independent production series "
+            f"agree -- data/threeway_production_validation.csv's weakest pair correlates "
+            f"at {r:.4f} daily")
     # No apostrophe, no ampersand, no tag anywhere in these sentences: token
     # values are HTML-escaped at render (an apostrophe would ship as &#x27;),
     # so the plain text is also the rendered text.
     return (f"{VERDICT_STEM}all {ab['buckets']} billed TOU buckets rebuild from the raw "
             "meter intervals to the whole-kWh rounding digit the statements print, and "
             f"the independent production series agree at "
-            f"{_min_pairwise_daily_correlation():.4f} daily correlation.")
+            f"{r:.4f} daily correlation.")
 
 
 _tok("S1_VERDICT", kind="derived", get=_s1_verdict,
@@ -1434,9 +1452,20 @@ def _s5_verdict(ctx):
     rd = _json("report_data.json")
     pc = rd["periods_chart"]
     on = pc["order"].index("on")
+    kwh_share = pc["import_share"][on]
+    cost_share = rd["onpeak"]["share_of_energy_cost"]
+    # The "but ... so timing sets this bill" conclusion rests on a comparison
+    # the sentence never states: it holds only while the on-peak window takes
+    # a LARGER share of cost than of kWh. Check it rather than assume it.
+    if cost_share <= kwh_share:
+        raise SystemExit(
+            f"report_tokens: S5_VERDICT refuses to claim timing sets this bill -- "
+            f"data/report_data.json puts the on-peak window at "
+            f"{cost_share:.3f} of import energy cost against {kwh_share:.3f} of "
+            f"imported kWh, so the cost share no longer exceeds the kWh share")
     return (f"{VERDICT_STEM}the {_peak_window()} on-peak window takes "
-            f"{round(pc['import_share'][on] * 100)}% of imported kWh but "
-            f"{round(rd['onpeak']['share_of_energy_cost'] * 100)}% of the import energy "
+            f"{round(kwh_share * 100)}% of imported kWh but "
+            f"{round(cost_share * 100)}% of the import energy "
             "cost, so timing, more than total consumption, sets this bill.")
 
 
@@ -1477,11 +1506,34 @@ def _s7_verdict(ctx):
     # beside it is the POST-fix one, and pairing the pre-fix saving with the
     # post-fix payback would mix two runs of the integrated pipeline.
     mid_payback = mid["battery_alone_payback_post_fix_yr"]
+    # The sentence quotes this payback as a fact about a purchase, so a
+    # non-positive or infinite one (a battery that saves nothing, or costs
+    # more to run than it saves) has no honest rendering here.
+    if not (0 < mid_payback < float("inf")):
+        raise SystemExit(
+            f"report_tokens: S7_VERDICT refuses to quote a {mid_payback}-year battery-alone "
+            f"payback -- data/package_results.json:packages.MID."
+            f"battery_alone_payback_post_fix_yr must be positive and finite")
+    exp_cost = high["cost"] - mid["cost"]
+    if exp_cost <= 0:
+        raise SystemExit(
+            f"report_tokens: S7_VERDICT refuses to call the HIGH package an expansion -- "
+            f"data/package_results.json prices it ${exp_cost:,.0f} against MID, so there "
+            f"is no extra cost for the extra pack to pay back")
     marginal = high["marginal_vs_mid_yr"]
-    exp_payback = (high["cost"] - mid["cost"]) / marginal if marginal else float("inf")
-    tail = ("and the expansion pack buys endurance, not savings"
-            if exp_payback > mid_payback else
-            "and the expansion pack pays back faster than the first unit")
+    # Sign first, arithmetic second. At marginal <= 0 the second pack saves
+    # nothing extra and no payback exists; dividing anyway returns a NEGATIVE
+    # "payback" that sorts below mid_payback and publishes the opposite
+    # purchase advice. Only two positive, finite paybacks are comparable.
+    # Each branch is also held to CLAUDE.md section 10's 35-word density cap
+    # on the whole sentence, not just the one that renders today: 25 words of
+    # lead leave 10 for the tail. "faster than the first unit" spent 11.
+    if marginal <= 0:
+        tail = "and the expansion pack never repays its extra cost"
+    elif exp_cost / marginal > mid_payback:
+        tail = "and the expansion pack buys endurance, not savings"
+    else:
+        tail = "and the expansion pack pays back faster than that"
     return (f"{VERDICT_STEM}the free EV-charging fix is worth a modeled "
             f"{_usd0(low['savings_yr'])}/yr whatever you buy; one "
             f"{_battery_model_short()} adds its own "

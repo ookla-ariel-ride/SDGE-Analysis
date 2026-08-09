@@ -627,6 +627,227 @@ def case_section_verdict_guards_refuse_to_publish_a_false_claim():
             "than publishing a claim their artifacts no longer support")
 
 
+# ---------------------------------------------------------------------------
+# Issue #131 follow-up: the verdict formulas that DIVIDE or COMPARE artifact
+# values. A payback is a quotient, so a package that saves nothing (or costs
+# more than it saves) yields a zero, infinite or NEGATIVE "payback" -- and a
+# negative one sorts BELOW every real payback, so comparing it publishes the
+# opposite purchase advice while every number in the sentence stays correct.
+#
+# Each case drives the formula with substituted artifact values rather than
+# asserting on the code: the substitution goes into report_tokens' in-memory
+# cache of a committed data/ file (the same technique the S1/S3 guard case
+# above uses) and is restored on the way out, so nothing under data/ is
+# touched. All of these read committed artifacts only -- no _require_household
+# gate, so they run in CI on a checkout with no private archive.
+# ---------------------------------------------------------------------------
+class _swapped:
+    """Temporarily replace node[key] in a cached artifact, restoring it."""
+
+    def __init__(self, node, key, value):
+        self.node, self.key, self.value = node, key, value
+
+    def __enter__(self):
+        self.old = self.node[self.key]
+        self.node[self.key] = self.value
+        return self.value
+
+    def __exit__(self, *exc):
+        self.node[self.key] = self.old
+
+
+# CLAUDE.md section 10's density cap applies to EVERY branch, but
+# test_report_consistency.py can only see the one branch index.html happens to
+# carry. Same lead-sentence rule, applied here to the branches that do not
+# render today: a period glued to digits (6.5-yr) is not a sentence break.
+_LEAD_BREAK_RE = re.compile(r"(?<!\d)\.(?=\s|$)")
+
+
+def _assert_within_density_cap(name, value, note):
+    m = _LEAD_BREAK_RE.search(value)
+    lead = value[:m.end()] if m else value
+    words = len(lead.split())
+    asides = lead.count("(") + lead.count("—")
+    assert words <= 35 and asides <= 1, (
+        f"{name} on {note} leads in {words} words / {asides} asides, over CLAUDE.md "
+        f"section 10's 35-word, 1-aside cap: {lead}")
+    return words
+
+
+@case
+def case_s7_verdict_never_credits_a_payback_to_an_expansion_that_saves_nothing():
+    """packages.HIGH.marginal_vs_mid_yr is the expansion's OWN annual saving.
+    At or below zero the expansion can never pay back, and the clause must say
+    so; dividing the extra hardware cost by it instead returns a negative
+    number that compares as "faster than the first unit"."""
+    pk = rt._json("package_results.json")["packages"]
+    real = pk["HIGH"]["marginal_vs_mid_yr"]
+    assert real > 0, (
+        f"data/package_results.json now puts the expansion's marginal saving at "
+        f"{real}/yr; the published branch below is no longer the live one")
+    published = rt.resolve_token("S7_VERDICT")
+    assert "buys endurance, not savings" in published, published
+    widths = {"published (marginal +%d)" % real:
+              _assert_within_density_cap("S7_VERDICT", published, "the published branch")}
+
+    for label, marginal in (("negative (-400)", -400), ("zero", 0)):
+        with _swapped(pk["HIGH"], "marginal_vs_mid_yr", marginal):
+            value = rt.resolve_token("S7_VERDICT")
+        assert "pays back faster" not in value, (
+            f"S7_VERDICT tells the reader the expansion pack pays back faster than the "
+            f"first unit while its own marginal saving is {marginal}/yr: {value}")
+        assert "never repays its extra cost" in value, (
+            f"S7_VERDICT must say plainly that an expansion saving {marginal}/yr does "
+            f"not pay back: {value}")
+        widths[label] = _assert_within_density_cap("S7_VERDICT", value, label)
+
+    # The positive side must still discriminate BOTH ways, or "never claims a
+    # faster payback" would pass trivially on a formula that never says it.
+    exp_cost = pk["HIGH"]["cost"] - pk["MID"]["cost"]
+    quick = exp_cost / (pk["MID"]["battery_alone_payback_post_fix_yr"] / 2)
+    with _swapped(pk["HIGH"], "marginal_vs_mid_yr", quick):
+        value = rt.resolve_token("S7_VERDICT")
+    assert "pays back faster than that" in value, (
+        f"S7_VERDICT withheld the faster-payback reading from an expansion that really "
+        f"does pay back in half the time: {value}")
+    widths["faster (positive)"] = _assert_within_density_cap(
+        "S7_VERDICT", value, "the faster-payback branch")
+
+    assert rt.resolve_token("S7_VERDICT") == published, (
+        "the substituted marginal saving leaked out of this case")
+    return ("S7_VERDICT reads endurance / faster / never-repays across marginal "
+            f"+{real}, +{quick:.0f}, 0 and -400 per year, each inside the density cap "
+            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+@case
+def case_s7_verdict_refuses_a_battery_payback_it_cannot_honestly_quote():
+    """The same sentence quotes MID's own payback as a fact and calls HIGH an
+    expansion. A non-positive or infinite payback, or a HIGH package that
+    costs no more than MID, makes one of those false -- refuse, do not print
+    a "~-6.5-yr payback"."""
+    pk = rt._json("package_results.json")["packages"]
+    for bad in (0, -6.5, float("inf")):
+        with _swapped(pk["MID"], "battery_alone_payback_post_fix_yr", bad):
+            try:
+                value = rt.resolve_token("S7_VERDICT")
+                raise AssertionError(f"S7_VERDICT quoted a {bad}-year battery payback "
+                                     f"as a sound purchase figure: {value}")
+            except SystemExit as e:
+                assert "S7_VERDICT" in str(e), e
+    with _swapped(pk["HIGH"], "cost", pk["MID"]["cost"]):
+        try:
+            value = rt.resolve_token("S7_VERDICT")
+            raise AssertionError(f"S7_VERDICT called HIGH an expansion pack while it "
+                                 f"costs no more than MID: {value}")
+        except SystemExit as e:
+            assert "S7_VERDICT" in str(e), e
+    return ("S7_VERDICT fails closed on a zero, negative or infinite battery payback and "
+            "on a HIGH package with no extra cost to repay")
+
+
+@case
+def case_s0_verdict_refuses_to_call_a_losing_battery_a_sound_buy():
+    """Section 0's headline quotes both battery-alone paybacks as a RANGE
+    under "a sound optional buy". Both are cost/annual-saving quotients, so a
+    battery that saved nothing would print "0.0-", "inf-" or "-3.0-year" there
+    and the recommendation around it would be false."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    for key in ("battery_alone_payback_yr", "battery_alone_payback_post_fix_yr"):
+        real = mid[key]
+        assert real > 0, f"data/package_results.json:{key} is already {real}"
+        for bad in (0, -3.0, float("inf")):
+            with _swapped(mid, key, bad):
+                try:
+                    value = rt.resolve_token("S0_VERDICT")
+                    raise AssertionError(f"S0_VERDICT called the battery a sound optional "
+                                         f"buy at a {bad}-year payback: {value}")
+                except SystemExit as e:
+                    assert "S0_VERDICT" in str(e), e
+    return ("S0_VERDICT fails closed on a zero, negative or infinite battery-alone "
+            "payback at either end of the range it publishes")
+
+
+@case
+def case_s5_verdict_refuses_the_timing_claim_when_the_shares_stop_diverging():
+    """"takes X% of imported kWh but Y% of the import energy cost, so timing
+    sets this bill" is a comparison the sentence never states. It holds only
+    while Y > X; at Y <= X the same words assert the opposite of the data."""
+    rd = rt._json("report_data.json")
+    pc = rd["periods_chart"]
+    kwh_share = pc["import_share"][pc["order"].index("on")]
+    real = rd["onpeak"]["share_of_energy_cost"]
+    assert real > kwh_share, (
+        f"data/report_data.json already puts the on-peak cost share ({real}) at or below "
+        f"its kWh share ({kwh_share}); S5_VERDICT's claim is no longer true")
+    for bad in (kwh_share, kwh_share / 2):
+        with _swapped(rd["onpeak"], "share_of_energy_cost", bad):
+            try:
+                value = rt.resolve_token("S5_VERDICT")
+                raise AssertionError(f"S5_VERDICT claimed timing sets this bill with the "
+                                     f"on-peak cost share at {bad} against a kWh share of "
+                                     f"{kwh_share}: {value}")
+            except SystemExit as e:
+                assert "S5_VERDICT" in str(e), e
+    return ("S5_VERDICT fails closed when the on-peak cost share stops exceeding the "
+            f"kWh share (live: {real} vs {kwh_share})")
+
+
+@case
+def case_s1_verdict_refuses_to_call_anti_correlated_series_agreement():
+    """The second half of section 1's verdict says the independent production
+    series "agree at" the weakest pairwise daily correlation. A correlation is
+    a signed ratio: at r <= 0 the pair does not agree at all, and printing the
+    number after the word "agree" states the opposite of what it means."""
+    rows = rt._csv_rows("threeway_production_validation.csv")
+    victim = list(rows[0])[1]
+    real = rt._min_pairwise_daily_correlation()
+    assert real > 0, f"the committed production series already correlate at {real:.4f}"
+    originals = [r[victim] for r in rows]
+    for r in rows:
+        if r[victim] not in (None, ""):
+            r[victim] = str(-float(r[victim]))
+    try:
+        value = rt.resolve_token("S1_VERDICT")
+        raise AssertionError(f"S1_VERDICT said the series agree while {victim!r} runs "
+                             f"anti-correlated with the others: {value}")
+    except SystemExit as e:
+        assert "S1_VERDICT" in str(e), e
+    finally:
+        for r, original in zip(rows, originals):
+            r[victim] = original
+    assert abs(rt._min_pairwise_daily_correlation() - real) < 1e-12, (
+        "the negated production column leaked out of this case")
+    return (f"S1_VERDICT refuses the word 'agree' when the weakest pair anti-correlates "
+            f"(live: {real:.4f})")
+
+
+@case
+def case_s6_verdict_compares_marginal_values_and_stays_true_at_every_sign():
+    """S6's closing clause is the other shape: a comparison of two DIFFERENCES
+    ("worth more than"), not a quotient. Ordering survives either difference
+    going negative, so it needs no guard -- asserted here across the sign
+    grid rather than by reading the code, since the neighbouring S7 defect
+    looked equally harmless."""
+    dp = rt._json("battery_dispatch_policies.json")
+    grid = [(1000, 900, 1050), (1000, 900, 1200), (1000, 1100, 1050),
+            (1000, 1100, 900), (1000, 900, 800)]
+    for greedy, evening, expanded in grid:
+        with _swapped(dp["pw3"]["greedy"], "save", greedy), \
+             _swapped(dp["pw3"]["evening"], "save", evening), \
+             _swapped(dp["pw3x"]["greedy"], "save", expanded):
+            value = rt.resolve_token("S6_VERDICT")
+        policy_gap, capacity_gap = greedy - evening, expanded - greedy
+        expected = ("so the dispatch settings are worth more than a bigger pack"
+                    if policy_gap > capacity_gap else
+                    "so a bigger pack is worth more than the dispatch settings")
+        assert expected in value, (
+            f"S6_VERDICT ranks the wrong side at policy gap {policy_gap} vs capacity gap "
+            f"{capacity_gap}: {value}")
+    return (f"S6_VERDICT's 'worth more than' clause tracks the larger marginal gain across "
+            f"{len(grid)} sign combinations, including both gaps negative")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (
