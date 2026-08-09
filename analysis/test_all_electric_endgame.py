@@ -1334,7 +1334,7 @@ def case_tier_interaction_overstatement_segment_level_diverges_from_period_level
     result = A.tier_interaction_overstatement(iso)
 
     floor_rows, _, _ = A.floor_savings_by_period(iso)
-    hpc_rows, _, _ = hpc.gas_savings_by_period(iso)
+    hpc_rows, _, _, _ = hpc.gas_savings_by_period(iso)
     heat_by_date = {r["statement_date"]: r["heating_therms_attributed"] for r in hpc_rows}
     periods = pd.read_csv(hpc.GAS_PERIODS_CSV)
     by_date = periods.set_index(periods["statement_date"].astype(str))

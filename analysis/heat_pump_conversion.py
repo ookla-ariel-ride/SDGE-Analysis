@@ -825,6 +825,17 @@ def gas_savings_by_period(iso):
     a single per-day capacity ceiling was ever valid to reuse across EVERY
     charge type's own days in the first place, before round 4 replaced it
     with real per-day data wherever available.
+
+    Returns (rows, total_savings, total_allocated_heat, day_heat_therms).
+    `day_heat_therms` (issue #119) is {date: capacity-capped heating therms}
+    for every real calendar day of every real billing period this function
+    processed -- the exact per-day shape it already computed via
+    _capacity_capped_days() above to price each period, now also handed back
+    so build_hp_load_series() can place electric load using this SAME capped
+    shape instead of independently re-deriving an uncapped hdd_by_day
+    proportion (see that function's own docstring for why the two can
+    disagree, and why that disagreement matters for TOU-sensitive electric
+    costing even when the ANNUAL totals reconcile).
     """
     periods = pd.read_csv(GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
@@ -867,6 +878,16 @@ def gas_savings_by_period(iso):
     rows = []
     total_savings = 0.0
     total_allocated_heat = 0.0
+    # Issue #119: every real day's own capacity-capped heating therms
+    # (_capacity_capped_days()'s own output for each period, flattened across
+    # every period into one dict) -- the SAME per-day shape this function
+    # already computes and prices below, now also handed back so
+    # build_hp_load_series() can place electric load using it instead of
+    # independently re-deriving an uncapped day_hdd/total_hdd proportion (see
+    # that function's own docstring for why the two shapes can disagree).
+    # Periods are already checked contiguous/non-overlapping above, so each
+    # real calendar day is written here exactly once.
+    day_heat_therms = {}
     for i, row in periods.iterrows():
         start, end = row["period_start"], row["period_end"]
         context = f"{row['statement_date']} [{row['period']}]"
@@ -917,6 +938,12 @@ def gas_savings_by_period(iso):
                                             heating_capable_per_day, floor_per_day,
                                             gas_daily, context)
         heating_therms_attributed = sum(h for _, h in capped_days)
+        for cd, ch in capped_days:
+            assert cd not in day_heat_therms, (
+                f"heat_pump_conversion.py: {context} re-wrote {cd}'s capped "
+                "heating therms -- billing periods should have been checked "
+                "contiguous/non-overlapping above")
+            day_heat_therms[cd] = ch
 
         gs_shares = _segment_heat_from_days(gs_ranges, capped_days)
         ge_shares = _segment_heat_from_days(ge_ranges, capped_days)
@@ -978,7 +1005,7 @@ def gas_savings_by_period(iso):
             "realized_rate_usd_per_therm": round(float(all_in_rate), 4),
             "gas_savings_usd": round(float(savings), 2),
         })
-    return rows, round(total_savings, 2), round(total_allocated_heat)
+    return rows, round(total_savings, 2), round(total_allocated_heat), day_heat_therms
 
 
 def build_hp_load_series(d, iso, cop):
@@ -1020,10 +1047,31 @@ def build_hp_load_series(d, iso, cop):
     falls back to uniform for that day alone, logged, never silently dropped
     -- weekend days can plausibly need this (rates.period() gives a weekend
     day sop only before 2pm, off afterward, so a mask CAN come up empty).
+
+    Each heating day's own kWh (issue #119) comes from
+    `iso["capped_heat_by_day"]` when the caller supplies it -- the SAME
+    capacity-capped per-day shape gas_savings_by_period() actually priced
+    (build() threads its `day_heat_therms` return value through under this
+    key) -- rather than an independently-derived day_hdd/total_hdd
+    proportion of the (already capped/reconciled) annual total. The two
+    shapes can disagree on WHICH specific days carry the heat even when
+    their annual totals match exactly: a day where the non-heating floor
+    consumed most of that day's own real billed usage has little capacity
+    left for heating regardless of how much HDD it had, and the raw
+    proportion has no way to know that. Since electric cost is TOU/interval-
+    sensitive, crediting a day with more (or less) heating load than it
+    actually delivered can misplace kWh into a different-priced interval
+    even while the annual dollars still reconcile.
+
+    `capped_heat_by_day` is None for a caller (or a hand-built test `iso`)
+    that never populated it -- falls back unchanged to the day_hdd/total_hdd
+    proportion, matching this function's pre-#119 behavior exactly.
     """
     hdd_by_day = iso["hdd_by_day"]
     total_hdd = iso["total_hdd"]
+    capped_heat_by_day = iso.get("capped_heat_by_day")
     ann_heat_kwh = iso["annual_heating_therms"] * KWH_PER_THERM * FURNACE_AFUE / cop
+    kwh_per_therm = KWH_PER_THERM * FURNACE_AFUE / cop
 
     dates = d["dt"].dt.date
     out = {"uniform": pd.Series(0.0, index=d.index),
@@ -1033,7 +1081,10 @@ def build_hp_load_series(d, iso, cop):
     for day, day_hdd in hdd_by_day.items():
         if day_hdd <= 0 or total_hdd <= 0:
             continue
-        day_kwh = ann_heat_kwh * (day_hdd / total_hdd)
+        if capped_heat_by_day is not None:
+            day_kwh = capped_heat_by_day.get(day, 0.0) * kwh_per_therm
+        else:
+            day_kwh = ann_heat_kwh * (day_hdd / total_hdd)
         mask = dates == day
         n = int(mask.sum())
         if n == 0:
@@ -1187,7 +1238,7 @@ def build():
 
     d = BR.load()
     iso = isolate_heating_therms()
-    gas_rows, gas_savings_annual, allocated_heat_therms = gas_savings_by_period(iso)
+    gas_rows, gas_savings_annual, allocated_heat_therms, day_heat_therms = gas_savings_by_period(iso)
     if abs(allocated_heat_therms - iso["annual_heating_therms"]) > 2:
         raise SystemExit(
             "heat_pump_conversion.py: gas savings allocated across billing "
@@ -1210,7 +1261,25 @@ def build():
     # to a real billed period -- so both sides use the SAME reconciled total.
     reconciled_heat_therms = round(
         sum(r["heating_therms_attributed"] for r in gas_rows), 2)
-    iso_reconciled = {**iso, "annual_heating_therms": reconciled_heat_therms}
+    # Two independent aggregations of the same underlying capped_days values
+    # (per-period-summed-then-summed-again above vs. flattened-into-a-dict-
+    # then-summed here) must agree -- if they didn't, a period boundary bug
+    # would be silently dropping or double-counting a real day's therms
+    # rather than merely producing a differently-shaped (but equally-sized)
+    # placement, which day_heat_therms below feeds straight into TOU-
+    # sensitive electric costing (issue #119).
+    assert abs(round(sum(day_heat_therms.values()), 2) - reconciled_heat_therms) < 0.01, (
+        "heat_pump_conversion.py: day_heat_therms sums to "
+        f"{sum(day_heat_therms.values())}, not reconciled_heat_therms "
+        f"({reconciled_heat_therms}) -- the per-day and per-period capped "
+        "heat totals have diverged")
+    # issue #119: hand the SAME capped per-day shape to build_hp_load_series()
+    # (via electric_cost_scenarios()) so it places heating kWh using the
+    # shape gas_savings_by_period() actually priced, not an independently
+    # re-derived uncapped hdd_by_day proportion of this (already capped)
+    # reconciled total.
+    iso_reconciled = {**iso, "annual_heating_therms": reconciled_heat_therms,
+                      "capped_heat_by_day": day_heat_therms}
 
     electric, baseline_bill_usd = electric_cost_scenarios(d, iso_reconciled)
 
