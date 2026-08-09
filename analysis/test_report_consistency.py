@@ -652,6 +652,75 @@ def case_heat_pump_conversion_section_matches_the_artifact():
     return "the §10 heat-pump-conversion section matches the live artifact, including the full sign-flip bracket"
 
 
+def case_all_electric_endgame_section_matches_the_artifact():
+    """The §10 water-heater / all-electric-endgame subsections are
+    hand-written, not templated -- lock their headline figures against the
+    live data/all_electric_endgame.json artifact (issue #20)."""
+    aee_path = ROOT / "data" / "all_electric_endgame.json"
+    assert aee_path.exists(), f"{aee_path} is committed public data and must exist"
+    aee = json.loads(aee_path.read_text())
+    assert aee["applicable"], "this household's own household.has_gas must be true"
+
+    m = re.search(r'<h3 id="wh-real-interval">.*?<h2 id="s11">', HTML, re.S)
+    assert m, "the water-heater-real-interval subsection was not found in index.html"
+    section = m.group(0)
+
+    wh = aee["water_heater_conversion"]
+    fc = aee["fixed_charge_check"]["regression"]
+    seq = aee["sequencing_and_paybacks"]
+    hr = aee["service_headroom_check"]
+    recon = aee["reconciliation"]
+    headline = wh["payback"][wh["headline_uef"]]
+    e = wh["electric_cost_by_scenario"][wh["headline_uef"]]
+    mb = seq["share_robustness"]["marginal_basis"]
+
+    checks = [
+        f"${wh['floor_savings_annual_usd']:,.2f}/yr",
+        f"${e['uniform']['electric_cost_increase_usd']:,.2f}/yr",
+        f"${headline['annual_net_savings_usd']:,.2f}/yr",
+        f"${e['super_off_peak']['electric_cost_increase_usd']:,.2f}/yr",
+        f"${e['on_peak']['electric_cost_increase_usd']:,.2f}/yr",
+        f"{headline['low_install']['payback_years']} years",
+        f"{headline['central_install']['payback_years']} years",
+        f"{headline['high_install']['payback_years']} years",
+        f"−${abs(fc['intercept_usd']):,.2f} ± ${fc['intercept_std_error_usd']:,.2f}",
+        f"{hr['water_heater_code_load_a']} A",
+        f"{seq['complete_transition_payback']['combined_install_usd']:,}",
+        f"${seq['complete_transition_payback']['combined_annual_net_savings_usd']:,.2f}/yr",
+        f"{seq['complete_transition_payback']['payback_years']}-year",
+        f"{recon['unattributed_heating_signal']['unattributed_therms_yr']:g} therms/yr",
+        f"${recon['unattributed_heating_signal']['unattributed_usd']:,.2f}/yr",
+        f"{mb['furnace_payback_years']}-year",
+        f"{mb['crossover_water_heater_share'] * 100:.1f}%",
+    ]
+    for value in checks:
+        assert value in section, f"§10 all-electric-endgame section: {value!r} not found in it"
+
+    assert hr["hard_blocker"] is True, (
+        "the artifact's own hard_blocker must stay True for the report's "
+        "panel-space-blocker claim to be honest -- if this ever flips, the "
+        "report prose needs rewriting, not just this test")
+    assert "only 1 free full-size space" in section or "1 free full-size space" in section, (
+        "the report must state the panel-space hard blocker plainly")
+    assert seq["fixed_charge_release_usd"] == 0.0, (
+        "the report's own 'no fixed charge to release' framing depends on "
+        "this artifact figure staying exactly zero")
+
+    final = seq["final_step_alone_payback"]
+    assert final["with_fixed_charge_credit"]["payback_years"] == \
+        final["without_fixed_charge_credit"]["payback_years"], (
+        "the report claims the final-step payback is identical with/without "
+        "the credit -- the artifact must actually agree")
+    assert f"{final['with_fixed_charge_credit']['payback_years']} years" in section
+
+    gap = round(headline["annual_net_savings_usd"]
+               - aee["reconciliation"]["water_heater_vs_extended_results_gas_decomposition"]
+               ["old_estimate_net_usd_yr"], 2)
+    assert f"${abs(gap):,.2f}/yr" in section, (gap, "reconciliation gap not cited in prose")
+    return ("the §10 water-heater / all-electric-endgame subsections match "
+           "the live all_electric_endgame.json artifact")
+
+
 def case_all_electric_paragraph_furnace_savings_matches_the_artifact():
     """Issue #109 round 3 (Codex adversarial review, pass 3): the §10
     "Going all-electric" paragraph cites the furnace's own annual gas
@@ -1512,6 +1581,7 @@ CASES = [
     case_dsgs_prestaged_sensitivity_matches_the_artifact,
     case_heat_pump_conversion_section_matches_the_artifact,
     case_all_electric_paragraph_furnace_savings_matches_the_artifact,
+    case_all_electric_endgame_section_matches_the_artifact,
     case_monte_carlo_paragraph_matches_uncertainty_results,
     case_backup_endurance_table_matches_the_artifact,
     case_battery_plan_matrix_table_matches_the_artifact,

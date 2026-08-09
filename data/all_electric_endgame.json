@@ -1,0 +1,662 @@
+{
+ "applicable": true,
+ "basis": "furnace figures cited directly from heat_pump_conversion.json (issues #1/#109), not recomputed; water-heater figures built by reusing heat_pump_conversion.py's own segment-tier gas-pricing helpers for the non-heating floor and its own real-interval electric-rebilling pattern; service-headroom figures reused from service_headroom.json (issue #6) and its own physical_fit() function",
+ "fixed_charge_check": {
+  "bill_evidence": [
+   {
+    "line_items": [
+     "Gas Service: 1 therm @ $2.04568 (4 of 32 days) + 8 therms @ $2.03321 (28 of 32 days) = $18.32",
+     "Gas Energy Charge, Public Purpose Programs, State Regulatory Fee: each a flat $/therm rate on every therm (page 2-3 of the PDF)"
+    ],
+    "note": "the lowest-usage statement in the corpus -- if a minimum or fixed charge existed, it would be most visible here, and it is not present",
+    "pdf": "private/1-raw-data/gas-bills/sdge_gas_2025-07-30.pdf",
+    "period": "Jun 27, 2025 - Jul 28, 2025",
+    "statement_date": "2025-07-30",
+    "therms": 9.0,
+    "total_charges_usd": 22.94
+   },
+   {
+    "line_items": [
+     "Gas Service: 36 baseline therms @ $2.02136 + 25 nonbaseline therms @ $2.37552 = $132.16",
+     "Gas Energy Charge: 10 therms @ $.47997 (5 of 31 days) + 51 therms @ $.52402 (26 of 31 days) = $31.53",
+     "Public Purpose Programs: 61 therms @ $.115410 = $7.04",
+     "State Regulatory Fee: 61 therms @ $.002500 = $0.15"
+    ],
+    "note": "the highest-usage statement in the corpus -- every component is volumetric here too",
+    "pdf": "private/1-raw-data/gas-bills/sdge_gas_2025-12-30.pdf",
+    "period": "Nov 26, 2025 - Dec 26, 2025",
+    "statement_date": "2025-12-30",
+    "therms": 61.0,
+    "total_charges_usd": 170.88
+   }
+  ],
+  "regression": {
+   "intercept_std_error_usd": 3.55,
+   "intercept_usd": -2.46,
+   "n_periods": 25,
+   "note": "the fitted per-statement intercept is small relative to a typical bill and within roughly one standard error of zero given this corpus's own scatter -- consistent with, not merely suggestive of, a genuinely zero fixed charge; the bill PDFs above are the harder evidence, this regression is a cross-check on the same claim, not a replacement for reading the bill",
+   "slope_usd_per_therm": 2.6155
+  },
+  "resolution": "no tension between index.html's existing 'near-zero fixed floor' regression claim and a per-meter fixed charge -- the regression is correct because there genuinely is no such charge on this rate, confirmed by reading two real bill PDFs directly (a 9-therm summer statement and a 61-therm winter statement) line by line, not merely inferred from the regression's own intercept alone",
+  "verdict": "confirmed -- GR-Residential has no separate fixed/customer gas charge; every line item on both bill PDFs read directly is a $/therm rate or a percentage of one"
+ },
+ "furnace_conversion": {
+  "gas_savings_annual_usd": 416.25,
+  "install_cost_marginal_over_ac_usd": 4098,
+  "install_cost_standalone_usd": 14529,
+  "payback_central_cop_3_5": {
+   "annual_electric_cost_increase_usd": 331.97,
+   "annual_gas_savings_usd": 416.25,
+   "annual_net_savings_usd": 84.28,
+   "marginal_over_ac_replacement": {
+    "npv": {
+     "4pct": -3161,
+     "5pct": -3223
+    },
+    "payback_years": 48.6
+   },
+   "standalone": {
+    "npv": {
+     "4pct": -13592,
+     "5pct": -13654
+    },
+    "payback_years": 172.4
+   }
+  },
+  "source": "data/heat_pump_conversion.json (issues #1/#109, reused directly)"
+ },
+ "gas_end_use_enumeration": {
+  "annual_total_therms_meter": 342,
+  "independent_bill_cross_check": {
+   "daily_meter_annual_total_therms": 342,
+   "note": "a genuinely independent check: 12 real monthly statement reads (data/bill_periods_gas.csv, most recent 12 of 25) against the daily Green Button export's own annual sum -- two different meter-read processes agreeing within 0.29% is real corroboration, not circular",
+   "pct_difference": 0.29,
+   "trailing_12_statement_therms": 341.0
+  },
+  "non_heating_floor": {
+   "cooking_fuel_evidence": {
+    "appliance_fuels_field_present": false,
+    "note": "the DATA-SOURCES-CHEATSHEET.md appliance_fuels field -- the one public-ok source for what fuels this household's major appliances (pool, water heater, space heating, cooking) -- was never filled in private/household.yaml, so this script cannot determine, and does not guess, whether cooking here is gas or electric. Recommend: ask directly and record the answer in household.appliance_fuels, then re-run this script.",
+    "verdict": "not determined"
+   },
+   "floor_composition": "not determined from committed public data -- at minimum the water heater; possibly also cooking and/or a clothes dryer, depending on this household's own fuel mix, which household.appliance_fuels does not yet record (see cooking_fuel_evidence above)",
+   "not_further_separable": "even where the fuel mix is known, individual appliance shares cannot be split from this household's single, unsplit gas meter -- see third_end_use_gap for the external benchmark bracket used only to size a POSSIBLE dryer share, never to invent a split of this figure",
+   "therms_yr": 137
+  },
+  "non_heating_floor_therms_yr": 137,
+  "space_heating": {
+   "source": "heat_pump_conversion.isolate_heating_therms() (HDD regression, reused unmodified)",
+   "therms_yr": 205
+  },
+  "space_heating_therms_yr": 205,
+  "sum_check": {
+   "heating_plus_floor_therms": 342,
+   "note": "exact by construction: the HDD regression's own floor (intercept) and heating slope are complementary components of the same fit, so they sum to the fitted annual total; this is the enumeration's internal consistency check, not an independent cross-check",
+   "pct_of_metered_total": 100.0
+  },
+  "third_end_use_gap": {
+   "basis": "external benchmark (HomeGuide/SlashPlan-class contractor and DOE-adjacent usage guides, 2026), not measured for this household and not evidence a dryer exists here -- sizes the possibility only, for the case where it does. Not separable from other shares of the 137-therm/yr floor with the single, unsplit gas meter this household has. The cooking benchmark above sizes a SECOND, independent possibility the same way -- both can in principle draw on the SAME floor at once, see water_heater_share_sensitivity's own benchmark_incompatibility_check.",
+   "gap": "NOT DETERMINED whether a third gas end use (cooking, and/or a clothes dryer) remains unconverted after the water-heater and furnace steps this issue's own body names -- household.appliance_fuels, the one public-ok source for this household's own fuel mix, was never answered. If either is gas, the meter cannot actually be removed after just those two conversions.",
+   "not_priced_here": true,
+   "possible_cooking_basis": "typical 4-burner gas range/cooktop annual usage -- chefsresource.com ('How Many Therms Does a Gas Stove Use?') and prodhut.com, both 2026, corroborated in order of magnitude by a separate monthly-usage-pattern estimate (learnmetrics.com, 3-10 therms/month = 36-120 therms/yr, 2026); consumer/contractor-guide tier evidence, the SAME evidentiary standard DRYER_THERMS_PER_MONTH_RANGE above already uses, not a primary utility or DOE study -- not measured for this household and not evidence that cooking here is gas",
+   "possible_cooking_pct_of_floor_range": [
+    29.2,
+    43.8
+   ],
+   "possible_cooking_rough_magnitude_therms_yr": [
+    40,
+    60
+   ],
+   "possible_dryer_pct_of_floor_range": [
+    27.7,
+    78.8
+   ],
+   "possible_dryer_rough_magnitude_therms_yr": [
+    38,
+    108
+   ],
+   "recommendation": "answer household.appliance_fuels directly (a single interview question, DATA-SOURCES-CHEATSHEET.md section E1) to resolve this before treating either conversion as sufficient to remove the gas meter; a fully costed gas-to-electric dryer conversion, if one turns out to be needed, is out of this issue's own scope box and is a good candidate for a follow-up issue."
+  }
+ },
+ "joint_electric_cost_scenario": {
+  "basis": "uniform distribution for both loads, furnace at central COP 3.5, water heater at the headline UEF -- matching each conversion's own headline scenario basis",
+  "combined_added_kwh": 1556,
+  "electric_cost_increase_usd": 556.22,
+  "furnace_added_kwh": 948,
+  "solar_absorbed_kwh": 455,
+  "water_heater_added_kwh": 608
+ },
+ "meter_removal_research": {
+  "future_reconnection_cost": {
+   "confidence": "not determined -- flagged explicitly per CLAUDE.md section 0 rather than guessed",
+   "finding": "NOT DETERMINED. A gas meter fully removed (not merely capped) and later wanted again is, functionally, a NEW gas service installation, not a same-day reconnection: SDG&E's own 'Schedule SE' (Service Establishment Charge) tariff governs new/re-instituted service, and a secondary source cited a $5.85 SEC figure, but this could not be verified against a current, fetchable SDG&E tariff PDF during this research, and it is not clear that figure (if current) covers the full real cost of restoring gas to a fully-capped/removed line (a licensed plumber's line inspection/pressure test and a permit are the typical real-world requirements for bringing a capped gas line back into service, per general industry practice, not an SDG&E-specific citation).",
+   "what_would_settle_it": "SDG&E's own current Gas Rules tariff book (Rule 11 and Schedule SE), or a direct call to SDG&E's tariff line (858-654-1748 / tariffbook@sdge.com, found via sdge.com/rates-and-regulations/current-and-effective-tariffs, 2026-08)"
+  },
+  "reconnection_fee_nonpayment": {
+   "confidence": "well-sourced for the nonpayment case specifically; does not directly answer the voluntary-removal case",
+   "finding": "SDG&E eliminated residential reconnection fees for NONPAYMENT-related disconnections as of 2020-06-20 (a CPUC decision) -- a different scenario from a full voluntary meter removal followed by a later NEW gas service installation, but indicative of SDG&E's current posture toward reconnection-type fees generally.",
+   "sources": [
+    "web search, 2026-08 (secondary sources; no direct CPUC decision document was fetched)"
+   ]
+  },
+  "removal_fee": {
+   "confidence": "not a primary SDG&E tariff citation -- a consumer advocacy resource (QuitCarbon), not SDG&E's own tariff book, states this plainly; SDG&E's own disconnection page (sdge.com/disconnection, fetched 2026-08) describes the STOP-SERVICE PROCESS (call 877-789-9866 or use the online Stop Service portal) but does not itself state a dollar fee either way for a customer-requested, non-delinquency disconnection",
+   "finding": "no fee to remove/cap a gas meter in most circumstances",
+   "sources": [
+    "https://www.quitcarbon.com/help/removing-your-gas-meter (fetched 2026-08)",
+    "https://www.sdge.com/disconnection (fetched 2026-08)"
+   ]
+  },
+  "voluntary_disconnection_process": {
+   "confidence": "this is the ELECTRIC rules PDF, not the gas book -- the analogous GAS Rule 11 PDF could not be located at a working URL during this research; SDG&E's gas and electric tariff books commonly mirror this class of customer-service rule, but that parallel was NOT independently confirmed for gas specifically. NOT DETERMINED for gas without reading the actual gas Rule 11.",
+   "finding": "SDG&E Rule 11.H (ELECTRIC tariff, sdge.com/sites/default/files/elec_elec-rules_erule11.pdf, fetched 2026-08): a customer requesting service discontinuance must give >= 2 business days' notice; the customer remains responsible for charges until the requested date. No fee is named in this rule for a customer-requested discontinuance.",
+   "sources": [
+    "https://www.sdge.com/sites/default/files/elec_elec-rules_erule11.pdf (fetched 2026-08, ELECTRIC rules)"
+   ]
+  }
+ },
+ "reconciliation": {
+  "furnace_vs_heat_pump_conversion_json": {
+   "agreement": "exact by construction",
+   "gas_savings_annual_usd": 416.25,
+   "source": "data/heat_pump_conversion.json (cited directly, not recomputed)"
+  },
+  "unattributed_heating_signal": {
+   "floor_savings_usd": 360.38,
+   "heating_savings_usd": 416.25,
+   "note": "heat_pump_conversion.py's own module docstring already documents that its day-level capacity cap excludes 59.81 therms/yr of HDD-regression heating signal it cannot pin to a specific real day (205 raw vs 145.19 reconciled) -- this script quantifies that gap in DOLLARS for the first time, by comparing the trailing-12-statement billed total against the TRUE joint gas savings from removing both the floor and the heating slice together, not the naive sum of the two steps' own independently-computed marginal savings",
+   "resolution": "not credited to either conversion step, conservatively, matching heat_pump_conversion.py's own treatment of the underlying therms",
+   "tier_interaction_correction_note": "unattributed_usd is trailing_12_billed_total_usd minus floor_savings_usd minus heating_savings_usd PLUS this tier_interaction_overstatement_usd (Finding 1, Codex review pass, issue #20 round 3): floor_savings_usd and heating_savings_usd are each computed as if it alone were removed from the original bill (tier_interaction_overstatement()'s own docstring), so naively subtracting both from the billed total double-subtracts the shared nonbaseline-tier dollars they both reach into -- the same overstatement complete_transition_payback already corrects for (sequencing_and_paybacks). Adding it back here turns the naive, double-subtracted residual into the TRUE unattributed gap: billed total minus the joint (not summed) gas savings from removing both.",
+   "tier_interaction_overstatement_usd": 28.74,
+   "trailing_12_billed_total_usd": 922.34,
+   "unattributed_therms_yr": 59.81,
+   "unattributed_usd": 174.45
+  },
+  "water_heater_vs_extended_results_gas_decomposition": {
+   "gap_note": "the two are expected to differ -- they price the SAME conversion by genuinely different methods, one of them (this script's) at this repo's own established real-interval-billing rigor and one (extended_findings.py's) at a flat-rate proxy",
+   "gap_usd": -68.73,
+   "new_estimate_net_usd_yr": 136.27,
+   "new_method": "real 15-minute intervals, solar absorbed first, whole year re-billed with rates.bill_nem() (this script, CLAUDE.md section 1b)",
+   "old_estimate_net_usd_yr": 205,
+   "old_method": "flat 'midday solar timer' rate estimate (extended_findings.py's gas_decomposition), not real-interval billed"
+  }
+ },
+ "sequencing_and_paybacks": {
+  "basis": "cost-effectiveness: whichever step's own marginal payback is shorter goes first. AC1's own finding (a genuinely $0 fixed gas charge on this rate) makes the issue's own 'credit the meter-release value only to the final step' rule trivially satisfied either way -- crediting $0 to whichever step is last changes nothing, so there is no fixed-charge-driven reason to sequence one way over the other, unlike a rate WITH a real per-meter charge would produce. This order is derived from the 100%-water-heater-share basis alone -- see this section's own share_robustness (added separately, in build()) for whether it survives the water-heater-share uncertainty water_heater_share_sensitivity establishes.",
+  "complete_transition_payback": {
+   "combined_annual_net_savings_usd": 191.67,
+   "combined_install_usd": 18729,
+   "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase understates the true combined electric cost, since both conversions' independent rebills let their own added load claim the SAME exported solar kWh, which cannot really happen once both loads are real.",
+   "electric_interaction_overstatement_usd": 0.14,
+   "naive_summed_annual_net_savings_usd": 220.55,
+   "npv": {
+    "4pct": -16598,
+    "5pct": -16740
+   },
+   "payback_years": 97.7,
+   "tier_interaction_note": "combined_annual_net_savings_usd is the naive sum of each step's own independently-computed marginal GAS savings, minus BOTH the tier_interaction_overstatement_usd correction (this field) AND the electric_interaction_overstatement_usd correction (below) -- see tier_interaction_overstatement() and electric_interaction_overstatement() (CLAUDE.md section 9: composite figures must not silently add numbers from two separate models). naive_summed_annual_net_savings_usd is kept alongside for transparency, not used in the payback below.",
+   "tier_interaction_overstatement_usd": 28.74
+  },
+  "final_step_alone_payback": {
+   "identical_because_credit_is_zero": true,
+   "install_usd": 14529,
+   "note": "reported both ways per the issue's own AC7 text, making the 'only the last step gets it' framing checkable -- with fixed_charge_release_usd=0.0 (AC1's own finding) the two are numerically identical, which is the correct, checkable outcome of that rule on THIS rate, not a shortcut around it",
+   "step": "furnace",
+   "with_fixed_charge_credit": {
+    "npv": {
+     "4pct": -13592,
+     "5pct": -13654
+    },
+    "payback_years": 172.4
+   },
+   "without_fixed_charge_credit": {
+    "npv": {
+     "4pct": -13592,
+     "5pct": -13654
+    },
+    "payback_years": 172.4
+   }
+  },
+  "fixed_charge_release_usd": 0.0,
+  "last_step": "furnace",
+  "not_verified_caveat": "the water-heater half of both paybacks above (complete_transition_payback and, when the water heater is the last step, final_step_alone_payback) is built on the PURE 100%-water-heater assumption, NOT VERIFIED against this household's own actual fuel mix -- see water_heater_conversion.water_heater_share_sensitivity for the same figures at explicit, illustrative water-heater-share scenarios (not a proven bound -- see that section's own basis)",
+  "order": [
+   "water_heater",
+   "furnace"
+  ],
+  "share_robustness": {
+   "basis": "checks whether the headline sequencing order (water heater first, furnace last, computed on the 100%-water-heater-share basis) survives the SAME share uncertainty water_heater_share_sensitivity() already establishes -- the true share is not verified and could sit below every scenario shown there. Checked against the furnace's own STANDALONE install-cost basis (matching combined_install's own basis above, CLAUDE.md section 2) by default; a SECOND check against the furnace's own marginal-over-AC-replacement install-cost basis is also reported below (marginal_basis) -- that basis is NOT the one combined_install actually uses, so marginal_basis is a diagnostic on a different hypothetical, not a second combined-savings figure",
+   "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 172.4-year standalone payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+   "crossover_water_heater_share": 0.1582,
+   "marginal_basis": {
+    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 48.6-year marginal_over_ac_replacement payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+    "crossover_water_heater_share": 0.6076,
+    "furnace_payback_years": 48.6,
+    "furnace_payback_years_basis": "marginal_over_ac_replacement",
+    "named_scenarios": {
+     "100pct_full_floor": {
+      "last_step": "furnace",
+      "order": [
+       "water_heater",
+       "furnace"
+      ],
+      "water_heater_annual_net_savings_usd": 136.27,
+      "water_heater_payback_years": 30.8,
+      "water_heater_share": 1.0
+     },
+     "21pct_if_dryer_present_at_benchmark_high": {
+      "last_step": "water_heater",
+      "order": [
+       "furnace",
+       "water_heater"
+      ],
+      "water_heater_annual_net_savings_usd": 32.32,
+      "water_heater_payback_years": 130.0,
+      "water_heater_share": 0.212
+     },
+     "72pct_if_dryer_present_at_benchmark_low": {
+      "last_step": "furnace",
+      "order": [
+       "water_heater",
+       "furnace"
+      ],
+      "water_heater_annual_net_savings_usd": 101.8,
+      "water_heater_payback_years": 41.3,
+      "water_heater_share": 0.723
+     }
+    },
+    "robust_across_named_scenarios": false
+   },
+   "named_scenarios": {
+    "100pct_full_floor": {
+     "last_step": "furnace",
+     "order": [
+      "water_heater",
+      "furnace"
+     ],
+     "water_heater_annual_net_savings_usd": 136.27,
+     "water_heater_payback_years": 30.8,
+     "water_heater_share": 1.0
+    },
+    "21pct_if_dryer_present_at_benchmark_high": {
+     "last_step": "furnace",
+     "order": [
+      "water_heater",
+      "furnace"
+     ],
+     "water_heater_annual_net_savings_usd": 32.32,
+     "water_heater_payback_years": 130.0,
+     "water_heater_share": 0.212
+    },
+    "72pct_if_dryer_present_at_benchmark_low": {
+     "last_step": "furnace",
+     "order": [
+      "water_heater",
+      "furnace"
+     ],
+     "water_heater_annual_net_savings_usd": 101.8,
+     "water_heater_payback_years": 41.3,
+     "water_heater_share": 0.723
+    }
+   },
+   "robust_across_named_scenarios": true
+  },
+  "third_end_use_caveat": "neither payback above represents a CONFIRMED gas-meter removal: see third_end_use_gap -- whether a third gas end use (possibly cooking, possibly a clothes dryer) remains unconverted and unpriced after these two steps is not determined, so the meter cannot be confirmed removable yet even once both pay for themselves"
+ },
+ "service_headroom_check": {
+  "ampacity_verdict": "not_determined",
+  "basis": "furnace heat pump reuses the existing A/C circuit (service_headroom.json's own heat_pump_replaces_ac case, verdict 'pass') -- that verdict credits the outgoing A/C's own removed demand against the historical summer coincident PEAK the panel's spare capacity is measured from; it says nothing about the incoming heat pump's own equipment ampacity (MCA), which this check never subtracts because no specific heat-pump model is selected anywhere in this issue's own furnace analysis (heat_pump_conversion.py prices a COP bracket, not one nameplate unit). The water heater's own new 30 A/240 V circuit, whose code load IS fixed and known, is checked against the SAME panel-wide spare capacity heat_pump_only's own case already establishes (fixed_added_load_a=0, i.e. before any new 240 V load); what is left after that subtraction is a CEILING on the furnace heat pump's own MCA, not a verified combined installation -- see known_gap",
+  "hard_blocker": true,
+  "hard_blocker_note": "PHYSICAL PANEL SPACE, not ampacity, is the binding constraint: only 1 free full-size space(s) remain and a new 240 V water-heater circuit needs 2 -- this fails regardless of how much amperage headroom the ampacity check above shows. The furnace conversion frees no space of its own (it reuses the A/C's existing circuit), so it does not relieve this blocker either. Resolving it (a subpanel, tandem-breaker consolidation, or removing another circuit) is outside this issue's own scope box.",
+  "known_gap": "TWO gaps, not one. (1) service_headroom.json's own cases are built from a SUMMER coincident-peak measurement window (issue #6's own gross-load reconstruction); a water heater and a space-heating heat pump both draw the most in WINTER, a season the underlying measurement window does not cover -- the same already-documented gap heat_pump_conversion.py's own module docstring names for the furnace's added load. This check inherits that gap rather than resolving it. (2) No specific furnace heat-pump model has been selected anywhere in this issue's own analysis -- heat_pump_conversion.py prices a COP bracket (COP_SCENARIOS: 2.8/3.5/4.2), not one nameplate unit -- so spare_after_water_heater_a is a CEILING on the largest heat-pump MCA that would still fit, not a verified combined installation: this check cannot certify that any real unit fits (ampacity_verdict is 'not_determined' whenever that ceiling is non-negative). The one exception is a genuine 'fail': if spare_after_water_heater_a is already negative on BOTH bases, even a zero-amp heat pump would not fit, which holds regardless of gap (2). What would settle gap (2): a specific heat-pump model's nameplate MCA, checked against spare_after_water_heater_a.",
+  "physical_fit_basis": "spaces_free=1 (data/service_headroom.json, panel occupancy); a 240 V circuit needs 2 adjacent full-size spaces -- service_headroom.physical_fit() called directly, not reimplemented",
+  "physical_fit_verdict": "fail",
+  "spare_after_water_heater_a": {
+   "conservative_basis": 13.5913,
+   "measured_basis": 53.0183
+  },
+  "spare_before_any_new_load_a": {
+   "conservative_basis": 37.0313,
+   "measured_basis": 76.4583
+  },
+  "water_heater_code_load_a": 23.44,
+  "water_heater_code_load_basis": "NEC 422.13 (water heater as a continuous load, 125% of nameplate) applied to a 4,500 W backup resistance element at 240.0 V -- matches the standard 30 A/240 V dedicated circuit every manufacturer spec sheet found calls for"
+ },
+ "water_heater_conversion": {
+  "baseline_electric_bill_usd": 4904.13,
+  "electric_cost_by_scenario": {
+   "central_3.88": {
+    "_fallback_days": {
+     "on_peak": 0,
+     "super_off_peak": 0
+    },
+    "on_peak": {
+     "added_kwh": 608,
+     "electric_cost_increase_usd": 432.86,
+     "solar_absorbed_kwh": 105
+    },
+    "super_off_peak": {
+     "added_kwh": 608,
+     "electric_cost_increase_usd": 72.18,
+     "solar_absorbed_kwh": 219
+    },
+    "uniform": {
+     "added_kwh": 608,
+     "electric_cost_increase_usd": 224.11,
+     "solar_absorbed_kwh": 193
+    }
+   },
+   "high_4.0": {
+    "_fallback_days": {
+     "on_peak": 0,
+     "super_off_peak": 0
+    },
+    "on_peak": {
+     "added_kwh": 590,
+     "electric_cost_increase_usd": 419.86,
+     "solar_absorbed_kwh": 102
+    },
+    "super_off_peak": {
+     "added_kwh": 590,
+     "electric_cost_increase_usd": 70.02,
+     "solar_absorbed_kwh": 212
+    },
+    "uniform": {
+     "added_kwh": 590,
+     "electric_cost_increase_usd": 217.39,
+     "solar_absorbed_kwh": 188
+    }
+   },
+   "low_3.5": {
+    "_fallback_days": {
+     "on_peak": 0,
+     "super_off_peak": 0
+    },
+    "on_peak": {
+     "added_kwh": 674,
+     "electric_cost_increase_usd": 479.88,
+     "solar_absorbed_kwh": 115
+    },
+    "super_off_peak": {
+     "added_kwh": 674,
+     "electric_cost_increase_usd": 80.03,
+     "solar_absorbed_kwh": 242
+    },
+    "uniform": {
+     "added_kwh": 674,
+     "electric_cost_increase_usd": 248.46,
+     "solar_absorbed_kwh": 214
+    }
+   }
+  },
+  "floor_savings_annual_usd": 360.38,
+  "floor_savings_by_period": [
+   {
+    "floor_savings_usd": 22.92,
+    "floor_therms_attributed": 9.0,
+    "statement_date": "2025-07-30"
+   },
+   {
+    "floor_savings_usd": 28.98,
+    "floor_therms_attributed": 10.9,
+    "statement_date": "2025-08-28"
+   },
+   {
+    "floor_savings_usd": 28.76,
+    "floor_therms_attributed": 11.28,
+    "statement_date": "2025-09-29"
+   },
+   {
+    "floor_savings_usd": 30.58,
+    "floor_therms_attributed": 12.03,
+    "statement_date": "2025-10-29"
+   },
+   {
+    "floor_savings_usd": 32.18,
+    "floor_therms_attributed": 10.9,
+    "statement_date": "2025-11-28"
+   },
+   {
+    "floor_savings_usd": 35.09,
+    "floor_therms_attributed": 11.65,
+    "statement_date": "2025-12-30"
+   },
+   {
+    "floor_savings_usd": 36.37,
+    "floor_therms_attributed": 12.03,
+    "statement_date": "2026-01-29"
+   },
+   {
+    "floor_savings_usd": 34.69,
+    "floor_therms_attributed": 11.28,
+    "statement_date": "2026-03-02"
+   },
+   {
+    "floor_savings_usd": 27.89,
+    "floor_therms_attributed": 10.9,
+    "statement_date": "2026-03-31"
+   },
+   {
+    "floor_savings_usd": 28.25,
+    "floor_therms_attributed": 12.03,
+    "statement_date": "2026-04-30"
+   },
+   {
+    "floor_savings_usd": 27.62,
+    "floor_therms_attributed": 11.28,
+    "statement_date": "2026-06-01"
+   },
+   {
+    "floor_savings_usd": 27.05,
+    "floor_therms_attributed": 10.9,
+    "statement_date": "2026-06-30"
+   }
+  ],
+  "floor_therms_annual": 134.2,
+  "gas_wh_uef_assumed": 0.6,
+  "gas_wh_uef_basis": "DOE federal minimum UEF for a residential gas storage water heater, <=55 gal (0.64) / ~40 gal (~0.59) -- energy.gov / hotwater.com DOE regulations pages, 2026-08 -- 0.60 used as the low end of that band, the assumption most favorable to the heat pump (a more efficient existing unit would mean MORE delivered heat to replace, raising required kWh), not a worst-case pick to flatter the electric side",
+  "headline_uef": "central_3.88",
+  "hpwh_uef_scenarios": {
+   "central_3.88": 3.88,
+   "high_4.0": 4.0,
+   "low_3.5": 3.5
+  },
+  "incentives": {
+   "note": "SGIP (the CPUC program covering heat-pump water heaters specifically) closed its ratepayer budgets 2025-12-31 regardless of appliance type -- see heat_pump_conversion.INCENTIVE_USD's own sources list, re-cited not re-verified",
+   "usd": 0
+  },
+  "install_cost": {
+   "central_usd": 4200,
+   "high_usd": 8000,
+   "low_usd": 2800,
+   "note": "general contractor-pricing guides (Angi, Fixr, HomeGuide, hotwater.com / A.O. Smith), 2026 -- not a CA-specific engineering study the way heat_pump_conversion.py's furnace figure is; central is Angi's own quoted installed average ($4,200), low/high are Fixr's/hotwater.com's own quoted brackets ($2,800-$8,000)"
+  },
+  "not_verified_caveat": "payback below (and every figure derived from it, including sequencing_and_paybacks) is the PURE 100%-water-heater computation and is NOT VERIFIED against this household's own actual appliance fuel mix, which is not determined (see cooking_fuel_evidence). See water_heater_share_sensitivity for the same figures propagated across explicit, illustrative water-heater-share scenarios (NOT a proven bound -- the true share could be lower still) rather than asserting this one as the true answer -- CLAUDE.md section 0 (no false precision on an unverified input).",
+  "payback": {
+   "central_3.88": {
+    "annual_electric_cost_increase_usd": 224.11,
+    "annual_gas_savings_usd": 360.38,
+    "annual_net_savings_usd": 136.27,
+    "central_install": {
+     "npv": {
+      "4pct": -2685,
+      "5pct": -2786
+     },
+     "payback_years": 30.8
+    },
+    "high_install": {
+     "npv": {
+      "4pct": -6485,
+      "5pct": -6586
+     },
+     "payback_years": 58.7
+    },
+    "low_install": {
+     "npv": {
+      "4pct": -1285,
+      "5pct": -1386
+     },
+     "payback_years": 20.5
+    }
+   },
+   "high_4.0": {
+    "annual_electric_cost_increase_usd": 217.39,
+    "annual_gas_savings_usd": 360.38,
+    "annual_net_savings_usd": 142.99,
+    "central_install": {
+     "npv": {
+      "4pct": -2610,
+      "5pct": -2716
+     },
+     "payback_years": 29.4
+    },
+    "high_install": {
+     "npv": {
+      "4pct": -6410,
+      "5pct": -6516
+     },
+     "payback_years": 55.9
+    },
+    "low_install": {
+     "npv": {
+      "4pct": -1210,
+      "5pct": -1316
+     },
+     "payback_years": 19.6
+    }
+   },
+   "low_3.5": {
+    "annual_electric_cost_increase_usd": 248.46,
+    "annual_gas_savings_usd": 360.38,
+    "annual_net_savings_usd": 111.92,
+    "central_install": {
+     "npv": {
+      "4pct": -2956,
+      "5pct": -3038
+     },
+     "payback_years": 37.5
+    },
+    "high_install": {
+     "npv": {
+      "4pct": -6756,
+      "5pct": -6838
+     },
+     "payback_years": 71.5
+    },
+    "low_install": {
+     "npv": {
+      "4pct": -1556,
+      "5pct": -1638
+     },
+     "payback_years": 25.0
+    }
+   }
+  },
+  "upper_bound_caveat": "floor_savings_annual_usd prices the WHOLE non-heating floor, which may include other gas end uses besides the water heater (gas_end_use_enumeration.non_heating_floor.floor_composition: not determined from committed public data) -- a HPWH replaces only the water-heater share, which cannot be separated from this household's single, unsplit gas meter, so this is an UPPER BOUND on the water heater step's own true gas savings, not a precise water-heater-only figure",
+  "water_heater_share_sensitivity": {
+   "basis": "household.appliance_fuels was never answered at intake, so the floor's own composition beyond 'at least the water heater' is NOT DETERMINED (see gas_end_use_enumeration). These are ILLUSTRATIVE scenarios built from external, uncited-to-this-household usage benchmarks (a typical gas dryer and a typical gas range/cooktop), NOT a proven mathematical bound on the water heater's own true share: the 100pct scenario is the mechanically pure computation (and remains live if this household has neither a gas dryer nor gas cooking); the other two apply only the dryer benchmark, at its low and high end. A THIRD external benchmark (typical gas cooking, COOKING_THERMS_YR_RANGE) is not folded into a fourth scenario here -- see benchmark_incompatibility_check below, which shows the dryer's and cooking's own high ends together would claim more of the floor than exists, which is evidence those two specific high-end assumptions can't both hold at once for a household known to run a gas water heater, not evidence the water heater itself uses no gas. The true water-heater share -- and the true payback -- could still be lower than every scenario shown here (an even heavier dryer or cooking load, or another unlisted gas end use, cannot be ruled out from these benchmarks), or could be the full 100pct if this household has neither. Report the range as illustrative, not as a settled bracket, per CLAUDE.md section 0.",
+   "benchmark_incompatibility_check": {
+    "combined_pct_of_floor": 122.6,
+    "cooking_benchmark_high_pct_of_floor": 43.8,
+    "dryer_benchmark_high_pct_of_floor": 78.8,
+    "mechanical_residual_water_heater_share": 0.0,
+    "not_a_scenario": true,
+    "note": "the dryer benchmark's own high end (78.8% of the floor) plus the cooking benchmark's own high end (43.8% of the floor) together claim 122.6% of the floor -- 22.6 percentage points over 100%, i.e. more gas than the floor actually contains. This household is KNOWN to have a gas water heater today (this issue's own body; gas_end_use_enumeration's own non_heating_floor.floor_composition: 'at minimum the water heater'), so a scenario claiming the water heater's own share is exactly zero would assert something already known false, not merely unverified. The correct reading is the reverse: these two SPECIFIC external, uncited-to-this-household high-end benchmarks cannot BOTH be true simultaneously for this household -- at most one applies at its own high end here, or both apply at less than their own high ends -- not that the water heater consumes zero gas. This is NOT a payback scenario: no floor_savings/electric_cost/net_savings/payback is computed or published for it.",
+    "verdict": "implausible_for_this_household"
+   },
+   "headline_uef": "central_3.88",
+   "scenarios": {
+    "100pct_full_floor": {
+     "annual_net_savings_usd": 136.27,
+     "electric_cost_increase_usd": 224.11,
+     "floor_savings_annual_usd": 360.38,
+     "floor_therms_annual": 134.2,
+     "payback": {
+      "central_install": {
+       "npv": {
+        "4pct": -2685,
+        "5pct": -2786
+       },
+       "payback_years": 30.8
+      },
+      "high_install": {
+       "npv": {
+        "4pct": -6485,
+        "5pct": -6586
+       },
+       "payback_years": 58.7
+      },
+      "low_install": {
+       "npv": {
+        "4pct": -1285,
+        "5pct": -1386
+       },
+       "payback_years": 20.5
+      }
+     },
+     "water_heater_share": 1.0
+    },
+    "21pct_if_dryer_present_at_benchmark_high": {
+     "annual_net_savings_usd": 32.32,
+     "electric_cost_increase_usd": 48.56,
+     "floor_savings_annual_usd": 80.88,
+     "floor_therms_annual": 29.09,
+     "payback": {
+      "central_install": {
+       "npv": {
+        "4pct": -3841,
+        "5pct": -3865
+       },
+       "payback_years": 130.0
+      },
+      "high_install": {
+       "npv": {
+        "4pct": -7641,
+        "5pct": -7665
+       },
+       "payback_years": 247.5
+      },
+      "low_install": {
+       "npv": {
+        "4pct": -2441,
+        "5pct": -2465
+       },
+       "payback_years": 86.6
+      }
+     },
+     "water_heater_share": 0.212
+    },
+    "72pct_if_dryer_present_at_benchmark_low": {
+     "annual_net_savings_usd": 101.8,
+     "electric_cost_increase_usd": 165.68,
+     "floor_savings_annual_usd": 267.48,
+     "floor_therms_annual": 99.22,
+     "payback": {
+      "central_install": {
+       "npv": {
+        "4pct": -3068,
+        "5pct": -3143
+       },
+       "payback_years": 41.3
+      },
+      "high_install": {
+       "npv": {
+        "4pct": -6868,
+        "5pct": -6943
+       },
+       "payback_years": 78.6
+      },
+      "low_install": {
+       "npv": {
+        "4pct": -1668,
+        "5pct": -1743
+       },
+       "payback_years": 27.5
+      }
+     },
+     "water_heater_share": 0.723
+    }
+   }
+  }
+ }
+}
