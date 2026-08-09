@@ -1759,21 +1759,76 @@ def _heading_verdict_agreement(rendered_headings, resolved_tokens):
     return agreeing, diverged, unresolved
 
 
+def _raised_in(exc, path):
+    """Whether `exc` -- or any exception it chains from -- has a frame in the
+    file `path`.
+
+    Attribution by RAISE SITE, which is a fact about the stack, rather than by
+    message text, which is prose the raising module is free to reword. The
+    chain matters: report_tokens catches the household loader's SystemExit and
+    re-raises its own ("failed to resolve token X: ..."), so the loader's
+    frames sit on the chained __context__, not on the exception the caller
+    catches. Both are walked, and a self-referential chain terminates."""
+    target = pathlib.Path(path).resolve()
+    seen, cur = set(), exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        tb = cur.__traceback__
+        while tb is not None:
+            if pathlib.Path(tb.tb_frame.f_code.co_filename).resolve() == target:
+                return True
+            tb = tb.tb_next
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _missing_archive_exit(exc, archive_present, loader_path):
+    """Whether this SystemExit means "this checkout has no private archive" --
+    the ONLY reason a token may be dropped from the agreement comparison.
+
+    SystemExit is report_tokens' GENERAL fail-closed signal. A missing
+    private/household.yaml raises it, but so does a broken artifact, a guard
+    firing correctly, an unknown token name and a bad format spec. Reading
+    every one of them as "needs the private archive" turned the agreement half
+    of the case below into a no-op that still reported success -- the same
+    defect class the case exists to catch.
+
+    Two conditions, neither of them a message match:
+      * the archive really is absent -- `household.PATH.is_file()` is the
+        loader's OWN precondition, the one household._load() tests before it
+        raises, so this tracks the loader rather than paraphrasing it;
+      * the failure really came out of that loader -- a frame in household.py
+        somewhere on the exception chain.
+    Each condition alone is too weak. Frames alone would write off a missing
+    household KEY, which raises from the same module while the archive is
+    present and is a real defect. Absence alone would write off any unrelated
+    breakage on a machine that happens to have no archive, which is CI."""
+    return not archive_present and _raised_in(exc, loader_path)
+
+
 def _resolve_heading_verdict_tokens(scaffold):
     """{section id: resolved token text} for as many in-heading verdict slots
     as this machine can resolve, plus a one-line note on what was skipped.
 
-    Resolution goes through report_tokens, the module that owns these values;
-    a token that fails to resolve raises SystemExit (report_tokens' fail-closed
-    signal, which a missing private/household.yaml produces) and is left out,
-    so the caller compares what it can and reports what it could not. Only
-    SystemExit is treated this way -- anything else is a real defect and is
-    allowed to blow up the run rather than quietly shrinking the check."""
+    Resolution goes through report_tokens, the module that owns these values.
+    A token that fails to resolve raises SystemExit, and exactly one kind of
+    SystemExit is survivable: the one a checkout without private/household.yaml
+    produces (S4_VERDICT_SHORT needs the archive; CI has none). That one leaves
+    its section uncompared and named in the summary line. Every other
+    SystemExit is a real token failure and fails the case -- raised as an
+    AssertionError, since a SystemExit escaping would end the whole run instead
+    of being reported as this case failing."""
     if str(ROOT / "analysis") not in sys.path:
         sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
     try:
         import report_tokens as rt
     except SystemExit as e:                       # pragma: no cover - archive-dependent
+        assert _missing_archive_exit(e, archive, loader), (
+            f"importing report_tokens failed, and NOT because this checkout lacks the "
+            f"private archive (present: {archive}) -- that is a real failure, not "
+            f"something to skip: {e}")
         return {}, f"no token resolved ({e})"
     resolved, skipped = {}, []
     for sid, (_, _, token) in sorted(scaffold.items()):
@@ -1783,7 +1838,11 @@ def _resolve_heading_verdict_tokens(scaffold):
             "not a report_tokens.TOKENS entry")
         try:
             resolved[sid] = rt.resolve_token(token, spec)
-        except SystemExit:                        # needs the private archive
+        except SystemExit as e:                   # pragma: no cover - archive-dependent
+            assert _missing_archive_exit(e, archive, loader), (
+                f"report_tokens could not resolve {token} (§{sid}), and NOT because this "
+                f"checkout lacks the private archive (present: {archive}) -- the heading "
+                f"cannot be compared against a token that is itself broken: {e}")
             skipped.append(sid)
     note = (f"{len(skipped)} unresolvable without the private archive ({sorted(skipped)})"
             if skipped else "all resolved")
@@ -1823,8 +1882,9 @@ def case_every_h2_section_opens_with_exactly_one_conclusion_line():
     # two words at the slot's position satisfies the mechanism without saying
     # what the token that owns the slot says, so compare them. This half needs
     # report_tokens and, for some tokens, the private archive -- everything
-    # above runs everywhere, and only the comparison of an unresolvable token
-    # is skipped (reported in the summary line, never silently).
+    # above runs everywhere, and the ONLY comparison that may be skipped is one
+    # a missing archive makes impossible (reported in the summary line, never
+    # silently); a token that fails for any other reason fails the case.
     scaffold = _in_heading_verdict_scaffold()
     assert _HEADING_VERDICT_TOKEN_DIVERGENCE <= set(scaffold), (
         "the issue #141 divergence allowance names sections that no longer use the "
@@ -1998,8 +2058,47 @@ def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
     assert diverged == {"sA"}, f"heading/token divergence not detected: {diverged}"
     assert agreeing == {"sB"}, f"heading/token agreement not detected: {agreeing}"
     assert unresolved == {"sC"}, f"an unresolvable token was compared anyway: {unresolved}"
+
+    # 4. ... and "cannot resolve" means ONE thing: this checkout has no private
+    #    archive. Reading report_tokens' general fail-closed SystemExit as that
+    #    single cause let a genuinely broken token quietly leave the agreement
+    #    check with nothing to compare, and the case still reported success.
+    #    The four inputs below are the four combinations that matter. The
+    #    loader-side ones are compiled under household.py's own path so they
+    #    carry a real frame in that file, which is what the classifier reads.
+    loader = str(ROOT / "analysis" / "household.py")
+    raise_from_loader = compile("raise SystemExit('missing private/household.yaml')",
+                                loader, "exec")
+    try:
+        exec(raise_from_loader, {})
+    except SystemExit as e:
+        direct = e
+    try:
+        try:
+            exec(raise_from_loader, {})
+        except SystemExit:
+            raise SystemExit("report_tokens: failed to resolve token S4_VERDICT_SHORT")
+    except SystemExit as e:
+        wrapped = e
+    try:
+        raise SystemExit("report_tokens: unknown format spec for S4_VERDICT_SHORT")
+    except SystemExit as e:
+        unrelated = e
+    assert _missing_archive_exit(direct, False, loader), \
+        "the loader's own missing-archive exit is no longer recognised, so an archive-less " \
+        "checkout (CI) would fail this case instead of reporting the token uncompared"
+    assert _missing_archive_exit(wrapped, False, loader), \
+        "report_tokens' wrapper hides the loader failure it chains from -- the exception " \
+        "chain has to be walked, not just the exception that was caught"
+    assert not _missing_archive_exit(wrapped, True, loader), \
+        "a token failure on a checkout that HAS the private archive is being written off " \
+        "as 'needs the archive'"
+    assert not _missing_archive_exit(unrelated, False, loader), \
+        "a token failure with nothing to do with the private archive is still being " \
+        "swallowed as one, which is what makes the agreement check a silent no-op"
     return ("the conclusion-presence, density-cap and heading/token-agreement guards each "
-            "reject the defect they exist to catch")
+            "reject the defect they exist to catch, and only a missing private archive "
+            "can drop a token from the agreement check")
 
 
 CASES = [
