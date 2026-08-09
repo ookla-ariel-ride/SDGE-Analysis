@@ -241,8 +241,14 @@ def case_cooking_fuel_evidence_not_determined_without_appliance_fuels():
 def case_cooking_fuel_evidence_reads_only_the_public_appliance_fuels_field():
     """When household.appliance_fuels IS answered (a different household's
     intake, or this one's own future state once answered), the function
-    must report it as determined -- proving it actually reads that field,
-    not just always returning 'not determined' regardless of input."""
+    must report it present and read -- proving it actually reads that
+    field, not just always returning 'not determined' regardless of input
+    -- but must NOT claim the answer has been interpreted into a verdict:
+    'answered_but_not_interpreted' is a real third state, distinct from
+    'not determined' AND from any claim of resolution, since appliance_
+    fuels is unstructured free text this script deliberately does not
+    parse (Codex adversarial review, issue #20 -- presence alone used to
+    be conflated with a favorable resolution)."""
     real_path, real_cache = _hh.PATH, _hh._cache
     tmp_dir = tempfile.TemporaryDirectory()
     try:
@@ -252,12 +258,13 @@ def case_cooking_fuel_evidence_reads_only_the_public_appliance_fuels_field():
             "appliance_fuels: 'pool: none, water heater: gas, heating: gas, cooking: electric'\n")
         _hh._cache = None
         ev = A.cooking_fuel_evidence()
-        assert ev["verdict"] == "recorded at intake", ev
+        assert ev["verdict"] == "answered_but_not_interpreted", ev
         assert ev["appliance_fuels_field_present"] is True, ev
+        assert "resolved" not in ev["note"].lower(), ev
     finally:
         _hh.PATH, _hh._cache = real_path, real_cache
         tmp_dir.cleanup()
-    return "a real appliance_fuels answer is read and reported as 'recorded at intake'"
+    return "a real appliance_fuels answer is read and reported as 'answered_but_not_interpreted', never as resolved"
 
 
 @case
@@ -285,6 +292,25 @@ def case_third_end_use_gap_defers_to_appliance_fuels_when_present():
     assert "NOT DETERMINED" not in gap["gap"], gap
     assert "appliance_fuels" in gap["gap"]
     return "third_end_use_gap defers to a real appliance_fuels answer rather than guessing when one exists"
+
+
+@case
+def case_third_end_use_gap_does_not_claim_resolved_from_mere_presence():
+    """Codex adversarial review, issue #20 (MEDIUM, all_electric_endgame.py):
+    appliance_fuels is UNSTRUCTURED free text, not a fixed enum -- ANY
+    non-null answer, even one that literally says 'cooking: gas', used to
+    be reported as 'resolved by household.appliance_fuels's own recorded
+    answer', which is backwards: a gas answer means a third gas end use
+    DOES remain, the opposite of resolved-in-the-favorable-direction. This
+    is the regression guard for that exact bug -- mere presence of an
+    answer must never be reported as 'resolved'; the reader must be told
+    to go read the field's own recorded text."""
+    cooking_fuel = {"appliance_fuels_field_present": True}
+    gap = A.third_end_use_gap(137, cooking_fuel)
+    assert "resolved" not in gap["gap"].lower(), gap
+    assert "appliance_fuels" in gap["gap"], gap
+    assert "read" in gap["gap"].lower(), gap
+    return "third_end_use_gap's presence-only branch never claims 'resolved' -- it tells the reader to read appliance_fuels's own recorded text directly"
 
 
 @case

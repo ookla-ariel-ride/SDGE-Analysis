@@ -290,12 +290,28 @@ def cooking_fuel_evidence():
     version read the panel schedule directly and was blocked before it ever
     reached a commit)."""
     appliance_fuels = hh.get("appliance_fuels", required=False)
+    # A present-but-non-null answer is NOT the same as a resolved-favorably
+    # answer: appliance_fuels is unstructured free text (DATA-SOURCES-
+    # CHEATSHEET.md's own format hint is "cooking ____", not a fixed enum),
+    # and an answer of e.g. "cooking: gas" would mean a third gas end use
+    # DOES remain -- the opposite of resolved. This script deliberately does
+    # NOT parse free text into a gas/electric verdict (auto-parsing nuance
+    # like "gas cooktop but electric oven" risks silently misreading it,
+    # which is itself a CLAUDE.md section 0 "never guess" violation), so
+    # "answered_but_not_interpreted" is a real third state distinct from
+    # both "not determined" and any claim of resolution -- see
+    # third_end_use_gap below, which must not collapse this state into
+    # "resolved" either (Codex adversarial review, issue #20).
     return {
         "appliance_fuels_field_present": appliance_fuels is not None,
-        "verdict": "recorded at intake" if appliance_fuels is not None else "not determined",
+        "verdict": ("answered_but_not_interpreted" if appliance_fuels is not None
+                   else "not determined"),
         "note": (
-            "household.appliance_fuels was answered directly at intake; see "
-            "its own recorded value for this household's confirmed fuel mix."
+            "household.appliance_fuels was answered directly at intake, but "
+            "this script does not parse free text into a gas/electric "
+            "verdict -- read the field's own recorded value directly to "
+            "determine this household's actual fuel mix; presence of an "
+            "answer alone settles nothing about the third-end-use gap."
             if appliance_fuels is not None else
             "the DATA-SOURCES-CHEATSHEET.md appliance_fuels field -- the "
             "one public-ok source for what fuels this household's major "
@@ -353,7 +369,16 @@ def third_end_use_gap(floor_therms_yr, cooking_fuel):
     lo_yr, hi_yr = round(lo * 12), round(hi * 12)
     lo_c, hi_c = COOKING_THERMS_YR_RANGE
     lo_c_yr, hi_c_yr = round(lo_c), round(hi_c)
-    determined = cooking_fuel["appliance_fuels_field_present"]
+    # NOTE: field_answered is presence-only, not resolution. appliance_fuels
+    # is unstructured free text -- an answer of "cooking: gas" would mean a
+    # third gas end use DOES remain, the opposite of resolved-in-the-
+    # favorable-direction. Mere presence must never be reported as
+    # "resolved"; only a human reading the field's own recorded text can
+    # settle this (Codex adversarial review, issue #20 -- a prior version of
+    # this branch said "resolved" from presence alone, which would have
+    # silently declared the gap closed on a household whose own answer said
+    # cooking runs on gas).
+    field_answered = cooking_fuel["appliance_fuels_field_present"]
     return {
         "gap": ("NOT DETERMINED whether a third gas end use (cooking, and/or "
                 "a clothes dryer) remains unconverted after the water-heater "
@@ -361,9 +386,12 @@ def third_end_use_gap(floor_therms_yr, cooking_fuel):
                 "household.appliance_fuels, the one public-ok source for "
                 "this household's own fuel mix, was never answered. If "
                 "either is gas, the meter cannot actually be removed after "
-                "just those two conversions." if not determined else
-                "resolved by household.appliance_fuels's own recorded "
-                "answer -- see that field, not this script's own guess."),
+                "just those two conversions." if not field_answered else
+                "household.appliance_fuels has been answered -- read its "
+                "own recorded text directly to determine whether cooking or "
+                "a dryer here run on gas; this script does not parse free "
+                "text into a verdict, so it cannot itself declare the gap "
+                "closed."),
         "possible_dryer_rough_magnitude_therms_yr": [lo_yr, hi_yr],
         "possible_dryer_pct_of_floor_range": [round(100 * lo_yr / floor_therms_yr, 1),
                                               round(100 * hi_yr / floor_therms_yr, 1)],
