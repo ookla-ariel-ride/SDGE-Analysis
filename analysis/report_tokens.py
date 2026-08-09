@@ -1690,13 +1690,21 @@ def _s7_verdict(ctx):
     # The clause is comparative because its CONDITION is comparative -- it
     # turns on the expansion's payback exceeding the first unit's, so it may
     # not assert more than that at the boundary where the two nearly tie.
+    # The comparison also needs its own equality branch, for the reason the
+    # section 6 tie and the section 10 zero-delta case both needed one: with
+    # two branches, an expansion repaying at EXACTLY the first unit's rate
+    # falls through to "faster than that", which is false. Three-way, so a tie
+    # is a tie. `ratio` is compared, never re-divided, so the tie branch is
+    # reachable on exactly the floats the > test rejected.
     # Each branch is also held to CLAUDE.md section 10's 35-word density cap
     # on the whole sentence, not just the one that renders today: 25 words of
     # lead leave 10 for the tail. "faster than the first unit" spent 11.
     if marginal <= 0:
         tail = "and the expansion pack never repays its extra cost"
-    elif exp_cost / marginal > mid_payback:
+    elif (ratio := exp_cost / marginal) > mid_payback:
         tail = "and the expansion pack saves too little to match that"
+    elif ratio == mid_payback:
+        tail = "and the expansion pack pays back at the same rate"
     else:
         tail = "and the expansion pack pays back faster than that"
     return (f"{VERDICT_STEM}the free EV-charging fix is worth a modeled "
@@ -1723,7 +1731,17 @@ def _s10_verdict(ctx):
     # GENERATION_PROVIDER_SHORT takes its acronym off the same field.
     cca_name = re.split(r"\s+[—–-]\s+|\(", hh1("household.cca"))[0].strip()
     delta = a["delta_usd_per_year"]
-    direction = "more than" if delta > 0 else "less than"
+    # This clause reports a DIRECTION, and at an exact tie there is no
+    # direction to report. A two-way ternary has to send delta == 0 somewhere,
+    # and "less than" is where it went: "$0/yr less than bundled generation"
+    # reads as the CCA being cheaper while the two cost exactly the same.
+    # Same shape as section 6's tie, and worded the same way -- the equality
+    # case says the two cost the same and quotes no direction at all.
+    if delta == 0:
+        comparison = f"the same as bundled {utility} generation"
+    else:
+        direction = "more than" if delta > 0 else "less than"
+        comparison = f"{_usd0(abs(delta))}/yr {direction} bundled {utility} generation"
     # Both qualitative claims are computed, not asserted. "materially larger"
     # compares the EXCLUDED net-export credit against the priced delta this
     # sentence quotes -- if the unpriced side ever stopped dominating, the
@@ -1737,7 +1755,7 @@ def _s10_verdict(ctx):
             f"${unpriced:,.2f} against a priced delta of ${priced:,.2f}")
     return (f"{VERDICT_STEM}on the net-import energy this analysis can price, staying on "
             f"the CCA ({cca_name}) would have cost this household about "
-            f"{_usd0(abs(delta))}/yr {direction} bundled {utility} generation "
+            f"{comparison} "
             f"({a['confidence']} · same-date bill rates, {a['days']} days) — a materially "
             "larger, unpriced net-export effect means the whole-household answer is not "
             "fully settled.")

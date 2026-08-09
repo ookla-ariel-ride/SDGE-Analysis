@@ -789,11 +789,30 @@ def case_s7_verdict_never_credits_a_payback_to_an_expansion_that_saves_nothing()
     widths["faster (positive)"] = _assert_within_density_cap(
         "S7_VERDICT", value, "the faster-payback branch")
 
+    # An EXACT tie is its own branch: two branches would have sent it to
+    # "pays back faster than that", which is false when the two paybacks are
+    # the same number. The tie is constructed, not hoped for -- the payback is
+    # swapped to the very quotient the formula computes (exp_cost / marginal,
+    # the identical IEEE division), so equality holds on any platform rather
+    # than depending on 5900/6.5 round-tripping.
+    tie_marginal = 1000.0
+    tie_payback = exp_cost / tie_marginal
+    with _swapped(pk["HIGH"], "marginal_vs_mid_yr", tie_marginal), \
+            _swapped(pk["MID"], "battery_alone_payback_post_fix_yr", tie_payback):
+        value = rt.resolve_token("S7_VERDICT")
+    assert "faster" not in value, (
+        f"S7_VERDICT calls an expansion repaying at exactly the first unit's rate "
+        f"({tie_payback:.1f} yr both) the faster buy: {value}")
+    assert "pays back at the same rate" in value, (
+        f"S7_VERDICT must call an exact tie a tie: {value}")
+    widths["tie (equal paybacks)"] = _assert_within_density_cap(
+        "S7_VERDICT", value, "the tie branch")
+
     assert rt.resolve_token("S7_VERDICT") == published, (
         "the substituted marginal saving leaked out of this case")
-    return ("S7_VERDICT reads slower / faster / never-repays across marginal "
-            f"+{real}, +{quick:.0f}, 0 and -400 per year, each inside the density cap "
-            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+    return ("S7_VERDICT reads slower / faster / tie / never-repays across marginal "
+            f"+{real}, +{quick:.0f}, +{tie_marginal:.0f}, 0 and -400 per year, each inside "
+            f"the density cap ({', '.join(f'{k} {v}w' for k, v in widths.items())})")
 
 
 # Wordings that tell the reader the expansion pack saves NOTHING. The
@@ -851,6 +870,66 @@ def case_s7_verdict_never_calls_a_positive_marginal_saving_an_absence_of_savings
     return ("S7_VERDICT never words a positive marginal saving as an absence of savings "
             f"(+{real}, +{slow:.0f}, +{quick:.0f}/yr), while the zero case still says the "
             "expansion never repays")
+
+
+def _s10_household_inputs():
+    """The two household answers S10_VERDICT reads: the household's own when
+    the private archive is staged, clearly synthetic stand-ins otherwise.
+
+    Same contract as _s2_household_inputs -- never the real answers as
+    literals in a committed file (CLAUDE.md section 4), and the stub exists so
+    the guard runs UNGATED on the archive-less runner CI uses rather than
+    skipping there."""
+    if rt.hh.PATH.is_file():
+        return {}
+    return {"household.utility": "Example Power",
+            "household.cca": "Example Community Energy — Example Product"}
+
+
+@case
+def case_s10_verdict_calls_an_exact_tie_a_tie_rather_than_a_cheaper_cca():
+    """This clause reports a DIRECTION, and at delta_usd_per_year == 0 there
+    is no direction to report. A two-way ternary still has to put that case
+    somewhere, and it put it in "less than": "$0/yr less than bundled
+    generation" tells a reader the CCA came out cheaper while the two priced
+    out exactly the same. Same defect shape as the section 6 tie.
+
+    Both signed branches are checked too, so the tie branch cannot be bought
+    by a formula that stopped reporting a direction at all."""
+    a = rt._json("cca_bundled_counterfactual.json")["direction_a_cca_repriced_at_bundled"]
+    real = a["delta_usd_per_year"]
+    assert real != 0, (
+        "data/cca_bundled_counterfactual.json now prices the two identically; the "
+        "published branch is the tie one and this case's premise no longer holds")
+
+    with _stub_household(_s10_household_inputs()):
+        published = rt.resolve_token("S10_VERDICT")
+        for label, delta, expected in (("positive", abs(real), "more than"),
+                                       ("negative", -abs(real), "less than")):
+            with _swapped(a, "delta_usd_per_year", delta):
+                value = rt.resolve_token("S10_VERDICT")
+            assert expected in value, (
+                f"S10_VERDICT dropped the {label} direction at a delta of {delta}: {value}")
+        with _swapped(a, "delta_usd_per_year", 0.0):
+            tie = rt.resolve_token("S10_VERDICT")
+
+    for wrong in ("more than", "less than"):
+        assert wrong not in tie, (
+            f"S10_VERDICT reports a direction at an exact tie ({wrong!r}), telling the "
+            f"reader one option won while the two cost the same: {tie}")
+    assert "the same as bundled" in tie, (
+        f"S10_VERDICT must say plainly that a zero delta means the two cost the same: {tie}")
+    assert "$0/yr" not in tie, (
+        f"S10_VERDICT quotes a $0/yr gap as if it were a priced difference: {tie}")
+    # Section 10 is advanced-tier, so CLAUDE.md section 10's 35-word cap is
+    # formally exempt here -- but the sentence is long already, so the tie
+    # branch may not lengthen it.
+    assert len(tie.split()) <= len(published.split()), (
+        f"the tie branch is longer than the published one "
+        f"({len(tie.split())} vs {len(published.split())} words): {tie}")
+    return (f"S10_VERDICT calls a zero delta the same cost instead of ${0:,.0f}/yr less "
+            f"(live delta ${real:,.2f}/yr), and still reports both directions when there "
+            f"is one ({len(tie.split())} words, same as the published branch)")
 
 
 @case
