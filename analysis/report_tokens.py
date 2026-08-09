@@ -704,13 +704,16 @@ def _sec9_teaser(ctx):
     # downstream of it, use behavior_rebuild's 563, so a teaser sourced from
     # deep_results contradicted the section it introduces.
     #
-    # The phantom figures below stay on deep_results because it is the only
-    # artifact of the three carrying a $/yr figure. They do NOT match the
+    # The phantom figures below stay on deep_results because its own method
+    # note ("25th-pct 3-5am non-EV draw") is the one that matches section 9's
+    # own 3-5am framing. (Not because it uniquely carries a $/yr figure --
+    # quiet_night_floor.json carries one too.) They do NOT match the
     # report body's own phantom numbers, which come from extra_results.json
     # (44 nights, 1.025 kW, 8,979 kWh/yr) and appear in sections 0 and 13 --
     # section 9's own phantom sentence cites no artifact at all. A third
     # artifact, quiet_night_floor.json, prices the same load 77-79% higher
-    # ($3,156.89/$3,196.27, two agreeing methods) and is cited nowhere. That
+    # ($3,156.89/$3,196.27, two agreeing methods) and is cited nowhere in the
+    # report (README/TECHNICAL.md do document it). That
     # three-way split is real and unresolved; it is tracked in issue #140
     # rather than papered over here, since settling it means changing
     # published figures in sections 0/9/13.
