@@ -2241,7 +2241,13 @@ def build():
     # rounding) rather than a proxy on the total therms alone.
     verify_electric, _ = HPC.electric_cost_scenarios(d, furnace_iso)
     verify_furnace_electric = verify_electric["central_3.5"]["uniform"]["electric_cost_increase_usd"]
-    assert abs(verify_furnace_electric - furnace_headline["annual_electric_cost_increase_usd"]) < 0.01, (
+    # Both sides are already round(..., 2) dollar figures (heat_pump_
+    # conversion.electric_cost_scenarios()'s own convention), so compare the
+    # rounded CENTS directly rather than a float-subtraction threshold --
+    # the exact float-precision trap issue #119 hit and fixed on a similar
+    # comparison (a one-cent gap can evaluate to 0.009999999999990905,
+    # slipping under a naive "< 0.01" bound by luck rather than by design).
+    assert round(verify_furnace_electric, 2) == round(furnace_headline["annual_electric_cost_increase_usd"], 2), (
         "all_electric_endgame.py: recomputed furnace electric cost increase "
         f"({verify_furnace_electric}) disagrees with heat_pump_conversion.json's "
         f"own committed figure ({furnace_headline['annual_electric_cost_increase_usd']}) -- "
