@@ -1066,6 +1066,68 @@ def case_hp_load_series_places_kwh_using_the_capped_shape_not_raw_hdd_proportion
 
 
 @case
+def case_hp_load_series_places_zero_on_a_positive_hdd_day_outside_capped_shape_coverage():
+    """Issue #119 (opus bug-scan review): hdd_by_day (from isolate_heating_
+    therms()'s gas/weather inner join) and capped_heat_by_day (from
+    gas_savings_by_period(), scoped to real gas BILLING periods) do not
+    always cover the identical date range -- this household's own real
+    archive has exactly one such day (2026-06-28: nonzero HDD, but past the
+    last real billing period's own end date). capped_heat_by_day.get(day,
+    0.0) is the CORRECT value there, not a missing-data default standing in
+    for a real number: that day was never summed into reconciled_heat_
+    therms either (build()'s own day_heat_therms IS reconciled_heat_therms's
+    per-day breakdown by construction), so 0.0 kWh is the exact complement
+    that keeps total placed kWh equal to ann_heat_kwh -- pinned here so a
+    future refactor doesn't "fix" it into a fail-closed SystemExit (which
+    _capacity_capped_days() correctly does for the DIFFERENT case of a real
+    gas.csv coverage gap INSIDE a billing period, where 0.0 would misprice
+    real, reconciled dollars)."""
+    period = "Jan 5, 2026 - Jan 6, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-06"], "period": [period], "therms": [22.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-06", period, 2, 22.0, 1.0, np.nan, 0.0, 0.0)
+    # day 3 has real, nonzero HDD but sits OUTSIDE the one real billing
+    # period above -- gas_savings_by_period() never visits it, so it is
+    # absent from day_heat_therms even though hdd_by_day carries it. Its HDD
+    # still counts toward total_hdd (the ANNUAL total, shared by every day
+    # regardless of billing-period membership), so annual_heating_therms is
+    # raised to 15.0 here (vs. the sibling fixture's 10.0) to keep each of
+    # the three now-equal-HDD days' own raw demand at 5.0 therms -- the same
+    # per-day demand the sibling fixture uses, just re-derived for a 3-day
+    # total_hdd instead of a 2-day one.
+    hdd_by_day = pd.Series({dt.date(2026, 1, 5): 10.0, dt.date(2026, 1, 6): 10.0,
+                            dt.date(2026, 1, 7): 10.0})
+    gas_daily = pd.Series({dt.date(2026, 1, 5): 2.0, dt.date(2026, 1, 6): 20.0})
+    iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+          "annual_heating_therms": 15.0, "floor_therms_per_day": 0.0,
+          "gas_daily": gas_daily}
+    with _GasFixture(periods, detail):
+        rows, _, _, day_heat_therms = hpc.gas_savings_by_period(iso)
+    assert dt.date(2026, 1, 7) not in day_heat_therms, day_heat_therms
+    reconciled = round(sum(r["heating_therms_attributed"] for r in rows), 2)
+    assert reconciled == 7.0, reconciled   # day 3's HDD never entered the sum
+
+    cop = hpc.COP_SCENARIOS["central_3.5"]
+    kwh_per_therm = hpc.KWH_PER_THERM * hpc.FURNACE_AFUE / cop
+    d = _synthetic_frame(n_days=3)
+    iso_capped = {**iso, "annual_heating_therms": reconciled,
+                 "capped_heat_by_day": day_heat_therms}
+    added, ann_heat_kwh, _ = hpc.build_hp_load_series(d, iso_capped, cop)
+    day3_mask = d["dt"].dt.date == dt.date(2026, 1, 7)
+    day3_kwh = float(added["uniform"].loc[day3_mask].sum())
+    assert day3_kwh == 0.0, day3_kwh
+    total_placed = float(added["uniform"].sum())
+    assert abs(total_placed - ann_heat_kwh) < 1e-6, (total_placed, ann_heat_kwh)
+    return ("a positive-HDD day outside gas_savings_by_period()'s own billing-period "
+           "coverage correctly places 0.0 kWh (it was never in the reconciled total "
+           "either), and total placed kWh still conserves exactly")
+
+
+@case
 def case_capacity_cap_fails_closed_when_gas_daily_missing_a_needed_day():
     """Issue #109, round 4. When `gas_daily` IS supplied (a real run, or a
     test deliberately exercising this path) but has no reading for a real

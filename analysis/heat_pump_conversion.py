@@ -1261,18 +1261,30 @@ def build():
     # to a real billed period -- so both sides use the SAME reconciled total.
     reconciled_heat_therms = round(
         sum(r["heating_therms_attributed"] for r in gas_rows), 2)
-    # Two independent aggregations of the same underlying capped_days values
-    # (per-period-summed-then-summed-again above vs. flattened-into-a-dict-
-    # then-summed here) must agree -- if they didn't, a period boundary bug
-    # would be silently dropping or double-counting a real day's therms
-    # rather than merely producing a differently-shaped (but equally-sized)
-    # placement, which day_heat_therms below feeds straight into TOU-
-    # sensitive electric costing (issue #119).
-    assert abs(round(sum(day_heat_therms.values()), 2) - reconciled_heat_therms) < 0.01, (
+    # day_heat_therms and reconciled_heat_therms both derive from the SAME
+    # per-period capped_days values (not independently re-derived), so they
+    # cannot structurally diverge -- but they ARE rounded in a different
+    # ORDER (reconciled_heat_therms sums each period's own already-rounded
+    # heating_therms_attributed; day_heat_therms sums every real day's own
+    # unrounded value). That alone produces a real, expected residual of up
+    # to 0.005 therms PER PERIOD even with zero bug. A fixed 0.01 tolerance
+    # passed on this household's real 25-period archive only by ~1e-14 of
+    # float luck (145.19 vs 145.18369...155904486, rounding to a diff of
+    # 0.009999999999990905) -- caught by adversarial review, since the next
+    # billing period added, or a rate change moving one period's attribution
+    # across a rounding boundary, could tip the same real residual to the
+    # other side of a fixed constant and halt the pipeline on a period-
+    # boundary-bug message describing a bug that doesn't exist. Size the
+    # tolerance to the rounding-order bound instead so it stays honest as
+    # the period count changes, while a genuine dropped/duplicated day (an
+    # order of magnitude larger than a few cents) still fails closed.
+    day_sum_tolerance = 0.005 * len(gas_rows) + 1e-6
+    assert abs(sum(day_heat_therms.values()) - reconciled_heat_therms) < day_sum_tolerance, (
         "heat_pump_conversion.py: day_heat_therms sums to "
         f"{sum(day_heat_therms.values())}, not reconciled_heat_therms "
-        f"({reconciled_heat_therms}) -- the per-day and per-period capped "
-        "heat totals have diverged")
+        f"({reconciled_heat_therms}, tolerance {day_sum_tolerance:.4f}) -- "
+        "the per-day and per-period capped heat totals have diverged by "
+        "more than rounding-order noise can explain")
     # issue #119: hand the SAME capped per-day shape to build_hp_load_series()
     # (via electric_cost_scenarios()) so it places heating kWh using the
     # shape gas_savings_by_period() actually priced, not an independently
