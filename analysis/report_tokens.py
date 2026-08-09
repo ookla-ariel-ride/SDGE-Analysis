@@ -693,14 +693,23 @@ _tok("CHART_TITLE_SPREAD", kind="derived", get=_chart_title_spread,
 
 
 def _sec9_teaser(ctx):
+    # Sessions come from behavior_rebuild.json, NOT deep_results.json (issue
+    # #130). Both detectors are committed and they disagree -- 563 vs 580 --
+    # because they merge back-to-back charges differently. Section 9's own
+    # body, and every dollar figure downstream of it, use behavior_rebuild's
+    # 563, so a teaser sourced from deep_results contradicted the section it
+    # introduces. The phantom figures below stay on deep_results, which is
+    # what section 9's own phantom paragraph cites (~1.02 kW, ~$1,787/yr).
+    br = _json("behavior_rebuild.json")
     dr = _json("deep_results.json")
-    return (f"{dr['ev_sessions']['count']} EV charging sessions logged; overnight "
+    return (f"{br['detection']['sessions']} EV charging sessions logged; overnight "
             f"phantom baseload {dr['phantom']['annual_kwh']:,} kWh/yr "
             f"(~${dr['phantom']['annual_cost_at_blend']:,}/yr)")
 
 
 _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
-     sources=["data/deep_results.json:ev_sessions, phantom"])
+     sources=["data/behavior_rebuild.json:detection.sessions",
+              "data/deep_results.json:phantom"])
 
 
 def _sec12_teaser(ctx):

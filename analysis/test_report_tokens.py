@@ -458,6 +458,45 @@ def case_crossover_season_year_returns_a_three_tuple_with_a_numeric_month():
     return f"_crossover_season_year returns (season, year, month) = {result}"
 
 
+@case
+def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
+    """Issue #130. SEC9_TEASER introduces section 9, so every figure in it
+    must come from the same artifact section 9's own body uses -- otherwise
+    a mechanical fill ships a teaser contradicting the section directly
+    beneath it, which is exactly what happened: the teaser said 580 EV
+    sessions (deep_results.json) while the body says 563
+    (behavior_rebuild.json), two committed detectors that merge
+    back-to-back charges differently.
+
+    Pins BOTH halves against their real artifacts, so neither can drift:
+    sessions must track behavior_rebuild (the detector every downstream
+    dollar figure uses), and the phantom figures must track deep_results
+    (what section 9's own phantom paragraph cites). A future change that
+    re-points either half at a different artifact fails here."""
+    _require_household()
+    teaser = rt.resolve_token("SEC9_TEASER")
+    br = rt._json("behavior_rebuild.json")["detection"]
+    dr = rt._json("deep_results.json")
+
+    sessions = br["sessions"]
+    assert f"{sessions} EV charging sessions" in teaser, (
+        f"teaser must cite behavior_rebuild's {sessions} sessions, not another "
+        f"detector's -- got: {teaser}")
+    stale = dr["ev_sessions"]["count"]
+    if stale != sessions:
+        assert f"{stale} EV charging sessions" not in teaser, (
+            f"teaser is citing deep_results' {stale} sessions, which contradicts "
+            f"section 9's own body ({sessions})")
+
+    assert f"{dr['phantom']['annual_kwh']:,} kWh/yr" in teaser, (
+        f"phantom kWh must track deep_results, which section 9's body cites -- got: {teaser}")
+    assert f"${dr['phantom']['annual_cost_at_blend']:,}/yr" in teaser, (
+        f"phantom cost must track deep_results, which section 9's body cites -- got: {teaser}")
+    return (f"SEC9_TEASER cites behavior_rebuild's {sessions} sessions (not "
+            f"deep_results' {stale}) and deep_results' phantom figures, matching "
+            "section 9's own body on both")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (
