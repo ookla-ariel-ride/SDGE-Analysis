@@ -298,55 +298,121 @@ def case_gas_end_use_enumeration_sums_to_the_metered_total():
 
 
 # ---------------------------------------------------------------------------
-# AC3/AC4 -- _floor_segment_tier_cost / _floor_capped_days / floor_savings_by_period
+# AC3/AC4 -- _priced_at_top_of_ladder / _floor_capped_days / floor_savings_by_period
+#
+# Codex adversarial review, issue #20 round 1, Finding 1: floor removal must
+# be priced at the TOP of the tier ladder (the marginal, most-expensive
+# rung), not the bottom -- a first version got this backwards. The case
+# below reproduces the reviewer's own hand-worked counterexample exactly:
+# a 60-therm period, 20-therm baseline allowance, $2.00/$2.38 rates,
+# removing 11 floor therms. True whole-bill savings bill(60)-bill(49) =
+# 11 x $2.38 = $26.18 (every removed therm was marginal, since the period
+# never drops below the baseline allowance). The old, buggy bottom-of-
+# ladder method gave 11 x $2.00 = $22.00 -- reproduced below and asserted
+# WRONG, so a regression back to that logic fails this test.
 # ---------------------------------------------------------------------------
 @case
-def case_floor_segment_tier_cost_baseline_only():
-    cost = A._floor_segment_tier_cost(
-        floor_therms=5.0, baseline_allowance=11.0, baseline_rate=2.0,
-        nonbaseline_rate=2.4, context="test")
+def case_priced_at_top_of_ladder_matches_reviewers_hand_worked_example():
+    """The exact counterexample from Codex adversarial review, issue #20
+    round 1, Finding 1: proves floor removal is priced at the marginal
+    (top) end of the ladder, matching a true whole-bill before/after delta,
+    not the bottom end a first, buggy version used."""
+    total, allowance, br, nbr, removed = 60.0, 20.0, 2.00, 2.38, 11.0
+
+    def bill(t):
+        base = min(t, allowance)
+        nb = max(0.0, t - allowance)
+        return base * br + nb * nbr
+
+    true_whole_bill_savings = bill(total) - bill(total - removed)
+    old_buggy_bottom_of_ladder = min(removed, allowance) * br + max(0.0, removed - allowance) * nbr
+    assert abs(true_whole_bill_savings - 26.18) < 0.005, true_whole_bill_savings
+    assert abs(old_buggy_bottom_of_ladder - 22.00) < 0.005, old_buggy_bottom_of_ladder
+    assert true_whole_bill_savings != old_buggy_bottom_of_ladder
+
+    priced = A._priced_at_top_of_ladder(
+        total_therms=total, marginal_therms=removed, baseline_allowance=allowance,
+        baseline_rate=br, nonbaseline_rate=nbr, context="test")
+    assert abs(priced - true_whole_bill_savings) < 1e-9, (priced, true_whole_bill_savings)
+    assert abs(priced - old_buggy_bottom_of_ladder) > 1.0, (
+        "the fix must actually change the number, not coincidentally match the old one")
+    return (f"_priced_at_top_of_ladder matches the reviewer's own hand-worked "
+           f"whole-bill delta (${priced:.2f}), not the old bottom-of-ladder "
+           f"bug (${old_buggy_bottom_of_ladder:.2f})")
+
+
+@case
+def case_priced_at_top_of_ladder_baseline_only():
+    cost = A._priced_at_top_of_ladder(
+        total_therms=5.0, marginal_therms=5.0, baseline_allowance=11.0,
+        baseline_rate=2.0, nonbaseline_rate=2.4, context="test")
     assert abs(cost - 10.0) < 1e-9, cost
-    return "floor entirely within baseline allowance prices at baseline_rate only"
+    return "a marginal removal that never reaches the allowance prices at baseline_rate only"
 
 
 @case
-def case_floor_segment_tier_cost_spills_into_nonbaseline():
-    cost = A._floor_segment_tier_cost(
-        floor_therms=15.0, baseline_allowance=11.0, baseline_rate=2.0,
-        nonbaseline_rate=2.4, context="test")
-    expected = 11.0 * 2.0 + 4.0 * 2.4
+def case_priced_at_top_of_ladder_spills_into_nonbaseline():
+    """total=30, allowance=11, removing the top 15 therms (i.e. what
+    remains after removal is 15, still above the 11-therm allowance) --
+    the removed 15 must split 4 nonbaseline / 11 baseline, at the TOP of
+    the ladder, not simply 'up to the allowance is baseline' the way the
+    old bottom-of-ladder bug would price it (11 baseline + 4 nonbaseline
+    is the SAME split by coincidence here only because non_remaining=15
+    already exceeds the allowance on its own -- the discriminating case is
+    the reviewer's own hand-worked example above, where total > allowance
+    and the remainder does NOT already exceed it)."""
+    cost = A._priced_at_top_of_ladder(
+        total_therms=30.0, marginal_therms=15.0, baseline_allowance=11.0,
+        baseline_rate=2.0, nonbaseline_rate=2.4, context="test")
+    expected = 15.0 * 2.4  # non_remaining = 30-15 = 15 >= allowance, so the
+                           # WHOLE marginal slice is nonbaseline
     assert abs(cost - expected) < 1e-9, cost
-    return "floor exceeding the segment's own baseline allowance spills into nonbaseline"
+    return "a marginal removal entirely above the allowance's own remaining share prices at nonbaseline_rate throughout"
 
 
 @case
-def case_floor_segment_tier_cost_small_overflow_folds_back_to_baseline():
-    """A tiny overflow (within FLOOR_OVERFLOW_TOLERANCE_THERMS) against a
+def case_priced_at_top_of_ladder_small_overflow_folds_back_to_baseline():
+    """A tiny overflow (within FLOOR_ESTIMATION_TOLERANCE_THERMS) against a
     segment whose real bill never crossed into nonbaseline (nonbaseline_rate
     is None) must NOT fail closed -- it is day-proportion estimation noise,
     per this function's own docstring."""
-    cost = A._floor_segment_tier_cost(
-        floor_therms=11.05, baseline_allowance=11.0, baseline_rate=2.0,
-        nonbaseline_rate=None, context="test")
+    cost = A._priced_at_top_of_ladder(
+        total_therms=11.05, marginal_therms=11.05, baseline_allowance=11.0,
+        baseline_rate=2.0, nonbaseline_rate=None, context="test")
     assert abs(cost - 11.05 * 2.0) < 1e-9, cost
     return "a small overflow against a never-crossed segment folds back to baseline, no failure"
 
 
 @case
-def case_floor_segment_tier_cost_large_overflow_fails_closed():
+def case_priced_at_top_of_ladder_large_overflow_fails_closed():
     """A LARGE overflow against a segment with no nonbaseline_rate at all
     must fail closed -- proves the tolerance has a real ceiling (tests must
     fail on the defect they name: a version of this function with the
     tolerance check removed, or set absurdly high, would NOT catch this)."""
     try:
-        A._floor_segment_tier_cost(
-            floor_therms=20.0, baseline_allowance=11.0, baseline_rate=2.0,
-            nonbaseline_rate=None, context="test-context-marker")
+        A._priced_at_top_of_ladder(
+            total_therms=20.0, marginal_therms=20.0, baseline_allowance=11.0,
+            baseline_rate=2.0, nonbaseline_rate=None, context="test-context-marker")
         raise AssertionError("a 9-therm overflow with no nonbaseline_rate was silently accepted")
     except SystemExit as e:
         assert "test-context-marker" in str(e), e
         assert "nonbaseline" in str(e), e
     return "a large overflow against a never-crossed segment fails closed"
+
+
+@case
+def case_floor_segment_total_therms_is_day_proportion():
+    """_floor_segment_total_therms always uses day-proportion (gas_daily=
+    None passed through to heat_pump_conversion._segment_real_or_proxy_
+    therms), never the real daily export -- see its own docstring for why
+    (the fail-closed path there would fire on the one trailing period whose
+    early days precede gas.csv's own coverage start, since the floor,
+    unlike heating, is never exactly zero on a real day)."""
+    t_s = A._floor_segment_total_therms(
+        dt.date(2025, 6, 1), dt.date(2025, 6, 15), period_therms=30.0,
+        period_days=30, floor_s=5.0, context="test")
+    assert abs(t_s - 15.0) < 1e-9, t_s  # 30 * 15/30 = 15, pure day-proportion
+    return "segment total therms is a pure day-proportion of the period's own real total"
 
 
 @case
@@ -382,7 +448,17 @@ def case_floor_savings_by_period_never_split_segment_matches_hand_calc():
     common case): floor_savings_by_period()'s own output must match a
     hand-computed figure exactly, the same regression-safety shape
     test_heat_pump_conversion.py's own _single_segment_detail fixture is
-    built for."""
+    built for.
+
+    Period total (20 therms) is deliberately LARGER than the floor's own
+    computed share (12 therms, from floor=0.4/day x 30 days) -- the
+    remaining 8 therms stand in for other usage (heating, in a real
+    period) that stays behind. This is the discriminating shape: with
+    floor==total (an earlier version of this test used therms=12 to match
+    the floor exactly), top-of-ladder and bottom-of-ladder pricing
+    coincide by construction and the test cannot tell them apart. Here
+    they must differ -- see the hand calc below -- so a regression back to
+    the pre-Finding-1-fix bottom-of-ladder bug fails this test."""
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         with _GasWeatherFixture(tmp, floor=0.4, slope=0.15, days=365):
@@ -390,29 +466,37 @@ def case_floor_savings_by_period_never_split_segment_matches_hand_calc():
             period = "Jun 1, 2025 - Jun 30, 2025"
             periods_df = pd.DataFrame([{
                 "statement_date": "2025-06-30", "period": period,
-                "period_end_month": "jun 2025", "therms": 12.0,
+                "period_end_month": "jun 2025", "therms": 20.0,
                 "total_gas_service": 30.0, "billed_amount": 30.0,
                 "baseline_rate": 2.0, "nonbaseline_rate": 2.4,
                 "baseline_allowance_therms": 11.0, "gas_energy_charge_rate": 0.5,
                 "other_fees_rate": 0.12,
             }])
             detail = _single_segment_detail(
-                "2025-06-30", period, period_days=30, therms=12.0,
+                "2025-06-30", period, period_days=30, therms=20.0,
                 baseline_rate=2.0, nonbaseline_rate=2.4, energy_rate=0.5,
                 other_fees_rate=0.12)
             with _GasDetailFixture(periods_df, detail):
                 rows, total_savings, total_therms = A.floor_savings_by_period(iso, n_trailing=1)
-    # floor=0.4/day * 30 days = 12.0, capped at the period's own real total
-    # (12.0) -- exactly at the cap, uncapped. All 12 therms are baseline
-    # (allowance 11.0 < 12.0, so 1 therm spills to nonbaseline).
-    expected_gs = 11.0 * 2.0 + 1.0 * 2.4
+    # floor = 0.4/day * 30 days = 12.0 (uncapped: period total/days = 20/30
+    # = 0.667/day > 0.4/day). Segment total (t_s) = 20 (day-proportion of
+    # the period's own real total, whole period = whole segment here).
+    # TOP-of-ladder: non_remaining = 20-12 = 8; baseline_ceiling = min(11,20)
+    # = 11; overlap_baseline = min(max(0, 11-8), 12) = 3; overlap_nonbaseline
+    # = 12-3 = 9. Gas Service = 3*2.0 + 9*2.4 = 27.6.
+    # (the old, buggy bottom-of-ladder method would have given
+    # min(12,11)*2.0 + max(0,12-11)*2.4 = 11*2.0+1*2.4 = 24.4 -- different,
+    # proving this scenario discriminates the two.)
+    expected_gs = 3.0 * 2.0 + 9.0 * 2.4
+    expected_gs_old_buggy = 11.0 * 2.0 + 1.0 * 2.4
+    assert abs(expected_gs - expected_gs_old_buggy) > 1.0  # sanity: scenario discriminates
     expected_ge = 12.0 * 0.5
     expected_of = 12.0 * 0.12
     expected = round(expected_gs + expected_ge + expected_of, 2)
     assert len(rows) == 1, rows
     assert abs(total_therms - 12.0) < 1e-6, total_therms
     assert abs(total_savings - expected) < 0.01, (total_savings, expected)
-    return f"never-split-segment floor pricing matches hand calc: ${total_savings} (expected ${expected})"
+    return f"never-split-segment floor pricing matches the TOP-of-ladder hand calc: ${total_savings} (expected ${expected}, old buggy bottom-of-ladder would give ${round(expected_gs_old_buggy + expected_ge + expected_of, 2)})"
 
 
 # ---------------------------------------------------------------------------
@@ -619,13 +703,18 @@ def case_service_headroom_check_ampacity_fails_when_code_load_exceeds_conservati
 # ---------------------------------------------------------------------------
 # AC7 -- sequencing_and_paybacks
 # ---------------------------------------------------------------------------
+_ZERO_INTERACTION = {"overstatement_usd": 0.0, "gas_service_independent_sum_usd": 0.0,
+                     "gas_service_joint_removal_usd": 0.0, "by_period": [],
+                     "note": "test fixture: zero interaction"}
+
+
 @case
 def case_sequencing_orders_by_shorter_payback_first():
     result = A.sequencing_and_paybacks(
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0)
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION)
     assert result["order"] == ["water_heater", "furnace"], result["order"]
     assert result["last_step"] == "furnace"
     assert result["fixed_charge_release_usd"] == 0.0
@@ -638,7 +727,7 @@ def case_sequencing_reorders_when_furnace_pays_back_faster():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=5, wh_payback_years=800.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=2000,
-        furnace_payback_years=7.0)
+        furnace_payback_years=7.0, tier_interaction=_ZERO_INTERACTION)
     assert result["order"] == ["furnace", "water_heater"], result["order"]
     assert result["last_step"] == "water_heater"
     return "sequencing genuinely reorders on the input economics, not hardcoded to one order"
@@ -650,7 +739,7 @@ def case_sequencing_final_step_identical_with_and_without_zero_credit():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0)
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION)
     fsa = result["final_step_alone_payback"]
     assert fsa["with_fixed_charge_credit"] == fsa["without_fixed_charge_credit"], fsa
     assert fsa["identical_because_credit_is_zero"] is True
@@ -663,11 +752,34 @@ def case_sequencing_combined_payback_sums_install_and_savings():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0)
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION)
     ct = result["complete_transition_payback"]
     assert ct["combined_install_usd"] == 18000, ct
     assert abs(ct["combined_annual_net_savings_usd"] - 250) < 0.01, ct
+    assert abs(ct["naive_summed_annual_net_savings_usd"] - 250) < 0.01, ct
     return "complete-transition payback combines both steps' install cost and net savings"
+
+
+@case
+def case_sequencing_applies_the_tier_interaction_correction():
+    """Codex adversarial review, issue #20 round 1 (a direct consequence of
+    the Finding-1 fix): complete_transition_payback's own combined savings
+    must be the naive sum MINUS the tier-interaction overstatement, not the
+    naive sum itself -- proves the correction is actually wired in, not
+    just computed and discarded."""
+    interaction = {"overstatement_usd": 15.0, "gas_service_independent_sum_usd": 0.0,
+                   "gas_service_joint_removal_usd": 0.0, "by_period": [],
+                   "note": "test fixture: $15 interaction"}
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
+        furnace_payback_years=280.0, tier_interaction=interaction)
+    ct = result["complete_transition_payback"]
+    assert abs(ct["naive_summed_annual_net_savings_usd"] - 250) < 0.01, ct
+    assert abs(ct["combined_annual_net_savings_usd"] - 235) < 0.01, ct  # 250 - 15
+    assert ct["tier_interaction_overstatement_usd"] == 15.0, ct
+    return "a nonzero tier-interaction overstatement is subtracted from the naive summed savings"
 
 
 @case
@@ -680,11 +792,128 @@ def case_sequencing_raises_if_fixed_charge_is_nonzero():
             fixed_charge_verdict_is_zero=False,
             wh_install_usd=1, wh_annual_net_savings_usd=1, wh_payback_years=1.0,
             furnace_install_usd=1, furnace_annual_net_savings_usd=1,
-            furnace_payback_years=1.0)
+            furnace_payback_years=1.0, tier_interaction=_ZERO_INTERACTION)
         raise AssertionError("a nonzero fixed-charge verdict was silently accepted")
     except SystemExit:
         pass
     return "a nonzero fixed-charge verdict fails closed rather than silently reusing zero-credit logic"
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 consequence: tier_interaction_overstatement
+# ---------------------------------------------------------------------------
+@case
+def case_tier_interaction_overstatement_matches_hand_calc():
+    """One period, hand-computable: total=60, allowance=20, $2.00/$2.40.
+    F=45 removed alone drops the remaining total (15) BELOW the allowance
+    (its own removal region straddles the tier boundary); H=10 removed
+    alone stays entirely in the nonbaseline region. Removed jointly (55),
+    the remaining total (5) is also below the allowance. Because F's own
+    individual removal already reaches into the baseline tier while H's
+    does not, the two independent computations both claim credit for part
+    of the SAME nonbaseline dollars -- a real, sizeable interaction, unlike
+    a naive same-tier-only construction (tried first; when both individual
+    removal regions land entirely within the SAME flat tier, sums and joint
+    coincide exactly and the scenario doesn't discriminate at all)."""
+    periods_df = _make_periods_df([("2025-06-30", "p1", 60.0, 999.0, 20.0)])
+    # _make_periods_df hardcodes baseline_rate=2.0/nonbaseline_rate=2.4;
+    # matched here for the hand calc.
+    baseline_rate, nonbaseline_rate, allowance = 2.0, 2.4, 20.0
+
+    def bill(t):
+        base = min(t, allowance)
+        nb = max(0.0, t - allowance)
+        return base * baseline_rate + nb * nonbaseline_rate
+
+    F, H = 45.0, 10.0
+    T = 60.0
+    savings_f = bill(T) - bill(T - F)
+    savings_h = bill(T) - bill(T - H)
+    savings_joint = bill(T) - bill(T - F - H)
+    expected_overstatement = round((savings_f + savings_h) - savings_joint, 2)
+    assert expected_overstatement > 0.01, "the fixture must produce a real, positive interaction"
+
+    with _GasDetailFixture(periods_df, []):
+        result = A.tier_interaction_overstatement(
+            floor_rows=[{"statement_date": "2025-06-30", "floor_therms_attributed": F}],
+            hpc_gas_rows=[{"statement_date": "2025-06-30", "heating_therms_attributed": H}])
+    assert abs(result["overstatement_usd"] - expected_overstatement) < 0.01, (
+        result["overstatement_usd"], expected_overstatement)
+    return f"tier_interaction_overstatement matches a hand-computed interaction of ${expected_overstatement}"
+
+
+@case
+def case_tier_interaction_overstatement_zero_when_period_stays_in_baseline():
+    """A period that never leaves the baseline tier even after both
+    removals has NO interaction (the rate is flat there, so independent
+    and joint savings coincide exactly) -- proves this function does not
+    report a spurious nonzero gap when none exists."""
+    periods_df = _make_periods_df([("2025-06-30", "p1", 15.0, 999.0, 20.0)])
+    with _GasDetailFixture(periods_df, []):
+        result = A.tier_interaction_overstatement(
+            floor_rows=[{"statement_date": "2025-06-30", "floor_therms_attributed": 3.0}],
+            hpc_gas_rows=[{"statement_date": "2025-06-30", "heating_therms_attributed": 4.0}])
+    assert abs(result["overstatement_usd"]) < 0.01, result
+    return "no interaction is reported when a period never reaches the nonbaseline tier"
+
+
+# ---------------------------------------------------------------------------
+# Finding 2: water_heater_share_sensitivity / floor_savings_by_period's own
+# water_heater_share parameter
+# ---------------------------------------------------------------------------
+@case
+def case_floor_savings_by_period_water_heater_share_scales_floor_per_day():
+    """A share of 0.5 must roughly halve the floor's own attributed
+    therms relative to share=1.0 on the SAME fixture (not exactly half,
+    since the period-level real-total cap can bind differently, but close
+    on an uncapped period) -- proves the parameter actually reaches
+    _floor_capped_days's own floor_per_day, not silently ignored."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        with _GasWeatherFixture(tmp, floor=0.4, slope=0.15, days=365):
+            iso = hpc.isolate_heating_therms()
+            period = "Jun 1, 2025 - Jun 30, 2025"
+            periods_df = pd.DataFrame([{
+                "statement_date": "2025-06-30", "period": period,
+                "period_end_month": "jun 2025", "therms": 60.0,
+                "total_gas_service": 30.0, "billed_amount": 30.0,
+                "baseline_rate": 2.0, "nonbaseline_rate": 2.4,
+                "baseline_allowance_therms": 11.0, "gas_energy_charge_rate": 0.5,
+                "other_fees_rate": 0.12,
+            }])
+            detail = _single_segment_detail(
+                "2025-06-30", period, period_days=30, therms=60.0,
+                baseline_rate=2.0, nonbaseline_rate=2.4, energy_rate=0.5,
+                other_fees_rate=0.12)
+            with _GasDetailFixture(periods_df, detail):
+                _, _, full = A.floor_savings_by_period(iso, n_trailing=1, water_heater_share=1.0)
+                _, _, half = A.floor_savings_by_period(iso, n_trailing=1, water_heater_share=0.5)
+    assert abs(half - full * 0.5) < 0.01, (full, half)
+    return f"water_heater_share=0.5 gives half the floor therms of share=1.0 ({half} vs {full})"
+
+
+@case
+def case_water_heater_share_sensitivity_reports_three_bounded_scenarios():
+    _require_archive()
+    d = br.load()
+    iso = hpc.isolate_heating_therms()
+    result = A.water_heater_share_sensitivity(
+        iso, d, dryer_pct_of_floor_range=[27.7, 78.8], headline_uef="central_3.88")
+    scenarios = result["scenarios"]
+    assert set(scenarios) == {"100pct_full_floor", "72pct_if_dryer_present_at_benchmark_low",
+                              "21pct_if_dryer_present_at_benchmark_high"}
+    shares = {k: v["water_heater_share"] for k, v in scenarios.items()}
+    assert shares["100pct_full_floor"] == 1.0
+    assert abs(shares["72pct_if_dryer_present_at_benchmark_low"] - 0.723) < 0.001
+    assert abs(shares["21pct_if_dryer_present_at_benchmark_high"] - 0.212) < 0.001
+    # a smaller share must give strictly smaller savings and a longer payback
+    full = scenarios["100pct_full_floor"]
+    low = scenarios["21pct_if_dryer_present_at_benchmark_high"]
+    assert low["floor_savings_annual_usd"] < full["floor_savings_annual_usd"]
+    assert low["annual_net_savings_usd"] < full["annual_net_savings_usd"]
+    assert (low["payback"]["central_install"]["payback_years"]
+           > full["payback"]["central_install"]["payback_years"])
+    return "water_heater_share_sensitivity reports three bounded, correctly-ordered scenarios on the real archive"
 
 
 # ---------------------------------------------------------------------------

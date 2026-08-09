@@ -61,19 +61,38 @@ AC3/AC4 -- water heater costing, real-interval electric rebilling. The floor's o
 are priced by `floor_savings_by_period()`, a sibling of `heat_pump_conversion.gas_savings_by_
 period()` built by REUSING that module's own segment-tier-pricing helpers
 (`_flat_segment_cost`, `_segment_day_ranges`, `_segment_real_or_proxy_therms`,
-`_other_fees_day_ranges`, `_segment_heat_from_days`, `load_gas_detail`) rather than
-reimplementing them -- the one genuinely new piece is `_floor_segment_tier_cost`, because the
-floor occupies the OPPOSITE end of each Gas Service segment's tier ladder from the heating
-slice (heating is modeled as the marginal TOP slice in heat_pump_conversion.py; the floor is
-the BOTTOM slice, billed at the cheaper baseline tier first) -- reusing the heating-side
-tier-cost function with the floor's own therms in its `heating_therms` argument would silently
-invert that placement. Restricted to the same trailing-12-real-bill window
-`heat_pump_conversion.py`'s own $416.25/yr already resolves to (see that module's own gas.csv
-coverage window), so the two figures are on the same annual basis and additive without double-
-counting: heating's own day-level capacity cap already reserves the floor's share of every real
-day BEFORE computing heating capacity (`heat_pump_conversion._capacity_capped_days`:
-`capacity = real_day_therms - floor_per_day`), so floor-day + heating-day <= real-day-therms by
-construction at the day level, and therefore at every level built by summing days.
+`_other_fees_day_ranges`, `_segment_heat_from_days`, `load_gas_detail`, and --
+post-adversarial-review -- `_gas_service_segment_tier_cost` ITSELF, called directly rather
+than reimplemented) rather than reimplementing them. The dollar savings from removing any
+quantity of gas usage is a WHOLE-BILL delta, `bill(T) - bill(T-X)`, which is always exactly
+the cost of the TOP X therms of the ORIGINAL total under a convex (tiered, non-decreasing
+marginal rate) schedule -- true regardless of which appliance the removed X therms are
+conceptually attributed to. So the water heater's OWN removal (X = the floor, with heating
+staying behind) is marginal/top-of-ladder to THIS removal, exactly mirroring how heating's
+own removal (furnace conversion, floor staying behind) is marginal/top-of-ladder to heat_pump_
+conversion.py's own computation -- the SAME function, `_gas_service_segment_tier_cost()`,
+correctly prices both, called with whichever quantity is being removed in its own
+`heating_therms` argument. (A first version of this module got this backwards, pricing the
+floor at the tier ladder's cheap end on the reasoning that "always-on usage occupies the cheap
+tier first" -- a real, confirmed bug, caught by adversarial review with a concrete
+counterexample and fixed; see the fuller account at `_floor_segment_total_therms`'s own
+docstring, just above `floor_savings_by_period()`.) Restricted to the same trailing-12-real-
+bill window `heat_pump_conversion.py`'s own $416.25/yr already resolves to (see that module's
+own gas.csv coverage window), so the two figures are on the same annual basis.
+
+Therms do not double-count between the two conversions even when both are considered:
+heating's own day-level capacity cap already reserves the floor's share of every real day
+BEFORE computing heating capacity (`heat_pump_conversion._capacity_capped_days`: `capacity =
+real_day_therms - floor_per_day`), so floor-day + heating-day <= real-day-therms by
+construction. DOLLARS are a different matter once BOTH conversions are considered together
+(`sequencing_and_paybacks.complete_transition_payback`): each conversion's own gas savings is
+computed as if it ALONE were being removed from the SAME original total (the correct basis for
+"marginal economics per step," which is what AC3 itself asks for), and summing two
+independently-computed marginal savings OVERSTATES the TRUE joint removal savings whenever
+both reach into the same segment's nonbaseline tier, because the shared top-of-ladder region
+gets priced twice. `complete_transition_payback` quantifies and discloses this gap explicitly
+(`tier_interaction_overstatement_usd`) rather than silently presenting the summed figure as
+exact -- see that field's own note for the real-data magnitude.
 
 Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
 `electric_cost_scenarios` exactly (absorb existing solar first, spill into new grid import
@@ -102,7 +121,16 @@ crediting $0 to whichever step is last changes nothing, so sequencing here is ch
 cost-effectiveness (whichever step's own marginal economics are better goes first) rather than
 on a fixed-charge-driven order. `final_step_alone_payback` reports the identical figure with
 and without the (zero) credit explicitly, rather than silently dropping that half of the
-requirement because it no longer bites.
+requirement because it no longer bites. `complete_transition_payback`'s own combined savings
+correct a tier-ladder interaction (Codex adversarial review, issue #20 round 1, a direct
+consequence of the Finding-1 pricing fix): summing each step's own INDEPENDENTLY-computed
+marginal savings overstates the true joint savings whenever both reach into the same period's
+nonbaseline tier, since that shared marginal region gets priced twice -- see
+`tier_interaction_overstatement()`, quantified and netted out rather than left in the headline
+number (CLAUDE.md section 9). Every water-heater-derived payback in this section (this one and
+`final_step_alone_payback` when the water heater is last) is the PURE 100%-floor-is-water-
+heater basis and carries a `not_verified_caveat` pointing at `water_heater_share_sensitivity`
+(Finding 2, above) rather than presenting itself as settled.
 
 AC8 -- reconciliation against `heat_pump_conversion.json` (should match exactly, since its own
 committed figures are cited directly, not recomputed) and against `extended_results.json ->
@@ -417,60 +445,115 @@ def _floor_capped_days(period_start, period_end, floor_per_day, period_total_the
             for i in range(period_days)]
 
 
-def _floor_segment_tier_cost(floor_therms, baseline_allowance, baseline_rate,
-                             nonbaseline_rate, context):
-    """Price of `floor_therms` at the BOTTOM of a Gas Service segment's own
-    two-tier ladder -- the complement of heat_pump_conversion._gas_service_
-    segment_tier_cost(), which prices heating at the TOP. SDG&E bills the
-    baseline allowance first (cheapest), so the floor -- always-on usage
-    that runs whether or not any heating happens -- occupies that cheap
-    tier first, and only spills into the nonbaseline tier if the floor
-    itself (unusual: this household's floor is ~0.376 therms/day, far under
-    any real period's baseline allowance) exceeds the segment's own
-    allowance. Reusing the heating-side function with the floor's own
-    therms in its `heating_therms` argument would silently invert this --
-    that function treats its `heating_therms` argument as the segment's
-    MARGINAL (top) slice, which is heating's own role, not the floor's.
+# --- Corrected per Codex adversarial review (round 1 of issue #20's own
+# review loop): floor removal must be priced at the TOP of each Gas Service
+# segment's tier ladder, not the bottom. ---
+#
+# The dollar SAVINGS from removing any quantity X of usage from a bill is
+# bill(T) - bill(T-X): a whole-bill delta, not an itemized "this appliance's
+# own conceptual slice of the ladder" attribution. Because SDG&E's tiered
+# rate is convex (the marginal $/therm is non-decreasing in total usage),
+# bill(T) - bill(T-X) is ALWAYS exactly the cost of the TOP X therms of the
+# ORIGINAL total T -- this is a general mathematical fact about savings from
+# a reduction under an increasing-marginal-cost schedule, true regardless of
+# which appliance the removed X therms are conceptually attributed to. It
+# does not matter that the floor is "always-on, baseline-tier-shaped"
+# usage; what matters is that the floor is the quantity being REMOVED here
+# (the water heater converts, the rest of the bill's usage -- heating, and
+# anything else -- stays), so it is the floor that is marginal to this
+# removal, exactly mirroring heat_pump_conversion.py's own furnace-removal
+# case (there, heating is what's removed, so heating is marginal and floor
+# stays behind at the bottom).
+#
+# A first version of this module got this backwards -- see its own removed
+# _floor_segment_tier_cost(), which priced the floor at the CHEAP end,
+# reasoning (wrongly) that "always-on usage occupies the cheap tier first."
+# Caught by adversarial review with a concrete counterexample: a 60-therm
+# period, 20-therm baseline allowance, $2.00/$2.38 rates, removing 11 floor
+# therms. True whole-bill savings (bill(60) - bill(49)): 11 x $2.38 =
+# $26.18, since the period never drops below the baseline allowance and so
+# every removed therm was marginal (nonbaseline). The bottom-of-ladder
+# method gave 11 x $2.00 = $22.00 -- a 16% understatement, reproduced
+# exactly by test_all_electric_endgame.py's own
+# case_floor_pricing_matches_whole_bill_delta_hand_example.
+#
+# Fixed by reusing heat_pump_conversion._gas_service_segment_tier_cost()
+# directly, passing floor_therms as ITS `heating_therms` argument (the
+# marginal/top-of-ladder role) -- not reimplementing a parallel function,
+# since the correct arithmetic already exists and this is exactly the
+# reuse heat_pump_conversion.py's own docstring warned against for the
+# WRONG reason (it assumed the floor's role was fixed as "bottom," when in
+# fact which end-use is marginal depends on which one is being removed).
 
-    `baseline_allowance` for a short, mid-cycle-split segment is itself only
-    a DAY-PROPORTION estimate of the period's own printed allowance (no
-    better alternative exists -- see heat_pump_conversion.gas_savings_by_
-    period()'s own JUDGMENT CALL paragraph), and floor_therms is UNCAPPED
-    against real daily data (see _floor_capped_days's own docstring for
-    why). The two together mean floor_therms can land fractionally above a
-    short segment's own estimated allowance even though the real bill's own
-    Gas Service block for that exact segment never crossed into nonbaseline
-    at all (parse_bills.py leaves nonbaseline_rate blank in exactly that
-    case). A SMALL overflow there (checked on this household's real corpus:
-    the largest is 0.05 therms, on a 1.83-therm segment) is estimation noise
-    in a_s, not evidence of a real tier crossing the bill itself contradicts
-    -- so it is folded back into the baseline tier (the bill's own evidence
-    wins over the day-proportion estimate) rather than failing the run,
-    UNLESS it exceeds FLOOR_OVERFLOW_TOLERANCE_THERMS, which would be large
-    enough to need investigating rather than silently absorbing."""
+
+def _floor_segment_total_therms(seg_start, seg_end, period_therms, period_days, floor_s, context):
+    """Segment total therms (t_s), the `total_therms` argument _gas_service_
+    segment_tier_cost() needs to place the floor's own removal on the
+    correct rung of the ladder. Always day-proportion (gas_daily=None):
+    heat_pump_conversion._segment_real_or_proxy_therms()'s own real-daily-
+    data path fails closed whenever the quantity being priced (its `heat_s`
+    argument) is nonzero and gas.csv doesn't cover every day of the segment
+    -- true for heating only outside gas.csv's own coverage window (HDD is
+    exactly zero there by construction), but the floor is NEVER exactly
+    zero on any real day, so that same fail-closed path would fire on the
+    one trailing period whose early days precede gas.csv's coverage start
+    (2025-07-30's own period begins 2025-06-27, 28 days before gas.csv
+    starts). Day-proportion is the same estimate heat_pump_conversion.py's
+    own JUDGMENT CALL paragraph already uses for baseline_allowance (no
+    better alternative exists for a tariff ENTITLEMENT either), reused here
+    for the segment total rather than inventing a second convention."""
+    return HPC._segment_real_or_proxy_therms(
+        seg_start, seg_end, period_therms, period_days, gas_daily=None,
+        heat_s=floor_s, context=context)
+
+
+# heat_pump_conversion._gas_service_segment_tier_cost()'s own 1e-6 fail-
+# closed tolerance is appropriate for HEATING, whose own total_therms/
+# heating_therms inputs are capacity-capped against REAL per-day meter
+# data (_capacity_capped_days, gas_daily) -- genuinely tight. The floor's
+# own total_therms (_floor_segment_total_therms, above) and baseline_
+# allowance are BOTH day-proportion ESTIMATES with no real-daily
+# counterpart (see that function's own docstring), so noise at this scale
+# is expected, not a sign of a real problem, and 1e-6 fires on it
+# constantly. Checked on this household's real corpus after the Finding-1
+# fix (top-of-ladder pricing): the largest real overflow is 0.17 therms,
+# on a 2-therm, 1.83-therm-allowance segment (2025-09-29). Set an order of
+# magnitude above that so a genuinely large discrepancy -- a real
+# methodology problem, not estimation noise -- still fails closed.
+FLOOR_ESTIMATION_TOLERANCE_THERMS = 0.5
+
+
+def _priced_at_top_of_ladder(total_therms, marginal_therms, baseline_allowance,
+                             baseline_rate, nonbaseline_rate, context):
+    """Thin tolerance wrapper around heat_pump_conversion._gas_service_
+    segment_tier_cost(), REUSED not reimplemented (Codex adversarial
+    review, issue #20 round 1): prices `marginal_therms` (the floor, being
+    removed by this conversion) at the TOP of the segment's tier ladder,
+    exactly like heating's own removal in heat_pump_conversion.py.
+
+    The only added logic: when the segment's own real bill never printed a
+    nonbaseline_rate at all (it never crossed into that tier), and the
+    day-proportion estimates above would place a SMALL amount of
+    marginal_therms there anyway (within FLOOR_ESTIMATION_TOLERANCE_THERMS
+    -- estimation noise, not a real crossing the bill itself contradicts),
+    the bill's own evidence wins and the full marginal_therms prices at the
+    baseline rate. A LARGE apparent overflow still reaches HPC's own
+    function unchanged, which fails closed on it exactly as it does for
+    heating."""
     if nonbaseline_rate is None or pd.isna(nonbaseline_rate):
-        overflow = floor_therms - baseline_allowance
-        if overflow > FLOOR_OVERFLOW_TOLERANCE_THERMS:
-            raise SystemExit(
-                f"all_electric_endgame.py: {context} needs "
-                f"{overflow:.2f} nonbaseline-tier floor therms (exceeds the "
-                f"{FLOOR_OVERFLOW_TOLERANCE_THERMS}-therm estimation-noise "
-                "tolerance) but bill_gas_detail.csv has no nonbaseline_rate "
-                "for this Gas Service segment.")
-        return floor_therms * baseline_rate
-    baseline_used = min(floor_therms, baseline_allowance)
-    nonbaseline_used = max(0.0, floor_therms - baseline_allowance)
-    return baseline_used * baseline_rate + nonbaseline_used * nonbaseline_rate
+        non_marginal = max(0.0, total_therms - marginal_therms)
+        baseline_ceiling = min(baseline_allowance, total_therms)
+        overlap_baseline = min(max(0.0, baseline_ceiling - non_marginal), marginal_therms)
+        overflow = marginal_therms - overlap_baseline
+        if overflow <= FLOOR_ESTIMATION_TOLERANCE_THERMS:
+            return marginal_therms * baseline_rate
+    return HPC._gas_service_segment_tier_cost(
+        total_therms=total_therms, heating_therms=marginal_therms,
+        baseline_allowance=baseline_allowance, baseline_rate=baseline_rate,
+        nonbaseline_rate=nonbaseline_rate, context=context)
 
 
-# The largest real overflow observed on this household's own 25-statement
-# corpus is 0.05 therms (2025-09-29's 5-day Gas Service segment); this is
-# set an order of magnitude above that so a genuinely large discrepancy (a
-# real methodology problem, not day-proportion noise) still fails closed.
-FLOOR_OVERFLOW_TOLERANCE_THERMS = 0.5
-
-
-def floor_savings_by_period(iso, n_trailing=12):
+def floor_savings_by_period(iso, n_trailing=12, water_heater_share=1.0):
     """Sibling of heat_pump_conversion.gas_savings_by_period(), reusing that
     module's own segment-day-range and flat-rate-segment helpers, priced for
     the non-heating FLOOR instead of the heating slice.
@@ -489,7 +572,18 @@ def floor_savings_by_period(iso, n_trailing=12):
     heating this window is a genuinely free choice, made to match the SAME
     window rather than one gas.csv's own coverage constrains -- keeping
     every "annual" figure in this script's own output on one common, real,
-    calendar-year basis."""
+    calendar-year basis.
+
+    `water_heater_share` (Codex adversarial review, issue #20 round 1,
+    Finding 2): the floor's own composition beyond "at least the water
+    heater" is NOT DETERMINED (gas_end_use_enumeration, cooking_fuel_
+    evidence) -- water_heater_share < 1.0 re-runs this SAME tier-pricing
+    machinery against a SCALED floor_per_day, so the water_heater_share_
+    sensitivity section in build()'s own output is a real re-pricing, not a
+    linear dollar-scaling of the 100%-floor figure (tiered rates are not
+    exactly linear in therms, so a dollar-scaling would itself be a small
+    additional approximation on top of an already-uncertain share
+    assumption -- avoided here since the real re-price costs little)."""
     periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
     periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
     periods[["period_start", "period_end"]] = periods["period"].str.split(
@@ -498,7 +592,7 @@ def floor_savings_by_period(iso, n_trailing=12):
     trailing = periods.tail(n_trailing).copy()
 
     gas_detail = HPC.load_gas_detail()
-    floor_per_day = iso["floor_therms_per_day"]
+    floor_per_day = iso["floor_therms_per_day"] * water_heater_share
 
     rows = []
     total_savings, total_floor_therms = 0.0, 0.0
@@ -529,10 +623,19 @@ def floor_savings_by_period(iso, n_trailing=12):
         for (seg_start, seg_end), floor_s, seg in zip(gs_ranges, gs_shares, gs_segs):
             seg_days = (seg_end - seg_start).days + 1
             a_s = row["baseline_allowance_therms"] * seg_days / period_days
-            gs_cost += _floor_segment_tier_cost(
-                floor_therms=floor_s, baseline_allowance=a_s,
+            seg_context = f"{context} gas_service segment {seg['segment']}"
+            t_s = _floor_segment_total_therms(
+                seg_start, seg_end, row["therms"], period_days, floor_s, seg_context)
+            # floor_s is the quantity being REMOVED (the water heater
+            # converts), so it takes the marginal/top-of-ladder role --
+            # exactly as heat_pump_conversion.py uses its own
+            # `heating_therms` argument for heating's own removal. See this
+            # module's own top-of-file note and _priced_at_top_of_ladder's
+            # own docstring.
+            gs_cost += _priced_at_top_of_ladder(
+                total_therms=t_s, marginal_therms=floor_s, baseline_allowance=a_s,
                 baseline_rate=seg["baseline_rate"], nonbaseline_rate=seg["nonbaseline_rate"],
-                context=f"{context} gas_service segment {seg['segment']}")
+                context=seg_context)
 
         ge_cost = sum(HPC._flat_segment_cost(floor_s, seg["energy_rate"])
                      for floor_s, seg in zip(ge_shares, ge_segs))
@@ -710,6 +813,72 @@ def wh_electric_cost_scenarios(d, floor_therms_yr):
         out[uef_key] = scen
         out[uef_key]["_fallback_days"] = fallback_days
     return out, round(base_bill, 2)
+
+
+# Codex adversarial review, issue #20 round 1, Finding 2: the pure
+# computation above prices the WHOLE non-heating floor as if it were 100%
+# water heater, even though gas_end_use_enumeration's own cooking_fuel_
+# evidence says that composition is NOT DETERMINED. CLAUDE.md section 0
+# forbids treating an unverified assumption as a headline point estimate --
+# this function propagates that uncertainty through as an explicit
+# sensitivity instead of hiding it behind one number. 1.0 is the pure
+# computation, kept because it is the mechanically correct answer to "if
+# the whole floor is water heater"; the other two bound water_heater_share
+# using third_end_use_gap's OWN possible-dryer-share-of-floor benchmark
+# (27.7-78.8%), inverted (a household with no dryer needs no such
+# adjustment at all, hence 1.0 remains a real, live possibility, not a
+# straw-man ceiling).
+def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range, headline_uef):
+    """AC3/AC4, Finding 2: floor_savings_annual_usd, electric cost, net
+    savings and payback at explicit water-heater-share assumptions, each a
+    REAL re-price (floor_savings_by_period + wh_electric_cost_scenarios
+    re-run at the scaled floor_per_day/therms, not a linear dollar-scale of
+    the 100% figure -- see floor_savings_by_period's own water_heater_share
+    docstring paragraph). Headline-UEF, uniform-distribution basis only
+    (matching this script's own primary reference elsewhere), to keep the
+    output to the scenarios that matter rather than a full UEF x
+    distribution x share cross product no reader asked for."""
+    lo_dryer_pct, hi_dryer_pct = dryer_pct_of_floor_range
+    shares = {
+        "100pct_full_floor": 1.0,
+        "72pct_if_dryer_present_at_benchmark_low": round(1 - lo_dryer_pct / 100, 3),
+        "21pct_if_dryer_present_at_benchmark_high": round(1 - hi_dryer_pct / 100, 3),
+    }
+    scenarios = {}
+    for key, share in shares.items():
+        rows, savings_usd, therms_annual = floor_savings_by_period(iso, water_heater_share=share)
+        electric, _ = wh_electric_cost_scenarios(d, therms_annual)
+        electric_increase = electric[headline_uef]["uniform"]["electric_cost_increase_usd"]
+        net_savings = round(savings_usd - electric_increase, 2)
+        scenarios[key] = {
+            "water_heater_share": share,
+            "floor_therms_annual": therms_annual,
+            "floor_savings_annual_usd": savings_usd,
+            "electric_cost_increase_usd": electric_increase,
+            "annual_net_savings_usd": net_savings,
+            "payback": {
+                "low_install": HPC.payback_and_npv(
+                    net_savings, WH_INSTALL_COST_LOW_USD, HPC.DISCOUNT_RATES, HPC.NPV_HORIZON_YEARS),
+                "central_install": HPC.payback_and_npv(
+                    net_savings, WH_INSTALL_COST_CENTRAL_USD, HPC.DISCOUNT_RATES, HPC.NPV_HORIZON_YEARS),
+                "high_install": HPC.payback_and_npv(
+                    net_savings, WH_INSTALL_COST_HIGH_USD, HPC.DISCOUNT_RATES, HPC.NPV_HORIZON_YEARS),
+            },
+        }
+    return {
+        "basis": ("household.appliance_fuels was never answered at intake, so "
+                  "the floor's own composition beyond 'at least the water "
+                  "heater' is NOT DETERMINED (see gas_end_use_enumeration). "
+                  "The 100pct scenario is the mechanically pure computation "
+                  "(and remains live if this household simply has no gas "
+                  "dryer); the other two bound the case where a dryer IS "
+                  "present, using third_end_use_gap's own external benchmark "
+                  "for its typical share of a floor this size. NONE of the "
+                  "three is asserted as the true figure -- report the range, "
+                  "not a single point estimate, per CLAUDE.md section 0."),
+        "headline_uef": headline_uef,
+        "scenarios": scenarios,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -901,16 +1070,95 @@ METER_REMOVAL_RESEARCH = {
 }
 
 
+def tier_interaction_overstatement(floor_rows, hpc_gas_rows):
+    """How much `complete_transition_payback` overstates the TRUE combined
+    gas savings by summing two INDEPENDENTLY-computed marginal-removal
+    figures, rather than computing one JOINT removal (CLAUDE.md section 9:
+    "one pipeline per package figure... never by adding numbers from
+    different models"). A direct, quantified consequence of the Finding-1
+    fix (Codex adversarial review, issue #20 round 1): under a convex
+    (tiered) rate, `[bill(T)-bill(T-F)] + [bill(T)-bill(T-H)]` (this
+    script's own floor savings plus heat_pump_conversion.json's own
+    heating savings, EACH computed as if it alone were removed from the
+    period's original total T) is >= `bill(T) - bill(T-F-H)` (the true
+    joint savings from removing both), because the shared top-of-ladder
+    (nonbaseline) region gets priced twice whenever both F and H reach
+    into it. Equality holds only when the period never reaches the
+    nonbaseline tier at all, or when one of F/H is zero.
+
+    Computed at the PERIOD level (using bill_periods_gas.csv's own
+    period-blended baseline_rate/nonbaseline_rate/baseline_allowance_
+    therms columns), a coarser basis than the segment-level precision
+    floor_savings_by_period() and heat_pump_conversion.gas_savings_by_
+    period() each use for their own headline figures -- appropriate for a
+    supplementary diagnostic quantifying a secondary effect, not a second
+    headline figure of its own. Gas Energy Charge and other_fees are flat
+    (linear) rates with no tier interaction, so this covers the Gas
+    Service component only, which is where the whole effect lives."""
+    heat_by_date = {r["statement_date"]: r["heating_therms_attributed"] for r in hpc_gas_rows}
+    periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
+    by_date = periods.set_index(periods["statement_date"].astype(str))
+
+    def bill(t, allowance, br, nbr):
+        base = min(t, allowance)
+        nb = max(0.0, t - allowance)
+        nbr = br if (nbr is None or pd.isna(nbr)) else nbr
+        return base * br + nb * nbr
+
+    total_independent_sum, total_joint, rows = 0.0, 0.0, []
+    for r in floor_rows:
+        d = r["statement_date"]
+        if d not in by_date.index or d not in heat_by_date:
+            continue
+        prow = by_date.loc[d]
+        T = float(prow["therms"])
+        allowance = float(prow["baseline_allowance_therms"])
+        br, nbr = float(prow["baseline_rate"]), prow["nonbaseline_rate"]
+        F, H = r["floor_therms_attributed"], heat_by_date[d]
+        b_T = bill(T, allowance, br, nbr)
+        savings_f = b_T - bill(max(0.0, T - F), allowance, br, nbr)
+        savings_h = b_T - bill(max(0.0, T - H), allowance, br, nbr)
+        savings_joint = b_T - bill(max(0.0, T - F - H), allowance, br, nbr)
+        independent_sum = savings_f + savings_h
+        total_independent_sum += independent_sum
+        total_joint += savings_joint
+        gap = round(independent_sum - savings_joint, 2)
+        if abs(gap) > 0.005:
+            rows.append({"statement_date": d, "overstatement_usd": gap})
+    overstatement = round(total_independent_sum - total_joint, 2)
+    return {
+        "gas_service_independent_sum_usd": round(total_independent_sum, 2),
+        "gas_service_joint_removal_usd": round(total_joint, 2),
+        "overstatement_usd": overstatement,
+        "by_period": rows,
+        "note": ("Gas Service (tiered) component only, period-level basis "
+                "-- see this function's own docstring. Positive means the "
+                "naive sum overstates the true joint savings; this is "
+                "structurally guaranteed non-negative under a convex rate."),
+    }
+
+
 # ---------------------------------------------------------------------------
 # AC3/AC7 -- sequencing and the two paybacks.
 # ---------------------------------------------------------------------------
 def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                             wh_annual_net_savings_usd, wh_payback_years,
                             furnace_install_usd, furnace_annual_net_savings_usd,
-                            furnace_payback_years):
+                            furnace_payback_years, tier_interaction):
     """AC3 (sequencing) + AC7 (two paybacks), reusing heat_pump_conversion.
     payback_and_npv() directly for both the combined-transition and the
-    final-step-alone figures rather than reimplementing payback math."""
+    final-step-alone figures rather than reimplementing payback math.
+
+    `tier_interaction` (tier_interaction_overstatement()'s own return
+    value) corrects `complete_transition_payback`'s own combined savings
+    for the tier-ladder interaction CLAUDE.md section 9 warns composite
+    figures must not carry silently: summing the water heater's and the
+    furnace's own INDEPENDENTLY-computed marginal gas savings (each
+    correct on its own -- see this module's top-of-file note -- for "this
+    step alone") overstates the TRUE savings from doing both, since both
+    reach into the same periods' nonbaseline tier. The correction is
+    applied here, not left as a footnote next to an uncorrected headline
+    number."""
     fixed_charge_release_usd = 0.0 if fixed_charge_verdict_is_zero else None
     if fixed_charge_release_usd is None:
         raise SystemExit(
@@ -941,9 +1189,11 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
     last_step = ordered[-1]
 
     combined_install = wh_install_usd + furnace_install_usd
-    combined_annual_net_savings = (wh_annual_net_savings_usd
-                                   + furnace_annual_net_savings_usd
-                                   + fixed_charge_release_usd)
+    naive_combined_annual_net_savings = (wh_annual_net_savings_usd
+                                         + furnace_annual_net_savings_usd
+                                         + fixed_charge_release_usd)
+    combined_annual_net_savings = round(
+        naive_combined_annual_net_savings - tier_interaction["overstatement_usd"], 2)
     complete_transition = HPC.payback_and_npv(
         combined_annual_net_savings, combined_install, HPC.DISCOUNT_RATES,
         HPC.NPV_HORIZON_YEARS)
@@ -970,7 +1220,18 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
         "fixed_charge_release_usd": fixed_charge_release_usd,
         "complete_transition_payback": {
             "combined_install_usd": combined_install,
-            "combined_annual_net_savings_usd": round(combined_annual_net_savings, 2),
+            "combined_annual_net_savings_usd": combined_annual_net_savings,
+            "naive_summed_annual_net_savings_usd": round(naive_combined_annual_net_savings, 2),
+            "tier_interaction_overstatement_usd": tier_interaction["overstatement_usd"],
+            "tier_interaction_note": (
+                "combined_annual_net_savings_usd is the naive sum of each "
+                "step's own independently-computed marginal savings, minus "
+                "the tier_interaction_overstatement_usd correction -- see "
+                "tier_interaction_overstatement() (CLAUDE.md section 9: "
+                "composite figures must not silently add numbers from two "
+                "separate models). naive_summed_annual_net_savings_usd is "
+                "kept alongside for transparency, not used in the payback "
+                "below."),
             **complete_transition,
         },
         "final_step_alone_payback": {
@@ -996,6 +1257,16 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                                  "determined, so the meter cannot be "
                                  "confirmed removable yet even once both "
                                  "pay for themselves"),
+        "not_verified_caveat": ("the water-heater half of both paybacks "
+                                "above (complete_transition_payback and, "
+                                "when the water heater is the last step, "
+                                "final_step_alone_payback) is built on the "
+                                "PURE 100%-water-heater assumption, NOT "
+                                "VERIFIED against this household's own "
+                                "actual fuel mix -- see water_heater_"
+                                "conversion.water_heater_share_sensitivity "
+                                "for the same figures at explicit, bounded "
+                                "water-heater-share assumptions"),
     }
 
 
@@ -1049,6 +1320,10 @@ def build():
     headline_uef = "central_3.88"
     wh_headline = wh_paybacks[headline_uef]
 
+    share_sensitivity = water_heater_share_sensitivity(
+        iso, d, enumeration["third_end_use_gap"]["possible_dryer_pct_of_floor_range"],
+        headline_uef)
+
     hpc_path = os.path.join(DATA, "heat_pump_conversion.json")
     if not os.path.exists(hpc_path):
         raise SystemExit(f"all_electric_endgame.py: {hpc_path} not found -- "
@@ -1058,6 +1333,8 @@ def build():
     furnace_install_usd = hpc_data["install_cost"]["standalone_usd"]
     furnace_payback_years = furnace_headline["standalone"]["payback_years"]
 
+    interaction = tier_interaction_overstatement(floor_rows, hpc_data["gas_savings_by_period"])
+
     sequencing = sequencing_and_paybacks(
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=WH_INSTALL_COST_CENTRAL_USD,
@@ -1066,6 +1343,7 @@ def build():
         furnace_install_usd=furnace_install_usd,
         furnace_annual_net_savings_usd=furnace_headline["annual_net_savings_usd"],
         furnace_payback_years=furnace_payback_years,
+        tier_interaction=interaction,
     )
 
     headroom = service_headroom_check()
@@ -1155,6 +1433,16 @@ def build():
                 "unsplit gas meter, so this is an UPPER BOUND on the water "
                 "heater step's own true gas savings, not a precise "
                 "water-heater-only figure"),
+            "not_verified_caveat": (
+                "payback below (and every figure derived from it, including "
+                "sequencing_and_paybacks) is the PURE 100%-water-heater "
+                "computation and is NOT VERIFIED against this household's "
+                "own actual appliance fuel mix, which is not determined "
+                "(see cooking_fuel_evidence). See water_heater_share_"
+                "sensitivity for the same figures propagated across "
+                "explicit, bounded water-heater-share assumptions rather "
+                "than asserting this one as the true answer -- CLAUDE.md "
+                "section 0 (no false precision on an unverified input)."),
             "baseline_electric_bill_usd": base_bill,
             "electric_cost_by_scenario": electric,
             "gas_wh_uef_assumed": GAS_WH_UEF,
@@ -1169,6 +1457,7 @@ def build():
             "incentives": {"usd": WH_INCENTIVE_USD, "note": WH_INCENTIVE_NOTE},
             "payback": wh_paybacks,
             "headline_uef": headline_uef,
+            "water_heater_share_sensitivity": share_sensitivity,
         },
         "furnace_conversion": {
             "source": "data/heat_pump_conversion.json (issues #1/#109, "

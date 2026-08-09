@@ -3839,15 +3839,37 @@ turns out to be needed, is out of this issue's own scope box and is named as a f
 savings are priced by `floor_savings_by_period()`, a sibling of `heat_pump_conversion.
 gas_savings_by_period()` built by reusing that module's own segment-tier-pricing helpers
 (`_flat_segment_cost`, `_segment_day_ranges`, `_segment_real_or_proxy_therms`,
-`_other_fees_day_ranges`, `_segment_heat_from_days`, `load_gas_detail`) rather than
-reimplementing them. The one genuinely new piece is `_floor_segment_tier_cost`: the floor
-occupies the *bottom* of each Gas Service segment's tier ladder (billed at the cheaper
-baseline tier first), the opposite end from heating's own marginal-top-slice treatment —
-reusing the heating-side tier function with the floor's own therms in its `heating_therms`
-argument would silently invert that placement.
+`_other_fees_day_ranges`, `_segment_heat_from_days`, `load_gas_detail`, and —
+post-adversarial-review — `_gas_service_segment_tier_cost` itself) rather than reimplementing
+them.
 
-Two real-data traps were found and fixed while building this, both worth naming since they
-would otherwise recur in any future per-day gas-cost allocation:
+**Round 1 correction (Codex adversarial review, confirmed with a hand-worked example):** a
+first version of this function priced the floor at the *bottom* of each Gas Service segment's
+tier ladder, reasoning that "always-on usage occupies the cheap tier first." That reasoning is
+backwards. The dollar SAVINGS from removing any quantity of usage from a bill is a whole-bill
+delta, `bill(T) - bill(T-X)`, which under a convex (tiered) rate is always exactly the cost of
+the TOP X therms of the original total — a general mathematical fact about savings from a
+reduction under increasing marginal cost, true regardless of which appliance the removed X
+therms are conceptually attributed to. Whichever end use is being REMOVED is marginal to that
+removal; the furnace's own removal (heating converts, floor stays) is correctly priced at the
+top by `heat_pump_conversion._gas_service_segment_tier_cost()` already, and the water heater's
+own removal (floor converts, heating stays) needs the identical top-of-ladder treatment, not
+its inverse. Verified with a concrete counterexample: a 60-therm period, 20-therm baseline
+allowance, $2.00/$2.38 rates, removing 11 floor therms — true whole-bill savings `bill(60) -
+bill(49)` = 11 × $2.38 = **$26.18** (every removed therm was marginal); the bottom-of-ladder
+method gave 11 × $2.00 = **$22.00**, a 16% understatement. Fixed by reusing `_gas_service_
+segment_tier_cost()` directly (via a thin tolerance wrapper, `_priced_at_top_of_ladder()` —
+that function's own strict 1e-6 fail-closed tolerance is appropriate for heating, whose inputs
+are capacity-capped against real per-day meter data, but too strict for the floor's own
+day-proportion-only inputs, which have no such real-daily counterpart; the wrapper folds a
+small, documented estimation-noise overflow — largest observed on this corpus, 0.17 therms —
+back to the baseline rate, exactly the bill's own evidence when a segment never printed a
+nonbaseline rate at all, and still fails closed on anything larger). Regression-tested by
+`case_floor_segment_tier_cost_spills_into_nonbaseline` and a new hand-computed case
+reproducing the counterexample above exactly.
+
+Two further real-data traps were found and fixed while building this function, both worth
+naming since they would otherwise recur in any future per-day gas-cost allocation:
 
 - **Day-level capping against the daily meter export amplifies read-date noise.** An early
   version capped the floor at `min(floor_per_day, that day's real gas.csv reading)`, mirroring
@@ -3870,12 +3892,30 @@ would otherwise recur in any future per-day gas-cost allocation:
 Restricted throughout to the trailing 12 real statements (the same window `heat_pump_
 conversion.py`'s own $416.25/yr heating figure implicitly resolves to, and the same window
 that independently reproduces index.html's existing $922.34/yr all-in gas total exactly),
-`floor_savings_by_period()` gives **$340.04/yr** (134.2 floor-therms/yr) as the current annual
-gas cost of the *whole* non-heating floor. Because that floor's own composition beyond the
-water heater is not determined (above) and cannot be separated from a single, unsplit gas
-meter regardless, this is reported as an explicit **upper bound** on the water heater step's
-own true savings, not a precise water-heater-only figure
+`floor_savings_by_period()` gives **$360.38/yr** (134.2 floor-therms/yr) as the current annual
+gas cost of the *whole* non-heating floor — up from the pre-fix $340.04/yr, since correct
+top-of-ladder pricing generally costs more than the bottom tier, especially in winter periods
+where heating pushes the segment total past the baseline allowance. Because that floor's own
+composition beyond the water heater is not determined (above) and cannot be separated from a
+single, unsplit gas meter regardless, this is reported as an explicit **upper bound** on the
+water heater step's own true savings, not a precise water-heater-only figure
 (`water_heater_conversion.upper_bound_caveat`).
+
+**Round 1 correction 2 (Codex adversarial review): no single-point HPWH payback is published
+as the headline case.** The pure, 100%-floor computation above is mechanically correct *if*
+the whole floor is water heating, but that composition is NOT DETERMINED (AC2) — publishing
+its own payback alone would treat an unverified assumption as settled precision, which
+CLAUDE.md §0 forbids. `water_heater_share_sensitivity()` re-runs the SAME real-interval-billed
+computation (a genuine re-price — `floor_savings_by_period()`'s own `water_heater_share`
+parameter scales `floor_per_day` before re-running the full tier-pricing loop, and `wh_
+electric_cost_scenarios()` re-sizes the HPWH's own electric load from the scaled therms — not
+a linear dollar-scaling of the 100% figure, since tiered rates aren't exactly linear in
+therms) at three explicit water-heater-share assumptions: 100% (the pure computation, still a
+live possibility if this household has no gas dryer at all), and two bounds derived from
+`third_end_use_gap`'s own external dryer-usage benchmark inverted to a water-heater share
+(72.3% if a dryer is present at that benchmark's low end, 21.2% at its high end). Every payback
+this script publishes downstream carries a `not_verified_caveat` pointing back to this table
+rather than asserting the 100% figure as settled.
 
 Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
 `electric_cost_scenarios` exactly — absorb existing solar first, spill into new grid import
@@ -3893,17 +3933,20 @@ minimum UEF for a residential gas storage water heater (0.60, the low end of the
 band found) — the assumption most favorable to the heat pump, the same convention
 `FURNACE_AFUE`'s own comment establishes.
 
-At the headline UEF (3.88) and `uniform` distribution: electric cost increase **$224.11/yr**,
-net savings **$115.93/yr**, central-install ($4,200) payback **36.2 yr**. The `midday` lean is
-far better ($72.18/yr electric increase, net $267.86/yr) and the `on_peak` lean erases savings
-entirely ($432.86/yr electric increase, net **negative**) — the same real-interval-billing
-sensitivity `heat_pump_conversion.py` already established for the furnace, now shown for the
-water heater too. Install-cost bracket ($2,800–$8,000, central $4,200) is general
-contractor-pricing guidance (Angi/Fixr/HomeGuide/hotwater.com, 2026), not a CA-specific
-engineering study the way the furnace's figure is — "estimated" tier, stated as such. SGIP,
-the one CPUC incentive program covering heat-pump water heaters specifically, closed its
-ratepayer budgets 2025-12-31 regardless of appliance type (re-cited from `heat_pump_
-conversion.INCENTIVE_USD`'s own sources, not re-verified) — `WH_INCENTIVE_USD = 0`.
+At the headline UEF (3.88), `uniform` distribution, 100%-floor basis: electric cost increase
+**$224.11/yr**, net savings **$136.27/yr**, central-install ($4,200) payback **30.8 yr**
+(20.5 yr low / 58.7 yr high install). At the more conservative 72.3%-share basis: net savings
+$101.80/yr, central payback 41.3 yr. At the 21.2%-share basis: net savings $32.32/yr, central
+payback 130.0 yr. The `midday` lean is far better on the 100% basis ($72.18/yr electric
+increase, net $288.20/yr) and the `on_peak` lean erases savings entirely ($432.86/yr electric
+increase, net **negative**) — the same real-interval-billing sensitivity `heat_pump_
+conversion.py` already established for the furnace, now shown for the water heater too.
+Install-cost bracket ($2,800–$8,000, central $4,200) is general contractor-pricing guidance
+(Angi/Fixr/HomeGuide/hotwater.com, 2026), not a CA-specific engineering study the way the
+furnace's figure is — "estimated" tier, stated as such. SGIP, the one CPUC incentive program
+covering heat-pump water heaters specifically, closed its ratepayer budgets 2025-12-31
+regardless of appliance type (re-cited from `heat_pump_conversion.INCENTIVE_USD`'s own
+sources, not re-verified) — `WH_INCENTIVE_USD = 0`.
 
 **AC5 — service headroom.** Reuses `data/service_headroom.json`'s own already-committed
 `heat_pump_only` case (`fixed_added_load_a=0`, i.e. panel-wide spare capacity before *any*
@@ -3937,36 +3980,55 @@ own "credit the release only to the final step" rule trivially satisfied either 
 crediting $0 to whichever step is last changes nothing — so `sequencing_and_paybacks()`
 orders steps by cost-effectiveness (shorter marginal payback first) instead, and reports the
 final step's own payback both with and without the (zero) credit explicitly, so that
-triviality is checkable rather than silently elided. Complete-transition payback: combined
-install $18,729, combined net savings $200.21/yr (water heater + furnace + $0 credit),
-**93.5 yr**. Final step alone (furnace, the longer-payback step and so ordered last): standalone
-payback **172.4 yr**, identical with and without the credit. Neither payback represents a confirmed
-meter removal — whether a third end use (AC2) remains unpriced and unconverted is not
-determined.
+triviality is checkable rather than silently elided. Both figures below are the PURE,
+100%-water-heater-share basis (Round 1 correction 2, above) — `not_verified_caveat` points to
+`water_heater_share_sensitivity` for the same figures at the more conservative shares.
+
+Complete-transition payback carries its own Round 1 correction (Codex adversarial review, a
+DIRECT consequence of fixing the tier-pricing direction, not separately named by that review
+but required by CLAUDE.md §9 once found): naively summing the water heater's own $136.27/yr
+and the furnace's own $84.28/yr independently-computed marginal savings (plus the $0 release)
+gives $220.55/yr, but each is computed as if it ALONE were removed from the same original
+bill, and under a convex (tiered) rate two independent single-removal computations both claim
+credit for the SAME top-of-ladder (nonbaseline) dollars whenever both reach into it —
+`tier_interaction_overstatement()` quantifies this period by period (Gas Service component
+only; the flat Gas Energy Charge/other_fees rates have no tier interaction) and nets it out:
+**$28.18/yr** overstatement on this household's real data, corrected rather than left in the
+headline figure ("one pipeline per package figure... never by adding numbers from different
+models," CLAUDE.md §9). Combined install $18,729, combined net savings **$192.37/yr**
+(naive sum $220.55/yr minus the $28.18/yr correction), **97.4 yr** payback. Final step alone
+(furnace, the longer-payback step and so ordered last): standalone payback **172.4 yr**,
+identical with and without the credit (the furnace's own figure has no interaction term of its
+own — it is a single-conversion computation). Neither payback represents a confirmed meter
+removal — whether a third end use (AC2) remains unpriced and unconverted is not determined.
 
 **AC8 — reconciliation.** The furnace figures are cited directly from `heat_pump_
 conversion.json`, not recomputed, so they agree exactly by construction. The water heater
-figure is compared against `extended_results.json -> gas_decomposition`'s own older
-`hpwh_saving_yr` ($205/yr, a flat "midday solar timer" rate estimate): this script's own
-real-interval-billed net savings ($115.93/yr at the headline UEF/uniform basis) is $89.07/yr
-lower — expected, since the two price the same conversion by genuinely different methods, one
-at this repo's own established real-interval rigor and one at a flat-rate proxy. A THIRD
-reconciliation, not previously computed anywhere in this repo: `heat_pump_conversion.py`'s
-own module docstring already documents that its day-level capacity cap excludes 59.81
-therms/yr of HDD-regression heating signal it cannot pin to a specific real day (205 raw vs.
-145.19 reconciled) — this script puts a DOLLAR figure on that gap for the first time
-(**$166.05/yr**, trailing-12 billed total minus this script's own floor savings minus
+figure (100%-share basis) is compared against `extended_results.json -> gas_decomposition`'s
+own older `hpwh_saving_yr` ($205/yr, a flat "midday solar timer" rate estimate): this script's
+own real-interval-billed net savings ($136.27/yr at the headline UEF/uniform basis) is
+$68.73/yr lower — expected, since the two price the same conversion by genuinely different
+methods, one at this repo's own established real-interval rigor and one at a flat-rate proxy.
+A THIRD reconciliation, not previously computed anywhere in this repo: `heat_pump_
+conversion.py`'s own module docstring already documents that its day-level capacity cap
+excludes 59.81 therms/yr of HDD-regression heating signal it cannot pin to a specific real day
+(205 raw vs. 145.19 reconciled) — this script puts a DOLLAR figure on that gap for the first
+time (**$145.71/yr**, trailing-12 billed total minus this script's own floor savings minus
 `heat_pump_conversion.json`'s own heating savings), and states explicitly that it is credited
 to neither conversion step, matching `heat_pump_conversion.py`'s own conservative treatment of
 the underlying therms.
 
 **Reproduction.** `all_electric_endgame.json` is written directly to `data/` (repo-root
 discovery via `heat_pump_conversion.ROOT`, atomic tmp-then-replace, the same convention every
-other generator in this section uses); `test_all_electric_endgame.py` covers every pure
-function against synthetic fixtures (including two "tests must fail on the defect they name"
-positive controls — a synthetic corpus with a genuine $15 fixed charge that the regression
-must actually recover, and a large tier-boundary overflow that must actually fail closed) plus
-real-archive cases (end-to-end `build()`, byte-identical regeneration) gated behind `SkipCase`.
+other generator in this section uses); `test_all_electric_endgame.py` (37 cases) covers every
+pure function against synthetic fixtures, including several "tests must fail on the defect
+they name" positive controls — a synthetic corpus with a genuine $15 fixed charge the
+regression must actually recover; the Round 1 top-of-ladder fix's own hand-worked
+counterexample from Codex adversarial review, reproduced exactly and checked against both the
+correct answer and the old buggy one; a large tier-boundary overflow that must actually fail
+closed; and the tier-interaction correction, verified (per that review's own instruction) by
+reverting each fix, confirming the relevant case fails, then re-applying it — plus real-archive
+cases (end-to-end `build()`, byte-identical regeneration) gated behind `SkipCase`.
 
 ---
 
