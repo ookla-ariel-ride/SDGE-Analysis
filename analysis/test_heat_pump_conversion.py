@@ -345,7 +345,7 @@ def case_gas_savings_price_heating_slice_at_true_marginal_tier():
         hdd_by_day = pd.Series({dt.date(2026, 1, d): 10.0 for d in range(1, 32)})
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 50.0, "floor_therms_per_day": 0.0}
-        rows, total_savings, _ = hpc.gas_savings_by_period(iso)
+        rows, total_savings, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     assert row["heating_therms_attributed"] == 50.0, row
     expect_savings = 30 * (1.8 + 0.5) + 20 * (2.3 + 0.5)
@@ -386,7 +386,7 @@ def case_gas_savings_heating_slice_entirely_within_baseline_tier():
         hdd_by_day = pd.Series({dt.date(2026, 7, d): 10.0 for d in range(1, 32)})
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 4.0, "floor_therms_per_day": 0.0}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     assert row["heating_therms_attributed"] == 4.0, row
     expect = 4.0 * (2.03477 + 0.39416)
@@ -571,7 +571,7 @@ def case_gas_savings_period_allocation_sums_to_the_annual_estimate():
             dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
-        rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
+        rows, total_savings, total_allocated, _ = hpc.gas_savings_by_period(iso)
     assert abs(total_allocated - 95) <= 1, total_allocated
     assert abs(total_savings - 95 * 2.70) < 5, total_savings
     for r in rows:
@@ -612,7 +612,7 @@ def case_gas_savings_never_credits_more_than_a_period_actually_billed():
             dt.date(2026, 3, d): 10.0 for d in range(1, 32)})])
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 95.0, "floor_therms_per_day": 0.0}
-        rows, total_savings, total_allocated = hpc.gas_savings_by_period(iso)
+        rows, total_savings, total_allocated, _ = hpc.gas_savings_by_period(iso)
     march = next(r for r in rows if r["statement_date"] == "2026-03-31")
     assert march["heating_therms_attributed"] == 20.0, march   # capped at its own billed therms
     # total_allocated is the RAW (uncapped) share, still ~95 -- the cap only
@@ -651,7 +651,7 @@ def case_gas_savings_reserves_the_non_heating_floor_before_capping():
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": float(hdd_by_day.sum()),
               "floor_therms_per_day": 0.3}
-        rows, total_savings, _ = hpc.gas_savings_by_period(iso)
+        rows, total_savings, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     expected_cap = 15.0 - 0.3 * 28
     assert abs(row["heating_therms_attributed"] - expected_cap) < 1e-9, (row, expected_cap)
@@ -702,7 +702,7 @@ def case_gas_savings_use_the_real_printed_period_dates_not_a_reconstruction():
         hdd_by_day = pd.Series(values)
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 30.0, "floor_therms_per_day": 0.0}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     nov = next(r for r in rows if r["statement_date"] == "2025-11-28")
     oct_ = next(r for r in rows if r["statement_date"] == "2025-10-29")
     # the real Nov period (Oct 28 - Nov 25, inclusive) contains one spike day
@@ -781,7 +781,7 @@ def case_gas_service_segment_tiering_differs_from_period_level_blend():
         hdd_by_day = pd.Series(hdd)
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 24.0, "floor_therms_per_day": 0.0}
-        rows, total_savings, _ = hpc.gas_savings_by_period(iso)
+        rows, total_savings, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     assert row["heating_therms_attributed"] == 24.0, row
     assert abs(row["gas_savings_usd"] - 59.60) < 0.01, row
@@ -847,7 +847,7 @@ def case_non_heating_floor_is_reserved_per_segment_not_once_per_period():
         hdd_by_day = pd.Series(hdd)
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 20.0, "floor_therms_per_day": 0.6}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     old_period_level_cap = max(0.0, 30.0 - 0.6 * 30)
     assert abs(old_period_level_cap - 12.0) < 1e-9, old_period_level_cap   # sanity on the fixture itself
@@ -908,7 +908,7 @@ def case_cold_day_cannot_borrow_a_hot_days_unused_capacity_within_one_segment():
         hdd_by_day = pd.Series({dt.date(2026, 1, 1): 0.0, dt.date(2026, 1, 2): 50.0})
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 8.0, "floor_therms_per_day": 3.0}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     segment_level_cap = max(0.0, 10.0 - 3.0 * 2)
     assert abs(segment_level_cap - 4.0) < 1e-9, segment_level_cap   # sanity on the fixture itself
@@ -962,9 +962,9 @@ def case_real_daily_data_overrides_the_uniform_proxy_when_available():
     with _GasFixture(periods, detail):
         iso_proxy = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
                     "annual_heating_therms": 50.0, "floor_therms_per_day": 0.5}
-        rows_proxy, _, _ = hpc.gas_savings_by_period(iso_proxy)
+        rows_proxy, _, _, _ = hpc.gas_savings_by_period(iso_proxy)
         iso_real = {**iso_proxy, "gas_daily": gas_daily}
-        rows_real, _, _ = hpc.gas_savings_by_period(iso_real)
+        rows_real, _, _, _ = hpc.gas_savings_by_period(iso_real)
     proxy_therms = rows_proxy[0]["heating_therms_attributed"]
     real_therms = rows_real[0]["heating_therms_attributed"]
     assert abs(proxy_therms - 3.17) < 0.01, proxy_therms
@@ -975,6 +975,156 @@ def case_real_daily_data_overrides_the_uniform_proxy_when_available():
     return (f"supplying real daily gas data caps this period's heating attribution "
            f"at {real_therms} therms (that cold day's own real usage), not the "
            f"{proxy_therms} therms the period-average proxy would have allowed")
+
+
+@case
+def case_hp_load_series_places_kwh_using_the_capped_shape_not_raw_hdd_proportion():
+    """Issue #119: build_hp_load_series() must place each day's heating kWh
+    using the SAME capacity-capped per-day shape gas_savings_by_period()
+    already priced (returned as its 4th value, `day_heat_therms`, threaded
+    through `iso["capped_heat_by_day"]`) -- not an independently-derived
+    raw hdd_by_day/total_hdd proportion of the (already-shrunk) reconciled
+    annual total, which has no way to know that a specific day's own real
+    usage left it little room for heating regardless of its HDD share.
+
+    A 2-day period with EQUAL HDD (10 each, so the raw proportion would
+    split any total 50/50) but very unequal real gas_daily usage -- day 1
+    real 2.0 therms (its own capacity, floor=0), day 2 real 20.0 (never
+    binds). Demand of 5.0 therms/day (10 total heating x 10/20 HDD share)
+    caps to (2.0, 5.0), not (5.0, 5.0) -- the capped shape genuinely
+    disagrees with the raw proportion on day 1, unlike a fixture where
+    capping happens not to bind anywhere.
+
+    Checked three ways: (1) day-by-day, the actual defect this issue
+    names, not just an annual-total match; (2) the fixture is confirmed to
+    actually exercise a capping gap, so this test could not pass by
+    accident on a fixture where the two shapes coincide; (3) a caller that
+    never populates `capped_heat_by_day` (e.g. all_electric_endgame.py's
+    own direct build_hp_load_series() call, issue #119's own stated
+    out-of-scope boundary) still gets the pre-#119 raw-proportional
+    result, unchanged."""
+    period = "Jan 5, 2026 - Jan 6, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-06"], "period": [period], "therms": [22.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-06", period, 2, 22.0, 1.0, np.nan, 0.0, 0.0)
+    hdd_by_day = pd.Series({dt.date(2026, 1, 5): 10.0, dt.date(2026, 1, 6): 10.0})
+    gas_daily = pd.Series({dt.date(2026, 1, 5): 2.0, dt.date(2026, 1, 6): 20.0})
+    iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+          "annual_heating_therms": 10.0, "floor_therms_per_day": 0.0,
+          "gas_daily": gas_daily}
+    with _GasFixture(periods, detail):
+        rows, _, _, day_heat_therms = hpc.gas_savings_by_period(iso)
+    assert day_heat_therms == {dt.date(2026, 1, 5): 2.0, dt.date(2026, 1, 6): 5.0}, day_heat_therms
+    reconciled = round(sum(r["heating_therms_attributed"] for r in rows), 2)
+    assert reconciled == 7.0, reconciled
+
+    # (2) confirm this fixture actually exercises a capping gap: the raw
+    # hdd_by_day proportion of the reconciled total would put 3.5 therms on
+    # EACH day (equal HDD shares), well above day 1's real 2.0-therm cap.
+    raw_proportional_day1 = reconciled * (10.0 / 20.0)
+    assert abs(raw_proportional_day1 - 2.0) > 1.0, (
+        "fixture does not actually exercise a capping gap -- old and new "
+        "shapes would coincide, so this test could not catch a regression")
+
+    cop = hpc.COP_SCENARIOS["central_3.5"]
+    kwh_per_therm = hpc.KWH_PER_THERM * hpc.FURNACE_AFUE / cop
+    d = _synthetic_frame(n_days=2)
+
+    # (1) the fix: with capped_heat_by_day supplied, each day's placed kWh
+    # matches gas_savings_by_period()'s own capped shape exactly.
+    iso_capped = {**iso, "annual_heating_therms": reconciled,
+                 "capped_heat_by_day": day_heat_therms}
+    added_capped, ann_heat_kwh, _ = hpc.build_hp_load_series(d, iso_capped, cop)
+    assert abs(ann_heat_kwh - reconciled * kwh_per_therm) < 1e-9, ann_heat_kwh
+    for day, capped_therms in day_heat_therms.items():
+        mask = d["dt"].dt.date == day
+        expect_kwh = capped_therms * kwh_per_therm
+        actual_kwh = float(added_capped["uniform"].loc[mask].sum())
+        assert abs(actual_kwh - expect_kwh) < 1e-6, (day, expect_kwh, actual_kwh, capped_therms)
+
+    # (3) a caller that never populates capped_heat_by_day (all_electric_
+    # endgame.py's own direct call, out of this issue's own scope box) still
+    # gets the OLD raw-proportional placement, unchanged: 3.5 therms on
+    # EACH day, including day 1 despite its real 2.0-therm capacity limit.
+    iso_uncapped = {**iso, "annual_heating_therms": reconciled}
+    added_uncapped, _, _ = hpc.build_hp_load_series(d, iso_uncapped, cop)
+    day1_mask = d["dt"].dt.date == dt.date(2026, 1, 5)
+    old_day1_kwh = float(added_uncapped["uniform"].loc[day1_mask].sum())
+    assert abs(old_day1_kwh - 3.5 * kwh_per_therm) < 1e-6, old_day1_kwh
+    new_day1_kwh = float(added_capped["uniform"].loc[day1_mask].sum())
+    assert new_day1_kwh < old_day1_kwh, (
+        new_day1_kwh, old_day1_kwh, "the capped shape must place LESS kWh on "
+        "day 1 than the raw proportion did, since day 1's real capacity is "
+        "well below its raw HDD share")
+    return (f"build_hp_load_series places 2.0/5.0 therms on day 1/2 from "
+           f"gas_savings_by_period()'s own capped shape, not the 3.5/3.5 raw-"
+           f"HDD-proportional split a caller without capped_heat_by_day still gets")
+
+
+@case
+def case_hp_load_series_places_zero_on_a_positive_hdd_day_outside_capped_shape_coverage():
+    """Issue #119 (opus bug-scan review): hdd_by_day (from isolate_heating_
+    therms()'s gas/weather inner join) and capped_heat_by_day (from
+    gas_savings_by_period(), scoped to real gas BILLING periods) do not
+    always cover the identical date range -- this household's own real
+    archive has exactly one such day (2026-06-28: nonzero HDD, but past the
+    last real billing period's own end date). capped_heat_by_day.get(day,
+    0.0) is the CORRECT value there, not a missing-data default standing in
+    for a real number: that day was never summed into reconciled_heat_
+    therms either (build()'s own day_heat_therms IS reconciled_heat_therms's
+    per-day breakdown by construction), so 0.0 kWh is the exact complement
+    that keeps total placed kWh equal to ann_heat_kwh -- pinned here so a
+    future refactor doesn't "fix" it into a fail-closed SystemExit (which
+    _capacity_capped_days() correctly does for the DIFFERENT case of a real
+    gas.csv coverage gap INSIDE a billing period, where 0.0 would misprice
+    real, reconciled dollars)."""
+    period = "Jan 5, 2026 - Jan 6, 2026"
+    periods = pd.DataFrame({
+        "statement_date": ["2026-01-06"], "period": [period], "therms": [22.0],
+        "total_gas_service": [999.0], "baseline_rate": [1.0], "nonbaseline_rate": [np.nan],
+        "baseline_allowance_therms": [999.0], "gas_energy_charge_rate": [0.0],
+        "other_fees_rate": [0.0],
+    })
+    detail = _single_segment_detail("2026-01-06", period, 2, 22.0, 1.0, np.nan, 0.0, 0.0)
+    # day 3 has real, nonzero HDD but sits OUTSIDE the one real billing
+    # period above -- gas_savings_by_period() never visits it, so it is
+    # absent from day_heat_therms even though hdd_by_day carries it. Its HDD
+    # still counts toward total_hdd (the ANNUAL total, shared by every day
+    # regardless of billing-period membership), so annual_heating_therms is
+    # raised to 15.0 here (vs. the sibling fixture's 10.0) to keep each of
+    # the three now-equal-HDD days' own raw demand at 5.0 therms -- the same
+    # per-day demand the sibling fixture uses, just re-derived for a 3-day
+    # total_hdd instead of a 2-day one.
+    hdd_by_day = pd.Series({dt.date(2026, 1, 5): 10.0, dt.date(2026, 1, 6): 10.0,
+                            dt.date(2026, 1, 7): 10.0})
+    gas_daily = pd.Series({dt.date(2026, 1, 5): 2.0, dt.date(2026, 1, 6): 20.0})
+    iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+          "annual_heating_therms": 15.0, "floor_therms_per_day": 0.0,
+          "gas_daily": gas_daily}
+    with _GasFixture(periods, detail):
+        rows, _, _, day_heat_therms = hpc.gas_savings_by_period(iso)
+    assert dt.date(2026, 1, 7) not in day_heat_therms, day_heat_therms
+    reconciled = round(sum(r["heating_therms_attributed"] for r in rows), 2)
+    assert reconciled == 7.0, reconciled   # day 3's HDD never entered the sum
+
+    cop = hpc.COP_SCENARIOS["central_3.5"]
+    kwh_per_therm = hpc.KWH_PER_THERM * hpc.FURNACE_AFUE / cop
+    d = _synthetic_frame(n_days=3)
+    iso_capped = {**iso, "annual_heating_therms": reconciled,
+                 "capped_heat_by_day": day_heat_therms}
+    added, ann_heat_kwh, _ = hpc.build_hp_load_series(d, iso_capped, cop)
+    day3_mask = d["dt"].dt.date == dt.date(2026, 1, 7)
+    day3_kwh = float(added["uniform"].loc[day3_mask].sum())
+    assert day3_kwh == 0.0, day3_kwh
+    total_placed = float(added["uniform"].sum())
+    assert abs(total_placed - ann_heat_kwh) < 1e-6, (total_placed, ann_heat_kwh)
+    return ("a positive-HDD day outside gas_savings_by_period()'s own billing-period "
+           "coverage correctly places 0.0 kWh (it was never in the reconciled total "
+           "either), and total placed kWh still conserves exactly")
 
 
 @case
@@ -1059,7 +1209,7 @@ def case_capacity_cap_does_not_fail_closed_on_a_zero_demand_day_missing_from_gas
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 50.0, "floor_therms_per_day": 0.5,
               "gas_daily": gas_daily}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     # day 2's own real capacity: 5.0 - 0.5 = 4.5, capping the 50-therm
     # demand there; day 1/3 contribute 0 regardless of which capacity
     # source applied, since their own demand is 0.
@@ -1104,7 +1254,7 @@ def case_segment_total_therms_does_not_fail_closed_on_a_zero_heat_segment_missin
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 25.0, "floor_therms_per_day": 0.0,
               "gas_daily": gas_daily}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     assert rows[0]["heating_therms_attributed"] == 25.0, rows[0]
     return "a gas_daily coverage gap inside a zero-heat segment falls through to the proxy without raising, since t_s can't misprice a zero heat_s"
 
@@ -1141,7 +1291,7 @@ def case_other_fees_borrows_gas_service_day_ranges_when_only_that_count_matches(
     with _GasFixture(periods, detail):
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 20.0, "floor_therms_per_day": 0.0}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     assert rows[0]["heating_therms_attributed"] == 20.0, rows[0]
     assert abs(rows[0]["gas_savings_usd"] - 20.0 * 0.30) < 0.01, rows[0]
     return "other_fees borrows Gas Service's own day ranges when only Gas Service's segment count matches, not Gas Energy Charge's"
@@ -1218,7 +1368,7 @@ def case_other_fees_borrows_gas_energy_day_ranges_when_segment_counts_match():
         hdd_by_day = pd.Series(hdd)
         iso = {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
               "annual_heating_therms": 15.0, "floor_therms_per_day": 0.0}
-        rows, _, _ = hpc.gas_savings_by_period(iso)
+        rows, _, _, _ = hpc.gas_savings_by_period(iso)
     row = rows[0]
     assert row["heating_therms_attributed"] == 15.0, row
     # Gas Service contributes 0 (baseline_rate x 15, nonbaseline never

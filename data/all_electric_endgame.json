@@ -45,22 +45,22 @@
   "install_cost_marginal_over_ac_usd": 4098,
   "install_cost_standalone_usd": 14529,
   "payback_central_cop_3_5": {
-   "annual_electric_cost_increase_usd": 331.97,
+   "annual_electric_cost_increase_usd": 329.37,
    "annual_gas_savings_usd": 416.25,
-   "annual_net_savings_usd": 84.28,
+   "annual_net_savings_usd": 86.88,
    "marginal_over_ac_replacement": {
     "npv": {
-     "4pct": -3161,
-     "5pct": -3223
+     "4pct": -3132,
+     "5pct": -3196
     },
-    "payback_years": 48.6
+    "payback_years": 47.2
    },
    "standalone": {
     "npv": {
-     "4pct": -13592,
-     "5pct": -13654
+     "4pct": -13563,
+     "5pct": -13627
     },
-    "payback_years": 172.4
+    "payback_years": 167.2
    }
   },
   "source": "data/heat_pump_conversion.json (issues #1/#109, reused directly)"
@@ -187,8 +187,8 @@
    "combined_annual_net_savings_usd": 191.67,
    "combined_install_usd": 18729,
    "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase understates the true combined electric cost, since both conversions' independent rebills let their own added load claim the SAME exported solar kWh, which cannot really happen once both loads are real.",
-   "electric_interaction_overstatement_usd": 0.14,
-   "naive_summed_annual_net_savings_usd": 220.55,
+   "electric_interaction_overstatement_usd": 2.74,
+   "naive_summed_annual_net_savings_usd": 223.15,
    "npv": {
     "4pct": -16598,
     "5pct": -16740
@@ -204,17 +204,17 @@
    "step": "furnace",
    "with_fixed_charge_credit": {
     "npv": {
-     "4pct": -13592,
-     "5pct": -13654
+     "4pct": -13563,
+     "5pct": -13627
     },
-    "payback_years": 172.4
+    "payback_years": 167.2
    },
    "without_fixed_charge_credit": {
     "npv": {
-     "4pct": -13592,
-     "5pct": -13654
+     "4pct": -13563,
+     "5pct": -13627
     },
-    "payback_years": 172.4
+    "payback_years": 167.2
    }
   },
   "fixed_charge_release_usd": 0.0,
@@ -226,12 +226,12 @@
   ],
   "share_robustness": {
    "basis": "checks whether the headline sequencing order (water heater first, furnace last, computed on the 100%-water-heater-share basis) survives the SAME share uncertainty water_heater_share_sensitivity() already establishes -- the true share is not verified and could sit below every scenario shown there. Checked against the furnace's own STANDALONE install-cost basis (matching combined_install's own basis above, CLAUDE.md section 2) by default; a SECOND check against the furnace's own marginal-over-AC-replacement install-cost basis is also reported below (marginal_basis) -- that basis is NOT the one combined_install actually uses, so marginal_basis is a diagnostic on a different hypothetical, not a second combined-savings figure",
-   "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 172.4-year standalone payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
-   "crossover_water_heater_share": 0.1582,
+   "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 167.2-year standalone payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+   "crossover_water_heater_share": 0.1632,
    "marginal_basis": {
-    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 48.6-year marginal_over_ac_replacement payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
-    "crossover_water_heater_share": 0.6076,
-    "furnace_payback_years": 48.6,
+    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 47.2-year marginal_over_ac_replacement payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+    "crossover_water_heater_share": 0.6266,
+    "furnace_payback_years": 47.2,
     "furnace_payback_years_basis": "marginal_over_ac_replacement",
     "named_scenarios": {
      "100pct_full_floor": {

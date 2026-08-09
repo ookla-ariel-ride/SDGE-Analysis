@@ -4056,8 +4056,8 @@ triviality is checkable rather than silently elided. Both figures below are the 
 Complete-transition payback carries TWO corrections, not one (Codex adversarial review,
 rounds 1 and 2, both a DIRECT consequence of fixing the tier-pricing direction, not
 separately named by round 1's own review but required by CLAUDE.md §9 once found): naively
-summing the water heater's own $136.27/yr and the furnace's own $84.28/yr
-independently-computed marginal savings (plus the $0 release) gives $220.55/yr, but each is
+summing the water heater's own $136.27/yr and the furnace's own $86.88/yr
+independently-computed marginal savings (plus the $0 release) gives $223.15/yr, but each is
 computed as if it ALONE were removed from the same original bill and rebilled against the
 same original solar.
 
@@ -4110,14 +4110,29 @@ functions their independent scenarios already use, `heat_pump_conversion.build_h
 series` and `build_wh_load_series`, not reimplemented) are SUMMED into one combined series,
 netted against solar ONCE, and re-billed ONCE with `rates.bill_nem()`. `electric_interaction_
 overstatement()` quantifies the gap between that joint figure and the naive sum of the two
-independent figures, mirroring `tier_interaction_overstatement()`'s own role: **$0.14/yr**
+independent figures, mirroring `tier_interaction_overstatement()`'s own role: **$2.74/yr**
 overstatement on this household's real data — real, structurally guaranteed non-negative (the
 "how much of a fixed solar export can a load absorb" function is concave, so `min(g,a) +
-min(g,b) >= min(g,a+b)` for any export `g` and loads `a, b`), but SMALL here specifically
-because this household's furnace load concentrates in winter while its water-heater load
-spreads uniformly across the whole year, so the two rarely compete for the same exported
-solar interval — a household whose two added loads overlap more in time would see a larger
-correction. Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces a
+min(g,b) >= min(g,a+b)` for any export `g` and loads `a, b`), SMALL here partly because this
+household's furnace load concentrates in winter while its water-heater load spreads uniformly
+across the whole year, so the two rarely compete for the same exported solar interval — a
+household whose two added loads overlap more in time would see a larger correction from that
+mechanism alone.
+
+**Post-issue-#119 basis note.** `furnace_headline["annual_electric_cost_increase_usd"]` (the
+term this function reads from `heat_pump_conversion.json`) now comes from that module's
+capacity-capped daily placement (issue #119), but `joint_electric_cost_scenario()`'s own
+internal furnace-added-load series still calls `HPC.build_hp_load_series()` without a
+`capped_heat_by_day` key, so it still places the furnace's load on the older, uncapped
+day_hdd/total_hdd shape. `electric_interaction_overstatement()`'s $2.74/yr (was $0.14/yr
+before issue #119) therefore now conflates the genuine double-claimed-solar effect above with
+a second, smaller effect: the same two-shape mismatch issue #119 fixed in
+`heat_pump_conversion.py`'s own pipeline, still latent here. `complete_transition_payback`'s
+own $191.67/yr and 97.7-yr figures are unaffected (the shift nets out exactly against
+`naive_summed_annual_net_savings_usd`'s own equal-and-opposite move), so no published headline
+number is wrong, but this specific $2.74/yr figure is not a clean measurement of solar
+double-counting alone until a follow-up threads the same capped shape into this script's own
+joint rebill. Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces a
 per-interval kW/circuit-amperage cap, and `rates.bill_nem()` has no demand-charge component
 either, so summing the two series for billing purposes does not interact with the PANEL-level
 cumulative-headroom check `service_headroom_check()` (AC5) already makes for both loads
@@ -4125,10 +4140,10 @@ together.
 
 Both corrections are netted out of the headline figure rather than left in it ("one pipeline
 per package figure... never by adding numbers from different models," CLAUDE.md §9). Combined
-install $18,729, combined net savings **$191.67/yr** (naive sum $220.55/yr minus the
-$28.74/yr segment-level gas correction minus the $0.14/yr electric correction), **97.7 yr**
+install $18,729, combined net savings **$191.67/yr** (naive sum $223.15/yr minus the
+$28.74/yr segment-level gas correction minus the $2.74/yr electric correction), **97.7 yr**
 payback. Final step alone (furnace, the longer-payback step and so ordered last): standalone
-payback **172.4 yr**, identical with and without the credit (the furnace's own figure has no
+payback **167.2 yr**, identical with and without the credit (the furnace's own figure has no
 interaction term of its own — it is a single-conversion computation). Neither payback
 represents a confirmed meter removal — whether a third end use (AC2) remains unpriced and
 unconverted is not determined.
@@ -4137,12 +4152,12 @@ unconverted is not determined.
 was derived from ONLY the 100%-water-heater-share basis, with no check against the SAME
 share uncertainty `water_heater_share_sensitivity()` (above) already establishes.** At a
 low-enough, still-plausible share, the water heater's own payback could exceed the furnace's
-own 172.4-year standalone payback, reversing the published order — publishing a single
+own 167.2-year standalone payback, reversing the published order — publishing a single
 hardcoded order without checking this was a real precision gap, not a style nit.
 `sequencing_share_robustness()` reuses `sequencing_and_paybacks()` ITSELF (not a second sort
 implementation) to probe the order at each of the three named share scenarios above, and
 bisects for the numeric share at which the water heater's own central-install payback first
-reaches the furnace's own 172.4-year target (`_crossover_water_heater_share()`, reusing `HPC.
+reaches the furnace's own 167.2-year target (`_crossover_water_heater_share()`, reusing `HPC.
 payback_and_npv()` and a leaner single-scenario version of the water-heater rebill, `_wh_net_
 savings_at_share()` — the SAME `floor_savings_by_period()` and `build_wh_load_series()` calls
 `wh_electric_cost_scenarios()` already makes, restricted to the one (headline UEF, uniform)
@@ -4153,7 +4168,7 @@ dozens of trials). On this household's real data the published order (water heat
 **robust at every one of the three named scenarios** (100%/72.3%/21.2% all keep the water
 heater first) **on the furnace's own STANDALONE install-cost basis** (the basis
 `complete_transition_payback`'s own `combined_install` actually uses, CLAUDE.md §2), and the
-numeric crossover sits at **15.82% water-heater share** on that basis — below the lowest
+numeric crossover sits at **16.32% water-heater share** on that basis — below the lowest
 illustrative scenario shown (21.2%), so the order does not flip anywhere this report actually
 illustrates on that basis, though a lower, unruled-out true share could still flip it. Wired
 into `sequencing_and_paybacks()`'s own output as a new `share_robustness` field
@@ -4163,14 +4178,14 @@ into `sequencing_and_paybacks()`'s own output as a new `share_robustness` field
 **Round 6 addition (code-reviewer, issue #20, Finding 4): the robustness check above was
 verified on only ONE of the two install-cost bases this report publishes for the furnace,
 without saying which.** `heat_pump_conversion.json` and this report's own furnace section
-also publish a MARGINAL-over-AC-replacement basis ($4,098 installed, 48.6-yr payback — the
+also publish a MARGINAL-over-AC-replacement basis ($4,098 installed, 47.2-yr payback — the
 more realistic basis for a homeowner already due for an AC replacement, and the one this
 report elsewhere calls more realistic), which `sequencing_share_robustness()`'s own
 `combined_install` does NOT use — so the "robust across every illustrative share" claim was
 correct but incomplete about which basis it was checked against. On this household's real
 data the order does NOT survive on the marginal basis: the 21.2%-share water-heater scenario's
-own 130.0-yr payback loses to the 48.6-yr marginal-basis furnace, reversing the order at a
-scenario this report explicitly illustrates, and the marginal-basis crossover sits at **60.76%
+own 130.0-yr payback loses to the 47.2-yr marginal-basis furnace, reversing the order at a
+scenario this report explicitly illustrates, and the marginal-basis crossover sits at **62.66%
 water-heater share** — well above every scenario this report considers plausible. Fixed by
 running the SAME check twice: `sequencing_share_robustness()` takes an optional
 `furnace_payback_years_marginal` argument and, when supplied, runs the identical named-
