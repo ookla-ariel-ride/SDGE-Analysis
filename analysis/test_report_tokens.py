@@ -822,30 +822,260 @@ def case_s1_verdict_refuses_to_call_anti_correlated_series_agreement():
             f"(live: {real:.4f})")
 
 
-@case
-def case_s6_verdict_compares_marginal_values_and_stays_true_at_every_sign():
-    """S6's closing clause is the other shape: a comparison of two DIFFERENCES
-    ("worth more than"), not a quotient. Ordering survives either difference
-    going negative, so it needs no guard -- asserted here across the sign
-    grid rather than by reading the code, since the neighbouring S7 defect
-    looked equally harmless."""
+def _s6_verdict_at(greedy, evening, expanded):
+    """S6_VERDICT rendered against a substituted dispatch artifact."""
     dp = rt._json("battery_dispatch_policies.json")
+    with _swapped(dp["pw3"]["greedy"], "save", greedy), \
+         _swapped(dp["pw3"]["evening"], "save", evening), \
+         _swapped(dp["pw3x"]["greedy"], "save", expanded):
+        return rt.resolve_token("S6_VERDICT")
+
+
+@case
+def case_s0_verdict_does_not_claim_the_free_move_is_the_largest_saving():
+    """"the biggest win costs nothing" is a superlative no artifact supports.
+    On this household's own numbers the battery's post-fix saving is LARGER
+    than the free EV fix, so on the plain reading -- the largest available
+    saving is the free one -- the sentence was false. There is nothing to
+    guard: a superlative with no computation behind it has to go, leaving
+    the true and useful claim (a large saving that needs no purchase)."""
+    saved = rt._json("behavior_rebuild.json")["scenarios"]["a"]["saved"]
+    battery = rt._json("package_results.json")["packages"]["MID"][
+        "battery_alone_post_ev_fix_yr"]
+    assert battery > saved, (
+        f"the battery's own saving (${battery}/yr) no longer exceeds the free fix "
+        f"(${saved}/yr); re-derive whether a superlative would now be defensible")
+    value = rt.resolve_token("S0_VERDICT")
+    for superlative in ("biggest", "largest", "greatest", "best"):
+        assert superlative not in value.lower(), (
+            f"S0_VERDICT ranks the free fix as the {superlative} win while the battery "
+            f"alone saves ${battery}/yr against its ${saved}/yr: {value}")
+    assert f"{rt._usd0(saved)}/yr" in value and "modeled" in value, (
+        f"S0_VERDICT dropped the free fix's figure or its modeled label: {value}")
+    _assert_within_density_cap("S0_VERDICT", value, "the published branch")
+    return (f"S0_VERDICT states the free fix's ${saved:,.0f}/yr without ranking it above "
+            f"the battery's own ${battery:,.0f}/yr")
+
+
+@case
+def case_s2_verdict_reports_what_was_measured_rather_than_an_array_health_verdict():
+    """"the array is healthy" rendered identically whatever the meter said:
+    no committed artifact carries a specific-yield expectation or a
+    degradation trend to compare against. Unlike S1's correlation floor
+    there is no committed gate to anchor a threshold to, so the judgment is
+    dropped instead of guarded -- the measured yield and the export-timing
+    finding carry the section."""
+    value = rt.resolve_token("S2_VERDICT")
+    for judgment in ("healthy", "degraded", "underperforming", "good shape"):
+        assert judgment not in value.lower(), (
+            f"S2_VERDICT passes a {judgment!r} verdict on the array with no committed "
+            f"benchmark behind it: {value}")
+    production = rt._annual_production_kwh(rt.CTX)
+    exported = rt._json("report_data.json")["totals"]["exp"]
+    assert f"{production:,.0f} kWh" in value, (
+        f"S2_VERDICT dropped the measured production total: {value}")
+    assert "kWh/kW" in value, f"S2_VERDICT dropped the measured specific yield: {value}"
+    assert f"{round(exported / production * 100)}% of that output exports at midday" \
+        in value, f"S2_VERDICT dropped the export-timing conclusion: {value}"
+    _assert_within_density_cap("S2_VERDICT", value, "the published branch")
+    return ("S2_VERDICT keeps the measured yield and the export-timing conclusion and "
+            "passes no health verdict")
+
+
+def _centered(values):
+    mean = sum(values) / len(values)
+    return [v - mean for v in values]
+
+
+def _blend_to_correlation(rows, column, target):
+    """Overwrite `column` in place so its weakest pairwise daily correlation
+    with the artifact's other series is `target`, and return the original
+    cells so the caller can restore them.
+
+    Deterministic and solved, not "add noise until it looks weak": a fixed
+    LCG sequence is projected orthogonal to EVERY series in the file (the
+    victim's own original included), so mixing in A units of it moves the
+    correlation to 1/sqrt(1 + A^2 var_z/var_x) and A can be solved for the
+    target outright. Orthogonalizing against the other columns as well is
+    what keeps a 0.0010 target from landing on the wrong SIDE of zero: the
+    other two series are near-copies of the victim, so any leftover
+    projection would dominate a correlation that small. Rows where any
+    column is blank are dropped from the victim so every pair correlates
+    over the same dates the projection was computed on."""
+    numeric = list(rows[0])[1:]                # column 0 is the date key
+    complete = [r for r in rows if all(r[c] not in (None, "") for c in numeric)]
+    xs = [float(r[column]) for r in complete]
+    others = [_centered([float(r[c]) for r in complete])
+              for c in numeric if c != column]
+    state = 12345
+    zs = []
+    for _ in complete:
+        state = (1103515245 * state + 12345) % 2147483648
+        zs.append(state / 2147483648 * 2 - 1)
+    cx = _centered(xs)
+    orth = _centered(zs)
+    for _pass in range(2):                     # twice, for numerical stability
+        for basis in [cx] + others:
+            denom = sum(v * v for v in basis)
+            beta = sum(u * v for u, v in zip(orth, basis)) / denom
+            orth = [o - beta * b for o, b in zip(orth, basis)]
+    var_x = sum(v * v for v in cx)
+    var_o = sum(v * v for v in orth)
+    amplitude = ((1.0 / target ** 2 - 1.0) * var_x / var_o) ** 0.5
+    originals = [r[column] for r in rows]
+    for r in rows:
+        r[column] = ""
+    for r, x, o in zip(complete, xs, orth):
+        r[column] = repr(x + amplitude * o)
+    return originals
+
+
+@case
+def case_s1_verdict_needs_real_agreement_not_merely_a_positive_correlation():
+    """Section 1's second claim is the word "agree", not the sign of a
+    number. A guard that only rejects r <= 0 still lets "the independent
+    production series agree at 0.0010 daily correlation" render, and 0.0010
+    is three series with essentially nothing in common. The bound the token
+    uses is not invented: it is the weakest pairwise correlation a passing
+    run of analysis/threeway_production_validation.py can put in the file
+    (its reference-sanity floor less its derived-series allowance)."""
+    rows = rt._csv_rows("threeway_production_validation.csv")
+    victim = list(rows[0])[1]
+    real = rt._min_pairwise_daily_correlation()
+    floor = rt.MIN_AGREEMENT_CORRELATION
+    assert real >= floor, (
+        f"the committed production series already correlate at only {real:.4f}, under "
+        f"the {floor} floor S1_VERDICT requires")
+    originals = None
+    measured = {}
+    try:
+        # Positive, and still not agreement: the review's own 0.0010 example,
+        # a correlation most readers would call strong (0.60), and one just
+        # under the floor.
+        for target in (0.0010, 0.60, floor - 0.002):
+            originals = _blend_to_correlation(rows, victim, target)
+            weakest = rt._min_pairwise_daily_correlation()
+            measured[f"{target:.4f}"] = weakest
+            assert 0 < weakest < floor, (
+                f"the {target:.4f} blend measured {weakest:.4f}, which is not the "
+                "positive-but-under-the-floor case this asserts")
+            try:
+                value = rt.resolve_token("S1_VERDICT")
+                raise AssertionError(
+                    f"S1_VERDICT said the independent production series agree at a "
+                    f"weakest pairwise correlation of {weakest:.4f}: {value}")
+            except SystemExit as e:
+                assert "S1_VERDICT" in str(e), e
+            for r, original in zip(rows, originals):
+                r[victim] = original
+            originals = None
+        # Discriminates both ways: a pair that is measurably worse than
+        # today's data but still clears the floor keeps the word.
+        originals = _blend_to_correlation(rows, victim, floor + 0.007)
+        weakest = rt._min_pairwise_daily_correlation()
+        measured["above the floor"] = weakest
+        assert floor < weakest < real, (
+            f"the above-floor blend measured {weakest:.4f}, outside the "
+            f"({floor}, {real:.4f}) band this arm needs")
+        value = rt.resolve_token("S1_VERDICT")
+        assert f"agree at {weakest:.4f} daily correlation" in value, value
+    finally:
+        if originals is not None:
+            for r, original in zip(rows, originals):
+                r[victim] = original
+    assert abs(rt._min_pairwise_daily_correlation() - real) < 1e-12, (
+        "the blended production column leaked out of this case")
+    return ("S1_VERDICT withholds the word 'agree' at weakest pairwise correlations of "
+            + ", ".join(f"{v:.4f}" for k, v in measured.items() if k != "above the floor")
+            + f" and keeps it at {measured['above the floor']:.4f} "
+            f"(floor {floor}, live {real:.4f})")
+
+
+@case
+def case_s6_verdict_ranks_the_larger_gain_whenever_one_option_really_gains():
+    """S6's closing clause is the other shape: a comparison of two DIFFERENCES
+    ("worth more than"), not a quotient. Where one of the two options really
+    does add money, the ranking must follow the larger gap in both
+    directions -- asserted across the grid rather than by reading the code,
+    since the neighbouring S7 defect looked equally harmless."""
     grid = [(1000, 900, 1050), (1000, 900, 1200), (1000, 1100, 1050),
-            (1000, 1100, 900), (1000, 900, 800)]
+            (1000, 900, 800), (1000, 1050, 1400)]
+    widths = {}
     for greedy, evening, expanded in grid:
-        with _swapped(dp["pw3"]["greedy"], "save", greedy), \
-             _swapped(dp["pw3"]["evening"], "save", evening), \
-             _swapped(dp["pw3x"]["greedy"], "save", expanded):
-            value = rt.resolve_token("S6_VERDICT")
+        value = _s6_verdict_at(greedy, evening, expanded)
         policy_gap, capacity_gap = greedy - evening, expanded - greedy
+        assert max(policy_gap, capacity_gap) > 0, (
+            f"grid entry {(greedy, evening, expanded)} has no winning option, so it "
+            "belongs in the both-lose case, not this one")
         expected = ("so the dispatch settings are worth more than a bigger pack"
                     if policy_gap > capacity_gap else
                     "so a bigger pack is worth more than the dispatch settings")
         assert expected in value, (
             f"S6_VERDICT ranks the wrong side at policy gap {policy_gap} vs capacity gap "
             f"{capacity_gap}: {value}")
+        widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"policy {policy_gap:+d} vs capacity {capacity_gap:+d}")
     return (f"S6_VERDICT's 'worth more than' clause tracks the larger marginal gain across "
-            f"{len(grid)} sign combinations, including both gaps negative")
+            f"{len(grid)} sign combinations, each inside the density cap "
+            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+@case
+def case_s6_verdict_calls_an_exact_tie_a_tie_rather_than_a_win_for_the_pack():
+    """"policy_gap > capacity_gap" splits three orderings into two branches:
+    at an exact tie the else arm fires and tells the reader a bigger pack is
+    worth MORE than the dispatch settings while the artifact says the two
+    marginal gains are identical."""
+    real = rt._json("battery_dispatch_policies.json")
+    live_policy = real["pw3"]["greedy"]["save"] - real["pw3"]["evening"]["save"]
+    live_capacity = real["pw3x"]["greedy"]["save"] - real["pw3"]["greedy"]["save"]
+    assert live_policy != live_capacity, (
+        f"data/battery_dispatch_policies.json now ties the two gaps at {live_policy}; "
+        "the published branch below is no longer the live one")
+    widths = {}
+    for greedy, evening, expanded in ((1000, 900, 1100), (1000, 700, 1300)):
+        value = _s6_verdict_at(greedy, evening, expanded)
+        gap = greedy - evening
+        assert "worth more than" not in value, (
+            f"S6_VERDICT ranks one option above the other while both add exactly "
+            f"${gap}/yr: {value}")
+        assert "are worth the same" in value, (
+            f"S6_VERDICT must say plainly that two ${gap}/yr gains are worth the same: "
+            f"{value}")
+        widths[f"tie at +{gap}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"an exact tie at +{gap}")
+    return ("S6_VERDICT calls an exact tie equal marginal value instead of handing the "
+            f"win to the bigger pack ({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+@case
+def case_s6_verdict_does_not_sell_the_better_of_two_losing_options():
+    """The comparison is still TRUE when both gaps are negative -- and that is
+    the problem. "a bigger pack is worth more than the dispatch settings"
+    reads as purchase guidance, so ranking two options that each REDUCE the
+    modeled saving recommends a detrimental buy on a technicality. Zero
+    counts as no gain, so a tie at zero belongs here too, not in the
+    equal-value branch."""
+    widths = {}
+    # (greedy, evening, expanded): policy gap / capacity gap, in that order --
+    # pack loses less, dispatch loses less, both exactly zero, one zero.
+    grid = [(1000, 1100, 950), (1000, 1100, 850), (1000, 1000, 1000), (1000, 1050, 1000)]
+    for greedy, evening, expanded in grid:
+        value = _s6_verdict_at(greedy, evening, expanded)
+        policy_gap, capacity_gap = greedy - evening, expanded - greedy
+        assert "worth more than" not in value, (
+            f"S6_VERDICT recommends the better of two options that each add "
+            f"{policy_gap:+d}/{capacity_gap:+d} per year: {value}")
+        assert "are worth the same" not in value, (
+            f"S6_VERDICT calls two non-gains equal marginal value at "
+            f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
+        assert "neither the dispatch settings nor a bigger pack adds any saving" in value, (
+            f"S6_VERDICT must say neither option adds anything at "
+            f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
+        widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"policy {policy_gap:+d} vs capacity {capacity_gap:+d}")
+    return ("S6_VERDICT refuses to rank two options that both fail to add a saving "
+            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
 
 
 def main():

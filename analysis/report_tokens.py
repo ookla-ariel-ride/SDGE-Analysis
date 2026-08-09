@@ -73,6 +73,11 @@ sys.path.insert(0, str(ROOT / "analysis"))
 import household as hh          # noqa: E402
 import privacy_tiers as pt      # noqa: E402
 import rates as R               # noqa: E402
+# Constants only (its two committed correlation bounds), never its generator
+# entry points -- see MIN_AGREEMENT_CORRELATION below. Importing beats
+# copying the numbers here, which would silently drift from the gate they
+# are supposed to mirror.
+import threeway_production_validation as tpv   # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1309,8 +1314,20 @@ def _s0_verdict(ctx):
     # "hardware-alone" is deliberate: CLAUDE.md section 2 forbids crediting
     # the free behavior saving to the hardware, and both ends of this range
     # are package_results.json's OWN battery-alone paybacks.
-    return (f"{VERDICT_STEM}the rate plan is right, the biggest win costs nothing "
-            f"(retiming EV charging, {_usd0(saved)}/yr modeled), and a "
+    #
+    # This clause used to read "the biggest win costs nothing". On the plain
+    # reading -- the largest saving available is the free one -- that is
+    # false on this household's own artifacts: the EV fix is worth
+    # scenarios.a.saved and the battery's own post-fix saving
+    # (packages.MID.battery_alone_post_ev_fix_yr) is larger. Only a
+    # net-of-cost or per-dollar reading rescued it, and a reader does not
+    # silently apply one to the word "biggest". What is TRUE, and what the
+    # section actually needs, is that the free move is large and does not
+    # depend on buying anything -- so the sentence says exactly that and
+    # ranks nothing. No guard can fix a superlative that no artifact
+    # supports; the honest fix is to stop claiming it.
+    return (f"{VERDICT_STEM}the rate plan is right, the free EV-charging fix saves a "
+            f"modeled {_usd0(saved)}/yr whatever you buy, and a "
             f"{_battery_model_short()} is a sound optional buy at a "
             f"{lo:.1f}–{hi:.1f}-year hardware-alone payback.")
 
@@ -1368,6 +1385,24 @@ def _min_pairwise_daily_correlation():
     return worst
 
 
+# A GUARD BOUND, not a measured or published quantity: no artifact in this
+# repo reports a "minimum correlation at which two production series agree",
+# and inventing a round one would be the kind of unsourced figure CLAUDE.md
+# section 0 forbids. So it is composed from the two FIXED constants already
+# committed in analysis/threeway_production_validation.py -- the generator
+# that WRITES the file this token correlates. That script refuses to publish
+# unless (a) the two reference instruments correlate at least
+# REF_CORRELATION_SANITY_MIN with each other, and (b) the third, derived
+# series sits no more than CORRELATION_FLOOR_BELOW_REF beneath that observed
+# reference correlation. Their difference is therefore the weakest pairwise
+# correlation a passing run of that generator can put into the artifact:
+# below it, the file did not come from a run its own validator would have
+# published, and the word "agree" has nothing left to stand on. Never
+# rendered -- it gates the sentence, it does not appear in it.
+MIN_AGREEMENT_CORRELATION = (tpv.REF_CORRELATION_SANITY_MIN
+                             - tpv.CORRELATION_FLOOR_BELOW_REF)
+
+
 def _s1_verdict(ctx):
     ab = _json("tou_audit_summary.json")["rules"]["as_billed"]
     # Fail closed rather than publish a false claim: the sentence says every
@@ -1377,16 +1412,20 @@ def _s1_verdict(ctx):
             f"report_tokens: S1_VERDICT refuses to claim all {ab['buckets']} billed TOU "
             f"buckets rebuild -- data/tou_audit_summary.json:rules.as_billed reports "
             f"{ab['buckets_failing']} failing bucket(s): {ab.get('failing_buckets')}")
-    # Same reason, second claim: a correlation coefficient is a signed ratio,
-    # and at r <= 0 the weakest pair does not agree at all -- printing "agree
-    # at -0.1300 daily correlation" states the opposite of what the number
-    # says. Only a positive r supports the word "agree".
+    # Same reason, second claim. A correlation coefficient is a signed ratio,
+    # so r <= 0 makes the printed number contradict the word beside it
+    # ("agree at -0.1300 daily correlation") -- but a merely POSITIVE r does
+    # not earn the word either: "agree at 0.0010 daily correlation" describes
+    # three series that share almost no day-to-day shape. The sentence claims
+    # agreement, so it has to clear the weakest agreement the artifact's own
+    # generator would ever publish (MIN_AGREEMENT_CORRELATION above).
     r = _min_pairwise_daily_correlation()
-    if r <= 0:
+    if r < MIN_AGREEMENT_CORRELATION:
         raise SystemExit(
             f"report_tokens: S1_VERDICT refuses to say the independent production series "
             f"agree -- data/threeway_production_validation.csv's weakest pair correlates "
-            f"at {r:.4f} daily")
+            f"at {r:.4f} daily, under the {MIN_AGREEMENT_CORRELATION:.4f} floor "
+            f"analysis/threeway_production_validation.py's own publication gate implies")
     # No apostrophe, no ampersand, no tag anywhere in these sentences: token
     # values are HTML-escaped at render (an apostrophe would ship as &#x27;),
     # so the plain text is also the rendered text.
@@ -1410,7 +1449,17 @@ def _s2_verdict(ctx):
         _json("behavior_rebuild.json")["window"]["end"].split(" ")[0])
     pto = _as_date(hh1("household.pto_date"))
     age = end.year - pto.year - ((end.month, end.day) < (pto.month, pto.day))
-    return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array is healthy, producing "
+    # "is healthy" was a judgment no artifact in this repo makes. Nothing
+    # committed here carries a specific-yield expectation or a degradation
+    # trend for this array, so the word rendered identically whatever the
+    # meter said -- a claim with no computation behind it, which is what
+    # CLAUDE.md section 0 forbids. Guarding it would mean inventing a
+    # kWh/kW floor, and unlike S1's correlation bound there is no committed
+    # gate to anchor one to. So the judgment is dropped rather than
+    # threshold-guarded: the yield and the production total are measured and
+    # stand on their own, and the export-timing clause -- derived from
+    # report_data.json's own totals -- is the section's real conclusion.
+    return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array produced "
             f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW, but "
             f"{round(exported / production * 100)}% of that output exports at midday "
             "while the EV charges at night.")
@@ -1481,10 +1530,27 @@ def _s6_verdict(ctx):
     policy_gap = greedy - evening
     capacity_gap = dp["pw3x"]["greedy"]["save"] - greedy
     # The closing clause is a comparison, not a conclusion pasted in: on
-    # another household's artifacts the second pack could well win.
-    tail = ("so the dispatch settings are worth more than a bigger pack"
-            if policy_gap > capacity_gap else
-            "so a bigger pack is worth more than the dispatch settings")
+    # another household's artifacts the second pack could well win. But a
+    # bare > splits three cases into two and mislabels the other two.
+    #   * At an exact tie neither side is worth more, and ">" quietly hands
+    #     the win to the pack.
+    #   * When the WINNING gap is itself <= 0, "worth more than" is
+    #     comparatively true and reads as purchase guidance for an option
+    #     that lowers the modeled saving -- the same reader-harm the S7
+    #     guard exists to prevent. Both gaps non-positive is exactly that
+    #     case (whichever is larger is still a loss or a wash), and the
+    #     clause has to say so instead of ranking them.
+    # Each branch is held to CLAUDE.md section 10's 35-word density cap on
+    # the whole sentence, including the branches today's data never takes:
+    # the lead spends 18, leaving 17 for the tail.
+    if policy_gap <= 0 and capacity_gap <= 0:
+        tail = "and neither the dispatch settings nor a bigger pack adds any saving"
+    elif policy_gap == capacity_gap:
+        tail = "and the dispatch settings and a bigger pack are worth the same"
+    elif policy_gap > capacity_gap:
+        tail = "so the dispatch settings are worth more than a bigger pack"
+    else:
+        tail = "so a bigger pack is worth more than the dispatch settings"
     return (f"{VERDICT_STEM}one {_battery_model_short()} on price-aware dispatch models "
             f"{_usd0(greedy)}/yr against {_usd0(evening)} on an evening-only schedule, {tail}.")
 
