@@ -2225,6 +2225,30 @@ def build():
     furnace_iso = {**iso, "annual_heating_therms": hpc_data["reconciled_heating_therms_yr"],
                    "capped_heat_by_day": day_heat_therms}
     furnace_cop = HPC.COP_SCENARIOS["central_3.5"]
+    # Codex adversarial review, issue #127: the therms-total check above
+    # cannot prove the artifact's own DAY-BY-DAY shape still matches --  a
+    # stale heat_pump_conversion.json regenerated from OLDER private data
+    # could coincidentally reconcile to the same annual total while
+    # redistributing heat across different days, silently reintroducing the
+    # exact basis mismatch this fix closes, just one level deeper. Directly
+    # recompute the SAME dollar figure furnace_headline is about to be
+    # combined with (heat_pump_conversion.electric_cost_scenarios()'s own
+    # central-COP/uniform electric_cost_increase_usd, not reimplemented)
+    # against this script's OWN freshly-loaded `iso` -- if the artifact is
+    # stale, a different real day-by-day placement produces a materially
+    # different TOU-priced bill, not merely a different-but-coincidentally-
+    # equal number, so this check is exact (not tolerance-widened for
+    # rounding) rather than a proxy on the total therms alone.
+    verify_electric, _ = HPC.electric_cost_scenarios(d, furnace_iso)
+    verify_furnace_electric = verify_electric["central_3.5"]["uniform"]["electric_cost_increase_usd"]
+    assert abs(verify_furnace_electric - furnace_headline["annual_electric_cost_increase_usd"]) < 0.01, (
+        "all_electric_endgame.py: recomputed furnace electric cost increase "
+        f"({verify_furnace_electric}) disagrees with heat_pump_conversion.json's "
+        f"own committed figure ({furnace_headline['annual_electric_cost_increase_usd']}) -- "
+        "the artifact may be stale (regenerated from different private data "
+        "than this script's own iso, even though the annual therms total "
+        "happens to reconcile); run heat_pump_conversion.py to regenerate "
+        "it from the same private data before this script")
     ann_wh_kwh_headline = (floor_therms_annual * HPC.KWH_PER_THERM * GAS_WH_UEF
                            / HPWH_UEF_SCENARIOS[headline_uef])
     joint_electric = joint_electric_cost_scenario(d, furnace_iso, furnace_cop, ann_wh_kwh_headline)
