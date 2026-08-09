@@ -78,6 +78,10 @@ import rates as R               # noqa: E402
 # copying the numbers here, which would silently drift from the gate they
 # are supposed to mirror.
 import threeway_production_validation as tpv   # noqa: E402
+# Constants only, same reason: tou_audit.ROUNDING_PER_BUCKET is the whole-kWh
+# rounding bound S1_VERDICT's sentence quotes, and importing it beats copying
+# the number here where it would drift from the artifact it describes.
+import tou_audit as ta                          # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1022,22 +1026,34 @@ def _plan_row(provider):
                       f"{hh1('household.plan')!r}/{provider!r}")
 
 
-def _assert_household_plan_is_cheapest(ctx, token):
-    """(plan, provider, cheapest_total) off data/plan_results.csv, after
-    asserting the household's own plan is the UNIQUE cheapest one priced for
-    its generation provider. Raises SystemExit naming `token` otherwise.
+def _join_plan_names(names):
+    """"A", "A and B", "A, B and C" -- plan names read as prose."""
+    names = list(names)
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
-    ONE helper, every caller: sections 0 and 3 both tell the reader this
-    house is already on the right tariff, and two independent rankings of the
-    same CSV can drift apart over what "cheapest" means -- which provider
-    column ranks, whether a tie counts as a win, whether the household's plan
-    even appears. A verdict that asserts the conclusion while a sibling
-    verdict is the only one checking it is exactly how section 0 -- the most
-    prominent claim in the report -- could keep recommending a tariff that no
-    longer wins, while section 3 failed closed on the same artifact.
 
-    A tie fails too. At an exact tie the household's plan is not the cheapest
-    plan, it is one of two, and neither sentence is written to say that.
+def _plan_ranking(ctx, token):
+    """(plan, provider, plan_total, cheapest_total, winners): the household's
+    own plan, the generation provider whose column ranks, what that column
+    charges for the household's plan, the cheapest total in it, and every plan
+    tying for that cheapest total -- all off data/plan_results.csv.
+
+    ONE helper, every caller: sections 0 and 3 both tell the reader something
+    about this house's tariff, and two independent rankings of the same CSV
+    can drift apart over what "cheapest" means -- which provider column ranks,
+    whether a tie counts as a win, whether the household's plan even appears.
+
+    It RANKS; it does not refuse. This helper used to raise SystemExit unless
+    the household's plan was the unique cheapest, which took the WHOLE report
+    down for a household on a non-optimal tariff -- exactly the household
+    section 3 exists to help, and exactly the reader who most needs the
+    section. Both sentences now invert on the ranking instead. The two
+    SystemExits left are the cases where there is no ranking to report at all:
+    no priced rows for the household's provider, and no priced row for the
+    household's own plan. Neither sentence can quote a figure that does not
+    exist, which is the one thing failing closed is still for.
     """
     plan = hh1("household.plan")
     provider = _generation_provider_short(ctx)
@@ -1046,14 +1062,15 @@ def _assert_household_plan_is_cheapest(ctx, token):
         raise SystemExit(f"report_tokens: {token} cannot rank plans -- "
                           f"data/plan_results.csv has no rows for the household's "
                           f"generation provider {provider!r}")
-    cheapest = min(float(r["total"]) for r in rows)
-    winners = [r["plan"] for r in rows if float(r["total"]) == cheapest]
-    if winners != [plan]:
+    totals = {r["plan"]: float(r["total"]) for r in rows}
+    if plan not in totals:
         raise SystemExit(
-            f"report_tokens: {token} refuses to claim {plan!r} is the cheapest plan -- "
-            f"data/plan_results.csv's {provider} column ranks {winners} cheapest at "
-            f"${cheapest:,.2f}")
-    return plan, provider, cheapest
+            f"report_tokens: {token} cannot price the household's own plan -- "
+            f"data/plan_results.csv's {provider} column prices {sorted(totals)}, "
+            f"which does not include {plan!r}")
+    cheapest = min(totals.values())
+    winners = sorted(p for p, t in totals.items() if t == cheapest)
+    return plan, provider, totals[plan], cheapest, winners
 
 
 _tok("BEST_PLAN_ANNUAL_CCA", kind="derived",
@@ -1089,43 +1106,68 @@ _tok("BATTERY_VALUE_BEST_PLAN", kind="derived",
 
 
 def _runner_up():
-    """The cheapest OTHER plan in battery_plan_matrix.json, once the household's
-    own plan is established as leading it.
+    """The cheapest OTHER plan in battery_plan_matrix.json, whether or not the
+    household's own plan leads it.
 
-    Both callers -- S4_VERDICT_SHORT and PLAN_MARGIN_VS_RUNNER_UP -- print the
-    difference as this plan's "lead" / "margin", words that are false if the
-    runner-up prices at or below it: the margin token would publish a negative
-    lead, and S4 would report the battery "widening" it. Same shape as the
-    section 0 / section 3 plan claim, checked against the artifact the sentence
-    actually quotes: this ranking is the matrix's own no-battery column, not
-    plan_results.csv's (battery_plan_matrix.py ties the two out in-script), so
-    it is a separate assertion rather than a call into
-    _assert_household_plan_is_cheapest.
+    Both callers -- S4_VERDICT_SHORT and PLAN_MARGIN_VS_RUNNER_UP -- describe
+    the difference as this plan's "lead" / "margin", words that are false if
+    the runner-up prices at or below it. That used to be refused here, which
+    took the whole report down for a household on a plan the matrix does not
+    put first. The gap is a real, quotable figure at every sign, so both
+    callers now word themselves off its sign instead (issue #131 review).
+
+    The one refusal left is a matrix with no other plan in it at all: there is
+    then no runner-up to name and no gap to take.
+
+    Ranked on the matrix's own no-battery column, not plan_results.csv's
+    (battery_plan_matrix.py ties the two out in-script), because that column is
+    the one these two sentences quote.
     """
     plan, best = _bpm_best()
     others = {k: v for k, v in _bpm_plans().items() if k != plan}
     if not others:
-        raise SystemExit("report_tokens: battery_plan_matrix.json has no runner-up plan")
+        raise SystemExit(f"report_tokens: battery_plan_matrix.json prices only {plan!r}, "
+                          "so there is no runner-up plan to measure a margin against")
     name, row = min(others.items(), key=lambda kv: kv[1]["no_battery"])
-    if row["no_battery"] <= best["no_battery"]:
-        raise SystemExit(
-            f"report_tokens: refusing to call the gap to {name} a lead for {plan} -- "
-            f"data/battery_plan_matrix.json prices {name} at ${row['no_battery']:,} "
-            f"against {plan}'s ${best['no_battery']:,} without a battery")
     return name, row
 
 
-_tok("S4_VERDICT_SHORT", kind="derived",
-     get=lambda ctx: (lambda plan, best, ru: (
-         f"Yes — the battery widens {plan}'s lead over {ru[0]} from "
-         f"${ru[1]['no_battery'] - best['no_battery']:,}/yr to "
-         f"${ru[1]['with_battery'] - best['with_battery']:,}/yr"
-         if (ru[1]["with_battery"] - best["with_battery"]) >
-            (ru[1]["no_battery"] - best["no_battery"]) else
-         f"No — the battery narrows {plan}'s lead over {ru[0]} from "
-         f"${ru[1]['no_battery'] - best['no_battery']:,}/yr to "
-         f"${ru[1]['with_battery'] - best['with_battery']:,}/yr"))(
-         *_bpm_best(), _runner_up()),
+def _s4_verdict_short(ctx):
+    """Section 4's in-heading verdict.
+
+    The Yes/No prefix and the widens/narrows verb are ONE decision on the same
+    test (does the battery grow the gap), left exactly as they were: issue #141
+    holds that this prefix answers section 4's heading question backwards, and
+    fixing that is #141's job, not this one.
+
+    What is fixed here is the noun. "lead" and "widens ... lead" are false when
+    the household's plan does not lead the matrix without a battery, and the
+    formula refused to render at all rather than say so. Below a positive gap
+    it now states where the plan actually stands, at both battery states.
+    """
+    plan, best = _bpm_best()
+    name, row = _runner_up()
+    gap_no = row["no_battery"] - best["no_battery"]
+    gap_with = row["with_battery"] - best["with_battery"]
+    widened = gap_with > gap_no
+    if gap_no > 0:
+        return (f"{'Yes' if widened else 'No'} — the battery "
+                f"{'widens' if widened else 'narrows'} {plan}'s lead over {name} from "
+                f"${gap_no:,}/yr to ${gap_with:,}/yr")
+
+    def stands(gap, named):
+        who = f" {name}" if named else ""
+        if gap > 0:
+            return f"leads{who} by ${gap:,}/yr"
+        if gap < 0:
+            return f"trails{who} by ${-gap:,}/yr"
+        return f"ties{who}"
+
+    return (f"{'Yes' if widened else 'No'} — {plan} {stands(gap_no, True)} without a "
+            f"battery, and {stands(gap_with, False)} with one")
+
+
+_tok("S4_VERDICT_SHORT", kind="derived", get=_s4_verdict_short,
      sources=["data/battery_plan_matrix.json:plans"])
 
 
@@ -1142,10 +1184,22 @@ def _wildcard_plan(ctx):
 
 _tok("WILDCARD_PLAN", kind="derived", get=_wildcard_plan,
      sources=["data/deep_results.json:wildcard"])
-_tok("PLAN_MARGIN_VS_RUNNER_UP", kind="derived",
-     get=lambda ctx: _runner_up()[1]["no_battery"] - _bpm_best()[1]["no_battery"],
+def _plan_margin_vs_runner_up(ctx):
+    """The household plan's margin over the cheapest other plan in
+    battery_plan_matrix.json's no-battery column, SIGNED.
+
+    A margin is a real figure at every sign, so this token no longer inherits
+    a refusal from _runner_up() when the sign goes the other way -- a house
+    priced above the runner-up has a negative margin, and the minus sign IS
+    the conclusion. Formatted here rather than through fmt="usd0" so the
+    negative reads "-$500" rather than "$-500"."""
+    gap = _runner_up()[1]["no_battery"] - _bpm_best()[1]["no_battery"]
+    return _usd0(gap) if gap >= 0 else f"-{_usd0(-gap)}"
+
+
+_tok("PLAN_MARGIN_VS_RUNNER_UP", kind="derived", get=_plan_margin_vs_runner_up,
      sources=["data/battery_plan_matrix.json:plans (no-battery column; ties out to "
-              "data/plan_results.csv, asserted in-script)"], fmt="usd0")
+              "data/plan_results.csv, asserted in-script)"])
 
 _tok("NEM_GRANDFATHER_VALUE_RANGE", kind="derived",
      get=lambda ctx: (lambda r: f"${r['low']:,.2f}–{r['high']:,.2f}")(
@@ -1371,33 +1425,39 @@ def _battery_model_short():
     return re.sub(r"\s*\([^)]*\)", "", TOKENS["BATTERY_MODEL"]["value"]).strip()
 
 
-def _assert_free_fix_saves(token):
-    """(behavior_saving, package_saving) for the free EV-charging fix, after
-    asserting BOTH are positive: data/behavior_rebuild.json:scenarios.a.saved
-    (the figure section 0 quotes) and data/package_results.json:packages.LOW
-    .savings_yr (the figure section 7 quotes). Raises SystemExit naming
-    `token` otherwise.
+def _free_fix_saving(token):
+    """(behavior_saving, package_saving, saves_money) for the free EV-charging
+    fix: data/behavior_rebuild.json:scenarios.a.saved (the figure section 0
+    quotes), data/package_results.json:packages.LOW.savings_yr (the figure
+    section 7 quotes), and whether the two agree that the move is worth
+    making.
 
     Three sentences pass through here, which is the point of it being one
     place: section 0 ("the free EV-charging fix saves a modeled $X/yr
     whatever you buy"), section 7 ("the free EV-charging fix is worth a
     modeled $X/yr") and the Monday appendix ("reprogramming the chargers this
-    week ... captures the free savings"). At or below zero the shift saves
-    nothing -- sections 0 and 7 would print a negative figure straight after
-    the word "saves", and the appendix, which quotes no figure at all, would
-    send the reader to spend an afternoon capturing a loss. Checking the two
-    artifacts together also stops them disagreeing about whether the free
-    move is worth making at all.
+    week ... captures the free savings").
+
+    At or below zero all three INVERT rather than the run failing. A house
+    that already charges inside the cheap window has no free saving left to
+    capture, which is an ordinary and useful conclusion -- refusing to
+    generate the report for it (as this helper used to) withholds fourteen
+    other sections over one clause that simply reads the other way.
+
+    The one refusal left is the two artifacts DISAGREEING about the sign: one
+    positive and one not is a contradiction between two committed artifacts
+    about the same move, and no sentence here can be written honestly on top
+    of it.
     """
     saved = _json("behavior_rebuild.json")["scenarios"]["a"]["saved"]
     low = _json("package_results.json")["packages"]["LOW"]["savings_yr"]
-    if saved <= 0 or low <= 0:
+    if (saved > 0) != (low > 0):
         raise SystemExit(
-            f"report_tokens: {token} refuses to call the EV-charging fix a saving -- "
-            f"data/behavior_rebuild.json:scenarios.a.saved is ${saved:,.0f}/yr and "
-            f"data/package_results.json:packages.LOW.savings_yr is ${low:,.0f}/yr; "
-            "both must be positive for the free move to be worth making")
-    return saved, low
+            f"report_tokens: {token} cannot say whether the EV-charging fix is worth "
+            f"making -- data/behavior_rebuild.json:scenarios.a.saved is ${saved:,.0f}/yr "
+            f"while data/package_results.json:packages.LOW.savings_yr is ${low:,.0f}/yr, "
+            "so the two committed artifacts disagree about the sign of the same move")
+    return saved, low, saved > 0
 
 
 def _s0_verdict(ctx):
@@ -1405,25 +1465,55 @@ def _s0_verdict(ctx):
     # report's most prominent sentence -- so it goes through section 3's own
     # ranking rather than being asserted on the strength of the plan the
     # household happens to be on. Shared helper, not a second implementation:
-    # the two must never disagree about which plan wins, and before this the
-    # headline would have kept recommending the tariff while S3 failed closed
-    # on the same artifact.
-    _assert_household_plan_is_cheapest(ctx, "S0_VERDICT")
-    # Same shape, second claim: "saves a modeled $X/yr" is false at X <= 0,
-    # and the check lives with sections 7 and 15's identical claim rather
-    # than here (see _assert_free_fix_saves).
-    saved, _low = _assert_free_fix_saves("S0_VERDICT")
+    # the two must never disagree about which plan wins.
+    #
+    # Three-way, because the ranking has three outcomes and each of them is a
+    # true sentence about some household: sole cheapest, tied for cheapest,
+    # beaten. The clause is the same length either way (5-6 words), which is
+    # what keeps every branch inside section 10's density cap on a sentence
+    # that already spends 34 of its 35 words.
+    plan, _provider, _plan_total, _cheapest, winners = _plan_ranking(ctx, "S0_VERDICT")
+    if winners == [plan]:
+        plan_clause = "the rate plan is right"
+    elif plan in winners:
+        plan_clause = "the rate plan ties for cheapest"
+    else:
+        plan_clause = "a cheaper rate plan exists"
+    # Same shape, second claim: "saves a modeled $X/yr" is false at X <= 0, so
+    # the clause reads the other way rather than the report refusing to
+    # generate (see _free_fix_saving, shared with sections 7 and 15).
+    saved, _low, free_fix_saves = _free_fix_saving("S0_VERDICT")
+    fix_clause = (
+        f"the free EV-charging fix saves a modeled {_usd0(saved)}/yr whatever you buy"
+        if free_fix_saves else "shifting EV charging adds no modeled saving")
     mid = _json("package_results.json")["packages"]["MID"]
     lo, hi = sorted((mid["battery_alone_payback_yr"],
                      mid["battery_alone_payback_post_fix_yr"]))
-    # Both ends are cost/annual-saving quotients: a battery that saved nothing
-    # (or lost money) would come back zero, infinite or NEGATIVE and still be
-    # printed here as a payback range under "a sound optional buy". Refuse.
-    if not (0 < lo <= hi < float("inf")):
+    # Both ends are cost/annual-saving quotients, so a battery that saves
+    # nothing (or loses money) comes back zero, infinite or NEGATIVE -- and
+    # printing that as a payback range under "a sound optional buy" would sell
+    # a purchase the artifact does not support.
+    #
+    # The branch turns on the SAVINGS rather than on the shape of the
+    # quotients, because the savings are what the reader is being told about
+    # and they say which case this is without inference: at or below zero the
+    # battery does not repay its cost, full stop, and that is a true sentence
+    # about a real household rather than a reason to withhold the report.
+    savings = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
+    if min(savings) > 0 and 0 < lo <= hi < float("inf"):
+        battery_clause = (f"a {_battery_model_short()} is a sound optional buy at a "
+                          f"{lo:.1f}–{hi:.1f}-year hardware-alone payback")
+    elif min(savings) <= 0:
+        battery_clause = f"a {_battery_model_short()} does not repay its own cost"
+    else:
+        # Positive savings but a payback that is not a positive finite number:
+        # the artifact's own quotients contradict its own savings, and neither
+        # branch above can be written honestly on top of that.
         raise SystemExit(
-            f"report_tokens: S0_VERDICT refuses to call the battery a sound optional buy "
-            f"at a {lo}–{hi}-year payback -- data/package_results.json:packages.MID's "
-            f"battery-alone paybacks must both be positive and finite")
+            f"report_tokens: S0_VERDICT cannot quote a {lo}–{hi}-year battery payback -- "
+            f"data/package_results.json:packages.MID reports positive battery-alone "
+            f"savings of {savings} against paybacks that are not both positive and "
+            f"finite, so the artifact contradicts itself")
     # "hardware-alone" is deliberate: CLAUDE.md section 2 forbids crediting
     # the free behavior saving to the hardware, and both ends of this range
     # are package_results.json's OWN battery-alone paybacks.
@@ -1439,10 +1529,7 @@ def _s0_verdict(ctx):
     # depend on buying anything -- so the sentence says exactly that and
     # ranks nothing. No guard can fix a superlative that no artifact
     # supports; the honest fix is to stop claiming it.
-    return (f"{VERDICT_STEM}the rate plan is right, the free EV-charging fix saves a "
-            f"modeled {_usd0(saved)}/yr whatever you buy, and a "
-            f"{_battery_model_short()} is a sound optional buy at a "
-            f"{lo:.1f}–{hi:.1f}-year hardware-alone payback.")
+    return f"{VERDICT_STEM}{plan_clause}, {fix_clause}, and {battery_clause}."
 
 
 _tok("S0_VERDICT", kind="derived", get=_s0_verdict,
@@ -1519,6 +1606,29 @@ MIN_AGREEMENT_CORRELATION = (tpv.REF_CORRELATION_SANITY_MIN
                              - tpv.CORRELATION_FLOOR_BELOW_REF)
 
 
+def _whole_kwh_rounding_bound():
+    """The +/-N kWh a printed whole-kWh bucket can hide, read off
+    data/tou_audit_summary.json's own tolerance.basis rather than restated
+    here, and cross-checked against the constant analysis/tou_audit.py used to
+    write it. Two statements of the same bound in two files drift; this way
+    the number the sentence is held to is the artifact's own."""
+    basis = _json("tou_audit_summary.json")["tolerance"]["basis"]
+    m = re.search(r"per-bucket rounding bound is ([\d.]+) kWh", basis)
+    if not m:
+        raise SystemExit(
+            "report_tokens: S1_VERDICT cannot check the rounding digit it claims -- "
+            "data/tou_audit_summary.json:tolerance.basis no longer states a per-bucket "
+            f"rounding bound: {basis!r}")
+    bound = float(m.group(1))
+    if bound != ta.ROUNDING_PER_BUCKET:
+        raise SystemExit(
+            f"report_tokens: data/tou_audit_summary.json states a {bound} kWh per-bucket "
+            f"rounding bound while analysis/tou_audit.py's ROUNDING_PER_BUCKET is "
+            f"{ta.ROUNDING_PER_BUCKET}; the artifact and its generator disagree about "
+            "the digit S1_VERDICT's sentence quotes")
+    return bound
+
+
 def _s1_verdict(ctx):
     ab = _json("tou_audit_summary.json")["rules"]["as_billed"]
     # Fail closed rather than publish a false claim: the sentence says every
@@ -1528,6 +1638,24 @@ def _s1_verdict(ctx):
             f"report_tokens: S1_VERDICT refuses to claim all {ab['buckets']} billed TOU "
             f"buckets rebuild -- data/tou_audit_summary.json:rules.as_billed reports "
             f"{ab['buckets_failing']} failing bucket(s): {ab.get('failing_buckets')}")
+    # buckets_failing alone does not prove what this sentence says. A bucket
+    # PASSES the audit within max(1.0 kWh, 0.5% of billed), which on the
+    # largest committed bucket (1,379 kWh) is a +/-6.9 kWh band -- while the
+    # sentence claims agreement "to the whole-kWh rounding digit the
+    # statements print", a +/-0.5 kWh claim. So zero failing buckets can hold
+    # with the real residual ten times what the words assert. Guard the
+    # quantity the sentence actually asserts: the worst residual in the file,
+    # against the artifact's own stated whole-kWh rounding bound.
+    bound = _whole_kwh_rounding_bound()
+    residual = ab["max_abs_residual_kwh"]
+    if residual > bound:
+        raise SystemExit(
+            f"report_tokens: S1_VERDICT refuses to claim the billed TOU buckets rebuild "
+            f"to the whole-kWh rounding digit -- data/tou_audit_summary.json:rules."
+            f"as_billed.max_abs_residual_kwh is {residual} kWh against the {bound} kWh "
+            f"bound its own tolerance.basis states for a printed whole-kWh bucket "
+            f"(the audit's own pass rule is looser, so {ab['buckets_failing']} failing "
+            "bucket(s) does not establish this)")
     # Same reason, second claim. A correlation coefficient is a signed ratio,
     # so r <= 0 makes the printed number contradict the word beside it
     # ("agree at -0.1300 daily correlation") -- but a merely POSITIVE r does
@@ -1554,6 +1682,10 @@ def _s1_verdict(ctx):
 _tok("S1_VERDICT", kind="derived", get=_s1_verdict,
      sources=["data/tou_audit_summary.json:rules.as_billed.buckets",
               "data/tou_audit_summary.json:rules.as_billed.buckets_failing",
+              "data/tou_audit_summary.json:rules.as_billed.max_abs_residual_kwh",
+              "data/tou_audit_summary.json:tolerance.basis (the whole-kWh rounding "
+              "bound the sentence quotes; cross-checked against "
+              "analysis/tou_audit.py:ROUNDING_PER_BUCKET)",
               "data/threeway_production_validation.csv (pairwise daily correlation)"])
 
 
@@ -1598,6 +1730,15 @@ def _midday_export_share(ctx):
         days["S" if d.month in R.SUMMER_MONTHS else "W"] += 1
         d += dt.timedelta(days=1)
     lo, hi, _lab = _cheap_run()
+    # The profiles are hour-of-day buckets, so a window that starts or ends
+    # mid-hour cannot be summed out of them -- slicing at int(lo):int(hi)
+    # would silently drop or add a whole hour of exports and publish the
+    # result as this tariff's midday share. Fail closed instead.
+    if lo != int(lo) or hi != int(hi):
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT cannot time exports against a {lo}-{hi}h daytime "
+            "super-off-peak run -- data/report_data.json's export profiles are hourly "
+            "buckets and cannot resolve a window boundary inside an hour")
     total = midday = 0.0
     for seas, n in days.items():
         exp = rd[f"hourly_{seas}"]["exp"]
@@ -1610,6 +1751,16 @@ def _midday_export_share(ctx):
     if total <= 0:
         raise SystemExit("report_tokens: data/report_data.json's hour-of-day export "
                          "profiles carry no exported kWh; there is no timing to report")
+    # Checked BEFORE it becomes a divisor. resolve_token catches KeyError,
+    # IndexError, TypeError and ValueError, so a ZeroDivisionError here would
+    # escape the named-SystemExit contract this module documents and surface
+    # as a raw traceback -- and a household that exported nothing all year is
+    # an ordinary reason for totals.exp to be zero.
+    if published <= 0:
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT cannot say when exports happen -- "
+            f"data/report_data.json:totals.exp is {published:,.0f} kWh, so there is no "
+            "year of exports to take a share of")
     if abs(total - published) / published > _EXPORT_REBUILD_TOLERANCE:
         raise SystemExit(
             f"report_tokens: S2_VERDICT refuses to say when exports happen -- "
@@ -1637,9 +1788,20 @@ def _overnight_ev_night_counts(ctx):
     household that charges at noon and one that charges at 3am are
     indistinguishable inside it."""
     lo, hi, _lab = _overnight_cheap_run()
-    label = f"{int(lo)}-{int(hi)}h"
     census = (_json("quiet_night_floor.json")["night_floor"]
               ["issue_114_investigation"]["ev_absence_by_window"])
+    # The census is keyed by whole clock hours. int() would truncate a tariff
+    # whose overnight run ends at 06:30 down to the "0-6h" key and hand back a
+    # count of a window nobody measured for it -- borrowing a neighbouring
+    # window's answer, which is precisely what this lookup's fail-closed
+    # promise is against. A fractional bound has no key, so say so.
+    if lo != int(lo) or hi != int(hi):
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT cannot say when the EV charges -- the tariff's "
+            f"overnight super-off-peak window runs {lo}-{hi}h, and "
+            f"data/quiet_night_floor.json's ev_absence_by_window is keyed by whole "
+            f"clock hours ({sorted(census)}), so none of its counts covers this window")
+    label = f"{int(lo)}-{int(hi)}h"
     if label not in census:
         raise SystemExit(
             f"report_tokens: S2_VERDICT cannot say when the EV charges -- the tariff's "
@@ -1653,6 +1815,15 @@ def _overnight_ev_night_counts(ctx):
 def _s2_verdict(ctx):
     production = _annual_production_kwh(ctx)
     kw_dc = hh1("solar.kw_dc")
+    # The specific yield below divides by this. Same exposure as totals.exp in
+    # _midday_export_share: ZeroDivisionError is not in resolve_token's caught
+    # set, so a household.yaml with no array size (or a zero one) would crash
+    # out of the named-SystemExit contract with a raw traceback.
+    if kw_dc <= 0:
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT cannot quote a specific yield -- "
+            f"private/household.yaml:solar.kw_dc is {kw_dc}, so there is no array "
+            "size to divide the year's production by")
     _start, end = _analysis_window_dates()
     pto = _as_date(hh1("household.pto_date"))
     age = end.year - pto.year - ((end.month, end.day) < (pto.month, pto.day))
@@ -1678,20 +1849,18 @@ def _s2_verdict(ctx):
     # habit: the EV must charge inside the overnight window on more nights
     # than it skips. Majority is the whole content of the word, not a cutoff
     # chosen to clear today's data -- on a house that charges during the day
-    # the two counts swap and the sentence refuses to render, which is exactly
-    # the reading this clause used to publish regardless.
-    charging, absent, observed = _overnight_ev_night_counts(ctx)
-    if charging <= absent:
-        raise SystemExit(
-            f"report_tokens: S2_VERDICT refuses to say the EV charges overnight -- "
-            f"data/quiet_night_floor.json's EV census finds charging in the "
-            f"{_overnight_cheap_window()} window on {charging} of {observed} observed "
-            f"nights and none on {absent}, so overnight charging is not this "
-            f"household's habit")
+    # the two counts swap and the clause says so instead, which is exactly the
+    # reading this sentence used to publish regardless. It INVERTS rather than
+    # failing closed: a daytime charger is an ordinary household with an
+    # ordinary report to generate, and "does not usually charge overnight" is
+    # true at every count from an even split down to none.
+    charging, absent, _observed = _overnight_ev_night_counts(ctx)
+    ev_clause = ("while the EV charges overnight" if charging > absent
+                 else "while the EV does not usually charge overnight")
     return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array produced "
             f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW, but "
             f"{round(midday_share * 100)}% of its exports leave in the "
-            f"{_cheap_window()} window while the EV charges overnight.")
+            f"{_cheap_window()} window {ev_clause}.")
 
 
 _tok("S2_VERDICT", kind="derived", get=_s2_verdict,
@@ -1706,13 +1875,26 @@ _tok("S2_VERDICT", kind="derived", get=_s2_verdict,
 
 
 def _s3_verdict(ctx):
-    # Computed, never asserted: if another plan ever prices lower (or ties),
-    # the sentence would be false, so refuse to render it. The ranking itself
-    # lives in _assert_household_plan_is_cheapest, shared with S0_VERDICT,
-    # which makes the same claim in the report's headline.
-    plan, _provider, cheapest = _assert_household_plan_is_cheapest(ctx, "S3_VERDICT")
-    return (f"{VERDICT_STEM}{plan} is still the cheapest plan for this house at a modeled "
-            f"{_usd0(cheapest)}/yr, and every alternative priced costs more.")
+    # Computed, never asserted, and INVERTED rather than refused: a household
+    # whose plan no longer wins is the one this section is written for, and
+    # "you are on the wrong tariff, here is the one that wins and by how
+    # much" is the most useful sentence section 3 can carry. The ranking
+    # itself lives in _plan_ranking, shared with S0_VERDICT, which reports the
+    # same three outcomes in the report's headline.
+    plan, _provider, plan_total, cheapest, winners = _plan_ranking(ctx, "S3_VERDICT")
+    if winners == [plan]:
+        claim = (f"{plan} is still the cheapest plan for this house at a modeled "
+                 f"{_usd0(cheapest)}/yr, and every alternative priced costs more.")
+    elif plan in winners:
+        others = [p for p in winners if p != plan]
+        claim = (f"{plan} ties {_join_plan_names(others)} as the cheapest plan for this "
+                 f"house at a modeled {_usd0(cheapest)}/yr, and nothing priced costs less.")
+    else:
+        verb = "prices" if len(winners) == 1 else "each price"
+        claim = (f"{plan} is not the cheapest plan for this house at a modeled "
+                 f"{_usd0(plan_total)}/yr, because {_join_plan_names(winners)} {verb} "
+                 f"{_usd0(plan_total - cheapest)}/yr lower.")
+    return VERDICT_STEM + claim
 
 
 _tok("S3_VERDICT", kind="derived", get=_s3_verdict,
@@ -1728,17 +1910,28 @@ def _s5_verdict(ctx):
     cost_share = rd["onpeak"]["share_of_energy_cost"]
     # The "but ... so timing sets this bill" conclusion rests on a comparison
     # the sentence never states: it holds only while the on-peak window takes
-    # a LARGER share of cost than of kWh. Check it rather than assume it.
-    if cost_share <= kwh_share:
-        raise SystemExit(
-            f"report_tokens: S5_VERDICT refuses to claim timing sets this bill -- "
-            f"data/report_data.json puts the on-peak window at "
-            f"{cost_share:.3f} of import energy cost against {kwh_share:.3f} of "
-            f"imported kWh, so the cost share no longer exceeds the kWh share")
-    return (f"{VERDICT_STEM}the {_peak_window()} on-peak window takes "
-            f"{round(kwh_share * 100)}% of imported kWh but "
-            f"{round(cost_share * 100)}% of the import energy "
-            "cost, so timing, more than total consumption, sets this bill.")
+    # a LARGER share of cost than of kWh. Check it rather than assume it --
+    # and check it ON THE ROUNDED FIGURES THE SENTENCE PRINTS. Guarding the
+    # unrounded shares passes at kwh 0.1720 / cost 0.1740, where the published
+    # words read "takes 17% of imported kWh but 17% of the import energy cost,
+    # so timing sets this bill" and the reader can see the two printed figures
+    # contradict the conclusion drawn from them. The reader gets whole
+    # percents, so whole percents are what has to diverge.
+    #
+    # And it INVERTS rather than refusing. A house whose on-peak window costs
+    # no more than its share of kWh is a house where timing does not drive the
+    # bill -- an ordinary result, and the one its section 5 needs to be told.
+    kwh_pct, cost_pct = round(kwh_share * 100), round(cost_share * 100)
+    if cost_pct > kwh_pct:
+        claim = (f"{kwh_pct}% of imported kWh but {cost_pct}% of the import energy cost, "
+                 "so timing, more than total consumption, sets this bill.")
+    elif cost_pct == kwh_pct:
+        claim = (f"{kwh_pct}% of imported kWh and the same share of the import energy "
+                 "cost, so timing does not drive this bill on its own.")
+    else:
+        claim = (f"{kwh_pct}% of imported kWh but only {cost_pct}% of the import energy "
+                 "cost, so total consumption, more than timing, sets this bill.")
+    return f"{VERDICT_STEM}the {_peak_window()} on-peak window takes {claim}"
 
 
 _tok("S5_VERDICT", kind="derived", get=_s5_verdict,
@@ -1787,9 +1980,15 @@ _tok("S6_VERDICT", kind="derived", get=_s6_verdict,
 def _s7_verdict(ctx):
     pk = _json("package_results.json")["packages"]
     low, mid, high = pk["LOW"], pk["MID"], pk["HIGH"]
-    # "is worth a modeled $X/yr" has no honest rendering at X <= 0; shared
-    # with sections 0 and 15, which make the same claim about the same move.
-    _saved, low_savings = _assert_free_fix_saves("S7_VERDICT")
+    # "is worth a modeled $X/yr" has no honest rendering at X <= 0, so the
+    # clause reads the other way there; shared with sections 0 and 15, which
+    # make the same claim about the same move. The inverted clause is SHORTER
+    # than the published one, so it cannot push this sentence -- already at
+    # section 10's 35-word cap -- over it.
+    _saved, low_savings, free_fix_saves = _free_fix_saving("S7_VERDICT")
+    fix_clause = (f"the free EV-charging fix is worth a modeled {_usd0(low_savings)}/yr "
+                  "whatever you buy" if free_fix_saves else
+                  "shifting EV charging adds no modeled saving")
     if low["cost"]:
         raise SystemExit(f"report_tokens: S7_VERDICT refuses to call the behavior package "
                           f"free -- data/package_results.json:packages.LOW.cost is "
@@ -1798,14 +1997,24 @@ def _s7_verdict(ctx):
     # beside it is the POST-fix one, and pairing the pre-fix saving with the
     # post-fix payback would mix two runs of the integrated pipeline.
     mid_payback = mid["battery_alone_payback_post_fix_yr"]
-    # The sentence quotes this payback as a fact about a purchase, so a
-    # non-positive or infinite one (a battery that saves nothing, or costs
-    # more to run than it saves) has no honest rendering here.
-    if not (0 < mid_payback < float("inf")):
+    mid_saving = mid["battery_alone_post_ev_fix_yr"]
+    # The sentence quotes the saving and the payback as facts about a
+    # purchase. At a saving of zero or less there is no payback to quote and
+    # the figure beside it would print a negative "adds its own $-400/yr" --
+    # so the clause says the plain thing instead. Same branch shape as section
+    # 0's, on the same package, and a battery that never repays is an ordinary
+    # household's answer rather than a reason to withhold the section.
+    if mid_saving > 0 and 0 < mid_payback < float("inf"):
+        battery_clause = (f"one {_battery_model_short()} adds its own "
+                          f"{_usd0(mid_saving)}/yr (~{mid_payback:.1f}-yr payback)")
+    elif mid_saving <= 0:
+        battery_clause = f"one {_battery_model_short()} never repays its own cost"
+    else:
         raise SystemExit(
-            f"report_tokens: S7_VERDICT refuses to quote a {mid_payback}-year battery-alone "
-            f"payback -- data/package_results.json:packages.MID."
-            f"battery_alone_payback_post_fix_yr must be positive and finite")
+            f"report_tokens: S7_VERDICT cannot quote a {mid_payback}-year battery-alone "
+            f"payback -- data/package_results.json:packages.MID reports a positive "
+            f"battery_alone_post_ev_fix_yr of {mid_saving} against a payback that is "
+            f"not positive and finite, so the artifact contradicts itself")
     exp_cost = high["cost"] - mid["cost"]
     if exp_cost <= 0:
         raise SystemExit(
@@ -1836,19 +2045,22 @@ def _s7_verdict(ctx):
     # Each branch is also held to CLAUDE.md section 10's 35-word density cap
     # on the whole sentence, not just the one that renders today: 25 words of
     # lead leave 10 for the tail. "faster than the first unit" spent 11.
+    #
+    # The three comparative branches all measure against the first unit's
+    # payback, so they are only available while there IS one. Where the first
+    # unit never repays, "that" refers to nothing and the tail states the
+    # expansion's own payback outright instead.
     if marginal <= 0:
         tail = "and the expansion pack never repays its extra cost"
+    elif mid_saving <= 0:
+        tail = f"while the expansion pack repays its extra cost in {exp_cost / marginal:.0f} years"
     elif (ratio := exp_cost / marginal) > mid_payback:
         tail = "and the expansion pack saves too little to match that"
     elif ratio == mid_payback:
         tail = "and the expansion pack pays back at the same rate"
     else:
         tail = "and the expansion pack pays back faster than that"
-    return (f"{VERDICT_STEM}the free EV-charging fix is worth a modeled "
-            f"{_usd0(low_savings)}/yr whatever you buy; one "
-            f"{_battery_model_short()} adds its own "
-            f"{_usd0(mid['battery_alone_post_ev_fix_yr'])}/yr (~{mid_payback:.1f}-yr "
-            f"payback), {tail}.")
+    return f"{VERDICT_STEM}{fix_clause}; {battery_clause}, {tail}."
 
 
 _tok("S7_VERDICT", kind="derived", get=_s7_verdict,
@@ -1881,21 +2093,26 @@ def _s10_verdict(ctx):
         comparison = f"{_usd0(abs(delta))}/yr {direction} bundled {utility} generation"
     # Both qualitative claims are computed, not asserted. "materially larger"
     # compares the EXCLUDED net-export credit against the priced delta this
-    # sentence quotes -- if the unpriced side ever stopped dominating, the
-    # caveat would be false, so refuse to render rather than overclaim.
+    # sentence quotes. Only the SIZE adjective turns on that comparison: the
+    # caveat itself ("not fully settled") rests on the artifact's own
+    # excluded_net_export_note, which says the priced delta is not the full
+    # answer whatever the excluded side weighs. So the adjective inverts and
+    # the sentence still renders -- refusing here withheld the section from
+    # any household whose unpriced side happened not to dominate, which is the
+    # BETTER-evidenced household of the two.
     unpriced = abs(a["excluded_net_export_cca_credit_usd"])
     priced = abs(a["delta_usd"])
-    if unpriced <= priced:
-        raise SystemExit(
-            f"report_tokens: S10_VERDICT refuses to call the unpriced net-export effect "
-            f"materially larger -- data/cca_bundled_counterfactual.json puts it at "
-            f"${unpriced:,.2f} against a priced delta of ${priced:,.2f}")
+    if unpriced > priced:
+        size = "a materially larger, unpriced net-export effect"
+    elif unpriced == priced:
+        size = "an equally large, unpriced net-export effect"
+    else:
+        size = "a smaller, unpriced net-export effect"
     return (f"{VERDICT_STEM}on the net-import energy this analysis can price, staying on "
             f"the CCA ({cca_name}) would have cost this household about "
             f"{comparison} "
-            f"({a['confidence']} · same-date bill rates, {a['days']} days) — a materially "
-            "larger, unpriced net-export effect means the whole-household answer is not "
-            "fully settled.")
+            f"({a['confidence']} · same-date bill rates, {a['days']} days) — {size} "
+            "means the whole-household answer is not fully settled.")
 
 
 _tok("S10_VERDICT", kind="derived", get=_s10_verdict,
@@ -1933,12 +2150,20 @@ def _overnight_cheap_window():
 def _s15_verdict(ctx):
     # This sentence names no figure, which is exactly why it needs the check:
     # "captures the free savings" reads as instruction, and at a non-positive
-    # saving it sends the reader after a loss. Same helper sections 0 and 7
-    # use, so the three cannot disagree about whether the move is worth making.
-    _assert_free_fix_saves("S15_VERDICT")
-    return (f"{VERDICT_STEM}reprogramming the chargers this week to finish inside the "
-            f"{_overnight_cheap_window()} super-off-peak window captures the free savings; "
-            "everything else on the list is verification before spending money.")
+    # saving it would send the reader after a loss. Same helper sections 0 and
+    # 7 use, so the three cannot disagree about whether the move is worth
+    # making -- and, like them, the clause inverts. A Monday list that opens
+    # "there is nothing left to capture here" is a useful thing to be told;
+    # withholding the whole appendix over it is not.
+    _saved, _low, free_fix_saves = _free_fix_saving("S15_VERDICT")
+    if free_fix_saves:
+        lead = (f"reprogramming the chargers this week to finish inside the "
+                f"{_overnight_cheap_window()} super-off-peak window captures the free savings")
+    else:
+        lead = (f"reprogramming the chargers into the {_overnight_cheap_window()} "
+                "super-off-peak window adds no modeled saving here")
+    return (f"{VERDICT_STEM}{lead}; everything else on the list is verification "
+            "before spending money.")
 
 
 _tok("S15_VERDICT", kind="derived", get=_s15_verdict,
