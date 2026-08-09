@@ -766,7 +766,7 @@ _ZERO_ELECTRIC_INTERACTION = {
 
 
 _ZERO_INTERACTION = {"overstatement_usd": 0.0, "gas_service_independent_sum_usd": 0.0,
-                     "gas_service_joint_removal_usd": 0.0, "by_period": [],
+                     "gas_service_joint_removal_usd": 0.0, "by_segment": [],
                      "note": "test fixture: zero interaction"}
 
 
@@ -834,7 +834,7 @@ def case_sequencing_applies_the_tier_interaction_correction():
     naive sum itself -- proves the correction is actually wired in, not
     just computed and discarded."""
     interaction = {"overstatement_usd": 15.0, "gas_service_independent_sum_usd": 0.0,
-                   "gas_service_joint_removal_usd": 0.0, "by_period": [],
+                   "gas_service_joint_removal_usd": 0.0, "by_segment": [],
                    "note": "test fixture: $15 interaction"}
     result = A.sequencing_and_paybacks(
         fixed_charge_verdict_is_zero=True,
@@ -868,25 +868,151 @@ def case_sequencing_raises_if_fixed_charge_is_nonzero():
 
 
 # ---------------------------------------------------------------------------
-# Finding 1 consequence: tier_interaction_overstatement
+# Finding 2 (Codex `review` pass, issue #20 round 4): sequencing_share_
+# robustness / _crossover_water_heater_share -- fast, deterministic checks
+# of the bisection/order-detection logic itself, decoupled from real
+# archive data via monkeypatching _wh_net_savings_at_share() (and R.
+# bill_nem(), which sequencing_share_robustness() calls once up front for
+# base_bill regardless). Real-archive end-to-end coverage lives further
+# below (case_sequencing_share_robustness_wired_into_build_on_real_archive).
 # ---------------------------------------------------------------------------
 @case
+def case_crossover_water_heater_share_finds_the_bisection_root():
+    """_crossover_water_heater_share() must converge to the algebraic root
+    of payback(share) == target_payback_years. Monkeypatches _wh_net_
+    savings_at_share() to a simple, controlled linear function of `share`
+    alone (net = 200 x share, so central-install payback = 4200/(200 x
+    share) years) so the true root is known exactly: target=30yr ->
+    share = 4200/(200x30) = 0.7. Tolerance is 0.005, not the bisection's
+    own 1e-4 share resolution: HPC.payback_and_npv() rounds payback_years
+    to 1 decimal place, and near share=0.7 the payback-vs-share slope is
+    steep enough (~43 years per unit share) that a 0.05-year rounding step
+    alone shifts the FOUND root by about 0.0012 in share -- a real,
+    understood artifact of reusing payback_and_npv()'s own rounding
+    unmodified (CLAUDE.md section 8: reuse, don't reimplement a
+    higher-precision parallel payback formula just for this search)."""
+    real_net = A._wh_net_savings_at_share
+    real_bill_nem = A.R.bill_nem
+    real_load_series = A.build_wh_load_series
+    try:
+        A.R.bill_nem = lambda *a, **kw: 0.0
+        A.build_wh_load_series = lambda *a, **kw: ({"uniform": 0.0}, {})
+        A._wh_net_savings_at_share = (
+            lambda iso, d, share, headline_uef, base_bill=None, **kw: 200.0 * share)
+        target_years = 30.0
+        crossover = A._crossover_water_heater_share(
+            iso=None, d=None, headline_uef="central_3.88", target_payback_years=target_years)
+        expected_share = A.WH_INSTALL_COST_CENTRAL_USD / (200.0 * target_years)
+        assert crossover is not None
+        assert abs(crossover - expected_share) < 0.005, (crossover, expected_share)
+    finally:
+        A._wh_net_savings_at_share = real_net
+        A.R.bill_nem = real_bill_nem
+        A.build_wh_load_series = real_load_series
+    return f"bisection finds the algebraic crossover share ({expected_share:.4f}) to within 0.005"
+
+
+@case
+def case_crossover_water_heater_share_none_when_target_never_reached():
+    """If the water heater's own payback never reaches the target even at
+    a 100% share, there is no crossover in (0, 1] and the function must
+    say so (None), not return a bogus share."""
+    real_net = A._wh_net_savings_at_share
+    real_bill_nem = A.R.bill_nem
+    real_load_series = A.build_wh_load_series
+    try:
+        A.R.bill_nem = lambda *a, **kw: 0.0
+        A.build_wh_load_series = lambda *a, **kw: ({"uniform": 0.0}, {})
+        # net=1.0 at every share -> payback = 4200 years always, far worse
+        # than any real target.
+        A._wh_net_savings_at_share = (
+            lambda iso, d, share, headline_uef, base_bill=None, **kw: 1.0)
+        crossover = A._crossover_water_heater_share(
+            iso=None, d=None, headline_uef="central_3.88", target_payback_years=30.0)
+        assert crossover is None, crossover
+    finally:
+        A._wh_net_savings_at_share = real_net
+        A.R.bill_nem = real_bill_nem
+        A.build_wh_load_series = real_load_series
+    return "no crossover is reported when the target payback is never reached at any share"
+
+
+@case
+def case_sequencing_share_robustness_detects_a_flip_at_a_named_scenario():
+    """Fast, deterministic check of sequencing_share_robustness()'s own
+    order-detection logic: monkeypatches _wh_net_savings_at_share() so ONE
+    named share yields a payback far longer than the furnace's own,
+    forcing a real order flip at that share -- proves
+    robust_across_named_scenarios correctly turns False and that
+    named_scenarios reports the FLIPPED order at that share, not silently
+    keeping the headline order everywhere."""
+    real_net = A._wh_net_savings_at_share
+    real_bill_nem = A.R.bill_nem
+    real_load_series = A.build_wh_load_series
+    try:
+        A.R.bill_nem = lambda *a, **kw: 0.0
+        A.build_wh_load_series = lambda *a, **kw: ({"uniform": 0.0}, {})
+
+        def fake_net(iso, d, share, headline_uef, base_bill=None, **kw):
+            return 1000.0 if share >= 0.5 else 0.01
+        A._wh_net_savings_at_share = fake_net
+
+        result = A.sequencing_share_robustness(
+            iso=None, d=None, headline_uef="central_3.88",
+            wh_share_scenarios={"hi": 1.0, "lo": 0.2},
+            furnace_install_usd=10000, furnace_annual_net_savings_usd=100,
+            furnace_payback_years=100.0,
+            tier_interaction=_ZERO_INTERACTION, electric_interaction=_ZERO_ELECTRIC_INTERACTION)
+    finally:
+        A._wh_net_savings_at_share = real_net
+        A.R.bill_nem = real_bill_nem
+        A.build_wh_load_series = real_load_series
+
+    assert result["named_scenarios"]["hi"]["order"] == ["water_heater", "furnace"], result
+    assert result["named_scenarios"]["lo"]["order"] == ["furnace", "water_heater"], result
+    assert result["robust_across_named_scenarios"] is False, result
+    assert result["crossover_water_heater_share"] is not None, result
+    return "sequencing_share_robustness correctly detects a real order flip at a low-savings named scenario"
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 consequence: tier_interaction_overstatement
+# ---------------------------------------------------------------------------
+def _flat_hdd_iso(floor_per_day, ann_heat, start, days, hdd_by_day=None):
+    """A minimal synthetic iso for tier_interaction_overstatement() (and
+    the private helpers it reuses from heat_pump_conversion.py) --
+    mirrors test_heat_pump_conversion.py's own hand-built-iso pattern for
+    _capacity_capped_days(). `gas_daily` is deliberately omitted (the
+    proxy-only day-proportional path, the same legitimate synthetic-test
+    case _capacity_capped_days()'s own docstring documents). Uniform HDD
+    (1.0/day) unless a caller supplies a specific `hdd_by_day` Series, so
+    ann_heat's own daily demand is easy to hand-verify."""
+    dates = [start + dt.timedelta(days=i) for i in range(days)]
+    if hdd_by_day is None:
+        hdd_by_day = pd.Series({d: 1.0 for d in dates})
+    return {"hdd_by_day": hdd_by_day, "total_hdd": float(hdd_by_day.sum()),
+           "annual_heating_therms": ann_heat, "floor_therms_per_day": floor_per_day}
+
+
+@case
 def case_tier_interaction_overstatement_matches_hand_calc():
-    """One period, hand-computable: total=60, allowance=20, $2.00/$2.40.
-    F=45 removed alone drops the remaining total (15) BELOW the allowance
-    (its own removal region straddles the tier boundary); H=10 removed
-    alone stays entirely in the nonbaseline region. Removed jointly (55),
-    the remaining total (5) is also below the allowance. Because F's own
-    individual removal already reaches into the baseline tier while H's
-    does not, the two independent computations both claim credit for part
-    of the SAME nonbaseline dollars -- a real, sizeable interaction, unlike
-    a naive same-tier-only construction (tried first; when both individual
-    removal regions land entirely within the SAME flat tier, sums and joint
-    coincide exactly and the scenario doesn't discriminate at all)."""
-    periods_df = _make_periods_df([("2025-06-30", "p1", 60.0, 999.0, 20.0)])
-    # _make_periods_df hardcodes baseline_rate=2.0/nonbaseline_rate=2.4;
-    # matched here for the hand calc.
+    """One period, ONE Gas Service segment (the whole period), hand-
+    computable: total=60, allowance=20, $2.00/$2.40. F=45 removed alone
+    drops the remaining total (15) BELOW the allowance (its own removal
+    region straddles the tier boundary); H=10 removed alone stays entirely
+    in the nonbaseline region. Removed jointly (55), the remaining total
+    (5) is also below the allowance. Because F's own individual removal
+    already reaches into the baseline tier while H's does not, the two
+    independent computations both claim credit for part of the SAME
+    nonbaseline dollars -- a real, sizeable interaction, unlike a naive
+    same-tier-only construction (tried first; when both individual removal
+    regions land entirely within the SAME flat tier, sums and joint
+    coincide exactly and the scenario doesn't discriminate at all). A
+    single-segment period is the segment-level function's degenerate case
+    -- it must reduce exactly to this period-level hand calc."""
+    statement_date, period = "2025-06-30", "Jun 1, 2025 - Jun 30, 2025"
     baseline_rate, nonbaseline_rate, allowance = 2.0, 2.4, 20.0
+    therms = 60.0
 
     def bill(t):
         base = min(t, allowance)
@@ -894,20 +1020,28 @@ def case_tier_interaction_overstatement_matches_hand_calc():
         return base * baseline_rate + nb * nonbaseline_rate
 
     F, H = 45.0, 10.0
-    T = 60.0
-    savings_f = bill(T) - bill(T - F)
-    savings_h = bill(T) - bill(T - H)
-    savings_joint = bill(T) - bill(T - F - H)
+    savings_f = bill(therms) - bill(therms - F)
+    savings_h = bill(therms) - bill(therms - H)
+    savings_joint = bill(therms) - bill(therms - F - H)
     expected_overstatement = round((savings_f + savings_h) - savings_joint, 2)
     assert expected_overstatement > 0.01, "the fixture must produce a real, positive interaction"
 
-    with _GasDetailFixture(periods_df, []):
-        result = A.tier_interaction_overstatement(
-            floor_rows=[{"statement_date": "2025-06-30", "floor_therms_attributed": F}],
-            hpc_gas_rows=[{"statement_date": "2025-06-30", "heating_therms_attributed": H}])
+    periods_df = _make_periods_df([(statement_date, period, therms, 999.0, allowance)])
+    detail = _single_segment_detail(
+        statement_date, period, period_days=30, therms=therms,
+        baseline_rate=baseline_rate, nonbaseline_rate=nonbaseline_rate,
+        energy_rate=0.5, other_fees_rate=0.12)
+    # floor_per_day=1.5 x 30 days = F=45.0; ann_heat=10 spread uniformly
+    # over the same 30 days = H=10.0 -- both well under their own daily
+    # capacity ceilings (checked: floor cap 60/30=2.0 >= 1.5; heating cap
+    # 60/30-1.5=0.5 >= 10/30=0.333), so neither is capped below target.
+    iso = _flat_hdd_iso(floor_per_day=1.5, ann_heat=H, start=dt.date(2025, 6, 1), days=30)
+
+    with _GasDetailFixture(periods_df, detail):
+        result = A.tier_interaction_overstatement(iso, n_trailing=1)
     assert abs(result["overstatement_usd"] - expected_overstatement) < 0.01, (
         result["overstatement_usd"], expected_overstatement)
-    return f"tier_interaction_overstatement matches a hand-computed interaction of ${expected_overstatement}"
+    return f"tier_interaction_overstatement (single-segment) matches a hand-computed interaction of ${expected_overstatement}"
 
 
 @case
@@ -916,13 +1050,156 @@ def case_tier_interaction_overstatement_zero_when_period_stays_in_baseline():
     removals has NO interaction (the rate is flat there, so independent
     and joint savings coincide exactly) -- proves this function does not
     report a spurious nonzero gap when none exists."""
-    periods_df = _make_periods_df([("2025-06-30", "p1", 15.0, 999.0, 20.0)])
-    with _GasDetailFixture(periods_df, []):
-        result = A.tier_interaction_overstatement(
-            floor_rows=[{"statement_date": "2025-06-30", "floor_therms_attributed": 3.0}],
-            hpc_gas_rows=[{"statement_date": "2025-06-30", "heating_therms_attributed": 4.0}])
+    statement_date, period = "2025-06-30", "Jun 1, 2025 - Jun 30, 2025"
+    therms, allowance = 15.0, 20.0
+    periods_df = _make_periods_df([(statement_date, period, therms, 999.0, allowance)])
+    detail = _single_segment_detail(
+        statement_date, period, period_days=30, therms=therms,
+        baseline_rate=2.0, nonbaseline_rate=2.4, energy_rate=0.5, other_fees_rate=0.12)
+    # floor_per_day=0.1 x 30 = F=3.0; ann_heat=4.0 uniform over 30 days = H=4.0.
+    iso = _flat_hdd_iso(floor_per_day=0.1, ann_heat=4.0, start=dt.date(2025, 6, 1), days=30)
+    with _GasDetailFixture(periods_df, detail):
+        result = A.tier_interaction_overstatement(iso, n_trailing=1)
     assert abs(result["overstatement_usd"]) < 0.01, result
     return "no interaction is reported when a period never reaches the nonbaseline tier"
+
+
+@case
+def case_tier_interaction_overstatement_segment_level_diverges_from_period_level_hand_calc():
+    """Finding 3 (Codex `review` pass, issue #20 round 4): a hand-worked,
+    TWO-segment period (a real shape this household's own corpus has --
+    e.g. 2025-01-29's real bill splits 5 days at one Gas Service rate, 27
+    at another, bill_gas_detail.csv) where the segment-level answer and a
+    period-blended-rate answer genuinely DIFFER, proving the granularity
+    choice is not cosmetic.
+
+    Segment 0 (5 days, cheap rate $1.00/$1.20): F=7.5, H=0 -- no
+    interaction possible (H=0). Segment 1 (25 days, expensive rate
+    $2.50/$3.00, allowance 40.0, own total 75.0): F=37.5 alone drops the
+    remaining total (37.5) BELOW the allowance (interaction-triggering);
+    H=20.0 alone leaves it (55.0) ABOVE the allowance; jointly (17.5) also
+    below -- the same interaction SHAPE as the classic hand example above,
+    reproduced here entirely within one segment. Total period: F=45.0,
+    H=20.0, T=90.0, allowance=48.0 (matching the segment totals exactly by
+    day-proportion). A NAIVE period-BLENDED computation (a single rate
+    averaged across the two segments, the retired approach) computes a
+    DIFFERENT overstatement on the SAME F/H/T/allowance -- checked below,
+    not assumed."""
+    statement_date, period = "2025-06-30", "Jun 1, 2025 - Jun 30, 2025"
+    therms, allowance = 90.0, 48.0
+    periods_df = _make_periods_df([(statement_date, period, therms, 999.0, allowance)])
+    detail = _gas_detail_rows(
+        statement_date, period,
+        gas_service=[(5, 1.0, 1.2), (25, 2.5, 3.0)], gas_energy=[], other_fees=[])
+    # floor_per_day=1.5 x 30 = F=45.0 total (F_seg0=7.5, F_seg1=37.5).
+    # Heating placed ONLY in segment 1's own 25 days (hdd=0 on segment 0's
+    # own days) -- ann_heat=20 spread uniformly over those 25 days.
+    dates = [dt.date(2025, 6, 1) + dt.timedelta(days=i) for i in range(30)]
+    hdd_by_day = pd.Series({d: (0.0 if i < 5 else 1.0) for i, d in enumerate(dates)})
+    iso = _flat_hdd_iso(floor_per_day=1.5, ann_heat=20.0, start=dt.date(2025, 6, 1),
+                        days=30, hdd_by_day=hdd_by_day)
+
+    with _GasDetailFixture(periods_df, detail):
+        result = A.tier_interaction_overstatement(iso, n_trailing=1)
+
+    # Segment-level hand calc (day-proportional t_s/a_s, matching the
+    # production code's own _segment_real_or_proxy_therms/day-proportion
+    # convention with no real gas_daily supplied).
+    def bill(t, a, br, nbr):
+        return min(t, a) * br + max(0.0, t - a) * nbr
+
+    t_s0, a_s0, F_s0, H_s0 = 15.0, 8.0, 7.5, 0.0
+    t_s1, a_s1, F_s1, H_s1 = 75.0, 40.0, 37.5, 20.0
+    seg0_gap = ((bill(t_s0, a_s0, 1.0, 1.2) - bill(t_s0 - F_s0, a_s0, 1.0, 1.2))
+               + (bill(t_s0, a_s0, 1.0, 1.2) - bill(t_s0 - H_s0, a_s0, 1.0, 1.2))
+               - (bill(t_s0, a_s0, 1.0, 1.2) - bill(t_s0 - F_s0 - H_s0, a_s0, 1.0, 1.2)))
+    seg1_gap = ((bill(t_s1, a_s1, 2.5, 3.0) - bill(t_s1 - F_s1, a_s1, 2.5, 3.0))
+               + (bill(t_s1, a_s1, 2.5, 3.0) - bill(t_s1 - H_s1, a_s1, 2.5, 3.0))
+               - (bill(t_s1, a_s1, 2.5, 3.0) - bill(t_s1 - F_s1 - H_s1, a_s1, 2.5, 3.0)))
+    expected_segment_level = round(seg0_gap + seg1_gap, 2)
+    assert abs(result["overstatement_usd"] - expected_segment_level) < 0.01, (
+        result["overstatement_usd"], expected_segment_level)
+
+    # The RETIRED period-blended computation: a single (day-weighted
+    # average) rate for the whole period, applied to the SAME period
+    # totals (F=45.0, H=20.0, T=90.0, allowance=48.0).
+    br_blend = (5 * 1.0 + 25 * 2.5) / 30
+    nbr_blend = (5 * 1.2 + 25 * 3.0) / 30
+    F, H, T = 45.0, 20.0, 90.0
+    naive_gap = ((bill(T, allowance, br_blend, nbr_blend) - bill(T - F, allowance, br_blend, nbr_blend))
+                + (bill(T, allowance, br_blend, nbr_blend) - bill(T - H, allowance, br_blend, nbr_blend))
+                - (bill(T, allowance, br_blend, nbr_blend) - bill(T - F - H, allowance, br_blend, nbr_blend)))
+    naive_period_level = round(naive_gap, 2)
+
+    assert abs(expected_segment_level - naive_period_level) > 0.5, (
+        "the fixture must make segment-level and period-blended bases "
+        "genuinely diverge, not agree by coincidence",
+        expected_segment_level, naive_period_level)
+    assert abs(result["overstatement_usd"] - naive_period_level) > 0.5, (
+        result["overstatement_usd"], naive_period_level)
+    return (f"segment-level overstatement (${expected_segment_level}) genuinely diverges "
+           f"from the retired period-blended basis (${naive_period_level}) on a real "
+           "mid-cycle-rate-change period shape")
+
+
+@case
+def case_tier_interaction_overstatement_segment_level_diverges_from_period_level_on_real_archive():
+    """The same divergence check as above, but end to end on this
+    household's OWN real gas corpus rather than a synthetic fixture:
+    bill_gas_detail.csv records a genuine mid-cycle Gas Service rate
+    change on 9 of this household's 25 real periods (e.g. 2025-01-29: 5
+    days at $1.56901/$1.87417, 27 days at $1.61980/$1.91783 -- two
+    different REAL billed rates inside one statement), several of which
+    fall inside the trailing-12 window this script's headline figures use.
+    Reconstructs the RETIRED period-level formula inline from the SAME
+    per-period F/H figures (floor_savings_by_period()'s own rows,
+    heat_pump_conversion.gas_savings_by_period()'s own rows) and confirms
+    the two bases give genuinely different totals on the real archive --
+    this was a live bug on this household's own data, not a hypothetical
+    one."""
+    _require_archive()
+    iso = hpc.isolate_heating_therms()
+    result = A.tier_interaction_overstatement(iso)
+
+    floor_rows, _, _ = A.floor_savings_by_period(iso)
+    hpc_rows, _, _ = hpc.gas_savings_by_period(iso)
+    heat_by_date = {r["statement_date"]: r["heating_therms_attributed"] for r in hpc_rows}
+    periods = pd.read_csv(hpc.GAS_PERIODS_CSV)
+    by_date = periods.set_index(periods["statement_date"].astype(str))
+
+    def bill(t, allowance, br, nbr):
+        base = min(t, allowance)
+        nb = max(0.0, t - allowance)
+        nbr = br if (nbr is None or pd.isna(nbr)) else nbr
+        return base * br + nb * nbr
+
+    naive_independent_sum, naive_joint = 0.0, 0.0
+    for r in floor_rows:
+        dstr = r["statement_date"]
+        if dstr not in by_date.index or dstr not in heat_by_date:
+            continue
+        prow = by_date.loc[dstr]
+        T = float(prow["therms"])
+        allowance = float(prow["baseline_allowance_therms"])
+        br, nbr = float(prow["baseline_rate"]), prow["nonbaseline_rate"]
+        F, H = r["floor_therms_attributed"], heat_by_date[dstr]
+        b_T = bill(T, allowance, br, nbr)
+        savings_f = b_T - bill(max(0.0, T - F), allowance, br, nbr)
+        savings_h = b_T - bill(max(0.0, T - H), allowance, br, nbr)
+        savings_joint = b_T - bill(max(0.0, T - F - H), allowance, br, nbr)
+        naive_independent_sum += savings_f + savings_h
+        naive_joint += savings_joint
+    naive_period_level_overstatement = round(naive_independent_sum - naive_joint, 2)
+
+    assert abs(result["overstatement_usd"] - naive_period_level_overstatement) > 0.01, (
+        "segment-level and period-level bases must genuinely diverge on "
+        "this household's real archive (it has real mid-cycle Gas Service "
+        f"rate changes), not agree by coincidence: segment-level "
+        f"${result['overstatement_usd']}, period-level "
+        f"${naive_period_level_overstatement}")
+    return (f"segment-level tier_interaction_overstatement (${result['overstatement_usd']}) "
+           f"genuinely diverges from the retired period-blended basis "
+           f"(${naive_period_level_overstatement}) on this household's own real archive")
 
 
 # ---------------------------------------------------------------------------
@@ -1175,16 +1452,15 @@ def case_floor_savings_by_period_water_heater_share_scales_floor_per_day():
 
 
 @case
-def case_water_heater_share_sensitivity_reports_four_illustrative_scenarios():
-    """Finding 2 (Codex adversarial review, issue #20 round 2): a fourth
-    scenario ('residual_if_dryer_and_cooking_both_present_at_benchmark_
-    high') must be present alongside the original three, since gas cooking
-    -- not just a dryer -- might also share the non-heating floor. On this
-    household's real 137-therm/yr floor, the dryer benchmark's own high end
-    (78.8% of the floor) plus the cooking benchmark's own high end (43.8%,
-    from A.COOKING_THERMS_YR_RANGE = 40-60 therms/yr) together exceed 100%
-    of the floor, so the residual water-heater share correctly rounds to
-    0.0 -- a real, checkable finding, not an off-by-one in the arithmetic."""
+def case_water_heater_share_sensitivity_reports_three_scenarios():
+    """Finding 1 (Codex `review` pass, issue #20 round 4): exactly THREE
+    live scenarios are reported -- 100%/72.3%/21.2% -- never a fourth
+    "0%-share" scenario with its own $0.00/yr payback row. A prior version
+    published such a scenario (the dryer's and cooking's own high-end
+    benchmarks combined) as though a zero water-heater share were a live
+    possible outcome; that is impossible for THIS household (known to run
+    a gas water heater today), not merely unverified -- see the module-
+    level comment directly above water_heater_share_sensitivity()."""
     _require_archive()
     d = br.load()
     iso = hpc.isolate_heating_therms()
@@ -1194,30 +1470,76 @@ def case_water_heater_share_sensitivity_reports_four_illustrative_scenarios():
     scenarios = result["scenarios"]
     assert set(scenarios) == {
         "100pct_full_floor", "72pct_if_dryer_present_at_benchmark_low",
-        "21pct_if_dryer_present_at_benchmark_high",
-        "residual_if_dryer_and_cooking_both_present_at_benchmark_high"}
+        "21pct_if_dryer_present_at_benchmark_high"}, scenarios
     shares = {k: v["water_heater_share"] for k, v in scenarios.items()}
     assert shares["100pct_full_floor"] == 1.0
     assert abs(shares["72pct_if_dryer_present_at_benchmark_low"] - 0.723) < 0.001
     assert abs(shares["21pct_if_dryer_present_at_benchmark_high"] - 0.212) < 0.001
-    assert shares["residual_if_dryer_and_cooking_both_present_at_benchmark_high"] == 0.0, shares
     assert "bound" not in result["basis"].lower() or "not a proven" in result["basis"].lower(), (
         "the basis text must not claim these scenarios are a proven bound")
-    # a smaller share must give strictly smaller (or equal, at the 0.0
-    # floor) savings and a longer-or-absent payback
+    # a smaller share must give strictly smaller savings and a longer payback
     full = scenarios["100pct_full_floor"]
     low = scenarios["21pct_if_dryer_present_at_benchmark_high"]
-    residual = scenarios["residual_if_dryer_and_cooking_both_present_at_benchmark_high"]
     assert low["floor_savings_annual_usd"] < full["floor_savings_annual_usd"]
     assert low["annual_net_savings_usd"] < full["annual_net_savings_usd"]
     assert (low["payback"]["central_install"]["payback_years"]
            > full["payback"]["central_install"]["payback_years"])
-    assert residual["floor_savings_annual_usd"] == 0.0, residual
-    assert residual["annual_net_savings_usd"] <= 0.0, residual
-    assert residual["payback"]["central_install"]["payback_years"] is None, residual
-    return ("water_heater_share_sensitivity reports four illustrative, "
-           "correctly-ordered scenarios on the real archive, including the "
-           "cooking+dryer residual, without overclaiming a proven bound")
+    return ("water_heater_share_sensitivity reports exactly three "
+           "illustrative, correctly-ordered scenarios on the real "
+           "archive -- no impossible 0%-share scenario among them")
+
+
+@case
+def case_benchmark_incompatibility_check_flags_implausible_on_real_archive():
+    """On this household's real 137-therm/yr floor, the dryer benchmark's
+    own high end (78.8% of the floor) plus the cooking benchmark's own high
+    end (43.8%, A.COOKING_THERMS_YR_RANGE = 40-60 therms/yr) together
+    exceed 100% of the floor (122.6%) -- benchmark_incompatibility_check
+    must flag this as implausible for THIS (known-gas-water-heater)
+    household, report the mechanical residual share (0.0) for
+    transparency, and must NOT appear among `scenarios` or carry any
+    priced (floor_savings/electric_cost/net_savings/payback) fields."""
+    _require_archive()
+    d = br.load()
+    iso = hpc.isolate_heating_therms()
+    result = A.water_heater_share_sensitivity(
+        iso, d, dryer_pct_of_floor_range=[27.7, 78.8],
+        cooking_pct_of_floor_range=[29.2, 43.8], headline_uef="central_3.88")
+    check = result["benchmark_incompatibility_check"]
+    assert check["verdict"] == "implausible_for_this_household", check
+    assert check["mechanical_residual_water_heater_share"] == 0.0, check
+    assert check["not_a_scenario"] is True
+    assert "water heater" in check["note"].lower() and "known" in check["note"].lower()
+    priced_fields = {"floor_savings_annual_usd", "electric_cost_increase_usd",
+                     "annual_net_savings_usd", "payback", "water_heater_share"}
+    assert not (priced_fields & set(check)), (
+        "benchmark_incompatibility_check must not carry any priced fields", check)
+    assert "benchmark_incompatibility_check" not in result["scenarios"]
+    for key in result["scenarios"]:
+        assert "residual" not in key, (
+            "no residual/0%-share entry may appear among scenarios", key)
+    return ("benchmark_incompatibility_check correctly flags the dryer+cooking "
+           "high ends as jointly implausible for this household, without "
+           "publishing a fake 0%-share payback scenario")
+
+
+@case
+def case_benchmark_incompatibility_check_not_triggered_when_benchmarks_fit():
+    """The mirror-image check: when the two high-end benchmarks together
+    claim LESS than the whole floor, no incompatibility exists and the
+    check must say so plainly (not flag every run as implausible
+    regardless of the input benchmarks)."""
+    _require_archive()
+    d = br.load()
+    iso = hpc.isolate_heating_therms()
+    result = A.water_heater_share_sensitivity(
+        iso, d, dryer_pct_of_floor_range=[10.0, 20.0],
+        cooking_pct_of_floor_range=[5.0, 15.0], headline_uef="central_3.88")
+    check = result["benchmark_incompatibility_check"]
+    assert check["verdict"] == "not_triggered", check
+    assert check["mechanical_residual_water_heater_share"] > 0.0, check
+    assert "not mutually incompatible" in check["note"] or "no incompatibility" in check["note"], check
+    return "benchmark_incompatibility_check reports not_triggered when the two high ends fit within the floor"
 
 
 # ---------------------------------------------------------------------------
@@ -1240,6 +1562,38 @@ def case_build_end_to_end_on_the_real_archive():
     hr = out["service_headroom_check"]
     assert hr["ampacity_verdict"] in ("pass", "fail", "not_determined")
     return "build() runs end to end on the real archive and every section is internally consistent"
+
+
+@case
+def case_sequencing_share_robustness_wired_into_build_on_real_archive():
+    """Finding 2 (Codex `review` pass, issue #20 round 4), end to end:
+    sequencing_and_paybacks()'s own share_robustness field must be present
+    in build()'s real output, agree with the headline order at every named
+    scenario on this household's real data (none of the three illustrative
+    shares actually flips it), and report a numeric crossover share that
+    sits BELOW the lowest illustrative scenario shown (21.2%) -- since that
+    scenario's own order does not flip, the true reversal threshold must be
+    lower still."""
+    _require_archive()
+    out = A.build()
+    seq = out["sequencing_and_paybacks"]
+    sr = seq["share_robustness"]
+    assert set(sr["named_scenarios"]) == {
+        "100pct_full_floor", "72pct_if_dryer_present_at_benchmark_low",
+        "21pct_if_dryer_present_at_benchmark_high"}, sr
+    assert sr["robust_across_named_scenarios"] is True, sr
+    for key, entry in sr["named_scenarios"].items():
+        assert entry["order"] == seq["order"], (key, entry, seq["order"])
+    cross = sr["crossover_water_heater_share"]
+    assert cross is not None, sr
+    lowest_named_share = sr["named_scenarios"][
+        "21pct_if_dryer_present_at_benchmark_high"]["water_heater_share"]
+    assert cross < lowest_named_share, (
+        "the crossover share must sit BELOW the lowest illustrative "
+        "scenario shown, since that scenario's own order does not flip", sr)
+    return (f"share_robustness is wired into build(): robust across all three named "
+           f"scenarios, numeric crossover at {cross:.4f} water-heater share, below the "
+           f"lowest illustrative scenario ({lowest_named_share})")
 
 
 @case

@@ -1049,28 +1049,45 @@ def electric_interaction_overstatement(wh_electric_increase_usd, furnace_electri
 # dryer needs no such adjustment at all, hence 1.0 remains a real, live
 # possibility, not a straw-man ceiling).
 #
-# Round 1's three scenarios were published as a "bounded sensitivity
-# range," but index.html's own cooking_fuel_evidence section already says
-# gas COOKING might ALSO share this same floor, unresolved by the same
-# missing household.appliance_fuels answer -- if cooking is gas, the true
-# water-heater share could sit below the round-1 "low" scenario (21.2%),
-# so calling those three a bound overstated certainty the evidence does
-# not support (round 2 finding). Fixed with a real, citable fourth
-# scenario rather than a relabel: COOKING_THERMS_YR_RANGE (same
-# evidentiary tier as the dryer benchmark, see its own module-level
-# comment) sizes cooking's own possible claim on the floor the same way
-# the dryer benchmark already sizes the dryer's, and this function reports
-# the RESIDUAL water-heater share once BOTH benchmarks are assumed present
-# at their own high ends simultaneously -- a real, evidence-grounded lower
-# scenario, not an invented one. On this household's own real data the two
-# benchmarks' high ends together (108 dryer-therms/yr + 60 cooking-
-# therms/yr = 168) exceed the entire 137-therm/yr floor, so the residual
-# share rounds to 0.0 -- a genuine, checkable finding (a dryer AND typical
-# gas cooking together could plausibly consume the WHOLE floor), not a
-# fabricated one. None of the four scenarios is asserted as a proven
-# mathematical bound: the benchmarks are external and uncited to this
-# household, and an even lower true share (or additional unlisted gas end
-# uses) cannot be ruled out from them.
+# Round 2 (Codex adversarial review, Finding 2): index.html's own cooking_
+# fuel_evidence section already says gas COOKING might ALSO share this same
+# floor, unresolved by the same missing household.appliance_fuels answer --
+# if cooking is gas, the true water-heater share could sit below the
+# round-1 "low" scenario (21.2%), so calling those three a bound overstated
+# the evidence. COOKING_THERMS_YR_RANGE (same evidentiary tier as the dryer
+# benchmark) sizes cooking's own possible claim on the floor the same way
+# the dryer benchmark already sizes the dryer's.
+#
+# Round 4 (Codex `review` pass, issue #20, Finding 1): round 2 published the
+# dryer-and-cooking-high-ends-combined RESIDUAL as a fourth live "scenario"
+# (residual_if_dryer_and_cooking_both_present_at_benchmark_high), complete
+# with its own $0.00/yr floor_savings/net_savings and a "no payback" table
+# row. That is internally impossible, not merely unverified: this household
+# is KNOWN to have a gas water heater today (this issue's own body,
+# "Water heating is gas today"; gas_end_use_enumeration's own
+# non_heating_floor.floor_composition already states the floor is "at
+# minimum the water heater"), so a scenario asserting the water heater's
+# OWN share is exactly ZERO asserts something already known false about
+# this household, not an open question. The mechanical arithmetic (on this
+# household's real data, 108 dryer-therms/yr + 60 cooking-therms/yr = 168,
+# against a 137-therm/yr floor) only shows that DRYER_THERMS_PER_MONTH_
+# RANGE's own high end and COOKING_THERMS_YR_RANGE's own high end -- two
+# independent, uncited-to-this-household EXTERNAL benchmarks -- cannot BOTH
+# be true simultaneously for this household; it does not show the water
+# heater uses zero gas. Publishing that arithmetic as a fourth payback
+# scenario overstated certainty in the opposite direction CLAUDE.md section
+# 0 already warns about (asserting a known-false input as a live outcome,
+# not merely an under-evidenced one). Fixed by keeping the mechanical
+# number -- it is a real, checkable computation, and worth showing exactly
+# how far the two high ends overshoot the floor by -- but reporting it as
+# `benchmark_incompatibility_check`, a diagnostic, NOT a member of
+# `scenarios`: no floor_savings/electric_cost/net_savings/payback is
+# computed or published for it, since a known-false input has no real
+# payback to report. This repo considered, and rejected, inventing a
+# small-but-nonzero floor share instead (CLAUDE.md section 0 forbids a
+# floor value with no evidentiary basis just as much as it forbids an
+# impossible zero -- no source pins what the true minimum water-heater
+# share actually is, so any such number would itself be a guess).
 def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range,
                                    cooking_pct_of_floor_range, headline_uef):
     """AC3/AC4, Finding 2: floor_savings_annual_usd, electric cost, net
@@ -1081,15 +1098,19 @@ def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range,
     docstring paragraph). Headline-UEF, uniform-distribution basis only
     (matching this script's own primary reference elsewhere), to keep the
     output to the scenarios that matter rather than a full UEF x
-    distribution x share cross product no reader asked for."""
+    distribution x share cross product no reader asked for.
+
+    Reports exactly THREE live scenarios (100%, 72.3%, 21.2%), plus a
+    separate, non-scenario `benchmark_incompatibility_check` -- see the
+    module-level comment immediately above this function (Finding 1, Codex
+    `review` pass, issue #20 round 4) for why a fourth "0%-share" scenario
+    is not published as a live payback outcome."""
     lo_dryer_pct, hi_dryer_pct = dryer_pct_of_floor_range
-    _, hi_cooking_pct = cooking_pct_of_floor_range
-    residual_share = round(max(0.0, 1 - (hi_dryer_pct + hi_cooking_pct) / 100), 3)
+    lo_cooking_pct, hi_cooking_pct = cooking_pct_of_floor_range
     shares = {
         "100pct_full_floor": 1.0,
         "72pct_if_dryer_present_at_benchmark_low": round(1 - lo_dryer_pct / 100, 3),
         "21pct_if_dryer_present_at_benchmark_high": round(1 - hi_dryer_pct / 100, 3),
-        "residual_if_dryer_and_cooking_both_present_at_benchmark_high": residual_share,
     }
     scenarios = {}
     for key, share in shares.items():
@@ -1112,6 +1133,47 @@ def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range,
                     net_savings, WH_INSTALL_COST_HIGH_USD, HPC.DISCOUNT_RATES, HPC.NPV_HORIZON_YEARS),
             },
         }
+
+    combined_hi_pct = round(hi_dryer_pct + hi_cooking_pct, 1)
+    residual_share = round(max(0.0, 1 - combined_hi_pct / 100), 3)
+    incompatible = residual_share <= 0.0
+    benchmark_incompatibility_check = {
+        "dryer_benchmark_high_pct_of_floor": hi_dryer_pct,
+        "cooking_benchmark_high_pct_of_floor": hi_cooking_pct,
+        "combined_pct_of_floor": combined_hi_pct,
+        "mechanical_residual_water_heater_share": residual_share,
+        "verdict": "implausible_for_this_household" if incompatible else "not_triggered",
+        "not_a_scenario": True,
+        "note": ((
+            f"the dryer benchmark's own high end ({hi_dryer_pct}% of the "
+            f"floor) plus the cooking benchmark's own high end "
+            f"({hi_cooking_pct}% of the floor) together claim "
+            f"{combined_hi_pct}% of the floor -- "
+            f"{round(combined_hi_pct - 100, 1)} percentage points over "
+            "100%, i.e. more gas than the floor actually contains. This "
+            "household is KNOWN to have a gas water heater today (this "
+            "issue's own body; gas_end_use_enumeration's own "
+            "non_heating_floor.floor_composition: 'at minimum the water "
+            "heater'), so a scenario claiming the water heater's own share "
+            "is exactly zero would assert something already known false, "
+            "not merely unverified. The correct reading is the reverse: "
+            "these two SPECIFIC external, uncited-to-this-household "
+            "high-end benchmarks cannot BOTH be true simultaneously for "
+            "this household -- at most one applies at its own high end "
+            "here, or both apply at less than their own high ends -- not "
+            "that the water heater consumes zero gas. This is NOT a "
+            "payback scenario: no floor_savings/electric_cost/net_savings/"
+            "payback is computed or published for it."
+        ) if incompatible else (
+            f"the dryer benchmark's own high end ({hi_dryer_pct}% of the "
+            f"floor) plus the cooking benchmark's own high end "
+            f"({hi_cooking_pct}% of the floor) together claim "
+            f"{combined_hi_pct}% of the floor -- under 100%, so the two "
+            "high-end benchmarks are not mutually incompatible on this "
+            "household's own numbers and no incompatibility is flagged."
+        )),
+    }
+
     return {
         "basis": ("household.appliance_fuels was never answered at intake, so "
                   "the floor's own composition beyond 'at least the water "
@@ -1122,26 +1184,212 @@ def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range,
                   "mathematical bound on the water heater's own true share: "
                   "the 100pct scenario is the mechanically pure computation "
                   "(and remains live if this household has neither a gas "
-                  "dryer nor gas cooking); the next two apply only the dryer "
-                  "benchmark, at its low and high end; the fourth "
-                  "('residual_if_dryer_and_cooking_both_present_at_"
-                  "benchmark_high') applies BOTH the dryer and the cooking "
-                  "benchmark at their high ends together, using third_end_"
-                  "use_gap's own possible_cooking_pct_of_floor_range -- on "
-                  "this household's real data the two combined exceed the "
-                  "entire floor, so that scenario's own water_heater_share "
-                  "rounds to 0.0 (a genuine finding: a dryer and typical gas "
-                  "cooking together could plausibly claim the WHOLE floor, "
-                  "leaving no water-heater share to save on at all). The "
-                  "true water-heater share -- and the true payback -- could "
-                  "still be lower than every scenario shown here (an even "
-                  "heavier dryer or cooking load, or another unlisted gas "
-                  "end use, cannot be ruled out from these benchmarks), or "
-                  "could be the full 100pct if this household has neither. "
-                  "Report the range as illustrative, not as a settled "
-                  "bracket, per CLAUDE.md section 0."),
+                  "dryer nor gas cooking); the other two apply only the "
+                  "dryer benchmark, at its low and high end. A THIRD "
+                  "external benchmark (typical gas cooking, "
+                  "COOKING_THERMS_YR_RANGE) is not folded into a fourth "
+                  "scenario here -- see benchmark_incompatibility_check "
+                  "below, which shows the dryer's and cooking's own high "
+                  "ends together would claim more of the floor than exists, "
+                  "which is evidence those two specific high-end "
+                  "assumptions can't both hold at once for a household "
+                  "known to run a gas water heater, not evidence the water "
+                  "heater itself uses no gas. The true water-heater share "
+                  "-- and the true payback -- could still be lower than "
+                  "every scenario shown here (an even heavier dryer or "
+                  "cooking load, or another unlisted gas end use, cannot be "
+                  "ruled out from these benchmarks), or could be the full "
+                  "100pct if this household has neither. Report the range "
+                  "as illustrative, not as a settled bracket, per CLAUDE.md "
+                  "section 0."),
         "headline_uef": headline_uef,
         "scenarios": scenarios,
+        "benchmark_incompatibility_check": benchmark_incompatibility_check,
+    }
+
+
+def _wh_net_savings_at_share(iso, d, share, headline_uef, base_bill=None, unit_uniform_series=None):
+    """The water heater's real-repriced annual net savings ($) at an
+    ARBITRARY water_heater_share, restricted to the (headline_uef, uniform)
+    basis this script's own headline figures already use -- a leaner
+    single-scenario rebill than wh_electric_cost_scenarios()'s own full
+    3-UEF x 3-distribution grid, which sequencing_share_robustness()'s own
+    bisection search below does not need (it calls this dozens of times).
+    Reuses floor_savings_by_period() and build_wh_load_series() directly
+    (not reimplemented) -- the SAME functions wh_electric_cost_scenarios()
+    itself calls -- and rates.bill_nem() for the rebill, mirroring wh_
+    electric_cost_scenarios()'s own solar-absorb-first netting pattern
+    (CLAUDE.md section 1b). `base_bill` does not depend on `share`, so a
+    caller running many trial shares (a bisection search) may compute it
+    once and pass it in rather than re-billing the SAME unmodified year on
+    every trial.
+
+    `unit_uniform_series` is an optional PRECOMPUTED build_wh_load_series()
+    "uniform" series for ann_wh_kwh=1.0. build_wh_load_series()'s own
+    uniform allocation has no share-dependent branching at all (every
+    interval gets exactly `(1.0 / n_days) / n`, a pure per-day constant)
+    -- so it is EXACTLY linear in ann_wh_kwh, and `unit_series *
+    ann_wh_kwh` reproduces build_wh_load_series(d, ann_wh_kwh)["uniform"]
+    exactly, not an approximation. build_wh_load_series() itself walks
+    every one of ~365 real days with a fresh boolean mask over the whole
+    year's own interval series (profiled at ~0.9s/call on this
+    household's real archive) -- expensive to repeat on every one of a
+    bisection search's dozens of trial shares for no reason, since only
+    the SCALE changes between trials, never the shape. A caller running
+    many trial shares should compute this once (`build_wh_load_series(d,
+    1.0)[0]["uniform"]`) and pass it in."""
+    _, savings_usd, therms_annual = floor_savings_by_period(iso, water_heater_share=share)
+    if base_bill is None:
+        base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
+    ann_wh_kwh = therms_annual * HPC.KWH_PER_THERM * GAS_WH_UEF / HPWH_UEF_SCENARIOS[headline_uef]
+    if unit_uniform_series is None:
+        added, _ = build_wh_load_series(d, 1.0)
+        unit_uniform_series = added["uniform"]
+    series = unit_uniform_series * ann_wh_kwh
+    absorbed = pd.concat([d["Generation"], series], axis=1).min(axis=1)
+    remainder = series - absorbed
+    f = d.copy()
+    f["Generation"] = d["Generation"] - absorbed
+    f["Consumption"] = d["Consumption"] + remainder
+    new_bill = R.bill_nem(f, imp="Consumption", exp="Generation")
+    assert abs(float(absorbed.sum() + remainder.sum()) - float(series.sum())) < 0.01, (
+        "_wh_net_savings_at_share: solar-netting step lost or duplicated energy")
+    return round(savings_usd - (new_bill - base_bill), 2)
+
+
+def _crossover_water_heater_share(iso, d, headline_uef, target_payback_years, base_bill=None,
+                                  install_usd=None, unit_uniform_series=None):
+    """Bisects water_heater_share in (roughly 0, 1] for the share at which
+    the water heater's own central-install payback first reaches
+    `target_payback_years` (the furnace's own standalone payback) -- the
+    numeric crossover sequencing_share_robustness() below reports (Finding
+    2, Codex `review` pass, issue #20 round 4). Reuses HPC.payback_and_
+    npv() and _wh_net_savings_at_share() above at each trial share, not a
+    second re-pricing implementation.
+
+    Net savings is empirically monotonically INCREASING in water_heater_
+    share on this household's real data (checked at the three named
+    scenarios water_heater_share_sensitivity() reports: 21.2%/72.3%/100%
+    give $32.32/$101.80/$136.27), so payback years is monotonically
+    DECREASING in share and a bisection search is valid here; that
+    monotonicity is a property of this real run, not proven algebraically
+    for an arbitrary gas tariff, so the search brackets itself (checking
+    payback(lo) is worse than target and payback(hi) is at least as good)
+    rather than assuming the bracket blindly."""
+    install_usd = WH_INSTALL_COST_CENTRAL_USD if install_usd is None else install_usd
+    if base_bill is None:
+        base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
+    if unit_uniform_series is None:
+        added, _ = build_wh_load_series(d, 1.0)
+        unit_uniform_series = added["uniform"]
+
+    def payback_at(share):
+        net = _wh_net_savings_at_share(iso, d, share, headline_uef, base_bill=base_bill,
+                                       unit_uniform_series=unit_uniform_series)
+        return HPC.payback_and_npv(
+            net, install_usd, HPC.DISCOUNT_RATES, HPC.NPV_HORIZON_YEARS)["payback_years"]
+
+    lo, hi = 1e-4, 1.0
+    pb_lo, pb_hi = payback_at(lo), payback_at(hi)
+    if pb_hi is not None and pb_hi >= target_payback_years:
+        return None  # the water heater never beats the target even at 100% share
+    if pb_lo is not None and pb_lo < target_payback_years:
+        return round(lo, 4)  # crossover at or below the search floor
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        pb_mid = payback_at(mid)
+        if pb_mid is None or pb_mid > target_payback_years:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-4:
+            break
+    return round(hi, 4)
+
+
+def sequencing_share_robustness(iso, d, headline_uef, wh_share_scenarios, furnace_install_usd,
+                                furnace_annual_net_savings_usd, furnace_payback_years,
+                                tier_interaction, electric_interaction):
+    """Finding 2 (Codex `review` pass, issue #20 round 4): whether the
+    published sequencing order (water heater first, furnace last --
+    sequencing_and_paybacks()'s own `order`/`last_step`) is ROBUST across
+    the water-heater-share uncertainty water_heater_share_sensitivity()
+    already establishes, or would REVERSE at a lower, still-plausible
+    share. sequencing_and_paybacks()'s own headline order is computed from
+    ONLY the 100%-water-heater-share scenario, but that share is NOT
+    VERIFIED (its own not_verified_caveat) and the true share could sit
+    below every illustrative scenario shown.
+
+    Reuses sequencing_and_paybacks() ITSELF for the order check at each
+    named share scenario, rather than a second sort implementation: its
+    `order`/`last_step` fields are computed from install_usd/
+    payback_years alone, BEFORE either interaction correction is applied
+    (see its own source -- the sort happens first, the tier/electric
+    corrections are applied only afterward to complete_transition_
+    payback's own combined savings) -- so calling it with a DIFFERENT
+    share's own marginal wh_payback_years, holding the SAME (100%-share-
+    basis) tier_interaction/electric_interaction dicts, still yields a
+    correct order/last_step. This function deliberately does NOT surface
+    that probe call's own complete_transition_payback: pairing a
+    non-headline share's own marginal savings with an interaction
+    correction computed on the headline share would be a real, mismatched
+    composite figure, not a second one this function publishes."""
+    base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
+    # Computed ONCE and reused for every trial share below (named scenarios
+    # plus the crossover bisection's own dozens of trials) -- see _wh_net_
+    # savings_at_share()'s own docstring for why this is exact, not an
+    # approximation, and why it matters for runtime.
+    unit_uniform_series = build_wh_load_series(d, 1.0)[0]["uniform"]
+    named = {}
+    all_robust = True
+    for key, share in wh_share_scenarios.items():
+        net = _wh_net_savings_at_share(iso, d, share, headline_uef, base_bill=base_bill,
+                                       unit_uniform_series=unit_uniform_series)
+        pb = HPC.payback_and_npv(net, WH_INSTALL_COST_CENTRAL_USD, HPC.DISCOUNT_RATES,
+                                 HPC.NPV_HORIZON_YEARS)["payback_years"]
+        probe = sequencing_and_paybacks(
+            fixed_charge_verdict_is_zero=True, wh_install_usd=WH_INSTALL_COST_CENTRAL_USD,
+            wh_annual_net_savings_usd=net, wh_payback_years=pb,
+            furnace_install_usd=furnace_install_usd,
+            furnace_annual_net_savings_usd=furnace_annual_net_savings_usd,
+            furnace_payback_years=furnace_payback_years,
+            tier_interaction=tier_interaction, electric_interaction=electric_interaction)
+        named[key] = {
+            "water_heater_share": share,
+            "water_heater_annual_net_savings_usd": net,
+            "water_heater_payback_years": pb,
+            "order": probe["order"],
+            "last_step": probe["last_step"],
+        }
+        if probe["order"] != ["water_heater", "furnace"]:
+            all_robust = False
+
+    crossover_share = _crossover_water_heater_share(
+        iso, d, headline_uef, furnace_payback_years, base_bill=base_bill,
+        unit_uniform_series=unit_uniform_series)
+
+    return {
+        "basis": ("checks whether the headline sequencing order (water "
+                  "heater first, furnace last, computed on the "
+                  "100%-water-heater-share basis) survives the SAME share "
+                  "uncertainty water_heater_share_sensitivity() already "
+                  "establishes -- the true share is not verified and could "
+                  "sit below every scenario shown there"),
+        "named_scenarios": named,
+        "robust_across_named_scenarios": all_robust,
+        "crossover_water_heater_share": crossover_share,
+        "crossover_note": ((
+            "the water_heater_share below which the water heater's own "
+            "central-install payback would exceed the furnace's own "
+            f"{furnace_payback_years:g}-year standalone payback, reversing "
+            "the published order, found by bisection on the SAME "
+            "real-interval gas/electric re-pricing this section's own "
+            "named scenarios use (not a linear extrapolation)"
+        ) if crossover_share is not None else (
+            "no crossover found in (0, 1] -- on this household's real "
+            "data the water heater sequences first at every possible "
+            "share, however low"
+        )),
     }
 
 
@@ -1334,7 +1582,7 @@ METER_REMOVAL_RESEARCH = {
 }
 
 
-def tier_interaction_overstatement(floor_rows, hpc_gas_rows):
+def tier_interaction_overstatement(iso, n_trailing=12):
     """How much `complete_transition_payback` overstates the TRUE combined
     gas savings by summing two INDEPENDENTLY-computed marginal-removal
     figures, rather than computing one JOINT removal (CLAUDE.md section 9:
@@ -1350,55 +1598,144 @@ def tier_interaction_overstatement(floor_rows, hpc_gas_rows):
     into it. Equality holds only when the period never reaches the
     nonbaseline tier at all, or when one of F/H is zero.
 
-    Computed at the PERIOD level (using bill_periods_gas.csv's own
+    SEGMENT-level basis (Codex `review` pass, issue #20 round 4, Finding 3
+    -- a real methodology bug, not a style choice). A first version of this
+    function computed at the PERIOD level (bill_periods_gas.csv's own
     period-blended baseline_rate/nonbaseline_rate/baseline_allowance_
-    therms columns), a coarser basis than the segment-level precision
-    floor_savings_by_period() and heat_pump_conversion.gas_savings_by_
-    period() each use for their own headline figures -- appropriate for a
-    supplementary diagnostic quantifying a secondary effect, not a second
-    headline figure of its own. Gas Energy Charge and other_fees are flat
-    (linear) rates with no tier interaction, so this covers the Gas
-    Service component only, which is where the whole effect lives."""
-    heat_by_date = {r["statement_date"]: r["heating_therms_attributed"] for r in hpc_gas_rows}
-    periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
-    by_date = periods.set_index(periods["statement_date"].astype(str))
+    therms columns), even though BOTH figures it corrects --
+    floor_savings_by_period() in this file and heat_pump_conversion.
+    gas_savings_by_period() -- price at SEGMENT level (issue #109: each
+    Gas Service segment's own rate, split at every mid-cycle rate change
+    within a billing period). This household's real gas corpus has NINE
+    periods with a real mid-cycle Gas Service rate change (bill_gas_
+    detail.csv, e.g. 2025-01-29: 5 days at $1.56901/$1.87417, 27 days at
+    $1.61980/$1.91783 -- two genuinely different, real billed rates inside
+    ONE statement), so a single period-blended rate is not the same basis
+    the two figures being corrected actually used whenever a period like
+    that falls in the trailing window -- subtracting a coarse, wrong-basis
+    correction from two segment-level figures does not produce a
+    rigorously true joint figure. Fixed by computing the SAME F-vs-H
+    interaction this function has always computed, but per Gas Service
+    SEGMENT (reusing floor_savings_by_period()'s own `_floor_capped_days()`
+    and heat_pump_conversion.gas_savings_by_period()'s own
+    `_capacity_capped_days()` for the day-level floor/heating allocation,
+    and `_segment_day_ranges()` / `_segment_heat_from_days()` /
+    `_segment_real_or_proxy_therms()` -- ALL reused directly from
+    heat_pump_conversion.py, not reimplemented, exactly the same helpers
+    floor_savings_by_period() and gas_savings_by_period() themselves call)
+    -- then summed across segments, instead of computing once per period
+    against a blended rate.
 
-    def bill(t, allowance, br, nbr):
-        base = min(t, allowance)
-        nb = max(0.0, t - allowance)
-        nbr = br if (nbr is None or pd.isna(nbr)) else nbr
-        return base * br + nb * nbr
+    Restricted to the trailing `n_trailing` real statements, the SAME
+    window floor_savings_by_period()'s own default resolves to, so this
+    diagnostic covers exactly the periods the headline combined-savings
+    figure actually uses. Gas Energy Charge and other_fees are flat
+    (linear) rates with no tier interaction regardless of granularity, so
+    this covers the Gas Service component only, which is where the whole
+    effect lives (unchanged from the period-level version)."""
+    periods = pd.read_csv(HPC.GAS_PERIODS_CSV)
+    periods["statement_date"] = pd.to_datetime(periods["statement_date"]).dt.date
+    periods[["period_start", "period_end"]] = periods["period"].str.split(
+        " - ", expand=True).apply(lambda c: pd.to_datetime(c, format="%b %d, %Y").dt.date)
+    periods = periods.sort_values("period_start").reset_index(drop=True)
+    trailing = periods.tail(n_trailing).copy()
+
+    gas_detail = HPC.load_gas_detail()
+    hdd_by_day = iso["hdd_by_day"]
+    total_hdd = iso["total_hdd"]
+    ann_heat = iso["annual_heating_therms"]
+    floor_per_day = iso["floor_therms_per_day"]
+    gas_daily = iso.get("gas_daily")
 
     total_independent_sum, total_joint, rows = 0.0, 0.0, []
-    for r in floor_rows:
-        d = r["statement_date"]
-        if d not in by_date.index or d not in heat_by_date:
-            continue
-        prow = by_date.loc[d]
-        T = float(prow["therms"])
-        allowance = float(prow["baseline_allowance_therms"])
-        br, nbr = float(prow["baseline_rate"]), prow["nonbaseline_rate"]
-        F, H = r["floor_therms_attributed"], heat_by_date[d]
-        b_T = bill(T, allowance, br, nbr)
-        savings_f = b_T - bill(max(0.0, T - F), allowance, br, nbr)
-        savings_h = b_T - bill(max(0.0, T - H), allowance, br, nbr)
-        savings_joint = b_T - bill(max(0.0, T - F - H), allowance, br, nbr)
-        independent_sum = savings_f + savings_h
-        total_independent_sum += independent_sum
-        total_joint += savings_joint
-        gap = round(independent_sum - savings_joint, 2)
-        if abs(gap) > 0.005:
-            rows.append({"statement_date": d, "overstatement_usd": gap})
+    for _, row in trailing.iterrows():
+        start, end = row["period_start"], row["period_end"]
+        context = f"{row['statement_date']} [{row['period']}]"
+        therms = row["therms"]
+        period_days = (end - start).days + 1
+
+        detail = gas_detail.get(str(row["statement_date"]))
+        if not detail or "gas_service" not in detail:
+            raise SystemExit(
+                f"all_electric_endgame.py: tier_interaction_overstatement "
+                f"needs gas_service segment detail for {context} in "
+                "bill_gas_detail.csv -- run parse_bills.py first")
+        gs_segs = detail["gas_service"]
+        gs_ranges = HPC._segment_day_ranges(
+            start, end, [s["segment_days"] for s in gs_segs], f"{context} gas_service")
+
+        # The SAME two day-level allocations floor_savings_by_period() and
+        # heat_pump_conversion.gas_savings_by_period() each already compute
+        # for their own headline figures -- not reimplemented, just run
+        # side by side here so both can be projected onto the SAME Gas
+        # Service segment boundaries below.
+        floor_capped_days = _floor_capped_days(start, end, floor_per_day, therms)
+        heating_capable_per_day = max(0.0, therms / period_days - floor_per_day)
+        heat_capped_days = HPC._capacity_capped_days(
+            start, end, hdd_by_day, total_hdd, ann_heat, heating_capable_per_day,
+            floor_per_day, gas_daily, context)
+
+        gs_floor_shares = HPC._segment_heat_from_days(gs_ranges, floor_capped_days)
+        gs_heat_shares = HPC._segment_heat_from_days(gs_ranges, heat_capped_days)
+
+        for (seg_start, seg_end), F_s, H_s, seg in zip(
+                gs_ranges, gs_floor_shares, gs_heat_shares, gs_segs):
+            if F_s <= 0.0 and H_s <= 0.0:
+                continue  # nothing removed in this segment -- no interaction possible
+            seg_days = (seg_end - seg_start).days + 1
+            a_s = row["baseline_allowance_therms"] * seg_days / period_days
+            seg_context = f"{context} gas_service segment {seg['segment']}"
+            # t_s: gas_daily=None (day-proportion), NOT the real iso
+            # gas_daily, even though heat_capped_days above used it. This
+            # mirrors _floor_segment_total_therms()'s own established
+            # convention (see that function's docstring): heat_pump_
+            # conversion.gas_savings_by_period() can safely pass real
+            # gas_daily for t_s because H_s > 0 there only on days gas.csv
+            # is KNOWN to cover (_capacity_capped_days() already fails
+            # closed otherwise) -- but F_s is NEVER exactly zero on any
+            # real day, so F_s + H_s > 0 gives no such guarantee here, and
+            # the real-daily path would fail closed on this household's own
+            # trailing period whose early days (2025-06-27 on) precede
+            # gas.csv's coverage start (2025-07-25). This is the SAME
+            # supplementary-diagnostic precision tradeoff the retired
+            # period-level version already made (it used bill_periods_
+            # gas.csv's own values with no gas_daily at all); only the
+            # SEGMENT granularity is new here, not full real-daily t_s.
+            t_s = HPC._segment_real_or_proxy_therms(
+                seg_start, seg_end, therms, period_days, None, F_s + H_s,
+                context=seg_context)
+            br = seg["baseline_rate"]
+            nbr = seg["nonbaseline_rate"]
+            nbr_eff = br if (nbr is None or pd.isna(nbr)) else nbr
+
+            def bill(t, a_s=a_s, br=br, nbr_eff=nbr_eff):
+                base = min(t, a_s)
+                nb = max(0.0, t - a_s)
+                return base * br + nb * nbr_eff
+
+            b_T = bill(t_s)
+            savings_f = b_T - bill(max(0.0, t_s - F_s))
+            savings_h = b_T - bill(max(0.0, t_s - H_s))
+            savings_joint = b_T - bill(max(0.0, t_s - F_s - H_s))
+            independent_sum = savings_f + savings_h
+            total_independent_sum += independent_sum
+            total_joint += savings_joint
+            gap = round(independent_sum - savings_joint, 2)
+            if abs(gap) > 0.005:
+                rows.append({"statement_date": str(row["statement_date"]),
+                            "segment": int(seg["segment"]), "overstatement_usd": gap})
     overstatement = round(total_independent_sum - total_joint, 2)
     return {
         "gas_service_independent_sum_usd": round(total_independent_sum, 2),
         "gas_service_joint_removal_usd": round(total_joint, 2),
         "overstatement_usd": overstatement,
-        "by_period": rows,
-        "note": ("Gas Service (tiered) component only, period-level basis "
-                "-- see this function's own docstring. Positive means the "
-                "naive sum overstates the true joint savings; this is "
-                "structurally guaranteed non-negative under a convex rate."),
+        "by_segment": rows,
+        "note": ("Gas Service (tiered) component only, SEGMENT-level basis "
+                "(Finding 3, Codex review pass, issue #20 round 4) -- see "
+                "this function's own docstring for why period-blended rates "
+                "were not the correct basis. Positive means the naive sum "
+                "overstates the true joint savings; this is structurally "
+                "guaranteed non-negative under a convex rate, per segment."),
     }
 
 
@@ -1489,7 +1826,12 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                   "crediting $0 to whichever step is last changes nothing, "
                   "so there is no fixed-charge-driven reason to sequence "
                   "one way over the other, unlike a rate WITH a real "
-                  "per-meter charge would produce."),
+                  "per-meter charge would produce. This order is derived "
+                  "from the 100%-water-heater-share basis alone -- see "
+                  "this section's own share_robustness (added separately, "
+                  "in build()) for whether it survives the water-heater-"
+                  "share uncertainty water_heater_share_sensitivity "
+                  "establishes."),
         "order": order_names,
         "last_step": last_step["name"],
         "fixed_charge_release_usd": fixed_charge_release_usd,
@@ -1623,7 +1965,7 @@ def build():
     furnace_install_usd = hpc_data["install_cost"]["standalone_usd"]
     furnace_payback_years = furnace_headline["standalone"]["payback_years"]
 
-    interaction = tier_interaction_overstatement(floor_rows, hpc_data["gas_savings_by_period"])
+    interaction = tier_interaction_overstatement(iso)
 
     # Finding 1 (Codex adversarial review, issue #20 round 2): the electric
     # side is non-additive too, exactly mirroring the gas side above. Build
@@ -1646,6 +1988,22 @@ def build():
         wh_install_usd=WH_INSTALL_COST_CENTRAL_USD,
         wh_annual_net_savings_usd=wh_headline["annual_net_savings_usd"],
         wh_payback_years=wh_headline["central_install"]["payback_years"],
+        furnace_install_usd=furnace_install_usd,
+        furnace_annual_net_savings_usd=furnace_headline["annual_net_savings_usd"],
+        furnace_payback_years=furnace_payback_years,
+        tier_interaction=interaction,
+        electric_interaction=electric_interaction,
+    )
+
+    # Finding 2 (Codex `review` pass, issue #20 round 4): the sequencing
+    # order above is derived from the 100%-water-heater-share basis alone
+    # -- check whether it survives the SAME share scenarios water_heater_
+    # share_sensitivity() already reports, and find the numeric crossover
+    # share below which it would reverse.
+    share_scenario_shares = {k: v["water_heater_share"]
+                             for k, v in share_sensitivity["scenarios"].items()}
+    sequencing["share_robustness"] = sequencing_share_robustness(
+        iso, d, headline_uef, share_scenario_shares,
         furnace_install_usd=furnace_install_usd,
         furnace_annual_net_savings_usd=furnace_headline["annual_net_savings_usd"],
         furnace_payback_years=furnace_payback_years,
