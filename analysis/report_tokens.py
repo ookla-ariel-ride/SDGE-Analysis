@@ -1265,6 +1265,306 @@ _tok("METRIC_TARGET", kind="derived",
               "data/report_data.json:totals.imp"])
 
 
+# ---- per-section one-line verdicts (issue #131) --------------------------
+# CLAUDE.md section 10 requires every h2 to open with its own one-line
+# conclusion. Three mechanisms carry one, and every h2 uses exactly one of
+# them: an in-heading verdict ({{S4_VERDICT_SHORT}}, {{S8_VERDICT_SHORT}},
+# {{S11_VERDICT_SHORT}}), a <summary> .teaser ({{SEC9_TEASER}},
+# {{SEC12_TEASER}}, {{SEC13_TEASER}}), or the <p class="verdict"> line the
+# tokens below fill. Rules every sentence here obeys:
+#   * it opens with the same "In one sentence: " stem the hand-authored
+#     section 10 verdict already uses, and it reads correctly standing alone
+#     -- the token owns every sigil and unit, the template contributes none
+#     (issue #129);
+#   * it is PLAIN TEXT. Token values are HTML-escaped at render
+#     (generate_report.py), so a tag, an entity, or a bare "&" would ship as
+#     "&amp;" rather than as markup;
+#   * the basic-tier ones (sections 0-7 and the Monday appendix) stay inside
+#     CLAUDE.md section 10's density cap -- 35 words to the first sentence
+#     break, at most one parenthetical or em-dash aside before it;
+#   * a qualitative COMPARISON in the sentence is computed, not asserted, so
+#     it inverts rather than lies if the artifacts move.
+VERDICT_STEM = "In one sentence: "
+
+
+def _battery_model_short():
+    """BATTERY_MODEL without its parenthetical acronym gloss -- these
+    sentences already spend their one allowed aside elsewhere."""
+    return re.sub(r"\s*\([^)]*\)", "", TOKENS["BATTERY_MODEL"]["value"]).strip()
+
+
+def _s0_verdict(ctx):
+    saved = _json("behavior_rebuild.json")["scenarios"]["a"]["saved"]
+    mid = _json("package_results.json")["packages"]["MID"]
+    lo, hi = sorted((mid["battery_alone_payback_yr"],
+                     mid["battery_alone_payback_post_fix_yr"]))
+    # "hardware-alone" is deliberate: CLAUDE.md section 2 forbids crediting
+    # the free behavior saving to the hardware, and both ends of this range
+    # are package_results.json's OWN battery-alone paybacks.
+    return (f"{VERDICT_STEM}the rate plan is right, the biggest win costs nothing "
+            f"(retiming EV charging, {_usd0(saved)}/yr modeled), and a "
+            f"{_battery_model_short()} is a sound optional buy at a "
+            f"{lo:.1f}–{hi:.1f}-year hardware-alone payback.")
+
+
+_tok("S0_VERDICT", kind="derived", get=_s0_verdict,
+     sources=["data/behavior_rebuild.json:scenarios.a.saved",
+              "data/package_results.json:packages.MID.battery_alone_payback_yr",
+              "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr"])
+
+
+def _daily_production_series():
+    """{column: {date: kWh}} for every numeric column of
+    data/threeway_production_validation.csv (its first column is the date)."""
+    rows = _csv_rows("threeway_production_validation.csv")
+    if not rows:
+        raise SystemExit("report_tokens: data/threeway_production_validation.csv is empty")
+    date_key = list(rows[0])[0]
+    series = {}
+    for col in list(rows[0])[1:]:
+        vals = {r[date_key]: float(r[col]) for r in rows if r[col] not in (None, "")}
+        if vals:
+            series[col] = vals
+    if len(series) < 2:
+        raise SystemExit("report_tokens: data/threeway_production_validation.csv has "
+                          "fewer than two usable production series to correlate")
+    return series
+
+
+def _min_pairwise_daily_correlation():
+    """The WEAKEST pairwise daily Pearson correlation among the committed
+    production series, over the dates each pair shares. Weakest, not mean:
+    the claim it backs is 'they all agree at least this well', which a mean
+    could satisfy while one pair drifted."""
+    series = _daily_production_series()
+    names = sorted(series)
+    worst = None
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            shared = sorted(set(series[a]) & set(series[b]))
+            if len(shared) < 30:
+                raise SystemExit(f"report_tokens: production series {a!r} and {b!r} "
+                                  f"share only {len(shared)} dated observations -- too "
+                                  "few to quote a daily correlation from")
+            xs = [series[a][d] for d in shared]
+            ys = [series[b][d] for d in shared]
+            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+            cx = [x - mx for x in xs]
+            cy = [y - my for y in ys]
+            den = (sum(v * v for v in cx) * sum(v * v for v in cy)) ** 0.5
+            if den == 0:
+                raise SystemExit(f"report_tokens: production series {a!r}/{b!r} has zero "
+                                  "variance; a correlation is undefined")
+            r = sum(u * v for u, v in zip(cx, cy)) / den
+            worst = r if worst is None else min(worst, r)
+    return worst
+
+
+def _s1_verdict(ctx):
+    ab = _json("tou_audit_summary.json")["rules"]["as_billed"]
+    # Fail closed rather than publish a false claim: the sentence says every
+    # billed bucket rebuilds, so a single failing bucket must stop the render.
+    if ab["buckets_failing"]:
+        raise SystemExit(
+            f"report_tokens: S1_VERDICT refuses to claim all {ab['buckets']} billed TOU "
+            f"buckets rebuild -- data/tou_audit_summary.json:rules.as_billed reports "
+            f"{ab['buckets_failing']} failing bucket(s): {ab.get('failing_buckets')}")
+    # No apostrophe, no ampersand, no tag anywhere in these sentences: token
+    # values are HTML-escaped at render (an apostrophe would ship as &#x27;),
+    # so the plain text is also the rendered text.
+    return (f"{VERDICT_STEM}all {ab['buckets']} billed TOU buckets rebuild from the raw "
+            "meter intervals to the whole-kWh rounding digit the statements print, and "
+            f"the independent production series agree at "
+            f"{_min_pairwise_daily_correlation():.4f} daily correlation.")
+
+
+_tok("S1_VERDICT", kind="derived", get=_s1_verdict,
+     sources=["data/tou_audit_summary.json:rules.as_billed.buckets",
+              "data/tou_audit_summary.json:rules.as_billed.buckets_failing",
+              "data/threeway_production_validation.csv (pairwise daily correlation)"])
+
+
+def _s2_verdict(ctx):
+    production = _annual_production_kwh(ctx)
+    kw_dc = hh1("solar.kw_dc")
+    exported = _json("report_data.json")["totals"]["exp"]
+    end = dt.date.fromisoformat(
+        _json("behavior_rebuild.json")["window"]["end"].split(" ")[0])
+    pto = _as_date(hh1("household.pto_date"))
+    age = end.year - pto.year - ((end.month, end.day) < (pto.month, pto.day))
+    return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array is healthy, producing "
+            f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW, but "
+            f"{round(exported / production * 100)}% of that output exports at midday "
+            "while the EV charges at night.")
+
+
+_tok("S2_VERDICT", kind="derived", get=_s2_verdict,
+     sources=["data/enphase_daily_production.csv (Total footer row)",
+              "data/report_data.json:totals.exp",
+              "data/behavior_rebuild.json:window.end",
+              "private/household.yaml:solar.kw_dc", "private/household.yaml:household.pto_date"])
+
+
+def _s3_verdict(ctx):
+    plan = hh1("household.plan")
+    provider = _generation_provider_short(ctx)
+    rows = [r for r in _csv_rows("plan_results.csv") if r["provider"] == provider]
+    if not rows:
+        raise SystemExit(f"report_tokens: data/plan_results.csv has no rows for the "
+                          f"household's generation provider {provider!r}")
+    cheapest = min(float(r["total"]) for r in rows)
+    winners = [r["plan"] for r in rows if float(r["total"]) == cheapest]
+    # Computed, never asserted: if another plan ever prices lower (or ties),
+    # the sentence would be false, so refuse to render it.
+    if winners != [plan]:
+        raise SystemExit(
+            f"report_tokens: S3_VERDICT refuses to claim {plan!r} is the cheapest plan -- "
+            f"data/plan_results.csv's {provider} column ranks {winners} cheapest at "
+            f"${cheapest:,.2f}")
+    return (f"{VERDICT_STEM}{plan} is still the cheapest plan for this house at a modeled "
+            f"{_usd0(cheapest)}/yr, and every alternative priced costs more.")
+
+
+_tok("S3_VERDICT", kind="derived", get=_s3_verdict,
+     sources=["data/plan_results.csv (the household provider's total column)",
+              "private/household.yaml:household.plan", "private/household.yaml:household.cca"])
+
+
+def _s5_verdict(ctx):
+    rd = _json("report_data.json")
+    pc = rd["periods_chart"]
+    on = pc["order"].index("on")
+    return (f"{VERDICT_STEM}the {_peak_window()} on-peak window takes "
+            f"{round(pc['import_share'][on] * 100)}% of imported kWh but "
+            f"{round(rd['onpeak']['share_of_energy_cost'] * 100)}% of the import energy "
+            "cost, so timing, more than total consumption, sets this bill.")
+
+
+_tok("S5_VERDICT", kind="derived", get=_s5_verdict,
+     sources=["data/report_data.json:periods_chart.import_share",
+              "data/report_data.json:onpeak.share_of_energy_cost",
+              "analysis/rates.py:period() (sampled)"])
+
+
+def _s6_verdict(ctx):
+    dp = _json("battery_dispatch_policies.json")
+    greedy, evening = dp["pw3"]["greedy"]["save"], dp["pw3"]["evening"]["save"]
+    policy_gap = greedy - evening
+    capacity_gap = dp["pw3x"]["greedy"]["save"] - greedy
+    # The closing clause is a comparison, not a conclusion pasted in: on
+    # another household's artifacts the second pack could well win.
+    tail = ("so the dispatch settings are worth more than a bigger pack"
+            if policy_gap > capacity_gap else
+            "so a bigger pack is worth more than the dispatch settings")
+    return (f"{VERDICT_STEM}one {_battery_model_short()} on price-aware dispatch models "
+            f"{_usd0(greedy)}/yr against {_usd0(evening)} on an evening-only schedule, {tail}.")
+
+
+_tok("S6_VERDICT", kind="derived", get=_s6_verdict,
+     sources=["data/battery_dispatch_policies.json:pw3.greedy.save",
+              "data/battery_dispatch_policies.json:pw3.evening.save",
+              "data/battery_dispatch_policies.json:pw3x.greedy.save"])
+
+
+def _s7_verdict(ctx):
+    pk = _json("package_results.json")["packages"]
+    low, mid, high = pk["LOW"], pk["MID"], pk["HIGH"]
+    if low["cost"]:
+        raise SystemExit(f"report_tokens: S7_VERDICT refuses to call the behavior package "
+                          f"free -- data/package_results.json:packages.LOW.cost is "
+                          f"${low['cost']:,.0f}")
+    # battery_alone_post_ev_fix_yr, not battery_alone_yr: the payback quoted
+    # beside it is the POST-fix one, and pairing the pre-fix saving with the
+    # post-fix payback would mix two runs of the integrated pipeline.
+    mid_payback = mid["battery_alone_payback_post_fix_yr"]
+    marginal = high["marginal_vs_mid_yr"]
+    exp_payback = (high["cost"] - mid["cost"]) / marginal if marginal else float("inf")
+    tail = ("and the expansion pack buys endurance, not savings"
+            if exp_payback > mid_payback else
+            "and the expansion pack pays back faster than the first unit")
+    return (f"{VERDICT_STEM}the free EV-charging fix is worth a modeled "
+            f"{_usd0(low['savings_yr'])}/yr whatever you buy; one "
+            f"{_battery_model_short()} adds its own "
+            f"{_usd0(mid['battery_alone_post_ev_fix_yr'])}/yr (~{mid_payback:.1f}-yr "
+            f"payback), {tail}.")
+
+
+_tok("S7_VERDICT", kind="derived", get=_s7_verdict,
+     sources=["data/package_results.json:packages.LOW.savings_yr",
+              "data/package_results.json:packages.LOW.cost",
+              "data/package_results.json:packages.MID.battery_alone_post_ev_fix_yr",
+              "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr",
+              "data/package_results.json:packages.HIGH.marginal_vs_mid_yr",
+              "data/package_results.json:packages.HIGH.cost"])
+
+
+def _s10_verdict(ctx):
+    a = _json("cca_bundled_counterfactual.json")["direction_a_cca_repriced_at_bundled"]
+    utility = hh1("household.utility")
+    # The provider's own name, taken off household.cca's head exactly the way
+    # GENERATION_PROVIDER_SHORT takes its acronym off the same field.
+    cca_name = re.split(r"\s+[—–-]\s+|\(", hh1("household.cca"))[0].strip()
+    delta = a["delta_usd_per_year"]
+    direction = "more than" if delta > 0 else "less than"
+    # Both qualitative claims are computed, not asserted. "materially larger"
+    # compares the EXCLUDED net-export credit against the priced delta this
+    # sentence quotes -- if the unpriced side ever stopped dominating, the
+    # caveat would be false, so refuse to render rather than overclaim.
+    unpriced = abs(a["excluded_net_export_cca_credit_usd"])
+    priced = abs(a["delta_usd"])
+    if unpriced <= priced:
+        raise SystemExit(
+            f"report_tokens: S10_VERDICT refuses to call the unpriced net-export effect "
+            f"materially larger -- data/cca_bundled_counterfactual.json puts it at "
+            f"${unpriced:,.2f} against a priced delta of ${priced:,.2f}")
+    return (f"{VERDICT_STEM}on the net-import energy this analysis can price, staying on "
+            f"the CCA ({cca_name}) would have cost this household about "
+            f"{_usd0(abs(delta))}/yr {direction} bundled {utility} generation "
+            f"({a['confidence']} · same-date bill rates, {a['days']} days) — a materially "
+            "larger, unpriced net-export effect means the whole-household answer is not "
+            "fully settled.")
+
+
+_tok("S10_VERDICT", kind="derived", get=_s10_verdict,
+     sources=["data/cca_bundled_counterfactual.json:direction_a_cca_repriced_at_bundled",
+              "private/household.yaml:household.utility",
+              "private/household.yaml:household.cca"])
+
+
+def _s14_verdict(ctx):
+    d = _rates_effective_date()
+    # Deliberately NOT "every figure traces to a script and an artifact":
+    # section 14 itself names figures that do not (unarchived workpapers),
+    # so that phrasing would overclaim under CLAUDE.md section 0.
+    return (f"{VERDICT_STEM}absolute dollars come from the actual statements, savings are "
+            f"model deltas at {d.month}/{d.day}/{d.year} rates, and each figure carries a "
+            "confidence label with the few non-artifact-backed items named as such.")
+
+
+_tok("S14_VERDICT", kind="derived", get=_s14_verdict,
+     sources=["analysis/rates.py module docstring ('effective M/D/YYYY')"])
+
+
+def _overnight_cheap_window():
+    """The OVERNIGHT weekday super-off-peak run (the one starting at
+    midnight), as distinct from _cheap_window()'s daytime run."""
+    runs = [r for r in _weekday_runs() if r[2] == "sop" and r[0] == 0]
+    if len(runs) != 1:
+        raise SystemExit(f"report_tokens: expected exactly one overnight weekday "
+                          f"super-off-peak run starting at midnight, found {runs}")
+    return _fmt_hour_range(runs[0][0], runs[0][1])
+
+
+def _s15_verdict(ctx):
+    return (f"{VERDICT_STEM}reprogramming the chargers this week to finish inside the "
+            f"{_overnight_cheap_window()} super-off-peak window captures the free savings; "
+            "everything else on the list is verification before spending money.")
+
+
+_tok("S15_VERDICT", kind="derived", get=_s15_verdict,
+     sources=["analysis/rates.py:period() (sampled)"])
+
+
 # ---- data / rate / env source inventories -------------------------------
 def _monitoring_fields():
     sources = _hh_value("monitoring[].source")

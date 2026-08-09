@@ -13,6 +13,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 """
 import calendar
 import datetime as dt
+import html as htmlmod
 import json
 import pathlib
 import re
@@ -1560,6 +1561,120 @@ def case_weather_regression_paragraph_matches_the_artifact():
     return "the §9 weather-regression paragraph matches weather_results.json"
 
 
+# ---------------------------------------------------------------------------
+# Issue #131: CLAUDE.md section 10 requires every h2 to open with a one-line
+# conclusion, and the report carries one three different ways. These two cases
+# are pure HTML structure -- no token resolution, no private archive -- so they
+# run in CI exactly as the chart pins above do.
+# ---------------------------------------------------------------------------
+TEMPLATE_HTML = (ROOT / "report-template.html").read_text()
+
+_SECTION_H2_RE = re.compile(r'<h2 id="([^"]+)"[^>]*>(.*?)</h2>', re.S)
+_TEMPLATE_VERDICT_TOKEN_RE = re.compile(r"\{\{[A-Z0-9_]*VERDICT[A-Z0-9_]*\}\}")
+
+
+def _in_heading_verdict_sections():
+    """Sections whose conclusion sits INSIDE the <h2> itself. Derived from the
+    template's own {{..._VERDICT_SHORT}} slots, never hardcoded: index.html is
+    that template rendered, so it inherits the same set by section id."""
+    return {sid for sid, inner in _SECTION_H2_RE.findall(TEMPLATE_HTML)
+            if _TEMPLATE_VERDICT_TOKEN_RE.search(inner)}
+
+
+def _conclusion_mechanisms(doc):
+    """{section id: set of conclusion mechanisms present}, parsed from the
+    document rather than read off a hardcoded id list, so a section added
+    later shows up here (with an empty set) instead of slipping through."""
+    in_heading = _in_heading_verdict_sections()
+    found = {}
+    for m in _SECTION_H2_RE.finditer(doc):
+        sid = m.group(1)
+        rest = doc[m.end():].lstrip()
+        mech = set()
+        if sid in in_heading:
+            mech.add("in-heading")
+        if (doc[:m.start()].rstrip().endswith("<summary>")
+                and rest.startswith('<span class="teaser">')):
+            mech.add("summary-teaser")
+        if rest.startswith('<p class="verdict">'):
+            mech.add("verdict-line")
+        found[sid] = mech
+    return found
+
+
+def case_every_h2_section_opens_with_exactly_one_conclusion_line():
+    index_mech = _conclusion_mechanisms(HTML)
+    template_mech = _conclusion_mechanisms(TEMPLATE_HTML)
+    assert len(index_mech) >= 16, (
+        f"only {len(index_mech)} <h2 id=...> sections parsed out of index.html -- "
+        "the parser probably broke")
+    assert set(index_mech) == set(template_mech), (
+        "index.html and report-template.html disagree about which sections exist: "
+        f"index-only {sorted(set(index_mech) - set(template_mech))}, "
+        f"template-only {sorted(set(template_mech) - set(index_mech))}")
+
+    # Exactly one, in BOTH files, with no exceptions.
+    for label, mechanisms in (("index.html", index_mech),
+                              ("report-template.html", template_mech)):
+        silent = sorted(sid for sid, m in mechanisms.items() if not m)
+        assert not silent, (
+            f"{label} sections with no conclusion line at all: {silent} -- every h2 needs "
+            'an in-heading verdict, a <summary> .teaser, or a <p class="verdict">')
+        doubled = {sid: sorted(m) for sid, m in mechanisms.items() if len(m) > 1}
+        assert not doubled, (
+            f"{label} sections carrying MORE than one conclusion mechanism: {doubled} -- "
+            "exactly one per section (CLAUDE.md section 10)")
+
+    drifted = {sid: (sorted(template_mech[sid]), sorted(index_mech[sid]))
+               for sid in template_mech if template_mech[sid] != index_mech[sid]}
+    assert not drifted, (
+        f"the rendered report uses a different conclusion mechanism than its "
+        f"template for: {drifted}")
+    counts = {}
+    for mech in index_mech.values():
+        counts[next(iter(mech))] = counts.get(next(iter(mech)), 0) + 1
+    return (f"all {len(index_mech)} h2 sections in both files carry exactly one conclusion "
+            f"line, by the same mechanism ({counts})")
+
+
+# The density cap governs the BASIC tier only (CLAUDE.md section 10); the
+# advanced tier is exempt because that audience reads for the derivation. The
+# boundary is read off the document itself rather than listed, so a section
+# moved across it is scoped correctly without editing this test.
+_LEAD_SENTENCE_BREAK_RE = re.compile(r"(?<!\d)\.(?=\s|$)")
+
+
+def _lead_sentence(text):
+    """Everything up to the first real sentence-ending period. A period glued
+    to digits ($264.10, 91.5%, 6.2–6.5-yr) is not a break -- a human reader
+    skips those too."""
+    m = _LEAD_SENTENCE_BREAK_RE.search(text)
+    return text[:m.end()] if m else text
+
+
+def case_basic_tier_verdict_lines_stay_inside_the_density_cap():
+    cut = HTML.find('<details id="advanced"')
+    assert cut > 0, 'the advanced-tier <details id="advanced"> wrapper is missing'
+    basic = HTML[:cut]
+    lines = re.findall(r'<p class="verdict">(.*?)</p>', basic, re.S)
+    assert len(lines) >= 8, (
+        f"only {len(lines)} basic-tier .verdict lines found -- sections 0-7 and the "
+        "Monday appendix should each have one")
+    over = []
+    for raw in lines:
+        text = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        lead = _lead_sentence(text)
+        words = len(lead.split())
+        asides = lead.count("(") + lead.count("—")
+        if words > 35 or asides > 1:
+            over.append(f"{words}w/{asides} asides: {lead[:70]}...")
+    assert not over, (
+        "basic-tier .verdict lead sentences over CLAUDE.md section 10's density cap "
+        f"(35 words, 1 aside): {over}")
+    return (f"all {len(lines)} basic-tier .verdict lines lead in 35 words or fewer "
+            "with at most one aside")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -1603,6 +1718,8 @@ CASES = [
     case_reprice_by_vintage_note_matches_the_artifact,
     case_soiling_annual_economics_matches_the_artifact,
     case_weather_regression_paragraph_matches_the_artifact,
+    case_every_h2_section_opens_with_exactly_one_conclusion_line,
+    case_basic_tier_verdict_lines_stay_inside_the_density_cap,
 ]
 
 

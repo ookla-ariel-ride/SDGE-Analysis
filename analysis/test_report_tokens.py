@@ -12,6 +12,7 @@ the real path rather than skipping.
 Run from the repo root:  ./.venv/bin/python analysis/test_report_tokens.py
 """
 import datetime as dt
+import html as _htmllib
 import pathlib
 import re
 import sys
@@ -512,6 +513,118 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     return (f"SEC9_TEASER cites behavior_rebuild's {sessions} sessions (not "
             f"deep_results' {stale}) and deep_results' phantom figures; the "
             "phantom three-way split is tracked in issue #140")
+
+
+# ---------------------------------------------------------------------------
+# Issue #131: the nine <p class="verdict"> section conclusions are token-owned.
+# index.html is the rendered artifact of those tokens, so the two must agree
+# CHARACTER FOR CHARACTER -- that equality is the whole anti-drift guard. An
+# editor who rewrites a verdict line in index.html without moving the token
+# (or vice versa) fails here.
+#
+# Split into two cases on purpose. Tokens that read only committed artifacts
+# must run in CI UNGATED, or a regression could merge green on a checkout with
+# no private archive (the same reasoning the SEC9 case above records). Only
+# the tokens that genuinely need private/household.yaml are gated, and which
+# ones those are is read off each token's own declared `sources` rather than
+# hardcoded, so adding a household-sourced figure to a verdict re-partitions
+# these cases automatically.
+# ---------------------------------------------------------------------------
+_VERDICT_TOKEN_RE = re.compile(r"\{\{(S\d+_VERDICT)\}\}")
+
+
+def _verdict_token_names():
+    names = sorted(set(_VERDICT_TOKEN_RE.findall(rt.TEMPLATE.read_text())))
+    assert len(names) >= 10, f"only {len(names)} section-verdict token slots in the template"
+    return names
+
+
+def _needs_household(name):
+    return any("private/household.yaml" in s for s in rt.TOKENS[name].get("sources", []))
+
+
+def _assert_verdict_matches_index(name, index_html):
+    """The published line must equal the token AS RENDERED -- i.e. after the
+    same html.escape(value, quote=True) generate_report.py applies. Comparing
+    the raw value instead would have been wrong in both directions: "&" is
+    fine (it escapes to "&amp;", which is exactly what index.html carries),
+    while "'" is not (it escapes to "&#x27;"). Escaping here reproduces the
+    render contract rather than approximating it."""
+    value = rt.resolve_token(name)
+    assert value.startswith("In one sentence: "), (
+        f"{name} must open with the same stem the other section verdicts use, got: {value!r}")
+    assert not (set("<>") & set(value)), (
+        f"{name} contains markup characters; these tokens carry plain text only: {value!r}")
+    rendered = _htmllib.escape(value, quote=True)
+    assert f'<p class="verdict">{rendered}</p>' in index_html, (
+        f"{name} does not round-trip into index.html:\n  token    : {value!r}\n"
+        f"  rendered : {rendered!r}")
+    return value
+
+
+@case
+def case_artifact_only_section_verdicts_match_index_html_verbatim():
+    index_html = (rt.ROOT / "index.html").read_text()
+    names = [n for n in _verdict_token_names() if not _needs_household(n)]
+    assert names, "no artifact-only section-verdict token found to check ungated"
+    for name in names:
+        _assert_verdict_matches_index(name, index_html)
+    return (f"{len(names)} artifact-only section verdicts ({', '.join(names)}) resolve and "
+            "appear verbatim in index.html, checked without the private archive")
+
+
+@case
+def case_household_sourced_section_verdicts_match_index_html_verbatim():
+    _require_household()
+    index_html = (rt.ROOT / "index.html").read_text()
+    names = [n for n in _verdict_token_names() if _needs_household(n)]
+    assert names, "no household-sourced section-verdict token found"
+    for name in names:
+        _assert_verdict_matches_index(name, index_html)
+    return (f"{len(names)} household-sourced section verdicts ({', '.join(names)}) resolve "
+            "and appear verbatim in index.html")
+
+
+@case
+def case_section_verdict_guards_refuse_to_publish_a_false_claim():
+    """Two of these sentences make a claim that would be FALSE if the
+    artifacts moved, so their formulas fail closed instead of rendering it
+    (CLAUDE.md section 0). Proven by driving each guard, not by reading it:
+    S1 claims every billed TOU bucket rebuilds, S3 claims the household's own
+    plan is the cheapest priced. Both must raise SystemExit naming the token."""
+    audit = rt._json("tou_audit_summary.json")
+    real_failing = audit["rules"]["as_billed"]["buckets_failing"]
+    assert real_failing == 0, (
+        f"data/tou_audit_summary.json now reports {real_failing} failing bucket(s) -- "
+        "S1_VERDICT's claim is no longer true and the token should already be failing")
+    audit["rules"]["as_billed"]["buckets_failing"] = 1
+    try:
+        rt.resolve_token("S1_VERDICT")
+        raise AssertionError("S1_VERDICT rendered its all-buckets-rebuild claim while "
+                             "the audit artifact reported a failing bucket")
+    except SystemExit as e:
+        assert "S1_VERDICT" in str(e), e
+    finally:
+        audit["rules"]["as_billed"]["buckets_failing"] = real_failing
+
+    if not rt.hh.PATH.is_file():
+        return ("S1_VERDICT refuses to publish its claim when a billed bucket fails "
+                "(S3_VERDICT's plan guard needs private/household.yaml, not checked here)")
+    rows = rt._csv_rows("plan_results.csv")
+    plan = rt.hh1("household.plan")
+    victim = next(r for r in rows if r["plan"] != plan)
+    original = victim["total"]
+    victim["total"] = "0.01"
+    try:
+        rt.resolve_token("S3_VERDICT")
+        raise AssertionError("S3_VERDICT claimed the household plan was cheapest while "
+                             f"{victim['plan']} priced lower")
+    except SystemExit as e:
+        assert "S3_VERDICT" in str(e), e
+    finally:
+        victim["total"] = original
+    return ("S1_VERDICT and S3_VERDICT both raise SystemExit naming themselves rather "
+            "than publishing a claim their artifacts no longer support")
 
 
 def main():
