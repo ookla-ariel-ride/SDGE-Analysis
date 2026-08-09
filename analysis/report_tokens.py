@@ -329,14 +329,34 @@ def _peak_window():
     return _fmt_hour_range(runs[0][0], runs[0][1])
 
 
-def _cheap_window():
+def _cheap_run():
     """The daytime (not overnight) weekday super-off-peak run -- the
-    'structural gift' window highlighted in the Bottom line / Monday appendix."""
+    'structural gift' window highlighted in the Bottom line / Monday appendix.
+
+    Returned as the raw (start_hour, end_hour, label) run rather than only as
+    the formatted string, because section 2 needs the BOUNDS to ask which
+    exports land inside the window, not just its printed name. The window is
+    the tariff's own, from rates.period(); nothing here picks a 'midday'."""
     runs = [r for r in _weekday_runs() if r[2] == "sop" and r[0] > 0]
     if len(runs) != 1:
         raise SystemExit(f"report_tokens: expected exactly one daytime weekday "
                           f"super-off-peak run, found {runs}")
-    return _fmt_hour_range(runs[0][0], runs[0][1])
+    return runs[0]
+
+
+def _cheap_window():
+    lo, hi, _lab = _cheap_run()
+    return _fmt_hour_range(lo, hi)
+
+
+def _overnight_cheap_run():
+    """The OVERNIGHT weekday super-off-peak run (the one starting at
+    midnight), as distinct from _cheap_run()'s daytime run."""
+    runs = [r for r in _weekday_runs() if r[2] == "sop" and r[0] == 0]
+    if len(runs) != 1:
+        raise SystemExit(f"report_tokens: expected exactly one overnight weekday "
+                          f"super-off-peak run starting at midnight, found {runs}")
+    return runs[0]
 
 
 _MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -1537,12 +1557,103 @@ _tok("S1_VERDICT", kind="derived", get=_s1_verdict,
               "data/threeway_production_validation.csv (pairwise daily correlation)"])
 
 
+def _analysis_window_dates():
+    """(start, end) of the analysis year, off behavior_rebuild.json's own
+    window -- the same window every other annual figure in this file uses."""
+    w = _json("behavior_rebuild.json")["window"]
+    return (dt.date.fromisoformat(w["start"].split(" ")[0]),
+            dt.date.fromisoformat(w["end"].split(" ")[0]))
+
+
+# The weighted hour-of-day profiles rebuild the year's exports to well inside
+# this band today (0.001%). The bound is a publication-rounding allowance, not
+# a judgment about how much drift is acceptable: report_data.json prints the
+# profiles to 3 decimals and its totals to whole kWh, which alone can move the
+# reconstruction by ~0.05%. 1% leaves room for that and nothing else -- a
+# profile that no longer describes this window misses by far more.
+_EXPORT_REBUILD_TOLERANCE = 0.01
+
+
+def _midday_export_share(ctx):
+    """Share of the year's exported kWh that leaves inside the tariff's own
+    daytime super-off-peak run -- "midday", defined by rates.period()'s
+    weekday schedule (_cheap_run()) rather than by a window picked here.
+
+    report_data.json carries two hour-of-day export profiles, one per tariff
+    season, each a mean day for its own season. Weighting them by the real
+    number of summer and winter days in the analysis window (season
+    membership from rates.SUMMER_MONTHS) turns them back into the year's
+    exported kWh by hour, which is what a claim about WHEN exports happen
+    needs; the annual totals alone say nothing about timing.
+
+    The reconstruction is checked against report_data.json's own export total
+    before any share is taken. If the weighted profiles no longer rebuild the
+    artifact's own annual exports, they are not describing this window and
+    nothing derived from them may be published (CLAUDE.md section 0)."""
+    rd = _json("report_data.json")
+    start, end = _analysis_window_dates()
+    days = {"S": 0, "W": 0}
+    d = start
+    while d <= end:
+        days["S" if d.month in R.SUMMER_MONTHS else "W"] += 1
+        d += dt.timedelta(days=1)
+    lo, hi, _lab = _cheap_run()
+    total = midday = 0.0
+    for seas, n in days.items():
+        exp = rd[f"hourly_{seas}"]["exp"]
+        if len(exp) != 24:
+            raise SystemExit(f"report_tokens: data/report_data.json hourly_{seas}.exp has "
+                             f"{len(exp)} hours, not 24 -- it is not an hour-of-day profile")
+        total += sum(exp) * n
+        midday += sum(exp[int(lo):int(hi)]) * n
+    published = rd["totals"]["exp"]
+    if total <= 0:
+        raise SystemExit("report_tokens: data/report_data.json's hour-of-day export "
+                         "profiles carry no exported kWh; there is no timing to report")
+    if abs(total - published) / published > _EXPORT_REBUILD_TOLERANCE:
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT refuses to say when exports happen -- "
+            f"data/report_data.json's season-weighted hour-of-day profiles rebuild "
+            f"{total:,.0f} kWh of exports against its own totals.exp of {published:,.0f} "
+            f"kWh, past the {_EXPORT_REBUILD_TOLERANCE:.0%} rebuild bound, so the profiles "
+            f"do not describe this window")
+    return midday / total
+
+
+def _overnight_ev_night_counts(ctx):
+    """(nights with EV charging, nights without, nights observed) inside the
+    tariff's overnight super-off-peak run.
+
+    quiet_night_floor.json censuses every night of the analysis window for
+    EV-session kWh in a handful of named windows, classifying each night with
+    behavior_rebuild.detect_sessions() -- the same detector behind every other
+    EV figure in this report. The window is looked up by the tariff's own
+    overnight super-off-peak bounds, so a tariff whose overnight window the
+    census never counted fails closed instead of borrowing a neighbouring
+    window's answer.
+
+    behavior_rebuild.json's own ev_kwh_sop_already cannot answer this: its
+    super-off-peak bucket pools the overnight run WITH the midday one, so a
+    household that charges at noon and one that charges at 3am are
+    indistinguishable inside it."""
+    lo, hi, _lab = _overnight_cheap_run()
+    label = f"{int(lo)}-{int(hi)}h"
+    census = (_json("quiet_night_floor.json")["night_floor"]
+              ["issue_114_investigation"]["ev_absence_by_window"])
+    if label not in census:
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT cannot say when the EV charges -- the tariff's "
+            f"overnight super-off-peak window is {label}, which data/quiet_night_floor.json's "
+            f"ev_absence_by_window never counted (it has {sorted(census)})")
+    entry = census[label]
+    absent, observed = entry["n"], entry["n_eligible_nights"]
+    return observed - absent, absent, observed
+
+
 def _s2_verdict(ctx):
     production = _annual_production_kwh(ctx)
     kw_dc = hh1("solar.kw_dc")
-    exported = _json("report_data.json")["totals"]["exp"]
-    end = dt.date.fromisoformat(
-        _json("behavior_rebuild.json")["window"]["end"].split(" ")[0])
+    _start, end = _analysis_window_dates()
     pto = _as_date(hh1("household.pto_date"))
     age = end.year - pto.year - ((end.month, end.day) < (pto.month, pto.day))
     # "is healthy" was a judgment no artifact in this repo makes. Nothing
@@ -1553,18 +1664,44 @@ def _s2_verdict(ctx):
     # kWh/kW floor, and unlike S1's correlation bound there is no committed
     # gate to anchor one to. So the judgment is dropped rather than
     # threshold-guarded: the yield and the production total are measured and
-    # stand on their own, and the export-timing clause -- derived from
-    # report_data.json's own totals -- is the section's real conclusion.
+    # stand on their own.
+    #
+    # The closing clause is this section's real conclusion, and both halves of
+    # it are claims about TIMING. Annual production and export TOTALS -- all
+    # this sentence used to read -- cannot support either half: the same
+    # totals arise whether the array exports at noon or at dusk, and whether
+    # the car charges at 3am or at 3pm. So each half now comes off an
+    # hour-resolved artifact, and the one that stays qualitative is gated on
+    # its own count rather than asserted.
+    midday_share = _midday_export_share(ctx)
+    # "charges overnight" is a habitual claim, so the census has to show the
+    # habit: the EV must charge inside the overnight window on more nights
+    # than it skips. Majority is the whole content of the word, not a cutoff
+    # chosen to clear today's data -- on a house that charges during the day
+    # the two counts swap and the sentence refuses to render, which is exactly
+    # the reading this clause used to publish regardless.
+    charging, absent, observed = _overnight_ev_night_counts(ctx)
+    if charging <= absent:
+        raise SystemExit(
+            f"report_tokens: S2_VERDICT refuses to say the EV charges overnight -- "
+            f"data/quiet_night_floor.json's EV census finds charging in the "
+            f"{_overnight_cheap_window()} window on {charging} of {observed} observed "
+            f"nights and none on {absent}, so overnight charging is not this "
+            f"household's habit")
     return (f"{VERDICT_STEM}at age {age} the {kw_dc:,.2f} kW array produced "
             f"{production:,.0f} kWh at {production / kw_dc:,.0f} kWh/kW, but "
-            f"{round(exported / production * 100)}% of that output exports at midday "
-            "while the EV charges at night.")
+            f"{round(midday_share * 100)}% of its exports leave in the "
+            f"{_cheap_window()} window while the EV charges overnight.")
 
 
 _tok("S2_VERDICT", kind="derived", get=_s2_verdict,
      sources=["data/enphase_daily_production.csv (Total footer row)",
-              "data/report_data.json:totals.exp",
-              "data/behavior_rebuild.json:window.end",
+              "data/report_data.json:hourly_S.exp / hourly_W.exp",
+              "data/report_data.json:totals.exp (rebuild check)",
+              "data/quiet_night_floor.json:night_floor.issue_114_investigation."
+              "ev_absence_by_window",
+              "data/behavior_rebuild.json:window.start/end",
+              "analysis/rates.py:SUMMER_MONTHS", "analysis/rates.py:period() (sampled)",
               "private/household.yaml:solar.kw_dc", "private/household.yaml:household.pto_date"])
 
 
@@ -1789,13 +1926,8 @@ _tok("S14_VERDICT", kind="derived", get=_s14_verdict,
 
 
 def _overnight_cheap_window():
-    """The OVERNIGHT weekday super-off-peak run (the one starting at
-    midnight), as distinct from _cheap_window()'s daytime run."""
-    runs = [r for r in _weekday_runs() if r[2] == "sop" and r[0] == 0]
-    if len(runs) != 1:
-        raise SystemExit(f"report_tokens: expected exactly one overnight weekday "
-                          f"super-off-peak run starting at midnight, found {runs}")
-    return _fmt_hour_range(runs[0][0], runs[0][1])
+    lo, hi, _lab = _overnight_cheap_run()
+    return _fmt_hour_range(lo, hi)
 
 
 def _s15_verdict(ctx):

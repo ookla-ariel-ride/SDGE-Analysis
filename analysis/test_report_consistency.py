@@ -1573,25 +1573,80 @@ _SECTION_H2_RE = re.compile(r'<h2 id="([^"]+)"[^>]*>(.*?)</h2>', re.S)
 _TEMPLATE_VERDICT_TOKEN_RE = re.compile(r"\{\{[A-Z0-9_]*VERDICT[A-Z0-9_]*\}\}")
 
 
-def _in_heading_verdict_sections():
-    """Sections whose conclusion sits INSIDE the <h2> itself. Derived from the
-    template's own {{..._VERDICT_SHORT}} slots, never hardcoded: index.html is
-    that template rendered, so it inherits the same set by section id."""
-    return {sid for sid, inner in _SECTION_H2_RE.findall(TEMPLATE_HTML)
-            if _TEMPLATE_VERDICT_TOKEN_RE.search(inner)}
+def _in_heading_verdict_scaffold():
+    """{section id: (text before the slot, text after it)} for every section
+    whose conclusion sits INSIDE the <h2> itself, taken from the template's own
+    {{..._VERDICT_SHORT}} slot.
+
+    The template stays the source of truth for WHICH sections use the
+    mechanism -- index.html is that template rendered, so it inherits the set
+    by section id -- but it now also yields the literal scaffolding around the
+    slot, which is what lets the rendered heading be inspected instead of
+    assumed. The conclusion text itself is never pinned here: pinning it would
+    make this test a second copy of the report, and it would then only ever
+    fail when someone forgot to update the copy.
+
+    A slot must have literal scaffolding to be checkable, so a template that
+    put another token BEFORE the verdict slot fails loudly rather than
+    silently reverting to the trust-the-template behaviour this replaced."""
+    out = {}
+    for sid, inner in _SECTION_H2_RE.findall(TEMPLATE_HTML):
+        m = _TEMPLATE_VERDICT_TOKEN_RE.search(inner)
+        if not m:
+            continue
+        prefix, suffix = inner[:m.start()], inner[m.end():]
+        assert "{{" not in prefix and "{{" not in suffix, (
+            f"report-template.html's {sid} heading wraps its verdict slot in other "
+            f"tokens ({inner!r}); the rendered heading can no longer be located by "
+            "its literal scaffolding")
+        out[sid] = (prefix, suffix)
+    return out
 
 
-def _conclusion_mechanisms(doc):
+# The conclusion in a heading slot is a clause, not a word: two words is the
+# floor, and it is the ONLY quantity pinned about the rendered text. Anything
+# stricter would start pinning the sentences themselves.
+_MIN_HEADING_VERDICT_WORDS = 2
+
+
+def _rendered_heading_verdict(inner, prefix, suffix):
+    """The conclusion a rendered <h2> carries in its template slot's own
+    position, or None if the heading is the bare section title.
+
+    Everything before the slot is the section number and title -- literal text
+    in the template -- so whatever sits in the slot is by construction the part
+    of the heading that goes BEYOND the title. That is the claim this returns,
+    which is also where the density cap's lead sentence starts."""
+    if not inner.startswith(prefix) or not inner.endswith(suffix):
+        return None
+    end = len(inner) - len(suffix) if suffix else len(inner)
+    text = htmlmod.unescape(re.sub(r"<[^>]+>", "", inner[len(prefix):end])).strip()
+    if len(text.split()) < _MIN_HEADING_VERDICT_WORDS:
+        return None
+    return text
+
+
+def _conclusion_mechanisms(doc, inspect_headings):
     """{section id: set of conclusion mechanisms present}, parsed from the
     document rather than read off a hardcoded id list, so a section added
-    later shows up here (with an empty set) instead of slipping through."""
-    in_heading = _in_heading_verdict_sections()
+    later shows up here (with an empty set) instead of slipping through.
+
+    `inspect_headings` says whether the in-heading mechanism has to be proved
+    by the heading's own CONTENT. For report-template.html it does not -- there
+    the unrendered {{...}} slot IS the mechanism. For index.html it does: this
+    case exists to check the rendered report, and crediting a rendered section
+    because its TEMPLATE has a slot let the published heading lose its verdict
+    text (leaving the bare '4 · Does a battery change which plan is best?')
+    while this test still reported a conclusion present."""
+    scaffold = _in_heading_verdict_scaffold()
     found = {}
     for m in _SECTION_H2_RE.finditer(doc):
         sid = m.group(1)
         rest = doc[m.end():].lstrip()
         mech = set()
-        if sid in in_heading:
+        if sid in scaffold and (
+                not inspect_headings
+                or _rendered_heading_verdict(m.group(2), *scaffold[sid])):
             mech.add("in-heading")
         if (doc[:m.start()].rstrip().endswith("<summary>")
                 and rest.startswith('<span class="teaser">')):
@@ -1603,8 +1658,8 @@ def _conclusion_mechanisms(doc):
 
 
 def case_every_h2_section_opens_with_exactly_one_conclusion_line():
-    index_mech = _conclusion_mechanisms(HTML)
-    template_mech = _conclusion_mechanisms(TEMPLATE_HTML)
+    index_mech = _conclusion_mechanisms(HTML, inspect_headings=True)
+    template_mech = _conclusion_mechanisms(TEMPLATE_HTML, inspect_headings=False)
     assert len(index_mech) >= 16, (
         f"only {len(index_mech)} <h2 id=...> sections parsed out of index.html -- "
         "the parser probably broke")
@@ -1652,6 +1707,17 @@ def _lead_sentence(text):
     return text[:m.end()] if m else text
 
 
+def _over_the_density_cap(label, text):
+    """A "Nw/Aa" complaint string when `text`'s lead sentence blows CLAUDE.md
+    section 10's 35-word / 1-aside cap, else None."""
+    lead = _lead_sentence(text)
+    words = len(lead.split())
+    asides = lead.count("(") + lead.count("—")
+    if words > 35 or asides > 1:
+        return f"{label} {words}w/{asides} asides: {lead[:70]}..."
+    return None
+
+
 def case_basic_tier_verdict_lines_stay_inside_the_density_cap():
     cut = HTML.find('<details id="advanced"')
     assert cut > 0, 'the advanced-tier <details id="advanced"> wrapper is missing'
@@ -1663,16 +1729,39 @@ def case_basic_tier_verdict_lines_stay_inside_the_density_cap():
     over = []
     for raw in lines:
         text = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
-        lead = _lead_sentence(text)
-        words = len(lead.split())
-        asides = lead.count("(") + lead.count("—")
-        if words > 35 or asides > 1:
-            over.append(f"{words}w/{asides} asides: {lead[:70]}...")
+        over.append(_over_the_density_cap(".verdict", text))
+
+    # A .verdict line is not the only way a basic-tier section states its
+    # conclusion: section 4 carries its whole conclusion inside its <h2>, so
+    # collecting <p class="verdict"> alone left an overlong or aside-heavy
+    # heading verdict passing a gate that claims to cover the basic tier.
+    # Sections 8 and 11 use the same mechanism but sit in the ADVANCED tier
+    # and are exempt (that audience reads for the derivation), which is why
+    # the split is the SAME `cut` the .verdict scan above uses -- read off the
+    # document, so a section moved across the boundary is scoped correctly
+    # without editing this test.
+    #
+    # What gets measured is the heading's own claim, not the section number
+    # and title in front of it: the lead sentence starts where the template's
+    # literal "N · Title" prefix ends, i.e. at the verdict slot's own text.
+    scaffold = _in_heading_verdict_scaffold()
+    headings = [(sid, _rendered_heading_verdict(inner, *scaffold[sid]))
+                for sid, inner in _SECTION_H2_RE.findall(basic) if sid in scaffold]
+    assert headings, (
+        "no basic-tier in-heading verdict found -- section 4 carries one, so either "
+        "the heading scaffolding moved or the advanced-tier boundary did")
+    for sid, text in headings:
+        assert text, (
+            f"basic-tier §{sid} uses the in-heading verdict mechanism but its rendered "
+            "<h2> carries no conclusion after the section title")
+        over.append(_over_the_density_cap(f"{sid} heading", text))
+
+    over = [o for o in over if o]
     assert not over, (
-        "basic-tier .verdict lead sentences over CLAUDE.md section 10's density cap "
+        "basic-tier lead sentences over CLAUDE.md section 10's density cap "
         f"(35 words, 1 aside): {over}")
-    return (f"all {len(lines)} basic-tier .verdict lines lead in 35 words or fewer "
-            "with at most one aside")
+    return (f"all {len(lines)} basic-tier .verdict lines and {len(headings)} basic-tier "
+            "in-heading verdict(s) lead in 35 words or fewer with at most one aside")
 
 
 CASES = [

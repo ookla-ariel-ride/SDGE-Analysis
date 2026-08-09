@@ -1251,15 +1251,107 @@ def case_s2_verdict_reports_what_was_measured_rather_than_an_array_health_verdic
             f"S2_VERDICT passes a {judgment!r} verdict on the array with no committed "
             f"benchmark behind it: {value}")
     production = rt._annual_production_kwh(rt.CTX)
-    exported = rt._json("report_data.json")["totals"]["exp"]
     assert f"{production:,.0f} kWh" in value, (
         f"S2_VERDICT dropped the measured production total: {value}")
     assert "kWh/kW" in value, f"S2_VERDICT dropped the measured specific yield: {value}"
-    assert f"{round(exported / production * 100)}% of that output exports at midday" \
-        in value, f"S2_VERDICT dropped the export-timing conclusion: {value}"
+    # The closing clause is the section's conclusion, and both halves of it are
+    # about TIMING. The export share must be the one the hour-of-day profiles
+    # produce for the tariff's own midday window -- not the annual
+    # exports/production ratio the sentence used to print, which is the same
+    # number whether the array exports at noon or at dusk.
+    share = rt._midday_export_share(rt.CTX)
+    assert f"{round(share * 100)}% of its exports leave in the " \
+        f"{rt._cheap_window()} window" in value, (
+        f"S2_VERDICT dropped the hour-resolved export-timing conclusion: {value}")
+    assert "charges overnight" in value, (
+        f"S2_VERDICT dropped the EV-timing conclusion: {value}")
     _assert_within_density_cap("S2_VERDICT", value, "the published branch")
-    return ("S2_VERDICT keeps the measured yield and the export-timing conclusion and "
-            "passes no health verdict")
+    return ("S2_VERDICT keeps the measured yield, states the midday export share the "
+            "hour-of-day profiles support, and passes no health verdict")
+
+
+@case
+def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
+    """The midday share is only this year's if report_data.json's two
+    season-mean hour-of-day export profiles, weighted by the window's real
+    summer/winter day counts, still rebuild its own annual export total.
+    Driven, not read: a profile scaled off the year it describes must take the
+    sentence's whole timing clause down with it, rather than publishing a
+    share of the wrong denominator."""
+    rd = rt._json("report_data.json")
+    live = rt._midday_export_share(rt.CTX)
+    assert 0 < live < 1, f"the live midday export share is {live}, not a share"
+    with _stub_household(_s2_household_inputs()):
+        assert rt.resolve_token("S2_VERDICT")
+        with _swapped(rd["hourly_S"], "exp", [v * 2 for v in rd["hourly_S"]["exp"]]):
+            try:
+                value = rt.resolve_token("S2_VERDICT")
+            except SystemExit as e:
+                assert "S2_VERDICT" in str(e) and "rebuild" in str(e), e
+            else:
+                raise AssertionError(
+                    "S2_VERDICT published an export-timing share from profiles that no "
+                    f"longer rebuild data/report_data.json's own export total: {value}")
+        # Nothing leaked: the same sentence comes back once the artifact does.
+        assert rt.resolve_token("S2_VERDICT")
+    return ("S2_VERDICT fails closed when the hour-of-day export profiles stop "
+            f"rebuilding the year's exports (live midday share {live:.1%})")
+
+
+@case
+def case_s2_verdict_refuses_to_say_the_ev_charges_overnight_on_a_daytime_charger():
+    """"while the EV charges overnight" was asserted outright, and on a
+    household that charges during the day it published a falsehood. It now
+    reads quiet_night_floor.json's EV-absence census for the tariff's own
+    overnight super-off-peak window, and says the habit only when the EV
+    charges there on more nights than it skips. Both sides of that boundary
+    are driven here, including the exact tie -- a house split evenly between
+    day and night charging has no overnight habit to report."""
+    census = (rt._json("quiet_night_floor.json")["night_floor"]
+              ["issue_114_investigation"]["ev_absence_by_window"])
+    lo, hi, _lab = rt._overnight_cheap_run()
+    label = f"{int(lo)}-{int(hi)}h"
+    assert label in census, (
+        f"data/quiet_night_floor.json no longer censuses the tariff's overnight "
+        f"super-off-peak window {label}; it has {sorted(census)}")
+    entry = census[label]
+    charging, absent, observed = rt._overnight_ev_night_counts(rt.CTX)
+    assert charging > absent, (
+        f"data/quiet_night_floor.json now finds overnight charging on only {charging} of "
+        f"{observed} nights; the published clause is no longer the live one")
+    with _stub_household(_s2_household_inputs()):
+        published = rt.resolve_token("S2_VERDICT")
+        assert "charges overnight" in published, published
+        # A daytime charger, and an exact 50/50 split -- neither may render.
+        # The half-night in the second case is synthetic on purpose: it is the
+        # value that lands the comparison exactly on the boundary for an odd
+        # night count, the way the section 6 and 7 tie branches are driven.
+        for label_, absent_n in (("daytime charger", observed - 1),
+                                 ("even split", observed / 2)):
+            with _swapped(entry, "n", absent_n):
+                try:
+                    value = rt.resolve_token("S2_VERDICT")
+                except SystemExit as e:
+                    assert "S2_VERDICT" in str(e) and "overnight" in str(e), e
+                else:
+                    raise AssertionError(
+                        f"S2_VERDICT told a {label_} that its EV charges overnight: {value}")
+        # A census that never counted this tariff's overnight window is a gap,
+        # not a licence to answer from a neighbouring window.
+        with _swapped(census, label, None):
+            del census[label]
+            try:
+                value = rt.resolve_token("S2_VERDICT")
+            except SystemExit as e:
+                assert "S2_VERDICT" in str(e) and label in str(e), e
+            else:
+                raise AssertionError(
+                    "S2_VERDICT timed the EV's charging from a census that never counted "
+                    f"the {label} window: {value}")
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted EV census leaked out of this case")
+    return (f"S2_VERDICT claims an overnight charging habit only on a majority of nights "
+            f"(live: {charging} of {observed} in the {rt._overnight_cheap_window()} window)")
 
 
 def _centered(values):
