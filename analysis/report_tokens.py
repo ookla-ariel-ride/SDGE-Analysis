@@ -695,11 +695,25 @@ _tok("CHART_TITLE_SPREAD", kind="derived", get=_chart_title_spread,
 def _sec9_teaser(ctx):
     # Sessions come from behavior_rebuild.json, NOT deep_results.json (issue
     # #130). Both detectors are committed and they disagree -- 563 vs 580 --
-    # because they merge back-to-back charges differently. Section 9's own
-    # body, and every dollar figure downstream of it, use behavior_rebuild's
-    # 563, so a teaser sourced from deep_results contradicted the section it
-    # introduces. The phantom figures below stay on deep_results, which is
-    # what section 9's own phantom paragraph cites (~1.02 kW, ~$1,787/yr).
+    # because they detect differently: deep_analyses.py gates on a flat
+    # kw > 6.5 and drops blocks under 3 kWh, while behavior_rebuild.py
+    # subtracts a rolling-percentile baseline and additionally gates on
+    # minimum duration AND peak excess. (Stated as the mechanism only to the
+    # extent the two sources show it; which detector is closer to truth is
+    # not settled here.) Section 9's own body, and every dollar figure
+    # downstream of it, use behavior_rebuild's 563, so a teaser sourced from
+    # deep_results contradicted the section it introduces.
+    #
+    # The phantom figures below stay on deep_results because it is the only
+    # artifact of the three carrying a $/yr figure. They do NOT match the
+    # report body's own phantom numbers, which come from extra_results.json
+    # (44 nights, 1.025 kW, 8,979 kWh/yr) and appear in sections 0 and 13 --
+    # section 9's own phantom sentence cites no artifact at all. A third
+    # artifact, quiet_night_floor.json, prices the same load 77-79% higher
+    # ($3,156.89/$3,196.27, two agreeing methods) and is cited nowhere. That
+    # three-way split is real and unresolved; it is tracked in issue #140
+    # rather than papered over here, since settling it means changing
+    # published figures in sections 0/9/13.
     br = _json("behavior_rebuild.json")
     dr = _json("deep_results.json")
     return (f"{br['detection']['sessions']} EV charging sessions logged; overnight "
