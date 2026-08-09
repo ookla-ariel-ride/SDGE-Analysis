@@ -672,6 +672,7 @@ def case_all_electric_endgame_section_matches_the_artifact():
     recon = aee["reconciliation"]
     headline = wh["payback"][wh["headline_uef"]]
     e = wh["electric_cost_by_scenario"][wh["headline_uef"]]
+    mb = seq["share_robustness"]["marginal_basis"]
 
     checks = [
         f"${wh['floor_savings_annual_usd']:,.2f}/yr",
@@ -689,6 +690,8 @@ def case_all_electric_endgame_section_matches_the_artifact():
         f"{seq['complete_transition_payback']['payback_years']}-year",
         f"{recon['unattributed_heating_signal']['unattributed_therms_yr']:g} therms/yr",
         f"${recon['unattributed_heating_signal']['unattributed_usd']:,.2f}/yr",
+        f"{mb['furnace_payback_years']}-year",
+        f"{mb['crossover_water_heater_share'] * 100:.1f}%",
     ]
     for value in checks:
         assert value in section, f"§10 all-electric-endgame section: {value!r} not found in it"

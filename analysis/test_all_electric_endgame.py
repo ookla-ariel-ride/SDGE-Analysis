@@ -1388,9 +1388,10 @@ def case_tier_interaction_overstatement_fails_closed_on_missing_nonbaseline_rate
     therms into the nonbaseline tier with no rate to price it at -- far
     past FLOOR_ESTIMATION_TOLERANCE_THERMS (0.5). This must raise
     SystemExit, not silently return a near-zero/wrong correction for the
-    segment. This test would NOT have caught the pre-fix code (its own
-    unconditional nbr_eff=baseline_rate fallback would have returned a
-    real, silently-wrong dollar figure here instead of failing)."""
+    segment. This test would NOT have PASSED against the pre-fix code
+    (its own unconditional nbr_eff=baseline_rate fallback would have
+    returned a real, silently-wrong dollar figure here instead of
+    raising)."""
     statement_date, period = "2025-06-30", "Jun 1, 2025 - Jun 30, 2025"
     therms, allowance = 60.0, 5.0
     periods_df = _make_periods_df([(statement_date, period, therms, 999.0, allowance)])

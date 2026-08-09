@@ -900,19 +900,24 @@ def wh_electric_cost_scenarios(d, floor_therms_yr):
     out = {}
     for uef_key, uef in HPWH_UEF_SCENARIOS.items():
         ann_wh_kwh = floor_therms_yr * HPC.KWH_PER_THERM * GAS_WH_UEF / uef
+        if ann_wh_kwh <= 0:
+            # Fails closed rather than a bare ZeroDivisionError below. No
+            # current caller reaches this (round 4 retired the only
+            # water_heater_share=0.0 call site -- see the module-level
+            # comment above water_heater_share_sensitivity()), but the
+            # named shares here are COMPUTED from external benchmarks
+            # (dryer_pct_of_floor_range etc.), not constants, so a future
+            # benchmark update reaching 100% of the floor could reintroduce
+            # a zero share without this function's own signature changing.
+            raise SystemExit(
+                f"all_electric_endgame.py: wh_electric_cost_scenarios got "
+                f"floor_therms_yr={floor_therms_yr:g}, giving a "
+                f"non-positive ann_wh_kwh for {uef_key} -- refusing to "
+                "price a zero-or-negative water-heating load")
         added, fallback_days = build_wh_load_series(d, ann_wh_kwh)
         scen = {}
         for dist_key, series in added.items():
             total_added = float(series.sum())
-            # No ann_wh_kwh == 0 guard here (round 4 retired the only call
-            # site that could ever produce one, Finding 2's own
-            # water_heater_share=0.0 residual scenario -- see the module-
-            # level comment above water_heater_share_sensitivity()): every
-            # remaining caller (build(), water_heater_share_sensitivity()'s
-            # own three named shares 100%/72.3%/21.2%) passes a strictly
-            # positive floor_therms_yr, so this check runs unconditionally
-            # rather than carrying a dead bypass branch with a rationale
-            # that no longer applies.
             if abs(total_added - ann_wh_kwh) / ann_wh_kwh > 0.001:
                 raise SystemExit(
                     f"all_electric_endgame.py: {uef_key}/{dist_key} added "
@@ -1317,9 +1322,11 @@ def _crossover_water_heater_share(iso, d, headline_uef, target_payback_years, ba
     # both must return None here. A version that checked only `pb_hi is not
     # None and pb_hi >= target_payback_years` silently skipped the None case
     # (a False `and` short-circuit), fell through to the bisection below
-    # with hi=1.0 pinned at a genuinely-never-pays-back point, and drove the
-    # search toward `lo` -- falsely reporting a tiny crossover share (~1.0)
-    # as if the water heater "wins" there, when it never wins at all.
+    # with pb_mid also None at every trial (mid never reaches hi=1.0 in the
+    # 40 bisection iterations), which drove `lo` UP toward the pinned
+    # hi=1.0 every iteration -- falsely reporting the MAXIMUM possible
+    # crossover share (round(hi, 4) == 1.0) as if the water heater "wins"
+    # at 100% share, when it never wins at all.
     if pb_hi is None or pb_hi >= target_payback_years:
         return None  # the water heater never beats the target even at 100% share
     if pb_lo is not None and pb_lo < target_payback_years:
@@ -1430,7 +1437,17 @@ def sequencing_share_robustness(iso, d, headline_uef, wh_share_scenarios, furnac
     that probe call's own complete_transition_payback: pairing a
     non-headline share's own marginal savings with an interaction
     correction computed on the headline share would be a real, mismatched
-    composite figure, not a second one this function publishes.
+    composite figure, not a second one this function publishes. The
+    marginal-basis probe below (`furnace_payback_years_marginal`) carries
+    a SECOND, related mismatch for the same reason: it always passes the
+    STANDALONE `furnace_install_usd`, never a marginal install figure, so
+    that probe's own internal (unsurfaced) combined-install/combined-
+    payback fields would be doubly incoherent -- mismatched share AND
+    mismatched install basis -- if anyone ever extended this function to
+    publish them. `order`/`last_step` are unaffected (they depend on
+    `payback_years` alone, never on `furnace_install_usd`), so today's
+    published `marginal_basis` output is correct; this is a hazard for a
+    future extension, not a live defect.
 
     `furnace_payback_years_marginal` (Finding 4, code-reviewer, issue #20
     round 6): sequencing_and_paybacks()'s combined_install always uses the
