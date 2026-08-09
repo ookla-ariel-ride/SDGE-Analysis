@@ -472,8 +472,11 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     sessions must track behavior_rebuild (the detector every downstream
     dollar figure uses), and the phantom figures must track deep_results
     (what section 9's own phantom paragraph cites). A future change that
-    re-points either half at a different artifact fails here."""
-    _require_household()
+    re-points either half at a different artifact fails here.
+
+    Deliberately NOT gated on _require_household(): SEC9_TEASER reads only
+    committed public artifacts, so this case must run in CI too -- gating it
+    would let a reversion merge green (Codex adversarial review, issue #130)."""
     teaser = rt.resolve_token("SEC9_TEASER")
     br = rt._json("behavior_rebuild.json")["detection"]
     dr = rt._json("deep_results.json")
