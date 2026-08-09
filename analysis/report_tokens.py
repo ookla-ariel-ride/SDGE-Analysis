@@ -507,9 +507,8 @@ _tok("NEM_EXPIRY_YEAR", kind="derived",
 
 _tok("INVERTER_DESCRIPTION", kind="derived",
      get=lambda ctx: (
-         f"{int(hh1('solar.inverter_count'))} × {hh1('solar.inverter_model')} "
-         f"(~{hh1('solar.kw_ac') * 1000 / hh1('solar.inverter_count'):.0f} VA each "
-         f"≈ {hh1('solar.kw_ac'):.2f} kW AC max)"),
+         f"{int(hh1('solar.inverter_count'))} × {hh1('solar.inverter_model')}"
+         f", ~{hh1('solar.kw_ac') * 1000 / hh1('solar.inverter_count'):.0f} VA each"),
      sources=["private/household.yaml:solar.inverter_count/inverter_model/kw_ac"])
 
 _tok("PANEL_MODEL_WATTS", kind="derived",
@@ -612,7 +611,7 @@ _tok("ANNUAL_LOAD_KWH", kind="derived", get=lambda ctx: round(_annual_load_kwh(c
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="num0")
 _tok("SOLAR_COVERAGE_PCT", kind="derived",
      get=lambda ctx: round(_annual_production_kwh(ctx) / _annual_load_kwh(ctx) * 100),
-     sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="num0")
+     sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="pct0")
 _tok("SELF_CONSUMED_SHARE", kind="derived",
      get=lambda ctx: (lambda p, e: round((p - e) / p * 100))(
          _annual_production_kwh(ctx), _json("report_data.json")["totals"]["exp"]),
