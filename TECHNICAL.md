@@ -3862,11 +3862,14 @@ segment_tier_cost()` directly (via a thin tolerance wrapper, `_priced_at_top_of_
 that function's own strict 1e-6 fail-closed tolerance is appropriate for heating, whose inputs
 are capacity-capped against real per-day meter data, but too strict for the floor's own
 day-proportion-only inputs, which have no such real-daily counterpart; the wrapper folds a
-small, documented estimation-noise overflow — largest observed on this corpus, 0.17 therms —
-back to the baseline rate, exactly the bill's own evidence when a segment never printed a
-nonbaseline rate at all, and still fails closed on anything larger). Regression-tested by
-`case_floor_segment_tier_cost_spills_into_nonbaseline` and a new hand-computed case
-reproducing the counterexample above exactly.
+small, documented estimation-noise overflow — largest observed on this corpus, restricted to
+the trailing-12-statement window this tolerance is actually exercised against, 0.46875
+therms on the 2025-10-29 period's Gas Service segment 0, 93.75% of the 0.5-therm tolerance (a
+genuinely thin margin, not a comfortable one, though still a single real occurrence rather
+than a systematic pattern) — back to the baseline rate, exactly the bill's own evidence when
+a segment never printed a nonbaseline rate at all, and still fails closed on anything larger).
+Regression-tested by `case_priced_at_top_of_ladder_spills_into_nonbaseline` and a new
+hand-computed case reproducing the counterexample above exactly.
 
 Two further real-data traps were found and fixed while building this function, both worth
 naming since they would otherwise recur in any future per-day gas-cost allocation:
@@ -3874,8 +3877,10 @@ naming since they would otherwise recur in any future per-day gas-cost allocatio
 - **Day-level capping against the daily meter export amplifies read-date noise.** An early
   version capped the floor at `min(floor_per_day, that day's real gas.csv reading)`, mirroring
   heating's own `_capacity_capped_days()`. 143 of 365 real days in `gas.csv` read *below*
-  `floor_per_day` (0.376 therms/day), 88 of them at exactly 0.00 — ordinary meter-read-date
-  batching noise, not zero usage. Applying a day-level cap against that noise understated the
+  `floor_per_day` (0.376 therms/day), all 143 of them at exactly 0.00 (the dataset is bimodal
+  at this resolution — every real day reads either 0.00 or ≥1.014 therms, no partial values in
+  between) — ordinary meter-read-date batching noise, not zero usage. Applying a day-level cap
+  against that noise understated the
   annual floor by roughly 40% (quantified, not assumed, before the fix landed). `floor_per_day`
   is already a regression output, smoothed across a full year of exactly this same noise, so it
   is applied uniformly per day; `gas.csv`'s own daily resolution is not consulted for the
@@ -4146,12 +4151,37 @@ allocation — exactly linear in `ann_wh_kwh`, since it has no share-dependent b
 computed ONCE and scaled per trial share rather than rebuilt on every one of the search's own
 dozens of trials). On this household's real data the published order (water heater first) is
 **robust at every one of the three named scenarios** (100%/72.3%/21.2% all keep the water
-heater first), and the numeric crossover sits at **15.82% water-heater share** — below the
-lowest illustrative scenario shown (21.2%), so the order does not flip anywhere this report
-actually illustrates, though a lower, unruled-out true share could still flip it. Wired into
-`sequencing_and_paybacks()`'s own output as a new `share_robustness` field (`named_scenarios`,
+heater first) **on the furnace's own STANDALONE install-cost basis** (the basis
+`complete_transition_payback`'s own `combined_install` actually uses, CLAUDE.md §2), and the
+numeric crossover sits at **15.82% water-heater share** on that basis — below the lowest
+illustrative scenario shown (21.2%), so the order does not flip anywhere this report actually
+illustrates on that basis, though a lower, unruled-out true share could still flip it. Wired
+into `sequencing_and_paybacks()`'s own output as a new `share_robustness` field
+(`named_scenarios`, `robust_across_named_scenarios`, `crossover_water_heater_share`,
+`crossover_note`) rather than a silent, unchecked headline order.
+
+**Round 6 addition (code-reviewer, issue #20, Finding 4): the robustness check above was
+verified on only ONE of the two install-cost bases this report publishes for the furnace,
+without saying which.** `heat_pump_conversion.json` and this report's own furnace section
+also publish a MARGINAL-over-AC-replacement basis ($4,098 installed, 48.6-yr payback — the
+more realistic basis for a homeowner already due for an AC replacement, and the one this
+report elsewhere calls more realistic), which `sequencing_share_robustness()`'s own
+`combined_install` does NOT use — so the "robust across every illustrative share" claim was
+correct but incomplete about which basis it was checked against. On this household's real
+data the order does NOT survive on the marginal basis: the 21.2%-share water-heater scenario's
+own 130.0-yr payback loses to the 48.6-yr marginal-basis furnace, reversing the order at a
+scenario this report explicitly illustrates, and the marginal-basis crossover sits at **60.76%
+water-heater share** — well above every scenario this report considers plausible. Fixed by
+running the SAME check twice: `sequencing_share_robustness()` takes an optional
+`furnace_payback_years_marginal` argument and, when supplied, runs the identical named-
+scenario probe and crossover bisection a second time via a factored-out helper
+(`_share_robustness_on_basis()`), returning the result as a separate `marginal_basis` field
+(`furnace_payback_years_basis`, `furnace_payback_years`, `named_scenarios`,
 `robust_across_named_scenarios`, `crossover_water_heater_share`, `crossover_note`) rather than
-a silent, unchecked headline order.
+leaving the standalone-basis-only claim unqualified. `combined_install` itself stays on the
+standalone basis throughout (CLAUDE.md §2's one-basis-per-projection rule) — this reversal is
+a caveat on how far the sequencing conclusion generalizes, not a correction to the published
+$191.67/yr combined savings figure.
 
 **AC8 — reconciliation.** The furnace figures are cited directly from `heat_pump_
 conversion.json`, not recomputed, so they agree exactly by construction. The water heater
@@ -4179,7 +4209,7 @@ conversion.py`'s own conservative treatment of the underlying therms.
 
 **Reproduction.** `all_electric_endgame.json` is written directly to `data/` (repo-root
 discovery via `heat_pump_conversion.ROOT`, atomic tmp-then-replace, the same convention every
-other generator in this section uses); `test_all_electric_endgame.py` (53 cases) covers every
+other generator in this section uses); `test_all_electric_endgame.py` (61 cases) covers every
 pure function against synthetic fixtures, including several "tests must fail on the defect
 they name" positive controls — a synthetic corpus with a genuine $15 fixed charge the
 regression must actually recover; the Round 1 top-of-ladder fix's own hand-worked

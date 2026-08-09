@@ -8,6 +8,7 @@ export, byte-identical regeneration) behind SkipCase rather than failing.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_all_electric_endgame.py
 """
+import calendar
 import datetime as dt
 import glob
 import json
@@ -278,7 +279,7 @@ def case_third_end_use_gap_bracket_arithmetic():
     assert "NOT DETERMINED" in gap["gap"]
     # Finding 2 (Codex adversarial review, issue #20 round 2): the same
     # bracket arithmetic, now also sized for cooking -- consumed by
-    # water_heater_share_sensitivity's own residual scenario.
+    # water_heater_share_sensitivity's own benchmark_incompatibility_check.
     lo_c, hi_c = A.COOKING_THERMS_YR_RANGE
     assert gap["possible_cooking_rough_magnitude_therms_yr"] == [round(lo_c), round(hi_c)]
     assert gap["possible_cooking_pct_of_floor_range"][0] < gap["possible_cooking_pct_of_floor_range"][1]
@@ -796,6 +797,37 @@ def case_service_headroom_check_ampacity_never_passes_even_with_abundant_spare()
     return "abundant spare amperage still reports not_determined, never a false pass, because no heat-pump model is selected"
 
 
+@case
+def case_service_headroom_check_ampacity_not_determined_on_mixed_basis_signs():
+    """Test-analyzer finding, issue #20 round 6 (correct by inspection, but
+    previously untested): ampacity_verdict's own guard is `after_wh_
+    conservative < 0 AND after_wh_measured < 0` -- a real `and`, not an
+    `or`. When the two bases DISAGREE in sign (conservative basis negative,
+    measured basis non-negative, the genuinely mixed case, not the
+    both-negative or both-non-negative cases every other test here already
+    covers), the correct verdict is 'not_determined', not 'fail': a 'fail'
+    verdict is only earned when the water heater's own fixed code load
+    exceeds spare capacity on BOTH bases regardless of which basis is
+    later chosen. An `and` -> `or` regression would flip this specific case
+    to 'fail' and this test would catch it (conservative_a=20 gives
+    after_wh_conservative = 20 - 23.44 = -3.44 (negative); measured_a=30
+    gives after_wh_measured = 30 - 23.44 = 6.56 (non-negative))."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        _write_synthetic_service_headroom_json(tmp, spaces_free=4, conservative_a=20,
+                                               measured_a=30)
+        real_data = A.DATA
+        A.DATA = str(tmp)
+        try:
+            result = A.service_headroom_check()
+        finally:
+            A.DATA = real_data
+    assert result["spare_after_water_heater_a"]["conservative_basis"] < 0, result
+    assert result["spare_after_water_heater_a"]["measured_basis"] >= 0, result
+    assert result["ampacity_verdict"] == "not_determined", result
+    return "a mixed-sign result across the two bases (conservative negative, measured non-negative) reports not_determined, not a false fail"
+
+
 # ---------------------------------------------------------------------------
 # AC7 -- sequencing_and_paybacks
 # ---------------------------------------------------------------------------
@@ -980,6 +1012,42 @@ def case_crossover_water_heater_share_none_when_target_never_reached():
 
 
 @case
+def case_crossover_water_heater_share_none_when_never_pays_back_at_all():
+    """Real bug (code-reviewer, issue #20 round 6): HPC.payback_and_npv()
+    returns payback_years=None (not a large finite number) whenever net
+    savings are <= 0 -- a genuinely DIFFERENT case from
+    case_crossover_water_heater_share_none_when_target_never_reached above
+    (net=1.0 there, a small but POSITIVE savings, giving a large but finite
+    payback). Forcing net <= 0 at every share (net=-5.0) means pb_hi is
+    None, not a finite number >= target -- the buggy guard
+    (`pb_hi is not None and pb_hi >= target`) evaluates False on a None
+    pb_hi via short-circuit, silently skips the "never beats target" return,
+    falls into the bisection with hi=1.0 permanently pinned at a
+    never-pays-back point, and drives toward `lo`, returning a bogus
+    near-zero crossover share as if the water heater "wins" there. The
+    correct behavior is the same as the always-positive-but-too-slow case:
+    no crossover in (0, 1], i.e. None."""
+    real_net = A._wh_net_savings_at_share
+    real_bill_nem = A.R.bill_nem
+    real_load_series = A.build_wh_load_series
+    try:
+        A.R.bill_nem = lambda *a, **kw: 0.0
+        A.build_wh_load_series = lambda *a, **kw: ({"uniform": 0.0}, {})
+        # net=-5.0 at every share -> payback_years is None at every trial
+        # (HPC.payback_and_npv()'s own annual_net_savings <= 0 branch).
+        A._wh_net_savings_at_share = (
+            lambda iso, d, share, headline_uef, base_bill=None, **kw: -5.0)
+        crossover = A._crossover_water_heater_share(
+            iso=None, d=None, headline_uef="central_3.88", target_payback_years=30.0)
+        assert crossover is None, crossover
+    finally:
+        A._wh_net_savings_at_share = real_net
+        A.R.bill_nem = real_bill_nem
+        A.build_wh_load_series = real_load_series
+    return "no crossover is reported when net savings are negative (no payback at all) at every share"
+
+
+@case
 def case_sequencing_share_robustness_detects_a_flip_at_a_named_scenario():
     """Fast, deterministic check of sequencing_share_robustness()'s own
     order-detection logic: monkeypatches _wh_net_savings_at_share() so ONE
@@ -1015,6 +1083,68 @@ def case_sequencing_share_robustness_detects_a_flip_at_a_named_scenario():
     assert result["robust_across_named_scenarios"] is False, result
     assert result["crossover_water_heater_share"] is not None, result
     return "sequencing_share_robustness correctly detects a real order flip at a low-savings named scenario"
+
+
+@case
+def case_sequencing_share_robustness_marginal_basis_optional_and_can_diverge_from_standalone():
+    """Finding 4 (code-reviewer, issue #20 round 6): sequencing_and_
+    paybacks()'s own combined_install always uses the furnace's STANDALONE
+    install cost, so a bare 'robust across every illustrative share' claim
+    was previously verified on ONLY that basis, unqualified about which one.
+    `furnace_payback_years_marginal` is optional (omitted -> marginal_basis
+    is None, no new claim asserted, backward compatible with every existing
+    caller) and, when supplied, runs a genuinely SEPARATE check that can
+    diverge from the standalone one -- forced here by construction: the
+    standalone target (1000yr) is worse than both named shares' own
+    paybacks (4.2yr at share>=0.5, 420yr at share<0.5), so standalone stays
+    robust; the marginal target (200yr) sits BETWEEN those two, so the
+    marginal check flips at the low share while the standalone check does
+    not -- proving the two bases are independently computed, not one
+    silently aliased to the other."""
+    real_net = A._wh_net_savings_at_share
+    real_bill_nem = A.R.bill_nem
+    real_load_series = A.build_wh_load_series
+    try:
+        A.R.bill_nem = lambda *a, **kw: 0.0
+        A.build_wh_load_series = lambda *a, **kw: ({"uniform": 0.0}, {})
+
+        def fake_net(iso, d, share, headline_uef, base_bill=None, **kw):
+            return 1000.0 if share >= 0.5 else 10.0
+        A._wh_net_savings_at_share = fake_net
+
+        no_marginal = A.sequencing_share_robustness(
+            iso=None, d=None, headline_uef="central_3.88",
+            wh_share_scenarios={"hi": 1.0, "lo": 0.2},
+            furnace_install_usd=10000, furnace_annual_net_savings_usd=100,
+            furnace_payback_years=1000.0,
+            tier_interaction=_ZERO_INTERACTION, electric_interaction=_ZERO_ELECTRIC_INTERACTION)
+        assert no_marginal["marginal_basis"] is None, no_marginal
+        assert no_marginal["robust_across_named_scenarios"] is True, no_marginal
+
+        with_marginal = A.sequencing_share_robustness(
+            iso=None, d=None, headline_uef="central_3.88",
+            wh_share_scenarios={"hi": 1.0, "lo": 0.2},
+            furnace_install_usd=10000, furnace_annual_net_savings_usd=100,
+            furnace_payback_years=1000.0,
+            tier_interaction=_ZERO_INTERACTION, electric_interaction=_ZERO_ELECTRIC_INTERACTION,
+            furnace_payback_years_marginal=200.0)
+    finally:
+        A._wh_net_savings_at_share = real_net
+        A.R.bill_nem = real_bill_nem
+        A.build_wh_load_series = real_load_series
+
+    assert with_marginal["robust_across_named_scenarios"] is True, with_marginal
+    mb = with_marginal["marginal_basis"]
+    assert mb is not None
+    assert mb["furnace_payback_years_basis"] == "marginal_over_ac_replacement"
+    assert mb["furnace_payback_years"] == 200.0
+    assert mb["named_scenarios"]["hi"]["order"] == ["water_heater", "furnace"], mb
+    assert mb["named_scenarios"]["lo"]["order"] == ["furnace", "water_heater"], mb
+    assert mb["robust_across_named_scenarios"] is False, mb
+    assert with_marginal["robust_across_named_scenarios"] != mb["robust_across_named_scenarios"], (
+        "standalone and marginal bases must be able to genuinely diverge -- the whole point of Fix 4")
+    return ("sequencing_share_robustness's own marginal-install-cost-basis check is optional "
+           "and can genuinely diverge from the standalone-basis check")
 
 
 # ---------------------------------------------------------------------------
@@ -1242,6 +1372,43 @@ def case_tier_interaction_overstatement_segment_level_diverges_from_period_level
     return (f"segment-level tier_interaction_overstatement (${result['overstatement_usd']}) "
            f"genuinely diverges from the retired period-blended basis "
            f"(${naive_period_level_overstatement}) on this household's own real archive")
+
+
+@case
+def case_tier_interaction_overstatement_fails_closed_on_missing_nonbaseline_rate():
+    """Silent-failure-hunter finding, issue #20 round 6: a prior version of
+    this function's own local bill(t) helper silently fell back to pricing
+    EVERYTHING at baseline_rate whenever a segment's own nonbaseline_rate
+    was missing, with NO tolerance check and no fail-closed guard at all --
+    unlike _priced_at_top_of_ladder()/_gas_service_segment_tier_cost(),
+    which this function is supposed to validate against, both of which fail
+    closed on a large overflow. A single segment (baseline_allowance=5.0,
+    nonbaseline_rate=None) with F=30 (floor_per_day=1.0 x 30 days) and H=20
+    (ann_heat=20 uniform over 30 days) forces a real overflow of 30-ish
+    therms into the nonbaseline tier with no rate to price it at -- far
+    past FLOOR_ESTIMATION_TOLERANCE_THERMS (0.5). This must raise
+    SystemExit, not silently return a near-zero/wrong correction for the
+    segment. This test would NOT have caught the pre-fix code (its own
+    unconditional nbr_eff=baseline_rate fallback would have returned a
+    real, silently-wrong dollar figure here instead of failing)."""
+    statement_date, period = "2025-06-30", "Jun 1, 2025 - Jun 30, 2025"
+    therms, allowance = 60.0, 5.0
+    periods_df = _make_periods_df([(statement_date, period, therms, 999.0, allowance)])
+    detail = _gas_detail_rows(
+        statement_date, period, gas_service=[(30, 2.0, None)], gas_energy=[], other_fees=[])
+    # floor_per_day=1.0 x 30 = F=30.0; ann_heat=20 uniform over 30 days = H=20.0.
+    iso = _flat_hdd_iso(floor_per_day=1.0, ann_heat=20.0, start=dt.date(2025, 6, 1), days=30)
+    with _GasDetailFixture(periods_df, detail):
+        try:
+            A.tier_interaction_overstatement(iso, n_trailing=1)
+            raise AssertionError(
+                "a large overflow against a segment with no nonbaseline_rate "
+                "was silently accepted instead of failing closed")
+        except SystemExit as e:
+            assert "nonbaseline" in str(e), e
+    return ("tier_interaction_overstatement fails closed, rather than silently "
+           "pricing at baseline_rate, when a real overflow exceeds the tolerance "
+           "on a segment with no nonbaseline_rate")
 
 
 # ---------------------------------------------------------------------------
@@ -1493,6 +1660,76 @@ def case_floor_savings_by_period_water_heater_share_scales_floor_per_day():
     return f"water_heater_share=0.5 gives half the floor therms of share=1.0 ({half} vs {full})"
 
 
+def _twelve_monthly_periods(therms=20.0, billed=50.0, allowance=11.0,
+                            baseline_rate=2.0, nonbaseline_rate=2.4,
+                            energy_rate=0.5, other_fees_rate=0.12, year=2025):
+    """Twelve consecutive real-date-range monthly gas periods (calendar year
+    `year`), one Gas Service segment each -- enough for floor_savings_by_
+    period()'s own default n_trailing=12 to run archive-independently.
+    Mirrors the hand-calc fixtures above but at fixture-building scale (a
+    full trailing-12-period run, not one hand-worked period), needed
+    because water_heater_share_sensitivity() calls floor_savings_by_period()
+    three times, once per named share."""
+    rows, detail = [], []
+    for m in range(1, 13):
+        start = dt.date(year, m, 1)
+        end_day = calendar.monthrange(year, m)[1]
+        end = dt.date(year, m, end_day)
+        period_str = f"{start.strftime('%b %d, %Y')} - {end.strftime('%b %d, %Y')}"
+        statement_date = (end + dt.timedelta(days=3)).isoformat()
+        rows.append((statement_date, period_str, therms, billed, allowance))
+        detail += _single_segment_detail(
+            statement_date, period_str, period_days=end_day, therms=therms,
+            baseline_rate=baseline_rate, nonbaseline_rate=nonbaseline_rate,
+            energy_rate=energy_rate, other_fees_rate=other_fees_rate)
+    return _make_periods_df(rows), detail
+
+
+@case
+def case_water_heater_share_sensitivity_synthetic_never_reports_a_fourth_scenario():
+    """Non-archive-gated counterpart to case_water_heater_share_sensitivity_
+    reports_three_scenarios and case_benchmark_incompatibility_check_flags_
+    implausible_on_real_archive below (test-analyzer finding, issue #20
+    round 6): those real-archive cases both call _require_archive() and
+    SILENTLY SKIP in CI, which runs on a bare runner with no private data
+    staged (.github/workflows/tests.yml's own comment) -- so a regression
+    that resurrected the retired impossible 0%-share scenario (round 4's own
+    benchmark_incompatibility_check fix) would leave CI green. This builds a
+    small synthetic 12-period gas fixture (no household archive needed) and
+    a synthetic electric frame (_synthetic_frame), with dryer/cooking
+    benchmark ranges deliberately set so their own high ends (70% + 50% =
+    120%) exceed 100% of the floor -- the SAME implausible-combination shape
+    the real archive happens to exhibit, reproduced here archive-
+    independently so this regression is caught even when the private
+    archive is absent."""
+    periods_df, detail = _twelve_monthly_periods()
+    with _GasDetailFixture(periods_df, detail):
+        d = _synthetic_frame(n_days=10)
+        iso = {"floor_therms_per_day": 0.4}
+        result = A.water_heater_share_sensitivity(
+            iso, d, dryer_pct_of_floor_range=[50.0, 70.0],
+            cooking_pct_of_floor_range=[40.0, 50.0], headline_uef="central_3.88")
+    assert set(result["scenarios"]) == {
+        "100pct_full_floor", "72pct_if_dryer_present_at_benchmark_low",
+        "21pct_if_dryer_present_at_benchmark_high"}, result["scenarios"]
+    for key in result["scenarios"]:
+        assert "residual" not in key, (
+            "no impossible 0%-share/residual entry may appear among scenarios", key)
+    check = result["benchmark_incompatibility_check"]
+    assert check["not_a_scenario"] is True, check
+    assert check["verdict"] == "implausible_for_this_household", check
+    assert check["mechanical_residual_water_heater_share"] == 0.0, check
+    assert "benchmark_incompatibility_check" not in result["scenarios"]
+    priced_fields = {"floor_savings_annual_usd", "electric_cost_increase_usd",
+                     "annual_net_savings_usd", "payback", "water_heater_share"}
+    assert not (priced_fields & set(check)), (
+        "benchmark_incompatibility_check must not carry any priced fields", check)
+    return ("water_heater_share_sensitivity (synthetic fixture, archive-independent) "
+           "reports exactly three named scenarios and flags the dryer+cooking high "
+           "ends as jointly implausible via benchmark_incompatibility_check, never "
+           "a fourth 0%-share scenario")
+
+
 @case
 def case_water_heater_share_sensitivity_reports_three_scenarios():
     """Finding 1 (Codex `review` pass, issue #20 round 4): exactly THREE
@@ -1640,6 +1877,71 @@ def case_sequencing_share_robustness_wired_into_build_on_real_archive():
     return (f"share_robustness is wired into build(): robust across all three named "
            f"scenarios, numeric crossover at {cross:.4f} water-heater share, below the "
            f"lowest illustrative scenario ({lowest_named_share})")
+
+
+@case
+def case_sequencing_share_robustness_marginal_basis_wired_into_build_on_real_archive():
+    """Finding 4 (code-reviewer, issue #20 round 6), end to end: on this
+    household's real data, the published sequencing order is robust on the
+    furnace's own STANDALONE install-cost basis (the prior test above) but
+    genuinely does NOT survive on the furnace's own marginal-over-AC-
+    replacement basis -- the 21.2%-share water-heater scenario's own 130.0
+    year payback loses to a 48.6-year marginal-basis furnace, reversing the
+    order at a scenario this report explicitly illustrates. This is the
+    real, checked-in-this-round finding Fix 4 exists to surface rather than
+    leave silently unqualified."""
+    _require_archive()
+    out = A.build()
+    sr = out["sequencing_and_paybacks"]["share_robustness"]
+    mb = sr["marginal_basis"]
+    assert mb is not None, sr
+    assert mb["furnace_payback_years_basis"] == "marginal_over_ac_replacement", mb
+    assert mb["robust_across_named_scenarios"] is False, (
+        "the marginal-basis order must genuinely diverge from the standalone-basis "
+        "order on this household's real data -- if this now passes as True, either "
+        "the underlying figures changed or the marginal-basis check regressed", mb)
+    lo = mb["named_scenarios"]["21pct_if_dryer_present_at_benchmark_high"]
+    assert lo["order"] == ["furnace", "water_heater"], (
+        "the lowest illustrative share must flip order on the marginal basis", lo)
+    assert mb["crossover_water_heater_share"] is not None, mb
+    assert mb["crossover_water_heater_share"] > sr["crossover_water_heater_share"], (
+        "the marginal-basis crossover share (a weaker furnace target) must sit "
+        "ABOVE the standalone-basis crossover share (a stronger furnace target)", sr, mb)
+    return (f"marginal-basis share_robustness correctly reports a real order reversal "
+           f"on this household's data (crossover at {mb['crossover_water_heater_share']:.4f} "
+           f"share, vs {sr['crossover_water_heater_share']:.4f} on the standalone basis)")
+
+
+@case
+def case_reconcile_unattributed_usd_hand_calc():
+    """Direct, non-archive-gated unit test for reconcile_unattributed_usd()
+    (test-analyzer finding, issue #20 round 6): a trivial hand calc,
+    900 - 300 - 400 + 25 == 225, run directly against the extracted pure
+    function rather than only through build() end to end (whose only prior
+    guard, case_reconciliation_unattributed_usd_corrects_for_tier_
+    interaction below, calls _require_archive() and silently skips in CI).
+    Also proves the tier-overstatement correction is genuinely ADDED, not
+    subtracted -- a sign-flip regression (billed - floor - heating -
+    tier_overstatement) would give 875, not 225, and is checked for
+    explicitly below so that specific regression shape is caught."""
+    result = A.reconcile_unattributed_usd(
+        trailing12_billed_usd=900.0, floor_savings_usd=300.0,
+        heating_savings_usd=400.0, tier_overstatement_usd=25.0)
+    assert abs(result - 225.0) < 1e-9, result
+    # Raising tier_overstatement_usd from 0 to 25 while holding every other
+    # input fixed must RAISE the result by exactly 25 -- proves the
+    # correction is genuinely ADDED, not subtracted or ignored. A
+    # sign-flip regression (billed - floor - heating - tier_overstatement)
+    # would instead LOWER the result from 200 to 175 here, which the
+    # exact-match assertion below would catch.
+    zero_correction = A.reconcile_unattributed_usd(
+        trailing12_billed_usd=900.0, floor_savings_usd=300.0,
+        heating_savings_usd=400.0, tier_overstatement_usd=0.0)
+    assert abs(zero_correction - 200.0) < 1e-9, zero_correction
+    assert abs(result - zero_correction - 25.0) < 1e-9, (
+        "the tier-overstatement correction must be ADDED to the naive residual, "
+        "not subtracted -- a sign-flip regression would fail this", result, zero_correction)
+    return f"reconcile_unattributed_usd(900, 300, 400, 25) = ${result}, matching the hand calc exactly"
 
 
 @case

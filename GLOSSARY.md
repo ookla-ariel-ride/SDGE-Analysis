@@ -148,7 +148,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **Electrification dividend** — This report's term for the money already being saved by driving on electricity instead of gasoline: the measured home-charging cost (plus estimated supercharging) versus what the same miles would cost at the cited state gasoline price and fleet fuel economy — about $3,230/yr here today, rising toward ~$4,440/yr once all charging lands super-off-peak.
 
-**HPWH (heat-pump water heater)** — A water heater that moves heat from the surrounding air into the tank rather than making heat directly, using roughly a third the energy of a standard electric unit. On a midday timer it can run largely on this home's surplus solar. [DOE: heat pump water heaters](https://www.energy.gov/energysaver/heat-pump-water-heaters)
+**HPWH (heat-pump water heater)** — A water heater that moves heat from the surrounding air into the tank rather than making heat directly, using roughly a third the energy of a standard electric unit. On a super-off-peak timer it can run largely on cheap overnight power, plus a genuine midday solar-coincident window (10am–2pm weekdays) — mostly not a midday-solar play, since super-off-peak on this tariff is 00:00–06:00 daily plus that midday slice. [DOE: heat pump water heaters](https://www.energy.gov/energysaver/heat-pump-water-heaters)
 
 **Phantom load / always-on baseload** — Power the house draws around the clock even when "nothing" is on: refrigeration, pool pumps, chargers, standby electronics. This home's overnight floor is ~1 kW (~$1,800/yr gross), though only part of that is realistically recoverable.
 

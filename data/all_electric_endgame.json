@@ -95,7 +95,7 @@
    "pct_of_metered_total": 100.0
   },
   "third_end_use_gap": {
-   "basis": "external benchmark (HomeGuide/SlashPlan-class contractor and DOE-adjacent usage guides, 2026), not measured for this household and not evidence a dryer exists here -- sizes the possibility only, for the case where it does. Not separable from other shares of the 137-therm/yr floor with the single, unsplit gas meter this household has. The cooking benchmark above sizes a SECOND, independent possibility the same way -- both can in principle draw on the SAME floor at once, see water_heater_share_sensitivity's own residual scenario.",
+   "basis": "external benchmark (HomeGuide/SlashPlan-class contractor and DOE-adjacent usage guides, 2026), not measured for this household and not evidence a dryer exists here -- sizes the possibility only, for the case where it does. Not separable from other shares of the 137-therm/yr floor with the single, unsplit gas meter this household has. The cooking benchmark above sizes a SECOND, independent possibility the same way -- both can in principle draw on the SAME floor at once, see water_heater_share_sensitivity's own benchmark_incompatibility_check.",
    "gap": "NOT DETERMINED whether a third gas end use (cooking, and/or a clothes dryer) remains unconverted after the water-heater and furnace steps this issue's own body names -- household.appliance_fuels, the one public-ok source for this household's own fuel mix, was never answered. If either is gas, the meter cannot actually be removed after just those two conversions.",
    "not_priced_here": true,
    "possible_cooking_basis": "typical 4-burner gas range/cooktop annual usage -- chefsresource.com ('How Many Therms Does a Gas Stove Use?') and prodhut.com, both 2026, corroborated in order of magnitude by a separate monthly-usage-pattern estimate (learnmetrics.com, 3-10 therms/month = 36-120 therms/yr, 2026); consumer/contractor-guide tier evidence, the SAME evidentiary standard DRYER_THERMS_PER_MONTH_RANGE above already uses, not a primary utility or DOE study -- not measured for this household and not evidence that cooking here is gas",
@@ -225,9 +225,48 @@
    "furnace"
   ],
   "share_robustness": {
-   "basis": "checks whether the headline sequencing order (water heater first, furnace last, computed on the 100%-water-heater-share basis) survives the SAME share uncertainty water_heater_share_sensitivity() already establishes -- the true share is not verified and could sit below every scenario shown there",
+   "basis": "checks whether the headline sequencing order (water heater first, furnace last, computed on the 100%-water-heater-share basis) survives the SAME share uncertainty water_heater_share_sensitivity() already establishes -- the true share is not verified and could sit below every scenario shown there. Checked against the furnace's own STANDALONE install-cost basis (matching combined_install's own basis above, CLAUDE.md section 2) by default; a SECOND check against the furnace's own marginal-over-AC-replacement install-cost basis is also reported below (marginal_basis) -- that basis is NOT the one combined_install actually uses, so marginal_basis is a diagnostic on a different hypothetical, not a second combined-savings figure",
    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 172.4-year standalone payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
    "crossover_water_heater_share": 0.1582,
+   "marginal_basis": {
+    "crossover_note": "the water_heater_share below which the water heater's own central-install payback would exceed the furnace's own 48.6-year marginal_over_ac_replacement payback, reversing the published order, found by bisection on the SAME real-interval gas/electric re-pricing this section's own named scenarios use (not a linear extrapolation)",
+    "crossover_water_heater_share": 0.6076,
+    "furnace_payback_years": 48.6,
+    "furnace_payback_years_basis": "marginal_over_ac_replacement",
+    "named_scenarios": {
+     "100pct_full_floor": {
+      "last_step": "furnace",
+      "order": [
+       "water_heater",
+       "furnace"
+      ],
+      "water_heater_annual_net_savings_usd": 136.27,
+      "water_heater_payback_years": 30.8,
+      "water_heater_share": 1.0
+     },
+     "21pct_if_dryer_present_at_benchmark_high": {
+      "last_step": "water_heater",
+      "order": [
+       "furnace",
+       "water_heater"
+      ],
+      "water_heater_annual_net_savings_usd": 32.32,
+      "water_heater_payback_years": 130.0,
+      "water_heater_share": 0.212
+     },
+     "72pct_if_dryer_present_at_benchmark_low": {
+      "last_step": "furnace",
+      "order": [
+       "water_heater",
+       "furnace"
+      ],
+      "water_heater_annual_net_savings_usd": 101.8,
+      "water_heater_payback_years": 41.3,
+      "water_heater_share": 0.723
+     }
+    },
+    "robust_across_named_scenarios": false
+   },
    "named_scenarios": {
     "100pct_full_floor": {
      "last_step": "furnace",
