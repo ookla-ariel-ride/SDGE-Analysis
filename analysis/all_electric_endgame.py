@@ -2193,7 +2193,37 @@ def build():
     # central_3.5 headline used (its own reconciled_heating_therms_yr, not
     # recomputed here) and the SAME water-heater added-load basis this
     # script's own headline UEF used, sum them, and rebill ONCE.
-    furnace_iso = {**iso, "annual_heating_therms": hpc_data["reconciled_heating_therms_yr"]}
+    #
+    # Issue #127: furnace_iso must ALSO carry the SAME capacity-capped daily
+    # heating shape heat_pump_conversion.json's own payback/electric_cost_
+    # by_scenario figures were built from (issue #119) -- otherwise
+    # joint_electric_cost_scenario()'s own furnace-added-load series places
+    # the SAME physical furnace load on the older, uncapped day_hdd/total_hdd
+    # shape while furnace_headline (below) reports the capped-shape figure,
+    # mixing two bases for one quantity inside a single joint rebill.
+    # Recompute the shape via the SAME HPC.gas_savings_by_period(iso) call
+    # heat_pump_conversion.py's own build() makes (not reimplemented, reused
+    # directly like every other HPC.* helper this file already calls), using
+    # the SAME `iso` already loaded above. Both calls are deterministic
+    # functions of the same real gas/weather data, so the recomputed total
+    # must reproduce heat_pump_conversion.json's own committed reconciled
+    # total exactly -- verified below, not assumed, so a private-data
+    # refresh that regenerates one artifact but not the other fails closed
+    # instead of silently mixing bases again.
+    day_gas_rows, _, _, day_heat_therms = HPC.gas_savings_by_period(iso)
+    day_reconciled_check = round(
+        sum(r["heating_therms_attributed"] for r in day_gas_rows), 2)
+    day_sum_tolerance = 0.005 * len(day_gas_rows) + 1e-6
+    assert abs(day_reconciled_check - hpc_data["reconciled_heating_therms_yr"]) < day_sum_tolerance, (
+        "all_electric_endgame.py: recomputed reconciled heating "
+        f"({day_reconciled_check} therms) disagrees with heat_pump_"
+        f"conversion.json's own committed reconciled_heating_therms_yr "
+        f"({hpc_data['reconciled_heating_therms_yr']}, tolerance "
+        f"{day_sum_tolerance:.4f}) by more than rounding-order noise can "
+        "explain -- run heat_pump_conversion.py to regenerate that "
+        "artifact from the same private data before this script")
+    furnace_iso = {**iso, "annual_heating_therms": hpc_data["reconciled_heating_therms_yr"],
+                   "capped_heat_by_day": day_heat_therms}
     furnace_cop = HPC.COP_SCENARIOS["central_3.5"]
     ann_wh_kwh_headline = (floor_therms_annual * HPC.KWH_PER_THERM * GAS_WH_UEF
                            / HPWH_UEF_SCENARIOS[headline_uef])

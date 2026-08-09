@@ -12,6 +12,7 @@ import calendar
 import datetime as dt
 import glob
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -1571,6 +1572,71 @@ def case_joint_electric_cost_scenario_conserves_energy():
     assert abs(result["combined_added_kwh"] - expected_total) <= 1, result
     assert result["solar_absorbed_kwh"] <= result["combined_added_kwh"]
     return "joint_electric_cost_scenario conserves energy across the combined furnace + water-heater series"
+
+
+@case
+def case_build_threads_the_capped_daily_shape_into_the_joint_furnace_rebill():
+    """Issue #127: build()'s own furnace_iso must carry the SAME capacity-
+    capped daily heating shape heat_pump_conversion.json's own payback
+    figures were built from (issue #119) -- proven here by confirming the
+    ACTUAL joint furnace-added-load placement build() produces on the real
+    archive differs from what the pre-#127 (uncapped) formula would still
+    give on the SAME furnace_iso, not merely that the key is present and
+    unused.
+
+    Also pins the cross-file reconciliation assert build() now runs: the
+    per-day shape recomputed here via HPC.gas_savings_by_period(iso) must
+    reproduce heat_pump_conversion.json's own committed
+    reconciled_heating_therms_yr, which build() itself already asserts and
+    would raise SystemExit on if the two artifacts were regenerated from
+    different private data."""
+    _require_archive()
+    out = A.build()
+    joint = out["joint_electric_cost_scenario"]
+
+    iso = hpc.isolate_heating_therms()
+    hpc_data = json.load(open(os.path.join(A.DATA, "heat_pump_conversion.json")))
+    day_gas_rows, _, _, day_heat_therms = hpc.gas_savings_by_period(iso)
+    reconciled = round(sum(r["heating_therms_attributed"] for r in day_gas_rows), 2)
+    assert abs(reconciled - hpc_data["reconciled_heating_therms_yr"]) < 0.005 * len(day_gas_rows) + 1e-6, (
+        reconciled, hpc_data["reconciled_heating_therms_yr"])
+
+    d = hpc.BR.load()
+    furnace_cop = hpc.COP_SCENARIOS["central_3.5"]
+    furnace_iso_capped = {**iso, "annual_heating_therms": reconciled,
+                          "capped_heat_by_day": day_heat_therms}
+    furnace_iso_uncapped = {**iso, "annual_heating_therms": reconciled}
+    added_capped, _, _ = hpc.build_hp_load_series(d, furnace_iso_capped, furnace_cop)
+    added_uncapped, _, _ = hpc.build_hp_load_series(d, furnace_iso_uncapped, furnace_cop)
+    # the two placements must genuinely differ on this household's real
+    # data (capping binds on real days -- confirmed by issue #119's own
+    # review), not coincide -- otherwise this test could not tell a correct
+    # fix from a silently-unused capped_heat_by_day key
+    assert not added_capped["uniform"].equals(added_uncapped["uniform"]), (
+        "capped and uncapped furnace placements are identical on the real "
+        "archive -- this fixture can no longer prove capped_heat_by_day is "
+        "actually taking effect")
+
+    # the ACTUAL joint scenario build() produced must match the capped
+    # placement's own bill, not the uncapped one -- replicate build()'s own
+    # ann_wh_kwh_headline computation exactly (the SAME headline UEF, the
+    # SAME floor_therms_annual source) so this is a like-for-like rebill,
+    # not a different water-heater load.
+    _, _, floor_therms_annual = A.floor_savings_by_period(iso)
+    ann_wh_kwh_headline = (floor_therms_annual * hpc.KWH_PER_THERM * A.GAS_WH_UEF
+                           / A.HPWH_UEF_SCENARIOS["central_3.88"])
+    capped_joint = A.joint_electric_cost_scenario(
+        d, furnace_iso_capped, furnace_cop, ann_wh_kwh_headline)
+    uncapped_joint = A.joint_electric_cost_scenario(
+        d, furnace_iso_uncapped, furnace_cop, ann_wh_kwh_headline)
+    assert abs(joint["electric_cost_increase_usd"] - capped_joint["electric_cost_increase_usd"]) < 0.01, (
+        joint, capped_joint)
+    assert capped_joint["electric_cost_increase_usd"] != uncapped_joint["electric_cost_increase_usd"], (
+        "capped and uncapped joint rebills cost identically -- capped_heat_by_day "
+        "is not actually changing the billed outcome")
+    return ("build()'s own joint furnace rebill matches the capacity-capped daily "
+           "placement, confirmed to genuinely differ from the pre-#127 uncapped one "
+           "on this household's real data")
 
 
 @case
