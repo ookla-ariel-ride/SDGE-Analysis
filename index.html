@@ -413,7 +413,7 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 <p class="small"><b>Payback sensitivity (tornado) <span class="pill y">modeled</span>:</b> around the 6.2-yr base, dispatch policy is the biggest lever (a 2.2-yr swing in battery-alone payback), then the install quote (2.1 yr), rate escalation (0.9), and the EV-fix interaction (0.3) — all four vary a genuinely annual input. DSGS revenue is deliberately not one of these levers: it's a partial-season backtest, not a full-year figure, so it's reported above (§6) only as an additive dollar amount on top of this payback, never combined into a payback-year swing. <code>data/extended_results.json → tornado_battery</code>.</p>
 
 <h2 id="s7">7 · The decision: three packages</h2>
-<p class="verdict">In one sentence: the free EV-charging fix is worth a modeled $1,221/yr whatever you buy; one Tesla Powerwall 3 adds its own $2,238/yr (~6.5-yr payback), and the expansion pack buys endurance, not savings.</p>
+<p class="verdict">In one sentence: the free EV-charging fix is worth a modeled $1,221/yr whatever you buy; one Tesla Powerwall 3 adds its own $2,238/yr (~6.5-yr payback), and the expansion pack saves too little to match that.</p>
 <p>All packages keep <b>EV-TOU-5</b>. <b>Baseline = your actual bills: $3,282/yr (~$274/mo), complete 365-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated NEM netting model (<code>analysis/behavior_rebuild.py</code>). No year-end lump-sum shortcuts; behavior and battery are simulated in ONE integrated pipeline (EV shift first, then battery, re-billed end-to-end), so nothing is double-counted.</p>
 
 <div class="grid3">
@@ -742,7 +742,7 @@ Every answer carries its evidence: <span class="pill g">measured</span> from met
 </details>
 
 <h2 id="s14">14 · Methodology, sources &amp; caveats</h2>
-<p class="verdict">In one sentence: absolute dollars come from the actual statements, savings are model deltas at 6/1/2026 rates, and each figure carries a confidence label with the few non-artifact-backed items named as such.</p>
+<p class="verdict">In one sentence: absolute bills are anchored to the actual statements, savings are model deltas at 6/1/2026 rates, and each figure carries a confidence label with the few non-artifact-backed items named as such.</p>
 <ul>
 <li><b>Grid data:</b> SDG&amp;E Green Button 15-min export (37,248 intervals, separate import/export channels); last 365 days analyzed.</li>
 <li><b>Solar/load data:</b> Enphase SAM 8760 hourly consumption (2025+2026 stitched), Enphase Site Energy Production daily report, PVOutput daily records — three production sources within ±2%, 0.9999 daily correlation; night-time residual of the derived series ≈ 0.</li>

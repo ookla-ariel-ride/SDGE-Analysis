@@ -762,7 +762,7 @@ def case_s7_verdict_never_credits_a_payback_to_an_expansion_that_saves_nothing()
         f"data/package_results.json now puts the expansion's marginal saving at "
         f"{real}/yr; the published branch below is no longer the live one")
     published = rt.resolve_token("S7_VERDICT")
-    assert "buys endurance, not savings" in published, published
+    assert "saves too little to match that" in published, published
     widths = {"published (marginal +%d)" % real:
               _assert_within_density_cap("S7_VERDICT", published, "the published branch")}
 
@@ -791,9 +791,66 @@ def case_s7_verdict_never_credits_a_payback_to_an_expansion_that_saves_nothing()
 
     assert rt.resolve_token("S7_VERDICT") == published, (
         "the substituted marginal saving leaked out of this case")
-    return ("S7_VERDICT reads endurance / faster / never-repays across marginal "
+    return ("S7_VERDICT reads slower / faster / never-repays across marginal "
             f"+{real}, +{quick:.0f}, 0 and -400 per year, each inside the density cap "
             f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+# Wordings that tell the reader the expansion pack saves NOTHING. The
+# slow-payback branch renders while packages.HIGH.marginal_vs_mid_yr is
+# POSITIVE, so any of these there states the artifact's own sign backwards.
+_ABSENT_SAVING_RE = re.compile(
+    r"not savings|no savings|nothing|never repays|saves? no\b|zero saving", re.I)
+
+
+@case
+def case_s7_verdict_never_calls_a_positive_marginal_saving_an_absence_of_savings():
+    """packages.HIGH.marginal_vs_mid_yr > 0 means the expansion pack DOES save
+    money -- $216/yr on the committed artifact, at a marginal payback slower
+    than the first unit's. Saying it "buys endurance, not savings" there
+    states the opposite of the artifact the sentence is derived from, and
+    hands a reader deciding what to buy the wrong fact: "saves too little to
+    be worth the money" and "saves no money at all" are different purchase
+    advice, and only the second is a reason to rule the pack out on its own
+    terms. Both positive branches are checked, so the wording cannot drift
+    into an absence claim on either side of the payback comparison.
+
+    The marginal <= 0 branch is checked to STILL read as an absence, which is
+    what keeps the two claims distinguishable -- and keeps this case from
+    passing on a formula that simply never mentions savings at all."""
+    pk = rt._json("package_results.json")["packages"]
+    exp_cost = pk["HIGH"]["cost"] - pk["MID"]["cost"]
+    mid_payback = pk["MID"]["battery_alone_payback_post_fix_yr"]
+    real = pk["HIGH"]["marginal_vs_mid_yr"]
+    assert real > 0 and exp_cost / mid_payback > real, (
+        f"data/package_results.json no longer puts the expansion on a positive, "
+        f"slower-than-{mid_payback}-yr marginal saving ({real}/yr on ${exp_cost:,.0f}); "
+        f"the published branch is no longer the one this case guards")
+
+    slow, quick = exp_cost / (mid_payback * 4), exp_cost / (mid_payback / 2)
+    checked = {}
+    for label, marginal in (("published (+%d)" % real, real),
+                            ("slower (+%.0f)" % slow, slow),
+                            ("faster (+%.0f)" % quick, quick)):
+        with _swapped(pk["HIGH"], "marginal_vs_mid_yr", marginal):
+            value = rt.resolve_token("S7_VERDICT")
+        hit = _ABSENT_SAVING_RE.search(value)
+        assert not hit, (
+            f"S7_VERDICT describes an expansion pack saving {marginal:.0f}/yr as an "
+            f"absence of savings ({hit.group(0)!r}) -- data/package_results.json:"
+            f"packages.HIGH.marginal_vs_mid_yr says it saves that money: {value}")
+        checked[label] = value
+
+    with _swapped(pk["HIGH"], "marginal_vs_mid_yr", 0):
+        none_at_all = rt.resolve_token("S7_VERDICT")
+    assert _ABSENT_SAVING_RE.search(none_at_all), (
+        f"S7_VERDICT stopped saying plainly that an expansion saving nothing never "
+        f"repays, so this case can no longer tell the two claims apart: {none_at_all}")
+    assert all(v != none_at_all for v in checked.values()), (
+        "S7_VERDICT gives a positive marginal saving the same clause it gives a zero one")
+    return ("S7_VERDICT never words a positive marginal saving as an absence of savings "
+            f"(+{real}, +{slow:.0f}, +{quick:.0f}/yr), while the zero case still says the "
+            "expansion never repays")
 
 
 @case

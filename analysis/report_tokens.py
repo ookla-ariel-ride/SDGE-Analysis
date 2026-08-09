@@ -1680,13 +1680,23 @@ def _s7_verdict(ctx):
     # nothing extra and no payback exists; dividing anyway returns a NEGATIVE
     # "payback" that sorts below mid_payback and publishes the opposite
     # purchase advice. Only two positive, finite paybacks are comparable.
+    # The middle branch is a SLOWER payback, not an absent saving. At
+    # marginal > 0 the expansion does save money (today $216/yr), so wording
+    # it as "not savings" would state the opposite of
+    # packages.HIGH.marginal_vs_mid_yr. It also has to stay readable as a
+    # different claim from the marginal <= 0 branch: "saves too little to
+    # match that payback" and "never repays" are not the same purchase
+    # advice, and a reader deciding what to buy needs to know which one holds.
+    # The clause is comparative because its CONDITION is comparative -- it
+    # turns on the expansion's payback exceeding the first unit's, so it may
+    # not assert more than that at the boundary where the two nearly tie.
     # Each branch is also held to CLAUDE.md section 10's 35-word density cap
     # on the whole sentence, not just the one that renders today: 25 words of
     # lead leave 10 for the tail. "faster than the first unit" spent 11.
     if marginal <= 0:
         tail = "and the expansion pack never repays its extra cost"
     elif exp_cost / marginal > mid_payback:
-        tail = "and the expansion pack buys endurance, not savings"
+        tail = "and the expansion pack saves too little to match that"
     else:
         tail = "and the expansion pack pays back faster than that"
     return (f"{VERDICT_STEM}the free EV-charging fix is worth a modeled "
@@ -1744,7 +1754,14 @@ def _s14_verdict(ctx):
     # Deliberately NOT "every figure traces to a script and an artifact":
     # section 14 itself names figures that do not (unarchived workpapers),
     # so that phrasing would overclaim under CLAUDE.md section 0.
-    return (f"{VERDICT_STEM}absolute dollars come from the actual statements, savings are "
+    # "absolute BILLS", not "absolute dollars", for the same reason: the
+    # report also carries absolute dollars that no statement produced (the
+    # ~$14,500 battery, the package prices). CLAUDE.md sections 0 and 1
+    # anchor the BILL figures to the statements and use the model only for
+    # deltas, which is what section 14's own package-math paragraph says
+    # ("absolute bills anchored to the ... actual"); the verdict summarises
+    # that methodology rather than widening it to every dollar on the page.
+    return (f"{VERDICT_STEM}absolute bills are anchored to the actual statements, savings are "
             f"model deltas at {d.month}/{d.day}/{d.year} rates, and each figure carries a "
             "confidence label with the few non-artifact-backed items named as such.")
 
