@@ -508,8 +508,7 @@ _tok("NEM_EXPIRY_YEAR", kind="derived",
 _tok("INVERTER_DESCRIPTION", kind="derived",
      get=lambda ctx: (
          f"{int(hh1('solar.inverter_count'))} × {hh1('solar.inverter_model')} "
-         f"(~{hh1('solar.kw_ac') * 1000 / hh1('solar.inverter_count'):.0f} VA each "
-         f"≈ {hh1('solar.kw_ac'):.2f} kW AC max)"),
+         f"(~{hh1('solar.kw_ac') * 1000 / hh1('solar.inverter_count'):.0f} VA each)"),
      sources=["private/household.yaml:solar.inverter_count/inverter_model/kw_ac"])
 
 _tok("PANEL_MODEL_WATTS", kind="derived",
