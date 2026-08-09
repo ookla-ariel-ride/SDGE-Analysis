@@ -2205,28 +2205,35 @@ def build():
     # heat_pump_conversion.py's own build() makes (not reimplemented, reused
     # directly like every other HPC.* helper this file already calls), using
     # the SAME `iso` already loaded above. Both calls are deterministic
-    # functions of the same real gas/weather data, so the recomputed total
-    # must reproduce heat_pump_conversion.json's own committed reconciled
-    # total exactly -- verified below, not assumed, so a private-data
-    # refresh that regenerates one artifact but not the other fails closed
-    # instead of silently mixing bases again.
+    # functions of the same real gas/weather data, computing the IDENTICAL
+    # expression (round(sum(r["heating_therms_attributed"] for r in rows), 2))
+    # over what should be the same rows -- unlike issue #119's own analogous
+    # check (which compares two DIFFERENTLY-rounded aggregations of the same
+    # values and genuinely needs rounding-order slack), there is no
+    # legitimate source of disagreement here on matching data, so this
+    # compares for exact agreement rather than borrowing that tolerance
+    # (Codex `review`, issue #127 round 2: the borrowed 0.005-per-period
+    # tolerance let a real 0.11-therm injected drift pass silently). Fails
+    # closed (matching the missing-artifact check three lines above, not a
+    # bare assert an optimized interpreter run could strip) if a private-
+    # data refresh regenerates one artifact but not the other.
     day_gas_rows, _, _, day_heat_therms = HPC.gas_savings_by_period(iso)
     day_reconciled_check = round(
         sum(r["heating_therms_attributed"] for r in day_gas_rows), 2)
-    day_sum_tolerance = 0.005 * len(day_gas_rows) + 1e-6
-    assert abs(day_reconciled_check - hpc_data["reconciled_heating_therms_yr"]) < day_sum_tolerance, (
-        "all_electric_endgame.py: recomputed reconciled heating "
-        f"({day_reconciled_check} therms) disagrees with heat_pump_"
-        f"conversion.json's own committed reconciled_heating_therms_yr "
-        f"({hpc_data['reconciled_heating_therms_yr']}, tolerance "
-        f"{day_sum_tolerance:.4f}) by more than rounding-order noise can "
-        "explain -- run heat_pump_conversion.py to regenerate that "
-        "artifact from the same private data before this script")
-    furnace_iso = {**iso, "annual_heating_therms": hpc_data["reconciled_heating_therms_yr"],
+    if abs(day_reconciled_check - hpc_data["reconciled_heating_therms_yr"]) > 1e-9:
+        raise SystemExit(
+            "all_electric_endgame.py: recomputed reconciled heating "
+            f"({day_reconciled_check} therms) disagrees with heat_pump_"
+            f"conversion.json's own committed reconciled_heating_therms_yr "
+            f"({hpc_data['reconciled_heating_therms_yr']}) -- the artifact "
+            "is stale (regenerated from different private data than this "
+            "script's own iso); run heat_pump_conversion.py to regenerate "
+            "it from the same private data before this script")
+    furnace_iso = {**iso, "annual_heating_therms": day_reconciled_check,
                    "capped_heat_by_day": day_heat_therms}
     furnace_cop = HPC.COP_SCENARIOS["central_3.5"]
     # Codex adversarial review, issue #127: the therms-total check above
-    # cannot prove the artifact's own DAY-BY-DAY shape still matches --  a
+    # cannot prove the artifact's own DAY-BY-DAY shape still matches -- a
     # stale heat_pump_conversion.json regenerated from OLDER private data
     # could coincidentally reconcile to the same annual total while
     # redistributing heat across different days, silently reintroducing the
@@ -2237,8 +2244,7 @@ def build():
     # against this script's OWN freshly-loaded `iso` -- if the artifact is
     # stale, a different real day-by-day placement produces a materially
     # different TOU-priced bill, not merely a different-but-coincidentally-
-    # equal number, so this check is exact (not tolerance-widened for
-    # rounding) rather than a proxy on the total therms alone.
+    # equal number.
     verify_electric, _ = HPC.electric_cost_scenarios(d, furnace_iso)
     verify_furnace_electric = verify_electric["central_3.5"]["uniform"]["electric_cost_increase_usd"]
     # Both sides are already round(..., 2) dollar figures (heat_pump_
@@ -2246,15 +2252,19 @@ def build():
     # rounded CENTS directly rather than a float-subtraction threshold --
     # the exact float-precision trap issue #119 hit and fixed on a similar
     # comparison (a one-cent gap can evaluate to 0.009999999999990905,
-    # slipping under a naive "< 0.01" bound by luck rather than by design).
-    assert round(verify_furnace_electric, 2) == round(furnace_headline["annual_electric_cost_increase_usd"], 2), (
-        "all_electric_endgame.py: recomputed furnace electric cost increase "
-        f"({verify_furnace_electric}) disagrees with heat_pump_conversion.json's "
-        f"own committed figure ({furnace_headline['annual_electric_cost_increase_usd']}) -- "
-        "the artifact may be stale (regenerated from different private data "
-        "than this script's own iso, even though the annual therms total "
-        "happens to reconcile); run heat_pump_conversion.py to regenerate "
-        "it from the same private data before this script")
+    # slipping a real one-cent drift PAST a naive "< 0.01" bound, the
+    # opposite failure direction from a threshold too tight -- Codex
+    # `review`, issue #127 round 2, confirmed by injecting a one-cent-stale
+    # value).
+    if round(verify_furnace_electric, 2) != round(furnace_headline["annual_electric_cost_increase_usd"], 2):
+        raise SystemExit(
+            "all_electric_endgame.py: recomputed furnace electric cost increase "
+            f"({verify_furnace_electric}) disagrees with heat_pump_conversion.json's "
+            f"own committed figure ({furnace_headline['annual_electric_cost_increase_usd']}) -- "
+            "the artifact is stale (regenerated from different private data "
+            "than this script's own iso, even though the annual therms total "
+            "happens to reconcile); run heat_pump_conversion.py to regenerate "
+            "it from the same private data before this script")
     ann_wh_kwh_headline = (floor_therms_annual * HPC.KWH_PER_THERM * GAS_WH_UEF
                            / HPWH_UEF_SCENARIOS[headline_uef])
     joint_electric = joint_electric_cost_scenario(d, furnace_iso, furnace_cop, ann_wh_kwh_headline)
