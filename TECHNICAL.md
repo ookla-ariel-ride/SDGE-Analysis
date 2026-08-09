@@ -4110,29 +4110,41 @@ functions their independent scenarios already use, `heat_pump_conversion.build_h
 series` and `build_wh_load_series`, not reimplemented) are SUMMED into one combined series,
 netted against solar ONCE, and re-billed ONCE with `rates.bill_nem()`. `electric_interaction_
 overstatement()` quantifies the gap between that joint figure and the naive sum of the two
-independent figures, mirroring `tier_interaction_overstatement()`'s own role: **$2.74/yr**
+independent figures, mirroring `tier_interaction_overstatement()`'s own role: **$0.13/yr**
 overstatement on this household's real data — real, structurally guaranteed non-negative (the
 "how much of a fixed solar export can a load absorb" function is concave, so `min(g,a) +
-min(g,b) >= min(g,a+b)` for any export `g` and loads `a, b`), SMALL here partly because this
+min(g,b) >= min(g,a+b)` for any export `g` and loads `a, b`), SMALL specifically because this
 household's furnace load concentrates in winter while its water-heater load spreads uniformly
 across the whole year, so the two rarely compete for the same exported solar interval — a
-household whose two added loads overlap more in time would see a larger correction from that
-mechanism alone.
+household whose two added loads overlap more in time would see a larger correction.
 
-**Post-issue-#119 basis note.** `furnace_headline["annual_electric_cost_increase_usd"]` (the
-term this function reads from `heat_pump_conversion.json`) now comes from that module's
-capacity-capped daily placement (issue #119), but `joint_electric_cost_scenario()`'s own
-internal furnace-added-load series still calls `HPC.build_hp_load_series()` without a
-`capped_heat_by_day` key, so it still places the furnace's load on the older, uncapped
-day_hdd/total_hdd shape. `electric_interaction_overstatement()`'s $2.74/yr (was $0.14/yr
-before issue #119) therefore now conflates the genuine double-claimed-solar effect above with
-a second, smaller effect: the same two-shape mismatch issue #119 fixed in
-`heat_pump_conversion.py`'s own pipeline, still latent here. `complete_transition_payback`'s
-own $191.67/yr and 97.7-yr figures are unaffected (the shift nets out exactly against
-`naive_summed_annual_net_savings_usd`'s own equal-and-opposite move), so no published headline
-number is wrong, but this specific $2.74/yr figure is not a clean measurement of solar
-double-counting alone until a follow-up threads the same capped shape into this script's own
-joint rebill. Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces a
+**Round 2 fix (issue #127): basis mismatch between `furnace_headline` and the joint rebill.**
+Issue #119 moved `furnace_headline["annual_electric_cost_increase_usd"]` (the term this
+function reads from `heat_pump_conversion.json`) onto that module's capacity-capped daily
+placement, but left `joint_electric_cost_scenario()`'s own internal furnace-added-load series
+on the older, uncapped `day_hdd/total_hdd` shape (`HPC.build_hp_load_series()` called without a
+`capped_heat_by_day` key) — deliberately, since issue #119's own scope box named this file's
+own accounting as a separate, pre-existing gap. That left `electric_interaction_overstatement()`
+conflating the genuine double-claimed-solar effect above with a second, unrelated effect: two
+different placement bases for the SAME physical furnace load inside one script, inflating
+$0.14/yr (pre-#119) to $2.74/yr. Fixed by recomputing the capped per-day shape here too, via
+the SAME `HPC.gas_savings_by_period(iso)` call `heat_pump_conversion.py`'s own `build()` makes
+(not reimplemented — `iso` is the SAME `HPC.isolate_heating_therms()` result this script
+already loads, and the call is a deterministic function of the same real gas/weather data, so
+it reproduces `heat_pump_conversion.json`'s own committed `reconciled_heating_therms_yr`
+exactly), threaded into `furnace_iso["capped_heat_by_day"]` before `joint_electric_cost_
+scenario()`'s own call. A new assert (tolerance derived from the recomputed period count, same
+formula as issue #119's own reconciliation check, not a fixed constant that could pass by float
+luck) fails closed if a future private-data refresh regenerates one artifact but not the other.
+Both bases now consistent, `electric_interaction_overstatement_usd` returned to $0.13/yr —
+close to, not identical to, the pre-#119 $0.14/yr, since #119 itself slightly changed the
+furnace's own headline electric cost. `complete_transition_payback`'s own combined figures DO
+move as a result (unlike issue #119 itself, whose combined figures happened to net out
+unaffected): $191.67/yr → $194.28/yr, 97.7 yr → 96.4 yr — a real, small improvement, not a
+correction of a previously-wrong number (the pre-#127 figures were internally consistent given
+the joint rebill's own then-current inputs; they simply priced the furnace's own joint-scenario
+electric cost on a shape this script's other reads of `heat_pump_conversion.json` had already
+moved past). Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces a
 per-interval kW/circuit-amperage cap, and `rates.bill_nem()` has no demand-charge component
 either, so summing the two series for billing purposes does not interact with the PANEL-level
 cumulative-headroom check `service_headroom_check()` (AC5) already makes for both loads
@@ -4140,8 +4152,8 @@ together.
 
 Both corrections are netted out of the headline figure rather than left in it ("one pipeline
 per package figure... never by adding numbers from different models," CLAUDE.md §9). Combined
-install $18,729, combined net savings **$191.67/yr** (naive sum $223.15/yr minus the
-$28.74/yr segment-level gas correction minus the $2.74/yr electric correction), **97.7 yr**
+install $18,729, combined net savings **$194.28/yr** (naive sum $223.15/yr minus the
+$28.74/yr segment-level gas correction minus the $0.13/yr electric correction), **96.4 yr**
 payback. Final step alone (furnace, the longer-payback step and so ordered last): standalone
 payback **167.2 yr**, identical with and without the credit (the furnace's own figure has no
 interaction term of its own — it is a single-conversion computation). Neither payback
@@ -4196,7 +4208,7 @@ scenario probe and crossover bisection a second time via a factored-out helper
 leaving the standalone-basis-only claim unqualified. `combined_install` itself stays on the
 standalone basis throughout (CLAUDE.md §2's one-basis-per-projection rule) — this reversal is
 a caveat on how far the sequencing conclusion generalizes, not a correction to the published
-$191.67/yr combined savings figure.
+$194.28/yr combined savings figure.
 
 **AC8 — reconciliation.** The furnace figures are cited directly from `heat_pump_
 conversion.json`, not recomputed, so they agree exactly by construction. The water heater

@@ -12,6 +12,7 @@ import calendar
 import datetime as dt
 import glob
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -1571,6 +1572,155 @@ def case_joint_electric_cost_scenario_conserves_energy():
     assert abs(result["combined_added_kwh"] - expected_total) <= 1, result
     assert result["solar_absorbed_kwh"] <= result["combined_added_kwh"]
     return "joint_electric_cost_scenario conserves energy across the combined furnace + water-heater series"
+
+
+@case
+def case_build_threads_the_capped_daily_shape_into_the_joint_furnace_rebill():
+    """Issue #127: build()'s own furnace_iso must carry the SAME capacity-
+    capped daily heating shape heat_pump_conversion.json's own payback
+    figures were built from (issue #119) -- proven here by confirming the
+    ACTUAL joint furnace-added-load placement build() produces on the real
+    archive differs from what the pre-#127 (uncapped) formula would still
+    give on the SAME furnace_iso, not merely that the key is present and
+    unused.
+
+    Also pins the cross-file reconciliation check build() now runs: the
+    per-day shape recomputed here via HPC.gas_savings_by_period(iso) must
+    reproduce heat_pump_conversion.json's own committed
+    reconciled_heating_therms_yr, which build() itself already checks and
+    would raise SystemExit on if the two artifacts were regenerated from
+    different private data (see the two negative-test cases immediately
+    below, which prove each of build()'s own two guards actually fires --
+    Codex `review`, issue #127 round 2: neither guard had a test proving it
+    could ever trip)."""
+    _require_archive()
+    out = A.build()
+    joint = out["joint_electric_cost_scenario"]
+
+    iso = hpc.isolate_heating_therms()
+    hpc_data = json.load(open(os.path.join(A.DATA, "heat_pump_conversion.json")))
+    day_gas_rows, _, _, day_heat_therms = hpc.gas_savings_by_period(iso)
+    reconciled = round(sum(r["heating_therms_attributed"] for r in day_gas_rows), 2)
+    # exact agreement expected -- both sides compute the identical
+    # expression over what should be the same rows (issue #127 round 2: a
+    # tolerance borrowed from issue #119's own, structurally different,
+    # comparison let a real drift pass silently)
+    assert reconciled == hpc_data["reconciled_heating_therms_yr"], (
+        reconciled, hpc_data["reconciled_heating_therms_yr"])
+
+    d = hpc.BR.load()
+    furnace_cop = hpc.COP_SCENARIOS["central_3.5"]
+    furnace_iso_capped = {**iso, "annual_heating_therms": reconciled,
+                          "capped_heat_by_day": day_heat_therms}
+    furnace_iso_uncapped = {**iso, "annual_heating_therms": reconciled}
+    added_capped, _, _ = hpc.build_hp_load_series(d, furnace_iso_capped, furnace_cop)
+    added_uncapped, _, _ = hpc.build_hp_load_series(d, furnace_iso_uncapped, furnace_cop)
+    # the two placements must genuinely differ on this household's real
+    # data (capping binds on real days -- confirmed by issue #119's own
+    # review), not coincide -- otherwise this test could not tell a correct
+    # fix from a silently-unused capped_heat_by_day key
+    assert not added_capped["uniform"].equals(added_uncapped["uniform"]), (
+        "capped and uncapped furnace placements are identical on the real "
+        "archive -- this fixture can no longer prove capped_heat_by_day is "
+        "actually taking effect")
+
+    # the ACTUAL joint scenario build() produced must match the capped
+    # placement's own bill, not the uncapped one -- replicate build()'s own
+    # ann_wh_kwh_headline computation exactly (the SAME headline UEF, the
+    # SAME floor_therms_annual source) so this is a like-for-like rebill,
+    # not a different water-heater load.
+    _, _, floor_therms_annual = A.floor_savings_by_period(iso)
+    ann_wh_kwh_headline = (floor_therms_annual * hpc.KWH_PER_THERM * A.GAS_WH_UEF
+                           / A.HPWH_UEF_SCENARIOS["central_3.88"])
+    capped_joint = A.joint_electric_cost_scenario(
+        d, furnace_iso_capped, furnace_cop, ann_wh_kwh_headline)
+    uncapped_joint = A.joint_electric_cost_scenario(
+        d, furnace_iso_uncapped, furnace_cop, ann_wh_kwh_headline)
+    assert round(joint["electric_cost_increase_usd"], 2) == round(capped_joint["electric_cost_increase_usd"], 2), (
+        joint, capped_joint)
+    assert capped_joint["electric_cost_increase_usd"] != uncapped_joint["electric_cost_increase_usd"], (
+        "capped and uncapped joint rebills cost identically -- capped_heat_by_day "
+        "is not actually changing the billed outcome")
+    return ("build()'s own joint furnace rebill matches the capacity-capped daily "
+           "placement, confirmed to genuinely differ from the pre-#127 uncapped one "
+           "on this household's real data")
+
+
+def _hpc_json_path(dir_):
+    return os.path.join(dir_, "heat_pump_conversion.json")
+
+
+def _staged_hpc_json(td, mutate):
+    """Copy the REAL committed heat_pump_conversion.json into a temp DATA
+    dir, apply `mutate` to the loaded dict, and write it back -- used by
+    both negative tests below so each can corrupt exactly one field without
+    touching the real committed artifact."""
+    real_path = os.path.join(A.DATA, "heat_pump_conversion.json")
+    data = json.load(open(real_path))
+    mutate(data)
+    with open(_hpc_json_path(td), "w") as fh:
+        json.dump(data, fh)
+
+
+@case
+def case_build_fails_closed_on_a_stale_reconciled_heating_therms():
+    """Issue #127, Codex `review` round 2: the therms-total guard must
+    actually fire on a real drift, not merely agree with itself on
+    unmodified data (a tautology that proves nothing). Corrupts ONLY
+    reconciled_heating_therms_yr in a staged copy of the real artifact by
+    an amount well outside legitimate float noise, and confirms build()
+    raises SystemExit naming the mismatch rather than silently proceeding
+    with a hybrid furnace_iso (stale annual_heating_therms, fresh
+    capped_heat_by_day)."""
+    _require_archive()
+    real_data_a = A.DATA
+    with tempfile.TemporaryDirectory() as td:
+        _staged_hpc_json(td, lambda d: d.__setitem__(
+            "reconciled_heating_therms_yr", d["reconciled_heating_therms_yr"] + 0.5))
+        A.DATA = td
+        try:
+            try:
+                A.build()
+                raise AssertionError(
+                    "a 0.5-therm-stale reconciled_heating_therms_yr was silently accepted")
+            except SystemExit as e:
+                assert "disagrees with heat_pump_" in str(e), e
+        finally:
+            A.DATA = real_data_a
+    return "build() fails closed on a stale reconciled_heating_therms_yr, not silently accepted"
+
+
+@case
+def case_build_fails_closed_on_a_stale_furnace_electric_cost_with_matching_therms_total():
+    """Issue #127, Codex `review` round 2 (the harder case): a stale
+    artifact whose reconciled_heating_therms_yr still happens to agree
+    (redistributed across different days, same annual total) must still be
+    caught -- this is exactly the gap the therms-only guard above cannot
+    close, which is why build() also recomputes the furnace's own dollar
+    figure directly. Corrupts ONLY annual_electric_cost_increase_usd,
+    leaving reconciled_heating_therms_yr untouched so the first guard
+    passes and only the second is exercised."""
+    _require_archive()
+    real_data_a = A.DATA
+    with tempfile.TemporaryDirectory() as td:
+        def mutate(d):
+            central = d["payback"]["central_3.5"]
+            central["annual_electric_cost_increase_usd"] = round(
+                central["annual_electric_cost_increase_usd"] + 1.00, 2)
+        _staged_hpc_json(td, mutate)
+        A.DATA = td
+        try:
+            try:
+                A.build()
+                raise AssertionError(
+                    "a $1.00-stale furnace annual_electric_cost_increase_usd was "
+                    "silently accepted despite the therms total still reconciling")
+            except SystemExit as e:
+                assert "recomputed furnace electric cost increase" in str(e), e
+        finally:
+            A.DATA = real_data_a
+    return ("build() fails closed on a stale furnace electric cost even when the "
+           "therms total still reconciles, proving the second guard is load-bearing")
 
 
 @case

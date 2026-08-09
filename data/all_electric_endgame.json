@@ -121,9 +121,9 @@
  "joint_electric_cost_scenario": {
   "basis": "uniform distribution for both loads, furnace at central COP 3.5, water heater at the headline UEF -- matching each conversion's own headline scenario basis",
   "combined_added_kwh": 1556,
-  "electric_cost_increase_usd": 556.22,
+  "electric_cost_increase_usd": 553.61,
   "furnace_added_kwh": 948,
-  "solar_absorbed_kwh": 455,
+  "solar_absorbed_kwh": 447,
   "water_heater_added_kwh": 608
  },
  "meter_removal_research": {
@@ -184,16 +184,16 @@
  "sequencing_and_paybacks": {
   "basis": "cost-effectiveness: whichever step's own marginal payback is shorter goes first. AC1's own finding (a genuinely $0 fixed gas charge on this rate) makes the issue's own 'credit the meter-release value only to the final step' rule trivially satisfied either way -- crediting $0 to whichever step is last changes nothing, so there is no fixed-charge-driven reason to sequence one way over the other, unlike a rate WITH a real per-meter charge would produce. This order is derived from the 100%-water-heater-share basis alone -- see this section's own share_robustness (added separately, in build()) for whether it survives the water-heater-share uncertainty water_heater_share_sensitivity establishes.",
   "complete_transition_payback": {
-   "combined_annual_net_savings_usd": 191.67,
+   "combined_annual_net_savings_usd": 194.28,
    "combined_install_usd": 18729,
    "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase understates the true combined electric cost, since both conversions' independent rebills let their own added load claim the SAME exported solar kWh, which cannot really happen once both loads are real.",
-   "electric_interaction_overstatement_usd": 2.74,
+   "electric_interaction_overstatement_usd": 0.13,
    "naive_summed_annual_net_savings_usd": 223.15,
    "npv": {
-    "4pct": -16598,
-    "5pct": -16740
+    "4pct": -16569,
+    "5pct": -16712
    },
-   "payback_years": 97.7,
+   "payback_years": 96.4,
    "tier_interaction_note": "combined_annual_net_savings_usd is the naive sum of each step's own independently-computed marginal GAS savings, minus BOTH the tier_interaction_overstatement_usd correction (this field) AND the electric_interaction_overstatement_usd correction (below) -- see tier_interaction_overstatement() and electric_interaction_overstatement() (CLAUDE.md section 9: composite figures must not silently add numbers from two separate models). naive_summed_annual_net_savings_usd is kept alongside for transparency, not used in the payback below.",
    "tier_interaction_overstatement_usd": 28.74
   },
