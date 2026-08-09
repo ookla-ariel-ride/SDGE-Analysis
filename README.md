@@ -51,6 +51,9 @@ high level, it covers:
   how long each configuration could carry the house through an outage
 - the health of the existing solar array: degradation, clipping, soiling and cleaning
   economics, and whether expansion is worthwhile
+- whether converting off gas pencils out: the furnace/heat-pump conversion alone, the
+  water heater, and the full transition (with the gas meter's own fixed charge credited
+  only where it actually goes away)
 - how the modeled bills reconcile against the year of actual statements
 - grid-carbon timing, NEM economics, and long-run rate-escalation exposure
 - a closing implementation appendix and a methodology section documenting every model,
@@ -127,9 +130,11 @@ containing those values.
   (`analyze_norelief.py` first — `battery_plan_matrix.py` ties out against its
   `plan_results.csv` — then `behavior_rebuild.py`, `battery_dispatch_policies.py`,
   `battery_plan_matrix.py`, `package_results.py`, `extended_findings.py`,
-  `carbon_fullyear.py`, plus `soiling_analysis.py`, `billing_model_nem.py`, and
-  `lifetime_payback.py` as applicable); then fill `report-template.html`'s `{{TOKEN}}`s from
-  your regenerated `data/*.json`.
+  `carbon_fullyear.py`, plus `soiling_analysis.py`, `billing_model_nem.py`,
+  `lifetime_payback.py`, and — gas households only — `heat_pump_conversion.py` then
+  `all_electric_endgame.py` (which depends on `heat_pump_conversion.py`'s own output plus
+  `service_headroom.py`'s) as applicable); then fill `report-template.html`'s `{{TOKEN}}`s
+  from your regenerated `data/*.json`.
 - **Your-own-LLM-key route (no agentic coding tool required):** once `data/*.json` is
   regenerated, `analysis/generate_report.py` fills `report-template.html` and writes
   `index.generated.html` using a paid API key you already have — Anthropic, OpenAI, or
@@ -275,6 +280,7 @@ schema and pipeline in depth.
 | `data/service_headroom.json` | Electrical service headroom under NEC 220.87: the measured demand basis, the calculated existing load it implies, what is left against the main breaker and the busbar, and the 120%-rule check on the existing PV backfeed |
 | `data/irreducible_bill.json` | The strict floor of the annual electric bill that no purchase can remove (the per-day fixed charge alone), reported separately from non-bypassable charges — real, currently owed, but usage-dependent, not fixed: per-period extraction (cross-checked against an independently sourced TOU-table computation), the trailing-12-month figures, each component's share of each `package_results.json` package's projected bill, and the minimum-bill-provision and NBC-on-gross-kWh checks behind it |
 | `data/heat_pump_conversion.json` | Replacing the gas furnace + AC with a heat pump: furnace therms isolated two independent ways and cross-checked, the added electric load re-billed on real 15-minute intervals across the measured year, gas savings priced at each real billing period's own realized rate, payback and NPV (standalone and marginal-over-AC-replacement) across a COP × install-cost × gas-price sensitivity grid |
+| `data/all_electric_endgame.json` | The full transition off gas: fixed charges isolated per statement, remaining gas end uses enumerated from the daily series, each conversion (water heater, furnace) costed and sequenced with the fixed-charge release credited only to the final step, added electric load re-billed jointly (not summed independently) with a quantified tier/solar double-count correction, service headroom checked against the panel, meter-removal research, and reconciliation against the furnace conversion and the HDD decomposition |
 
 </details>
 
@@ -309,13 +315,14 @@ schema and pipeline in depth.
 | `analysis/service_headroom.py` | Electrical service headroom from measured demand: takes the peak interval demand out of the Green Button export, applies the NEC 220.87 existing-dwelling method (measured maximum demand × 125%), and checks the result and the existing PV backfeed against the panel facts in `private/household.yaml` → `data/service_headroom.json` |
 | `analysis/irreducible_bill.py` | Splits every electric billing period into a fixed daily charge, non-bypassable charges billed on gross imported kWh, taxes/fees and a residual energy bucket; cross-checks the residual against an independently sourced TOU-table computation, states the fixed daily charge alone as the strict floor over the trailing 12-month bill window (non-bypassable charges are reported separately — real, but usage-dependent, not fixed), and expresses each component as a share of each package's projected bill → `data/irreducible_bill.json` |
 | `analysis/heat_pump_conversion.py` | Heat-pump conversion scenario model: isolates furnace therms from the gas meter two independent ways, sizes the heat pump's replacement electricity by COP scenario, adds it into real 15-minute intervals and re-bills the measured year with the canonical NEM engine, and prices displaced gas at each real billing period's own realized rate → `data/heat_pump_conversion.json` |
+| `analysis/all_electric_endgame.py` | Costs cancelling the gas meter entirely: isolates the fixed charge, enumerates remaining gas end uses, sequences and costs each conversion with the fixed-charge release credited only to the final step, jointly re-bills the combined added electric load (not two independent rebills summed, which double-claims solar), checks service headroom, researches meter removal, and reconciles against the furnace conversion and §10's existing figures → `data/all_electric_endgame.json` |
 | `analysis/extra_results.py` | Regenerates `data/extra_results.json`'s `escalation` block — a RETIRED, evening-only-dispatch scenario, distinct by design from the current published escalation ladder in `data/battery_dispatch_policies.json` (TECHNICAL.md §3.11) — from a documented historical constant instead of an orphaned hand-typed figure; the file's other six keys (phantom baseload, price map, NBT bracket, cleaning, true-up, EV fleet) are one-time measurements with no other source, so they pass through unchanged |
 | `research/rates-reference.md` | Every rate figure used: SDG&E UDC + EECC per plan, CEA generation, PCIA, fixed charges, baselines, TOU windows — with sources |
 | `research/battery-research-notes.md` | 2026 battery prices/specs, incentive status, simulation summary |
 | `research/extended-research-notes.md` | AB 205 / DSGS-VPP / outage-exposure / fuel-constant research (sources + captured figures) backing the extended findings |
 | `research/sdge-plan-comparison-capture.md` | SDG&E's own plan-tool output vs this model |
 | `analysis/parse_bills.py` | Parses the detailed bill PDFs into the per-period and TOU artifacts, and regenerates the two legacy bill summaries as its own reproduction gate. Reads `household.has_gas` — the flag, not the presence of a directory, decides whether gas is expected |
-| `analysis/test_*.py` | **44 test suites**, run by CI on every push. They are mostly *negative* tests: each one injects the defect it claims to catch and proves the code refuses. `test_scripts_runnable.py` additionally executes every generator and byte-diffs each committed artifact against a fresh run — the §9 gate, folded into the suite |
+| `analysis/test_*.py` | **45 test suites**, run by CI on every push. They are mostly *negative* tests: each one injects the defect it claims to catch and proves the code refuses. `test_scripts_runnable.py` additionally executes every generator and byte-diffs each committed artifact against a fresh run — the §9 gate, folded into the suite |
 | `analysis/check_coverage.sh` | Local coverage gate (≥90% statement coverage across the analysis package); needs the private archive, so it does not run in CI |
 | `analysis/household.py` | Loader for `private/household.yaml` — analysis scripts read per-house facts (invoice, dates, charger kW, vehicle specs…) through it and **fail closed** with a run-the-intake-interview message if the file or a required key is missing |
 
@@ -396,4 +403,4 @@ each with a privacy checklist so nothing personal lands in a public thread.
 
 ---
 
-*Last reviewed: 2026-08-06, against commit `f47ab67`.*
+*Last reviewed: 2026-08-09, against commit `2025636`.*
