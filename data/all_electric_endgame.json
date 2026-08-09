@@ -95,9 +95,18 @@
    "pct_of_metered_total": 100.0
   },
   "third_end_use_gap": {
-   "basis": "external benchmark (HomeGuide/SlashPlan-class contractor and DOE-adjacent usage guides, 2026), not measured for this household and not evidence a dryer exists here -- sizes the possibility only, for the case where it does. Not separable from other shares of the 137-therm/yr floor with the single, unsplit gas meter this household has.",
+   "basis": "external benchmark (HomeGuide/SlashPlan-class contractor and DOE-adjacent usage guides, 2026), not measured for this household and not evidence a dryer exists here -- sizes the possibility only, for the case where it does. Not separable from other shares of the 137-therm/yr floor with the single, unsplit gas meter this household has. The cooking benchmark above sizes a SECOND, independent possibility the same way -- both can in principle draw on the SAME floor at once, see water_heater_share_sensitivity's own residual scenario.",
    "gap": "NOT DETERMINED whether a third gas end use (cooking, and/or a clothes dryer) remains unconverted after the water-heater and furnace steps this issue's own body names -- household.appliance_fuels, the one public-ok source for this household's own fuel mix, was never answered. If either is gas, the meter cannot actually be removed after just those two conversions.",
    "not_priced_here": true,
+   "possible_cooking_basis": "typical 4-burner gas range/cooktop annual usage -- chefsresource.com ('How Many Therms Does a Gas Stove Use?') and prodhut.com, both 2026, corroborated in order of magnitude by a separate monthly-usage-pattern estimate (learnmetrics.com, 3-10 therms/month = 36-120 therms/yr, 2026); consumer/contractor-guide tier evidence, the SAME evidentiary standard DRYER_THERMS_PER_MONTH_RANGE above already uses, not a primary utility or DOE study -- not measured for this household and not evidence that cooking here is gas",
+   "possible_cooking_pct_of_floor_range": [
+    29.2,
+    43.8
+   ],
+   "possible_cooking_rough_magnitude_therms_yr": [
+    40,
+    60
+   ],
    "possible_dryer_pct_of_floor_range": [
     27.7,
     78.8
@@ -108,6 +117,14 @@
    ],
    "recommendation": "answer household.appliance_fuels directly (a single interview question, DATA-SOURCES-CHEATSHEET.md section E1) to resolve this before treating either conversion as sufficient to remove the gas meter; a fully costed gas-to-electric dryer conversion, if one turns out to be needed, is out of this issue's own scope box and is a good candidate for a follow-up issue."
   }
+ },
+ "joint_electric_cost_scenario": {
+  "basis": "uniform distribution for both loads, furnace at central COP 3.5, water heater at the headline UEF -- matching each conversion's own headline scenario basis",
+  "combined_added_kwh": 1556,
+  "electric_cost_increase_usd": 556.22,
+  "furnace_added_kwh": 948,
+  "solar_absorbed_kwh": 455,
+  "water_heater_added_kwh": 608
  },
  "meter_removal_research": {
   "future_reconnection_cost": {
@@ -165,15 +182,17 @@
  "sequencing_and_paybacks": {
   "basis": "cost-effectiveness: whichever step's own marginal payback is shorter goes first. AC1's own finding (a genuinely $0 fixed gas charge on this rate) makes the issue's own 'credit the meter-release value only to the final step' rule trivially satisfied either way -- crediting $0 to whichever step is last changes nothing, so there is no fixed-charge-driven reason to sequence one way over the other, unlike a rate WITH a real per-meter charge would produce.",
   "complete_transition_payback": {
-   "combined_annual_net_savings_usd": 192.37,
+   "combined_annual_net_savings_usd": 192.23,
    "combined_install_usd": 18729,
+   "electric_interaction_note": "combined_annual_net_savings_usd also subtracts this correction -- see electric_interaction_overstatement() (Finding 1, Codex adversarial review, issue #20 round 2): summing each step's own independently-rebilled electric-cost increase understates the true combined electric cost, since both conversions' independent rebills let their own added load claim the SAME exported solar kWh, which cannot really happen once both loads are real.",
+   "electric_interaction_overstatement_usd": 0.14,
    "naive_summed_annual_net_savings_usd": 220.55,
    "npv": {
-    "4pct": -16590,
-    "5pct": -16732
+    "4pct": -16592,
+    "5pct": -16734
    },
    "payback_years": 97.4,
-   "tier_interaction_note": "combined_annual_net_savings_usd is the naive sum of each step's own independently-computed marginal savings, minus the tier_interaction_overstatement_usd correction -- see tier_interaction_overstatement() (CLAUDE.md section 9: composite figures must not silently add numbers from two separate models). naive_summed_annual_net_savings_usd is kept alongside for transparency, not used in the payback below.",
+   "tier_interaction_note": "combined_annual_net_savings_usd is the naive sum of each step's own independently-computed marginal GAS savings, minus BOTH the tier_interaction_overstatement_usd correction (this field) AND the electric_interaction_overstatement_usd correction (below) -- see tier_interaction_overstatement() and electric_interaction_overstatement() (CLAUDE.md section 9: composite figures must not silently add numbers from two separate models). naive_summed_annual_net_savings_usd is kept alongside for transparency, not used in the payback below.",
    "tier_interaction_overstatement_usd": 28.18
   },
   "final_step_alone_payback": {
@@ -198,7 +217,7 @@
   },
   "fixed_charge_release_usd": 0.0,
   "last_step": "furnace",
-  "not_verified_caveat": "the water-heater half of both paybacks above (complete_transition_payback and, when the water heater is the last step, final_step_alone_payback) is built on the PURE 100%-water-heater assumption, NOT VERIFIED against this household's own actual fuel mix -- see water_heater_conversion.water_heater_share_sensitivity for the same figures at explicit, bounded water-heater-share assumptions",
+  "not_verified_caveat": "the water-heater half of both paybacks above (complete_transition_payback and, when the water heater is the last step, final_step_alone_payback) is built on the PURE 100%-water-heater assumption, NOT VERIFIED against this household's own actual fuel mix -- see water_heater_conversion.water_heater_share_sensitivity for the same figures at explicit, illustrative water-heater-share scenarios (not a proven bound -- see that section's own basis)",
   "order": [
    "water_heater",
    "furnace"
@@ -373,7 +392,7 @@
    "low_usd": 2800,
    "note": "general contractor-pricing guides (Angi, Fixr, HomeGuide, hotwater.com / A.O. Smith), 2026 -- not a CA-specific engineering study the way heat_pump_conversion.py's furnace figure is; central is Angi's own quoted installed average ($4,200), low/high are Fixr's/hotwater.com's own quoted brackets ($2,800-$8,000)"
   },
-  "not_verified_caveat": "payback below (and every figure derived from it, including sequencing_and_paybacks) is the PURE 100%-water-heater computation and is NOT VERIFIED against this household's own actual appliance fuel mix, which is not determined (see cooking_fuel_evidence). See water_heater_share_sensitivity for the same figures propagated across explicit, bounded water-heater-share assumptions rather than asserting this one as the true answer -- CLAUDE.md section 0 (no false precision on an unverified input).",
+  "not_verified_caveat": "payback below (and every figure derived from it, including sequencing_and_paybacks) is the PURE 100%-water-heater computation and is NOT VERIFIED against this household's own actual appliance fuel mix, which is not determined (see cooking_fuel_evidence). See water_heater_share_sensitivity for the same figures propagated across explicit, illustrative water-heater-share scenarios (NOT a proven bound -- the true share could be lower still) rather than asserting this one as the true answer -- CLAUDE.md section 0 (no false precision on an unverified input).",
   "payback": {
    "central_3.88": {
     "annual_electric_cost_increase_usd": 224.11,
@@ -456,7 +475,7 @@
   },
   "upper_bound_caveat": "floor_savings_annual_usd prices the WHOLE non-heating floor, which may include other gas end uses besides the water heater (gas_end_use_enumeration.non_heating_floor.floor_composition: not determined from committed public data) -- a HPWH replaces only the water-heater share, which cannot be separated from this household's single, unsplit gas meter, so this is an UPPER BOUND on the water heater step's own true gas savings, not a precise water-heater-only figure",
   "water_heater_share_sensitivity": {
-   "basis": "household.appliance_fuels was never answered at intake, so the floor's own composition beyond 'at least the water heater' is NOT DETERMINED (see gas_end_use_enumeration). The 100pct scenario is the mechanically pure computation (and remains live if this household simply has no gas dryer); the other two bound the case where a dryer IS present, using third_end_use_gap's own external benchmark for its typical share of a floor this size. NONE of the three is asserted as the true figure -- report the range, not a single point estimate, per CLAUDE.md section 0.",
+   "basis": "household.appliance_fuels was never answered at intake, so the floor's own composition beyond 'at least the water heater' is NOT DETERMINED (see gas_end_use_enumeration). These are ILLUSTRATIVE scenarios built from external, uncited-to-this-household usage benchmarks (a typical gas dryer and a typical gas range/cooktop), NOT a proven mathematical bound on the water heater's own true share: the 100pct scenario is the mechanically pure computation (and remains live if this household has neither a gas dryer nor gas cooking); the next two apply only the dryer benchmark, at its low and high end; the fourth ('residual_if_dryer_and_cooking_both_present_at_benchmark_high') applies BOTH the dryer and the cooking benchmark at their high ends together, using third_end_use_gap's own possible_cooking_pct_of_floor_range -- on this household's real data the two combined exceed the entire floor, so that scenario's own water_heater_share rounds to 0.0 (a genuine finding: a dryer and typical gas cooking together could plausibly claim the WHOLE floor, leaving no water-heater share to save on at all). The true water-heater share -- and the true payback -- could still be lower than every scenario shown here (an even heavier dryer or cooking load, or another unlisted gas end use, cannot be ruled out from these benchmarks), or could be the full 100pct if this household has neither. Report the range as illustrative, not as a settled bracket, per CLAUDE.md section 0.",
    "headline_uef": "central_3.88",
    "scenarios": {
     "100pct_full_floor": {
@@ -548,6 +567,27 @@
       }
      },
      "water_heater_share": 0.723
+    },
+    "residual_if_dryer_and_cooking_both_present_at_benchmark_high": {
+     "annual_net_savings_usd": 0.0,
+     "electric_cost_increase_usd": 0.0,
+     "floor_savings_annual_usd": 0.0,
+     "floor_therms_annual": 0.0,
+     "payback": {
+      "central_install": {
+       "note": "no positive annual savings on this basis -- no payback",
+       "payback_years": null
+      },
+      "high_install": {
+       "note": "no positive annual savings on this basis -- no payback",
+       "payback_years": null
+      },
+      "low_install": {
+       "note": "no positive annual savings on this basis -- no payback",
+       "payback_years": null
+      }
+     },
+     "water_heater_share": 0.0
     }
    }
   }

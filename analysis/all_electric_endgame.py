@@ -94,6 +94,24 @@ gets priced twice. `complete_transition_payback` quantifies and discloses this g
 (`tier_interaction_overstatement_usd`) rather than silently presenting the summed figure as
 exact -- see that field's own note for the real-data magnitude.
 
+The SAME non-additivity problem exists on the ELECTRIC side, independently of the gas-side
+fix above, and was missed by the first version of this correction (Codex adversarial review,
+issue #20 round 2, Finding 1): `wh_electric_cost_scenarios()` and `heat_pump_conversion.
+electric_cost_scenarios()` each net their OWN added load against the household's FULL solar
+Generation before billing, so two independently-computed electric-cost increases both let
+their own conversion claim first dibs on the SAME exported kWh in the SAME interval, which
+cannot really happen once both loads are real -- `rates.bill_nem()`'s own per-(month, TOU
+bucket) netting is not additive across two separately-billed scenarios either. Fixed by
+`joint_electric_cost_scenario()`: the furnace's and the water heater's own added-load series
+(each built by the SAME functions their independent scenarios already use, `heat_pump_
+conversion.build_hp_load_series` / `build_wh_load_series`, not reimplemented) are SUMMED into
+one combined series, netted against solar ONCE, and re-billed ONCE -- the correct joint
+electric-cost delta for the complete-transition scenario. `electric_interaction_
+overstatement()` quantifies the gap between that joint figure and the naive sum of the two
+independent figures, exactly mirroring `tier_interaction_overstatement()`'s own role on the
+gas side, and `complete_transition_payback` nets BOTH corrections out of its own headline
+combined savings, not just the gas one.
+
 Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
 `electric_cost_scenarios` exactly (absorb existing solar first, spill into new grid import
 only once that interval's export is exhausted, re-bill the whole measured year with
@@ -122,15 +140,20 @@ cost-effectiveness (whichever step's own marginal economics are better goes firs
 on a fixed-charge-driven order. `final_step_alone_payback` reports the identical figure with
 and without the (zero) credit explicitly, rather than silently dropping that half of the
 requirement because it no longer bites. `complete_transition_payback`'s own combined savings
-correct a tier-ladder interaction (Codex adversarial review, issue #20 round 1, a direct
+correct TWO interactions (Codex adversarial review, issue #20 rounds 1 and 2, both a direct
 consequence of the Finding-1 pricing fix): summing each step's own INDEPENDENTLY-computed
-marginal savings overstates the true joint savings whenever both reach into the same period's
-nonbaseline tier, since that shared marginal region gets priced twice -- see
-`tier_interaction_overstatement()`, quantified and netted out rather than left in the headline
-number (CLAUDE.md section 9). Every water-heater-derived payback in this section (this one and
-`final_step_alone_payback` when the water heater is last) is the PURE 100%-floor-is-water-
-heater basis and carries a `not_verified_caveat` pointing at `water_heater_share_sensitivity`
-(Finding 2, above) rather than presenting itself as settled.
+marginal GAS savings overstates the true joint savings whenever both reach into the same
+period's nonbaseline tier, since that shared marginal region gets priced twice (`tier_
+interaction_overstatement()`); summing each step's own INDEPENDENTLY-rebilled ELECTRIC cost
+increase similarly understates the true joint electric cost, since both independent rebills
+let their own added load claim the SAME exported solar kWh (`electric_interaction_
+overstatement()`, backed by one joint rebill of the combined added-load series, `joint_
+electric_cost_scenario()`). Both corrections are quantified and netted out of the headline
+combined savings, never left silently in it (CLAUDE.md section 9). Every water-heater-derived
+payback in this section (this one and `final_step_alone_payback` when the water heater is
+last) is the PURE 100%-floor-is-water-heater basis and carries a `not_verified_caveat`
+pointing at `water_heater_share_sensitivity` (Finding 2, above) rather than presenting itself
+as settled.
 
 AC8 -- reconciliation against `heat_pump_conversion.json` (should match exactly, since its own
 committed figures are cited directly, not recomputed) and against `extended_results.json ->
@@ -293,6 +316,31 @@ def cooking_fuel_evidence():
 # estimate, since neither is specific to this household.
 DRYER_THERMS_PER_MONTH_RANGE = (3.2, 9.0)
 
+# A second national, uncited-to-this-household benchmark, same "estimated"
+# tier and same evidentiary standard as DRYER_THERMS_PER_MONTH_RANGE above
+# (Finding 2, Codex adversarial review, issue #20 round 2): typical gas
+# range/cooktop annual usage, used ONLY to size a residual scenario in
+# water_heater_share_sensitivity() below, never to assert this household
+# cooks with gas. Two real figures found: a specific annual figure for a
+# typical 4-burner gas range (40-60 therms/yr -- chefsresource.com "How
+# Many Therms Does a Gas Stove Use?" and prodhut.com, both 2026) and a
+# broader monthly-usage-pattern estimate (3-10 therms/month = 36-120
+# therms/yr -- learnmetrics.com, 2026) that corroborates the same order of
+# magnitude from an independent estimation method. The narrower, more
+# directly-annual figure (40-60) is used, since it is the more specific,
+# directly-cited claim rather than one requiring an extra "how many hours a
+# day" assumption on top.
+COOKING_THERMS_YR_RANGE = (40.0, 60.0)
+COOKING_THERMS_YR_BASIS = (
+    "typical 4-burner gas range/cooktop annual usage -- chefsresource.com "
+    "('How Many Therms Does a Gas Stove Use?') and prodhut.com, both 2026, "
+    "corroborated in order of magnitude by a separate monthly-usage-pattern "
+    "estimate (learnmetrics.com, 3-10 therms/month = 36-120 therms/yr, "
+    "2026); consumer/contractor-guide tier evidence, the SAME evidentiary "
+    "standard DRYER_THERMS_PER_MONTH_RANGE above already uses, not a "
+    "primary utility or DOE study -- not measured for this household and "
+    "not evidence that cooking here is gas")
+
 
 def third_end_use_gap(floor_therms_yr, cooking_fuel):
     """AC2/AC6: whether a gas end use besides the water heater (cooking
@@ -303,6 +351,8 @@ def third_end_use_gap(floor_therms_yr, cooking_fuel):
     cooking_fuel_evidence's own docstring)."""
     lo, hi = DRYER_THERMS_PER_MONTH_RANGE
     lo_yr, hi_yr = round(lo * 12), round(hi * 12)
+    lo_c, hi_c = COOKING_THERMS_YR_RANGE
+    lo_c_yr, hi_c_yr = round(lo_c), round(hi_c)
     determined = cooking_fuel["appliance_fuels_field_present"]
     return {
         "gap": ("NOT DETERMINED whether a third gas end use (cooking, and/or "
@@ -317,13 +367,20 @@ def third_end_use_gap(floor_therms_yr, cooking_fuel):
         "possible_dryer_rough_magnitude_therms_yr": [lo_yr, hi_yr],
         "possible_dryer_pct_of_floor_range": [round(100 * lo_yr / floor_therms_yr, 1),
                                               round(100 * hi_yr / floor_therms_yr, 1)],
+        "possible_cooking_rough_magnitude_therms_yr": [lo_c_yr, hi_c_yr],
+        "possible_cooking_pct_of_floor_range": [round(100 * lo_c_yr / floor_therms_yr, 1),
+                                                round(100 * hi_c_yr / floor_therms_yr, 1)],
+        "possible_cooking_basis": COOKING_THERMS_YR_BASIS,
         "basis": ("external benchmark (HomeGuide/SlashPlan-class contractor "
                   "and DOE-adjacent usage guides, 2026), not measured for "
                   "this household and not evidence a dryer exists here -- "
                   "sizes the possibility only, for the case where it does. "
                   f"Not separable from other shares of the {floor_therms_yr:g}"
                   "-therm/yr floor with the single, unsplit gas meter this "
-                  "household has."),
+                  "household has. The cooking benchmark above sizes a "
+                  "SECOND, independent possibility the same way -- both can "
+                  "in principle draw on the SAME floor at once, see "
+                  "water_heater_share_sensitivity's own residual scenario."),
         "recommendation": ("answer household.appliance_fuels directly (a "
                            "single interview question, DATA-SOURCES-"
                            "CHEATSHEET.md section E1) to resolve this "
@@ -791,7 +848,13 @@ def wh_electric_cost_scenarios(d, floor_therms_yr):
         scen = {}
         for dist_key, series in added.items():
             total_added = float(series.sum())
-            if abs(total_added - ann_wh_kwh) / ann_wh_kwh > 0.001:
+            # ann_wh_kwh == 0 is a real, reachable case (Finding 2's own
+            # water_heater_share=0.0 residual scenario, when the dryer and
+            # cooking benchmarks together are assumed to claim the whole
+            # floor) -- guarded the same way heat_pump_conversion.
+            # electric_cost_scenarios() already guards ann_heat_kwh == 0,
+            # rather than dividing by zero.
+            if ann_wh_kwh > 0 and abs(total_added - ann_wh_kwh) / ann_wh_kwh > 0.001:
                 raise SystemExit(
                     f"all_electric_endgame.py: {uef_key}/{dist_key} added "
                     f"{total_added:.1f} kWh, not the {ann_wh_kwh:.1f} kWh "
@@ -815,20 +878,161 @@ def wh_electric_cost_scenarios(d, floor_therms_yr):
     return out, round(base_bill, 2)
 
 
-# Codex adversarial review, issue #20 round 1, Finding 2: the pure
-# computation above prices the WHOLE non-heating floor as if it were 100%
-# water heater, even though gas_end_use_enumeration's own cooking_fuel_
-# evidence says that composition is NOT DETERMINED. CLAUDE.md section 0
-# forbids treating an unverified assumption as a headline point estimate --
-# this function propagates that uncertainty through as an explicit
-# sensitivity instead of hiding it behind one number. 1.0 is the pure
-# computation, kept because it is the mechanically correct answer to "if
-# the whole floor is water heater"; the other two bound water_heater_share
-# using third_end_use_gap's OWN possible-dryer-share-of-floor benchmark
-# (27.7-78.8%), inverted (a household with no dryer needs no such
-# adjustment at all, hence 1.0 remains a real, live possibility, not a
-# straw-man ceiling).
-def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range, headline_uef):
+def joint_electric_cost_scenario(d, furnace_iso, furnace_cop, ann_wh_kwh):
+    """The COMBINED furnace + water-heater added-load series, netted against
+    solar and re-billed ONCE -- the correct joint electric-cost delta for
+    `sequencing_and_paybacks`'s own complete-transition scenario (Finding 1,
+    Codex adversarial review, issue #20 round 2).
+
+    `wh_electric_cost_scenarios()` and `heat_pump_conversion.electric_cost_
+    scenarios()` each independently net their OWN added load against the
+    household's FULL solar Generation (CLAUDE.md section 1b) before
+    billing. Summing their two independently-computed electric-cost
+    increases silently lets BOTH conversions claim the SAME exported solar
+    kWh in the SAME interval -- physically impossible once both loads are
+    real, and `rates.bill_nem()`'s own per-(month, TOU bucket) NEM netting
+    is not additive across two separately-billed scenarios either. This
+    function builds each conversion's own uniform-distribution added-load
+    series with the SAME functions their independent scenarios already use
+    (`heat_pump_conversion.build_hp_load_series` for the furnace, `build_wh_
+    load_series` for the water heater -- not reimplemented), SUMS them into
+    ONE combined series, then runs the SAME solar-absorb-first-then-grid-
+    import netting and `rates.bill_nem()` re-bill ONCE against that combined
+    series.
+
+    Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces
+    a per-interval kW/circuit-amperage cap -- each only allocates a day's
+    (or heating-day's) total kWh across some subset of that day's own real
+    intervals, with no check on how many watts that implies in any single
+    interval. `rates.bill_nem()` itself has no demand-charge/kW-rate
+    component either (rates.py: pure TOU-and-NEM netting on kWh, see its
+    own module docstring) -- so summing the two series here changes
+    electric BILLING correctly without interacting with, weakening, or
+    needing any interval-level power cap. The real physical question --
+    can the panel actually supply both loads at once -- is a PANEL-level
+    check, already made CUMULATIVELY for the furnace heat pump and the
+    water heater by `service_headroom_check()` (AC5, whose own docstring
+    opens "cumulative headroom for furnace heat pump + water heater"); this
+    function does not duplicate, weaken, or bypass that check."""
+    furnace_added, ann_heat_kwh, _ = HPC.build_hp_load_series(d, furnace_iso, furnace_cop)
+    wh_added, _ = build_wh_load_series(d, ann_wh_kwh)
+    combined = furnace_added["uniform"] + wh_added["uniform"]
+    total_added = float(combined.sum())
+    expected = ann_heat_kwh + ann_wh_kwh
+    if expected > 0 and abs(total_added - expected) / expected > 0.001:
+        raise SystemExit(
+            f"all_electric_endgame.py: joint_electric_cost_scenario added "
+            f"{total_added:.1f} kWh, not the {expected:.1f} kWh the "
+            "combined furnace + water-heater load requires -- energy is "
+            "not conserved")
+    base_bill = R.bill_nem(d, imp="Consumption", exp="Generation")
+    absorbed = pd.concat([d["Generation"], combined], axis=1).min(axis=1)
+    remainder = combined - absorbed
+    f = d.copy()
+    f["Generation"] = d["Generation"] - absorbed
+    f["Consumption"] = d["Consumption"] + remainder
+    assert abs(float(absorbed.sum() + remainder.sum()) - total_added) < 0.01, (
+        "joint_electric_cost_scenario: solar-netting step lost or duplicated energy")
+    new_bill = R.bill_nem(f, imp="Consumption", exp="Generation")
+    return {
+        "furnace_added_kwh": round(ann_heat_kwh),
+        "water_heater_added_kwh": round(ann_wh_kwh),
+        "combined_added_kwh": round(total_added),
+        "solar_absorbed_kwh": round(float(absorbed.sum())),
+        "electric_cost_increase_usd": round(new_bill - base_bill, 2),
+        "basis": ("uniform distribution for both loads, furnace at central "
+                  "COP 3.5, water heater at the headline UEF -- matching "
+                  "each conversion's own headline scenario basis"),
+    }
+
+
+def electric_interaction_overstatement(wh_electric_increase_usd, furnace_electric_increase_usd,
+                                       joint_electric_increase_usd):
+    """How much `complete_transition_payback`'s naive combined savings
+    OVERSTATES the true combined savings by summing two INDEPENDENTLY
+    rebilled electric-cost increases rather than rebilling the combined
+    added-load series once (Finding 1, Codex adversarial review, issue #20
+    round 2 -- the ELECTRIC-side counterpart to `tier_interaction_
+    overstatement()`'s gas-side correction; same CLAUDE.md section 9
+    requirement, "one pipeline per package figure").
+
+    `rates.bill_nem()`'s own NEM netting absorbs added load against that
+    SAME interval's solar Generation first (CLAUDE.md section 1b); when the
+    water heater's and furnace's added loads are rebilled independently
+    (`wh_electric_cost_scenarios`, `heat_pump_conversion.electric_cost_
+    scenarios`), each one separately gets first claim on the household's
+    FULL solar export in every interval -- both cannot actually do that at
+    once. `joint_electric_cost_scenario()`'s own combined rebill is
+    therefore always >= the sum of the two independent electric_cost_
+    increase_usd figures: less solar is really available to each load once
+    both draw on the same panel, so the true combined bill rises by at
+    least as much as the two independent estimates suggest. This is a
+    structural, not a coincidental, result: for any nonnegative solar-
+    export quantity g and any two nonnegative added loads a, b,
+    min(g, a) + min(g, b) >= min(g, a + b) (the "how much of a fixed
+    export can a load absorb" function is concave and therefore
+    subadditive), and rates.bill_nem() prices additional grid import at a
+    non-decreasing marginal rate, so more combined import never bills for
+    less."""
+    independent_sum = round(wh_electric_increase_usd + furnace_electric_increase_usd, 2)
+    overstatement = round(joint_electric_increase_usd - independent_sum, 2)
+    return {
+        "wh_independent_electric_increase_usd": wh_electric_increase_usd,
+        "furnace_independent_electric_increase_usd": furnace_electric_increase_usd,
+        "independent_sum_electric_increase_usd": independent_sum,
+        "joint_electric_increase_usd": joint_electric_increase_usd,
+        "overstatement_usd": overstatement,
+        "note": ("Positive means summing each conversion's own "
+                 "independently-rebilled electric-cost increase "
+                 "UNDERSTATES the true combined electric cost (equivalently "
+                 "OVERSTATES combined net savings), because each "
+                 "independent rebill lets that conversion's own added load "
+                 "claim first dibs on the household's FULL solar export in "
+                 "every interval -- both cannot do that simultaneously. "
+                 "Structurally >= 0 whenever the two loads' own placements "
+                 "ever compete for the same interval's export; see this "
+                 "function's own docstring for why."),
+    }
+
+
+# Codex adversarial review, issue #20 round 1, Finding 2 (and round 2, which
+# found the round-1 fix still overclaimed): the pure computation above
+# prices the WHOLE non-heating floor as if it were 100% water heater, even
+# though gas_end_use_enumeration's own cooking_fuel_evidence says that
+# composition is NOT DETERMINED. CLAUDE.md section 0 forbids treating an
+# unverified assumption as a headline point estimate -- this function
+# propagates that uncertainty through as explicit scenarios instead of
+# hiding it behind one number. 1.0 is the pure computation, kept because it
+# is the mechanically correct answer to "if the whole floor is water
+# heater"; the next two apply third_end_use_gap's OWN possible-dryer-
+# share-of-floor benchmark (27.7-78.8%), inverted (a household with no
+# dryer needs no such adjustment at all, hence 1.0 remains a real, live
+# possibility, not a straw-man ceiling).
+#
+# Round 1's three scenarios were published as a "bounded sensitivity
+# range," but index.html's own cooking_fuel_evidence section already says
+# gas COOKING might ALSO share this same floor, unresolved by the same
+# missing household.appliance_fuels answer -- if cooking is gas, the true
+# water-heater share could sit below the round-1 "low" scenario (21.2%),
+# so calling those three a bound overstated certainty the evidence does
+# not support (round 2 finding). Fixed with a real, citable fourth
+# scenario rather than a relabel: COOKING_THERMS_YR_RANGE (same
+# evidentiary tier as the dryer benchmark, see its own module-level
+# comment) sizes cooking's own possible claim on the floor the same way
+# the dryer benchmark already sizes the dryer's, and this function reports
+# the RESIDUAL water-heater share once BOTH benchmarks are assumed present
+# at their own high ends simultaneously -- a real, evidence-grounded lower
+# scenario, not an invented one. On this household's own real data the two
+# benchmarks' high ends together (108 dryer-therms/yr + 60 cooking-
+# therms/yr = 168) exceed the entire 137-therm/yr floor, so the residual
+# share rounds to 0.0 -- a genuine, checkable finding (a dryer AND typical
+# gas cooking together could plausibly consume the WHOLE floor), not a
+# fabricated one. None of the four scenarios is asserted as a proven
+# mathematical bound: the benchmarks are external and uncited to this
+# household, and an even lower true share (or additional unlisted gas end
+# uses) cannot be ruled out from them.
+def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range,
+                                   cooking_pct_of_floor_range, headline_uef):
     """AC3/AC4, Finding 2: floor_savings_annual_usd, electric cost, net
     savings and payback at explicit water-heater-share assumptions, each a
     REAL re-price (floor_savings_by_period + wh_electric_cost_scenarios
@@ -839,10 +1043,13 @@ def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range, headline_ue
     output to the scenarios that matter rather than a full UEF x
     distribution x share cross product no reader asked for."""
     lo_dryer_pct, hi_dryer_pct = dryer_pct_of_floor_range
+    _, hi_cooking_pct = cooking_pct_of_floor_range
+    residual_share = round(max(0.0, 1 - (hi_dryer_pct + hi_cooking_pct) / 100), 3)
     shares = {
         "100pct_full_floor": 1.0,
         "72pct_if_dryer_present_at_benchmark_low": round(1 - lo_dryer_pct / 100, 3),
         "21pct_if_dryer_present_at_benchmark_high": round(1 - hi_dryer_pct / 100, 3),
+        "residual_if_dryer_and_cooking_both_present_at_benchmark_high": residual_share,
     }
     scenarios = {}
     for key, share in shares.items():
@@ -869,13 +1076,30 @@ def water_heater_share_sensitivity(iso, d, dryer_pct_of_floor_range, headline_ue
         "basis": ("household.appliance_fuels was never answered at intake, so "
                   "the floor's own composition beyond 'at least the water "
                   "heater' is NOT DETERMINED (see gas_end_use_enumeration). "
-                  "The 100pct scenario is the mechanically pure computation "
-                  "(and remains live if this household simply has no gas "
-                  "dryer); the other two bound the case where a dryer IS "
-                  "present, using third_end_use_gap's own external benchmark "
-                  "for its typical share of a floor this size. NONE of the "
-                  "three is asserted as the true figure -- report the range, "
-                  "not a single point estimate, per CLAUDE.md section 0."),
+                  "These are ILLUSTRATIVE scenarios built from external, "
+                  "uncited-to-this-household usage benchmarks (a typical gas "
+                  "dryer and a typical gas range/cooktop), NOT a proven "
+                  "mathematical bound on the water heater's own true share: "
+                  "the 100pct scenario is the mechanically pure computation "
+                  "(and remains live if this household has neither a gas "
+                  "dryer nor gas cooking); the next two apply only the dryer "
+                  "benchmark, at its low and high end; the fourth "
+                  "('residual_if_dryer_and_cooking_both_present_at_"
+                  "benchmark_high') applies BOTH the dryer and the cooking "
+                  "benchmark at their high ends together, using third_end_"
+                  "use_gap's own possible_cooking_pct_of_floor_range -- on "
+                  "this household's real data the two combined exceed the "
+                  "entire floor, so that scenario's own water_heater_share "
+                  "rounds to 0.0 (a genuine finding: a dryer and typical gas "
+                  "cooking together could plausibly claim the WHOLE floor, "
+                  "leaving no water-heater share to save on at all). The "
+                  "true water-heater share -- and the true payback -- could "
+                  "still be lower than every scenario shown here (an even "
+                  "heavier dryer or cooking load, or another unlisted gas "
+                  "end use, cannot be ruled out from these benchmarks), or "
+                  "could be the full 100pct if this household has neither. "
+                  "Report the range as illustrative, not as a settled "
+                  "bracket, per CLAUDE.md section 0."),
         "headline_uef": headline_uef,
         "scenarios": scenarios,
     }
@@ -1144,7 +1368,8 @@ def tier_interaction_overstatement(floor_rows, hpc_gas_rows):
 def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                             wh_annual_net_savings_usd, wh_payback_years,
                             furnace_install_usd, furnace_annual_net_savings_usd,
-                            furnace_payback_years, tier_interaction):
+                            furnace_payback_years, tier_interaction,
+                            electric_interaction):
     """AC3 (sequencing) + AC7 (two paybacks), reusing heat_pump_conversion.
     payback_and_npv() directly for both the combined-transition and the
     final-step-alone figures rather than reimplementing payback math.
@@ -1153,12 +1378,20 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
     value) corrects `complete_transition_payback`'s own combined savings
     for the tier-ladder interaction CLAUDE.md section 9 warns composite
     figures must not carry silently: summing the water heater's and the
-    furnace's own INDEPENDENTLY-computed marginal gas savings (each
+    furnace's own INDEPENDENTLY-computed marginal GAS savings (each
     correct on its own -- see this module's top-of-file note -- for "this
     step alone") overstates the TRUE savings from doing both, since both
-    reach into the same periods' nonbaseline tier. The correction is
-    applied here, not left as a footnote next to an uncorrected headline
-    number."""
+    reach into the same periods' nonbaseline tier.
+
+    `electric_interaction` (electric_interaction_overstatement()'s own
+    return value, Finding 1, Codex adversarial review, issue #20 round 2)
+    corrects the SAME combined savings for the mirror-image problem on the
+    ELECTRIC side: summing the water heater's and the furnace's own
+    INDEPENDENTLY-rebilled electric-cost increases UNDERSTATES the true
+    combined electric cost, since both independent rebills let their own
+    added load claim the SAME exported solar kWh -- which cannot really
+    happen once both loads are real. Both corrections are applied here,
+    never left as a footnote next to an uncorrected headline number."""
     fixed_charge_release_usd = 0.0 if fixed_charge_verdict_is_zero else None
     if fixed_charge_release_usd is None:
         raise SystemExit(
@@ -1193,7 +1426,9 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                                          + furnace_annual_net_savings_usd
                                          + fixed_charge_release_usd)
     combined_annual_net_savings = round(
-        naive_combined_annual_net_savings - tier_interaction["overstatement_usd"], 2)
+        naive_combined_annual_net_savings
+        - tier_interaction["overstatement_usd"]
+        - electric_interaction["overstatement_usd"], 2)
     complete_transition = HPC.payback_and_npv(
         combined_annual_net_savings, combined_install, HPC.DISCOUNT_RATES,
         HPC.NPV_HORIZON_YEARS)
@@ -1225,13 +1460,25 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
             "tier_interaction_overstatement_usd": tier_interaction["overstatement_usd"],
             "tier_interaction_note": (
                 "combined_annual_net_savings_usd is the naive sum of each "
-                "step's own independently-computed marginal savings, minus "
-                "the tier_interaction_overstatement_usd correction -- see "
-                "tier_interaction_overstatement() (CLAUDE.md section 9: "
-                "composite figures must not silently add numbers from two "
-                "separate models). naive_summed_annual_net_savings_usd is "
-                "kept alongside for transparency, not used in the payback "
-                "below."),
+                "step's own independently-computed marginal GAS savings, "
+                "minus BOTH the tier_interaction_overstatement_usd "
+                "correction (this field) AND the electric_interaction_"
+                "overstatement_usd correction (below) -- see tier_"
+                "interaction_overstatement() and electric_interaction_"
+                "overstatement() (CLAUDE.md section 9: composite figures "
+                "must not silently add numbers from two separate models). "
+                "naive_summed_annual_net_savings_usd is kept alongside for "
+                "transparency, not used in the payback below."),
+            "electric_interaction_overstatement_usd": electric_interaction["overstatement_usd"],
+            "electric_interaction_note": (
+                "combined_annual_net_savings_usd also subtracts this "
+                "correction -- see electric_interaction_overstatement() "
+                "(Finding 1, Codex adversarial review, issue #20 round 2): "
+                "summing each step's own independently-rebilled electric-"
+                "cost increase understates the true combined electric "
+                "cost, since both conversions' independent rebills let "
+                "their own added load claim the SAME exported solar kWh, "
+                "which cannot really happen once both loads are real."),
             **complete_transition,
         },
         "final_step_alone_payback": {
@@ -1265,8 +1512,10 @@ def sequencing_and_paybacks(fixed_charge_verdict_is_zero, wh_install_usd,
                                 "VERIFIED against this household's own "
                                 "actual fuel mix -- see water_heater_"
                                 "conversion.water_heater_share_sensitivity "
-                                "for the same figures at explicit, bounded "
-                                "water-heater-share assumptions"),
+                                "for the same figures at explicit, "
+                                "illustrative water-heater-share scenarios "
+                                "(not a proven bound -- see that section's "
+                                "own basis)"),
     }
 
 
@@ -1322,6 +1571,7 @@ def build():
 
     share_sensitivity = water_heater_share_sensitivity(
         iso, d, enumeration["third_end_use_gap"]["possible_dryer_pct_of_floor_range"],
+        enumeration["third_end_use_gap"]["possible_cooking_pct_of_floor_range"],
         headline_uef)
 
     hpc_path = os.path.join(DATA, "heat_pump_conversion.json")
@@ -1335,6 +1585,22 @@ def build():
 
     interaction = tier_interaction_overstatement(floor_rows, hpc_data["gas_savings_by_period"])
 
+    # Finding 1 (Codex adversarial review, issue #20 round 2): the electric
+    # side is non-additive too, exactly mirroring the gas side above. Build
+    # the SAME furnace added-load basis heat_pump_conversion.json's own
+    # central_3.5 headline used (its own reconciled_heating_therms_yr, not
+    # recomputed here) and the SAME water-heater added-load basis this
+    # script's own headline UEF used, sum them, and rebill ONCE.
+    furnace_iso = {**iso, "annual_heating_therms": hpc_data["reconciled_heating_therms_yr"]}
+    furnace_cop = HPC.COP_SCENARIOS["central_3.5"]
+    ann_wh_kwh_headline = (floor_therms_annual * HPC.KWH_PER_THERM * GAS_WH_UEF
+                           / HPWH_UEF_SCENARIOS[headline_uef])
+    joint_electric = joint_electric_cost_scenario(d, furnace_iso, furnace_cop, ann_wh_kwh_headline)
+    electric_interaction = electric_interaction_overstatement(
+        wh_electric_increase_usd=wh_headline["annual_electric_cost_increase_usd"],
+        furnace_electric_increase_usd=furnace_headline["annual_electric_cost_increase_usd"],
+        joint_electric_increase_usd=joint_electric["electric_cost_increase_usd"])
+
     sequencing = sequencing_and_paybacks(
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=WH_INSTALL_COST_CENTRAL_USD,
@@ -1344,6 +1610,7 @@ def build():
         furnace_annual_net_savings_usd=furnace_headline["annual_net_savings_usd"],
         furnace_payback_years=furnace_payback_years,
         tier_interaction=interaction,
+        electric_interaction=electric_interaction,
     )
 
     headroom = service_headroom_check()
@@ -1440,9 +1707,11 @@ def build():
                 "own actual appliance fuel mix, which is not determined "
                 "(see cooking_fuel_evidence). See water_heater_share_"
                 "sensitivity for the same figures propagated across "
-                "explicit, bounded water-heater-share assumptions rather "
-                "than asserting this one as the true answer -- CLAUDE.md "
-                "section 0 (no false precision on an unverified input)."),
+                "explicit, illustrative water-heater-share scenarios (NOT "
+                "a proven bound -- the true share could be lower still) "
+                "rather than asserting this one as the true answer -- "
+                "CLAUDE.md section 0 (no false precision on an unverified "
+                "input)."),
             "baseline_electric_bill_usd": base_bill,
             "electric_cost_by_scenario": electric,
             "gas_wh_uef_assumed": GAS_WH_UEF,
@@ -1469,6 +1738,7 @@ def build():
             "payback_central_cop_3_5": furnace_headline,
         },
         "sequencing_and_paybacks": sequencing,
+        "joint_electric_cost_scenario": joint_electric,
         "service_headroom_check": headroom,
         "meter_removal_research": METER_REMOVAL_RESEARCH,
         "reconciliation": reconciliation,

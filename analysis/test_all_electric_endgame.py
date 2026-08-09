@@ -269,6 +269,12 @@ def case_third_end_use_gap_bracket_arithmetic():
     assert gap["not_priced_here"] is True
     assert gap["possible_dryer_pct_of_floor_range"][0] < gap["possible_dryer_pct_of_floor_range"][1]
     assert "NOT DETERMINED" in gap["gap"]
+    # Finding 2 (Codex adversarial review, issue #20 round 2): the same
+    # bracket arithmetic, now also sized for cooking -- consumed by
+    # water_heater_share_sensitivity's own residual scenario.
+    lo_c, hi_c = A.COOKING_THERMS_YR_RANGE
+    assert gap["possible_cooking_rough_magnitude_therms_yr"] == [round(lo_c), round(hi_c)]
+    assert gap["possible_cooking_pct_of_floor_range"][0] < gap["possible_cooking_pct_of_floor_range"][1]
     return "third_end_use_gap reports a bracket, not a point estimate, and states NOT DETERMINED when appliance_fuels is unanswered"
 
 
@@ -703,6 +709,14 @@ def case_service_headroom_check_ampacity_fails_when_code_load_exceeds_conservati
 # ---------------------------------------------------------------------------
 # AC7 -- sequencing_and_paybacks
 # ---------------------------------------------------------------------------
+_ZERO_ELECTRIC_INTERACTION = {
+    "overstatement_usd": 0.0, "wh_independent_electric_increase_usd": 0.0,
+    "furnace_independent_electric_increase_usd": 0.0,
+    "independent_sum_electric_increase_usd": 0.0, "joint_electric_increase_usd": 0.0,
+    "note": "test fixture: zero electric interaction",
+}
+
+
 _ZERO_INTERACTION = {"overstatement_usd": 0.0, "gas_service_independent_sum_usd": 0.0,
                      "gas_service_joint_removal_usd": 0.0, "by_period": [],
                      "note": "test fixture: zero interaction"}
@@ -714,7 +728,8 @@ def case_sequencing_orders_by_shorter_payback_first():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION)
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION,
+        electric_interaction=_ZERO_ELECTRIC_INTERACTION)
     assert result["order"] == ["water_heater", "furnace"], result["order"]
     assert result["last_step"] == "furnace"
     assert result["fixed_charge_release_usd"] == 0.0
@@ -727,7 +742,8 @@ def case_sequencing_reorders_when_furnace_pays_back_faster():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=5, wh_payback_years=800.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=2000,
-        furnace_payback_years=7.0, tier_interaction=_ZERO_INTERACTION)
+        furnace_payback_years=7.0, tier_interaction=_ZERO_INTERACTION,
+        electric_interaction=_ZERO_ELECTRIC_INTERACTION)
     assert result["order"] == ["furnace", "water_heater"], result["order"]
     assert result["last_step"] == "water_heater"
     return "sequencing genuinely reorders on the input economics, not hardcoded to one order"
@@ -739,7 +755,8 @@ def case_sequencing_final_step_identical_with_and_without_zero_credit():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION)
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION,
+        electric_interaction=_ZERO_ELECTRIC_INTERACTION)
     fsa = result["final_step_alone_payback"]
     assert fsa["with_fixed_charge_credit"] == fsa["without_fixed_charge_credit"], fsa
     assert fsa["identical_because_credit_is_zero"] is True
@@ -752,7 +769,8 @@ def case_sequencing_combined_payback_sums_install_and_savings():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION)
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION,
+        electric_interaction=_ZERO_ELECTRIC_INTERACTION)
     ct = result["complete_transition_payback"]
     assert ct["combined_install_usd"] == 18000, ct
     assert abs(ct["combined_annual_net_savings_usd"] - 250) < 0.01, ct
@@ -774,7 +792,8 @@ def case_sequencing_applies_the_tier_interaction_correction():
         fixed_charge_verdict_is_zero=True,
         wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
         furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
-        furnace_payback_years=280.0, tier_interaction=interaction)
+        furnace_payback_years=280.0, tier_interaction=interaction,
+        electric_interaction=_ZERO_ELECTRIC_INTERACTION)
     ct = result["complete_transition_payback"]
     assert abs(ct["naive_summed_annual_net_savings_usd"] - 250) < 0.01, ct
     assert abs(ct["combined_annual_net_savings_usd"] - 235) < 0.01, ct  # 250 - 15
@@ -792,7 +811,8 @@ def case_sequencing_raises_if_fixed_charge_is_nonzero():
             fixed_charge_verdict_is_zero=False,
             wh_install_usd=1, wh_annual_net_savings_usd=1, wh_payback_years=1.0,
             furnace_install_usd=1, furnace_annual_net_savings_usd=1,
-            furnace_payback_years=1.0, tier_interaction=_ZERO_INTERACTION)
+            furnace_payback_years=1.0, tier_interaction=_ZERO_INTERACTION,
+            electric_interaction=_ZERO_ELECTRIC_INTERACTION)
         raise AssertionError("a nonzero fixed-charge verdict was silently accepted")
     except SystemExit:
         pass
@@ -858,6 +878,220 @@ def case_tier_interaction_overstatement_zero_when_period_stays_in_baseline():
 
 
 # ---------------------------------------------------------------------------
+# Finding 1 (round 2): joint_electric_cost_scenario / electric_interaction_
+# overstatement -- the ELECTRIC-side counterpart to tier_interaction_
+# overstatement above. A first version of the Finding-1 fix (issue #20
+# round 1) corrected only the GAS side; Codex adversarial review round 2
+# found the electric side was still summing two independently-rebilled
+# scenarios, letting both conversions claim the same exported solar kWh.
+# ---------------------------------------------------------------------------
+def _rebill_with_added_series(d, series):
+    """The SAME solar-absorb-first-then-grid-import netting and rates.
+    bill_nem() re-bill pattern joint_electric_cost_scenario() and every
+    other electric-cost-scenario function in this module use, run here by
+    hand (not calling production code) so the hand-worked test below can
+    independently derive the "naive sum of two independent rebills" side
+    of the comparison without depending on the function being tested."""
+    base = R.bill_nem(d, imp="Consumption", exp="Generation")
+    absorbed = pd.concat([d["Generation"], series], axis=1).min(axis=1)
+    remainder = series - absorbed
+    f = d.copy()
+    f["Generation"] = d["Generation"] - absorbed
+    f["Consumption"] = d["Consumption"] + remainder
+    new_bill = R.bill_nem(f, imp="Consumption", exp="Generation")
+    return new_bill - base, float(absorbed.sum())
+
+
+@case
+def case_joint_electric_cost_scenario_not_equal_to_naive_sum_hand_example():
+    """The regression test for Finding 1 (round 2): proves the joint rebill
+    of the COMBINED furnace + water-heater added-load series is NOT equal
+    to the naive sum of the two INDEPENDENTLY rebilled scenarios -- this is
+    the exact bug (summing two independent rebills silently let both
+    conversions claim the same exported solar kWh at once).
+
+    Hand-derivable setup: a 10-day synthetic frame (_synthetic_frame) has
+    constant Generation=0.05 kWh/interval, 960 intervals total, so total
+    real export capacity is EXACTLY 0.05 x 960 = 48.0 kWh across the whole
+    window. Both the furnace's own uniform-distribution added load (HDD=1.0
+    every day, so it spreads across every interval of every day) and the
+    water heater's own uniform-distribution added load are sized to roughly
+    0.5 kWh/interval, far above the 0.05 kWh/interval export -- so EACH
+    one, computed independently, fully absorbs the entire 48.0 kWh of
+    export on its own (absorbed = min(Generation, added) = Generation in
+    every interval). Summed independently, the two rebills together claim
+    2 x 48.0 = 96.0 kWh of solar that only exists once. Computed JOINTLY
+    (both loads summed into one series before netting), only 48.0 kWh can
+    ever be absorbed, since that is all the real export there is -- the
+    other 48.0 kWh of "double-claimed" solar becomes real new grid import
+    in the joint case, which importing at a positive rate must cost more
+    than the naive sum implies.
+
+    Mutation-tested: reverting sequencing_and_paybacks()'s own electric_
+    interaction subtraction (see git history / commit message for this
+    fix) does not touch this test directly -- but reverting THIS function
+    to return `wh_electric_increase + furnace_electric_increase` (the
+    pre-fix naive approach) instead of running a real joint rebill would
+    make joint_electric_cost_scenario's own electric_cost_increase_usd
+    equal the naive sum, and this test's own strict inequality below would
+    fail -- confirmed by hand during development (temporarily replacing
+    joint_electric_cost_scenario's own body with the naive sum, this test
+    failed; restored, it passes)."""
+    d = _synthetic_frame(n_days=10)
+    total_export_capacity = float(d["Generation"].sum())
+    assert abs(total_export_capacity - 48.0) < 0.01, total_export_capacity  # 0.05 * 960
+
+    cop = 3.5
+    ann_target_kwh = 480.0   # >> 0.05 kWh/interval export cap in every interval
+    dates = sorted(d["dt"].dt.date.unique())
+    furnace_iso = {
+        "hdd_by_day": {day: 1.0 for day in dates},
+        "total_hdd": float(len(dates)),
+        "annual_heating_therms": ann_target_kwh * cop / (hpc.KWH_PER_THERM * hpc.FURNACE_AFUE),
+    }
+    ann_wh_kwh = ann_target_kwh
+
+    furnace_added, ann_heat_kwh, _ = hpc.build_hp_load_series(d, furnace_iso, cop)
+    wh_added, _ = A.build_wh_load_series(d, ann_wh_kwh)
+    assert abs(ann_heat_kwh - ann_target_kwh) < 0.5, ann_heat_kwh
+
+    furnace_increase, furnace_absorbed = _rebill_with_added_series(d, furnace_added["uniform"])
+    wh_increase, wh_absorbed = _rebill_with_added_series(d, wh_added["uniform"])
+    naive_sum_increase = round(furnace_increase + wh_increase, 2)
+    independent_absorbed_sum = furnace_absorbed + wh_absorbed
+
+    # Hand-derivable energy check: each independent rebill claims (close
+    # to) the FULL 48.0 kWh export on its own, so their sum is close to
+    # double the real export that actually exists.
+    assert abs(furnace_absorbed - total_export_capacity) < 1.0, furnace_absorbed
+    assert abs(wh_absorbed - total_export_capacity) < 1.0, wh_absorbed
+    assert independent_absorbed_sum > 1.8 * total_export_capacity, (
+        independent_absorbed_sum, total_export_capacity)
+
+    joint = A.joint_electric_cost_scenario(d, furnace_iso, cop, ann_wh_kwh)
+    # Jointly, only the real 48.0 kWh of export can ever be absorbed once --
+    # NOT the 96.0 kWh the two independent rebills together claimed.
+    assert abs(joint["solar_absorbed_kwh"] - total_export_capacity) < 1.0, joint
+    assert joint["solar_absorbed_kwh"] < independent_absorbed_sum - 40, (
+        joint["solar_absorbed_kwh"], independent_absorbed_sum)
+
+    # The dollar consequence: the joint rebill must cost MORE than the
+    # naive sum of the two independent rebills (more real grid import in
+    # the joint case, and rates.bill_nem() prices import at a positive
+    # rate) -- this is the exact inequality the pre-fix code got wrong by
+    # never computing joint at all.
+    joint_increase = joint["electric_cost_increase_usd"]
+    assert joint_increase > naive_sum_increase + 0.01, (joint_increase, naive_sum_increase)
+    return (f"joint electric rebill (${joint_increase}/yr) exceeds the naive sum of two "
+           f"independent rebills (${naive_sum_increase}/yr) by "
+           f"${round(joint_increase - naive_sum_increase, 2)}/yr, matching the hand-derived "
+           "double-claimed-solar energy gap")
+
+
+@case
+def case_electric_interaction_overstatement_matches_hand_calc():
+    """A.electric_interaction_overstatement() must report exactly
+    joint - (wh + furnace), and must be positive on the same hand-worked
+    double-claimed-solar setup case_joint_electric_cost_scenario_not_
+    equal_to_naive_sum_hand_example uses."""
+    d = _synthetic_frame(n_days=10)
+    cop = 3.5
+    ann_target_kwh = 480.0
+    dates = sorted(d["dt"].dt.date.unique())
+    furnace_iso = {
+        "hdd_by_day": {day: 1.0 for day in dates},
+        "total_hdd": float(len(dates)),
+        "annual_heating_therms": ann_target_kwh * cop / (hpc.KWH_PER_THERM * hpc.FURNACE_AFUE),
+    }
+    furnace_added, _, _ = hpc.build_hp_load_series(d, furnace_iso, cop)
+    wh_added, _ = A.build_wh_load_series(d, ann_target_kwh)
+    furnace_increase, _ = _rebill_with_added_series(d, furnace_added["uniform"])
+    wh_increase, _ = _rebill_with_added_series(d, wh_added["uniform"])
+    joint = A.joint_electric_cost_scenario(d, furnace_iso, cop, ann_target_kwh)
+
+    result = A.electric_interaction_overstatement(
+        wh_electric_increase_usd=round(wh_increase, 2),
+        furnace_electric_increase_usd=round(furnace_increase, 2),
+        joint_electric_increase_usd=joint["electric_cost_increase_usd"])
+    expected = round(joint["electric_cost_increase_usd"]
+                     - (round(wh_increase, 2) + round(furnace_increase, 2)), 2)
+    assert abs(result["overstatement_usd"] - expected) < 0.01, (result, expected)
+    assert result["overstatement_usd"] > 0, result
+    return f"electric_interaction_overstatement matches a hand-computed interaction of ${result['overstatement_usd']}"
+
+
+@case
+def case_joint_electric_cost_scenario_conserves_energy():
+    d = _synthetic_frame(n_days=5)
+    cop = 3.5
+    dates = sorted(d["dt"].dt.date.unique())
+    furnace_iso = {
+        "hdd_by_day": {day: 1.0 for day in dates},
+        "total_hdd": float(len(dates)),
+        "annual_heating_therms": 50.0,
+    }
+    ann_wh_kwh = 200.0
+    result = A.joint_electric_cost_scenario(d, furnace_iso, cop, ann_wh_kwh)
+    expected_total = result["furnace_added_kwh"] + result["water_heater_added_kwh"]
+    assert abs(result["combined_added_kwh"] - expected_total) <= 1, result
+    assert result["solar_absorbed_kwh"] <= result["combined_added_kwh"]
+    return "joint_electric_cost_scenario conserves energy across the combined furnace + water-heater series"
+
+
+@case
+def case_sequencing_applies_the_electric_interaction_correction():
+    """The electric-side counterpart to case_sequencing_applies_the_tier_
+    interaction_correction: complete_transition_payback's own combined
+    savings must ALSO subtract electric_interaction_overstatement_usd, not
+    just tier_interaction_overstatement_usd -- proves the Finding-1 round-2
+    correction is actually wired into sequencing_and_paybacks, not just
+    computed and discarded."""
+    electric_interaction = {
+        "overstatement_usd": 10.0, "wh_independent_electric_increase_usd": 0.0,
+        "furnace_independent_electric_increase_usd": 0.0,
+        "independent_sum_electric_increase_usd": 0.0, "joint_electric_increase_usd": 10.0,
+        "note": "test fixture: $10 electric interaction",
+    }
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
+        furnace_payback_years=280.0, tier_interaction=_ZERO_INTERACTION,
+        electric_interaction=electric_interaction)
+    ct = result["complete_transition_payback"]
+    assert abs(ct["naive_summed_annual_net_savings_usd"] - 250) < 0.01, ct
+    assert abs(ct["combined_annual_net_savings_usd"] - 240) < 0.01, ct  # 250 - 10
+    assert ct["electric_interaction_overstatement_usd"] == 10.0, ct
+    return "a nonzero electric-interaction overstatement is subtracted from the naive summed savings"
+
+
+@case
+def case_sequencing_applies_both_interaction_corrections_together():
+    """Both the gas-side and electric-side corrections must apply
+    simultaneously, without double-applying or clobbering each other --
+    proves the two corrections are genuinely independent subtractions."""
+    tier_interaction = {"overstatement_usd": 15.0, "gas_service_independent_sum_usd": 0.0,
+                        "gas_service_joint_removal_usd": 0.0, "by_period": [],
+                        "note": "test fixture: $15 gas interaction"}
+    electric_interaction = {
+        "overstatement_usd": 10.0, "wh_independent_electric_increase_usd": 0.0,
+        "furnace_independent_electric_increase_usd": 0.0,
+        "independent_sum_electric_increase_usd": 0.0, "joint_electric_increase_usd": 10.0,
+        "note": "test fixture: $10 electric interaction",
+    }
+    result = A.sequencing_and_paybacks(
+        fixed_charge_verdict_is_zero=True,
+        wh_install_usd=4000, wh_annual_net_savings_usd=200, wh_payback_years=20.0,
+        furnace_install_usd=14000, furnace_annual_net_savings_usd=50,
+        furnace_payback_years=280.0, tier_interaction=tier_interaction,
+        electric_interaction=electric_interaction)
+    ct = result["complete_transition_payback"]
+    assert abs(ct["naive_summed_annual_net_savings_usd"] - 250) < 0.01, ct
+    assert abs(ct["combined_annual_net_savings_usd"] - 225) < 0.01, ct  # 250 - 15 - 10
+    return "gas-side and electric-side interaction corrections both apply together, additively"
+
+
+# ---------------------------------------------------------------------------
 # Finding 2: water_heater_share_sensitivity / floor_savings_by_period's own
 # water_heater_share parameter
 # ---------------------------------------------------------------------------
@@ -893,27 +1127,49 @@ def case_floor_savings_by_period_water_heater_share_scales_floor_per_day():
 
 
 @case
-def case_water_heater_share_sensitivity_reports_three_bounded_scenarios():
+def case_water_heater_share_sensitivity_reports_four_illustrative_scenarios():
+    """Finding 2 (Codex adversarial review, issue #20 round 2): a fourth
+    scenario ('residual_if_dryer_and_cooking_both_present_at_benchmark_
+    high') must be present alongside the original three, since gas cooking
+    -- not just a dryer -- might also share the non-heating floor. On this
+    household's real 137-therm/yr floor, the dryer benchmark's own high end
+    (78.8% of the floor) plus the cooking benchmark's own high end (43.8%,
+    from A.COOKING_THERMS_YR_RANGE = 40-60 therms/yr) together exceed 100%
+    of the floor, so the residual water-heater share correctly rounds to
+    0.0 -- a real, checkable finding, not an off-by-one in the arithmetic."""
     _require_archive()
     d = br.load()
     iso = hpc.isolate_heating_therms()
     result = A.water_heater_share_sensitivity(
-        iso, d, dryer_pct_of_floor_range=[27.7, 78.8], headline_uef="central_3.88")
+        iso, d, dryer_pct_of_floor_range=[27.7, 78.8],
+        cooking_pct_of_floor_range=[29.2, 43.8], headline_uef="central_3.88")
     scenarios = result["scenarios"]
-    assert set(scenarios) == {"100pct_full_floor", "72pct_if_dryer_present_at_benchmark_low",
-                              "21pct_if_dryer_present_at_benchmark_high"}
+    assert set(scenarios) == {
+        "100pct_full_floor", "72pct_if_dryer_present_at_benchmark_low",
+        "21pct_if_dryer_present_at_benchmark_high",
+        "residual_if_dryer_and_cooking_both_present_at_benchmark_high"}
     shares = {k: v["water_heater_share"] for k, v in scenarios.items()}
     assert shares["100pct_full_floor"] == 1.0
     assert abs(shares["72pct_if_dryer_present_at_benchmark_low"] - 0.723) < 0.001
     assert abs(shares["21pct_if_dryer_present_at_benchmark_high"] - 0.212) < 0.001
-    # a smaller share must give strictly smaller savings and a longer payback
+    assert shares["residual_if_dryer_and_cooking_both_present_at_benchmark_high"] == 0.0, shares
+    assert "bound" not in result["basis"].lower() or "not a proven" in result["basis"].lower(), (
+        "the basis text must not claim these scenarios are a proven bound")
+    # a smaller share must give strictly smaller (or equal, at the 0.0
+    # floor) savings and a longer-or-absent payback
     full = scenarios["100pct_full_floor"]
     low = scenarios["21pct_if_dryer_present_at_benchmark_high"]
+    residual = scenarios["residual_if_dryer_and_cooking_both_present_at_benchmark_high"]
     assert low["floor_savings_annual_usd"] < full["floor_savings_annual_usd"]
     assert low["annual_net_savings_usd"] < full["annual_net_savings_usd"]
     assert (low["payback"]["central_install"]["payback_years"]
            > full["payback"]["central_install"]["payback_years"])
-    return "water_heater_share_sensitivity reports three bounded, correctly-ordered scenarios on the real archive"
+    assert residual["floor_savings_annual_usd"] == 0.0, residual
+    assert residual["annual_net_savings_usd"] <= 0.0, residual
+    assert residual["payback"]["central_install"]["payback_years"] is None, residual
+    return ("water_heater_share_sensitivity reports four illustrative, "
+           "correctly-ordered scenarios on the real archive, including the "
+           "cooking+dryer residual, without overclaiming a proven bound")
 
 
 # ---------------------------------------------------------------------------

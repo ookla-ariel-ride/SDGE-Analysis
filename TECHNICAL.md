@@ -3910,12 +3910,37 @@ computation (a genuine re-price — `floor_savings_by_period()`'s own `water_hea
 parameter scales `floor_per_day` before re-running the full tier-pricing loop, and `wh_
 electric_cost_scenarios()` re-sizes the HPWH's own electric load from the scaled therms — not
 a linear dollar-scaling of the 100% figure, since tiered rates aren't exactly linear in
-therms) at three explicit water-heater-share assumptions: 100% (the pure computation, still a
-live possibility if this household has no gas dryer at all), and two bounds derived from
-`third_end_use_gap`'s own external dryer-usage benchmark inverted to a water-heater share
-(72.3% if a dryer is present at that benchmark's low end, 21.2% at its high end). Every payback
-this script publishes downstream carries a `not_verified_caveat` pointing back to this table
-rather than asserting the 100% figure as settled.
+therms) at explicit water-heater-share scenarios: 100% (the pure computation, still a live
+possibility if this household has neither a gas dryer nor gas cooking), and two shares
+derived from `third_end_use_gap`'s own external dryer-usage benchmark inverted to a
+water-heater share (72.3% if a dryer is present at that benchmark's low end, 21.2% at its
+high end).
+
+**Round 2 correction (Codex adversarial review, Finding 2): those three scenarios were
+published as a "bounded sensitivity range," which overclaimed certainty.** `cooking_fuel_
+evidence()` and `gas_end_use_enumeration()` already say gas COOKING — not just a dryer — might
+also share the same non-heating floor, unresolved by the same missing `household.
+appliance_fuels` answer; if cooking is gas, the true water-heater share could sit *below* the
+21.2% "low" scenario, so calling those three a bound overstated the evidence. Fixed with a
+real, citable fourth scenario rather than a relabel: `COOKING_THERMS_YR_RANGE` (40–60
+therms/yr for a typical 4-burner gas range/cooktop — chefsresource.com and prodhut.com, 2026,
+corroborated in order of magnitude by a separate monthly-usage-pattern estimate from
+learnmetrics.com, 2026 — the SAME consumer/contractor-guide evidentiary tier the dryer
+benchmark already uses) sizes cooking's own possible claim on the floor the same way the
+dryer benchmark sizes the dryer's. `water_heater_share_sensitivity()` now reports a fourth,
+residual scenario (`residual_if_dryer_and_cooking_both_present_at_benchmark_high`) at the
+share left over once BOTH benchmarks are assumed present at their own high ends together. On
+this household's real 137-therm/yr floor, 108 dryer-therms/yr + 60 cooking-therms/yr = 168
+exceeds the entire floor, so that residual share rounds to **0.0** — a genuine, checkable
+finding (a dryer and typical gas cooking together could plausibly claim the WHOLE floor,
+leaving nothing for the water heater to save), not a fabricated one; at share 0.0 the floor
+savings, electric cost increase, and net savings are all exactly $0.00/yr and no payback is
+reported. None of the four scenarios is asserted as a proven mathematical bound: the
+benchmarks are external and uncited to this household, and an even lower true share (a
+heavier dryer or cooking load, or another unlisted gas end use) cannot be ruled out from
+them. Every payback this script publishes downstream carries a `not_verified_caveat` pointing
+back to this table, now described as illustrative scenarios rather than a bound, rather than
+asserting the 100% figure as settled.
 
 Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
 `electric_cost_scenarios` exactly — absorb existing solar first, spill into new grid import
@@ -3984,23 +4009,58 @@ triviality is checkable rather than silently elided. Both figures below are the 
 100%-water-heater-share basis (Round 1 correction 2, above) — `not_verified_caveat` points to
 `water_heater_share_sensitivity` for the same figures at the more conservative shares.
 
-Complete-transition payback carries its own Round 1 correction (Codex adversarial review, a
-DIRECT consequence of fixing the tier-pricing direction, not separately named by that review
-but required by CLAUDE.md §9 once found): naively summing the water heater's own $136.27/yr
-and the furnace's own $84.28/yr independently-computed marginal savings (plus the $0 release)
-gives $220.55/yr, but each is computed as if it ALONE were removed from the same original
-bill, and under a convex (tiered) rate two independent single-removal computations both claim
-credit for the SAME top-of-ladder (nonbaseline) dollars whenever both reach into it —
-`tier_interaction_overstatement()` quantifies this period by period (Gas Service component
-only; the flat Gas Energy Charge/other_fees rates have no tier interaction) and nets it out:
-**$28.18/yr** overstatement on this household's real data, corrected rather than left in the
-headline figure ("one pipeline per package figure... never by adding numbers from different
-models," CLAUDE.md §9). Combined install $18,729, combined net savings **$192.37/yr**
-(naive sum $220.55/yr minus the $28.18/yr correction), **97.4 yr** payback. Final step alone
-(furnace, the longer-payback step and so ordered last): standalone payback **172.4 yr**,
-identical with and without the credit (the furnace's own figure has no interaction term of its
-own — it is a single-conversion computation). Neither payback represents a confirmed meter
-removal — whether a third end use (AC2) remains unpriced and unconverted is not determined.
+Complete-transition payback carries TWO corrections, not one (Codex adversarial review,
+rounds 1 and 2, both a DIRECT consequence of fixing the tier-pricing direction, not
+separately named by round 1's own review but required by CLAUDE.md §9 once found): naively
+summing the water heater's own $136.27/yr and the furnace's own $84.28/yr
+independently-computed marginal savings (plus the $0 release) gives $220.55/yr, but each is
+computed as if it ALONE were removed from the same original bill and rebilled against the
+same original solar.
+
+*GAS-side correction (round 1).* Under a convex (tiered) rate, two independent
+single-removal computations both claim credit for the SAME top-of-ladder (nonbaseline)
+dollars whenever both reach into it — `tier_interaction_overstatement()` quantifies this
+period by period (Gas Service component only; the flat Gas Energy Charge/other_fees rates
+have no tier interaction) and nets it out: **$28.18/yr** overstatement on this household's
+real data.
+
+*ELECTRIC-side correction (round 2, Finding 1): round 1 fixed only the gas side, but the
+electric side has the SAME non-additivity problem.* `wh_electric_cost_scenarios()` and
+`heat_pump_conversion.electric_cost_scenarios()` each net their OWN added load against the
+household's FULL solar Generation before billing — summing their two independently-rebilled
+electric-cost increases silently lets BOTH conversions claim the SAME exported solar kWh in
+the SAME interval, which cannot really happen once both loads are real, and `rates.
+bill_nem()`'s own per-(month, TOU bucket) NEM netting is not additive across two
+separately-billed scenarios either. Fixed by `joint_electric_cost_scenario()`: the furnace's
+and the water heater's own uniform-distribution added-load series (built with the SAME
+functions their independent scenarios already use, `heat_pump_conversion.build_hp_load_
+series` and `build_wh_load_series`, not reimplemented) are SUMMED into one combined series,
+netted against solar ONCE, and re-billed ONCE with `rates.bill_nem()`. `electric_interaction_
+overstatement()` quantifies the gap between that joint figure and the naive sum of the two
+independent figures, mirroring `tier_interaction_overstatement()`'s own role: **$0.14/yr**
+overstatement on this household's real data — real, structurally guaranteed non-negative (the
+"how much of a fixed solar export can a load absorb" function is concave, so `min(g,a) +
+min(g,b) >= min(g,a+b)` for any export `g` and loads `a, b`), but SMALL here specifically
+because this household's furnace load concentrates in winter while its water-heater load
+spreads uniformly across the whole year, so the two rarely compete for the same exported
+solar interval — a household whose two added loads overlap more in time would see a larger
+correction. Neither `build_hp_load_series()` nor `build_wh_load_series()` enforces a
+per-interval kW/circuit-amperage cap, and `rates.bill_nem()` has no demand-charge component
+either, so summing the two series for billing purposes does not interact with the PANEL-level
+cumulative-headroom check `service_headroom_check()` (AC5) already makes for both loads
+together.
+
+Both corrections are netted out of the headline figure rather than left in it ("one pipeline
+per package figure... never by adding numbers from different models," CLAUDE.md §9). Combined
+install $18,729, combined net savings **$192.23/yr** (naive sum $220.55/yr minus the $28.18/yr
+gas correction minus the $0.14/yr electric correction), **97.4 yr** payback — the same rounded
+payback as before the round-2 fix, since the electric correction is small relative to the
+gas one on this household's real data, though the underlying net-savings figure moved from
+$192.37/yr to $192.23/yr. Final step alone (furnace, the longer-payback step and so ordered
+last): standalone payback **172.4 yr**, identical with and without the credit (the furnace's
+own figure has no interaction term of its own — it is a single-conversion computation).
+Neither payback represents a confirmed meter removal — whether a third end use (AC2) remains
+unpriced and unconverted is not determined.
 
 **AC8 — reconciliation.** The furnace figures are cited directly from `heat_pump_
 conversion.json`, not recomputed, so they agree exactly by construction. The water heater
@@ -4020,15 +4080,20 @@ the underlying therms.
 
 **Reproduction.** `all_electric_endgame.json` is written directly to `data/` (repo-root
 discovery via `heat_pump_conversion.ROOT`, atomic tmp-then-replace, the same convention every
-other generator in this section uses); `test_all_electric_endgame.py` (37 cases) covers every
+other generator in this section uses); `test_all_electric_endgame.py` (42 cases) covers every
 pure function against synthetic fixtures, including several "tests must fail on the defect
 they name" positive controls — a synthetic corpus with a genuine $15 fixed charge the
 regression must actually recover; the Round 1 top-of-ladder fix's own hand-worked
 counterexample from Codex adversarial review, reproduced exactly and checked against both the
 correct answer and the old buggy one; a large tier-boundary overflow that must actually fail
-closed; and the tier-interaction correction, verified (per that review's own instruction) by
-reverting each fix, confirming the relevant case fails, then re-applying it — plus real-archive
-cases (end-to-end `build()`, byte-identical regeneration) gated behind `SkipCase`.
+closed; the round-1 gas-side tier-interaction correction; and the round-2 electric-side
+interaction correction (`joint_electric_cost_scenario()` / `electric_interaction_
+overstatement()`), backed by a hand-derivable synthetic-frame example where two loads that
+would each independently claim a household's entire real solar export (48.0 kWh across a
+10-day window) are shown to jointly claim only that same 48.0 kWh once, not double — every one
+of these verified (per that review's own instruction) by reverting each fix, confirming the
+relevant case fails, then re-applying it — plus real-archive cases (end-to-end `build()`,
+byte-identical regeneration) gated behind `SkipCase`.
 
 ---
 
