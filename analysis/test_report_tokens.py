@@ -656,6 +656,82 @@ class _swapped:
         self.node[self.key] = self.old
 
 
+class _stub_household:
+    """Substitute household.yaml answers BY PATH (and, optionally, the
+    generation-provider acronym report_tokens derives from household.cca),
+    restoring both on the way out. Paths not listed fall through to the real
+    accessor.
+
+    Same contract as _swapped, one level up: nothing on disk is touched and
+    the substitution is in-memory only. It exists so the cases driving
+    household-sourced verdicts run UNGATED. A case gated behind
+    _require_household() SKIPS on a runner with no private archive, and
+    .github/workflows/tests.yml runs this suite on exactly that -- so a gated
+    guard case cannot stop a regression merging green, which is the failure
+    the SEC9 and verdict round-trip cases above already record. Worse for the
+    fail-closed cases specifically: without the archive, resolve_token's own
+    "missing private/household.yaml" SystemExit ALSO names the token, so an
+    `assert token in str(e)` case would have passed for entirely the wrong
+    reason. Where the archive IS staged the callers feed it the household's
+    real answers, so the stub changes nothing about what is exercised.
+    """
+
+    def __init__(self, values, provider=None):
+        self.values, self.provider = values, provider
+
+    def __enter__(self):
+        self.old_hh1 = rt.hh1
+        self.old_provider = rt._generation_provider_short
+        rt.hh1 = lambda path: (self.values[path] if path in self.values
+                               else self.old_hh1(path))
+        if self.provider is not None:
+            rt._generation_provider_short = lambda ctx: self.provider
+        return self
+
+    def __exit__(self, *exc):
+        rt.hh1 = self.old_hh1
+        rt._generation_provider_short = self.old_provider
+
+
+def _stub_plan(plan, provider):
+    """_stub_household narrowed to the two answers the plan-ranking guard
+    reads (household.plan, and the provider acronym taken off household.cca)."""
+    return _stub_household({"household.plan": plan}, provider=provider)
+
+
+def _s2_household_inputs():
+    """The two household answers S2_VERDICT reads: the household's own when
+    the private archive is staged, clearly synthetic stand-ins otherwise.
+
+    Never the real figures as literals -- this file is committed, and
+    CLAUDE.md section 4 keeps household answers out of committed artifacts.
+    The case does not need them: every assertion it makes is about the
+    sentence's WORDING and about the committed artifacts' own production and
+    export totals, neither of which depends on the array's size or its PTO
+    date."""
+    if rt.hh.PATH.is_file():
+        return {"solar.kw_dc": rt.hh1("solar.kw_dc"),
+                "household.pto_date": rt.hh1("household.pto_date")}
+    return {"solar.kw_dc": 5.0, "household.pto_date": dt.date(2019, 1, 1)}
+
+
+def _plan_ranking_inputs():
+    """(provider, cheapest_plan, priced_rows) for the plan-guard cases.
+
+    The provider is the household's own when the private archive is staged and
+    the committed CSV's first provider column otherwise, so these cases assert
+    the same thing in both places rather than skipping in one of them."""
+    rows = rt._csv_rows("plan_results.csv")
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file()
+                else rows[0]["provider"])
+    priced = [r for r in rows if r["provider"] == provider]
+    assert len(priced) > 1, (
+        f"data/plan_results.csv prices only {len(priced)} plan(s) for {provider!r}; "
+        "there is no runner-up to rank against")
+    cheapest = min(priced, key=lambda r: float(r["total"]))
+    return provider, cheapest["plan"], priced
+
+
 # CLAUDE.md section 10's density cap applies to EVERY branch, but
 # test_report_consistency.py can only see the one branch index.html happens to
 # carry. Same lead-sentence rule, applied here to the branches that do not
@@ -751,13 +827,18 @@ def case_s0_verdict_refuses_to_call_a_losing_battery_a_sound_buy():
     """Section 0's headline quotes both battery-alone paybacks as a RANGE
     under "a sound optional buy". Both are cost/annual-saving quotients, so a
     battery that saved nothing would print "0.0-", "inf-" or "-3.0-year" there
-    and the recommendation around it would be false."""
+    and the recommendation around it would be false.
+
+    Stubbed household plan, so this keeps running ungated now that S0 checks
+    the tariff ranking too -- the substituted values are the household's own
+    where the archive is staged."""
     mid = rt._json("package_results.json")["packages"]["MID"]
+    provider, cheapest, _rows = _plan_ranking_inputs()
     for key in ("battery_alone_payback_yr", "battery_alone_payback_post_fix_yr"):
         real = mid[key]
         assert real > 0, f"data/package_results.json:{key} is already {real}"
         for bad in (0, -3.0, float("inf")):
-            with _swapped(mid, key, bad):
+            with _swapped(mid, key, bad), _stub_plan(cheapest, provider):
                 try:
                     value = rt.resolve_token("S0_VERDICT")
                     raise AssertionError(f"S0_VERDICT called the battery a sound optional "
@@ -845,7 +926,9 @@ def case_s0_verdict_does_not_claim_the_free_move_is_the_largest_saving():
     assert battery > saved, (
         f"the battery's own saving (${battery}/yr) no longer exceeds the free fix "
         f"(${saved}/yr); re-derive whether a superlative would now be defensible")
-    value = rt.resolve_token("S0_VERDICT")
+    provider, cheapest, _rows = _plan_ranking_inputs()
+    with _stub_plan(cheapest, provider):
+        value = rt.resolve_token("S0_VERDICT")
     for superlative in ("biggest", "largest", "greatest", "best"):
         assert superlative not in value.lower(), (
             f"S0_VERDICT ranks the free fix as the {superlative} win while the battery "
@@ -858,14 +941,175 @@ def case_s0_verdict_does_not_claim_the_free_move_is_the_largest_saving():
 
 
 @case
+def case_s0_verdict_refuses_the_tariff_claim_when_another_plan_prices_lower():
+    """Section 0 opens "the rate plan is right" -- the same claim section 3
+    makes, and section 3 is the only one that used to check it. If a
+    regeneration ever made another plan cheapest, S3 would fail closed while
+    the report's most prominent sentence kept recommending the losing tariff.
+
+    Both failure modes are driven, not read off the code: another plan priced
+    lower, and an exact tie (at a tie the household's plan is not THE cheapest
+    plan, it is one of two). Each is asserted for S0 and S3 together, which is
+    what proves the two go through the same ranking rather than two
+    implementations that can drift apart. Ungated: the household plan and
+    provider are stubbed, so this runs in CI as well as here."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    index_html = (rt.ROOT / "index.html").read_text()
+
+    # Positive control first, or "refuses" could pass on a token that refuses
+    # everything -- and it doubles as the ungated round-trip check for the S0
+    # line, which the verbatim case above can no longer make without the
+    # private archive now that S0 declares household sources.
+    with _stub_plan(cheapest, provider):
+        published = _assert_verdict_matches_index("S0_VERDICT", index_html)
+    assert "the rate plan is right" in published, (
+        f"S0_VERDICT no longer carries the tariff claim this case guards: {published}")
+
+    runner_up = min((r for r in priced if r["plan"] != cheapest),
+                    key=lambda r: float(r["total"]))
+    cheapest_total = next(r["total"] for r in priced if r["plan"] == cheapest)
+    gap = float(runner_up["total"]) - float(cheapest_total)
+    results = {}
+
+    # 1. Another plan really is cheaper: the household sits on the runner-up.
+    for token in ("S0_VERDICT", "S3_VERDICT"):
+        with _stub_plan(runner_up["plan"], provider):
+            try:
+                value = rt.resolve_token(token)
+                raise AssertionError(
+                    f"{token} called {runner_up['plan']} the right plan while "
+                    f"{cheapest} prices ${gap:,.2f} lower: {value}")
+            except SystemExit as e:
+                assert token in str(e), e
+                assert cheapest in str(e), (
+                    f"{token}'s refusal does not name the plan that actually won: {e}")
+        results[f"{token} vs a cheaper plan"] = "refused"
+
+    # 2. An exact tie: the runner-up is repriced to the cheapest total, so the
+    #    household's plan is joint-cheapest and "the cheapest plan" is false.
+    for token in ("S0_VERDICT", "S3_VERDICT"):
+        with _swapped(runner_up, "total", cheapest_total), \
+             _stub_plan(cheapest, provider):
+            try:
+                value = rt.resolve_token(token)
+                raise AssertionError(
+                    f"{token} called {cheapest} THE cheapest plan while "
+                    f"{runner_up['plan']} ties it at ${float(cheapest_total):,.2f}: {value}")
+            except SystemExit as e:
+                assert token in str(e), e
+        results[f"{token} at a tie"] = "refused"
+
+    assert float(runner_up["total"]) != float(cheapest_total), (
+        "the substituted plan total leaked out of this case")
+    with _stub_plan(cheapest, provider):
+        assert rt.resolve_token("S0_VERDICT") == published, (
+            "S0_VERDICT no longer renders its published line after the substitutions")
+    return (f"S0_VERDICT and S3_VERDICT both fail closed when {runner_up['plan']} prices "
+            f"below or ties {cheapest} on the {provider} column, and S0's published line "
+            "round-trips into index.html ungated")
+
+
+@case
+def case_plan_lead_tokens_refuse_a_lead_the_matrix_does_not_show():
+    """The same shape one artifact over. S4_VERDICT_SHORT says the battery
+    "widens EV-TOU-5's lead over" the runner-up and PLAN_MARGIN_VS_RUNNER_UP
+    publishes that lead as a dollar figure; both take the difference without
+    checking its sign. A runner-up that priced at or below the household's
+    plan would print a negative lead and a battery that "widens" it, so the
+    shared _runner_up() helper refuses instead.
+
+    Ranked on battery_plan_matrix.json's own no-battery column -- the numbers
+    these two sentences actually quote -- not on plan_results.csv."""
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    ordered = sorted(plans, key=lambda k: plans[k]["no_battery"])
+    best, runner_up = ordered[0], ordered[1]
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file()
+                else "CEA")
+    with _stub_plan(best, provider):
+        lead = plans[runner_up]["no_battery"] - plans[best]["no_battery"]
+        assert lead > 0, f"data/battery_plan_matrix.json shows no lead for {best}"
+        assert rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP") == rt._usd0(lead)
+        for beaten in (plans[best]["no_battery"], plans[best]["no_battery"] - 500):
+            with _swapped(plans[runner_up], "no_battery", beaten):
+                for token in ("PLAN_MARGIN_VS_RUNNER_UP", "S4_VERDICT_SHORT"):
+                    try:
+                        value = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} published a lead over {runner_up} while "
+                            f"{runner_up} prices ${beaten:,} against {best}'s "
+                            f"${plans[best]['no_battery']:,}: {value}")
+                    except SystemExit as e:
+                        assert token in str(e), e
+        assert rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP") == rt._usd0(lead), (
+            "the substituted no-battery total leaked out of this case")
+    return (f"PLAN_MARGIN_VS_RUNNER_UP and S4_VERDICT_SHORT refuse to call the gap to "
+            f"{runner_up} a lead when it ties or beats {best} (live lead ${lead:,})")
+
+
+@case
+def case_free_fix_verdicts_refuse_to_call_a_non_saving_a_saving():
+    """Three sentences sell the same free move: section 0 ("saves a modeled
+    $X/yr whatever you buy"), section 7 ("is worth a modeled $X/yr") and the
+    Monday appendix ("captures the free savings", which quotes no figure at
+    all and so can never be caught by reading the rendered line). At X <= 0
+    the shift saves nothing: the first two would print a negative figure
+    straight after the word "saves", and the third would send the reader
+    after a loss.
+
+    Driven from BOTH artifacts the three sentences quote -- behavior_rebuild's
+    scenarios.a.saved and package_results' packages.LOW.savings_yr -- because
+    the guard they share checks both, so a regression that re-pointed one
+    sentence at the other artifact still cannot slip a non-saving through.
+    Ungated (the plan answers S0 needs are stubbed)."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    scenario = rt._json("behavior_rebuild.json")["scenarios"]["a"]
+    low = rt._json("package_results.json")["packages"]["LOW"]
+    live = {"behavior_rebuild:scenarios.a.saved": scenario["saved"],
+            "package_results:LOW.savings_yr": low["savings_yr"]}
+    for label, value in live.items():
+        assert value > 0, (
+            f"data/{label} is already {value}/yr; the free-fix sentences in sections "
+            "0, 7 and 15 are no longer true and should already be failing closed")
+
+    tokens = ("S0_VERDICT", "S7_VERDICT", "S15_VERDICT")
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in tokens}
+        for node, key in ((scenario, "saved"), (low, "savings_yr")):
+            for bad in (0, -400):
+                with _swapped(node, key, bad):
+                    for token in tokens:
+                        try:
+                            rendered = rt.resolve_token(token)
+                            raise AssertionError(
+                                f"{token} sold the free EV-charging fix while "
+                                f"{key} is {bad}/yr: {rendered}")
+                        except SystemExit as e:
+                            assert token in str(e), e
+        for token in tokens:
+            assert rt.resolve_token(token) == published[token], (
+                f"the substituted free-fix saving leaked out of this case ({token})")
+    return ("S0_VERDICT, S7_VERDICT and S15_VERDICT all fail closed at a zero or "
+            "negative free-fix saving in either artifact (live: "
+            + ", ".join(f"{k.split(':')[0]} ${v:,.0f}" for k, v in live.items()) + ")")
+
+
+@case
 def case_s2_verdict_reports_what_was_measured_rather_than_an_array_health_verdict():
     """"the array is healthy" rendered identically whatever the meter said:
     no committed artifact carries a specific-yield expectation or a
     degradation trend to compare against. Unlike S1's correlation floor
     there is no committed gate to anchor a threshold to, so the judgment is
     dropped instead of guarded -- the measured yield and the export-timing
-    finding carry the section."""
-    value = rt.resolve_token("S2_VERDICT")
+    finding carry the section.
+
+    Ungated on purpose, and stubbed to stay that way: S2_VERDICT reads two
+    household answers (solar.kw_dc, household.pto_date), so without the
+    substitution this case raised SystemExit -- not SkipCase -- on an
+    archive-less runner, and CI runs this suite on exactly that. A wording
+    guard that cannot run in CI cannot stop the "healthy" verdict coming
+    back."""
+    with _stub_household(_s2_household_inputs()):
+        value = rt.resolve_token("S2_VERDICT")
     for judgment in ("healthy", "degraded", "underperforming", "good shape"):
         assert judgment not in value.lower(), (
             f"S2_VERDICT passes a {judgment!r} verdict on the array with no committed "

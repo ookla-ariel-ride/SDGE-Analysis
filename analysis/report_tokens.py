@@ -1002,6 +1002,40 @@ def _plan_row(provider):
                       f"{hh1('household.plan')!r}/{provider!r}")
 
 
+def _assert_household_plan_is_cheapest(ctx, token):
+    """(plan, provider, cheapest_total) off data/plan_results.csv, after
+    asserting the household's own plan is the UNIQUE cheapest one priced for
+    its generation provider. Raises SystemExit naming `token` otherwise.
+
+    ONE helper, every caller: sections 0 and 3 both tell the reader this
+    house is already on the right tariff, and two independent rankings of the
+    same CSV can drift apart over what "cheapest" means -- which provider
+    column ranks, whether a tie counts as a win, whether the household's plan
+    even appears. A verdict that asserts the conclusion while a sibling
+    verdict is the only one checking it is exactly how section 0 -- the most
+    prominent claim in the report -- could keep recommending a tariff that no
+    longer wins, while section 3 failed closed on the same artifact.
+
+    A tie fails too. At an exact tie the household's plan is not the cheapest
+    plan, it is one of two, and neither sentence is written to say that.
+    """
+    plan = hh1("household.plan")
+    provider = _generation_provider_short(ctx)
+    rows = [r for r in _csv_rows("plan_results.csv") if r["provider"] == provider]
+    if not rows:
+        raise SystemExit(f"report_tokens: {token} cannot rank plans -- "
+                          f"data/plan_results.csv has no rows for the household's "
+                          f"generation provider {provider!r}")
+    cheapest = min(float(r["total"]) for r in rows)
+    winners = [r["plan"] for r in rows if float(r["total"]) == cheapest]
+    if winners != [plan]:
+        raise SystemExit(
+            f"report_tokens: {token} refuses to claim {plan!r} is the cheapest plan -- "
+            f"data/plan_results.csv's {provider} column ranks {winners} cheapest at "
+            f"${cheapest:,.2f}")
+    return plan, provider, cheapest
+
+
 _tok("BEST_PLAN_ANNUAL_CCA", kind="derived",
      get=lambda ctx: float(_plan_row("CEA")["total"]),
      sources=["data/plan_results.csv"], fmt="usd0")
@@ -1035,11 +1069,30 @@ _tok("BATTERY_VALUE_BEST_PLAN", kind="derived",
 
 
 def _runner_up():
+    """The cheapest OTHER plan in battery_plan_matrix.json, once the household's
+    own plan is established as leading it.
+
+    Both callers -- S4_VERDICT_SHORT and PLAN_MARGIN_VS_RUNNER_UP -- print the
+    difference as this plan's "lead" / "margin", words that are false if the
+    runner-up prices at or below it: the margin token would publish a negative
+    lead, and S4 would report the battery "widening" it. Same shape as the
+    section 0 / section 3 plan claim, checked against the artifact the sentence
+    actually quotes: this ranking is the matrix's own no-battery column, not
+    plan_results.csv's (battery_plan_matrix.py ties the two out in-script), so
+    it is a separate assertion rather than a call into
+    _assert_household_plan_is_cheapest.
+    """
     plan, best = _bpm_best()
     others = {k: v for k, v in _bpm_plans().items() if k != plan}
     if not others:
         raise SystemExit("report_tokens: battery_plan_matrix.json has no runner-up plan")
-    return min(others.items(), key=lambda kv: kv[1]["no_battery"])
+    name, row = min(others.items(), key=lambda kv: kv[1]["no_battery"])
+    if row["no_battery"] <= best["no_battery"]:
+        raise SystemExit(
+            f"report_tokens: refusing to call the gap to {name} a lead for {plan} -- "
+            f"data/battery_plan_matrix.json prices {name} at ${row['no_battery']:,} "
+            f"against {plan}'s ${best['no_battery']:,} without a battery")
+    return name, row
 
 
 _tok("S4_VERDICT_SHORT", kind="derived",
@@ -1298,8 +1351,48 @@ def _battery_model_short():
     return re.sub(r"\s*\([^)]*\)", "", TOKENS["BATTERY_MODEL"]["value"]).strip()
 
 
-def _s0_verdict(ctx):
+def _assert_free_fix_saves(token):
+    """(behavior_saving, package_saving) for the free EV-charging fix, after
+    asserting BOTH are positive: data/behavior_rebuild.json:scenarios.a.saved
+    (the figure section 0 quotes) and data/package_results.json:packages.LOW
+    .savings_yr (the figure section 7 quotes). Raises SystemExit naming
+    `token` otherwise.
+
+    Three sentences pass through here, which is the point of it being one
+    place: section 0 ("the free EV-charging fix saves a modeled $X/yr
+    whatever you buy"), section 7 ("the free EV-charging fix is worth a
+    modeled $X/yr") and the Monday appendix ("reprogramming the chargers this
+    week ... captures the free savings"). At or below zero the shift saves
+    nothing -- sections 0 and 7 would print a negative figure straight after
+    the word "saves", and the appendix, which quotes no figure at all, would
+    send the reader to spend an afternoon capturing a loss. Checking the two
+    artifacts together also stops them disagreeing about whether the free
+    move is worth making at all.
+    """
     saved = _json("behavior_rebuild.json")["scenarios"]["a"]["saved"]
+    low = _json("package_results.json")["packages"]["LOW"]["savings_yr"]
+    if saved <= 0 or low <= 0:
+        raise SystemExit(
+            f"report_tokens: {token} refuses to call the EV-charging fix a saving -- "
+            f"data/behavior_rebuild.json:scenarios.a.saved is ${saved:,.0f}/yr and "
+            f"data/package_results.json:packages.LOW.savings_yr is ${low:,.0f}/yr; "
+            "both must be positive for the free move to be worth making")
+    return saved, low
+
+
+def _s0_verdict(ctx):
+    # "the rate plan is right" is section 3's claim, made here in the
+    # report's most prominent sentence -- so it goes through section 3's own
+    # ranking rather than being asserted on the strength of the plan the
+    # household happens to be on. Shared helper, not a second implementation:
+    # the two must never disagree about which plan wins, and before this the
+    # headline would have kept recommending the tariff while S3 failed closed
+    # on the same artifact.
+    _assert_household_plan_is_cheapest(ctx, "S0_VERDICT")
+    # Same shape, second claim: "saves a modeled $X/yr" is false at X <= 0,
+    # and the check lives with sections 7 and 15's identical claim rather
+    # than here (see _assert_free_fix_saves).
+    saved, _low = _assert_free_fix_saves("S0_VERDICT")
     mid = _json("package_results.json")["packages"]["MID"]
     lo, hi = sorted((mid["battery_alone_payback_yr"],
                      mid["battery_alone_payback_post_fix_yr"]))
@@ -1334,8 +1427,11 @@ def _s0_verdict(ctx):
 
 _tok("S0_VERDICT", kind="derived", get=_s0_verdict,
      sources=["data/behavior_rebuild.json:scenarios.a.saved",
+              "data/package_results.json:packages.LOW.savings_yr (sign guard)",
               "data/package_results.json:packages.MID.battery_alone_payback_yr",
-              "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr"])
+              "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr",
+              "data/plan_results.csv (the household provider's total column)",
+              "private/household.yaml:household.plan", "private/household.yaml:household.cca"])
 
 
 def _daily_production_series():
@@ -1473,21 +1569,11 @@ _tok("S2_VERDICT", kind="derived", get=_s2_verdict,
 
 
 def _s3_verdict(ctx):
-    plan = hh1("household.plan")
-    provider = _generation_provider_short(ctx)
-    rows = [r for r in _csv_rows("plan_results.csv") if r["provider"] == provider]
-    if not rows:
-        raise SystemExit(f"report_tokens: data/plan_results.csv has no rows for the "
-                          f"household's generation provider {provider!r}")
-    cheapest = min(float(r["total"]) for r in rows)
-    winners = [r["plan"] for r in rows if float(r["total"]) == cheapest]
     # Computed, never asserted: if another plan ever prices lower (or ties),
-    # the sentence would be false, so refuse to render it.
-    if winners != [plan]:
-        raise SystemExit(
-            f"report_tokens: S3_VERDICT refuses to claim {plan!r} is the cheapest plan -- "
-            f"data/plan_results.csv's {provider} column ranks {winners} cheapest at "
-            f"${cheapest:,.2f}")
+    # the sentence would be false, so refuse to render it. The ranking itself
+    # lives in _assert_household_plan_is_cheapest, shared with S0_VERDICT,
+    # which makes the same claim in the report's headline.
+    plan, _provider, cheapest = _assert_household_plan_is_cheapest(ctx, "S3_VERDICT")
     return (f"{VERDICT_STEM}{plan} is still the cheapest plan for this house at a modeled "
             f"{_usd0(cheapest)}/yr, and every alternative priced costs more.")
 
@@ -1564,6 +1650,9 @@ _tok("S6_VERDICT", kind="derived", get=_s6_verdict,
 def _s7_verdict(ctx):
     pk = _json("package_results.json")["packages"]
     low, mid, high = pk["LOW"], pk["MID"], pk["HIGH"]
+    # "is worth a modeled $X/yr" has no honest rendering at X <= 0; shared
+    # with sections 0 and 15, which make the same claim about the same move.
+    _saved, low_savings = _assert_free_fix_saves("S7_VERDICT")
     if low["cost"]:
         raise SystemExit(f"report_tokens: S7_VERDICT refuses to call the behavior package "
                           f"free -- data/package_results.json:packages.LOW.cost is "
@@ -1601,7 +1690,7 @@ def _s7_verdict(ctx):
     else:
         tail = "and the expansion pack pays back faster than that"
     return (f"{VERDICT_STEM}the free EV-charging fix is worth a modeled "
-            f"{_usd0(low['savings_yr'])}/yr whatever you buy; one "
+            f"{_usd0(low_savings)}/yr whatever you buy; one "
             f"{_battery_model_short()} adds its own "
             f"{_usd0(mid['battery_alone_post_ev_fix_yr'])}/yr (~{mid_payback:.1f}-yr "
             f"payback), {tail}.")
@@ -1609,6 +1698,7 @@ def _s7_verdict(ctx):
 
 _tok("S7_VERDICT", kind="derived", get=_s7_verdict,
      sources=["data/package_results.json:packages.LOW.savings_yr",
+              "data/behavior_rebuild.json:scenarios.a.saved (sign guard)",
               "data/package_results.json:packages.LOW.cost",
               "data/package_results.json:packages.MID.battery_alone_post_ev_fix_yr",
               "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr",
@@ -1674,13 +1764,20 @@ def _overnight_cheap_window():
 
 
 def _s15_verdict(ctx):
+    # This sentence names no figure, which is exactly why it needs the check:
+    # "captures the free savings" reads as instruction, and at a non-positive
+    # saving it sends the reader after a loss. Same helper sections 0 and 7
+    # use, so the three cannot disagree about whether the move is worth making.
+    _assert_free_fix_saves("S15_VERDICT")
     return (f"{VERDICT_STEM}reprogramming the chargers this week to finish inside the "
             f"{_overnight_cheap_window()} super-off-peak window captures the free savings; "
             "everything else on the list is verification before spending money.")
 
 
 _tok("S15_VERDICT", kind="derived", get=_s15_verdict,
-     sources=["analysis/rates.py:period() (sampled)"])
+     sources=["analysis/rates.py:period() (sampled)",
+              "data/behavior_rebuild.json:scenarios.a.saved (sign guard)",
+              "data/package_results.json:packages.LOW.savings_yr (sign guard)"])
 
 
 # ---- data / rate / env source inventories -------------------------------
