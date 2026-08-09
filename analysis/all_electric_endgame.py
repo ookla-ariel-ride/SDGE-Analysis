@@ -1446,22 +1446,53 @@ def service_headroom_check():
     after_wh_conservative = round(spare_conservative - WH_CODE_LOAD_A, 4)
     after_wh_measured = round(spare_measured - WH_CODE_LOAD_A, 4)
 
+    # after_wh_* is a CEILING on the furnace heat pump's own MCA (the
+    # largest unit that would still fit alongside a full-code water
+    # heater) -- it is NOT a verified combined fit, because the furnace
+    # heat pump's own equipment ampacity is never subtracted anywhere in
+    # this computation. heat_pump_only's remaining_headroom_a is itself a
+    # SOLVED-FOR term (its own service_headroom.json note: "No heat pump
+    # has been selected, so the term is solved for rather than assumed:
+    # this is the largest minimum circuit ampacity that fits") -- it
+    # already equals the panel's total spare capacity with a heat pump's
+    # own draw at zero, not a headroom figure with a real unit's demand
+    # already debited. heat_pump_replaces_ac's own remaining_headroom_a is
+    # the SAME shape (also solved-for, per its own "remaining_is": "the
+    # largest heat-pump MCA that fits...") -- crediting the outgoing A/C's
+    # removed load changes the ceiling's SIZE, not the fact that it is
+    # still a ceiling, not a fixed remaining number for an assumed unit.
+    # Nowhere in this issue's own furnace analysis is one specific
+    # heat-pump model selected: heat_pump_conversion.py prices a COP
+    # BRACKET (COP_SCENARIOS: 2.8/3.5/4.2), not one nameplate MCA. So a
+    # 'pass' verdict here would assert something not knowable from this
+    # artifact. A 'fail' verdict does NOT have that problem: if the
+    # ceiling is already negative on BOTH bases, the water heater's own
+    # fixed code load alone -- with ZERO heat pump amps added -- already
+    # exceeds spare capacity, which holds regardless of which heat pump,
+    # if any, is eventually chosen.
     ampacity_verdict = ("fail" if after_wh_conservative < 0 and after_wh_measured < 0
-                        else "not_determined" if after_wh_conservative < 0
-                        else "pass")
+                        else "not_determined")
 
     return {
         "basis": ("furnace heat pump reuses the existing A/C circuit "
                   "(service_headroom.json's own heat_pump_replaces_ac "
                   "case, verdict "
-                  f"{hp_replaces_ac['ampacity_verdict']!r}, contributes no "
-                  "net-new panel-wide demand in the case's own summer-"
-                  "coincident-peak measurement basis); the water heater's "
-                  "own new 30 A/240 V circuit is checked against the SAME "
-                  "panel-wide spare capacity heat_pump_only's own case "
-                  "already establishes (fixed_added_load_a=0, i.e. before "
-                  "any new 240 V load), since it is the one addition that "
-                  "genuinely stacks on top of what is already installed"),
+                  f"{hp_replaces_ac['ampacity_verdict']!r}) -- that verdict "
+                  "credits the outgoing A/C's own removed demand against "
+                  "the historical summer coincident PEAK the panel's spare "
+                  "capacity is measured from; it says nothing about the "
+                  "incoming heat pump's own equipment ampacity (MCA), "
+                  "which this check never subtracts because no specific "
+                  "heat-pump model is selected anywhere in this issue's "
+                  "own furnace analysis (heat_pump_conversion.py prices a "
+                  "COP bracket, not one nameplate unit). The water "
+                  "heater's own new 30 A/240 V circuit, whose code load IS "
+                  "fixed and known, is checked against the SAME panel-wide "
+                  "spare capacity heat_pump_only's own case already "
+                  "establishes (fixed_added_load_a=0, i.e. before any new "
+                  "240 V load); what is left after that subtraction is a "
+                  "CEILING on the furnace heat pump's own MCA, not a "
+                  "verified combined installation -- see known_gap"),
         "water_heater_code_load_a": WH_CODE_LOAD_A,
         "water_heater_code_load_basis": WH_CODE_LOAD_BASIS,
         "spare_before_any_new_load_a": {
@@ -1487,15 +1518,32 @@ def service_headroom_check():
             "consolidation, or removing another circuit) is outside this "
             "issue's own scope box." if physical_fit == "fail" else
             "no physical-space blocker found"),
-        "known_gap": ("service_headroom.json's own cases are built from a "
-                      "SUMMER coincident-peak measurement window (issue #6's "
-                      "own gross-load reconstruction); a water heater and a "
-                      "space-heating heat pump both draw the most in WINTER, "
-                      "a season the underlying measurement window does not "
-                      "cover -- the same already-documented gap heat_pump_"
+        "known_gap": ("TWO gaps, not one. (1) service_headroom.json's own "
+                      "cases are built from a SUMMER coincident-peak "
+                      "measurement window (issue #6's own gross-load "
+                      "reconstruction); a water heater and a space-heating "
+                      "heat pump both draw the most in WINTER, a season "
+                      "the underlying measurement window does not cover -- "
+                      "the same already-documented gap heat_pump_"
                       "conversion.py's own module docstring names for the "
                       "furnace's added load. This check inherits that gap "
-                      "rather than resolving it."),
+                      "rather than resolving it. (2) No specific furnace "
+                      "heat-pump model has been selected anywhere in this "
+                      "issue's own analysis -- heat_pump_conversion.py "
+                      "prices a COP bracket (COP_SCENARIOS: 2.8/3.5/4.2), "
+                      "not one nameplate unit -- so spare_after_water_"
+                      "heater_a is a CEILING on the largest heat-pump MCA "
+                      "that would still fit, not a verified combined "
+                      "installation: this check cannot certify that any "
+                      "real unit fits (ampacity_verdict is 'not_"
+                      "determined' whenever that ceiling is non-negative). "
+                      "The one exception is a genuine 'fail': if "
+                      "spare_after_water_heater_a is already negative on "
+                      "BOTH bases, even a zero-amp heat pump would not "
+                      "fit, which holds regardless of gap (2). What would "
+                      "settle gap (2): a specific heat-pump model's "
+                      "nameplate MCA, checked against "
+                      "spare_after_water_heater_a."),
     }
 
 

@@ -3999,17 +3999,33 @@ sources, not re-verified) — `WH_INCENTIVE_USD = 0`.
 **AC5 — service headroom.** Reuses `data/service_headroom.json`'s own already-committed
 `heat_pump_only` case (`fixed_added_load_a=0`, i.e. panel-wide spare capacity before *any*
 new 240 V load: 37.03 A conservative / 76.46 A measured) as the ampacity baseline — the
-furnace conversion reuses the existing A/C circuit (`heat_pump_replaces_ac`, verdict `pass`)
-and contributes no net-new demand in that case's own summer-coincident-peak basis, so the
-water heater's own new 30 A/240 V circuit (NEC 422.13, 125% of a 4,500 W backup element =
-23.44 A) is checked against that same spare capacity. Ampacity passes on both bases
-(13.59 A / 53.02 A remaining). **Physical panel space does not**: `service_headroom.
-physical_fit()` is called directly (not reimplemented) with the panel's own already-committed
-`spaces_free=1` — a new 240 V circuit needs 2 adjacent spaces, and only 1 remains. This is a
-hard blocker, stated plainly, independent of the ampacity result and not relieved by the
-furnace conversion (which frees no space of its own). The same summer-only measurement-window
-gap `heat_pump_conversion.py`'s own docstring already names for the furnace's winter-season
-demand applies here too, inherited rather than resolved.
+furnace conversion reuses the existing A/C circuit (`heat_pump_replaces_ac`, verdict `pass`,
+which credits the outgoing A/C's own removed demand against the historical summer
+coincident-peak basis, saying nothing about the incoming heat pump's own equipment
+ampacity) — so the water heater's own new 30 A/240 V circuit (NEC 422.13, 125% of a 4,500 W
+backup element = 23.44 A) is checked against that same spare capacity, leaving 13.59 A /
+53.02 A. **That remaining figure is a CEILING on the furnace heat pump's own MCA, not a
+verified fit** (Codex `review` pass, issue #20 round 5, Finding 1): `heat_pump_only`'s own
+`remaining_headroom_a` is itself a SOLVED-FOR term (its own note: "No heat pump has been
+selected, so the term is solved for rather than assumed: this is the largest minimum circuit
+ampacity that fits"), and `heat_pump_replaces_ac`'s own `remaining_headroom_a` is the SAME
+solved-for shape (its own `remaining_is`: "the largest heat-pump MCA that fits..."), so
+neither case gives a fixed remaining number for an assumed real unit — subtracting only the
+water heater's own fixed code load from either implicitly treats the furnace heat pump's own
+electrical demand as zero. No specific heat-pump model is selected anywhere in this issue's
+own furnace analysis (`heat_pump_conversion.py` prices a COP bracket — `COP_SCENARIOS`:
+2.8/3.5/4.2 — not one nameplate MCA), so `ampacity_verdict` is honestly reported as
+`not_determined` rather than `pass` whenever the ceiling is non-negative; it is a real `fail`
+only when the ceiling is already negative on both bases (i.e. even a zero-amp heat pump would
+not fit), which holds regardless of which unit, if any, is eventually chosen. What would
+settle the `not_determined` case: a specific heat-pump model's nameplate MCA, checked against
+the 13.59 A / 53.02 A ceiling. **Physical panel space is a hard blocker regardless**:
+`service_headroom.physical_fit()` is called directly (not reimplemented) with the panel's own
+already-committed `spaces_free=1` — a new 240 V circuit needs 2 adjacent spaces, and only 1
+remains. This blocks the water heater's own new circuit independent of the ampacity result and
+is not relieved by the furnace conversion (which frees no space of its own). The same
+summer-only measurement-window gap `heat_pump_conversion.py`'s own docstring already names for
+the furnace's winter-season demand applies here too, inherited rather than resolved.
 
 **AC6 — meter removal.** WebSearch findings, each cited with a URL and fetch date
 (`METER_REMOVAL_RESEARCH`): no fee to remove/cap a gas meter in most circumstances (a

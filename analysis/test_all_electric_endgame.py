@@ -719,7 +719,14 @@ def case_service_headroom_check_not_determined_with_enough_spaces_but_no_adjacen
     ADJACENT, which this household's intake never records (schedule_
     confidence: 'position map partial'), so the honest verdict is
     'not_determined', not 'pass' -- this test would catch a reimplementation
-    that conflated 'enough spaces' with 'a confirmed fit'."""
+    that conflated 'enough spaces' with 'a confirmed fit'. ampacity_verdict
+    is ALSO 'not_determined' here, not 'pass' (Codex review, issue #20
+    round 5, Finding 1): plenty of spare amperage remains after the water
+    heater's own fixed code load, but no specific furnace heat-pump model
+    is ever selected in this issue's own analysis (heat_pump_conversion.py
+    prices a COP bracket, not one nameplate MCA), so the heat pump's own
+    equipment ampacity is never actually checked against what is left --
+    a real 'pass' is not knowable from this artifact."""
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         _write_synthetic_service_headroom_json(tmp, spaces_free=4, conservative_a=40,
@@ -732,7 +739,7 @@ def case_service_headroom_check_not_determined_with_enough_spaces_but_no_adjacen
             A.DATA = real_data
     assert result["physical_fit_verdict"] == "not_determined", result
     assert result["hard_blocker"] is False, result
-    assert result["ampacity_verdict"] == "pass", result
+    assert result["ampacity_verdict"] == "not_determined", result
     return "enough free spaces without adjacency data reports not_determined, not a false pass"
 
 
@@ -752,6 +759,41 @@ def case_service_headroom_check_ampacity_fails_when_code_load_exceeds_conservati
             A.DATA = real_data
     assert result["ampacity_verdict"] == "fail", result
     return "insufficient spare amperage on both bases reports a real ampacity fail"
+
+
+@case
+def case_service_headroom_check_ampacity_never_passes_even_with_abundant_spare():
+    """Codex `review` pass, issue #20 round 5, Finding 1: the cumulative
+    service-headroom check never debited the furnace heat pump's OWN
+    electrical demand -- it took heat_pump_only's remaining_headroom_a
+    (itself a SOLVED-FOR 'largest MCA that fits with nothing else added'
+    term, per that case's own service_headroom.json note) and subtracted
+    only the water heater's fixed code load, treating any non-negative
+    remainder as a 'pass'. That implicitly assumes the furnace heat pump
+    itself draws ZERO amps of the panel's spare capacity. heat_pump_
+    replaces_ac's own remaining_headroom_a is the SAME solved-for shape
+    (its own 'remaining_is' field: "the largest heat-pump MCA that fits
+    ..."), so swapping to it would not fix this either -- neither case
+    gives a FIXED remaining number for an assumed real unit. With even
+    enormous (1000 A) spare on both bases, ampacity_verdict must still be
+    'not_determined', never 'pass', because no specific heat-pump MCA is
+    ever selected anywhere in this issue's own furnace analysis to check
+    against what is left. This test would have failed against the
+    pre-fix code (which returned 'pass' here)."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        _write_synthetic_service_headroom_json(tmp, spaces_free=4, conservative_a=1000,
+                                               measured_a=1000, hp_replaces_ac_verdict="pass")
+        real_data = A.DATA
+        A.DATA = str(tmp)
+        try:
+            result = A.service_headroom_check()
+        finally:
+            A.DATA = real_data
+    assert result["ampacity_verdict"] == "not_determined", result
+    assert result["spare_after_water_heater_a"]["conservative_basis"] > 900, result
+    assert "no specific" in result["known_gap"].lower() or "not selected" in result["known_gap"].lower(), result
+    return "abundant spare amperage still reports not_determined, never a false pass, because no heat-pump model is selected"
 
 
 # ---------------------------------------------------------------------------
@@ -1560,7 +1602,11 @@ def case_build_end_to_end_on_the_real_archive():
     seq = out["sequencing_and_paybacks"]
     assert seq["fixed_charge_release_usd"] == 0.0
     hr = out["service_headroom_check"]
-    assert hr["ampacity_verdict"] in ("pass", "fail", "not_determined")
+    # ampacity_verdict can never be 'pass' (Codex review, issue #20 round
+    # 5, Finding 1) -- no specific furnace heat-pump model is selected
+    # anywhere in this issue's own analysis, so a real fit is never
+    # knowable from this artifact, only 'fail' or 'not_determined'.
+    assert hr["ampacity_verdict"] in ("fail", "not_determined"), hr
     return "build() runs end to end on the real archive and every section is internally consistent"
 
 
