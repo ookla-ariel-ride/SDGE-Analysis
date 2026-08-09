@@ -559,7 +559,29 @@ def case_build_wh_load_series_conserves_energy_across_distributions():
     for key, series in added.items():
         total = float(series.sum())
         assert abs(total - ann_kwh) < 0.01, (key, total)
-    return "uniform/midday/on_peak water-heater load series each conserve the same annual kWh"
+    return "uniform/super_off_peak/on_peak water-heater load series each conserve the same annual kWh"
+
+
+@case
+def case_build_wh_load_series_scenario_key_is_super_off_peak_not_midday():
+    """Finding 2 (Codex review pass, issue #20 round 3): this scenario
+    concentrates load into rates.period()'s 'sop' intervals, which on this
+    household's EV-TOU-5 tariff run 00:00-06:00 plus weekday 10:00-14:00 and
+    weekend 00:00-14:00 -- mostly overnight/early-morning, not clock-time
+    midday. The scenario key must say what the code actually does (targets
+    the super-off-peak RATE period) rather than implying a daytime/solar-
+    timer placement it does not compute. This also pins the sop-targeting
+    behavior itself: on a day with sop intervals, the super_off_peak series
+    must be zero everywhere else."""
+    d = _synthetic_frame()
+    added, _ = A.build_wh_load_series(d, 600.0)
+    assert "midday" not in added, "a 'midday' key would mislabel the sop-targeting scenario"
+    assert "super_off_peak" in added
+    is_sop = (d["p"] == "sop")
+    assert (added["super_off_peak"].loc[~is_sop] == 0).all(), (
+        "super_off_peak placed load outside sop intervals on a day that has sop intervals")
+    assert (added["super_off_peak"].loc[is_sop] > 0).any()
+    return "the sop-targeting water-heater scenario is named super_off_peak, not midday, and only ever places load in 'sop' intervals"
 
 
 @case
@@ -579,9 +601,9 @@ def case_build_wh_load_series_falls_back_when_a_day_has_no_sop_or_on_intervals()
     d["p"] = "off"   # force every interval to 'off' -- no sop, no on at all
     ann_kwh = 10.0
     added, fallback = A.build_wh_load_series(d, ann_kwh)
-    assert fallback["midday"] == 1, fallback
+    assert fallback["super_off_peak"] == 1, fallback
     assert fallback["on_peak"] == 1, fallback
-    assert abs(float(added["midday"].sum()) - ann_kwh) < 0.01
+    assert abs(float(added["super_off_peak"].sum()) - ann_kwh) < 0.01
     assert abs(float(added["on_peak"].sum()) - ann_kwh) < 0.01
     return "a day with no sop/on-peak intervals falls back to uniform, energy still conserved"
 
@@ -640,7 +662,7 @@ def case_wh_electric_cost_scenarios_conserves_energy_and_bills():
     electric, base_bill = A.wh_electric_cost_scenarios(d, floor_therms_yr=137.0)
     assert set(electric.keys()) == set(A.HPWH_UEF_SCENARIOS.keys())
     for uef_key, scen in electric.items():
-        for dist_key in ("uniform", "midday", "on_peak"):
+        for dist_key in ("uniform", "super_off_peak", "on_peak"):
             assert "electric_cost_increase_usd" in scen[dist_key]
             assert scen[dist_key]["added_kwh"] > 0
     return "wh_electric_cost_scenarios runs energy-conserving netting across every UEF x distribution cell"
@@ -1218,6 +1240,35 @@ def case_build_end_to_end_on_the_real_archive():
     hr = out["service_headroom_check"]
     assert hr["ampacity_verdict"] in ("pass", "fail", "not_determined")
     return "build() runs end to end on the real archive and every section is internally consistent"
+
+
+@case
+def case_reconciliation_unattributed_usd_corrects_for_tier_interaction():
+    """Finding 1 (Codex review pass, issue #20 round 3): unattributed_usd
+    naively subtracted floor_savings_annual_usd and heating_savings_usd
+    (each an INDEPENDENTLY-computed marginal gas saving) from the trailing-
+    12 billed total, double-subtracting the tier_interaction_overstatement_
+    usd dollars both independent savings figures claim credit for in the
+    same nonbaseline tier -- the same overstatement complete_transition_
+    payback already corrects for (sequencing_and_paybacks). This checks the
+    corrected formula end to end against the real archive: unattributed_usd
+    must equal billed - floor - heating + tier_interaction_overstatement_
+    usd, not the naive billed - floor - heating."""
+    _require_archive()
+    out = A.build()
+    signal = out["reconciliation"]["unattributed_heating_signal"]
+    naive = round(signal["trailing_12_billed_total_usd"] - signal["floor_savings_usd"]
+                 - signal["heating_savings_usd"], 2)
+    overstatement = signal["tier_interaction_overstatement_usd"]
+    assert overstatement > 0.01, "the fixture must exercise a real, positive tier interaction"
+    expected = round(naive + overstatement, 2)
+    assert abs(signal["unattributed_usd"] - expected) < 0.01, (
+        signal["unattributed_usd"], expected, naive, overstatement)
+    assert abs(signal["unattributed_usd"] - naive) > 0.01, (
+        "the correction must actually change the naive figure on real data")
+    return (f"unattributed_usd (${signal['unattributed_usd']}) is the naive residual "
+           f"(${naive}) plus the ${overstatement} tier-interaction correction, not the "
+           "naive figure alone")
 
 
 @case

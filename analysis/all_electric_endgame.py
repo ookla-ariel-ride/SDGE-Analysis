@@ -814,18 +814,30 @@ def build_wh_load_series(d, ann_wh_kwh):
     day `d` covers gets an EQUAL share of ann_wh_kwh, not an HDD-weighted
     one.
 
-      uniform -- spread evenly across every interval of each day.
-      midday  -- concentrated in each day's own super-off-peak (sop)
-                 intervals -- the discretionary-timer placement index.html
-                 already describes as physically realistic for a water
-                 heater (it can run on a schedule, unlike a thermostat-
-                 driven heating load).
+      uniform         -- spread evenly across every interval of each day.
+      super_off_peak  -- concentrated in each day's own super-off-peak
+                 (rates.period()'s "sop" code) intervals -- the
+                 discretionary-timer placement index.html describes as
+                 physically realistic for a water heater (it can run on a
+                 schedule, unlike a thermostat-driven heating load). This
+                 is NOT a "midday" placement: on this household's EV-TOU-5
+                 tariff sop is 00:00-06:00 plus 10:00-14:00 on weekdays and
+                 00:00-14:00 on weekends (rates.period()) -- mostly
+                 overnight and early-morning hours, only the weekday
+                 10:00-14:00 slice genuinely coincides with peak solar. It
+                 is named for the RATE PERIOD it targets (the genuinely
+                 cheapest tariff period on this schedule, the same
+                 convention heat_pump_conversion.build_hp_load_series uses
+                 for its own sop-targeting `off_peak` scenario), not for a
+                 daytime/solar-timer story -- a real, corrected mismatch
+                 between this scenario's own code and index.html's earlier
+                 "midday" prose (Codex review pass, issue #20 round 3).
       on_peak -- concentrated in each day's own on-peak intervals -- the
                  illustrative high-cost lean, the water-heater-side bracket
-                 partner to `midday`.
+                 partner to `super_off_peak`.
 
-    Neither `midday` nor `on_peak` is a computed cost extremum, the same
-    caveat heat_pump_conversion.build_hp_load_series states for its own
+    Neither `super_off_peak` nor `on_peak` is a computed cost extremum, the
+    same caveat heat_pump_conversion.build_hp_load_series states for its own
     on_peak/off_peak bracket."""
     dates = d["dt"].dt.date
     unique_dates = dates.unique()
@@ -835,9 +847,9 @@ def build_wh_load_series(d, ann_wh_kwh):
                          "the water heater's load into")
     kwh_per_day = ann_wh_kwh / n_days
     out = {"uniform": pd.Series(0.0, index=d.index),
-           "midday": pd.Series(0.0, index=d.index),
+           "super_off_peak": pd.Series(0.0, index=d.index),
            "on_peak": pd.Series(0.0, index=d.index)}
-    fallback_days = {"midday": 0, "on_peak": 0}
+    fallback_days = {"super_off_peak": 0, "on_peak": 0}
     for day in unique_dates:
         mask = dates == day
         n = int(mask.sum())
@@ -846,10 +858,10 @@ def build_wh_load_series(d, ann_wh_kwh):
         sop_mask = mask & (d["p"] == "sop")
         n_sop = int(sop_mask.sum())
         if n_sop > 0:
-            out["midday"].loc[sop_mask] += kwh_per_day / n_sop
+            out["super_off_peak"].loc[sop_mask] += kwh_per_day / n_sop
         else:
-            out["midday"].loc[mask] += kwh_per_day / n
-            fallback_days["midday"] += 1
+            out["super_off_peak"].loc[mask] += kwh_per_day / n
+            fallback_days["super_off_peak"] += 1
 
         on_mask = mask & (d["p"] == "on")
         n_on = int(on_mask.sum())
@@ -1653,8 +1665,19 @@ def build():
     trailing12_billed_total = round(
         pd.read_csv(HPC.GAS_PERIODS_CSV).sort_values("statement_date")
         .tail(12)["billed_amount"].sum(), 2)
+    # naively summing floor_savings_annual and hpc_data["gas_savings_annual_usd"]
+    # double-subtracts the same tier_interaction_overstatement() gap that
+    # complete_transition_payback already corrects for (both are independently-
+    # computed marginal gas savings that reach into the SAME nonbaseline-tier
+    # dollars whenever both apply -- see tier_interaction_overstatement()'s own
+    # docstring). Adding that overstatement back before subtracting from the
+    # trailing-12 billed total turns the naive (double-subtracted) residual
+    # into the correct one: billed total minus the TRUE joint gas savings from
+    # removing both the floor and the heating slice together, not minus the sum
+    # of two independently-priced marginal removals.
     unattributed_usd = round(
-        trailing12_billed_total - floor_savings_annual - hpc_data["gas_savings_annual_usd"], 2)
+        trailing12_billed_total - floor_savings_annual - hpc_data["gas_savings_annual_usd"]
+        + interaction["overstatement_usd"], 2)
 
     reconciliation = {
         "furnace_vs_heat_pump_conversion_json": {
@@ -1689,12 +1712,30 @@ def build():
                      f"{reconciled_heating_therms:g} reconciled) -- this "
                      "script quantifies that gap in DOLLARS for the first "
                      "time, by comparing the trailing-12-statement billed "
-                     "total against this script's own floor savings plus "
-                     "heat_pump_conversion.json's own heating savings"),
+                     "total against the TRUE joint gas savings from removing "
+                     "both the floor and the heating slice together, not the "
+                     "naive sum of the two steps' own independently-computed "
+                     "marginal savings"),
             "unattributed_therms_yr": unattributed_therms,
             "trailing_12_billed_total_usd": trailing12_billed_total,
             "floor_savings_usd": floor_savings_annual,
             "heating_savings_usd": hpc_data["gas_savings_annual_usd"],
+            "tier_interaction_overstatement_usd": interaction["overstatement_usd"],
+            "tier_interaction_correction_note": (
+                "unattributed_usd is trailing_12_billed_total_usd minus "
+                "floor_savings_usd minus heating_savings_usd PLUS this "
+                "tier_interaction_overstatement_usd (Finding 1, Codex review "
+                "pass, issue #20 round 3): floor_savings_usd and "
+                "heating_savings_usd are each computed as if it alone were "
+                "removed from the original bill (tier_interaction_"
+                "overstatement()'s own docstring), so naively subtracting "
+                "both from the billed total double-subtracts the shared "
+                "nonbaseline-tier dollars they both reach into -- the same "
+                "overstatement complete_transition_payback already corrects "
+                "for (sequencing_and_paybacks). Adding it back here turns "
+                "the naive, double-subtracted residual into the TRUE "
+                "unattributed gap: billed total minus the joint (not summed) "
+                "gas savings from removing both."),
             "unattributed_usd": unattributed_usd,
             "resolution": ("not credited to either conversion step, "
                           "conservatively, matching heat_pump_conversion.py's "

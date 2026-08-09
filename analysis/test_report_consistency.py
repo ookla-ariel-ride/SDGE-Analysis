@@ -677,7 +677,7 @@ def case_all_electric_endgame_section_matches_the_artifact():
         f"${wh['floor_savings_annual_usd']:,.2f}/yr",
         f"${e['uniform']['electric_cost_increase_usd']:,.2f}/yr",
         f"${headline['annual_net_savings_usd']:,.2f}/yr",
-        f"${e['midday']['electric_cost_increase_usd']:,.2f}/yr",
+        f"${e['super_off_peak']['electric_cost_increase_usd']:,.2f}/yr",
         f"${e['on_peak']['electric_cost_increase_usd']:,.2f}/yr",
         f"{headline['low_install']['payback_years']} years",
         f"{headline['central_install']['payback_years']} years",

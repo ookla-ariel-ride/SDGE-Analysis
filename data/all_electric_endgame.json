@@ -164,11 +164,13 @@
   "unattributed_heating_signal": {
    "floor_savings_usd": 360.38,
    "heating_savings_usd": 416.25,
-   "note": "heat_pump_conversion.py's own module docstring already documents that its day-level capacity cap excludes 59.81 therms/yr of HDD-regression heating signal it cannot pin to a specific real day (205 raw vs 145.19 reconciled) -- this script quantifies that gap in DOLLARS for the first time, by comparing the trailing-12-statement billed total against this script's own floor savings plus heat_pump_conversion.json's own heating savings",
+   "note": "heat_pump_conversion.py's own module docstring already documents that its day-level capacity cap excludes 59.81 therms/yr of HDD-regression heating signal it cannot pin to a specific real day (205 raw vs 145.19 reconciled) -- this script quantifies that gap in DOLLARS for the first time, by comparing the trailing-12-statement billed total against the TRUE joint gas savings from removing both the floor and the heating slice together, not the naive sum of the two steps' own independently-computed marginal savings",
    "resolution": "not credited to either conversion step, conservatively, matching heat_pump_conversion.py's own treatment of the underlying therms",
+   "tier_interaction_correction_note": "unattributed_usd is trailing_12_billed_total_usd minus floor_savings_usd minus heating_savings_usd PLUS this tier_interaction_overstatement_usd (Finding 1, Codex review pass, issue #20 round 3): floor_savings_usd and heating_savings_usd are each computed as if it alone were removed from the original bill (tier_interaction_overstatement()'s own docstring), so naively subtracting both from the billed total double-subtracts the shared nonbaseline-tier dollars they both reach into -- the same overstatement complete_transition_payback already corrects for (sequencing_and_paybacks). Adding it back here turns the naive, double-subtracted residual into the TRUE unattributed gap: billed total minus the joint (not summed) gas savings from removing both.",
+   "tier_interaction_overstatement_usd": 28.18,
    "trailing_12_billed_total_usd": 922.34,
    "unattributed_therms_yr": 59.81,
-   "unattributed_usd": 145.71
+   "unattributed_usd": 173.89
   },
   "water_heater_vs_extended_results_gas_decomposition": {
    "gap_note": "the two are expected to differ -- they price the SAME conversion by genuinely different methods, one of them (this script's) at this repo's own established real-interval-billing rigor and one (extended_findings.py's) at a flat-rate proxy",
@@ -248,18 +250,18 @@
   "electric_cost_by_scenario": {
    "central_3.88": {
     "_fallback_days": {
-     "midday": 0,
-     "on_peak": 0
-    },
-    "midday": {
-     "added_kwh": 608,
-     "electric_cost_increase_usd": 72.18,
-     "solar_absorbed_kwh": 219
+     "on_peak": 0,
+     "super_off_peak": 0
     },
     "on_peak": {
      "added_kwh": 608,
      "electric_cost_increase_usd": 432.86,
      "solar_absorbed_kwh": 105
+    },
+    "super_off_peak": {
+     "added_kwh": 608,
+     "electric_cost_increase_usd": 72.18,
+     "solar_absorbed_kwh": 219
     },
     "uniform": {
      "added_kwh": 608,
@@ -269,18 +271,18 @@
    },
    "high_4.0": {
     "_fallback_days": {
-     "midday": 0,
-     "on_peak": 0
-    },
-    "midday": {
-     "added_kwh": 590,
-     "electric_cost_increase_usd": 70.02,
-     "solar_absorbed_kwh": 212
+     "on_peak": 0,
+     "super_off_peak": 0
     },
     "on_peak": {
      "added_kwh": 590,
      "electric_cost_increase_usd": 419.86,
      "solar_absorbed_kwh": 102
+    },
+    "super_off_peak": {
+     "added_kwh": 590,
+     "electric_cost_increase_usd": 70.02,
+     "solar_absorbed_kwh": 212
     },
     "uniform": {
      "added_kwh": 590,
@@ -290,18 +292,18 @@
    },
    "low_3.5": {
     "_fallback_days": {
-     "midday": 0,
-     "on_peak": 0
-    },
-    "midday": {
-     "added_kwh": 674,
-     "electric_cost_increase_usd": 80.03,
-     "solar_absorbed_kwh": 242
+     "on_peak": 0,
+     "super_off_peak": 0
     },
     "on_peak": {
      "added_kwh": 674,
      "electric_cost_increase_usd": 479.88,
      "solar_absorbed_kwh": 115
+    },
+    "super_off_peak": {
+     "added_kwh": 674,
+     "electric_cost_increase_usd": 80.03,
+     "solar_absorbed_kwh": 242
     },
     "uniform": {
      "added_kwh": 674,

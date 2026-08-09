@@ -3947,8 +3947,14 @@ Electric load placement mirrors `heat_pump_conversion.build_hp_load_series` /
 only once that interval's export is exhausted, re-bill the whole measured year with
 `rates.bill_nem()` (CLAUDE.md §1b) — with a different day-weighting (`build_wh_load_series`):
 the floor runs at a roughly constant daily rate, so each real calendar day gets an equal
-share, spread `uniform` / concentrated in `midday` (super-off-peak, a HPWH's realistic
-discretionary-timer placement) / concentrated `on_peak` (the high-cost bracket partner).
+share, spread `uniform` / concentrated in `super_off_peak` (`rates.period()`'s "sop" code — a
+HPWH's realistic discretionary-timer placement, named for the RATE PERIOD it targets rather
+than a "midday" clock-time claim, since on this household's EV-TOU-5 tariff sop runs
+00:00–06:00 plus weekday 10:00–14:00 and weekend 00:00–14:00 — mostly overnight and
+early-morning hours, with only the weekday 10:00–14:00 slice genuinely solar-coincident; a
+"midday" label previously named this scenario, a mismatch between the code and the report's
+own prose caught by Codex review, issue #20 round 3) / concentrated `on_peak` (the high-cost
+bracket partner).
 Efficiency is UEF (Uniform Energy Factor — the correct metric for a storage-type heat-pump
 water heater; it already folds in standby loss, unlike a furnace heat pump's COP), from a
 real, cited product family (Rheem ProTerra, UEF 3.5–4.0, 2026-08). The existing gas water
@@ -3962,7 +3968,7 @@ At the headline UEF (3.88), `uniform` distribution, 100%-floor basis: electric c
 **$224.11/yr**, net savings **$136.27/yr**, central-install ($4,200) payback **30.8 yr**
 (20.5 yr low / 58.7 yr high install). At the more conservative 72.3%-share basis: net savings
 $101.80/yr, central payback 41.3 yr. At the 21.2%-share basis: net savings $32.32/yr, central
-payback 130.0 yr. The `midday` lean is far better on the 100% basis ($72.18/yr electric
+payback 130.0 yr. The `super_off_peak` lean is far better on the 100% basis ($72.18/yr electric
 increase, net $288.20/yr) and the `on_peak` lean erases savings entirely ($432.86/yr electric
 increase, net **negative**) — the same real-interval-billing sensitivity `heat_pump_
 conversion.py` already established for the furnace, now shown for the water heater too.
@@ -4073,14 +4079,22 @@ A THIRD reconciliation, not previously computed anywhere in this repo: `heat_pum
 conversion.py`'s own module docstring already documents that its day-level capacity cap
 excludes 59.81 therms/yr of HDD-regression heating signal it cannot pin to a specific real day
 (205 raw vs. 145.19 reconciled) — this script puts a DOLLAR figure on that gap for the first
-time (**$145.71/yr**, trailing-12 billed total minus this script's own floor savings minus
-`heat_pump_conversion.json`'s own heating savings), and states explicitly that it is credited
-to neither conversion step, matching `heat_pump_conversion.py`'s own conservative treatment of
-the underlying therms.
+time (**$173.89/yr**, trailing-12 billed total minus this script's own floor savings minus
+`heat_pump_conversion.json`'s own heating savings, PLUS the $28.18/yr `tier_interaction_
+overstatement_usd` from AC3/AC4 above). That addition matters (Finding 1, Codex review pass,
+issue #20 round 3): `floor_savings_usd` and `heating_savings_usd` are each an INDEPENDENTLY-
+computed marginal gas saving (the correct basis for "this step alone," per AC3's own
+docstring), so naively subtracting both from the billed total double-subtracts the same
+shared nonbaseline-tier dollars `tier_interaction_overstatement()` already prices — the
+identical correction `complete_transition_payback` applies to its own combined savings above.
+Adding the overstatement back turns the naive, double-subtracted residual into the TRUE
+unattributed gap (billed total minus the JOINT, not summed, gas savings from removing both).
+The corrected figure is credited to neither conversion step, matching `heat_pump_
+conversion.py`'s own conservative treatment of the underlying therms.
 
 **Reproduction.** `all_electric_endgame.json` is written directly to `data/` (repo-root
 discovery via `heat_pump_conversion.ROOT`, atomic tmp-then-replace, the same convention every
-other generator in this section uses); `test_all_electric_endgame.py` (42 cases) covers every
+other generator in this section uses); `test_all_electric_endgame.py` (45 cases) covers every
 pure function against synthetic fixtures, including several "tests must fail on the defect
 they name" positive controls — a synthetic corpus with a genuine $15 fixed charge the
 regression must actually recover; the Round 1 top-of-ladder fix's own hand-worked
@@ -4090,9 +4104,13 @@ closed; the round-1 gas-side tier-interaction correction; and the round-2 electr
 interaction correction (`joint_electric_cost_scenario()` / `electric_interaction_
 overstatement()`), backed by a hand-derivable synthetic-frame example where two loads that
 would each independently claim a household's entire real solar export (48.0 kWh across a
-10-day window) are shown to jointly claim only that same 48.0 kWh once, not double — every one
-of these verified (per that review's own instruction) by reverting each fix, confirming the
-relevant case fails, then re-applying it — plus real-archive cases (end-to-end `build()`,
+10-day window) are shown to jointly claim only that same 48.0 kWh once, not double; and the
+round-3 fixes above — the reconciliation's own `unattributed_usd` correction (checked
+end-to-end against the real archive: `naive + tier_interaction_overstatement_usd`) and a
+naming/mask check on `build_wh_load_series`'s sop-targeting scenario (`super_off_peak`, not
+`midday`, confirmed to place load only in `p == "sop"` intervals) — every one of these
+verified (per that review's own instruction) by reverting each fix, confirming the relevant
+case fails, then re-applying it — plus real-archive cases (end-to-end `build()`,
 byte-identical regeneration) gated behind `SkipCase`.
 
 ---
