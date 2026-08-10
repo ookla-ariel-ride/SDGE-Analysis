@@ -4689,6 +4689,18 @@ _tok("SPREAD_BATTERY_SEED_SAVING", kind="derived",
 
 
 # ---- the quiet-night floor, decomposed (section 13) ------------------------
+# A year of nights. A leap year's 366 clears it too, which is right: the gate
+# asks whether the corpus covers a year, not whether it is exactly 365 long.
+_FULL_YEAR_NIGHTS = 365
+# floor_kw_priced is round(median_kw, 4) in quiet_night_floor.py; half of the
+# last retained decimal is the whole slack that derivation introduces.
+_FOUR_DECIMAL_ROUNDING = 0.00005 + 1e-12
+
+
+def _covers_a_full_year(nights):
+    return nights >= _FULL_YEAR_NIGHTS
+
+
 def _night_floor():
     return _json("quiet_night_floor.json")["night_floor"]
 
@@ -4710,15 +4722,43 @@ def _night_floor_annual_kwh(ctx):
     """The floor's implied annual energy, on the artifact's OWN stated method.
 
     quiet_night_floor.py prices the measured floor as a CONSTANT across every
-    hour of the window (pricing.floor_kw_basis says so in as many words), so
-    the implied energy is that constant times the window's hours -- and the
-    hours come from the artifact's own night count, not from a hardcoded
-    8,760."""
+    hour of the year (pricing.floor_kw_basis says so in as many words), so the
+    implied energy is that constant times the hours it was applied to.
+
+    THE RATE IS THE ONE THE PRICING USED, NOT A PARALLEL READ OF THE SAME
+    FIELD. pricing.floor_kw_priced is literally round(night_floor.median_kw, 4)
+    in the generator -- ONE DERIVED FROM THE OTHER, so they are compared within
+    that rounding and the priced value is what this figure is built on. Reading
+    median_kw instead would have let the kWh figure and the $ figure beside it
+    drift apart silently if the generator ever priced something else.
+
+    AND THE /yr LABEL IS EARNED, NOT ASSUMED (issue #132, adversarial pass 3).
+    The previous version annualized as nights_total x 24 and called the result
+    "/yr". nights_total is only the count of dates present in the series, so a
+    partial or gappy corpus produced a SMALLER number still wearing an annual
+    unit -- understating the load and contradicting the 8,760-hour basis the
+    artifact declares. The arithmetic is unchanged where the corpus really does
+    cover a year (365 x 24 = 8,760, which is exactly the artifact's stated
+    basis); where it does not, the figure is reported over the window it
+    actually measures and says so, rather than being refused. A refusal here
+    would withhold the whole report over a label, which is the failure the
+    previous pass corrected."""
     nf = _night_floor()
-    kw, nights = _quantities("NIGHT_FLOOR_ANNUAL_KWH",
-                             "how much energy the always-on floor draws in a year",
-                             median_kw=nf["median_kw"], nights_total=nf["nights_total"])
-    return f"{kw * nights * 24:,.0f} kWh/yr"
+    priced = _json("quiet_night_floor.json")["pricing"]["floor_kw_priced"]
+    kw, nights, median = _quantities(
+        "NIGHT_FLOOR_ANNUAL_KWH", "how much energy the always-on floor draws",
+        floor_kw_priced=priced, nights_total=nf["nights_total"],
+        median_kw=nf["median_kw"])
+    _require_derived(
+        "NIGHT_FLOOR_ANNUAL_KWH", "which floor the annual energy is built on",
+        median, kw, _FOUR_DECIMAL_ROUNDING,
+        f"data/quiet_night_floor.json prices {kw!r} kW while night_floor.median_kw is "
+        f"{median!r} kW -- the energy figure and the cost figure beside it would be "
+        "built on different floors")
+    kwh = kw * nights * 24
+    return (f"{kwh:,.0f} kWh/yr" if _covers_a_full_year(nights)
+            else f"{kwh:,.0f} kWh across the {nights:,.0f} nights measured, "
+                 "which is less than a full year")
 
 
 def _night_floor_annual_cost(ctx):
@@ -4741,12 +4781,24 @@ def _night_floor_annual_cost(ctx):
     That the report carries both is a real, unresolved split, tracked in issue
     #140 because settling it means changing published figures; SEC9_TEASER's
     own comment traces it. This token names its own artifact so a reader can
-    see which of the three it is."""
+    see which of the three it is.
+
+    THE SAME COVERAGE GATE AS THE kWh FIGURE, for the same reason: both
+    pricing methods sum over the interval series the run was given, so on a
+    short corpus their totals are window totals and "/yr" would be a claim
+    neither of them makes."""
+    nf = _night_floor()
     pricing = _json("quiet_night_floor.json")["pricing"]
-    a, b = _amounts("NIGHT_FLOOR_ANNUAL_COST", "what the always-on floor costs in a year",
+    nights, = _quantities("NIGHT_FLOOR_ANNUAL_COST",
+                          "how many nights the pricing covers",
+                          nights_total=nf["nights_total"])
+    a, b = _amounts("NIGHT_FLOOR_ANNUAL_COST", "what the always-on floor costs",
                     price_map_usd=pricing["method_a_price_map"]["total_usd"],
                     rebill_usd=pricing["method_b_rebill"]["total_usd"])
-    return f"${a:,.0f}/yr by the price map · ${b:,.0f}/yr by a full re-bill"
+    if _covers_a_full_year(nights):
+        return f"${a:,.0f}/yr by the price map · ${b:,.0f}/yr by a full re-bill"
+    return (f"${a:,.0f} by the price map · ${b:,.0f} by a full re-bill, across the "
+            f"{nights:,.0f} nights measured, which is less than a full year")
 
 
 def _night_floor_seasonality(ctx):

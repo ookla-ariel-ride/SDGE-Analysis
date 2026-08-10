@@ -4624,6 +4624,71 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
 
 
 @case
+def case_a_partial_corpus_never_publishes_a_figure_wearing_an_annual_unit():
+    """ISSUE #132, ADVERSARIAL PASS 3. NIGHT_FLOOR_ANNUAL_KWH annualized as
+    median_kw x nights_total x 24 and labelled the result "/yr", while the
+    artifact declares its own basis as the floor "applied as a constant across
+    all 8,760 hours of the year". nights_total is only the count of dates
+    present in the series, so the two agree at 365 BY COINCIDENCE: a partial or
+    gappy corpus produced a smaller number still wearing an annual unit --
+    understating the load, and contradicting the basis the artifact states.
+
+    The same gate belongs on NIGHT_FLOOR_ANNUAL_COST, whose two pricing methods
+    both sum over whatever interval series the run was given.
+
+    Two properties, and the second is the one that would have caught the
+    original defect: a short corpus must not produce "/yr", and a complete one
+    must render exactly what it renders today."""
+    complete = {n: rt.resolve_token(n) for n in
+                ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST")}
+    assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
+    assert "/yr" in complete["NIGHT_FLOOR_ANNUAL_COST"], complete
+
+    def partial(nights):
+        def edit(doc):
+            doc["night_floor"]["nights_total"] = nights
+        return edit
+
+    short = {}
+    for nights in (90, 200, 364):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", partial(nights))):
+            for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST"):
+                text = _renders(token)
+                short[f"{token}@{nights}"] = text
+                assert "/yr" not in text, (
+                    f"{token} publishes an ANNUAL figure from a {nights}-night corpus, "
+                    f"which is less than a full year: {text}")
+                assert "less than a full year" in text and f"{nights:,}" in text, text
+                for label, pattern in _MALFORMED_RENDER:
+                    assert not pattern.search(text), f"{token} rendered {label}: {text}"
+
+    # A leap year's 366 is still a year -- the gate asks about coverage, not
+    # about an exact length.
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", partial(366))):
+        leap = _renders("NIGHT_FLOOR_ANNUAL_KWH")
+    assert leap.endswith("kWh/yr"), leap
+
+    # The rate is the one the pricing used: a floor_kw_priced that no longer
+    # matches median_kw beyond its own rounding means the kWh figure and the $
+    # figure would rest on different floors, and that IS a refusal.
+    def drifted(doc):
+        doc["pricing"]["floor_kw_priced"] = doc["night_floor"]["median_kw"] + 0.5
+
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", drifted)):
+        try:
+            rt.resolve_token("NIGHT_FLOOR_ANNUAL_KWH")
+            raise AssertionError("a drifted floor_kw_priced was accepted")
+        except SystemExit as e:
+            assert "NIGHT_FLOOR_ANNUAL_KWH" in str(e), e
+
+    after = {n: rt.resolve_token(n) for n in complete}
+    assert after == complete, f"the stubs leaked: {after} != {complete}"
+    return (f"a partial corpus renders its own window instead of an annual claim "
+            f"({len(short)} renders across 90/200/364 nights), a full year still reads "
+            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, and a drifted priced floor refuses")
+
+
+@case
 def case_the_malformed_render_patterns_flag_exactly_the_shapes_they_name():
     """ISSUE #132. The sweep's whole contract is _MALFORMED_RENDER, and nothing
     tested the patterns themselves -- a lookaround loosened by one character
