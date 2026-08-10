@@ -3769,8 +3769,32 @@ _MALFORMED_RENDER = (
     ("a doubled sigil", re.compile(r"\$\$|%%|¢¢|~~")),
     # A sigil with no number behind it, and a unit with no number in front:
     # the shapes a formula produces when its figure formats to nothing.
+    #
+    # THE "]" EXEMPTION, AND WHY IT IS CONDITIONAL. tou_spread.py writes its
+    # confidence intervals as "[1.68, 21.0]%/yr" and publishes that string in
+    # the not_determined_because reasons SPREAD_TREND_WINTER renders verbatim
+    # (issue #132) -- a percent sign with a fully-formed number behind it,
+    # which is the opposite of the shape this pattern hunts.
+    #
+    # The first version of that exemption was `(?<![\d)\]])%`, which exempts a
+    # BRACKET rather than a NUMBER: it let "[]%" through -- an interval that
+    # formatted to nothing, wearing a percent sign -- which is precisely the
+    # class this pattern exists for. Reviewer catch on issue #132; latent
+    # rather than live (an empty ci95 list sends both spread tokens down the
+    # not-determined branch, which prints no interval at all), but a guard that
+    # covers less than it claims is the failure this project keeps paying for.
+    #
+    # So the exemption is two fixed-width lookbehinds and requires a DIGIT
+    # immediately before the bracket: "21.0]%" passes, "[]%" and "[nan]%" are
+    # flagged, and "%" after a space or a letter is untouched. "(1.3)%" still
+    # passes on the first lookbehind, which has exempted ")" since round 5.
+    #
+    # The cents pattern is left exactly as it was BEFORE issue #132. Nothing
+    # renders "]¢", so widening it bought no render and only ever cost
+    # coverage; the smallest correct change is to give that back rather than
+    # to grant a narrower version of an exemption no token uses.
     ("an empty numeric field",
-     re.compile(r"\$(?![\d,])|(?<![\d)])%|(?<![\d)])¢")),
+     re.compile(r"\$(?![\d,])|(?<![\d)])(?<!\d\])%|(?<![\d)])¢")),
 )
 
 
@@ -4382,6 +4406,184 @@ def case_the_sweep_fails_when_it_covers_an_artifact_with_nothing():
             f"(ANNUAL_PRODUCTION_KWH: {real_probes} probes), and a token reading an "
             f"artifact that contributes no poisonable field is a named coverage FAILURE "
             f"-- reproduced twice, on the round-5 filter and on a blinded column")
+
+
+def _stub_for(artifact, edit):
+    """A drop-in rt._json that hands out an EDITED DEEP COPY of one artifact
+    and the real document for every other, so a stub cannot leak into the
+    module's cache or into a later case."""
+    real = rt._json
+
+    def stubbed(name):
+        if name != artifact:
+            return real(name)
+        doc = copy.deepcopy(real(name))
+        edit(doc)
+        return doc
+
+    return stubbed
+
+
+def _renders(token):
+    """resolve_token, with a REFUSAL turned into this case's own failure.
+
+    resolve_token signals refusal with SystemExit, which is a BaseException:
+    left to propagate it would end the whole run instead of failing the case
+    that provoked it, and "the suite stopped" reads nothing like "this token
+    refuses a household that merely differs", which is the defect being
+    tested."""
+    try:
+        return rt.resolve_token(token)
+    except SystemExit as e:
+        raise AssertionError(
+            f"{token} REFUSED an artifact state that is simply the other reading, "
+            f"instead of rendering the sentence written for it: {e}")
+
+
+@case
+def case_a_household_whose_artifacts_read_the_other_way_still_gets_its_sentences():
+    """ISSUE #132. Round one's defect, in the shape issue #132's own tokens
+    could take: four of them BRANCH on what the artifacts say, and this
+    household's artifacts only ever select one branch each. An array that
+    gained instead of declining, a cadence model whose soiling scenarios pick
+    different months, a spread trend that survives its structural-break check,
+    a battery re-run that produces a real payback -- every one of those is an
+    ordinary household with an ordinary sentence to print, and none of them may
+    reach a refusal or a branch written for the opposite reading.
+
+    The committed artifacts are never edited; each stub is a deep copy."""
+    got = {}
+
+    # 1. An array that GAINED, and one whose three estimators disagree on the
+    #    direction -- neither is a refusal, and neither may print "decline".
+    def gained(doc):
+        d = doc["degradation"]
+        d["ols_pct_per_yr"], d["cagr_pct_per_yr"], d["theil_sen_pct_per_yr"] = 0.4, 1.1, 0.9
+
+    def split(doc):
+        d = doc["degradation"]
+        d["ols_pct_per_yr"], d["cagr_pct_per_yr"], d["theil_sen_pct_per_yr"] = -0.6, 0.2, -0.1
+
+    for label, edit in (("gain", gained), ("split", split)):
+        with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", edit)):
+            got[f"degradation_{label}"] = _renders("DEGRADATION_NAIVE_RANGE")
+    assert "of gain" in got["degradation_gain"], got["degradation_gain"]
+    assert "decline" not in got["degradation_gain"], got["degradation_gain"]
+    assert "disagree on the direction" in got["degradation_split"], got["degradation_split"]
+
+    # 2. Soiling scenarios that pick DIFFERENT best months: every scenario's
+    #    own answer is named, rather than one of them being published as "the"
+    #    month or the disagreement being refused.
+    def months_differ(doc):
+        for i, key in enumerate(sorted(doc["cleaning"], key=float)):
+            doc["cleaning"][key]["best1"] = ["Jun 2", "Jul 17", "Aug 30"][i % 3]
+
+    with _patched(rt, "_json", _stub_for("extra_results.json", months_differ)):
+        got["cleaning"] = _renders("CLEANING_BEST_MONTH")
+    for month in ("Jun 2", "Jul 17", "Aug 30"):
+        assert month in got["cleaning"], got["cleaning"]
+    assert "every soiling rate" not in got["cleaning"], got["cleaning"]
+
+    # 3. A spread trend that SURVIVES, and a battery re-run that produces a
+    #    real payback and NPV on it.
+    def determined(doc):
+        for season in ("summer", "winter"):
+            doc["delivery_spread"][season]["verdict"] = "escalating"
+            doc["delivery_spread"][season]["reportable"] = True
+        for season, npv in (("summer", 4200), ("winter", -900)):
+            doc["battery"]["per_period"][season] = {
+                "verdict": "escalating", "payback_yr": 5.4, "npv10": npv}
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", determined)):
+        got["summer"] = _renders("SPREAD_TREND_SUMMER")
+        got["battery"] = _renders("BATTERY_ON_MEASURED_SPREAD")
+    assert "%/yr" in got["summer"] and "95% CI" in got["summer"], got["summer"]
+    assert "not determined" not in got["summer"], got["summer"]
+    assert "5.4 yr payback" in got["battery"], got["battery"]
+    assert "+$4,200" in got["battery"] and "-$900" in got["battery"], got["battery"]
+
+    # 4. And an instrument reading ABOVE the inverter nameplate says so rather
+    #    than printing a negative headroom as though it were clearance.
+    def over_nameplate(doc):
+        doc["gross_reconstruction"]["pv_ac_ceiling"]["corroboration"][0][
+            "below_nameplate_by_kw"] = -0.4
+
+    with _patched(rt, "_json", _stub_for("service_headroom.json", over_nameplate)):
+        got["headroom"] = _renders("PV_PEAK_HEADROOM")
+    assert "ABOVE the inverter nameplate" in got["headroom"], got["headroom"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return ("the alternate reading of every branching issue-#132 token renders a real "
+            f"sentence rather than a refusal: {sorted(got)}")
+
+
+@case
+def case_the_malformed_render_patterns_flag_exactly_the_shapes_they_name():
+    """ISSUE #132. The sweep's whole contract is _MALFORMED_RENDER, and nothing
+    tested the patterns themselves -- a lookaround loosened by one character
+    would disable the guard while every case above still reported PASS, which
+    is the shape six review rounds have been finding.
+
+    So the patterns are pinned from both sides. The first list is what must
+    still be caught, one entry per pattern including the shapes an earlier
+    round actually shipped ("-$nan", "$-1,234", a bare "$" before a word). The
+    second is what must NOT be caught, and it is short on purpose: the only
+    entries are ones a real token renders, and the bracket-then-percent one is
+    the exemption issue #132 added when SPREAD_TREND_WINTER began rendering
+    tou_spread.py's own confidence intervals ("[1.68, 21.0]%/yr"). Written out here
+    the exemption is a fact this case asserts rather than a lookbehind nobody
+    reads."""
+    def flagged(text):
+        return [label for label, pattern in _MALFORMED_RENDER if pattern.search(text)]
+
+    must_flag = {
+        "$nan": "a non-finite numeral",
+        "-$nan": "a non-finite numeral",
+        "$inf/yr": "a non-finite numeral",
+        "1.2 kW is infinity": "a non-finite numeral",
+        "$-1,234": "a minus inside a sigil",
+        "+$-3,000": "a minus inside a sigil",
+        "$$4,200": "a doubled sigil",
+        "12%%": "a doubled sigil",
+        "8.4¢¢": "a doubled sigil",
+        "~~$500": "a doubled sigil",
+        "costs $ a year": "an empty numeric field",
+        "a share of %": "an empty numeric field",
+        "stored energy costs ¢": "an empty numeric field",
+        # The bracket exemption must require a NUMBER, not merely a bracket:
+        # an interval that formatted to nothing is the exact shape this
+        # pattern exists for, and the first version of the exemption let all
+        # three of these through (reviewer catch, issue #132).
+        "95% CI []%/yr": "an empty numeric field",
+        "[ ]%/yr": "an empty numeric field",
+        "[nan]%/yr": "an empty numeric field",
+        "[]¢": "an empty numeric field",
+    }
+    for text, label in must_flag.items():
+        assert label in flagged(text), (
+            f"{text!r} must be flagged as {label!r}; the patterns matched {flagged(text)}")
+
+    must_not_flag = (
+        # The real renders of tokens this repo publishes today.
+        "not determined — the post-break slope is significant on its own interval "
+        "([1.68, 21.0]%/yr) but not once that interval is widened",
+        "$4,200 installed (quoted range $2,800–8,000)",
+        "-$500/yr",
+        "45.2 kWh/day",
+        "97% of the inverter AC ceiling",
+        "~8.4¢",
+        "the information in the infrastructure is fine",
+        "carried by a single step of $0.04844/kWh on 2025-06-14 (21.4% of the prior level)",
+    )
+    for text in must_not_flag:
+        assert not flagged(text), f"{text!r} is a legitimate render but was flagged: " \
+                                  f"{flagged(text)}"
+    return (f"all {len(_MALFORMED_RENDER)} malformed-render patterns flag the "
+            f"{len(must_flag)} shapes they name and none of the {len(must_not_flag)} "
+            "legitimate renders, including a bracketed confidence interval's percent sign")
 
 
 # --- the ten round-5 findings, one regression case each ---------------------

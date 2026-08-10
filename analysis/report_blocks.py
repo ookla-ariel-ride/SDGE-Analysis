@@ -37,13 +37,19 @@ CLASSIFICATION
       DATA_SOURCES_SUMMARY, DAYBAND_SEASON_LABEL, SEC9_TEASER, SEC12_TEASER,
       SEC13_TEASER, DATA_SOURCES_DETAIL all have this shape) -- these
       resolve to "" (the comment is simply dropped).
-    - "human" when satisfying it truthfully needs a fact this repo's
-      pipeline has never measured: a hardware price quote, incentive/rebate
-      program status, or a genuinely new statistic (a measured peak, a
-      regression coefficient, a degradation rate) with no TOKENS entry
-      anywhere -- inventing one would violate CLAUDE.md section 0. This
-      also covers every block that names a KNOWN_GAPS token by cheatsheet
-      / report_tokens.py's own admission it cannot source.
+    - "human" when satisfying it truthfully needs a fact THIS REPO DOES NOT
+      HOLD -- not in data/, not in private/household.yaml, not in
+      analysis/*.py: a hardware price quote, an incentive program's current
+      status. Inventing one would violate CLAUDE.md section 0.
+
+      THE TEST IS THE EVIDENCE, NOT THE TOKEN INVENTORY (issue #132). "No
+      report_tokens.py entry" is NOT a reason to mark a block human, and
+      eleven blocks were wrongly human for exactly that reason: a committed
+      artifact answered each of them and only the TOKENS entry carrying the
+      answer was missing, which is a thing to write rather than a blocker.
+      Every human block therefore also declares a checkable blocker in
+      HUMAN_BLOCKERS -- a KNOWN_GAPS token, or a named outside fact -- and
+      test_report_blocks.py fails the moment one of those stops holding.
     - "prose" otherwise: the block can be answered using only tokens
       already in report_tokens.TOKENS plus qualitative, non-numeric
       language -- the numeral guard in generate_report.py is what actually
@@ -176,6 +182,21 @@ def validate_classification(html=None):
     if missing_reasons:
         raise SystemExit(f"report_blocks: human-classified block(s) with no HUMAN_REASONS "
                           f"entry: {sorted(missing_reasons)}")
+    # A prose reason a reader can nod at is not a justification a test can
+    # check (issue #132). Every human block also declares WHAT blocks it, in
+    # exactly one of the two checkable forms.
+    missing_blockers = {bid for bid, k in CLASSIFICATION.items()
+                         if k == "human" and bid not in HUMAN_BLOCKERS}
+    if missing_blockers:
+        raise SystemExit(f"report_blocks: human-classified block(s) with no HUMAN_BLOCKERS "
+                          f"entry naming a checkable blocker: {sorted(missing_blockers)}")
+    bad_blockers = {bid: sorted(b) for bid, b in HUMAN_BLOCKERS.items()
+                     if bool(b.get("gap_tokens")) == bool(b.get("outside_fact"))
+                     or set(b) - {"gap_tokens", "outside_fact"}}
+    if bad_blockers:
+        raise SystemExit(
+            "report_blocks: every HUMAN_BLOCKERS entry declares exactly one of "
+            f"gap_tokens / outside_fact and nothing else; these do not: {bad_blockers}")
     missing_builders = {bid for bid, k in CLASSIFICATION.items()
                          if k == "data" and bid not in DATA_BUILDERS}
     if missing_builders:
@@ -204,8 +225,9 @@ CLASSIFICATION = {
     # --- s2 Your solar system today --------------------------------------
     "s2#1": "prose",   # gateway/metering configuration -- DATA_SOURCES_SUMMARY/DETAIL cover it
     "s2#2": "prose",   # monitoring platforms in use
-    "s2#3": "human",   # daily production range (mean/best/worst) -- no TOKENS entry
-    "s2#4": "human",   # degradation / laggard-panel health signals -- no TOKENS entry
+    "s2#3": "prose",   # daily range -- DAILY_PRODUCTION_MEAN/BEST/WORST, enphase_daily_production.csv
+    "s2#4": "prose",   # output health -- DEGRADATION_NAIVE_RANGE; the per-panel ask is retired
+                        # from the TODO because nothing committed records per-module output
     "s2#5": "prose",   # key architectural fact -- SOLAR_COVERAGE_PCT/SELF_CONSUMED_SHARE etc.
 
     # --- s3 Rate plan comparison ------------------------------------------
@@ -253,10 +275,13 @@ CLASSIFICATION = {
 
     # --- s9 Deeper analyses ------------------------------------------
     "s9#1": "data",    # teaser -- already rendered by {{SEC9_TEASER}}
-    "s9#2": "human",   # array degradation %/yr bracket -- no TOKENS entry
-    "s9#3": "human",   # inverter clipping vs measured peak kW -- no TOKENS entry
-    "s9#4": "human",   # weather-normalized cooling regression -- no TOKENS entry
-    "s9#5": "human",   # EV report card (sessions/yr, kWh/yr, compliance %) -- no TOKENS entry
+    "s9#2": "prose",   # degradation -- ARRAY_EFFICIENCY_SERIES / DEGRADATION_NAIVE_RANGE /
+                        # DEGRADATION_WEATHER_CAVEAT, gross_import_decomposition.json
+    "s9#3": "prose",   # clipping -- PV_PEAK_OBSERVED / PV_PEAK_HEADROOM /
+                        # PEAK_POWER_MULTIYEAR, service_headroom.json + the 2024 peaks CSV
+    "s9#4": "prose",   # cooling regression -- the seven weather_results.json tokens
+    "s9#5": "prose",   # EV report card -- EV_SESSION_COUNT/ANNUAL_KWH/AVG_SESSION_KWH/
+                        # WINDOW_DECOMPOSITION/SOP_COMPLIANCE_PCT, behavior_rebuild.json
     "s9#6": "prose",   # wildcard plan -- WILDCARD_PLAN + BEST_PLAN tokens, qualitative verdict
     "s9#7": "prose",   # phantom honesty note, qualitative
 
@@ -264,7 +289,10 @@ CLASSIFICATION = {
     "s10#1": "prose",  # bill facts -- narrative rows, not a uniform artifact loop
     "s10#2": "prose",  # ACTUAL_ANNUAL_BILL / MODELED_ANNUAL_AT_CURRENT_RATES tokens exist
     "s10#3": "prose",  # ACTUAL_ANNUAL_GAS_BILL token exists
-    "s10#4": "human",  # electrification math -- exactly ELECTRIFICATION_VERDICT_SHORT's gap
+    "s10#4": "prose",  # electrification math -- all_electric_endgame.json +
+                        # heat_pump_conversion.json now cost BOTH appliances. The section's
+                        # own {{ELECTRIFICATION_VERDICT_SHORT}} HEADING token is still a
+                        # live gap needing a human override; the block below it is not.
     "s10#5": "prose",  # gas fixed vs volumetric, qualitative
 
     # --- s11 Lifetime value --------------------------------------------
@@ -278,7 +306,8 @@ CLASSIFICATION = {
     "s12#2": "data",   # one <tr> per control year -- cleaning_study_daily.csv
     "s12#3": "prose",  # diff-in-diff result -- CLEANED_RATIO/CLEANING_EFFECT_PCT tokens
     "s12#4": "prose",  # soiling reconciliation -- SOILING_RATE_RANGE/SOILING_SCRIPT tokens
-    "s12#5": "human",  # optimal cadence/month + shop-below price threshold -- no TOKENS entry
+    "s12#5": "prose",  # cadence -- CLEANING_BEST_MONTH / CLEANING_SINGLE_VALUE_RANGE /
+                        # CLEANING_SECOND_MARGINAL_RANGE, extra_results.json:cleaning
 
     # --- s13 Carbon, NEM, escalation & price map -------------------------
     "s13#1": "data",   # teaser -- already rendered by {{SEC13_TEASER}}
@@ -288,10 +317,13 @@ CLASSIFICATION = {
     "s13#5": "prose",  # base-case assumptions, qualitative
     "s13#6": "prose",  # ladder-vs-spread framing -- ESCALATION_HISTORICAL token
     "s13#7": "prose",  # spread chart caption, qualitative
-    "s13#8": "human",  # per-season escalation trend/CI/r^2 -- a new regression, no token
-    "s13#9": "human",  # battery re-run on the measured spread -- a new payback/NPV, no token
+    "s13#8": "prose",  # per-season spread trend -- SPREAD_TREND_SUMMER/WINTER carry
+                        # tou_spread.json's own verdict, reason and corpus, including
+                        # "not determined", which is the answer on this corpus
+    "s13#9": "prose",  # battery on the measured spread -- BATTERY_ON_MEASURED_SPREAD /
+                        # SPREAD_BATTERY_SEED_SAVING, tou_spread.json:battery
     "s13#10": "prose", # scope caveat, qualitative
-    "s13#11": "human", # phantom baseload decomposition (median/p10/p90) -- no TOKENS entry
+    "s13#11": "prose", # night floor -- the seven NIGHT_FLOOR_* tokens, quiet_night_floor.json
     "s13#12": "data",  # one <tr> per season x TOU-period -- analysis/rates.py
     "s13#13": "prose", # rate-table provenance, qualitative
 
@@ -303,45 +335,76 @@ CLASSIFICATION = {
     "s14#15": "data",  # data sources full inventory -- already rendered by {{DATA_SOURCES_DETAIL}}
 }
 
+# ---------------------------------------------------------------------------
+# WHY EACH REMAINING BLOCK IS HUMAN -- AND THE TEST THAT IS ACTUALLY BEING
+# APPLIED (issue #132).
+#
+# Eleven of the fourteen entries this map used to hold are gone, because they
+# were never true. Eight of them justified themselves with the words "no
+# report_tokens.py entry" -- a test of THIS PIPELINE'S TOKEN INVENTORY, not of
+# the evidence. A committed artifact answered every one of those eight
+# questions; what was missing was a TOKENS entry to carry the answer, which is
+# a thing to write, not a reason to block. Stated that way the map could only
+# rot: every generator added after it was written left a stale "human" behind
+# it, and nothing in the test suite could tell the difference between "no
+# evidence exists" and "nobody wired the evidence up".
+#
+# The test each surviving entry states, and which the AC5 case in
+# test_report_blocks.py CHECKS rather than reads:
+#
+#   THE FACT IS NOT IN THIS REPO AT ALL. Not in data/, not in
+#   private/household.yaml, not in analysis/*.py. Every such block names its
+#   blocker in HUMAN_BLOCKERS below -- either a report_tokens.KNOWN_GAPS token
+#   (checkable: if the token leaves KNOWN_GAPS, the justification is void and
+#   the case fails naming this block) or an outside fact this repo does not
+#   collect (a price quote), named explicitly so the exemption is written down
+#   rather than inferred from a token that happens to resolve.
+#
+# Reasons here name the ARTIFACT or the GAP TOKEN whose absence blocks the
+# block. "No token exists" is not a reason and must not reappear.
+# ---------------------------------------------------------------------------
 HUMAN_REASONS = {
-    "s2#3": "daily production range (mean/best/worst) has no report_tokens.py entry -- "
-            "a new measured statistic, not a token substitution",
-    "s2#4": "degradation / laggard-panel health-check results have no report_tokens.py "
-            "entry -- asserting a specific check outcome with no source would invent a fact",
-    "s6#1": "references {{INCENTIVE_STATUS}}, a KNOWN_GAPS token in report_tokens.py: "
-            "federal ITC / CA SGIP program status is a live research fact this pipeline "
-            "has never measured (issue #39's own stated default: incentive status is human)",
-    "s6#8": "asks the reader to 'get quotes' -- a hardware price quote (issue #39's own "
-            "stated default: hardware prices as quoted are human)",
-    "s8#1": "mixes MARGINAL_EXPORT_VALUE (a KNOWN_GAPS token), repowering health evidence, "
-            "and a measured worst-case peak kW vs the AC ceiling -- none of the three has a "
-            "report_tokens.py entry",
-    "s9#2": "a multi-year degradation %/yr bracket is a new statistic with no "
-            "report_tokens.py entry",
-    "s9#3": "the measured worst-case peak power (to compare against AC_CEILING_KW) has no "
-            "report_tokens.py entry -- only the ceiling itself is tokenized, not the "
-            "measured peak",
-    "s9#4": "a weather-normalized cooling regression (base load, kWh/CDD, $ sensitivity) "
-            "is a new statistical result with no report_tokens.py entry",
-    "s9#5": "the EV report card asks for sessions/yr, kWh/yr, and compliance % broken out "
-            "by window; only the two compliance-savings dollar figures are tokenized "
-            "(EV_FIX_SAVINGS_100/80) -- the session counts and percentages have no entry",
-    "s10#4": "this is exactly report_tokens.py's ELECTRIFICATION_VERDICT_SHORT gap: "
-             "heat-pump space heating has a committed install-cost basis since issue "
-             "#1 (data/heat_pump_conversion.json), HPWH still does not, so an "
-             "appliance-by-appliance ROI verdict needing both still cannot be made "
-             "honestly from what is committed",
-    "s12#5": "an optimal single-cleaning month and a shop-below price threshold are new "
-             "figures with no report_tokens.py entry",
-    "s13#8": "a per-season escalation trend (%/yr, 95% CI, r-squared, rate-level count) is "
-             "a new regression result computed on the fly, not backed by a committed token "
-             "-- and tou_spread.py's own stated rule allows the honest answer to be 'not "
-             "determined', which a token substitution cannot express",
-    "s13#9": "a battery re-run on the MEASURED spread (vs the uniform escalation ladder) "
-             "is a new payback/NPV figure with no report_tokens.py entry",
-    "s13#11": "phantom baseload's median/p10/p90 kW and kWh/yr and $/yr breakdown has no "
-              "standalone report_tokens.py entry (only bundled inside SEC9_TEASER's fixed "
-              "sentence, not exposed as reusable tokens)",
+    "s6#1": "blocked on {{INCENTIVE_STATUS}}, a report_tokens.KNOWN_GAPS token. The "
+            "CALIFORNIA side of this question is now committed research -- "
+            "data/heat_pump_conversion.json:incentives dates SGIP's ratepayer-budget "
+            "close, and data/dsgs_vpp_backtest.json:finding_2026_enrollment_eligibility "
+            "reads the CEC's own DSGS guidelines -- so the blocker is narrower than it "
+            "was: no committed artifact records the CURRENT FEDERAL residential storage "
+            "credit's status, and an incentive figure without an as-of date is not "
+            "something this report may publish",
+    "s6#8": "blocked on an INSTALLED PRICE QUOTE and the cross-ecosystem cost/warranty "
+            "deltas that go with it. No data/*.json or *.csv in this repo carries a "
+            "quoted installed price for any battery -- data/battery_sim.json prices "
+            "capacity and savings, never a bid -- and a quote is a fact about a local "
+            "market on a date, which this pipeline has no way to measure",
+    "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}} and {{MARGINAL_EXPORT_VALUE}}, both "
+            "report_tokens.KNOWN_GAPS tokens: no committed generator computes a "
+            "marginal-panel-expansion payback or the marginal new-panel kWh's export "
+            "value, and the figures the hand-authored report quoted for them come from "
+            "unarchived workpaper arithmetic. (The clipping half of this block's ask IS "
+            "artifact-backed now -- see s9#3 -- but the two expansion figures the block "
+            "leads with are not.)",
+}
+
+# ---------------------------------------------------------------------------
+# THE MACHINE-CHECKABLE HALF OF EACH HUMAN REASON. Prose above for a reader;
+# this for the AC5 case, which can only check a fact.
+#
+# gap_tokens : report_tokens.KNOWN_GAPS token names whose absence blocks the
+#              block. Checked three ways: still declared, still kind="gap",
+#              and actually inside this block's own scope -- so a justification
+#              cannot cite a gap belonging to some other section.
+# outside_fact: for a block blocked by something this repo does not collect at
+#              all. There is no token to fail, so the case cannot detect the
+#              justification going stale, and the exemption is written down
+#              here with what would end it rather than inferred from silence.
+# ---------------------------------------------------------------------------
+HUMAN_BLOCKERS = {
+    "s6#1": {"gap_tokens": ("INCENTIVE_STATUS",)},
+    "s6#8": {"outside_fact": "an installed price quote for a specific battery from a "
+                             "specific installer on a specific date; ends when a "
+                             "committed artifact records one"},
+    "s8#1": {"gap_tokens": ("EXPANSION_PAYBACK_YEARS", "MARGINAL_EXPORT_VALUE")},
 }
 
 # Three of report_tokens.py's five KNOWN_GAPS tokens appear in LIVE template

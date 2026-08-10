@@ -310,8 +310,8 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <ul>
 <li><b>Production:</b> {{ANNUAL_PRODUCTION_KWH}} kWh/yr (primary meter; other sources agree within {{PRODUCTION_AGREEMENT_PCT}})</li>
 <li><b>Specific yield:</b> {{SPECIFIC_YIELD}} kWh/kW/yr · capacity factor {{CAPACITY_FACTOR}}</li>
-<li><!-- TODO: daily range (mean / best / worst) --></li>
-<li><!-- TODO: health signals — degradation/laggard-panel checks --></li>
+<li><!-- TODO: daily range — mean ({{DAILY_PRODUCTION_MEAN}}), best ({{DAILY_PRODUCTION_BEST}}), worst ({{DAILY_PRODUCTION_WORST}}). --></li>
+<li><!-- TODO: health signal — the naive multi-year output trend ({{DEGRADATION_NAIVE_RANGE}}), and one clause saying the weather-corrected rate is not determined, with §9 named as where the workup lives. No per-panel claim: nothing committed records per-module output, so a laggard-panel check has no evidence here and must not be asserted either way. --></li>
 <li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's {{ANNUAL_LOAD_KWH}} kWh/yr load — {{SELF_CONSUMED_SHARE}} self-consumed, {{EXPORTED_SHARE}} exported</li>
 </ul>
 </div>
@@ -362,7 +362,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s6">6 · Battery hardware — capability and cost</h2>
 <p class="verdict">{{S6_VERDICT}}</p>
-<p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}). --></p>
+<p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}, a KNOWN_GAPS token: the CA program side is committed research, the federal residential storage credit's current status is not, so this block needs a human-supplied, dated answer). --></p>
 <div class="grid2">
 <div>
 <h3>Arbitrage value (current behavior)</h3>
@@ -491,16 +491,16 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p>Questions that earned their own workups; each feeds a number used elsewhere in the report.</p>
 
 <h3>Array health: multi-year degradation trend</h3>
-<p><!-- TODO: size-normalized yearly efficiency series, weather caveats, failure-signature check, verdict with a %/yr bracket. --></p>
+<p><!-- TODO: the size-normalized yearly efficiency series ({{ARRAY_EFFICIENCY_SERIES}}), the naive trend it implies ({{DEGRADATION_NAIVE_RANGE}}), and the weather/soiling caveat that stops the naive trend being a degradation rate ({{DEGRADATION_WEATHER_CAVEAT}}). Close on the verdict the artifact itself publishes: the true, weather-corrected rate is NOT DETERMINED and is not bounded either, because no daily production or weather record exists for the earlier years to separate soiling and cloud cover from panel ageing. Say what would settle it (a multi-year daily production plus rainfall record, or a measured before/after gain at each cleaning). Do not narrow that to a tighter bracket. --></p>
 
 <h3>Inverter clipping (high-resolution data)</h3>
-<p><!-- TODO: cross-reference the §8 finding; peak power vs AC ceiling on the worst-case day. --></p>
+<p><!-- TODO: cross-reference the §8 finding; the largest output each independent instrument recorded ({{PV_PEAK_OBSERVED}}), how close the closest of them came to the inverter nameplate ({{PV_PEAK_HEADROOM}}), and the closest approach anywhere in the committed record ({{PEAK_POWER_MULTIYEAR}}) against the {{AC_CEILING_KW}} kW AC ceiling. --></p>
 
 <h3>Weather-normalized cooling</h3>
-<p><!-- TODO: regression of daily non-EV load vs local temperature — base load, kWh per cooling-degree-day, annual A/C kWh, value of pre-cooling, $ sensitivity per +100 CDD. --></p>
+<p><!-- TODO: regression of daily non-EV load vs local temperature — base load ({{COOLING_BASE_LOAD}}), slope ({{COOLING_KWH_PER_CDD}}, r² {{COOLING_REGRESSION_R2}}), annual A/C load ({{ANNUAL_COOLING_KWH}}), the load sensitivity to 100 extra cooling-degree-days ({{COOLING_SENSITIVITY_PER_100_CDD}}), and the modeled value of pre-cooling ({{PRECOOL_SHIFT_VALUE}}) and of a setpoint change ({{SETPOINT_VALUE}}). --></p>
 
 <h3>EV charging report card</h3>
-<p><!-- TODO: session-level results — sessions/yr, kWh/yr, current compliance %, where the straggler energy lands, savings at 100%/80% compliance, decomposition by window, and the free fix. --></p>
+<p><!-- TODO: session-level results — sessions ({{EV_SESSION_COUNT}}) and energy ({{EV_ANNUAL_KWH}}, averaging {{EV_AVG_SESSION_KWH}} a session), where that energy lands by window ({{EV_WINDOW_DECOMPOSITION}}), the share already charging in the cheap window ({{EV_SOP_COMPLIANCE_PCT}}), and the free fix — what full compliance is worth ({{EV_FIX_SAVINGS_100}}) versus a realistic {{EV_FIX_SAVINGS_80}}. --></p>
 
 <h3>Plan wildcard: can {{WILDCARD_PLAN}} + a battery beat {{BEST_PLAN}}?</h3>
 <p><!-- TODO: the adversarial cross-check — best-case modeling for the wildcard plan and the resulting verdict. --></p>
@@ -526,7 +526,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p><!-- TODO: annual therms, seasonal shape, heating/non-heating split, actual annual gas $ ({{ACTUAL_ANNUAL_GAS_BILL}}), combined household energy total. --></p>
 
 <h3>Should you electrify? {{ELECTRIFICATION_VERDICT_SHORT}}</h3>
-<p><!-- TODO: the appliance-by-appliance electrification math (water heater first, space heating later), rebates to check, replace-on-failure guidance. --></p>
+<p><!-- TODO: the appliance-by-appliance electrification math — the cost-effective order ({{ELECTRIFICATION_SEQUENCE}}); the water heater at {{HPWH_INSTALL_COST}} for {{HPWH_NET_SAVINGS}}, a {{HPWH_PAYBACK}} payback; the furnace at {{HEAT_PUMP_INSTALL_COST}} for a {{HEAT_PUMP_PAYBACK}} payback; both together, {{ELECTRIFICATION_COMBINED_PAYBACK}}. State what incentives are actually claimable and when that was checked ({{ELECTRIFICATION_INCENTIVES}}). Close on replace-on-failure: paybacks this long past equipment life mean the decision belongs at the moment the existing appliance dies, not before. --></p>
 <p><!-- TODO: what the gas bills show about fixed vs volumetric charges and what that means for eventually closing the gas account. --></p>
 
 <h2 id="s11">11 · Lifetime value: {{S11_VERDICT_SHORT}}</h2>
@@ -558,7 +558,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <h3>How fast do the panels re-soil? <span class="pill r">estimated</span></h3>
 <p><!-- TODO: the independent soiling study vs the cleaning-implied rate; reconcile or bracket honestly ({{SOILING_RATE_RANGE}}); cite {{SOILING_SCRIPT}}. --></p>
 <h3>Best cadence and month — and a caution about today's rates <span class="pill y">modeled</span></h3>
-<p><!-- TODO: optimal single-cleaning month, whether a second cleaning pencils, and how current TOU midday value changes the verdict; a shop-below price threshold. --></p>
+<p><!-- TODO: the optimal single-cleaning month ({{CLEANING_BEST_MONTH}}), what that cleaning is worth ({{CLEANING_SINGLE_VALUE_RANGE}}), and whether a second one pencils ({{CLEANING_SECOND_MARGINAL_RANGE}}). Turn the first of those into the shop-below threshold against what was actually paid ({{CLEANING_PRICE}}). Caveat the verdict: the cadence model prices recovered kWh at a blended per-kWh value above what a marginal midday kWh earns on today's tariff ({{SUPER_OFF_PEAK_RATE}}), so treat these as an upper bound — see TECHNICAL.md §3.11. --></p>
 </details>
 
 <details class="sec" id="sec13" open>
@@ -600,17 +600,21 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
           apparently solid winter trend into "not determined".
      Expect "not determined" to be the honest answer on a two-year corpus, and say what would
      settle it: more rate changes, a breakpoint fixed in advance from published tariff dates, or a
-     longer pre-break window. --></p>
-<p><!-- TODO: battery re-run on the MEASURED spread vs the uniform ladder above — payback years
-     and 10-yr NPV, and the delta against each rung, so the reader can see which rungs mis-state
-     the battery. Tag the re-run figures modeled. --></p>
+     longer pre-break window. The per-season results, verdict and reason and corpus together, are
+     {{SPREAD_TREND_SUMMER}} and {{SPREAD_TREND_WINTER}}. --></p>
+<p><!-- TODO: battery re-run on the MEASURED spread vs the uniform ladder above — the per-season
+     result ({{BATTERY_ON_MEASURED_SPREAD}}), run from the same year-one marginal saving the ladder
+     is seeded with ({{SPREAD_BATTERY_SEED_SAVING}}). Where the re-run is not determined, say so and
+     say what that costs the reader: the ladder's own rungs ({{PAYBACK_AT_HISTORICAL_ESCALATION}},
+     {{NPV_AT_HISTORICAL_ESCALATION}}) stay an assumption about level escalation, not a measurement
+     of the spread the battery actually sells. Tag the re-run figures modeled. --></p>
 <p class="small"><!-- TODO: scope caveat. If the corpus cannot price one component of the rate
      (e.g. generation on community-choice dates, where statements print the utility's bundled
      comparison rather than the charged rate), say which component the spread covers, that the
      all-in spread is therefore not determined, and exactly what data would settle it. Cite
      analysis/tou_spread.py -> data/tou_spread.json and the settlement-zero exclusion rule. --></p>
 <h3>Phantom baseload — decomposed <span class="pill g">measured</span></h3>
-<p><!-- TODO: EV-free-night floor statistics (median/p10/p90 kW, implied kWh/yr and $/yr), cycling and seasonality structure, and the practical recoverable read. --></p>
+<p><!-- TODO: EV-free-night floor statistics — the median ({{NIGHT_FLOOR_MEDIAN}}), its spread ({{NIGHT_FLOOR_SPREAD}}), the sample it rests on ({{NIGHT_FLOOR_SAMPLE}}), the energy it implies ({{NIGHT_FLOOR_ANNUAL_KWH}}) and what that costs ({{NIGHT_FLOOR_ANNUAL_COST}}); the within-night cycling ({{NIGHT_FLOOR_CYCLING}}) and the seasonal swing ({{NIGHT_FLOOR_SEASONALITY}}). Close on the practical recoverable read, and keep the exclusion rate in view — the floor is measured on the minority of nights that stayed quiet, and the load's CAUSE is attested by the owner, not metered. --></p>
 <h3>The marginal price map — what one kWh costs or earns, right now <span class="pill g">measured · bill rates</span></h3>
 <table>
 <thead><tr><th>Season · period</th><th>Import (all-in)</th><th>Export credit</th></tr></thead>
