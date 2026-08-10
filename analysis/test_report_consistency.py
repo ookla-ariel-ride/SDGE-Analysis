@@ -13,6 +13,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 """
 import calendar
 import datetime as dt
+import html as htmlmod
 import json
 import pathlib
 import re
@@ -264,10 +265,26 @@ def case_no_retired_holiday_discrepancy_note():
     return "the retired holiday-convention explanation is gone from the report"
 
 
-def case_report_totals_match_the_artifact():
+def case_report_import_and_export_totals_match_the_artifact():
+    """report_data.json's `totals` block holds five figures; this case covers
+    the two meter flows the report actually prints, and says so in its name.
+
+    Issue #131 review round 6: it was called case_report_totals_match_the_
+    artifact and checked one of the five (`imp`), so its name claimed the
+    whole block. `net`, `energy_cost` and `bsc` are not cited in index.html in
+    any form this case could pin -- `bsc` would reduce to a bare "290"
+    substring search -- so nothing here claims to cover them.
+
+    The two that ARE cited sit in one §1 clause, and they are pinned as that
+    ordered clause rather than as two document-wide substring searches: both
+    numbers would still be present if the report swapped which one it called
+    imported."""
     t = RD["totals"]
-    assert f"{t['imp']:,}" in HTML, f"totals.imp {t['imp']:,} not cited in the report"
-    return "the report's annual import total matches report_data.json"
+    clause = f"SDG&amp;E's meter ({t['imp']:,} kWh imported, {t['exp']:,} kWh exported)"
+    assert clause in HTML, (
+        f"the §1 meter-flow clause {clause!r} was not found in index.html -- the import "
+        "and export totals may be stale, reversed, or the clause reworded")
+    return "the report's annual import and export meter totals match report_data.json"
 
 
 def case_cca_cheaper_period_count_matches_the_artifact():
@@ -384,14 +401,19 @@ def case_sizing_curve_table_matches_the_artifact_row_by_row():
 
     assert checked == len(cur_rows), "not every artifact grid point was matched to a table row"
 
+    # Issue #131 review round 6: these two messages named the §6 table while
+    # searching the whole document, so a figure deleted from the table would
+    # still have been found elsewhere in the report. Both are bounded to the
+    # table block the loop above already parsed.
     knee_kwh = bsc["current_behavior"]["knee"]["kwh"]
-    assert f"{knee_kwh} kWh — the knee" in HTML, (
+    assert f"{knee_kwh} kWh — the knee" in table_html, (
         f"the artifact's knee ({knee_kwh} kWh) is not cited in the §6 table as expected")
     for scen_key in ("current_behavior", "post_behavior"):
         for prod in bsc[scen_key]["shipping_products_on_curve"]:
             payback = round(prod["payback_years"], 1)
-            assert f"{payback} yr" in HTML, (
-                f"{scen_key} {prod['name']} real-quote payback {payback} yr not found in the report")
+            assert f"{payback} yr" in table_html, (
+                f"{scen_key} {prod['name']} real-quote payback {payback} yr not found in "
+                "the §6 sizing-curve table")
 
     return f"all {checked} rows of the §6 sizing-curve table match the live artifact exactly"
 
@@ -403,7 +425,14 @@ def case_sizing_curve_knee_direction_is_not_reversed():
     marginal kWh FAILS that payback -- the exact opposite claim, which could
     steer a reader toward buying capacity the report's own rule rejects. This
     locks the corrected direction against the live artifact so a future
-    regeneration can't silently reintroduce the reversal (issue #12)."""
+    regeneration can't silently reintroduce the reversal (issue #12).
+
+    What it can establish is the reversal's ABSENCE plus the presence of the
+    number that contradicts it, which is what the summary line now says. Issue
+    #131 review round 6: that line used to read "the report correctly states
+    the knee's marginal kWh FAILS the 10-yr bar", a claim about what the prose
+    says that no assertion here makes -- the prose could describe the knee any
+    way at all, so long as it avoided one retired phrasing."""
     bsc_path = ROOT / "data" / "battery_sizing_curve.json"
     bsc = json.loads(bsc_path.read_text())
     assert "still pays back the" not in HTML, (
@@ -417,13 +446,20 @@ def case_sizing_curve_knee_direction_is_not_reversed():
         assert payback_str in HTML, (
             f"{scen_key} knee's marginal payback ({payback_str}) -- the number "
             "that proves the knee fails the 10-yr bar -- is not cited in the report")
-    return "the report correctly states the knee's marginal kWh FAILS the 10-yr payback bar"
+    return ("the reversed knee-direction claim is absent, and both scenarios' knee "
+            "marginal paybacks -- which fail the artifact's own 10-yr bar -- are cited")
 
 
 def case_optimality_gap_table_matches_the_artifact():
     """The §6 'How good is the controller?' table and its verdict figures are
     hand-written, not templated -- lock every cited number against the live
-    artifact so a regeneration can't silently drift them (issue #13)."""
+    artifact so a regeneration can't silently drift them (issue #13).
+
+    Issue #131 review round 6: the checks searched the whole document, while
+    the summary line said the §6 table matched. Several of these values recur
+    elsewhere in the report ("$2,328" appears twelve times), so the table
+    could have lost a figure entirely and the search would still have found
+    it in another section. Scoped to the subsection that owns them."""
     pfd_path = ROOT / "data" / "perfect_foresight_dispatch.json"
     assert pfd_path.exists(), f"{pfd_path} is committed public data and must exist"
     pfd = json.loads(pfd_path.read_text())
@@ -441,8 +477,13 @@ def case_optimality_gap_table_matches_the_artifact():
         f"${ps['gap_attributed_to_forecast_error_usd']:,.2f}",
         f"${ps['gap_attributed_to_myopic_horizon_usd']:,.2f}",
     ]
+    start = HTML.index("<h3>How good is the controller?")
+    end = HTML.index("<h3", start + 4)
+    section = HTML[start:end]
     for value in checks:
-        assert value in HTML, f"§6 controller-quality table: {value!r} not found in the report"
+        assert value in section, (
+            f"§6 controller-quality subsection: {value!r} not found in it "
+            "(present elsewhere in the report doesn't count)")
 
     assert gc["perfect_foresight_save_usd"] >= gc["greedy_save_usd"], (
         "the true optimum must never save less than the greedy policy")
@@ -458,13 +499,27 @@ def case_optimality_gap_table_matches_the_artifact():
     # so asserting an ordering here would encode a false assumption.
     assert abs(pfd["verification"]["agreement_usd"]) < 1.0, (
         "the LP's own required $1 agreement with rates.bill_nem is not met")
-    return "the §6 controller-quality table matches the live perfect-foresight artifact"
+    return ("the §6 controller-quality subsection's own figures match the live "
+            "perfect-foresight artifact")
 
 
 def case_tou_structure_stress_table_matches_the_artifact():
     """The §7 tariff-structure-risk table and its worst-scenario sentence are
-    hand-written, not templated -- lock every cited number against the live
-    artifact so a regeneration can't silently drift them (issue #14)."""
+    hand-written, not templated -- lock every cited number, and the precedent
+    label sitting beside it, against the live artifact so a regeneration can't
+    silently drift them (issue #14).
+
+    Issue #131 review round 6: the precedent half of this case claimed more
+    than it checked. Its own comment said "the summer-extension scenario
+    specifically must be labeled hypothetical", and the assertion under it was
+    `"hypothetical" in HTML` -- a word that appears seven times in this report
+    for unrelated reasons (a "hypothetical Powerwall 3", "a real structural
+    change, not a hypothetical one"), so it would have passed with the label
+    stripped off the table entirely, or moved onto the wrong scenario's row.
+    Each scenario is now matched to its OWN table row by its four delta cells
+    and its precedent cell read off that row, which binds the label to the
+    scenario without pinning either one's prose. Those four deltas are read
+    from the row rather than searched for document-wide for the same reason."""
     tss_path = ROOT / "data" / "tou_structure_stress.json"
     assert tss_path.exists(), f"{tss_path} is committed public data and must exist"
     tss = json.loads(tss_path.read_text())
@@ -473,25 +528,43 @@ def case_tou_structure_stress_table_matches_the_artifact():
         sign = "&minus;$" if v < 0 else "+$"
         return f"{sign}{abs(v):,.2f}"
 
-    checks = []
-    for key in ("onpeak_widened", "onpeak_shifted_later", "midday_sop_narrowed",
-                "summer_extended"):
-        s = tss["scenarios"][key]
-        checks += [fmt(s["baseline_delta_usd"]), fmt(s["behavior_save_delta_usd"]),
-                  fmt(s["battery_marginal_delta_usd"]), fmt(s["total_package_impact_usd"])]
-    for value in checks:
-        assert value in HTML, f"§7 tariff-structure-risk table: {value!r} not found in the report"
+    m = re.search(r'<div class="note" data-label="Risk">.*?</div>', HTML, re.S)
+    assert m, "the §7 tariff-structure-risk note was not found in index.html"
+    note = m.group(0)
+    rows = []
+    for tr in re.finditer(r"<tr[^>]*>(.*?)</tr>", note, re.S):
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<td[^>]*>(.*?)</td>", tr.group(1), re.S)]
+        if len(cells) == 6:                    # scenario, precedent, 4 deltas
+            rows.append(cells)
+    assert len(rows) == len(tss["scenarios"]), (
+        f"the §7 table has {len(rows)} scenario rows but the artifact has "
+        f"{len(tss['scenarios'])} scenarios")
+
+    allowed = {"measured, in-corpus", "historically motivated", "hypothetical"}
+    for key, spec in sorted(tss["scenarios"].items()):
+        deltas = [fmt(spec["baseline_delta_usd"]), fmt(spec["behavior_save_delta_usd"]),
+                  fmt(spec["battery_marginal_delta_usd"]),
+                  fmt(spec["total_package_impact_usd"])]
+        matched = [r for r in rows if r[2:] == deltas]
+        assert len(matched) == 1, (
+            f"§7 tariff-structure-risk table: the {key} scenario's four deltas {deltas} "
+            f"match {len(matched)} rows of the table, not exactly one -- a cell has "
+            "drifted from the artifact, or two scenarios' rows have been swapped")
+        assert spec["precedent"] in allowed, (
+            f"{key} carries precedent {spec['precedent']!r}, which is not one of the "
+            f"labels this analysis allows ({sorted(allowed)}) -- a fabricated precedent")
+        assert matched[0][1] == spec["precedent"], (
+            f"§7 tariff-structure-risk table labels the {key} scenario "
+            f"{matched[0][1]!r}, but the artifact's own precedent for it is "
+            f"{spec['precedent']!r} -- the label and the scenario it sits beside "
+            "must not drift apart")
 
     worst = tss["worst_scenario"]
-    assert f"{worst['total_package_impact_usd']:.2f}" in HTML, (
-        "the worst-scenario dollar figure is not cited in the report prose")
-    # every scenario's precedent label must be one that the AC allows, and the
-    # summer-extension scenario specifically must be labeled hypothetical --
-    # nothing here is fabricated as a fake precedent
-    assert "hypothetical" in HTML, "the ungrounded scenario must be labeled hypothetical in prose"
-    for key, spec in tss["scenarios"].items():
-        assert spec["precedent"] in {"measured, in-corpus", "historically motivated", "hypothetical"}
-    return "the §7 tariff-structure-risk table matches the live tou_structure_stress artifact"
+    assert f"{worst['total_package_impact_usd']:.2f}" in note, (
+        "the worst-scenario dollar figure is not cited in the §7 risk note's own prose")
+    return ("the §7 tariff-structure-risk table matches the live tou_structure_stress "
+            "artifact row by row, each scenario's precedent label included")
 
 
 def _dsgs_prestaging_paragraph():
@@ -1560,6 +1633,682 @@ def case_weather_regression_paragraph_matches_the_artifact():
     return "the §9 weather-regression paragraph matches weather_results.json"
 
 
+# ---------------------------------------------------------------------------
+# Issue #131: CLAUDE.md section 10 requires every h2 to open with a one-line
+# conclusion, and the report carries one three different ways. The structural
+# half of these cases -- every conclusion PRESENT, none doubled, none over the
+# density cap -- is pure HTML and runs everywhere, in CI exactly as the chart
+# pins above do. One half of one case goes further and asks whether each
+# in-heading verdict AGREES with the token that owns it; that resolves through
+# report_tokens, and a token needing private/household.yaml (S4_VERDICT_SHORT
+# does) is left uncompared and named in the summary line rather than failing
+# or quietly passing. Nothing here is gated as a whole.
+# ---------------------------------------------------------------------------
+TEMPLATE_HTML = (ROOT / "report-template.html").read_text()
+
+_SECTION_H2_RE = re.compile(r'<h2 id="([^"]+)"[^>]*>(.*?)</h2>', re.S)
+_TEMPLATE_VERDICT_TOKEN_RE = re.compile(r"\{\{[A-Z0-9_]*VERDICT[A-Z0-9_]*\}\}")
+
+
+def _in_heading_verdict_scaffold():
+    """{section id: (text before the slot, text after it, the slot's token
+    name)} for every section whose conclusion sits INSIDE the <h2> itself,
+    taken from the template's own {{..._VERDICT_SHORT}} slot.
+
+    The template stays the source of truth for WHICH sections use the
+    mechanism -- index.html is that template rendered, so it inherits the set
+    by section id -- but it now also yields the literal scaffolding around the
+    slot, which is what lets the rendered heading be inspected instead of
+    assumed. The conclusion text itself is never pinned here: pinning it would
+    make this test a second copy of the report, and it would then only ever
+    fail when someone forgot to update the copy.
+
+    The token NAME is carried alongside because the template is also the only
+    place that records which token owns a given heading's conclusion; the
+    agreement check below resolves it and compares.
+
+    A slot must have literal scaffolding to be checkable, so a template that
+    put another token BEFORE the verdict slot fails loudly rather than
+    silently reverting to the trust-the-template behaviour this replaced."""
+    out = {}
+    for sid, inner in _SECTION_H2_RE.findall(TEMPLATE_HTML):
+        m = _TEMPLATE_VERDICT_TOKEN_RE.search(inner)
+        if not m:
+            continue
+        prefix, suffix = inner[:m.start()], inner[m.end():]
+        assert "{{" not in prefix and "{{" not in suffix, (
+            f"report-template.html's {sid} heading wraps its verdict slot in other "
+            f"tokens ({inner!r}); the rendered heading can no longer be located by "
+            "its literal scaffolding")
+        out[sid] = (prefix, suffix, m.group(0).strip("{}"))
+    return out
+
+
+# A conclusion is a clause, not a word: two words is the floor, and it is the
+# ONLY quantity pinned about the rendered text. Anything stricter would start
+# pinning the sentences themselves.
+#
+# The floor is the same for all THREE mechanisms. An in-heading verdict, a
+# <summary> .teaser and a <p class="verdict"> are interchangeable ways of
+# carrying the one conclusion CLAUDE.md section 10 requires, so an emptied
+# <p class="verdict"></p> has to fail exactly as a heading that lost its
+# verdict text does. Crediting the opening TAG alone (which is what the
+# paragraph and teaser mechanisms used to do) let a section keep its
+# conclusion line in name only: index.html's section 2 line replaced by
+# <p class="verdict"></p> left both of these cases green.
+_MIN_CONCLUSION_WORDS = 2
+
+_TOKEN_REF_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+
+
+def _visible_text(fragment):
+    """`fragment`'s reader-visible text: comments and tags removed, entities
+    unescaped, whitespace-stripped."""
+    fragment = re.sub(r"<!--.*?-->", "", fragment, flags=re.S)
+    return htmlmod.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
+
+
+def _element_text(rest, open_tag, close_tag):
+    """The visible text of the element `rest` STARTS with, or None when `rest`
+    does not open with `open_tag` or that element is never closed. Neither
+    element this is used for (<p>, <span class="teaser">) nests in the report,
+    so the first close tag is the right one."""
+    if not rest.startswith(open_tag):
+        return None
+    end = rest.find(close_tag, len(open_tag))
+    if end < 0:
+        return None
+    return _visible_text(rest[len(open_tag):end])
+
+
+def _carries_conclusion(text, rendered):
+    """Whether `text` is a conclusion rather than an empty or stub element.
+
+    In report-template.html an unrendered {{TOKEN}} slot IS the conclusion --
+    the same reason the in-heading mechanism is taken on trust there -- so a
+    slot satisfies the floor. In the RENDERED report nothing is taken on
+    trust: the words have to be there."""
+    if text is None:
+        return False
+    if not rendered and _TOKEN_REF_RE.search(text):
+        return True
+    return len(text.split()) >= _MIN_CONCLUSION_WORDS
+
+
+def _rendered_heading_verdict(inner, prefix, suffix):
+    """The conclusion a rendered <h2> carries in its template slot's own
+    position, or None if the heading is the bare section title.
+
+    Everything before the slot is the section number and title -- literal text
+    in the template -- so whatever sits in the slot is by construction the part
+    of the heading that goes BEYOND the title. That is the claim this returns,
+    which is also where the density cap's lead sentence starts."""
+    if not inner.startswith(prefix) or not inner.endswith(suffix):
+        return None
+    end = len(inner) - len(suffix) if suffix else len(inner)
+    text = _visible_text(inner[len(prefix):end])
+    if len(text.split()) < _MIN_CONCLUSION_WORDS:
+        return None
+    return text
+
+
+def _conclusion_mechanisms(doc, rendered):
+    """{section id: set of the conclusion mechanisms a section OPENS with},
+    parsed from the document rather than read off a hardcoded id list, so a
+    section added later shows up here (with an empty set) instead of slipping
+    through.
+
+    This is a set of KINDS and it only ever looks at what immediately follows
+    the <h2>, which is the "opens with" half of the invariant. It cannot count
+    conclusion lines: three stacked <p class="verdict"> paragraphs collapse to
+    {"verdict-line"} here, exactly like one. _conclusion_line_counts below is
+    the half that counts.
+
+    `rendered` says whether each mechanism has to be proved by its own
+    CONTENT. For report-template.html it does not -- there the unrendered
+    {{...}} slot IS the mechanism, in a heading or in a paragraph. For
+    index.html it does: this case exists to check the rendered report, and
+    crediting a rendered section because its TEMPLATE has a slot let the
+    published heading lose its verdict text (leaving the bare '4 · Does a
+    battery change which plan is best?') while this test still reported a
+    conclusion present. The paragraph and teaser mechanisms had the same
+    hole, one tag lower down: they were credited from the opening tag."""
+    scaffold = _in_heading_verdict_scaffold()
+    found = {}
+    for m in _SECTION_H2_RE.finditer(doc):
+        sid = m.group(1)
+        rest = doc[m.end():].lstrip()
+        mech = set()
+        if sid in scaffold and (
+                not rendered
+                or _rendered_heading_verdict(m.group(2), *scaffold[sid][:2])):
+            mech.add("in-heading")
+        if (doc[:m.start()].rstrip().endswith("<summary>")
+                and _carries_conclusion(
+                    _element_text(rest, '<span class="teaser">', "</span>"), rendered)):
+            mech.add("summary-teaser")
+        if _carries_conclusion(
+                _element_text(rest, '<p class="verdict">', "</p>"), rendered):
+            mech.add("verdict-line")
+        found[sid] = mech
+    return found
+
+
+# A conclusion LINE is an element, and "exactly one per section" is a count of
+# ELEMENTS -- not a count of mechanism KINDS. Reading len() off the set
+# _conclusion_mechanisms returns only ever caught a section MIXING two
+# mechanisms: a section carrying the same mechanism twice, or carrying a
+# second conclusion line further down where the opening-tag scan cannot see it
+# at all, satisfied a guard whose own message said "exactly one per section".
+# The two helpers below count the elements themselves over the whole span
+# between one <h2> and the next.
+#
+# Matching is by CLASS rather than by the exact literal opening tag the
+# mechanism helpers require, so a second conclusion line cannot duck the count
+# by carrying an extra attribute.
+_CONCLUSION_ELEMENT_RES = {
+    "verdict-line": re.compile(r'<p\b[^>]*\bclass="[^"]*\bverdict\b[^"]*"'),
+    "summary-teaser": re.compile(r'<span\b[^>]*\bclass="[^"]*\bteaser\b[^"]*"'),
+}
+
+
+def _conclusion_line_counts(doc):
+    """{section id: {mechanism: how many conclusion-line ELEMENTS the section
+    carries}}, counted over the whole span from each <h2> to the next.
+
+    The in-heading mechanism contributes 1 to a section that uses it: a
+    heading holds at most one verdict slot, which _in_heading_verdict_scaffold
+    enforces against the template directly rather than assuming it."""
+    scaffold = _in_heading_verdict_scaffold()
+    heads = list(_SECTION_H2_RE.finditer(doc))
+    counts = {}
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(doc)
+        span = doc[m.end():end]
+        per_mech = {mech: len(rx.findall(span))
+                    for mech, rx in _CONCLUSION_ELEMENT_RES.items()}
+        per_mech["in-heading"] = 1 if m.group(1) in scaffold else 0
+        counts[m.group(1)] = per_mech
+    return counts
+
+
+def _conclusion_lines_outside_sections(doc):
+    """How many conclusion-line elements sit ahead of the first <h2>, where no
+    section owns them -- the one region the per-section spans above cannot
+    see, and so the one place a second conclusion line could be parked."""
+    first = _SECTION_H2_RE.search(doc)
+    head = doc if first is None else doc[:first.start()]
+    return sum(len(rx.findall(head)) for rx in _CONCLUSION_ELEMENT_RES.values())
+
+
+# Sections whose rendered <h2> verdict does NOT say what its own token says.
+# This is a PRE-EXISTING divergence in the report, tracked in issue #141 and
+# out of scope for the case below, which only has to stop it spreading:
+#
+#   s4  renders "No — it strengthens it." while S4_VERDICT_SHORT resolves to
+#       "Yes — the battery widens EV-TOU-5's lead ... $961/yr to $1,612/yr"
+#       (the token is also inverted against its own heading question -- #141).
+#   s8  renders "No, no, and not yet." while S8_VERDICT_SHORT resolves to the
+#       same verdict continued into its figures.
+#
+# WHEN ISSUE #141 LANDS THIS SET MUST BECOME EMPTY. It is not a permanent
+# allowance: the case asserts in BOTH directions, so the moment a listed
+# section starts agreeing with its token, this case FAILS with a message
+# telling whoever fixed #141 to delete the id from here. A third divergence,
+# or any new section drifting from its token, fails the other direction.
+_HEADING_VERDICT_TOKEN_DIVERGENCE = {"s4", "s8"}
+
+
+def _normalized_verdict(text):
+    """A heading verdict reduced to what it CLAIMS: whitespace collapsed and a
+    terminating period dropped, since a token supplies the clause and the
+    heading may end the sentence for it."""
+    return re.sub(r"\s+", " ", text).strip().rstrip(".").strip()
+
+
+def _heading_verdict_agreement(rendered_headings, resolved_tokens):
+    """(agreeing, diverged, unresolved) section-id sets, comparing each
+    rendered in-heading verdict against the token that owns it.
+
+    A section whose token is absent from `resolved_tokens` is `unresolved`
+    and is NOT compared -- token resolution can need private/household.yaml
+    (S4_VERDICT_SHORT does), which CI does not have. Kept pure so the case
+    below can be driven with synthetic inputs."""
+    agreeing, diverged, unresolved = set(), set(), set()
+    for sid, text in rendered_headings.items():
+        if sid not in resolved_tokens:
+            unresolved.add(sid)
+        elif _normalized_verdict(text) == _normalized_verdict(resolved_tokens[sid]):
+            agreeing.add(sid)
+        else:
+            diverged.add(sid)
+    return agreeing, diverged, unresolved
+
+
+def _raised_in(exc, path):
+    """Whether `exc` -- or any exception it chains from -- has a frame in the
+    file `path`.
+
+    Attribution by RAISE SITE, which is a fact about the stack, rather than by
+    message text, which is prose the raising module is free to reword. The
+    chain matters: report_tokens catches the household loader's SystemExit and
+    re-raises its own ("failed to resolve token X: ..."), so the loader's
+    frames sit on the chained __context__, not on the exception the caller
+    catches. Both are walked, and a self-referential chain terminates."""
+    target = pathlib.Path(path).resolve()
+    seen, cur = set(), exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        tb = cur.__traceback__
+        while tb is not None:
+            if pathlib.Path(tb.tb_frame.f_code.co_filename).resolve() == target:
+                return True
+            tb = tb.tb_next
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _missing_archive_exit(exc, archive_present, loader_path):
+    """Whether this SystemExit means "this checkout has no private archive" --
+    the ONLY reason a token may be dropped from the agreement comparison.
+
+    SystemExit is report_tokens' GENERAL fail-closed signal. A missing
+    private/household.yaml raises it, but so does a broken artifact, a guard
+    firing correctly, an unknown token name and a bad format spec. Reading
+    every one of them as "needs the private archive" turned the agreement half
+    of the case below into a no-op that still reported success -- the same
+    defect class the case exists to catch.
+
+    Two conditions, neither of them a message match:
+      * the archive really is absent -- `household.PATH.is_file()` is the
+        loader's OWN precondition, the one household._load() tests before it
+        raises, so this tracks the loader rather than paraphrasing it;
+      * the failure really came out of that loader -- a frame in household.py
+        somewhere on the exception chain.
+    Each condition alone is too weak. Frames alone would write off a missing
+    household KEY, which raises from the same module while the archive is
+    present and is a real defect. Absence alone would write off any unrelated
+    breakage on a machine that happens to have no archive, which is CI."""
+    return not archive_present and _raised_in(exc, loader_path)
+
+
+def _resolve_heading_verdict_tokens(scaffold):
+    """{section id: resolved token text} for as many in-heading verdict slots
+    as this machine can resolve, plus a one-line note on what was skipped.
+
+    Resolution goes through report_tokens, the module that owns these values.
+    A token that fails to resolve raises SystemExit, and exactly one kind of
+    SystemExit is survivable: the one a checkout without private/household.yaml
+    produces (S4_VERDICT_SHORT needs the archive; CI has none). That one leaves
+    its section uncompared and named in the summary line. Every other
+    SystemExit is a real token failure and fails the case -- raised as an
+    AssertionError, since a SystemExit escaping would end the whole run instead
+    of being reported as this case failing."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    try:
+        import report_tokens as rt
+    except SystemExit as e:                       # pragma: no cover - archive-dependent
+        assert _missing_archive_exit(e, archive, loader), (
+            f"importing report_tokens failed, and NOT because this checkout lacks the "
+            f"private archive (present: {archive}) -- that is a real failure, not "
+            f"something to skip: {e}")
+        return {}, f"no token resolved ({e})"
+    resolved, skipped = {}, []
+    for sid, (_, _, token) in sorted(scaffold.items()):
+        spec = rt.TOKENS.get(token)
+        assert spec is not None, (
+            f"report-template.html's {sid} heading references {{{{{token}}}}}, which is "
+            "not a report_tokens.TOKENS entry")
+        try:
+            resolved[sid] = rt.resolve_token(token, spec)
+        except SystemExit as e:                   # pragma: no cover - archive-dependent
+            assert _missing_archive_exit(e, archive, loader), (
+                f"report_tokens could not resolve {token} (§{sid}), and NOT because this "
+                f"checkout lacks the private archive (present: {archive}) -- the heading "
+                f"cannot be compared against a token that is itself broken: {e}")
+            skipped.append(sid)
+    note = (f"{len(skipped)} unresolvable without the private archive ({sorted(skipped)})"
+            if skipped else "all resolved")
+    return resolved, note
+
+
+def case_every_h2_section_opens_with_exactly_one_conclusion_line():
+    index_mech = _conclusion_mechanisms(HTML, rendered=True)
+    template_mech = _conclusion_mechanisms(TEMPLATE_HTML, rendered=False)
+    assert len(index_mech) >= 16, (
+        f"only {len(index_mech)} <h2 id=...> sections parsed out of index.html -- "
+        "the parser probably broke")
+    assert set(index_mech) == set(template_mech), (
+        "index.html and report-template.html disagree about which sections exist: "
+        f"index-only {sorted(set(index_mech) - set(template_mech))}, "
+        f"template-only {sorted(set(template_mech) - set(index_mech))}")
+
+    # Exactly one, in BOTH files, with no exceptions. Two assertions, because
+    # the invariant is two claims: the section OPENS with a conclusion line
+    # (the mechanism scan, which only reads what follows the <h2>), and the
+    # section carries exactly ONE of them (the element count, over the whole
+    # span to the next <h2>). Either alone is passable while the other is
+    # violated -- a section whose only .verdict sits at the bottom counts 1
+    # but opens with nothing, and a section opening with a .verdict followed
+    # by two more opens correctly but carries three.
+    for label, doc, mechanisms in (("index.html", HTML, index_mech),
+                                   ("report-template.html", TEMPLATE_HTML, template_mech)):
+        silent = sorted(sid for sid, m in mechanisms.items() if not m)
+        assert not silent, (
+            f"{label} sections with no conclusion line at all: {silent} -- every h2 needs "
+            'an in-heading verdict, a <summary> .teaser, or a <p class="verdict">')
+        line_counts = _conclusion_line_counts(doc)
+        extra = {sid: {mech: n for mech, n in per_mech.items() if n}
+                 for sid, per_mech in line_counts.items() if sum(per_mech.values()) > 1}
+        assert not extra, (
+            f"{label} sections carrying MORE than one conclusion line: {extra} -- exactly "
+            "one per section (CLAUDE.md section 10). This counts ELEMENTS, not mechanism "
+            'kinds: two <p class="verdict"> paragraphs in one section are two conclusion '
+            "lines even though they share a mechanism")
+        stray = _conclusion_lines_outside_sections(doc)
+        assert stray == 0, (
+            f"{label} carries {stray} conclusion-line element(s) ahead of its first <h2>, "
+            "where no section owns them -- the per-section count above cannot see them, so "
+            "a duplicate parked there would go unnoticed")
+
+    drifted = {sid: (sorted(template_mech[sid]), sorted(index_mech[sid]))
+               for sid in template_mech if template_mech[sid] != index_mech[sid]}
+    assert not drifted, (
+        f"the rendered report uses a different conclusion mechanism than its "
+        f"template for: {drifted}")
+
+    # PRESENCE is now proved; AGREEMENT is the other half. A heading carrying
+    # two words at the slot's position satisfies the mechanism without saying
+    # what the token that owns the slot says, so compare them. This half needs
+    # report_tokens and, for some tokens, the private archive -- everything
+    # above runs everywhere, and the ONLY comparison that may be skipped is one
+    # a missing archive makes impossible (reported in the summary line, never
+    # silently); a token that fails for any other reason fails the case.
+    scaffold = _in_heading_verdict_scaffold()
+    assert _HEADING_VERDICT_TOKEN_DIVERGENCE <= set(scaffold), (
+        "the issue #141 divergence allowance names sections that no longer use the "
+        f"in-heading mechanism: {sorted(_HEADING_VERDICT_TOKEN_DIVERGENCE - set(scaffold))}")
+    rendered_headings = {sid: _rendered_heading_verdict(inner, *scaffold[sid][:2])
+                         for sid, inner in _SECTION_H2_RE.findall(HTML) if sid in scaffold}
+    resolved, note = _resolve_heading_verdict_tokens(scaffold)
+    agreeing, diverged, unresolved = _heading_verdict_agreement(rendered_headings, resolved)
+
+    unexpected = sorted(diverged - _HEADING_VERDICT_TOKEN_DIVERGENCE)
+    assert not unexpected, (
+        "rendered <h2> verdict disagrees with the token that owns it for "
+        + ", ".join(f"§{sid} (heading {rendered_headings[sid]!r} vs "
+                    f"{scaffold[sid][2]} {resolved[sid]!r})" for sid in unexpected)
+        + " -- the heading and its token must state the same conclusion")
+    healed = sorted(_HEADING_VERDICT_TOKEN_DIVERGENCE & agreeing)
+    assert not healed, (
+        f"§{', §'.join(healed)} now AGREES with its token -- issue #141 is fixed for it, so "
+        "delete the id from _HEADING_VERDICT_TOKEN_DIVERGENCE (the set exists only to hold "
+        "that known divergence and must end up empty)")
+
+    counts = {}
+    for mech in index_mech.values():
+        counts[next(iter(mech))] = counts.get(next(iter(mech)), 0) + 1
+    return (f"all {len(index_mech)} h2 sections in both files OPEN with a conclusion line "
+            f"and carry exactly one conclusion-line element anywhere in the section, by "
+            f"the same mechanism ({counts}); {len(agreeing)} in-heading verdict(s) "
+            f"match their token, {len(diverged)} carry the known issue #141 divergence, "
+            f"{len(unresolved)} not compared -- {note}")
+
+
+# The density cap governs the BASIC tier only (CLAUDE.md section 10); the
+# advanced tier is exempt because that audience reads for the derivation. The
+# boundary is read off the document itself rather than listed, so a section
+# moved across it is scoped correctly without editing this test.
+#
+# CLAUDE.md section 10 defines the break exactly: "35 words or fewer up to its
+# first sentence-ending period (a period followed by a space or the tag's end;
+# ignore periods glued to digits, as in `$264.10` or `91.5%` -- a human reader
+# skips those too)". Glued means BETWEEN digits, which is why the "followed by
+# a space or the end" lookahead is the whole rule: a period sitting between two
+# digits is followed by a digit and can never match it. An added lookbehind for
+# a preceding digit is NOT the rule and over-rejects -- it skips the real break
+# in a compliant lead that ends on a figure ("...saves a modeled $1,221.") and
+# runs the word count on into the next sentence.
+_LEAD_SENTENCE_BREAK_RE = re.compile(r"\.(?=\s|$)")
+
+
+def _lead_sentence(text):
+    """Everything up to the first real sentence-ending period. A period glued
+    to digits ($264.10, 91.5%, 6.2–6.5-yr) is not a break -- a human reader
+    skips those too -- but a period that ENDS on a figure ($1,221.) is."""
+    m = _LEAD_SENTENCE_BREAK_RE.search(text)
+    return text[:m.end()] if m else text
+
+
+def _over_the_density_cap(label, text):
+    """A "Nw/Aa" complaint string when `text`'s lead sentence blows CLAUDE.md
+    section 10's 35-word / 1-aside cap, else None."""
+    lead = _lead_sentence(text)
+    words = len(lead.split())
+    asides = lead.count("(") + lead.count("—")
+    if words > 35 or asides > 1:
+        return f"{label} {words}w/{asides} asides: {lead[:70]}..."
+    return None
+
+
+def case_basic_tier_verdict_lines_stay_inside_the_density_cap():
+    cut = HTML.find('<details id="advanced"')
+    assert cut > 0, 'the advanced-tier <details id="advanced"> wrapper is missing'
+    basic = HTML[:cut]
+    # Issue #131 review round 6: the floor here used to be `len(lines) >= 8`, a
+    # hardcoded count of ONE mechanism's elements. It fired first on any
+    # rearrangement of the tier and so reported a .verdict shortfall for
+    # defects that were nothing of the kind -- a section carrying its
+    # conclusion a different legal way, or carrying none at all. The floor is
+    # on the SECTIONS, which is what "the basic tier" means; the completeness
+    # count below then ties one measured lead sentence to each of them.
+    basic_sections = [sid for sid, _ in _SECTION_H2_RE.findall(basic)]
+    assert len(basic_sections) >= 9, (
+        f"only {len(basic_sections)} basic-tier <h2> sections parsed ({basic_sections}) -- "
+        "sections 0-7 and the Monday appendix are all basic-tier, so either the parser or "
+        "the advanced-tier boundary broke")
+    lines = re.findall(r'<p class="verdict">(.*?)</p>', basic, re.S)
+    over = []
+    for raw in lines:
+        text = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        over.append(_over_the_density_cap(".verdict", text))
+
+    # A .verdict line is not the only way a basic-tier section states its
+    # conclusion: section 4 carries its whole conclusion inside its <h2>, so
+    # collecting <p class="verdict"> alone left an overlong or aside-heavy
+    # heading verdict passing a gate that claims to cover the basic tier.
+    # Sections 8 and 11 use the same mechanism but sit in the ADVANCED tier
+    # and are exempt (that audience reads for the derivation), which is why
+    # the split is the SAME `cut` the .verdict scan above uses -- read off the
+    # document, so a section moved across the boundary is scoped correctly
+    # without editing this test.
+    #
+    # What gets measured is the heading's own claim, not the section number
+    # and title in front of it: the lead sentence starts where the template's
+    # literal "N · Title" prefix ends, i.e. at the verdict slot's own text.
+    scaffold = _in_heading_verdict_scaffold()
+    headings = [(sid, _rendered_heading_verdict(inner, *scaffold[sid][:2]))
+                for sid, inner in _SECTION_H2_RE.findall(basic) if sid in scaffold]
+    assert headings, (
+        "no basic-tier in-heading verdict found -- section 4 carries one, so either "
+        "the heading scaffolding moved or the advanced-tier boundary did")
+    for sid, text in headings:
+        assert text, (
+            f"basic-tier §{sid} uses the in-heading verdict mechanism but its rendered "
+            "<h2> carries no conclusion after the section title")
+        over.append(_over_the_density_cap(f"{sid} heading", text))
+
+    # Issue #131 review round 6: the comment above says the tier boundary is
+    # read off the document "so a section moved across it is scoped correctly
+    # without editing this test", and this case measured only two of the three
+    # conclusion mechanisms. A <summary> .teaser section moved into the basic
+    # tier would have gone unmeasured while the summary line still reported the
+    # tier covered. The third mechanism is measured too, and the count below
+    # proves the coverage instead of assuming it: one lead sentence per
+    # basic-tier <h2>, which the sibling case above has already established is
+    # exactly one conclusion line per section.
+    teasers = re.findall(r'<span class="teaser">(.*?)</span>', basic, re.S)
+    for raw in teasers:
+        text = htmlmod.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        over.append(_over_the_density_cap(".teaser", text))
+
+    measured = len(lines) + len(headings) + len(teasers)
+    assert measured == len(basic_sections), (
+        f"the density cap measured {measured} lead sentences across {len(basic_sections)} "
+        f"basic-tier sections ({basic_sections}) -- every basic-tier section must "
+        "contribute exactly one, or a section's lead is going unchecked")
+
+    over = [o for o in over if o]
+    assert not over, (
+        "basic-tier lead sentences over CLAUDE.md section 10's density cap "
+        f"(35 words, 1 aside): {over}")
+    return (f"every one of the {len(basic_sections)} basic-tier sections' lead sentences "
+            f"({len(lines)} .verdict, {len(headings)} in-heading, {len(teasers)} .teaser) "
+            "lead in 35 words or fewer with at most one aside")
+
+
+def case_the_two_structural_guards_reject_the_defects_they_exist_to_catch():
+    """The two cases above pass on today's report whether or not their logic
+    actually checks anything -- that is exactly how every defect fixed in them
+    survived review. This drives their helpers with inputs that HAVE the
+    defect, so reintroducing one fails here on real output instead of waiting
+    for a future report to be wrong in the right way.
+
+    It covers the helpers, not the cases: an assertion the cases themselves
+    make but no helper carries is invisible here, so it belongs in the case
+    that makes it."""
+
+    # 1. An empty or stub conclusion element is not a conclusion. Crediting the
+    #    opening TAG made every one of these pass.
+    empty_p = '<h2 id="sX">X · Title</h2>\n<p class="verdict"></p>'
+    stub_p = '<h2 id="sX">X · Title</h2>\n<p class="verdict"> <b>Yes.</b></p>'
+    real_p = '<h2 id="sX">X · Title</h2>\n<p class="verdict">In one sentence: it works.</p>'
+    assert _conclusion_mechanisms(empty_p, rendered=True)["sX"] == set(), \
+        'an empty <p class="verdict"></p> still counts as a conclusion line'
+    assert _conclusion_mechanisms(stub_p, rendered=True)["sX"] == set(), \
+        f'a one-word .verdict counts as a conclusion (floor is {_MIN_CONCLUSION_WORDS} words)'
+    assert _conclusion_mechanisms(real_p, rendered=True)["sX"] == {"verdict-line"}, \
+        "a real .verdict line stopped counting as a conclusion"
+    empty_t = '<summary><h2 id="sY">Y · Title</h2>\n<span class="teaser"></span>'
+    real_t = ('<summary><h2 id="sY">Y · Title</h2>\n'
+              '<span class="teaser">Cleaning does not pay for itself.</span>')
+    assert _conclusion_mechanisms(empty_t, rendered=True)["sY"] == set(), \
+        'an empty <span class="teaser"></span> still counts as a conclusion line'
+    assert _conclusion_mechanisms(real_t, rendered=True)["sY"] == {"summary-teaser"}, \
+        "a real .teaser stopped counting as a conclusion"
+    # ... while in the TEMPLATE the unrendered slot is the conclusion, and in
+    # the rendered report an unrendered slot is not text.
+    slot_p = '<h2 id="sX">X · Title</h2>\n<p class="verdict">{{SX_VERDICT}}</p>'
+    assert _conclusion_mechanisms(slot_p, rendered=False)["sX"] == {"verdict-line"}, \
+        "the template's own {{...}} verdict slot stopped counting"
+    assert _conclusion_mechanisms(slot_p, rendered=True)["sX"] == set(), \
+        "an unrendered {{...}} token passes for a conclusion in the rendered report"
+
+    # 1b. "Exactly one conclusion line" is a count of ELEMENTS. Reading it off
+    #     the mechanism SET only ever caught a section mixing two mechanisms:
+    #     a section repeating one mechanism, or parking a second conclusion
+    #     line further down where the opening-tag scan cannot see it, passed a
+    #     guard whose message said "exactly one per section".
+    one_line = '<h2 id="sX">X · Title</h2>\n<p class="verdict">In one sentence: it works.</p>'
+    same_mech_twice = (one_line + '\n<p class="verdict">In one sentence: it also works.</p>')
+    lower_down = (one_line + "\n<p>Body copy.</p>\n"
+                  '<p class="verdict">In one sentence: a second conclusion.</p>')
+    mixed_mechs = (one_line + '\n<span class="teaser">A second conclusion.</span>')
+    attr_dodge = (one_line + '\n<p id="x" class="verdict small">A second conclusion.</p>')
+    assert sum(_conclusion_line_counts(one_line)["sX"].values()) == 1, \
+        "a section with one .verdict line no longer counts as carrying one conclusion line"
+    for label, doc in (("the same mechanism twice", same_mech_twice),
+                       ("a second .verdict lower down the section", lower_down),
+                       ("two different mechanisms", mixed_mechs),
+                       ("a second .verdict carrying extra attributes", attr_dodge)):
+        assert _conclusion_mechanisms(doc, rendered=True)["sX"] == {"verdict-line"}, (
+            f"{label}: the mechanism set is a set of KINDS and must stay one -- if it grew, "
+            "the count assertion below is measuring something else")
+        assert sum(_conclusion_line_counts(doc)["sX"].values()) == 2, (
+            f"{label} is not counted as two conclusion lines, so the "
+            '"exactly one per section" assertion cannot see it')
+    # ... and a conclusion line parked ahead of every <h2> belongs to no
+    # section's span, so it needs its own count or it is invisible.
+    assert _conclusion_lines_outside_sections(
+        '<p class="verdict">Orphan.</p>\n' + one_line) == 1, \
+        "a conclusion line ahead of the first <h2> is not counted as unowned"
+    assert _conclusion_lines_outside_sections(one_line) == 0, \
+        "a section's own conclusion line is being counted as unowned"
+
+    # 2. The lead sentence ends at a period followed by a space, including one
+    #    that lands on a figure. A digit LOOKBEHIND skipped that break and ran
+    #    the count into the next sentence, over-counting a compliant lead.
+    tail = " " + " ".join(["overrun"] * 60) + "."
+    ends_on_a_figure = "In one sentence: the charging fix saves a modeled $1,221." + tail
+    assert _lead_sentence(ends_on_a_figure).endswith("$1,221."), \
+        "a lead sentence ending on a figure is not being broken at its own period"
+    assert _over_the_density_cap(".verdict", ends_on_a_figure) is None, \
+        "a 9-word lead ending on a figure is reported over the 35-word density cap"
+    # The glued-to-digits exemption CLAUDE.md section 10 actually names survives.
+    glued = "It cost $264.10 over 91.5% of the days" + tail
+    assert _lead_sentence("It cost $264.10 today.") == "It cost $264.10 today.", \
+        "a period between two digits is being treated as a sentence break"
+    assert _over_the_density_cap(".verdict", glued) is not None, \
+        "an overlong lead whose only earlier periods are glued to digits went unreported"
+
+    # 3. An in-heading verdict has to agree with the token that owns it, and a
+    #    token this machine cannot resolve is reported as uncompared, never as
+    #    agreement.
+    agreeing, diverged, unresolved = _heading_verdict_agreement(
+        {"sA": "No — it strengthens it.",
+         "sB": "the solar array has already paid for itself ",
+         "sC": "not compared"},
+        {"sA": "Yes — the battery widens the lead",
+         "sB": "the solar array has already paid for itself"})
+    assert diverged == {"sA"}, f"heading/token divergence not detected: {diverged}"
+    assert agreeing == {"sB"}, f"heading/token agreement not detected: {agreeing}"
+    assert unresolved == {"sC"}, f"an unresolvable token was compared anyway: {unresolved}"
+
+    # 4. ... and "cannot resolve" means ONE thing: this checkout has no private
+    #    archive. Reading report_tokens' general fail-closed SystemExit as that
+    #    single cause let a genuinely broken token quietly leave the agreement
+    #    check with nothing to compare, and the case still reported success.
+    #    The four inputs below are the four combinations that matter. The
+    #    loader-side ones are compiled under household.py's own path so they
+    #    carry a real frame in that file, which is what the classifier reads.
+    loader = str(ROOT / "analysis" / "household.py")
+    raise_from_loader = compile("raise SystemExit('missing private/household.yaml')",
+                                loader, "exec")
+    try:
+        exec(raise_from_loader, {})
+    except SystemExit as e:
+        direct = e
+    try:
+        try:
+            exec(raise_from_loader, {})
+        except SystemExit:
+            raise SystemExit("report_tokens: failed to resolve token S4_VERDICT_SHORT")
+    except SystemExit as e:
+        wrapped = e
+    try:
+        raise SystemExit("report_tokens: unknown format spec for S4_VERDICT_SHORT")
+    except SystemExit as e:
+        unrelated = e
+    assert _missing_archive_exit(direct, False, loader), \
+        "the loader's own missing-archive exit is no longer recognised, so an archive-less " \
+        "checkout (CI) would fail this case instead of reporting the token uncompared"
+    assert _missing_archive_exit(wrapped, False, loader), \
+        "report_tokens' wrapper hides the loader failure it chains from -- the exception " \
+        "chain has to be walked, not just the exception that was caught"
+    assert not _missing_archive_exit(wrapped, True, loader), \
+        "a token failure on a checkout that HAS the private archive is being written off " \
+        "as 'needs the archive'"
+    assert not _missing_archive_exit(unrelated, False, loader), \
+        "a token failure with nothing to do with the private archive is still being " \
+        "swallowed as one, which is what makes the agreement check a silent no-op"
+    return ("the conclusion-presence, one-conclusion-line-per-section, density-cap and "
+            "heading/token-agreement guards each reject the defect they exist to catch, "
+            "and only a missing private archive can drop a token from the agreement check")
+
+
 CASES = [
     case_periods_chart_matches_its_artifact,
     case_monthly_series_match_their_artifact,
@@ -1571,7 +2320,7 @@ CASES = [
     case_headline_figures_present_and_stale_ones_absent,
     case_chart_and_dispatch_agree_on_non_super_off_peak,
     case_no_retired_holiday_discrepancy_note,
-    case_report_totals_match_the_artifact,
+    case_report_import_and_export_totals_match_the_artifact,
     case_cca_cheaper_period_count_matches_the_artifact,
     case_cca_verdict_annualized_figure_matches_the_artifact,
     case_sizing_curve_table_matches_the_artifact_row_by_row,
@@ -1603,6 +2352,9 @@ CASES = [
     case_reprice_by_vintage_note_matches_the_artifact,
     case_soiling_annual_economics_matches_the_artifact,
     case_weather_regression_paragraph_matches_the_artifact,
+    case_every_h2_section_opens_with_exactly_one_conclusion_line,
+    case_basic_tier_verdict_lines_stay_inside_the_density_cap,
+    case_the_two_structural_guards_reject_the_defects_they_exist_to_catch,
 ]
 
 

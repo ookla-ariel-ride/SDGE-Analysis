@@ -11,7 +11,10 @@ the real path rather than skipping.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_report_tokens.py
 """
+import contextlib
+import copy
 import datetime as dt
+import html as _htmllib
 import pathlib
 import re
 import sys
@@ -512,6 +515,4654 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     return (f"SEC9_TEASER cites behavior_rebuild's {sessions} sessions (not "
             f"deep_results' {stale}) and deep_results' phantom figures; the "
             "phantom three-way split is tracked in issue #140")
+
+
+# ---------------------------------------------------------------------------
+# Issue #131: the nine <p class="verdict"> section conclusions are token-owned.
+# index.html is the rendered artifact of those tokens, so the two must agree
+# CHARACTER FOR CHARACTER -- that equality is the whole anti-drift guard. An
+# editor who rewrites a verdict line in index.html without moving the token
+# (or vice versa) fails here.
+#
+# Split into two cases on purpose. Tokens that read only committed artifacts
+# must run in CI UNGATED, or a regression could merge green on a checkout with
+# no private archive (the same reasoning the SEC9 case above records). Only
+# the tokens that genuinely need private/household.yaml are gated, and which
+# ones those are is read off each token's own declared `sources` rather than
+# hardcoded, so adding a household-sourced figure to a verdict re-partitions
+# these cases automatically.
+# ---------------------------------------------------------------------------
+_VERDICT_TOKEN_RE = re.compile(r"\{\{(S\d+_VERDICT)\}\}")
+
+
+def _verdict_token_names():
+    names = sorted(set(_VERDICT_TOKEN_RE.findall(rt.TEMPLATE.read_text())))
+    assert len(names) >= 10, f"only {len(names)} section-verdict token slots in the template"
+    return names
+
+
+def _needs_household(name):
+    return any("private/household.yaml" in s for s in rt.TOKENS[name].get("sources", []))
+
+
+_H2_ID_RE = re.compile(r'<h2 id="([^"]+)"')
+
+
+def _verdict_section_id(name):
+    """The section a verdict token OWNS. S7_VERDICT is section 7's conclusion
+    and belongs under <h2 id="s7">; nowhere else in the document is the right
+    place for it."""
+    m = re.fullmatch(r"S(\d+)_VERDICT", name)
+    assert m, f"{name} is not a section-verdict token name"
+    return f"s{m.group(1)}"
+
+
+def _index_section(index_html, section_id):
+    """index.html from this section's own <h2 id="..."> to the next <h2 id=.
+
+    Document order, not numeric order: the report puts the "What to do Monday"
+    appendix (id="s15") between sections 7 and 8, and three audit sections
+    carry their h2 inside a <summary>. Slicing on the h2s as they appear
+    handles both without a table of where anything is."""
+    heads = [(m.group(1), m.start()) for m in _H2_ID_RE.finditer(index_html)]
+    ids = [i for i, _ in heads]
+    assert section_id in ids, (
+        f'index.html has no <h2 id="{section_id}"> for this verdict to sit under; it '
+        f"has {ids}")
+    at = ids.index(section_id)
+    end = heads[at + 1][1] if at + 1 < len(heads) else len(index_html)
+    return index_html[heads[at][1]:end]
+
+
+def _assert_verdict_matches_index(name, index_html):
+    """The published line must equal the token AS RENDERED -- i.e. after the
+    same html.escape(value, quote=True) generate_report.py applies. Comparing
+    the raw value instead would have been wrong in both directions: "&" is
+    fine (it escapes to "&amp;", which is exactly what index.html carries),
+    while "'" is not (it escapes to "&#x27;"). Escaping here reproduces the
+    render contract rather than approximating it.
+
+    AND IN THE SECTION THAT OWNS IT, exactly once in the document. This used
+    to be a bare `in index_html`, which is a membership test over 800 lines of
+    report: a verdict line moved into a neighbouring section, or duplicated
+    into two, satisfied it just as well as one sitting where it belongs
+    (issue #131 review round 6, finding 8). "Section 7's conclusion appears
+    somewhere on the page" is not the claim this case is making."""
+    value = rt.resolve_token(name)
+    assert value.startswith("In one sentence: "), (
+        f"{name} must open with the same stem the other section verdicts use, got: {value!r}")
+    assert not (set("<>") & set(value)), (
+        f"{name} contains markup characters; these tokens carry plain text only: {value!r}")
+    rendered = _htmllib.escape(value, quote=True)
+    line = f'<p class="verdict">{rendered}</p>'
+    section_id = _verdict_section_id(name)
+    section = _index_section(index_html, section_id)
+    assert line in section, (
+        f"{name} does not round-trip into the section it owns "
+        f'(<h2 id="{section_id}">):\n  token    : {value!r}\n  rendered : {rendered!r}\n'
+        + ("  (it IS published elsewhere in index.html, under a different heading)"
+           if line in index_html else "  (it is not published anywhere in index.html)"))
+    assert index_html.count(line) == 1, (
+        f"{name}'s line is published {index_html.count(line)} times in index.html; a "
+        "verdict is one section's conclusion and belongs in one place")
+    return value
+
+
+@case
+def case_artifact_only_section_verdicts_match_index_html_verbatim():
+    index_html = (rt.ROOT / "index.html").read_text()
+    names = [n for n in _verdict_token_names() if not _needs_household(n)]
+    assert names, "no artifact-only section-verdict token found to check ungated"
+    for name in names:
+        _assert_verdict_matches_index(name, index_html)
+    return (f"{len(names)} artifact-only section verdicts ({', '.join(names)}) resolve and "
+            "appear verbatim in index.html, checked without the private archive")
+
+
+@case
+def case_household_sourced_section_verdicts_match_index_html_verbatim():
+    _require_household()
+    index_html = (rt.ROOT / "index.html").read_text()
+    names = [n for n in _verdict_token_names() if _needs_household(n)]
+    assert names, "no household-sourced section-verdict token found"
+    for name in names:
+        _assert_verdict_matches_index(name, index_html)
+    return (f"{len(names)} household-sourced section verdicts ({', '.join(names)}) resolve "
+            "and appear verbatim in index.html")
+
+
+@case
+def case_every_section_verdict_agrees_with_index_html_without_the_private_archive():
+    """The gate above skips on a checkout with no private/household.yaml, and
+    .github/workflows/tests.yml runs this suite on exactly that -- so every
+    verdict _needs_household() routed into it (S0, S2, S3, S10) had NO
+    token<->index.html agreement check on the runner that guards merges. Those
+    four published lines could ship blank, reworded, or contradicting their
+    tokens and CI would stay green, which is the failure _stub_household was
+    written to prevent.
+
+    So every verdict slot in the template is checked here, ungated, with the
+    household answers substituted. Where the archive is staged the stubs are
+    the household's own answers and nothing about the check changes.
+
+    Nine of the ten round-trip EXACTLY, because their household inputs are
+    recoverable from committed artifacts: the plan and generation provider off
+    data/plan_results.csv, the two provider names off
+    data/cca_bundled_counterfactual.json's own question line.
+
+    S2_VERDICT cannot, and this is the one place a stand-in changes what is
+    checked. Its sentence prints the array's age and nameplate and computes
+    its specific yield from the nameplate; no committed artifact in this repo
+    carries either, and writing the household's own answers into this
+    committed file is what CLAUDE.md section 4 forbids. So it is checked by
+    skeleton: the rendered sentence is split at those three figures and every
+    literal fragment between them -- the whole wording, the production total,
+    the export share, the tariff window, the EV clause -- must appear in
+    order inside the published line, which still catches a blanked or
+    reworded line. Only the two household figures go unchecked here; the
+    gated case above checks those against the real archive."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    exact, skeleton = [], []
+    for name in _verdict_token_names():
+        if not _needs_household(name):
+            _assert_verdict_matches_index(name, index_html)
+            exact.append(name)
+        elif name == "S2_VERDICT":
+            stubs = _s2_household_inputs()
+            with _stub_household(stubs):
+                value = rt.resolve_token(name)
+            _assert_verdict_skeleton_matches_index(
+                name, index_html, value, _s2_variable_figures(stubs))
+            skeleton.append(name)
+        else:
+            with _verdict_stub(name):
+                _assert_verdict_matches_index(name, index_html)
+            exact.append(name)
+    assert sorted(exact + skeleton) == _verdict_token_names(), (
+        f"only {sorted(exact + skeleton)} of {_verdict_token_names()} were checked")
+    assert skeleton == ["S2_VERDICT"], (
+        f"a verdict other than S2_VERDICT dropped to a skeleton check: {skeleton}")
+    return (f"all {len(exact) + len(skeleton)} section verdicts agree with index.html "
+            f"without the private archive -- {len(exact)} verbatim, S2_VERDICT by "
+            "skeleton (its age and nameplate figures have no committed source)")
+
+
+@case
+def case_section_verdict_guards_refuse_to_publish_a_false_claim():
+    """S1's sentence makes a claim that would be FALSE if the artifact moved,
+    so its formula fails closed instead of rendering it (CLAUDE.md section 0).
+    Proven by driving the guard, not by reading it: S1 claims every billed TOU
+    bucket rebuilds, so a failing bucket must raise SystemExit naming the token.
+
+    S3's plan claim is checked here too, but the correct behaviour there is to
+    INVERT, not to refuse -- a household on a plan that no longer wins is the
+    household section 3 is written for. So the second half asserts the
+    sentence turns around and names the plan that actually won; the full
+    branch matrix is
+    case_plan_verdicts_invert_rather_than_refusing_when_the_household_plan_loses.
+    """
+    audit = rt._json("tou_audit_summary.json")
+    real_failing = audit["rules"]["as_billed"]["buckets_failing"]
+    assert real_failing == 0, (
+        f"data/tou_audit_summary.json now reports {real_failing} failing bucket(s) -- "
+        "S1_VERDICT's claim is no longer true and the token should already be failing")
+    audit["rules"]["as_billed"]["buckets_failing"] = 1
+    try:
+        rt.resolve_token("S1_VERDICT")
+        raise AssertionError("S1_VERDICT rendered its all-buckets-rebuild claim while "
+                             "the audit artifact reported a failing bucket")
+    except SystemExit as e:
+        assert "S1_VERDICT" in str(e), e
+    finally:
+        audit["rules"]["as_billed"]["buckets_failing"] = real_failing
+
+    if not rt.hh.PATH.is_file():
+        return ("S1_VERDICT refuses to publish its claim when a billed bucket fails "
+                "(S3_VERDICT's plan guard needs private/household.yaml, not checked here)")
+    rows = rt._csv_rows("plan_results.csv")
+    plan = rt.hh1("household.plan")
+    victim = next(r for r in rows if r["plan"] != plan)
+    original = victim["total"]
+    victim["total"] = "0.01"
+    try:
+        value = rt.resolve_token("S3_VERDICT")
+        assert "is not the cheapest plan" in value and victim["plan"] in value, (
+            f"S3_VERDICT still claims the household plan is cheapest while "
+            f"{victim['plan']} prices lower: {value}")
+    finally:
+        victim["total"] = original
+    return ("S1_VERDICT raises SystemExit naming itself rather than publishing a claim "
+            "its artifact no longer supports, and S3_VERDICT inverts to name the plan "
+            "that actually priced lower")
+
+
+# ---------------------------------------------------------------------------
+# Issue #131 follow-up: the verdict formulas that DIVIDE or COMPARE artifact
+# values. A payback is a quotient, so a package that saves nothing (or costs
+# more than it saves) yields a zero, infinite or NEGATIVE "payback" -- and a
+# negative one sorts BELOW every real payback, so comparing it publishes the
+# opposite purchase advice while every number in the sentence stays correct.
+#
+# Each case drives the formula with substituted artifact values rather than
+# asserting on the code: the substitution goes into report_tokens' in-memory
+# cache of a committed data/ file (the same technique the S1/S3 guard case
+# above uses) and is restored on the way out, so nothing under data/ is
+# touched. All of these read committed artifacts only -- no _require_household
+# gate, so they run in CI on a checkout with no private archive.
+# ---------------------------------------------------------------------------
+class _swapped:
+    """Temporarily replace node[key] in a cached artifact, restoring it."""
+
+    def __init__(self, node, key, value):
+        self.node, self.key, self.value = node, key, value
+
+    def __enter__(self):
+        self.old = self.node[self.key]
+        self.node[self.key] = self.value
+        return self.value
+
+    def __exit__(self, *exc):
+        self.node[self.key] = self.old
+
+
+def _mid_battery_swaps(mid, pre, post):
+    """The swaps that put packages.MID's battery on a substituted pair of
+    battery-alone savings, WITH the paybacks package_results.py derives from
+    them.
+
+    analysis/package_results.py writes each payback as
+    `round(packages.MID.cost / saving, 1)`, so a case that moves a saving and
+    leaves its payback behind is not describing a household -- it is
+    describing an artifact no run of the generator could produce, and
+    report_tokens now (correctly) refuses that as an artifact contradicting
+    itself. Cases that want to drive a HOUSEHOLD build the pair here; cases
+    that want to drive the contradiction break it deliberately and say so."""
+    cost = mid["cost"]
+    return [_swapped(mid, "battery_alone_yr", pre),
+            _swapped(mid, "battery_alone_post_ev_fix_yr", post),
+            _swapped(mid, "battery_alone_payback_yr",
+                     round(cost / pre, 1) if pre else float("inf")),
+            _swapped(mid, "battery_alone_payback_post_fix_yr",
+                     round(cost / post, 1) if post else float("inf"))]
+
+
+@contextlib.contextmanager
+def _mid_battery_at(mid, pre, post):
+    """_mid_battery_swaps as one context manager."""
+    with contextlib.ExitStack() as stack:
+        for swap in _mid_battery_swaps(mid, pre, post):
+            stack.enter_context(swap)
+        yield
+
+
+class _stub_household:
+    """Substitute household.yaml answers BY PATH (and, optionally, the
+    generation-provider acronym report_tokens derives from household.cca),
+    restoring both on the way out. Paths not listed fall through to the real
+    accessor.
+
+    Same contract as _swapped, one level up: nothing on disk is touched and
+    the substitution is in-memory only. It exists so the cases driving
+    household-sourced verdicts run UNGATED. A case gated behind
+    _require_household() SKIPS on a runner with no private archive, and
+    .github/workflows/tests.yml runs this suite on exactly that -- so a gated
+    guard case cannot stop a regression merging green, which is the failure
+    the SEC9 and verdict round-trip cases above already record. Worse for the
+    fail-closed cases specifically: without the archive, resolve_token's own
+    "missing private/household.yaml" SystemExit ALSO names the token, so an
+    `assert token in str(e)` case would have passed for entirely the wrong
+    reason. Where the archive IS staged the callers feed it the household's
+    real answers, so the stub changes nothing about what is exercised.
+    """
+
+    def __init__(self, values, provider=None):
+        self.values, self.provider = values, provider
+
+    def __enter__(self):
+        self.old_hh1 = rt.hh1
+        self.old_provider = rt._generation_provider_short
+        rt.hh1 = lambda path: (self.values[path] if path in self.values
+                               else self.old_hh1(path))
+        if self.provider is not None:
+            rt._generation_provider_short = lambda ctx: self.provider
+        return self
+
+    def __exit__(self, *exc):
+        rt.hh1 = self.old_hh1
+        rt._generation_provider_short = self.old_provider
+
+
+def _stub_plan(plan, provider):
+    """_stub_household narrowed to the two answers the plan-ranking guard
+    reads (household.plan, and the provider acronym taken off household.cca)."""
+    return _stub_household({"household.plan": plan}, provider=provider)
+
+
+def _s2_household_inputs():
+    """The two household answers S2_VERDICT reads: the household's own when
+    the private archive is staged, clearly synthetic stand-ins otherwise.
+
+    Never the real figures as literals -- this file is committed, and
+    CLAUDE.md section 4 keeps household answers out of committed artifacts.
+    The case does not need them: every assertion it makes is about the
+    sentence's WORDING and about the committed artifacts' own production and
+    export totals, neither of which depends on the array's size or its PTO
+    date."""
+    if rt.hh.PATH.is_file():
+        return {"solar.kw_dc": rt.hh1("solar.kw_dc"),
+                "household.pto_date": rt.hh1("household.pto_date")}
+    return {"solar.kw_dc": 5.0, "household.pto_date": dt.date(2019, 1, 1)}
+
+
+def _plan_ranking_inputs():
+    """(provider, cheapest_plan, priced_rows) for the plan-guard cases.
+
+    The provider is the household's own when the private archive is staged and
+    the committed CSV's first provider column otherwise, so these cases assert
+    the same thing in both places rather than skipping in one of them."""
+    rows = rt._csv_rows("plan_results.csv")
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file()
+                else rows[0]["provider"])
+    priced = [r for r in rows if r["provider"] == provider]
+    assert len(priced) > 1, (
+        f"data/plan_results.csv prices only {len(priced)} plan(s) for {provider!r}; "
+        "there is no runner-up to rank against")
+    cheapest = min(priced, key=lambda r: float(r["total"]))
+    return provider, cheapest["plan"], priced
+
+
+# CLAUDE.md section 10's density cap applies to EVERY branch, but
+# test_report_consistency.py can only see the one branch index.html happens to
+# carry. Same lead-sentence rule, applied here to the branches that do not
+# render today: a period glued to digits (6.5-yr) is not a sentence break.
+_LEAD_BREAK_RE = re.compile(r"(?<!\d)\.(?=\s|$)")
+
+
+def _assert_within_density_cap(name, value, note):
+    m = _LEAD_BREAK_RE.search(value)
+    lead = value[:m.end()] if m else value
+    words = len(lead.split())
+    asides = lead.count("(") + lead.count("—")
+    assert words <= 35 and asides <= 1, (
+        f"{name} on {note} leads in {words} words / {asides} asides, over CLAUDE.md "
+        f"section 10's 35-word, 1-aside cap: {lead}")
+    return words
+
+
+@case
+def case_s7_verdict_never_credits_a_payback_to_an_expansion_that_saves_nothing():
+    """packages.HIGH.marginal_vs_mid_yr is the expansion's OWN annual saving.
+    At or below zero the expansion can never pay back, and the clause must say
+    so; dividing the extra hardware cost by it instead returns a negative
+    number that compares as "faster than the first unit"."""
+    pk = rt._json("package_results.json")["packages"]
+    real = pk["HIGH"]["marginal_vs_mid_yr"]
+    assert real > 0, (
+        f"data/package_results.json now puts the expansion's marginal saving at "
+        f"{real}/yr; the published branch below is no longer the live one")
+    published = rt.resolve_token("S7_VERDICT")
+    assert "saves too little to match that" in published, published
+    widths = {"published (marginal +%d)" % real:
+              _assert_within_density_cap("S7_VERDICT", published, "the published branch")}
+
+    for label, marginal in (("negative (-400)", -400), ("zero", 0)):
+        with _swapped(pk["HIGH"], "marginal_vs_mid_yr", marginal):
+            value = rt.resolve_token("S7_VERDICT")
+        assert "pays back faster" not in value, (
+            f"S7_VERDICT tells the reader the expansion pack pays back faster than the "
+            f"first unit while its own marginal saving is {marginal}/yr: {value}")
+        assert "never repays its extra cost" in value, (
+            f"S7_VERDICT must say plainly that an expansion saving {marginal}/yr does "
+            f"not pay back: {value}")
+        widths[label] = _assert_within_density_cap("S7_VERDICT", value, label)
+
+    # The positive side must still discriminate BOTH ways, or "never claims a
+    # faster payback" would pass trivially on a formula that never says it.
+    exp_cost = pk["HIGH"]["cost"] - pk["MID"]["cost"]
+    quick = exp_cost / (pk["MID"]["battery_alone_payback_post_fix_yr"] / 2)
+    with _swapped(pk["HIGH"], "marginal_vs_mid_yr", quick):
+        value = rt.resolve_token("S7_VERDICT")
+    assert "pays back faster than that" in value, (
+        f"S7_VERDICT withheld the faster-payback reading from an expansion that really "
+        f"does pay back in half the time: {value}")
+    widths["faster (positive)"] = _assert_within_density_cap(
+        "S7_VERDICT", value, "the faster-payback branch")
+
+    # An EXACT tie is its own branch: two branches would have sent it to
+    # "pays back faster than that", which is false when the two paybacks are
+    # the same number. The tie is constructed, not hoped for -- the payback is
+    # swapped to the very quotient the formula computes (exp_cost / marginal,
+    # the identical IEEE division), so equality holds on any platform rather
+    # than depending on 5900/6.5 round-tripping.
+    #
+    # The first unit's saving moves with its payback, because the two are one
+    # quantity in two forms (payback = cost / saving) and report_tokens checks
+    # that derivation: swapping the payback alone builds an artifact no run of
+    # package_results.py could write, and the refusal that produces is a
+    # DIFFERENT finding's, not this one's.
+    tie_marginal = 1000.0
+    tie_payback = exp_cost / tie_marginal
+    tie_saving = pk["MID"]["cost"] / tie_payback
+    with _swapped(pk["HIGH"], "marginal_vs_mid_yr", tie_marginal), \
+            _swapped(pk["MID"], "battery_alone_post_ev_fix_yr", tie_saving), \
+            _swapped(pk["MID"], "battery_alone_payback_post_fix_yr", tie_payback):
+        value = rt.resolve_token("S7_VERDICT")
+    assert "faster" not in value, (
+        f"S7_VERDICT calls an expansion repaying at exactly the first unit's rate "
+        f"({tie_payback:.1f} yr both) the faster buy: {value}")
+    assert "pays back at the same rate" in value, (
+        f"S7_VERDICT must call an exact tie a tie: {value}")
+    widths["tie (equal paybacks)"] = _assert_within_density_cap(
+        "S7_VERDICT", value, "the tie branch")
+
+    assert rt.resolve_token("S7_VERDICT") == published, (
+        "the substituted marginal saving leaked out of this case")
+    return ("S7_VERDICT reads slower / faster / tie / never-repays across marginal "
+            f"+{real}, +{quick:.0f}, +{tie_marginal:.0f}, 0 and -400 per year, each inside "
+            f"the density cap ({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+# Wordings that tell the reader the expansion pack saves NOTHING. The
+# slow-payback branch renders while packages.HIGH.marginal_vs_mid_yr is
+# POSITIVE, so any of these there states the artifact's own sign backwards.
+_ABSENT_SAVING_RE = re.compile(
+    r"not savings|no savings|nothing|never repays|saves? no\b|zero saving", re.I)
+
+
+@case
+def case_s7_verdict_never_calls_a_positive_marginal_saving_an_absence_of_savings():
+    """packages.HIGH.marginal_vs_mid_yr > 0 means the expansion pack DOES save
+    money -- $216/yr on the committed artifact, at a marginal payback slower
+    than the first unit's. Saying it "buys endurance, not savings" there
+    states the opposite of the artifact the sentence is derived from, and
+    hands a reader deciding what to buy the wrong fact: "saves too little to
+    be worth the money" and "saves no money at all" are different purchase
+    advice, and only the second is a reason to rule the pack out on its own
+    terms. Both positive branches are checked, so the wording cannot drift
+    into an absence claim on either side of the payback comparison.
+
+    The marginal <= 0 branch is checked to STILL read as an absence, which is
+    what keeps the two claims distinguishable -- and keeps this case from
+    passing on a formula that simply never mentions savings at all."""
+    pk = rt._json("package_results.json")["packages"]
+    exp_cost = pk["HIGH"]["cost"] - pk["MID"]["cost"]
+    mid_payback = pk["MID"]["battery_alone_payback_post_fix_yr"]
+    real = pk["HIGH"]["marginal_vs_mid_yr"]
+    assert real > 0 and exp_cost / mid_payback > real, (
+        f"data/package_results.json no longer puts the expansion on a positive, "
+        f"slower-than-{mid_payback}-yr marginal saving ({real}/yr on ${exp_cost:,.0f}); "
+        f"the published branch is no longer the one this case guards")
+
+    slow, quick = exp_cost / (mid_payback * 4), exp_cost / (mid_payback / 2)
+    checked = {}
+    for label, marginal in (("published (+%d)" % real, real),
+                            ("slower (+%.0f)" % slow, slow),
+                            ("faster (+%.0f)" % quick, quick)):
+        with _swapped(pk["HIGH"], "marginal_vs_mid_yr", marginal):
+            value = rt.resolve_token("S7_VERDICT")
+        hit = _ABSENT_SAVING_RE.search(value)
+        assert not hit, (
+            f"S7_VERDICT describes an expansion pack saving {marginal:.0f}/yr as an "
+            f"absence of savings ({hit.group(0)!r}) -- data/package_results.json:"
+            f"packages.HIGH.marginal_vs_mid_yr says it saves that money: {value}")
+        checked[label] = value
+
+    with _swapped(pk["HIGH"], "marginal_vs_mid_yr", 0):
+        none_at_all = rt.resolve_token("S7_VERDICT")
+    assert _ABSENT_SAVING_RE.search(none_at_all), (
+        f"S7_VERDICT stopped saying plainly that an expansion saving nothing never "
+        f"repays, so this case can no longer tell the two claims apart: {none_at_all}")
+    assert all(v != none_at_all for v in checked.values()), (
+        "S7_VERDICT gives a positive marginal saving the same clause it gives a zero one")
+    return ("S7_VERDICT never words a positive marginal saving as an absence of savings "
+            f"(+{real}, +{slow:.0f}, +{quick:.0f}/yr), while the zero case still says the "
+            "expansion never repays")
+
+
+def _s10_household_inputs():
+    """The two household answers S10_VERDICT reads: the household's own when
+    the private archive is staged, and otherwise the two provider names taken
+    off data/cca_bundled_counterfactual.json -- the very artifact the sentence
+    is derived from, whose own question line names both in committed,
+    de-identified text.
+
+    Same contract as _s2_household_inputs -- never the real answers as
+    literals in a committed file (CLAUDE.md section 4), and the stub exists so
+    the guard runs UNGATED on the archive-less runner CI uses rather than
+    skipping there. Sourcing the stand-ins from the artifact rather than
+    inventing them is what lets the round-trip against index.html be exact in
+    both places: a synthetic provider name renders a sentence no published
+    line could ever match."""
+    if rt.hh.PATH.is_file():
+        return {}
+    utility, cca = _cca_provider_names()
+    return {"household.utility": utility, "household.cca": cca}
+
+
+def _cca_provider_names():
+    """(utility, cca) off data/cca_bundled_counterfactual.json's question."""
+    question = rt._json("cca_bundled_counterfactual.json")["question"]
+    m = re.search(r"bundled (.+?) generation to the CCA \((.+?)\)", question)
+    assert m, (
+        "data/cca_bundled_counterfactual.json's question no longer names both "
+        f"generation providers: {question!r}")
+    return m.group(1), m.group(2)
+
+
+def _verdict_stub(name):
+    """The household answers one verdict reads, substituted so its round-trip
+    against index.html runs on a checkout with no private archive.
+
+    Where the archive IS staged every stub resolves to the household's own
+    answer, so the substitution changes nothing about what is exercised."""
+    if name in ("S0_VERDICT", "S3_VERDICT"):
+        provider, cheapest, _priced = _plan_ranking_inputs()
+        # Without the archive, stand in with the plan the committed CSV ranks
+        # cheapest -- the branch index.html publishes today. If this household
+        # ever moves onto a plan that loses, the published line becomes the
+        # inverted one and this stub stops reproducing it, which fails loudly
+        # here rather than passing on the wrong branch.
+        plan = rt.hh1("household.plan") if rt.hh.PATH.is_file() else cheapest
+        return _stub_plan(plan, provider)
+    if name == "S10_VERDICT":
+        return _stub_household(_s10_household_inputs())
+    if name == "S2_VERDICT":
+        return _stub_household(_s2_household_inputs())
+    raise AssertionError(
+        f"{name} declares private/household.yaml sources but has no stub, so it has no "
+        "index.html agreement check on a runner without the private archive")
+
+
+def _s2_variable_figures(stubs):
+    """The three figures in S2_VERDICT that come off private/household.yaml:
+    the array's age, its nameplate, and the specific yield divided out of it."""
+    kw_dc = stubs["solar.kw_dc"]
+    pto = rt._as_date(stubs["household.pto_date"])
+    _start, end = rt._analysis_window_dates()
+    age = end.year - pto.year - ((end.month, end.day) < (pto.month, pto.day))
+    production = rt._annual_production_kwh(rt.CTX)
+    return [f"{age}", f"{kw_dc:,.2f}", f"{production / kw_dc:,.0f}"]
+
+
+def _assert_verdict_skeleton_matches_index(name, index_html, value, variables):
+    """index.html agreement for a verdict carrying figures that have no
+    committed source: every literal fragment BETWEEN those figures must appear,
+    in order, inside the published <p class="verdict"> line, which must also
+    end where the sentence does.
+
+    Scoped to the section that owns the verdict, and required to be the only
+    verdict line in it -- finding 8's other half. Searching every
+    <p class="verdict"> in the document for one that happens to start the
+    right way accepted a line that had moved sections, and would have picked
+    an arbitrary one of two duplicates."""
+    fragments, rest = [], value
+    for var in variables:
+        head, sep, rest = rest.partition(var)
+        assert sep, (
+            f"{name}'s rendering does not contain the substituted figure {var!r}, so "
+            f"this case cannot tell its household figures from its wording: {value!r}")
+        fragments.append(head)
+    fragments.append(rest)
+    assert sum(len(f) for f in fragments) > len(value) / 2, (
+        f"{name} is mostly household figures ({fragments!r}); a skeleton check would "
+        "assert almost nothing")
+
+    section_id = _verdict_section_id(name)
+    section = _index_section(index_html, section_id)
+    in_section = re.findall(r'<p class="verdict">(.*?)</p>', section, re.S)
+    assert len(in_section) == 1, (
+        f'<h2 id="{section_id}"> carries {len(in_section)} verdict lines, so {name} '
+        "cannot be matched to the one it owns")
+    published = [p for p in in_section
+                 if p.startswith(_htmllib.escape(fragments[0], quote=True))]
+    assert published, (
+        f"{name}'s own section publishes a verdict that does not open with "
+        f"{fragments[0]!r}: {in_section[0]!r}")
+    assert index_html.count(f'<p class="verdict">{in_section[0]}</p>') == 1, (
+        f"{name}'s published line appears more than once in index.html")
+    line, pos = published[0], 0
+    for fragment in fragments:
+        escaped = _htmllib.escape(fragment, quote=True)
+        found = line.find(escaped, pos)
+        assert found >= 0, (
+            f"{name} does not round-trip into index.html: the published line is missing "
+            f"{escaped!r} after character {pos}\n  token: {value!r}\n  index: {line!r}")
+        pos = found + len(escaped)
+    assert pos == len(line), (
+        f"{name}'s published line carries {line[pos:]!r} past the end of the token's "
+        f"own sentence")
+    return line
+
+
+@case
+def case_s10_verdict_calls_an_exact_tie_a_tie_rather_than_a_cheaper_cca():
+    """This clause reports a DIRECTION, and at delta_usd_per_year == 0 there
+    is no direction to report. A two-way ternary still has to put that case
+    somewhere, and it put it in "less than": "$0/yr less than bundled
+    generation" tells a reader the CCA came out cheaper while the two priced
+    out exactly the same. Same defect shape as the section 6 tie.
+
+    Both signed branches are checked too, so the tie branch cannot be bought
+    by a formula that stopped reporting a direction at all."""
+    a = rt._json("cca_bundled_counterfactual.json")["direction_a_cca_repriced_at_bundled"]
+    real = a["delta_usd_per_year"]
+    assert real != 0, (
+        "data/cca_bundled_counterfactual.json now prices the two identically; the "
+        "published branch is the tie one and this case's premise no longer holds")
+
+    with _stub_household(_s10_household_inputs()):
+        published = rt.resolve_token("S10_VERDICT")
+        for label, delta, expected in (("positive", abs(real), "more than"),
+                                       ("negative", -abs(real), "less than")):
+            with _swapped(a, "delta_usd_per_year", delta):
+                value = rt.resolve_token("S10_VERDICT")
+            assert expected in value, (
+                f"S10_VERDICT dropped the {label} direction at a delta of {delta}: {value}")
+        with _swapped(a, "delta_usd_per_year", 0.0):
+            tie = rt.resolve_token("S10_VERDICT")
+
+    for wrong in ("more than", "less than"):
+        assert wrong not in tie, (
+            f"S10_VERDICT reports a direction at an exact tie ({wrong!r}), telling the "
+            f"reader one option won while the two cost the same: {tie}")
+    assert "the same as bundled" in tie, (
+        f"S10_VERDICT must say plainly that a zero delta means the two cost the same: {tie}")
+    assert "$0/yr" not in tie, (
+        f"S10_VERDICT quotes a $0/yr gap as if it were a priced difference: {tie}")
+    # Section 10 is advanced-tier, so CLAUDE.md section 10's 35-word cap is
+    # formally exempt here -- but the sentence is long already, so the tie
+    # branch may not lengthen it.
+    assert len(tie.split()) <= len(published.split()), (
+        f"the tie branch is longer than the published one "
+        f"({len(tie.split())} vs {len(published.split())} words): {tie}")
+    return (f"S10_VERDICT calls a zero delta the same cost instead of ${0:,.0f}/yr less "
+            f"(live delta ${real:,.2f}/yr), and still reports both directions when there "
+            f"is one ({len(tie.split())} words, same as the published branch)")
+
+
+@case
+def case_s10_verdict_sizes_the_unpriced_effect_rather_than_refusing_to_render():
+    """Section 10's closing caveat calls the excluded net-export effect
+    "materially larger" than the priced delta it quotes. That adjective is a
+    comparison, and it used to abort the whole report when the comparison went
+    the other way -- withholding the section from the household with the
+    BETTER-evidenced answer, since a small unpriced side is what makes the
+    priced one worth reading.
+
+    Only the adjective turns on the comparison. The caveat itself rests on the
+    artifact's own excluded_net_export_note, which says the priced delta is
+    not the full answer whatever the excluded side weighs, so it stands in
+    every branch. All three sizes are driven; section 10 is advanced-tier and
+    formally exempt from the density cap, so the check is that no branch runs
+    longer than the published one."""
+    a = rt._json("cca_bundled_counterfactual.json")["direction_a_cca_repriced_at_bundled"]
+    unpriced = abs(a["excluded_net_export_cca_credit_usd"])
+    priced = abs(a["delta_usd"])
+    assert unpriced > priced, (
+        f"data/cca_bundled_counterfactual.json already puts the unpriced effect "
+        f"(${unpriced:,.2f}) at or below the priced delta (${priced:,.2f}); the published "
+        "branch is no longer the live one")
+    with _stub_household(_s10_household_inputs()):
+        published = rt.resolve_token("S10_VERDICT")
+        assert "a materially larger, unpriced net-export effect" in published, published
+        lengths = {"published": len(published.split())}
+        for label, value, expected in (
+                ("equal", priced, "an equally large, unpriced net-export effect"),
+                ("smaller", priced / 2, "a smaller, unpriced net-export effect")):
+            with _swapped(a, "excluded_net_export_cca_credit_usd", -value):
+                rendered = rt.resolve_token("S10_VERDICT")
+            assert expected in rendered, (
+                f"S10_VERDICT does not size the unpriced effect correctly when it is "
+                f"{label} to the ${priced:,.2f} priced delta: {rendered}")
+            assert "materially larger" not in rendered, (
+                f"S10_VERDICT still calls the unpriced effect materially larger at "
+                f"${value:,.2f}: {rendered}")
+            assert "not fully settled" in rendered, (
+                f"S10_VERDICT dropped the caveat its artifact's own "
+                f"excluded_net_export_note supports at every size: {rendered}")
+            lengths[label] = len(rendered.split())
+            assert lengths[label] <= lengths["published"], (
+                f"the {label} branch runs longer than the published one: {rendered}")
+        assert rt.resolve_token("S10_VERDICT") == published, (
+            "the substituted excluded credit leaked out of this case")
+    return ("S10_VERDICT resizes its unpriced-effect adjective instead of aborting when "
+            f"the excluded net-export credit stops dominating (live ${unpriced:,.2f} vs "
+            f"${priced:,.2f}; " + ", ".join(f"{k} {v}w" for k, v in lengths.items()) + ")")
+
+
+@case
+def case_s7_verdict_refuses_a_battery_payback_its_own_artifact_contradicts():
+    """The two refusals section 7 keeps, both of them artifacts contradicting
+    themselves rather than households whose answer differs.
+
+    1. A payback that is zero, negative or infinite WHILE the same package's
+       battery_alone_post_ev_fix_yr is positive. The payback is that saving
+       divided into the cost, so a positive saving and a non-quotable
+       quotient cannot both be right; neither the published clause nor the
+       never-repays one can be written on top of the contradiction. (A
+       non-positive SAVING is the household case, and inverts -- see
+       case_battery_verdicts_say_plainly_when_the_battery_never_repays.)
+    2. A HIGH package costing no more than MID. HIGH is MID plus the
+       expansion pack by construction -- that is what BATTERY_EXPANDED_MODEL
+       and BATTERY_EXPANDED_COST name -- so a non-positive difference means
+       the artifact no longer prices the thing the clause is about. There is
+       no expansion cost to repay and no figure to quote for one."""
+    pk = rt._json("package_results.json")["packages"]
+    assert pk["MID"]["battery_alone_post_ev_fix_yr"] > 0, (
+        "this case drives the positive-saving contradiction; the live saving is not positive")
+    for bad in (0, -6.5, float("inf")):
+        with _swapped(pk["MID"], "battery_alone_payback_post_fix_yr", bad):
+            try:
+                value = rt.resolve_token("S7_VERDICT")
+                raise AssertionError(f"S7_VERDICT quoted a {bad}-year battery payback "
+                                     f"as a sound purchase figure: {value}")
+            except SystemExit as e:
+                assert "S7_VERDICT" in str(e), e
+    with _swapped(pk["HIGH"], "cost", pk["MID"]["cost"]):
+        try:
+            value = rt.resolve_token("S7_VERDICT")
+            raise AssertionError(f"S7_VERDICT called HIGH an expansion pack while it "
+                                 f"costs no more than MID: {value}")
+        except SystemExit as e:
+            assert "S7_VERDICT" in str(e), e
+    return ("S7_VERDICT fails closed when a positive battery-alone saving is paired with "
+            "a zero, negative or infinite payback, and when the HIGH package carries no "
+            "extra cost for an expansion to repay")
+
+
+@case
+def case_battery_verdicts_say_plainly_when_the_battery_never_repays():
+    """Sections 0 and 7 both sell the battery off packages.MID, and both used
+    to raise SystemExit when its own savings stopped repaying it -- section 0
+    on the payback RANGE it publishes, section 7 on the single payback it
+    quotes. A household whose battery never pays back is as legitimate a
+    reproducer as one on the wrong tariff, and it is the household most in
+    need of being told; refusing there withheld all fifteen sections to avoid
+    printing one clause the other way.
+
+    The substitution moves the saving AND its payback together, the way a real
+    run of package_results.py would: a battery saving nothing has an infinite
+    payback, one losing money a negative one. Section 7's expansion tail is
+    checked too, because its three comparative branches all measure against a
+    first-unit payback that no longer exists -- it has to state the
+    expansion's own instead of comparing to nothing."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    pk = rt._json("package_results.json")["packages"]
+    mid = pk["MID"]
+    live = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
+    assert min(live) > 0, (
+        f"data/package_results.json already puts a battery-alone saving at {min(live)}/yr; "
+        "the published branch is no longer the live one")
+    exp_cost = pk["HIGH"]["cost"] - mid["cost"]
+    widths = {}
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in ("S0_VERDICT", "S7_VERDICT")}
+        assert "sound optional buy" in published["S0_VERDICT"], published["S0_VERDICT"]
+        assert "adds its own" in published["S7_VERDICT"], published["S7_VERDICT"]
+
+        for label, saving, payback in (("saves nothing", 0, float("inf")),
+                                       ("loses money", -400, -36.25)):
+            with _swapped(mid, "battery_alone_yr", saving), \
+                    _swapped(mid, "battery_alone_post_ev_fix_yr", saving), \
+                    _swapped(mid, "battery_alone_payback_yr", payback), \
+                    _swapped(mid, "battery_alone_payback_post_fix_yr", payback):
+                s0 = rt.resolve_token("S0_VERDICT")
+                s7 = rt.resolve_token("S7_VERDICT")
+            assert "does not repay its own cost" in s0, (
+                f"S0_VERDICT still calls a battery that {label} a sound buy: {s0}")
+            assert "sound optional buy" not in s0 and "payback" not in s0, s0
+            assert "never repays its own cost" in s7, (
+                f"S7_VERDICT still quotes a payback for a battery that {label}: {s7}")
+            assert "adds its own" not in s7, s7
+            # The expansion tail loses its comparator, so it must stop
+            # comparing rather than measure against a payback that is gone.
+            marginal = pk["HIGH"]["marginal_vs_mid_yr"]
+            assert marginal > 0, "this arm needs a positive expansion saving"
+            assert f"repays its extra cost in {exp_cost / marginal:.1f} years" in s7, (
+                f"S7_VERDICT's expansion tail still measures against a first-unit "
+                f"payback that no longer exists: {s7}")
+            for dangling in ("match that", "faster than that", "at the same rate"):
+                assert dangling not in s7, (
+                    f"S7_VERDICT compares the expansion to a payback it no longer "
+                    f"quotes ({dangling!r}): {s7}")
+            widths[f"S0 {label}"] = _assert_within_density_cap("S0_VERDICT", s0, label)
+            widths[f"S7 {label}"] = _assert_within_density_cap("S7_VERDICT", s7, label)
+
+            # And an expansion that also never repays still reads as absent.
+            with _swapped(mid, "battery_alone_yr", saving), \
+                    _swapped(mid, "battery_alone_post_ev_fix_yr", saving), \
+                    _swapped(mid, "battery_alone_payback_yr", payback), \
+                    _swapped(mid, "battery_alone_payback_post_fix_yr", payback), \
+                    _swapped(pk["HIGH"], "marginal_vs_mid_yr", 0):
+                neither = rt.resolve_token("S7_VERDICT")
+            assert "never repays its own cost" in neither and \
+                "expansion pack never repays its extra cost" in neither, neither
+            widths[f"S7 {label}, no expansion saving"] = _assert_within_density_cap(
+                "S7_VERDICT", neither, f"{label} with a dead expansion")
+
+        for token, value in published.items():
+            assert rt.resolve_token(token) == value, (
+                f"the substituted battery saving leaked out of this case ({token})")
+    return ("S0_VERDICT and S7_VERDICT say plainly that a battery saving nothing or "
+            "losing money does not repay its cost, instead of aborting the report "
+            f"(live battery-alone savings ${live[0]:,}/${live[1]:,}/yr; "
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_s0_verdict_refuses_a_payback_range_its_own_artifact_contradicts():
+    """Section 0's headline quotes both battery-alone paybacks as a RANGE
+    under "a sound optional buy". Each is the package's cost divided by one of
+    its battery-alone savings, so a payback that is zero, negative or infinite
+    WHILE both savings stay positive is the artifact contradicting itself --
+    the quotients and the savings cannot both be right, and no branch can be
+    written on top of that.
+
+    The household case (a saving at or below zero, where the battery really
+    does not repay) inverts instead; it is driven in
+    case_battery_verdicts_say_plainly_when_the_battery_never_repays.
+
+    Stubbed household plan, so this keeps running ungated now that S0 checks
+    the tariff ranking too -- the substituted values are the household's own
+    where the archive is staged."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    provider, cheapest, _rows = _plan_ranking_inputs()
+    assert min(mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"]) > 0, (
+        "this case drives the positive-savings contradiction; a live saving is not positive")
+    for key in ("battery_alone_payback_yr", "battery_alone_payback_post_fix_yr"):
+        real = mid[key]
+        assert real > 0, f"data/package_results.json:{key} is already {real}"
+        for bad in (0, -3.0, float("inf")):
+            with _swapped(mid, key, bad), _stub_plan(cheapest, provider):
+                try:
+                    value = rt.resolve_token("S0_VERDICT")
+                    raise AssertionError(f"S0_VERDICT called the battery a sound optional "
+                                         f"buy at a {bad}-year payback: {value}")
+                except SystemExit as e:
+                    assert "S0_VERDICT" in str(e), e
+    return ("S0_VERDICT fails closed when positive battery-alone savings are paired with "
+            "a zero, negative or infinite payback at either end of the range it publishes")
+
+
+@case
+def case_s5_verdict_inverts_when_timing_stops_driving_the_bill():
+    """"takes X% of imported kWh but Y% of the import energy cost, so timing
+    sets this bill" is a comparison the sentence never states. It holds only
+    while Y > X; at Y <= X the same words assert the opposite of the data.
+
+    It used to refuse there, which is the wrong half of the answer to
+    withhold: a house whose on-peak window costs no more than its share of
+    kWh is a house where timing does NOT drive the bill, and section 5 exists
+    to tell it so. Both directions and the exact tie are driven, each held to
+    the density cap."""
+    rd = rt._json("report_data.json")
+    pc = rd["periods_chart"]
+    kwh_share = pc["import_share"][pc["order"].index("on")]
+    real = rd["onpeak"]["share_of_energy_cost"]
+    assert real > kwh_share, (
+        f"data/report_data.json already puts the on-peak cost share ({real}) at or below "
+        f"its kWh share ({kwh_share}); the published branch is no longer the live one")
+    published = rt.resolve_token("S5_VERDICT")
+    assert "timing, more than total consumption, sets this bill" in published, published
+    widths = {"published": _assert_within_density_cap(
+        "S5_VERDICT", published, "the published branch")}
+
+    for label, bad, expected in (
+            ("cheaper on-peak energy", kwh_share / 2,
+             "so total consumption, more than timing, sets this bill"),
+            ("an exact tie", kwh_share,
+             "so timing does not drive this bill on its own")):
+        with _swapped(rd["onpeak"], "share_of_energy_cost", bad):
+            value = rt.resolve_token("S5_VERDICT")
+        assert expected in value, (
+            f"S5_VERDICT does not state the {label} conclusion at a cost share of {bad} "
+            f"against a kWh share of {kwh_share}: {value}")
+        assert "timing, more than total consumption" not in value, (
+            f"S5_VERDICT still claims timing sets this bill at {label}: {value}")
+        widths[label] = _assert_within_density_cap("S5_VERDICT", value, label)
+    assert rt.resolve_token("S5_VERDICT") == published, (
+        "the substituted cost share leaked out of this case")
+    return ("S5_VERDICT inverts to consumption-driven, and to neither, instead of "
+            f"aborting when the on-peak cost share stops exceeding the kWh share "
+            f"(live: {real} vs {kwh_share}; "
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_s1_verdict_refuses_to_call_anti_correlated_series_agreement():
+    """The second half of section 1's verdict says the independent production
+    series "agree at" the weakest pairwise daily correlation. A correlation is
+    a signed ratio: at r <= 0 the pair does not agree at all, and printing the
+    number after the word "agree" states the opposite of what it means."""
+    rows = rt._csv_rows("threeway_production_validation.csv")
+    victim = list(rows[0])[1]
+    real = rt._min_pairwise_daily_correlation()
+    assert real > 0, f"the committed production series already correlate at {real:.4f}"
+    originals = [r[victim] for r in rows]
+    for r in rows:
+        if r[victim] not in (None, ""):
+            r[victim] = str(-float(r[victim]))
+    try:
+        value = rt.resolve_token("S1_VERDICT")
+        raise AssertionError(f"S1_VERDICT said the series agree while {victim!r} runs "
+                             f"anti-correlated with the others: {value}")
+    except SystemExit as e:
+        assert "S1_VERDICT" in str(e), e
+    finally:
+        for r, original in zip(rows, originals):
+            r[victim] = original
+    assert abs(rt._min_pairwise_daily_correlation() - real) < 1e-12, (
+        "the negated production column leaked out of this case")
+    return (f"S1_VERDICT refuses the word 'agree' when the weakest pair anti-correlates "
+            f"(live: {real:.4f})")
+
+
+@case
+def case_s1_verdict_guards_the_rounding_digit_its_sentence_claims():
+    """Section 1 says the billed TOU buckets rebuild "to the whole-kWh
+    rounding digit the statements print" -- a +/-0.5 kWh claim about the WORST
+    residual in the file. The guard used to read only
+    rules.as_billed.buckets_failing, and analysis/tou_audit.py passes a bucket
+    within max(1.0 kWh, 0.5% of the billed magnitude): its floor alone is
+    twice the digit this sentence quotes, and on the largest committed bucket
+    (1,379 kWh) the pass band is +/-6.9 kWh. So zero failing buckets can hold
+    while the real residual is ten times what the words assert.
+
+    Driven at the quantity the sentence actually asserts, with
+    buckets_failing left at zero throughout -- otherwise the old guard would
+    have caught the substitution for the wrong reason."""
+    ab = rt._json("tou_audit_summary.json")["rules"]["as_billed"]
+    bound = rt._whole_kwh_rounding_bound()
+    assert ab["buckets_failing"] == 0, ab["buckets_failing"]
+    assert ab["max_abs_residual_kwh"] <= bound, (
+        f"data/tou_audit_summary.json's worst as-billed residual is already "
+        f"{ab['max_abs_residual_kwh']} kWh against a {bound} kWh bound; S1_VERDICT's "
+        "claim is no longer true and the token should already be failing")
+    assert rt.ta.ABS_TOL_KWH > bound, (
+        f"tou_audit's per-bucket pass floor ({rt.ta.ABS_TOL_KWH} kWh) no longer exceeds "
+        f"the {bound} kWh rounding digit S1_VERDICT quotes, so buckets_failing would "
+        "establish the claim on its own and this case's premise is gone")
+    declared = " ".join(rt.TOKENS["S1_VERDICT"]["sources"])
+    assert "max_abs_residual_kwh" in declared, (
+        f"S1_VERDICT must declare the residual it is guarded on: {declared}")
+
+    published = rt.resolve_token("S1_VERDICT")
+    assert "whole-kWh rounding digit" in published, published
+    # Residuals that PASS tou_audit's own rule (its 1.0 kWh floor, and the
+    # 6.9 kWh band the largest committed bucket earns at 0.5%) but blow the
+    # digit the sentence quotes.
+    for bad in (rt.ta.ABS_TOL_KWH, 6.9):
+        with _swapped(ab, "max_abs_residual_kwh", bad):
+            assert ab["buckets_failing"] == 0, "this arm must not lean on a failing bucket"
+            try:
+                value = rt.resolve_token("S1_VERDICT")
+                raise AssertionError(
+                    f"S1_VERDICT claimed a whole-kWh ({bound} kWh) rebuild while its own "
+                    f"artifact reports a {bad} kWh worst residual: {value}")
+            except SystemExit as e:
+                assert "S1_VERDICT" in str(e) and str(bad) in str(e), e
+    # Discriminates: a residual sitting exactly on the printed digit still
+    # renders, so this is a bound and not a blanket refusal.
+    with _swapped(ab, "max_abs_residual_kwh", bound):
+        assert rt.resolve_token("S1_VERDICT") == published
+
+    # The bound itself is read off the artifact, so a file that stops stating
+    # it fails closed rather than falling back on a number restated here.
+    tol = rt._json("tou_audit_summary.json")["tolerance"]
+    with _swapped(tol, "basis", "statements print kWh"):
+        try:
+            value = rt.resolve_token("S1_VERDICT")
+            raise AssertionError(
+                f"S1_VERDICT rendered while its artifact no longer states the rounding "
+                f"bound its sentence quotes: {value}")
+        except SystemExit as e:
+            assert "S1_VERDICT" in str(e), e
+    # And an artifact whose stated bound has drifted from the generator that
+    # wrote it fails closed rather than quietly picking one of the two.
+    with _patched(rt.ta, "ROUNDING_PER_BUCKET", bound + 0.25):
+        try:
+            value = rt.resolve_token("S1_VERDICT")
+            raise AssertionError(
+                f"S1_VERDICT rendered while data/tou_audit_summary.json and "
+                f"analysis/tou_audit.py disagree about the rounding bound: {value}")
+        except SystemExit as e:
+            assert "S1_VERDICT" in str(e), e
+    assert rt.resolve_token("S1_VERDICT") == published, (
+        "the substituted tolerance leaked out of this case")
+    return (f"S1_VERDICT is guarded on max_abs_residual_kwh against the {bound} kWh "
+            f"digit its own sentence quotes, not on tou_audit's looser "
+            f"max({rt.ta.ABS_TOL_KWH} kWh, {rt.ta.REL_TOL_CELL:.1%}) pass rule "
+            f"(live worst residual {ab['max_abs_residual_kwh']} kWh)")
+
+
+@case
+def case_s5_verdict_compares_the_rounded_shares_the_reader_sees():
+    """The sentence prints both shares as whole percents and concludes from
+    the gap between them. Guarding the UNROUNDED shares passes at kwh 0.1720 /
+    cost 0.1740, where the published words read "takes 17% of imported kWh but
+    17% of the import energy cost, so timing sets this bill" -- a conclusion
+    its own two printed figures contradict. The guard has to run on what the
+    reader is shown."""
+    rd = rt._json("report_data.json")
+    pc = rd["periods_chart"]
+    kwh_share = pc["import_share"][pc["order"].index("on")]
+    real = rd["onpeak"]["share_of_energy_cost"]
+    kwh_pct = round(kwh_share * 100)
+    assert round(real * 100) > kwh_pct, (
+        f"data/report_data.json already prints both shares as {kwh_pct}%; the published "
+        "branch is no longer the live one")
+    published = rt.resolve_token("S5_VERDICT")
+    assert f"{kwh_pct}% of imported kWh" in published, published
+
+    # Strictly larger unrounded, identical once printed: the exact case the
+    # unrounded guard waves through.
+    same_pct = kwh_share + 0.0002
+    assert same_pct > kwh_share and round(same_pct * 100) == kwh_pct, (
+        f"{same_pct} is not a cost share that beats {kwh_share} yet prints the same")
+    with _swapped(rd["onpeak"], "share_of_energy_cost", same_pct):
+        value = rt.resolve_token("S5_VERDICT")
+    assert "timing, more than total consumption" not in value, (
+        f"S5_VERDICT concluded that timing sets this bill while showing the reader "
+        f"{kwh_pct}% against {kwh_pct}%: {value}")
+    assert "the same share of the import energy cost" in value, (
+        f"S5_VERDICT does not call two figures that print alike the same share: {value}")
+
+    # Discriminates: one whole percent of divergence is still the published
+    # claim, so this is a rounding check and not a blanket refusal.
+    with _swapped(rd["onpeak"], "share_of_energy_cost", (kwh_pct + 1) / 100):
+        value = rt.resolve_token("S5_VERDICT")
+    assert f"but {kwh_pct + 1}% of the import energy" in value, value
+    assert rt.resolve_token("S5_VERDICT") == published, (
+        "the substituted cost share leaked out of this case")
+    return (f"S5_VERDICT refuses the timing conclusion whenever its two printed figures "
+            f"round to the same {kwh_pct}%, and keeps it at one point of divergence "
+            f"(live: {real:.4f} vs {kwh_share:.4f})")
+
+
+@case
+def case_s2_verdict_fails_closed_instead_of_dividing_by_zero():
+    """resolve_token catches KeyError, IndexError, TypeError and ValueError.
+    ZeroDivisionError is not among them, so a division by an artifact value
+    that can legitimately be zero escapes this module's documented
+    named-SystemExit contract and surfaces as a raw traceback -- from a
+    household with no exports, or none recorded, which is an ordinary thing
+    for a report generator to meet.
+
+    Both divisions section 2's sentence performs are driven: the year's export
+    total (the share's denominator) and the array nameplate (the specific
+    yield's). A ZeroDivisionError fails this case by propagating out of it."""
+    rd = rt._json("report_data.json")
+    stubs = _s2_household_inputs()
+    with _stub_household(stubs):
+        published = rt.resolve_token("S2_VERDICT")
+        for bad in (0, 0.0):
+            with _swapped(rd["totals"], "exp", bad):
+                try:
+                    value = rt.resolve_token("S2_VERDICT")
+                    raise AssertionError(
+                        f"S2_VERDICT published an export-timing share of a {bad} kWh "
+                        f"export total: {value}")
+                except SystemExit as e:
+                    assert "S2_VERDICT" in str(e) and "totals.exp" in str(e), e
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted export total leaked out of this case")
+    for bad in (0, 0.0):
+        with _stub_household(dict(stubs, **{"solar.kw_dc": bad})):
+            try:
+                value = rt.resolve_token("S2_VERDICT")
+                raise AssertionError(
+                    f"S2_VERDICT quoted a specific yield against a {bad} kW array: {value}")
+            except SystemExit as e:
+                assert "S2_VERDICT" in str(e) and "kw_dc" in str(e), e
+    return ("S2_VERDICT raises SystemExit naming itself on a zero export total and a "
+            "zero array nameplate, rather than a ZeroDivisionError resolve_token does "
+            "not catch")
+
+
+@case
+def case_s2_verdict_refuses_windows_its_hourly_sources_cannot_key():
+    """Both halves of section 2's timing clause read HOURLY sources with an
+    int() on the tariff's own window bounds. A tariff whose overnight
+    super-off-peak run ended at 06:30 would truncate to the "0-6h" census key
+    and borrow a count nobody ever made for it -- the exact borrowing the
+    lookup's docstring promises to fail closed on -- and the midday export
+    slice would silently drop the half hour from a whole-hour bucket profile.
+
+    Driven by handing the formulas a fractional tariff window, which is what
+    makes this case fail on the truncating version: "0-6h" IS a key the
+    committed census carries, so the old code rendered a confident answer."""
+    stubs = _s2_household_inputs()
+    with _stub_household(stubs):
+        published = rt.resolve_token("S2_VERDICT")
+        for label, attr, run in (
+                ("the overnight EV census", "_overnight_cheap_run", (0.0, 6.5, "sop")),
+                ("the midday export slice", "_cheap_run", (10.0, 14.5, "sop"))):
+            with _patched(rt, attr, lambda run=run: run):
+                try:
+                    value = rt.resolve_token("S2_VERDICT")
+                    raise AssertionError(
+                        f"S2_VERDICT answered {label} for a window running to "
+                        f"{run[1]}h off a whole-hour source: {value}")
+                except SystemExit as e:
+                    assert "S2_VERDICT" in str(e), e
+                    assert str(run[1]) in str(e), (
+                        f"the refusal does not name the fractional bound it turned on: {e}")
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted tariff window leaked out of this case")
+    return ("S2_VERDICT fails closed on a tariff window its hourly sources cannot key "
+            "(overnight run to 6.5h, midday run to 14.5h) instead of truncating to the "
+            "neighbouring whole hour")
+
+
+def _s6_verdict_at(greedy, evening, expanded):
+    """S6_VERDICT rendered against a substituted dispatch artifact."""
+    dp = rt._json("battery_dispatch_policies.json")
+    with _swapped(dp["pw3"]["greedy"], "save", greedy), \
+         _swapped(dp["pw3"]["evening"], "save", evening), \
+         _swapped(dp["pw3x"]["greedy"], "save", expanded):
+        return rt.resolve_token("S6_VERDICT")
+
+
+@case
+def case_s0_verdict_does_not_claim_the_free_move_is_the_largest_saving():
+    """"the biggest win costs nothing" is a superlative no artifact supports.
+    On this household's own numbers the battery's post-fix saving is LARGER
+    than the free EV fix, so on the plain reading -- the largest available
+    saving is the free one -- the sentence was false. There is nothing to
+    guard: a superlative with no computation behind it has to go, leaving
+    the true and useful claim (a large saving that needs no purchase)."""
+    saved = rt._json("behavior_rebuild.json")["scenarios"]["a"]["saved"]
+    battery = rt._json("package_results.json")["packages"]["MID"][
+        "battery_alone_post_ev_fix_yr"]
+    assert battery > saved, (
+        f"the battery's own saving (${battery}/yr) no longer exceeds the free fix "
+        f"(${saved}/yr); re-derive whether a superlative would now be defensible")
+    provider, cheapest, _rows = _plan_ranking_inputs()
+    with _stub_plan(cheapest, provider):
+        value = rt.resolve_token("S0_VERDICT")
+    for superlative in ("biggest", "largest", "greatest", "best"):
+        assert superlative not in value.lower(), (
+            f"S0_VERDICT ranks the free fix as the {superlative} win while the battery "
+            f"alone saves ${battery}/yr against its ${saved}/yr: {value}")
+    assert f"{rt._usd0(saved)}/yr" in value and "modeled" in value, (
+        f"S0_VERDICT dropped the free fix's figure or its modeled label: {value}")
+    _assert_within_density_cap("S0_VERDICT", value, "the published branch")
+    return (f"S0_VERDICT states the free fix's ${saved:,.0f}/yr without ranking it above "
+            f"the battery's own ${battery:,.0f}/yr")
+
+
+@case
+def case_plan_verdicts_invert_rather_than_refusing_when_the_household_plan_loses():
+    """Section 0 opens "the rate plan is right" and section 3 says the plan is
+    "still the cheapest" -- the same claim, from the same ranking. Both used to
+    raise SystemExit when the ranking said otherwise, which took the ENTIRE
+    report down: generate_report.py folds a token-resolution failure into its
+    own failure list and writes nothing. A household sitting on a plan that no
+    longer wins is precisely the household section 3 exists to help, so the
+    sentences have to turn around instead.
+
+    Every branch of the ranking is driven, for both tokens together (which is
+    what proves they share one ranking rather than two that can drift):
+    sole cheapest, an exact tie, and beaten by a cheaper plan. Each rendering
+    is held to CLAUDE.md section 10's density cap, since section 0's published
+    branch already spends 34 of its 35 words.
+
+    The two genuine fail-closed paths are driven too -- no priced rows for the
+    household's provider, and no priced row for the household's own plan --
+    because there the sentence has no figure to quote at all, which is the one
+    thing refusing is still for.
+
+    Ungated: the household plan and provider are stubbed, so this runs in CI."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    index_html = (rt.ROOT / "index.html").read_text()
+
+    # Positive control first, or "inverts" could pass on a token stuck in one
+    # branch -- and it doubles as the ungated round-trip check for the S0
+    # line, which the verbatim case above cannot make without the private
+    # archive now that S0 declares household sources.
+    with _stub_plan(cheapest, provider):
+        published = _assert_verdict_matches_index("S0_VERDICT", index_html)
+        published3 = rt.resolve_token("S3_VERDICT")
+    assert "the rate plan is right" in published, (
+        f"S0_VERDICT no longer carries the tariff claim this case guards: {published}")
+    assert "still the cheapest plan" in published3, published3
+    widths = {"S0 sole cheapest": _assert_within_density_cap(
+        "S0_VERDICT", published, "the published branch"),
+        "S3 sole cheapest": _assert_within_density_cap(
+        "S3_VERDICT", published3, "the published branch")}
+
+    runner_up = min((r for r in priced if r["plan"] != cheapest),
+                    key=lambda r: float(r["total"]))
+    cheapest_total = next(r["total"] for r in priced if r["plan"] == cheapest)
+    gap = float(runner_up["total"]) - float(cheapest_total)
+
+    # 1. Another plan really is cheaper: the household sits on the runner-up.
+    #    Both sentences must render, say plainly that this plan does not win,
+    #    and name the one that does.
+    with _stub_plan(runner_up["plan"], provider):
+        beaten0 = rt.resolve_token("S0_VERDICT")
+        beaten3 = rt.resolve_token("S3_VERDICT")
+    assert "a cheaper rate plan exists" in beaten0, (
+        f"S0_VERDICT still tells a household on {runner_up['plan']} its rate plan is "
+        f"right while {cheapest} prices ${gap:,.2f} lower: {beaten0}")
+    assert "the rate plan is right" not in beaten0, beaten0
+    assert "is not the cheapest plan" in beaten3 and cheapest in beaten3, (
+        f"S3_VERDICT does not say plainly that {runner_up['plan']} loses to "
+        f"{cheapest}: {beaten3}")
+    assert rt._usd0(gap) in beaten3, (
+        f"S3_VERDICT does not quote the ${gap:,.2f}/yr the household is leaving on the "
+        f"table: {beaten3}")
+    widths["S0 beaten"] = _assert_within_density_cap("S0_VERDICT", beaten0, "the beaten branch")
+    widths["S3 beaten"] = _assert_within_density_cap("S3_VERDICT", beaten3, "the beaten branch")
+
+    # 2. An exact tie: the runner-up is repriced to the cheapest total, so the
+    #    household's plan is joint-cheapest. "THE cheapest plan" is false
+    #    there, and so is "a cheaper rate plan exists" -- it is its own branch.
+    with _swapped(runner_up, "total", cheapest_total), _stub_plan(cheapest, provider):
+        tie0 = rt.resolve_token("S0_VERDICT")
+        tie3 = rt.resolve_token("S3_VERDICT")
+    assert "ties for cheapest" in tie0, (
+        f"S0_VERDICT does not report the tie between {cheapest} and "
+        f"{runner_up['plan']}: {tie0}")
+    assert "the rate plan is right" not in tie0 and "cheaper rate plan" not in tie0, tie0
+    assert f"ties {runner_up['plan']}" in tie3, (
+        f"S3_VERDICT does not name the plan tying {cheapest} at "
+        f"${float(cheapest_total):,.2f}: {tie3}")
+    assert "still the cheapest" not in tie3 and "is not the cheapest" not in tie3, tie3
+    widths["S0 tie"] = _assert_within_density_cap("S0_VERDICT", tie0, "the tie branch")
+    widths["S3 tie"] = _assert_within_density_cap("S3_VERDICT", tie3, "the tie branch")
+
+    # 2b. More than one winner has to read as prose in both directions: the
+    #     tie branch joins the names, the beaten branch conjugates its verb.
+    third = min((r for r in priced if r["plan"] not in (cheapest, runner_up["plan"])),
+                key=lambda r: float(r["total"]))
+    with _swapped(runner_up, "total", cheapest_total), \
+            _swapped(third, "total", cheapest_total), _stub_plan(cheapest, provider):
+        many_tie = rt.resolve_token("S3_VERDICT")
+    joined = " and ".join(sorted((runner_up["plan"], third["plan"])))
+    assert f"ties {joined} as the cheapest plan" in many_tie, (
+        f"S3_VERDICT does not name both plans tying {cheapest}: {many_tie}")
+    with _swapped(runner_up, "total", cheapest_total), _stub_plan(third["plan"], provider):
+        many_beaten = rt.resolve_token("S3_VERDICT")
+    joined = " and ".join(sorted((runner_up["plan"], cheapest)))
+    assert f"because {joined} each price" in many_beaten, (
+        f"S3_VERDICT does not conjugate two winners: {many_beaten}")
+    widths["S3 tie, two others"] = _assert_within_density_cap(
+        "S3_VERDICT", many_tie, "a three-way tie")
+    widths["S3 beaten, two winners"] = _assert_within_density_cap(
+        "S3_VERDICT", many_beaten, "two winners")
+
+    # 3. The two cases with no ranking to report at all still fail closed:
+    #    a provider column that prices nothing, and one that prices everything
+    #    except the household's own plan.
+    for label, plan, prov in (("an unpriced provider", cheapest, "ZZZ_NO_SUCH_PROVIDER"),
+                              ("an unpriced plan", "ZZZ_NO_SUCH_PLAN", provider)):
+        for token in ("S0_VERDICT", "S3_VERDICT"):
+            with _stub_plan(plan, prov):
+                try:
+                    value = rt.resolve_token(token)
+                    raise AssertionError(
+                        f"{token} ranked plans with {label}: {value}")
+                except SystemExit as e:
+                    assert token in str(e), e
+
+    assert float(runner_up["total"]) != float(cheapest_total), (
+        "the substituted plan total leaked out of this case")
+    with _stub_plan(cheapest, provider):
+        assert rt.resolve_token("S0_VERDICT") == published, (
+            "S0_VERDICT no longer renders its published line after the substitutions")
+        assert rt.resolve_token("S3_VERDICT") == published3, (
+            "S3_VERDICT no longer renders its published line after the substitutions")
+    return (f"S0_VERDICT and S3_VERDICT invert instead of aborting the report when "
+            f"{runner_up['plan']} ties or beats {cheapest} on the {provider} column, "
+            f"still fail closed with no priced ranking at all, and S0's published line "
+            f"round-trips into index.html ungated "
+            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+@case
+def case_plan_lead_tokens_report_a_gap_the_matrix_does_not_call_a_lead():
+    """The same shape one artifact over. S4_VERDICT_SHORT says the battery
+    "widens EV-TOU-5's lead over" the runner-up and PLAN_MARGIN_VS_RUNNER_UP
+    publishes that lead as a dollar figure; both take the difference without
+    checking its sign. A runner-up pricing at or below the household's plan
+    would print a negative lead and a battery that "widens" it -- so the
+    shared _runner_up() helper used to refuse, taking the whole report down
+    for any household the matrix does not put first.
+
+    A margin is a real figure at every sign and "this plan trails" is a real
+    sentence, so both now word themselves off the sign. The Yes/No prefix and
+    the widens/narrows verb are deliberately NOT touched: issue #141 holds
+    that prefix answers section 4's heading question backwards, and this case
+    asserts only that the words around it stop claiming a lead that is not
+    there.
+
+    Ranked on battery_plan_matrix.json's own no-battery column -- the numbers
+    these two sentences actually quote -- not on plan_results.csv."""
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    ordered = sorted(plans, key=lambda k: plans[k]["no_battery"])
+    best, runner_up = ordered[0], ordered[1]
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file()
+                else "CEA")
+    widths, readings = {}, {}
+    with _stub_plan(best, provider):
+        lead = plans[runner_up]["no_battery"] - plans[best]["no_battery"]
+        assert lead > 0, f"data/battery_plan_matrix.json shows no lead for {best}"
+        assert rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP") == rt._usd0(lead)
+        published = rt.resolve_token("S4_VERDICT_SHORT")
+        assert f"lead over {runner_up}" in published, published
+        widths["published"] = _assert_within_density_cap(
+            "S4_VERDICT_SHORT", published, "the published branch")
+
+        for label, beaten, margin, standing in (
+                ("tie", plans[best]["no_battery"], "$0", f"ties {runner_up}"),
+                ("beaten", plans[best]["no_battery"] - 500, "-$500",
+                 f"trails {runner_up} by $500/yr")):
+            with _swapped(plans[runner_up], "no_battery", beaten):
+                got_margin = rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP")
+                value = rt.resolve_token("S4_VERDICT_SHORT")
+            assert got_margin == margin, (
+                f"PLAN_MARGIN_VS_RUNNER_UP published {got_margin} for a {label} against "
+                f"{runner_up}, not {margin}")
+            assert f"{standing} without a battery" in value, (
+                f"S4_VERDICT_SHORT does not say where {best} actually stands without a "
+                f"battery at a {label}: {value}")
+            # "leads by ... with one" stays legal: with a battery this plan
+            # really may lead. What may not survive is a lead in the
+            # NO-battery ranking, or a verb that presupposes one.
+            for phrase in (f"lead over {runner_up}", "widens", "narrows",
+                           "leads without a battery"):
+                assert phrase not in value, (
+                    f"S4_VERDICT_SHORT still claims {phrase!r} for {best} while "
+                    f"{runner_up} prices ${beaten:,} against ${plans[best]['no_battery']:,}: "
+                    f"{value}")
+            widths[label] = _assert_within_density_cap("S4_VERDICT_SHORT", value, label)
+            readings[label] = got_margin
+
+        assert rt.resolve_token("PLAN_MARGIN_VS_RUNNER_UP") == rt._usd0(lead), (
+            "the substituted no-battery total leaked out of this case")
+        assert rt.resolve_token("S4_VERDICT_SHORT") == published, (
+            "the substituted no-battery total leaked out of this case")
+    return (f"PLAN_MARGIN_VS_RUNNER_UP publishes a signed margin ({', '.join(readings.values())}) "
+            f"and S4_VERDICT_SHORT drops the word 'lead' when {runner_up} ties or beats "
+            f"{best}, instead of both aborting the report (live lead ${lead:,}; "
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_free_fix_verdicts_invert_rather_than_refusing_when_there_is_no_free_saving():
+    """Three sentences sell the same free move: section 0 ("saves a modeled
+    $X/yr whatever you buy"), section 7 ("is worth a modeled $X/yr") and the
+    Monday appendix ("captures the free savings", which quotes no figure at
+    all and so can never be caught by reading the rendered line). At X <= 0
+    the shift saves nothing: the first two would print a negative figure
+    straight after the word "saves", and the third would send the reader
+    after a loss.
+
+    All three used to raise SystemExit there, which is wrong for the same
+    reason the plan guard was: a household that ALREADY charges inside the
+    cheap window has no free saving left to capture, and that is an ordinary,
+    useful conclusion -- not grounds for refusing to generate any of the
+    report's fifteen sections. So the clauses invert.
+
+    Both artifacts are still driven -- behavior_rebuild's scenarios.a.saved
+    and package_results' packages.LOW.savings_yr -- in two ways. Moving BOTH
+    to zero or negative must invert all three sentences. Moving ONE must still
+    fail closed: two committed artifacts disagreeing about the sign of the
+    same move is a contradiction no sentence here can be written on top of,
+    and it also catches a regression that re-pointed one sentence at the other
+    artifact. Ungated (the plan answers S0 needs are stubbed)."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    scenario = rt._json("behavior_rebuild.json")["scenarios"]["a"]
+    low = rt._json("package_results.json")["packages"]["LOW"]
+    live = {"behavior_rebuild:scenarios.a.saved": scenario["saved"],
+            "package_results:LOW.savings_yr": low["savings_yr"]}
+    for label, value in live.items():
+        assert value > 0, (
+            f"data/{label} is already {value}/yr; the free-fix sentences in sections "
+            "0, 7 and 15 are no longer the published branch")
+
+    tokens = ("S0_VERDICT", "S7_VERDICT", "S15_VERDICT")
+    widths = {}
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in tokens}
+        for t in tokens:
+            assert "free" in published[t], (
+                f"{t} no longer sells the free move this case guards: {published[t]}")
+
+        # 1. Both artifacts agree there is nothing to capture: invert.
+        with _swapped(scenario, "saved", 0), _swapped(low, "savings_yr", 0):
+            for token in tokens:
+                value = rt.resolve_token(token)
+                assert "adds no modeled saving" in value, (
+                    "{} does not say plainly that a 0/yr EV-charging shift has "
+                    "nothing to capture: {}".format(token, value))
+                assert value != published[token], (
+                    f"{token} renders its published sentence at a 0/yr free fix: {value}")
+                for sold in ("captures the free savings", "whatever you buy"):
+                    assert sold not in value, (
+                        f"{token} still sells the free move at 0/yr ({sold!r}): {value}")
+                widths[f"{token} at 0"] = _assert_within_density_cap(
+                    token, value, "the no-saving branch at 0")
+
+        # 2. The two artifacts coming APART is still a refusal -- but the test
+        #    is the derivation, not the sign. packages.LOW.savings_yr is
+        #    literally round() of scenarios.a.saved (analysis/package_results.py),
+        #    so a pair further apart than the rounding explains means the two
+        #    artifacts were composed from different runs and nothing here can
+        #    be written on top of them. Every ordered pair below is hundreds of
+        #    dollars apart, so each is a genuine drift rather than a rounding
+        #    boundary.
+        for a_saved, b_low in ((0, 400), (-400, 400), (0, -400), (-400, 0),
+                               (400, 0), (400, -400)):
+            with _swapped(scenario, "saved", a_saved), _swapped(low, "savings_yr", b_low):
+                for token in tokens:
+                    try:
+                        rendered = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} rendered while behavior_rebuild puts the free fix "
+                            f"at {a_saved}/yr and package_results at {b_low}/yr -- a gap "
+                            f"no rounding explains: {rendered}")
+                    except SystemExit as e:
+                        assert token in str(e), e
+                        assert "what the free EV-charging fix is worth" in str(e), (
+                            f"{token}'s refusal does not name the quantity that was "
+                            f"indeterminate: {e}")
+
+        # 3. Non-finite on either side is the same state: nothing to compare.
+        for bad in (float("nan"), float("inf")):
+            with _swapped(scenario, "saved", bad), _swapped(low, "savings_yr", bad):
+                for token in tokens:
+                    try:
+                        rendered = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} rendered a free-fix clause off a {bad} saving: "
+                            f"{rendered}")
+                    except SystemExit as e:
+                        assert token in str(e), e
+
+        for token in tokens:
+            assert rt.resolve_token(token) == published[token], (
+                f"the substituted free-fix saving leaked out of this case ({token})")
+    return ("S0_VERDICT, S7_VERDICT and S15_VERDICT invert to 'adds no modeled saving' "
+            "when both artifacts put the free fix at exactly zero, and fail closed on "
+            "every mixed-sign and non-finite pair (live: "
+            + ", ".join(f"{k.split(':')[0]} ${v:,.0f}" for k, v in live.items())
+            + "; " + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_free_fix_verdicts_state_a_modeled_loss_as_a_loss_not_as_a_non_event():
+    """FINDING 4. Zero and negative were one branch, so a free fix the model
+    prices at -$800/yr rendered "shifting EV charging adds no modeled saving"
+    in sections 0, 7 and 15 -- section 15 being the Monday INSTRUCTION list,
+    which then gave the reader no reason not to spend the afternoon on a move
+    the model prices as a loss.
+
+    They are different states of the same claim: an exact zero is
+    SUPPORTED-OPPOSITE ("nothing left to capture"), a loss is a real finding
+    that has to be stated as one. It is STATED rather than refused because the
+    artifacts settle it -- both agree and the sign is unambiguous -- and
+    NOT_DETERMINED is for questions they do not settle (driven in the mixed-sign
+    arms of the case above).
+
+    Both magnitudes are driven, so the loss clause quotes the loss rather than
+    printing a constant, and the zero and loss renderings must differ from each
+    other as well as from the published one."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    scenario = rt._json("behavior_rebuild.json")["scenarios"]["a"]
+    low = rt._json("package_results.json")["packages"]["LOW"]
+    assert scenario["saved"] > 0 and low["savings_yr"] > 0, (
+        "the free fix is no longer positive on the committed artifacts; the published "
+        "branch this case contrasts against is gone")
+    tokens = ("S0_VERDICT", "S7_VERDICT", "S15_VERDICT")
+    widths, seen = {}, {}
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in tokens}
+        with _swapped(scenario, "saved", 0), _swapped(low, "savings_yr", 0):
+            zero = {t: rt.resolve_token(t) for t in tokens}
+        for loss in (-800, -125.5):
+            with _swapped(scenario, "saved", loss), _swapped(low, "savings_yr", loss):
+                for token in tokens:
+                    value = rt.resolve_token(token)
+                    assert "adds no modeled saving" not in value, (
+                        f"{token} renders a modeled {loss}/yr LOSS as a neutral "
+                        f"non-event: {value}")
+                    assert f"costs a modeled {rt._usd0(-loss)}/yr" in value, (
+                        f"{token} does not state the {loss}/yr loss its two artifacts "
+                        f"agree on: {value}")
+                    assert "$-" not in value, (
+                        f"{token} prints a minus inside the dollar sigil: {value}")
+                    for sold in ("captures the free savings", "whatever you buy",
+                                 "is worth a modeled", "saves a modeled"):
+                        assert sold not in value, (
+                            f"{token} still sells the free move at a {loss}/yr loss "
+                            f"({sold!r}): {value}")
+                    assert value not in (published[token], zero[token]), (
+                        f"{token} gives a {loss}/yr loss the same sentence it gives a "
+                        f"zero or a positive saving: {value}")
+                    widths[f"{token} at {loss}"] = _assert_within_density_cap(
+                        token, value, f"the loss branch at {loss}")
+                    seen[token] = value
+        # Section 15 is the instruction list: it must actively tell the reader
+        # not to make the move, not merely stop recommending it.
+        assert "leave the charger schedules alone" in seen["S15_VERDICT"], (
+            f"S15_VERDICT's Monday list does not tell the reader to leave the schedules "
+            f"alone while the model prices moving them as a loss: {seen['S15_VERDICT']}")
+        for token in tokens:
+            assert rt.resolve_token(token) == published[token], (
+                f"the substituted free-fix loss leaked out of this case ({token})")
+    return ("S0_VERDICT, S7_VERDICT and S15_VERDICT state a modeled free-fix loss as a "
+            "loss (-$800, -$126/yr), distinct from both the zero and the positive "
+            "branch, and S15 tells the reader to leave the schedules alone ("
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_s2_verdict_reports_what_was_measured_rather_than_an_array_health_verdict():
+    """"the array is healthy" rendered identically whatever the meter said:
+    no committed artifact carries a specific-yield expectation or a
+    degradation trend to compare against. Unlike S1's correlation floor
+    there is no committed gate to anchor a threshold to, so the judgment is
+    dropped instead of guarded -- the measured yield and the export-timing
+    finding carry the section.
+
+    Ungated on purpose, and stubbed to stay that way: S2_VERDICT reads two
+    household answers (solar.kw_dc, household.pto_date), so without the
+    substitution this case raised SystemExit -- not SkipCase -- on an
+    archive-less runner, and CI runs this suite on exactly that. A wording
+    guard that cannot run in CI cannot stop the "healthy" verdict coming
+    back."""
+    with _stub_household(_s2_household_inputs()):
+        value = rt.resolve_token("S2_VERDICT")
+    for judgment in ("healthy", "degraded", "underperforming", "good shape"):
+        assert judgment not in value.lower(), (
+            f"S2_VERDICT passes a {judgment!r} verdict on the array with no committed "
+            f"benchmark behind it: {value}")
+    production = rt._annual_production_kwh(rt.CTX)
+    assert f"{production:,.0f} kWh" in value, (
+        f"S2_VERDICT dropped the measured production total: {value}")
+    assert "kWh/kW" in value, f"S2_VERDICT dropped the measured specific yield: {value}"
+    # The closing clause is the section's conclusion, and both halves of it are
+    # about TIMING. The export share must be the one the hour-of-day profiles
+    # produce for the tariff's own midday window -- not the annual
+    # exports/production ratio the sentence used to print, which is the same
+    # number whether the array exports at noon or at dusk.
+    share = rt._midday_export_share(rt.CTX)
+    assert f"{round(share * 100)}% of its exports leave in the " \
+        f"{rt._cheap_window()} window" in value, (
+        f"S2_VERDICT dropped the hour-resolved export-timing conclusion: {value}")
+    assert "charges overnight" in value, (
+        f"S2_VERDICT dropped the EV-timing conclusion: {value}")
+    _assert_within_density_cap("S2_VERDICT", value, "the published branch")
+    return ("S2_VERDICT keeps the measured yield, states the midday export share the "
+            "hour-of-day profiles support, and passes no health verdict")
+
+
+@case
+def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
+    """The midday share is only this year's if report_data.json's two
+    season-mean hour-of-day export profiles, weighted by the window's real
+    summer/winter day counts, still rebuild its own annual export total.
+    Driven, not read: a profile scaled off the year it describes must take the
+    sentence's whole timing clause down with it, rather than publishing a
+    share of the wrong denominator."""
+    rd = rt._json("report_data.json")
+    live = rt._midday_export_share(rt.CTX)
+    assert 0 < live < 1, f"the live midday export share is {live}, not a share"
+    with _stub_household(_s2_household_inputs()):
+        assert rt.resolve_token("S2_VERDICT")
+        with _swapped(rd["hourly_S"], "exp", [v * 2 for v in rd["hourly_S"]["exp"]]):
+            try:
+                value = rt.resolve_token("S2_VERDICT")
+            except SystemExit as e:
+                assert "S2_VERDICT" in str(e) and "rebuild" in str(e), e
+            else:
+                raise AssertionError(
+                    "S2_VERDICT published an export-timing share from profiles that no "
+                    f"longer rebuild data/report_data.json's own export total: {value}")
+        # Nothing leaked: the same sentence comes back once the artifact does.
+        assert rt.resolve_token("S2_VERDICT")
+    return ("S2_VERDICT fails closed when the hour-of-day export profiles stop "
+            f"rebuilding the year's exports (live midday share {live:.1%})")
+
+
+@case
+def case_s2_verdict_reports_a_daytime_charger_rather_than_refusing_to_render():
+    """"while the EV charges overnight" was asserted outright, and on a
+    household that charges during the day it published a falsehood. It now
+    reads quiet_night_floor.json's EV-absence census for the tariff's own
+    overnight super-off-peak window, and says the habit only when the EV
+    charges there on more nights than it skips. Both sides of that boundary
+    are driven here, including the exact tie -- a house split evenly between
+    day and night charging has no overnight habit to report.
+
+    Below the boundary the clause INVERTS; it does not take the report down
+    with it. A daytime charger is an ordinary household whose section 2 is
+    just as worth generating, and "does not usually charge overnight" is true
+    at every count from an even split down to none. What still fails closed is
+    a census that never counted this tariff's window at all, since there the
+    clause has no measurement to invert on."""
+    census = (rt._json("quiet_night_floor.json")["night_floor"]
+              ["issue_114_investigation"]["ev_absence_by_window"])
+    lo, hi, _lab = rt._overnight_cheap_run()
+    label = f"{int(lo)}-{int(hi)}h"
+    assert label in census, (
+        f"data/quiet_night_floor.json no longer censuses the tariff's overnight "
+        f"super-off-peak window {label}; it has {sorted(census)}")
+    entry = census[label]
+    charging, absent, observed = rt._overnight_ev_night_counts(rt.CTX)
+    assert charging > absent, (
+        f"data/quiet_night_floor.json now finds overnight charging on only {charging} of "
+        f"{observed} nights; the published clause is no longer the live one")
+    widths = {}
+    with _stub_household(_s2_household_inputs()):
+        published = rt.resolve_token("S2_VERDICT")
+        assert "while the EV charges overnight" in published, published
+        widths["published"] = _assert_within_density_cap(
+            "S2_VERDICT", published, "the published branch")
+        # A daytime charger, and an exact 50/50 split -- neither may claim the
+        # habit, and both must still render. The half-night in the second case
+        # is synthetic on purpose: it is the value that lands the comparison
+        # exactly on the boundary for an odd night count, the way the section 6
+        # and 7 tie branches are driven.
+        for label_, absent_n in (("daytime charger", observed - 1),
+                                 ("even split", observed / 2)):
+            with _swapped(entry, "n", absent_n):
+                value = rt.resolve_token("S2_VERDICT")
+            assert "does not usually charge overnight" in value, (
+                f"S2_VERDICT does not say plainly that a {label_} lacks the overnight "
+                f"habit: {value}")
+            assert "while the EV charges overnight" not in value, (
+                f"S2_VERDICT told a {label_} that its EV charges overnight: {value}")
+            widths[label_] = _assert_within_density_cap("S2_VERDICT", value, label_)
+        # A census that never counted this tariff's overnight window is a gap,
+        # not a licence to answer from a neighbouring window.
+        with _swapped(census, label, None):
+            del census[label]
+            try:
+                value = rt.resolve_token("S2_VERDICT")
+            except SystemExit as e:
+                assert "S2_VERDICT" in str(e) and label in str(e), e
+            else:
+                raise AssertionError(
+                    "S2_VERDICT timed the EV's charging from a census that never counted "
+                    f"the {label} window: {value}")
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted EV census leaked out of this case")
+    return (f"S2_VERDICT claims an overnight charging habit only on a majority of nights "
+            f"and inverts below that instead of aborting the report (live: {charging} of "
+            f"{observed} in the {rt._overnight_cheap_window()} window; "
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+def _centered(values):
+    mean = sum(values) / len(values)
+    return [v - mean for v in values]
+
+
+def _blend_to_correlation(rows, column, target):
+    """Overwrite `column` in place so its weakest pairwise daily correlation
+    with the artifact's other series is `target`, and return the original
+    cells so the caller can restore them.
+
+    Deterministic and solved, not "add noise until it looks weak": a fixed
+    LCG sequence is projected orthogonal to EVERY series in the file (the
+    victim's own original included), so mixing in A units of it moves the
+    correlation to 1/sqrt(1 + A^2 var_z/var_x) and A can be solved for the
+    target outright. Orthogonalizing against the other columns as well is
+    what keeps a 0.0010 target from landing on the wrong SIDE of zero: the
+    other two series are near-copies of the victim, so any leftover
+    projection would dominate a correlation that small. Rows where any
+    column is blank are dropped from the victim so every pair correlates
+    over the same dates the projection was computed on."""
+    numeric = list(rows[0])[1:]                # column 0 is the date key
+    complete = [r for r in rows if all(r[c] not in (None, "") for c in numeric)]
+    xs = [float(r[column]) for r in complete]
+    others = [_centered([float(r[c]) for r in complete])
+              for c in numeric if c != column]
+    state = 12345
+    zs = []
+    for _ in complete:
+        state = (1103515245 * state + 12345) % 2147483648
+        zs.append(state / 2147483648 * 2 - 1)
+    cx = _centered(xs)
+    orth = _centered(zs)
+    for _pass in range(2):                     # twice, for numerical stability
+        for basis in [cx] + others:
+            denom = sum(v * v for v in basis)
+            beta = sum(u * v for u, v in zip(orth, basis)) / denom
+            orth = [o - beta * b for o, b in zip(orth, basis)]
+    var_x = sum(v * v for v in cx)
+    var_o = sum(v * v for v in orth)
+    amplitude = ((1.0 / target ** 2 - 1.0) * var_x / var_o) ** 0.5
+    originals = [r[column] for r in rows]
+    for r in rows:
+        r[column] = ""
+    for r, x, o in zip(complete, xs, orth):
+        r[column] = repr(x + amplitude * o)
+    return originals
+
+
+@case
+def case_s1_verdict_needs_real_agreement_not_merely_a_positive_correlation():
+    """Section 1's second claim is the word "agree", not the sign of a
+    number. A guard that only rejects r <= 0 still lets "the independent
+    production series agree at 0.0010 daily correlation" render, and 0.0010
+    is three series with essentially nothing in common. The bound the token
+    uses is not invented: it is the weakest pairwise correlation a passing
+    run of analysis/threeway_production_validation.py can put in the file
+    (its reference-sanity floor less its derived-series allowance)."""
+    rows = rt._csv_rows("threeway_production_validation.csv")
+    victim = list(rows[0])[1]
+    real = rt._min_pairwise_daily_correlation()
+    floor = rt.MIN_AGREEMENT_CORRELATION
+    assert real >= floor, (
+        f"the committed production series already correlate at only {real:.4f}, under "
+        f"the {floor} floor S1_VERDICT requires")
+    originals = None
+    measured = {}
+    try:
+        # Positive, and still not agreement: the review's own 0.0010 example,
+        # a correlation most readers would call strong (0.60), and one just
+        # under the floor.
+        for target in (0.0010, 0.60, floor - 0.002):
+            originals = _blend_to_correlation(rows, victim, target)
+            weakest = rt._min_pairwise_daily_correlation()
+            measured[f"{target:.4f}"] = weakest
+            assert 0 < weakest < floor, (
+                f"the {target:.4f} blend measured {weakest:.4f}, which is not the "
+                "positive-but-under-the-floor case this asserts")
+            try:
+                value = rt.resolve_token("S1_VERDICT")
+                raise AssertionError(
+                    f"S1_VERDICT said the independent production series agree at a "
+                    f"weakest pairwise correlation of {weakest:.4f}: {value}")
+            except SystemExit as e:
+                assert "S1_VERDICT" in str(e), e
+            for r, original in zip(rows, originals):
+                r[victim] = original
+            originals = None
+        # Discriminates both ways: a pair that is measurably worse than
+        # today's data but still clears the floor keeps the word.
+        originals = _blend_to_correlation(rows, victim, floor + 0.007)
+        weakest = rt._min_pairwise_daily_correlation()
+        measured["above the floor"] = weakest
+        assert floor < weakest < real, (
+            f"the above-floor blend measured {weakest:.4f}, outside the "
+            f"({floor}, {real:.4f}) band this arm needs")
+        value = rt.resolve_token("S1_VERDICT")
+        assert f"agree at {weakest:.4f} daily correlation" in value, value
+    finally:
+        if originals is not None:
+            for r, original in zip(rows, originals):
+                r[victim] = original
+    assert abs(rt._min_pairwise_daily_correlation() - real) < 1e-12, (
+        "the blended production column leaked out of this case")
+    return ("S1_VERDICT withholds the word 'agree' at weakest pairwise correlations of "
+            + ", ".join(f"{v:.4f}" for k, v in measured.items() if k != "above the floor")
+            + f" and keeps it at {measured['above the floor']:.4f} "
+            f"(floor {floor}, live {real:.4f})")
+
+
+@case
+def case_s6_verdict_ranks_the_larger_gain_whenever_one_option_really_gains():
+    """S6's closing clause is the other shape: a comparison of two DIFFERENCES
+    ("worth more than"), not a quotient. Where one of the two options really
+    does add money, the ranking must follow the larger gap in both
+    directions -- asserted across the grid rather than by reading the code,
+    since the neighbouring S7 defect looked equally harmless."""
+    grid = [(1000, 900, 1050), (1000, 900, 1200), (1000, 1100, 1050),
+            (1000, 900, 800), (1000, 1050, 1400)]
+    widths = {}
+    for greedy, evening, expanded in grid:
+        value = _s6_verdict_at(greedy, evening, expanded)
+        policy_gap, capacity_gap = greedy - evening, expanded - greedy
+        assert max(policy_gap, capacity_gap) > 0, (
+            f"grid entry {(greedy, evening, expanded)} has no winning option, so it "
+            "belongs in the both-lose case, not this one")
+        expected = ("so the dispatch settings are worth more than a bigger pack"
+                    if policy_gap > capacity_gap else
+                    "so a bigger pack is worth more than the dispatch settings")
+        assert expected in value, (
+            f"S6_VERDICT ranks the wrong side at policy gap {policy_gap} vs capacity gap "
+            f"{capacity_gap}: {value}")
+        widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"policy {policy_gap:+d} vs capacity {capacity_gap:+d}")
+    return (f"S6_VERDICT's 'worth more than' clause tracks the larger marginal gain across "
+            f"{len(grid)} sign combinations, each inside the density cap "
+            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+@case
+def case_s6_verdict_calls_an_exact_tie_a_tie_rather_than_a_win_for_the_pack():
+    """"policy_gap > capacity_gap" splits three orderings into two branches:
+    at an exact tie the else arm fires and tells the reader a bigger pack is
+    worth MORE than the dispatch settings while the artifact says the two
+    marginal gains are identical."""
+    real = rt._json("battery_dispatch_policies.json")
+    live_policy = real["pw3"]["greedy"]["save"] - real["pw3"]["evening"]["save"]
+    live_capacity = real["pw3x"]["greedy"]["save"] - real["pw3"]["greedy"]["save"]
+    assert live_policy != live_capacity, (
+        f"data/battery_dispatch_policies.json now ties the two gaps at {live_policy}; "
+        "the published branch below is no longer the live one")
+    widths = {}
+    for greedy, evening, expanded in ((1000, 900, 1100), (1000, 700, 1300)):
+        value = _s6_verdict_at(greedy, evening, expanded)
+        gap = greedy - evening
+        assert "worth more than" not in value, (
+            f"S6_VERDICT ranks one option above the other while both add exactly "
+            f"${gap}/yr: {value}")
+        assert "are worth the same" in value, (
+            f"S6_VERDICT must say plainly that two ${gap}/yr gains are worth the same: "
+            f"{value}")
+        widths[f"tie at +{gap}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"an exact tie at +{gap}")
+    return ("S6_VERDICT calls an exact tie equal marginal value instead of handing the "
+            f"win to the bigger pack ({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+@case
+def case_s6_verdict_does_not_sell_the_better_of_two_losing_options():
+    """The comparison is still TRUE when both gaps are negative -- and that is
+    the problem. "a bigger pack is worth more than the dispatch settings"
+    reads as purchase guidance, so ranking two options that each REDUCE the
+    modeled saving recommends a detrimental buy on a technicality. Zero
+    counts as no gain, so a tie at zero belongs here too, not in the
+    equal-value branch."""
+    widths = {}
+    # (greedy, evening, expanded): policy gap / capacity gap, in that order --
+    # pack loses less, dispatch loses less, both exactly zero, one zero.
+    grid = [(1000, 1100, 950), (1000, 1100, 850), (1000, 1000, 1000), (1000, 1050, 1000)]
+    for greedy, evening, expanded in grid:
+        value = _s6_verdict_at(greedy, evening, expanded)
+        policy_gap, capacity_gap = greedy - evening, expanded - greedy
+        assert "worth more than" not in value, (
+            f"S6_VERDICT recommends the better of two options that each add "
+            f"{policy_gap:+d}/{capacity_gap:+d} per year: {value}")
+        assert "are worth the same" not in value, (
+            f"S6_VERDICT calls two non-gains equal marginal value at "
+            f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
+        assert "neither the dispatch settings nor a bigger pack adds any saving" in value, (
+            f"S6_VERDICT must say neither option adds anything at "
+            f"{policy_gap:+d}/{capacity_gap:+d}: {value}")
+        widths[f"{policy_gap:+d}/{capacity_gap:+d}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"policy {policy_gap:+d} vs capacity {capacity_gap:+d}")
+    return ("S6_VERDICT refuses to rank two options that both fail to add a saving "
+            f"({', '.join(f'{k} {v}w' for k, v in widths.items())})")
+
+
+# ---------------------------------------------------------------------------
+# Issue #131, REVIEW ROUND 2. The round-one fix turned every aborting guard
+# into an INVERSION, which left each clause binary -- render the confident
+# claim, or render the confident opposite -- with no state for "the data does
+# not settle this". Degenerate inputs then selected a confident branch.
+#
+# Every case below drives a DEGENERATE input the previous round's tests never
+# fed the formulas: zero observations, an exact zero magnitude, a negative
+# one, mixed signs across two artifacts, a non-finite quotient. Each is
+# ungated wherever the token permits (household answers stubbed), because CI
+# runs this suite without the private archive.
+# ---------------------------------------------------------------------------
+@case
+def case_the_three_claim_states_are_three_and_the_third_names_its_quantity():
+    """The mechanism itself, driven directly: two states RENDER and the third
+    REFUSES, naming both the token and the quantity that was indeterminate.
+    Without this, "we introduced a tri-state" is a claim about the code rather
+    than about its behaviour."""
+    assert rt._claim("T", "x", rt.SUPPORTED, "d") is True
+    assert rt._claim("T", "x", rt.SUPPORTED_OPPOSITE, "d") is False
+    try:
+        rt._claim("TOKEN_X", "whether the widget widgets", rt.NOT_DETERMINED,
+                  "artifact says 0 of 0")
+        raise AssertionError("_claim rendered a NOT_DETERMINED clause")
+    except SystemExit as e:
+        for expected in ("TOKEN_X", "whether the widget widgets", "artifact says 0 of 0",
+                         "do not settle it"):
+            assert expected in str(e), (
+                f"the NOT_DETERMINED refusal does not carry {expected!r}: {e}")
+    # The override exists for the one obstacle that is not the artifacts.
+    try:
+        rt._claim("T", "x", rt.NOT_DETERMINED, "d", unsettled="the template asserts it")
+        raise AssertionError("_claim rendered a NOT_DETERMINED clause")
+    except SystemExit as e:
+        assert "the template asserts it" in str(e), e
+    # No bare three-way sign helper survives in the module: the two
+    # comparisons that used one were both reading pairs a sign test could not
+    # settle, and leaving it available is how that gets written a third time.
+    assert not hasattr(rt, "_sign"), (
+        "report_tokens grew a bare _sign() helper back; a clause branching on one "
+        "magnitude goes through _sign_claim, and a PAIR of fields is compared only "
+        "against its own traced relationship")
+    assert rt._sign_claim("T", "x", 3, "d") is True
+    assert rt._sign_claim("T", "x", 0, "d") is False
+    assert rt._sign_claim("T", "x", -3, "d") is False
+    try:
+        rt._sign_claim("TOKEN_Y", "whether the widget widgets", float("nan"), "d")
+        raise AssertionError("_sign_claim ranked a nan magnitude")
+    except SystemExit as e:
+        assert "TOKEN_Y" in str(e), e
+    assert rt._finite(0, -1.5, 2)
+    for bad in (float("nan"), float("inf"), float("-inf"), None, "3", True):
+        assert not rt._finite(bad), f"_finite accepted {bad!r} as a magnitude"
+    return ("_claim renders SUPPORTED and SUPPORTED-OPPOSITE and refuses NOT_DETERMINED "
+            "naming its token, its subject and the artifact values behind it")
+
+
+def _battery_reading(s0, s7):
+    """(section 0's verdict, section 7's verdict) on the SAME battery, as the
+    two words a reader would take away."""
+    def read(value, sells, denies):
+        # Section 0's selling clause has TWO shapes since round 6's finding 6
+        # -- "a sound optional buy at a 6.2-6.5-year payback" where every
+        # payback lands inside the warranted life, and "repays in N years,
+        # past its 10-year warranty" where it does not. Both say the battery
+        # repays; only one recommends buying it, which is a distinction this
+        # helper is not the place to make.
+        if any(s in value for s in sells):
+            return "repays"
+        if denies in value:
+            return "does not repay"
+        raise AssertionError(f"neither battery clause is present: {value}")
+    return (read(s0, ("sound optional buy", "-year warranty"),
+                 "does not repay its own cost"),
+            read(s7, ("adds its own",), "never repays its own cost"))
+
+
+@case
+def case_a_battery_worth_less_after_the_free_fix_still_gets_a_report():
+    """ROUND 4, FINDING 1. The guard here required packages.MID's two
+    battery-alone savings to AGREE IN SIGN, on the theory that two committed
+    figures for one battery pointing opposite ways is a contradiction between
+    artifacts.
+
+    They are not two figures for one battery. Trace them through
+    analysis/package_results.py: battery_alone_yr is
+    battery_dispatch_policies.json's pw3.greedy.save, the battery billed
+    against the UNSHIFTED baseline, and battery_alone_post_ev_fix_yr is that
+    artifact's post_behavior.mid.battery_marginal, the same battery billed
+    against the EV-SHIFTED year. Different scenarios, and CLAUDE.md section 1b
+    describes exactly that overlap as the expected result of modelling
+    behavior and hardware together.
+
+    So a household whose battery value is mostly EV arbitrage the free fix
+    already captures -- +$2,328 before the fix, -$50 after it -- is an
+    ORDINARY household with an ordinary report to generate, and the guard
+    aborted all fifteen sections of it. This case drives that household and
+    asserts the report RENDERS, which is the assertion the previous round's
+    case could not make: it moved both fields together, so the one shape that
+    reproduces the defect never appeared in it.
+
+    What must still hold is that the two sentences agree with EACH OTHER, off
+    the post-fix scenario, which is the finding-1 property from round two."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    live = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
+    assert min(live) > 0, (
+        f"data/package_results.json already puts a battery-alone saving at {min(live)}/yr")
+    readings, widths = {}, {}
+    with _stub_plan(cheapest, provider):
+        s0, s7 = rt.resolve_token("S0_VERDICT"), rt.resolve_token("S7_VERDICT")
+        readings["published"] = _battery_reading(s0, s7)
+
+        # 1. THE REPRODUCTION. Every ordered pair whose two scenarios point
+        #    different ways, starting with the review's own (+2,328, -50).
+        #    Each must RENDER -- both sentences -- and each must read off the
+        #    POST-fix scenario, which is the one the packages are built on.
+        for pre, post in ((2328, -50), (-100, live[1]), (live[0], -100),
+                          (0, live[1]), (live[0], 0), (-100, 0), (0, -100)):
+            label = f"pre {pre}, post {post}"
+            with _mid_battery_at(mid, pre, post):
+                s0_at = rt.resolve_token("S0_VERDICT")
+                s7_at = rt.resolve_token("S7_VERDICT")
+            pair = _battery_reading(s0_at, s7_at)
+            expected = "repays" if post > 0 else "does not repay"
+            assert pair == (expected, expected), (
+                f"at {label} the two sections read {pair}, which is neither one verdict "
+                f"nor the post-fix scenario's own ({expected})")
+            widths[f"S0 {label}"] = _assert_within_density_cap("S0_VERDICT", s0_at, label)
+            widths[f"S7 {label}"] = _assert_within_density_cap("S7_VERDICT", s7_at, label)
+            readings[label] = pair
+
+        # 2. Sign-AGREEING pairs still render and still agree, so the case
+        #    discriminates rather than passing on a formula that never refuses.
+        for label, pre, post in (("both zero", 0, 0),
+                                 ("both losing", -100, -400),
+                                 ("both positive, different sizes",
+                                  live[0] * 2, live[1])):
+            with _mid_battery_at(mid, pre, post):
+                s0_at = rt.resolve_token("S0_VERDICT")
+                s7_at = rt.resolve_token("S7_VERDICT")
+            pair = _battery_reading(s0_at, s7_at)
+            assert pair[0] == pair[1], (
+                f"sections 0 and 7 reached opposite verdicts on the same battery at "
+                f"{label} ({pre}/{post} per year): {pair}")
+            widths[f"S0 {label}"] = _assert_within_density_cap("S0_VERDICT", s0_at, label)
+            widths[f"S7 {label}"] = _assert_within_density_cap("S7_VERDICT", s7_at, label)
+            readings[label] = pair
+        assert len({p[0] for p in readings.values()}) > 1, (
+            f"every arm read the same way, so agreement proves nothing: {readings}")
+
+        # 3. A NON-FINITE post-fix saving settles nothing -- that is the state
+        #    the sign gate was standing in for, and it is the one that remains.
+        for bad in (float("nan"), float("inf")):
+            with _swapped(mid, "battery_alone_post_ev_fix_yr", bad):
+                for token in ("S0_VERDICT", "S7_VERDICT"):
+                    try:
+                        value = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} read a battery verdict off a {bad} saving: {value}")
+                    except SystemExit as e:
+                        assert token in str(e), e
+                        assert "whether the battery repays its own cost" in str(e), (
+                            f"{token}'s refusal does not name the indeterminate "
+                            f"quantity: {e}")
+
+        assert rt.resolve_token("S0_VERDICT") == s0 and rt.resolve_token("S7_VERDICT") == s7, (
+            "the substituted battery savings leaked out of this case")
+    return ("a battery worth +$2,328 before the free EV fix and -$50 after it gets a "
+            "report, with sections 0 and 7 reading the post-fix scenario together across "
+            f"every mixed pair ({'; '.join(f'{k}: {v[0]}' for k, v in readings.items())})")
+
+
+@case
+def case_the_two_battery_scenarios_are_never_cross_checked_against_each_other():
+    """The same finding, asserted on the RESOLVER rather than on a sentence:
+    no branch anywhere in this module may key on the two battery-alone savings
+    agreeing.
+
+    Driven by holding the post-fix scenario FIXED at the committed artifact's
+    own value and sweeping the pre-fix one across both signs and zero. Every
+    figure the resolver reports about the post-fix scenario -- the verdict,
+    the saving, the payback -- has to come back identical, because none of
+    them is a function of the other scenario. A guard that reads the pair
+    fails here the moment the sweep crosses zero."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    post = mid["battery_alone_post_ev_fix_yr"]
+    assert post > 0, post
+    baseline = None
+    swept = []
+    for pre in (-5000, -1, 0, 1, 5000, post, post * 3):
+        with _mid_battery_at(mid, pre, post):
+            repays, saving, payback, _quotable = rt._battery_alone("PROBE")
+        got = (repays, saving, payback)
+        if baseline is None:
+            baseline = got
+        assert got == baseline, (
+            f"the post-fix verdict moved from {baseline} to {got} when the UNSHIFTED "
+            f"baseline scenario's saving changed to {pre}/yr -- the two scenarios are "
+            "still cross-checked against each other")
+        swept.append(pre)
+    return ("the post-fix battery verdict, saving and payback are unchanged across "
+            f"pre-fix baseline savings of {swept}, so no branch reads the two scenarios "
+            "against each other")
+
+
+# The template chrome that ASSERTS the household's plan wins. Named here so
+# the cases below fail if the chrome is ever made conditional (at which point
+# the gates it justifies can go) as loudly as if a gate regressed.
+_PLAN_CHROME = ("Best plan in every scenario", 'Why {{BEST_PLAN}} wins:')
+# The two families are gated on DIFFERENT artifacts because they are rendered
+# from different artifacts -- see
+# case_section_4s_win_row_is_gated_on_the_matrix_its_cells_come_from.
+_CSV_PLAN_TOKENS = ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA", "BEST_PLAN_ANNUAL_BUNDLED")
+_MATRIX_PLAN_TOKENS = ("BEST_PLAN_NOBATT_MODELED", "BEST_PLAN_BATT_MODELED",
+                       "BATTERY_VALUE_BEST_PLAN")
+_BEST_PLAN_TOKENS = _CSV_PLAN_TOKENS + _MATRIX_PLAN_TOKENS
+
+
+@case
+def case_best_plan_family_fails_closed_on_chrome_it_cannot_make_true():
+    """FINDING 2 (round two). _plan_ranking no longer requires the household's
+    plan to be cheapest, but BEST_PLAN was a bare household.plan passthrough
+    and report-template.html still asserts the ranking as FIXED CHROME: a
+    section 0 card reading "Best plan in every scenario", `class="win"` rows
+    carrying {{BEST_PLAN}} in sections 3 and 4, and the line "Why
+    {{BEST_PLAN}} wins:". So a losing household got section 3's own inverted
+    verdict ("... is not the cheapest plan for this house") printed beside a
+    card calling the same plan the best in every scenario.
+
+    The template is not this module's to edit, and no value rendered into
+    those slots makes that page true -- so the family is state 3 there,
+    failing closed with a message that NAMES the chrome as the reason. This
+    deliberately re-refuses a case round one asked to invert; the difference
+    is that round one refused sentences this module OWNS (which now invert,
+    and are driven in the plan-verdict case above), while these tokens feed
+    sentences it does not own.
+
+    THE FAMILY IS THE THREE TOKENS RENDERED FROM data/plan_results.csv.
+    Section 4's three matrix cells used to be gated here too, off a CSV that
+    does not price a battery at all; they are gated on their own artifact now
+    and driven in the case below. This case asserts they are NOT taken down
+    by a CSV-only change, which is the other half of gating the right artifact.
+
+    A TIE renders: a plan tying for cheapest is a cheapest plan, so the card
+    and the win rows are true of it.
+
+    The chrome literals are asserted present in report-template.html, so if
+    that file is ever made conditional this case fails and the gate comes out
+    rather than quietly outliving its reason."""
+    template = rt.TEMPLATE.read_text()
+    for literal in _PLAN_CHROME:
+        assert literal in template, (
+            f"report-template.html no longer carries {literal!r}; if the plan chrome is "
+            "now conditional, _best_plan's gate has outlived its reason -- delete both")
+    win_rows = [ln for ln in template.splitlines()
+                if 'class="win"' in ln and "{{BEST_PLAN}}" in ln]
+    assert len(win_rows) >= 2, (
+        f"report-template.html no longer marks the household's plan rows as winners "
+        f"({len(win_rows)} found); re-derive whether this gate is still needed")
+
+    provider, cheapest, priced = _plan_ranking_inputs()
+    runner_up = min((r for r in priced if r["plan"] != cheapest),
+                    key=lambda r: float(r["total"]))
+    cheapest_total = next(r["total"] for r in priced if r["plan"] == cheapest)
+
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in _BEST_PLAN_TOKENS}
+        for token, value in published.items():
+            assert value.strip(), f"{token} resolved blank on the winning household"
+
+        # 1. Beaten in the CSV: the three CSV-rendered tokens fail closed,
+        #    naming the chrome. The household stays on the plan the matrix
+        #    prices, so the refusal can only be the ranking gate and not a
+        #    missing artifact row.
+        with _swapped(runner_up, "total", str(float(cheapest_total) - 500)):
+            for token in _CSV_PLAN_TOKENS:
+                try:
+                    value = rt.resolve_token(token)
+                    raise AssertionError(
+                        f"{token} rendered {value!r} into report-template.html's "
+                        f"'Best plan in every scenario' chrome while {runner_up['plan']} "
+                        f"prices $500/yr below {cheapest}")
+                except SystemExit as e:
+                    assert token in str(e), e
+                    assert "best plan" in str(e), (
+                        f"{token}'s refusal does not name the claim it cannot make: {e}")
+                    assert "report-template.html" in str(e) and _PLAN_CHROME[0] in str(e), (
+                        f"{token}'s refusal does not name the chrome that makes the page "
+                        f"unrenderable, so a reader cannot tell what to fix: {e}")
+            # ... and the matrix cells, which this CSV does not rank, are
+            # untouched by it.
+            for token in _MATRIX_PLAN_TOKENS:
+                assert rt.resolve_token(token) == published[token], (
+                    f"{token} refused on a data/plan_results.csv change, but its value "
+                    "is a data/battery_plan_matrix.json cell that CSV does not price")
+
+        # 2. An exact tie still renders: a joint-cheapest plan IS a best plan.
+        with _swapped(runner_up, "total", cheapest_total):
+            for token in _BEST_PLAN_TOKENS:
+                assert rt.resolve_token(token) == published[token], (
+                    f"{token} refused a household tying for cheapest, which the chrome "
+                    "describes truthfully")
+
+        for token, value in published.items():
+            assert rt.resolve_token(token) == value, (
+                f"the substituted plan total leaked out of this case ({token})")
+    return (f"the {len(_CSV_PLAN_TOKENS)} plan_results.csv-rendered tokens fail closed "
+            f"naming report-template.html's own plan chrome when {cheapest} stops winning "
+            f"there, the {len(_MATRIX_PLAN_TOKENS)} matrix cells are untouched by it, and "
+            "all six still render on a tie")
+
+
+@case
+def case_section_4s_win_row_is_gated_on_the_matrix_its_cells_come_from():
+    """ROUND 4, FINDING 3. Section 4's `class="win"` row renders three cells,
+    all three out of data/battery_plan_matrix.json -- and the gate in front of
+    them ranked data/plan_results.csv instead.
+
+    The two artifacts are not interchangeable. battery_plan_matrix.py asserts
+    its no_battery column against plan_results.csv's CEA column to within
+    $1.00, so they agree about THAT column for the three plans the matrix
+    prices; plan_results.csv has no battery column at all, so nothing in it
+    constrains with_battery or battery_value.
+
+    The reproduction: move a rival plan's matrix with_battery below this
+    household's and plan_results.csv does not change by a cent. The old gate
+    passed, and section 4 rendered "trails by $500/yr with one" from
+    S4_VERDICT_SHORT -- which reads the matrix, correctly -- directly above a
+    row marked as the winner.
+
+    Both columns are driven, because the win row spans both and section 4's
+    heading question is exactly whether the answer survives the battery. The
+    two SIBLING sentences that read the same matrix (S4_VERDICT_SHORT and
+    PLAN_MARGIN_VS_RUNNER_UP) must keep rendering throughout: they are this
+    module's own, they word themselves off the sign, and taking them down was
+    never the fix."""
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    with _stub_plan(cheapest, provider):
+        assert cheapest in plans, (
+            f"the CSV's cheapest plan {cheapest!r} is not priced in "
+            f"battery_plan_matrix.json ({sorted(plans)}); this case cannot drive the gate")
+        published = {t: rt.resolve_token(t) for t in _MATRIX_PLAN_TOKENS}
+        best = plans[cheapest]
+        rivals = [p for p in plans if p != cheapest]
+        assert rivals, "the matrix prices only one plan; there is no rival to promote"
+        rival = min(rivals, key=lambda p: plans[p]["no_battery"])
+
+        checked = []
+        for column in ("no_battery", "with_battery"):
+            # Undercut the household's plan in ONE matrix column at a time,
+            # leaving data/plan_results.csv untouched.
+            with _swapped(plans[rival], column, best[column] - 500):
+                for token in _MATRIX_PLAN_TOKENS:
+                    try:
+                        value = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} rendered {value!r} into section 4's class=\"win\" "
+                            f"row while battery_plan_matrix.json prices {rival} $500/yr "
+                            f"below {cheapest} in its {column} column")
+                    except SystemExit as e:
+                        assert token in str(e), e
+                        assert "best plan" in str(e) and column in str(e), (
+                            f"{token}'s refusal does not name the matrix column that "
+                            f"made the win row false: {e}")
+                        assert "battery_plan_matrix.json" in str(e), (
+                            f"{token}'s refusal names no artifact a reader could go "
+                            f"and check: {e}")
+                # The sibling sentences off the same artifact keep rendering.
+                for sibling in ("S4_VERDICT_SHORT", "PLAN_MARGIN_VS_RUNNER_UP"):
+                    assert rt.resolve_token(sibling).strip(), (
+                        f"{sibling} was taken down by the matrix gate; it words itself "
+                        "off the sign and must render for a household the matrix does "
+                        "not put first")
+                checked.append(column)
+
+            # A TIE in that column renders: joint-cheapest is cheapest.
+            with _swapped(plans[rival], column, best[column]):
+                for token in _MATRIX_PLAN_TOKENS:
+                    assert rt.resolve_token(token) == published[token], (
+                        f"{token} refused a plan tying for cheapest in the {column} "
+                        "column, which the win row describes truthfully")
+
+        for token, value in published.items():
+            assert rt.resolve_token(token) == value, (
+                f"the substituted matrix cell leaked out of this case ({token})")
+    return (f"the {len(_MATRIX_PLAN_TOKENS)} section 4 win-row cells fail closed when "
+            f"battery_plan_matrix.json stops putting {cheapest} first in either of its "
+            f"{checked} columns, tie included, while S4_VERDICT_SHORT and "
+            "PLAN_MARGIN_VS_RUNNER_UP keep rendering")
+
+
+@case
+def case_s2_verdict_refuses_an_overnight_habit_it_never_observed():
+    """FINDING 3. With the census entry at n_eligible_nights = 0 and n = 0,
+    `charging > absent` is False, so section 2 published "while the EV does
+    not usually charge overnight" -- a habit claim resting on ZERO
+    observations. Both readings are claims about an observed habit, so the
+    unmeasured case is neither of them.
+
+    An incoherent census (more absences than nights watched, so the charging
+    count comes out negative) goes the same way. The measured cases are driven
+    alongside, so this cannot pass on a formula that stopped rendering."""
+    census = (rt._json("quiet_night_floor.json")["night_floor"]
+              ["issue_114_investigation"]["ev_absence_by_window"])
+    lo, hi, _lab = rt._overnight_cheap_run()
+    label = f"{int(lo)}-{int(hi)}h"
+    entry = census[label]
+    live_nights = entry["n_eligible_nights"]
+    assert live_nights > 0, f"the committed census already watched {live_nights} nights"
+    with _stub_household(_s2_household_inputs()):
+        published = rt.resolve_token("S2_VERDICT")
+        assert "while the EV charges overnight" in published, published
+
+        for label_, bad in (
+                ("no eligible nights at all", {"n": 0, "n_eligible_nights": 0}),
+                ("nights watched but none counted", {"n": 0, "n_eligible_nights": 0.0}),
+                ("more absences than nights watched",
+                 {"n": live_nights + 5, "n_eligible_nights": live_nights}),
+                ("a negative night count", {"n": -3, "n_eligible_nights": live_nights})):
+            with _swapped(census, label, bad):
+                try:
+                    value = rt.resolve_token("S2_VERDICT")
+                    raise AssertionError(
+                        f"S2_VERDICT published an overnight-charging habit claim on "
+                        f"{label_} ({bad}): {value}")
+                except SystemExit as e:
+                    assert "S2_VERDICT" in str(e), e
+                    assert "whether the EV usually charges overnight" in str(e), (
+                        f"the refusal does not name the indeterminate quantity: {e}")
+
+        # Discriminates: one observed night either way still renders, so this
+        # is a "no observations" gate and not a new blanket refusal.
+        for label_, bad, expected in (
+                ("a single night, charging", {"n": 0, "n_eligible_nights": 1},
+                 "while the EV charges overnight"),
+                ("a single night, absent", {"n": 1, "n_eligible_nights": 1},
+                 "while the EV does not usually charge overnight")):
+            with _swapped(census, label, bad):
+                value = rt.resolve_token("S2_VERDICT")
+            assert expected in value, (
+                f"S2_VERDICT does not report {label_} as {expected!r}: {value}")
+            _assert_within_density_cap("S2_VERDICT", value, label_)
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted census leaked out of this case")
+    return ("S2_VERDICT fails closed on a census with no observed nights (and on an "
+            "incoherent one) instead of publishing a habit claim, while still reading "
+            "both ways on a single observed night")
+
+
+@case
+def case_no_verdict_prints_a_minus_inside_the_dollar_sigil():
+    """FINDING 5. _s4_verdict_short's gap_no > 0 branch tested only the
+    NO-battery gap, so a plan leading without a battery and TRAILING with one
+    printed "narrows EV-TOU-5's lead over EV-TOU-2 from $200/yr to $-500/yr":
+    a "lead" that is not one, and the minus sign inside the sigil. The same
+    commit had already fixed exactly this in _plan_margin_vs_runner_up and in
+    the branch beside it, which is why this is swept rather than patched --
+    every signed figure now goes through _usd0 / _usd0_signed.
+
+    Driven across the matrix's sign combinations for the two plan tokens, and
+    across a losing dispatch run for section 6's two modeled savings."""
+    assert rt._usd0_signed(-500) == "-$500" and rt._usd0_signed(500) == "$500", (
+        "the shared signed-currency formatter no longer puts the sign outside the sigil")
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    ordered = sorted(plans, key=lambda k: plans[k]["no_battery"])
+    best, runner_up = ordered[0], ordered[1]
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    widths, seen = {}, {}
+    with _stub_plan(best, provider):
+        published = rt.resolve_token("S4_VERDICT_SHORT")
+        assert f"lead over {runner_up}" in published, published
+        # Leads without a battery, TRAILS with one: the combination the
+        # previous branch structure sent into the "lead ... from X to Y"
+        # wording. It is reachable only by moving the WITH-battery column.
+        for label, with_battery, expect in (
+                ("trails with a battery", plans[best]["with_battery"] - 500,
+                 "trails by $500/yr with one"),
+                ("ties with a battery", plans[best]["with_battery"], "ties with one")):
+            with _swapped(plans[runner_up], "with_battery", with_battery):
+                value = rt.resolve_token("S4_VERDICT_SHORT")
+            assert expect in value, (
+                f"S4_VERDICT_SHORT does not say where {best} stands when it {label}: "
+                f"{value}")
+            for wrong in ("$-", f"lead over {runner_up}", "widens", "narrows"):
+                assert wrong not in value, (
+                    f"S4_VERDICT_SHORT still prints {wrong!r} while {best} {label}: "
+                    f"{value}")
+            assert f"leads {runner_up} by" in value, (
+                f"S4_VERDICT_SHORT dropped the no-battery lead it really does have: "
+                f"{value}")
+            widths[label] = _assert_within_density_cap("S4_VERDICT_SHORT", value, label)
+            seen[label] = value
+        assert rt.resolve_token("S4_VERDICT_SHORT") == published, (
+            "the substituted with-battery total leaked out of this case")
+
+        # And the whole no-battery sign grid, for both plan tokens at once.
+        for label, no_battery in (("beaten", plans[best]["no_battery"] - 500),
+                                  ("tied", plans[best]["no_battery"])):
+            with _swapped(plans[runner_up], "no_battery", no_battery):
+                for token in ("S4_VERDICT_SHORT", "PLAN_MARGIN_VS_RUNNER_UP"):
+                    value = rt.resolve_token(token)
+                    assert "$-" not in value, (
+                        f"{token} prints a minus inside the dollar sigil when {best} is "
+                        f"{label}: {value}")
+
+    # Section 6 quotes two modeled savings that another household's dispatch
+    # run can return negative.
+    for greedy, evening in ((-120, -200), (0, -200), (-120, 0)):
+        value = _s6_verdict_at(greedy, evening, greedy - 50)
+        assert "$-" not in value, (
+            f"S6_VERDICT prints a minus inside the dollar sigil at greedy {greedy}, "
+            f"evening {evening}: {value}")
+        assert rt._usd0_signed(greedy) in value and rt._usd0_signed(evening) in value, (
+            f"S6_VERDICT dropped one of its two modeled savings: {value}")
+        widths[f"S6 {greedy}/{evening}"] = _assert_within_density_cap(
+            "S6_VERDICT", value, f"greedy {greedy}, evening {evening}")
+    return ("no verdict prints a minus inside the dollar sigil: S4_VERDICT_SHORT drops "
+            "the word 'lead' when the battery turns the gap negative, and S4/S6/"
+            "PLAN_MARGIN_VS_RUNNER_UP all format signed figures through _usd0_signed ("
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_s10_verdict_claims_no_unpriced_effect_when_the_artifact_excludes_nothing():
+    """FINDING 6. The size adjective had no zero branch, so an excluded
+    net-export credit of exactly $0 still published "a smaller, unpriced
+    net-export effect means the whole-household answer is not fully settled"
+    -- asserting an effect exists while the artifact says nothing at all was
+    excluded. Whether anything IS excluded is asked first, three ways; at zero
+    the adjective and the caveat that rests on its existence both go.
+
+    Both signed zeros are driven (the artifact stores this figure as a
+    negative credit, so -0.0 is the value a real run would write for "no
+    exclusions"), and a non-finite one settles nothing."""
+    a = rt._json("cca_bundled_counterfactual.json")["direction_a_cca_repriced_at_bundled"]
+    live = a["excluded_net_export_cca_credit_usd"]
+    assert live != 0, f"the committed artifact already excludes nothing ({live})"
+    with _stub_household(_s10_household_inputs()):
+        published = rt.resolve_token("S10_VERDICT")
+        assert "unpriced net-export effect" in published and "not fully settled" in published
+        for label, zero in (("+0.0", 0.0), ("-0.0", -0.0), ("integer 0", 0)):
+            with _swapped(a, "excluded_net_export_cca_credit_usd", zero):
+                value = rt.resolve_token("S10_VERDICT")
+            for wrong in ("unpriced net-export effect", "not fully settled",
+                          "a smaller", "materially larger", "an equally large"):
+                assert wrong not in value, (
+                    f"S10_VERDICT asserts {wrong!r} at an excluded credit of {label}, "
+                    f"while its own artifact says nothing was excluded: {value}")
+            assert "no net-export credit excluded" in value, (
+                f"S10_VERDICT does not say plainly that nothing was excluded at {label}: "
+                f"{value}")
+            assert len(value.split()) <= len(published.split()), (
+                f"the no-exclusion branch runs longer than the published one: {value}")
+        for bad in (float("nan"), float("inf")):
+            with _swapped(a, "excluded_net_export_cca_credit_usd", bad):
+                try:
+                    value = rt.resolve_token("S10_VERDICT")
+                    raise AssertionError(
+                        f"S10_VERDICT sized an excluded effect of {bad}: {value}")
+                except SystemExit as e:
+                    assert "S10_VERDICT" in str(e), e
+        assert rt.resolve_token("S10_VERDICT") == published, (
+            "the substituted excluded credit leaked out of this case")
+    return ("S10_VERDICT states that nothing was excluded at an excluded net-export "
+            "credit of exactly zero (+0.0, -0.0 and 0), instead of sizing an effect the "
+            "artifact does not report")
+
+
+@case
+def case_s7_verdict_prints_a_real_expansion_payback_with_an_agreeing_plural():
+    """FINDING 7. The S7 tail printed the expansion's own payback with ":.0f"
+    and a hardcoded "years", so it could publish "repays its extra cost in 1
+    years" (anything from 0.5 to 1.5 yr) or "in 0 years" (anything under half
+    a year) -- a rounded-away figure and a plural that does not agree.
+
+    This branch is only reachable where the first unit never repays, so the
+    battery savings are moved with it. Each arm asserts the exact printed
+    string, so a regression to ":.0f" fails on the number as well as on the
+    noun."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    pk = rt._json("package_results.json")["packages"]
+    mid = pk["MID"]
+    exp_cost = pk["HIGH"]["cost"] - mid["cost"]
+    assert exp_cost > 0, exp_cost
+    widths = {}
+    with _stub_plan(cheapest, provider):
+        published = rt.resolve_token("S7_VERDICT")
+        for label, marginal, expected in (
+                ("exactly one year", exp_cost, "in 1.0 year"),
+                ("just over a year", exp_cost / 1.2, "in 1.2 years"),
+                ("under half a year", exp_cost / 0.3, "in 0.3 years"),
+                ("many years", exp_cost / 27.3, "in 27.3 years")):
+            with _swapped(mid, "battery_alone_yr", 0), \
+                    _swapped(mid, "battery_alone_post_ev_fix_yr", 0), \
+                    _swapped(mid, "battery_alone_payback_yr", float("inf")), \
+                    _swapped(mid, "battery_alone_payback_post_fix_yr", float("inf")), \
+                    _swapped(pk["HIGH"], "marginal_vs_mid_yr", marginal):
+                value = rt.resolve_token("S7_VERDICT")
+            assert f"repays its extra cost {expected}" in value, (
+                f"S7_VERDICT does not print the expansion payback at {label} as "
+                f"{expected!r}: {value}")
+            assert "in 1 years" not in value and "in 0 years" not in value, (
+                f"S7_VERDICT prints a truncated payback with a hardcoded plural at "
+                f"{label}: {value}")
+            widths[label] = _assert_within_density_cap("S7_VERDICT", value, label)
+        assert rt.resolve_token("S7_VERDICT") == published, (
+            "the substituted expansion saving leaked out of this case")
+    return ("S7_VERDICT prints the expansion payback to one decimal with an agreeing "
+            "plural (1.0 year, 1.2 / 0.3 / 27.3 years) instead of truncating to "
+            '"1 years" or "0 years" ('
+            + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
+
+
+@case
+def case_rounding_bound_is_derived_from_the_generator_constant_not_the_prose():
+    """FINDING 8. _whole_kwh_rounding_bound's docstring said the bound came
+    from analysis/tou_audit.py's ROUNDING_PER_BUCKET, while the code
+    regex-parsed a hand-typed sentence out of the artifact's tolerance.basis
+    and returned THAT number. The two disagreed about which was the source.
+
+    Resolved by deriving: the constant is the bound and the prose corroborates
+    it. Proven by IDENTITY -- the returned object is the constant itself,
+    which a float parsed out of a string can never be -- driven under a
+    patched constant with matching prose, so the arm cannot pass by the two
+    happening to be equal. Both refusals are still driven: a prose bound that
+    disagrees, and a basis that no longer states one."""
+    bound = rt._whole_kwh_rounding_bound()
+    assert bound is rt.ta.ROUNDING_PER_BUCKET, (
+        f"the rounding bound {bound} is not analysis/tou_audit.py's own "
+        f"ROUNDING_PER_BUCKET object, so it is still being parsed out of prose")
+    tol = rt._json("tou_audit_summary.json")["tolerance"]
+    moved = 0.25
+    assert moved != rt.ta.ROUNDING_PER_BUCKET, moved
+    with _patched(rt.ta, "ROUNDING_PER_BUCKET", moved), \
+            _swapped(tol, "basis", "statements print whole kWh, so the per-bucket "
+                                   "rounding bound is 0.25 kWh and a period's is more"):
+        got = rt._whole_kwh_rounding_bound()
+        assert got is rt.ta.ROUNDING_PER_BUCKET and got == moved, (
+            f"the bound followed the artifact's prose ({got}) rather than the "
+            f"generator constant ({moved})")
+    # Disagreement and absence both still fail closed, naming both sides.
+    with _patched(rt.ta, "ROUNDING_PER_BUCKET", moved):
+        try:
+            rt._whole_kwh_rounding_bound()
+            raise AssertionError("the bound resolved while the artifact and its "
+                                 "generator disagree about it")
+        except SystemExit as e:
+            assert str(moved) in str(e) and "tou_audit" in str(e), e
+    with _swapped(tol, "basis", "statements print whole kWh"):
+        try:
+            rt._whole_kwh_rounding_bound()
+            raise AssertionError("the bound resolved off a basis that no longer states one")
+        except SystemExit as e:
+            assert "ROUNDING_PER_BUCKET" in str(e), (
+                f"the refusal does not name the constant it could not corroborate: {e}")
+    assert rt._whole_kwh_rounding_bound() is rt.ta.ROUNDING_PER_BUCKET, (
+        "the substituted bound leaked out of this case")
+    return (f"the whole-kWh bound S1_VERDICT quotes IS analysis/tou_audit.py's "
+            f"ROUNDING_PER_BUCKET ({bound} kWh), cross-checked against "
+            "data/tou_audit_summary.json's prose rather than parsed out of it")
+
+
+@case
+def case_hour_labels_carry_the_minutes_of_a_fractional_tariff_bound():
+    """FINDING 9. The int() sweep missed _hour_label, which truncated the same
+    fractional run bounds into the window NAMES sections 2, 5 and 15 print --
+    so a tariff whose overnight super-off-peak run ends at 06:30 was labelled
+    "12am–6am", mislabelling the very window the report tells the reader to
+    charge inside.
+
+    The bound is determinable to the minute, so it is rendered to the minute
+    rather than refused; a bound that is not a whole number of minutes has no
+    clock label at all and fails closed. Driven end-to-end through S15_VERDICT
+    as well as on the labeller, because the label is what ships."""
+    for hour, expected in ((0, "12am"), (6, "6am"), (12, "12pm"), (16, "4pm"),
+                           (21, "9pm"), (0.25, "12:15am"), (6.5, "6:30am"),
+                           (12.5, "12:30pm"), (14.5, "2:30pm"), (23.75, "11:45pm")):
+        got = rt._hour_label(hour)
+        assert got == expected, f"_hour_label({hour}) is {got!r}, expected {expected!r}"
+    assert rt._fmt_hour_range(0, 6.5) == "12am–6:30am", rt._fmt_hour_range(0, 6.5)
+    assert rt._fmt_hour_range(16, 21) == "4–9pm", rt._fmt_hour_range(16, 21)
+    for bad in (6.001, 0.4321):
+        try:
+            got = rt._hour_label(bad)
+            raise AssertionError(
+                f"_hour_label named a bound that is not a whole minute: {bad} -> {got!r}")
+        except SystemExit as e:
+            assert str(bad) in str(e), e
+
+    # End to end: the Monday appendix tells the reader which window to charge
+    # in, and that window's name has to be the tariff's own.
+    published = rt.resolve_token("S15_VERDICT")
+    assert rt._overnight_cheap_window() in published, published
+    with _patched(rt, "_overnight_cheap_run", lambda: (0.0, 6.5, "sop")):
+        value = rt.resolve_token("S15_VERDICT")
+    assert "12am–6:30am" in value, (
+        f"S15_VERDICT names a window half an hour shorter than the tariff's own: {value}")
+    assert "12am–6am" not in value, (
+        f"S15_VERDICT truncated the tariff's 06:30 boundary into the window it tells the "
+        f"reader to charge inside: {value}")
+    _assert_within_density_cap("S15_VERDICT", value, "a fractional overnight window")
+    assert rt.resolve_token("S15_VERDICT") == published, (
+        "the substituted tariff window leaked out of this case")
+    return ("_hour_label renders a fractional tariff bound to the minute (06:30 -> "
+            '"6:30am") instead of truncating it, so S15_VERDICT names the window the '
+            "tariff actually has, and refuses a bound that is not a whole minute")
+
+
+@case
+def case_no_comparison_clause_picks_a_branch_off_a_non_finite_input():
+    """The same defect class as findings 1, 3, 4 and 6, swept across every
+    remaining COMPARISON in this module rather than patched at the sites the
+    review named.
+
+    A nan satisfies no comparison at all -- `nan > 0`, `nan < 0` and
+    `nan == x` are every one of them False -- so it falls through each test in
+    a branch chain and lands in whichever arm happens to be written last,
+    which is a CONFIDENT clause selected by a degenerate input. An infinity is
+    the same problem going the other way: it wins every `>` it meets. Neither
+    is settled by the artifacts, so both are state 3.
+
+    Every clause that branches on a magnitude is driven at both, and the
+    refusal has to name the quantity, or a maintainer reading the failure
+    cannot tell which artifact field went bad."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    ordered = sorted(plans, key=lambda k: plans[k]["no_battery"])
+    best, runner_up = ordered[0], ordered[1]
+    dp = rt._json("battery_dispatch_policies.json")
+    pk = rt._json("package_results.json")["packages"]
+    a = rt._json("cca_bundled_counterfactual.json")["direction_a_cca_repriced_at_bundled"]
+    checked = []
+    for bad in (float("nan"), float("inf")):
+        # The household's OWN matrix row, not the runner-up's: _runner_up()
+        # ranks the others on no_battery, so poisoning a rival's cell just
+        # elects a different runner-up and the gap stays finite.
+        arms = (
+            ("S4_VERDICT_SHORT", plans[best], "with_battery", "with_battery_gap", best),
+            ("PLAN_MARGIN_VS_RUNNER_UP", plans[best], "no_battery", "margin", best),
+            ("S6_VERDICT", dp["pw3"]["greedy"], "save", "greedy_save", None),
+            ("S6_VERDICT", dp["pw3x"]["greedy"], "save", "expanded_save", None),
+            ("S7_VERDICT", pk["HIGH"], "marginal_vs_mid_yr",
+             "expansion_marginal_saving", cheapest),
+            ("S10_VERDICT", a, "delta_usd_per_year", "delta_usd_per_year", None),
+            # The three comparisons the previous sweep did not reach (issue
+            # #131 review round 4, findings 4 and 5, plus the section 4 win
+            # row's own new gate). Named the same way, in the same place, so
+            # "swept" means the whole module and not the arms that were easy
+            # to reach from a verdict token.
+            ("S0_VERDICT", pk["MID"], "battery_alone_post_ev_fix_yr",
+             "whether the battery repays its own cost", cheapest),
+            ("BEST_PLAN_BATT_MODELED", plans[best], "with_battery",
+             "cheapest with one battery", best),
+            ("BATTERY_PAYBACK_RANGE", pk["MID"], "battery_alone_post_ev_fix_yr",
+             "whether the battery repays its own cost", None),
+        )
+        for token, node, key, named, plan in arms:
+            stub = (_stub_plan(plan, provider) if plan is not None
+                    else _stub_household(_s10_household_inputs()))
+            with stub, _swapped(node, key, bad):
+                try:
+                    value = rt.resolve_token(token)
+                    raise AssertionError(
+                        f"{token} picked a branch with {key} = {bad}: {value}")
+                except SystemExit as e:
+                    assert token in str(e), e
+                    assert named in str(e), (
+                        f"{token}'s refusal does not name the quantity that went "
+                        f"non-finite ({named}): {e}")
+            checked.append(f"{token}:{key}")
+    return (f"{len(checked)} comparison clauses fail closed naming their own quantity on "
+            "a nan or an infinity, instead of falling through into the last branch "
+            f"({', '.join(sorted(set(checked)))})")
+
+
+@case
+def case_a_free_fix_worth_under_a_dollar_still_gets_a_report():
+    """ROUND 4, FINDING 2. The guard compared the SIGNS of
+    behavior_rebuild's scenarios.a.saved and package_results'
+    packages.LOW.savings_yr, calling a disagreement a contradiction between
+    two committed artifacts.
+
+    analysis/package_results.py writes `savings_yr` as literally
+    `round(scenarios.a.saved)`. They are one figure and its whole-dollar
+    rounding. So a household whose EV shift is worth $0.37/yr had sign +1
+    against sign 0 and got NO REPORT AT ALL -- and every household under fifty
+    cents a year with it.
+
+    This case drives that household and asserts the three sentences RENDER.
+    The previous round's case moved both fields together, so the pair that
+    reproduces the defect never occurred in it.
+
+    The rounding boundary is driven from both sides, and a pair that really
+    HAS come apart still refuses -- otherwise this case would pass on a
+    formula that simply stopped checking."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    scenario = rt._json("behavior_rebuild.json")["scenarios"]["a"]
+    low = rt._json("package_results.json")["packages"]["LOW"]
+    tokens = ("S0_VERDICT", "S7_VERDICT", "S15_VERDICT")
+    rendered = {}
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in tokens}
+
+        # 1. THE REPRODUCTION, plus the rest of the sub-dollar band. Each pair
+        #    is (saved, round(saved)) -- exactly what the generator writes.
+        for saved in (0.37, 0.5, -0.37, 0.49, -0.5, 1220.85):
+            rounded = round(saved)
+            with _swapped(scenario, "saved", saved), \
+                    _swapped(low, "savings_yr", rounded):
+                for token in tokens:
+                    value = rt.resolve_token(token)
+                    assert value.strip(), f"{token} rendered blank at a {saved}/yr fix"
+                    # Whatever it says, it may not print a mangled figure: the
+                    # sign is taken on the WHOLE-DOLLAR value all three print,
+                    # so a $0.37 saving cannot reach the loss clause and render
+                    # "costs a modeled $-0/yr".
+                    assert "$-" not in value and "$0/yr" not in value, (
+                        f"{token} printed a mangled figure at a {saved}/yr free fix: "
+                        f"{value}")
+                    _assert_within_density_cap(token, value, f"a {saved}/yr free fix")
+                    rendered[f"{token} at {saved}"] = value
+            # Sub-dollar savings round to nothing, and the sentence says so
+            # rather than selling a move it would price at $0.
+            if rounded == 0:
+                for token in tokens:
+                    assert "adds no modeled saving" in rendered[f"{token} at {saved}"], (
+                        f"{token} sells a free fix its own printed figure rounds to "
+                        f"zero ({saved}/yr): {rendered[f'{token} at {saved}']}")
+
+        # 2. A pair the rounding cannot explain still fails closed, so the
+        #    tolerance did not simply delete the check.
+        for saved, drifted in ((1220.85, 1222), (1220.85, 1220), (0.37, 1)):
+            apart = abs(saved - drifted) > 0.5
+            with _swapped(scenario, "saved", saved), \
+                    _swapped(low, "savings_yr", drifted):
+                for token in tokens:
+                    try:
+                        value = rt.resolve_token(token)
+                        assert not apart, value
+                    except SystemExit as e:
+                        assert apart, (
+                            f"{token} refused a pair inside the half-dollar the rounding "
+                            f"itself moves ({saved} vs {drifted}): {e}")
+                        assert token in str(e) and "rounding" in str(e), e
+
+        for token, value in published.items():
+            assert rt.resolve_token(token) == value, (
+                f"the substituted free-fix saving leaked out of this case ({token})")
+    return ("a $0.37/yr free EV-charging fix gets a report -- all three sentences render, "
+            "reading the whole-dollar figure they print -- while a pair further apart "
+            "than the rounding explains still fails closed")
+
+
+@case
+def case_the_plan_ranking_refuses_a_non_finite_total_instead_of_emptying_itself():
+    """ROUND 4, FINDING 4. The non-finite sweep reached this module's other
+    comparisons and skipped _plan_ranking, which feeds three sentences.
+
+    A nan in data/plan_results.csv's total column makes `t == cheapest` False
+    for EVERY row, including its own, so `winners` came back EMPTY: S0_VERDICT
+    published "a cheaper rate plan exists" off a non-finite input, S3_VERDICT
+    named a plan that had not won anything, and BEST_PLAN died several tokens
+    later with a bare IndexError rather than this module's named refusal.
+
+    Both non-finite values are driven, on the household's own row and on a
+    rival's, and the refusal has to name the PLAN -- the message is the only
+    thing telling a maintainer which CSV cell went bad."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))
+    own = next(r for r in priced if r["plan"] == cheapest)
+    tokens = ("S0_VERDICT", "S3_VERDICT", "BEST_PLAN")
+    checked = []
+    with _stub_plan(cheapest, provider):
+        published = {t: rt.resolve_token(t) for t in tokens}
+        for row in (own, rival):
+            for bad in ("nan", "inf", "-inf"):
+                with _swapped(row, "total", bad):
+                    for token in tokens:
+                        try:
+                            value = rt.resolve_token(token)
+                            raise AssertionError(
+                                f"{token} ranked plans with {row['plan']} priced at "
+                                f"{bad}/yr: {value}")
+                        except SystemExit as e:
+                            assert token in str(e), e
+                            assert "which rate plan is cheapest" in str(e), (
+                                f"{token}'s refusal does not name the indeterminate "
+                                f"quantity: {e}")
+                            assert row["plan"] in str(e) and bad in str(e), (
+                                f"{token}'s refusal does not name the plan whose total "
+                                f"went non-finite: {e}")
+                checked.append(f"{row['plan']}={bad}")
+        for token, value in published.items():
+            assert rt.resolve_token(token) == value, (
+                f"the substituted plan total leaked out of this case ({token})")
+    return ("the shared plan ranking fails closed naming the plan whose total went "
+            f"non-finite ({', '.join(checked)}), instead of returning an empty winner "
+            "list that published a confident clause and an IndexError")
+
+
+@case
+def case_s2_verdict_refuses_a_non_finite_night_census():
+    """ROUND 4, FINDING 5. Section 2's EV-timing clause is three-state, but
+    the gate never tested finiteness -- and Python's json parser accepts a
+    bare NaN.
+
+    A nan census satisfies none of `observed <= 0`, `absent < 0`,
+    `charging < 0` or `charging > absent`, so it fell straight through into
+    the confident opposite branch: "the EV does not usually charge overnight",
+    a claim about an observed habit, selected by a non-number.
+
+    Both census fields are driven at both non-finite values. The coherent
+    cases either side are driven too, so this cannot pass on a formula that
+    refuses everything."""
+    census = (rt._json("quiet_night_floor.json")["night_floor"]
+              ["issue_114_investigation"]["ev_absence_by_window"])
+    lo, hi, _lab = rt._overnight_cheap_run()
+    entry = census[f"{int(lo)}-{int(hi)}h"]
+    checked = []
+    with _stub_household(_s2_household_inputs()):
+        published = rt.resolve_token("S2_VERDICT")
+        for key in ("n", "n_eligible_nights"):
+            for bad in (float("nan"), float("inf"), float("-inf")):
+                with _swapped(entry, key, bad):
+                    try:
+                        value = rt.resolve_token("S2_VERDICT")
+                        raise AssertionError(
+                            f"S2_VERDICT published an overnight-charging habit with "
+                            f"{key} = {bad}: {value}")
+                    except SystemExit as e:
+                        assert "S2_VERDICT" in str(e), e
+                        assert "whether the EV usually charges overnight" in str(e), (
+                            f"S2_VERDICT's refusal does not name the indeterminate "
+                            f"quantity: {e}")
+                checked.append(f"{key}={bad}")
+
+        # It still DISCRIMINATES: a real census either way renders, and the
+        # two coherent answers are different sentences.
+        observed = entry["n_eligible_nights"]
+        assert observed > 2, observed
+        readings = {}
+        for label, absent in (("mostly charging", 0), ("mostly absent", observed)):
+            with _swapped(entry, "n", absent):
+                readings[label] = rt.resolve_token("S2_VERDICT")
+        assert "while the EV charges overnight" in readings["mostly charging"], readings
+        assert "does not usually charge overnight" in readings["mostly absent"], readings
+        assert rt.resolve_token("S2_VERDICT") == published, (
+            "the substituted census leaked out of this case")
+    return ("S2_VERDICT fails closed naming the habit it cannot claim on a non-finite "
+            f"night census ({', '.join(checked)}), and still reads both ways on a real "
+            "one")
+
+
+@case
+def case_the_payback_card_never_prints_a_payback_the_battery_does_not_have():
+    """ROUND 4, FINDING 6. BATTERY_PAYBACK_RANGE fills the section 0 card
+    "Battery-alone payback with price-aware dispatch". It read packages.MID's
+    two payback fields directly and sorted them, bypassing every check the
+    verdict printed beside it goes through.
+
+    So with a negative battery-alone saving the card printed the package cost
+    divided by that loss as though it were a length of time -- "~-290.0-6.2
+    yr" -- and it printed it directly above a verdict saying the battery does
+    not repay its own cost.
+
+    It goes through the shared resolver now and spans only the paybacks that
+    EXIST. Driven at: the PRE-fix scenario losing money (the card names the
+    post-fix payback, which is the one the report's verdicts are written on),
+    the POST-fix scenario losing money (no payback the report says the battery
+    has, so the card fails closed -- see the round-5 note below), both losing,
+    and an artifact whose payback contradicts its own saving (the resolver's
+    own refusal, which this token used to skip).
+
+    ROUND 5, FINDING 3 amended arm 1 of this case. It used to assert that a
+    battery losing money AFTER the free fix but repaying before it prints the
+    PRE-fix payback -- pinning, as the correct answer, the card reading "6.2
+    yr" a few pixels above a verdict that reads "does not repay its own cost"
+    on the very household round 4's own finding 1 introduced (+$2,328 before
+    the fix, -$50 after it). The card and the verdict describe one purchase,
+    the verdict is written on the post-fix scenario, and a card asserting a
+    payback the sentence beside it denies is the defect this case exists to
+    prevent. So that arm now asserts the refusal, and arm 5 below drives the
+    card and both verdicts together across every mixed pair."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    live = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
+    assert min(live) > 0, live
+    published = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+    assert "-" not in published.replace("–", ""), (
+        f"the published card already carries a minus sign: {published!r}")
+
+    # 1. The PRE-fix scenario losing money: the card quotes the post-fix
+    #    payback, which is the one every verdict is written on, and never the
+    #    cost divided by a loss.
+    with _mid_battery_at(mid, -50, live[1]):
+        value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+    expected = f"{round(mid['cost'] / live[1], 1):.1f} yr"
+    assert value == expected, (
+        f"the payback card reads {value!r} with a -50/yr pre-fix battery-alone saving; "
+        f"the only payback the report's verdicts stand behind is {expected!r}")
+    assert "-" not in value, (
+        f"the payback card printed a cost divided by a loss as a payback: {value}")
+
+    # 2. The post-fix scenario does not repay -- whatever the other one says.
+    #    There is no payback the report stands behind, so the card refuses
+    #    rather than quoting the surviving scenario's. (2328, -50) is the
+    #    review's own household, the one arm 1 used to pin the other way.
+    for pre, post in ((-50, -400), (0, 0), (0, -400),
+                      (2328, -50), (live[0], -50), (live[0], 0)):
+        with _mid_battery_at(mid, pre, post):
+            try:
+                value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                raise AssertionError(
+                    f"the payback card printed {value!r} for a battery whose savings are "
+                    f"{pre}/{post} per year -- neither scenario has a payback")
+            except SystemExit as e:
+                assert "BATTERY_PAYBACK_RANGE" in str(e), e
+                assert "report-template.html" in str(e), (
+                    f"the refusal does not name the chrome that makes it one: {e}")
+
+    # 3. The consistency check the token used to bypass entirely.
+    for bad in (0, -3.0, float("inf")):
+        with _swapped(mid, "battery_alone_payback_post_fix_yr", bad):
+            try:
+                value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                raise AssertionError(
+                    f"the payback card printed {value!r} while packages.MID pairs a "
+                    f"{live[1]}/yr saving with a {bad}-year payback")
+            except SystemExit as e:
+                assert "BATTERY_PAYBACK_RANGE" in str(e), e
+
+    # 4. ...and it cannot be switched off from the numerator's side. Without a
+    #    usable cost there is nothing to divide by a saving, so the paybacks
+    #    would be quoted on the artifact's own say-so.
+    for bad in (float("nan"), 0, -14500):
+        with _swapped(mid, "cost", bad):
+            try:
+                value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                raise AssertionError(
+                    f"the payback card printed {value!r} unchecked while packages.MID "
+                    f"reports a cost of {bad}")
+            except SystemExit as e:
+                assert "BATTERY_PAYBACK_RANGE" in str(e) and "cost" in str(e), e
+
+    # 5. ROUND 5, FINDING 3, as the property rather than as three examples:
+    #    the card never asserts a payback while the two verdicts printed
+    #    around it deny the battery repays. Driven across every mixed pair,
+    #    with the verdicts resolved in the same substituted state.
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    agreed = []
+    with _stub_plan(cheapest, provider):
+        for pre, post in ((2328, -50), (live[0], -50), (-50, live[1]),
+                          (live[0], 0), (0, live[1]), (live[0], live[1])):
+            with _mid_battery_at(mid, pre, post):
+                s0, s7 = rt.resolve_token("S0_VERDICT"), rt.resolve_token("S7_VERDICT")
+                try:
+                    card = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                except SystemExit:
+                    card = None
+            says_repays = _battery_reading(s0, s7) == ("repays", "repays")
+            assert (card is not None) == says_repays, (
+                f"at pre {pre}/post {post} the section 0 card reads {card!r} while the "
+                f"two verdicts read {_battery_reading(s0, s7)} -- a card asserting a "
+                "payback the sentences beside it deny")
+            agreed.append(f"{pre}/{post}:{'quoted' if card else 'withheld'}")
+        assert len({a.split(':')[1] for a in agreed}) == 2, (
+            f"every pair went the same way, so agreement proves nothing: {agreed}")
+
+    assert rt.resolve_token("BATTERY_PAYBACK_RANGE") == published, (
+        "the substituted battery figures leaked out of this case")
+    return (f"the section 0 payback card reads {published!r} on the committed artifact, "
+            "names the post-fix payback when the pre-fix scenario loses money, withholds "
+            "the card whenever the verdicts beside it say the battery does not repay "
+            f"({', '.join(agreed)}), and fails closed rather than printing a cost "
+            "divided by a loss")
+
+
+@case
+def case_a_window_ending_at_midnight_is_named_midnight_not_noon():
+    """ROUND 4, FINDING 7. _weekday_runs() closes its last run at h = 24.0 --
+    the same instant as h = 0.0, and "12am" on a clock. The meridiem test was
+    a bare `hour < 12`, and 24 is not less than 12, so the label came out
+    "12pm": a tariff whose last run ends at midnight named a window ending at
+    NOON, twelve hours wrong, in the sentence telling the reader when the
+    cheap window closes.
+
+    Driven on the labeller, on the range formatter, and end to end through the
+    Monday appendix, which is the sentence a reader would act on."""
+    assert rt._hour_label(24) == "12am", rt._hour_label(24)
+    assert rt._hour_label(24.5) == "12:30am", rt._hour_label(24.5)
+    assert rt._hour_label(0) == "12am" and rt._hour_label(12) == "12pm"
+    assert rt._fmt_hour_range(21, 24) == "9pm–12am", rt._fmt_hour_range(21, 24)
+    assert rt._fmt_hour_range(22, 24) == "10pm–12am", rt._fmt_hour_range(22, 24)
+    # A run that BEGINS at the midnight bound elides no meridiem either -- the
+    # "12" hours are excluded from the elision modulo the day.
+    assert rt._fmt_hour_range(24, 30) == "12am–6am", rt._fmt_hour_range(24, 30)
+
+    published = rt.resolve_token("S15_VERDICT")
+    with _patched(rt, "_overnight_cheap_run", lambda: (18.0, 24.0, "sop")):
+        value = rt.resolve_token("S15_VERDICT")
+    assert "6pm–12am" in value, (
+        f"S15_VERDICT names a window ending at midnight as ending at noon: {value}")
+    assert "12pm" not in value, value
+    _assert_within_density_cap("S15_VERDICT", value, "a window ending at midnight")
+    assert rt.resolve_token("S15_VERDICT") == published, (
+        "the substituted tariff window leaked out of this case")
+    return ('a tariff window bound at h = 24.0 is named "12am", so a run ending at '
+            'midnight prints "6pm–12am" rather than a window ending at noon')
+
+
+# Every quantity in this module whose SIGN the artifact decides rather than
+# the schema: a difference, a modeled saving or value, an NPV, an overlap
+# deduction. Matched against a token's name AND its source path, so a figure
+# named for what it is cannot be declared with a formatter that hides a minus
+# inside the dollar sigil.
+_SIGNED_QUANTITY_RE = re.compile(
+    r"save|saving|marginal|delta|value|npv|double_count|margin|gap|overlap", re.I)
+_UNSIGNED_CURRENCY_FMTS = {"usd0", "usd0_tilde", "usd2", "usd3"}
+# Tokens the name-and-path probe flags whose quantity is NOT signed, each one
+# traced to its generator rather than waved through on the word:
+#
+#   FIRST_YEAR_VALUE -- analysis/lifetime_payback.py computes
+#   years[].value_usd as `PROD[y] * blended_rate * RATE_IDX[y] /
+#   RATE_IDX[cur_year]`: a product of a kWh count and two rates, every factor
+#   non-negative by construction. It is a LEVEL that happens to be called a
+#   value, not a difference. (Contrast SOLAR_ANNUAL_VALUE, which really is
+#   nosolar_bill_usd minus the modeled baseline, and is signed.)
+_UNSIGNED_BY_CONSTRUCTION = {"FIRST_YEAR_VALUE"}
+
+
+@case
+def case_no_signed_currency_token_prints_a_minus_inside_the_dollar_sigil():
+    """ROUND 4, FINDINGS 8 AND 10, swept. This defect has now been found at
+    five exits over three review rounds: two verdict clauses, the section 7
+    expansion-cost refusal, and BATTERY_MARGINAL_SAVINGS, which rendered
+    packages.MID.battery_alone_yr -- a modeled saving that is negative on any
+    household the battery costs money -- through fmt="usd0".
+
+    Two sweeps, so the class is closed rather than patched again:
+
+      1. MECHANICAL. Every token whose name or source path says it carries a
+         signed quantity must be declared with a signed formatter. A new token
+         called ..._SAVINGS or pointing at a ...delta field cannot ship with
+         fmt="usd0".
+      2. BEHAVIOURAL. Every signed formatter, and every refusal message in
+         this module that can print a non-positive currency figure, is driven
+         at a negative value and must put the sign OUTSIDE the sigil."""
+    offenders, exempt = [], []
+    for name, spec in rt.TOKENS.items():
+        if spec.get("fmt") not in _UNSIGNED_CURRENCY_FMTS:
+            continue
+        probe = name + " " + " ".join(str(k) for k in spec.get("path", ()))
+        if not _SIGNED_QUANTITY_RE.search(probe):
+            continue
+        (exempt if name in _UNSIGNED_BY_CONSTRUCTION else offenders).append(
+            f"{name} ({spec['fmt']}, {probe.strip()})")
+    assert not offenders, (
+        "token(s) carrying a signed quantity are declared with an unsigned currency "
+        f"formatter, so a negative renders as \"$-500\": {sorted(offenders)}")
+    # The reasoned exemptions stay live: an entry that no longer matches the
+    # probe at all has stopped documenting anything and should come out.
+    assert len(exempt) == len(_UNSIGNED_BY_CONSTRUCTION), (
+        f"_UNSIGNED_BY_CONSTRUCTION lists {sorted(_UNSIGNED_BY_CONSTRUCTION)} but the "
+        f"probe only reaches {sorted(exempt)}; a stale exemption hides nothing and "
+        "should be deleted")
+
+    for fmt in ("usd0_signed", "usd0_tilde_signed", "usd0_plus"):
+        rendered = rt.FORMATTERS[fmt](-500)
+        assert "$-" not in rendered and rendered.endswith("$500"), (
+            f"FORMATTERS[{fmt!r}] renders -500 as {rendered!r}")
+    assert rt.FORMATTERS["usd0_plus"](8656) == "+$8,656"
+    assert rt.FORMATTERS["usd0_plus"](0) == "$0"
+    assert rt.FORMATTERS["usd0_tilde_signed"](4900) == "~$4,900"
+
+    # End to end, on the token the review named. The substitution moves the
+    # POST-fix scenario, which is the one this token has read since round 5's
+    # finding 10 re-based it onto the scenario section 7's verdict quotes --
+    # and it moves the payback with it, because package_results.py writes the
+    # payback as cost / saving and report_tokens checks that derivation.
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    with _mid_battery_at(mid, mid["battery_alone_yr"], -120):
+        value = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+    assert value == "-$120", value
+
+    # And in the refusal messages, which ship to a maintainer rather than a
+    # reader but are the exits this class keeps reappearing at.
+    pk = rt._json("package_results.json")["packages"]
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    messages = []
+    with _stub_plan(cheapest, provider):
+        for node, key, bad in ((pk["HIGH"], "cost", pk["MID"]["cost"] - 500),
+                               (pk["LOW"], "cost", -250)):
+            with _swapped(node, key, bad):
+                try:
+                    value = rt.resolve_token("S7_VERDICT")
+                    raise AssertionError(f"S7_VERDICT rendered at {key} = {bad}: {value}")
+                except SystemExit as e:
+                    assert "$-" not in str(e), (
+                        f"S7_VERDICT's refusal prints a minus inside the dollar sigil: {e}")
+                    messages.append(str(e).split(" -- ")[-1])
+    return (f"no token declared with an unsigned currency formatter carries a signed "
+            f"quantity, the three signed formatters put the sign outside the sigil, "
+            f"BATTERY_MARGINAL_SAVINGS renders -$120 at a negative saving, and section "
+            f"7's two cost refusals read {messages}")
+
+
+@case
+def case_both_worth_doing_clauses_resolve_through_one_shared_ladder():
+    """ROUND 4, FINDING 9. _free_fix_saving and _battery_alone carried
+    byte-identical three-state ladders -- finite, then above zero, then
+    otherwise -- which is how the same wrong comparison ended up written twice
+    in two different shapes.
+
+    The ladder is _sign_claim now, and this asserts BOTH resolvers reach it
+    rather than that the source happens to look similar: the shared helper is
+    replaced with a recorder, and each resolver must be seen calling it with
+    its own subject.
+
+    What is deliberately NOT shared is the relationship check in front of it.
+    Those two sites read differently-related artifact pairs -- a rounding pair
+    and a two-scenario pair -- and folding their checks together is what put
+    both through one sign test to begin with. So the recorder also asserts the
+    two arrive with DIFFERENT subjects and different magnitudes."""
+    seen = []
+
+    def recorder(token, subject, magnitude, detail):
+        seen.append((token, subject, magnitude))
+        return real(token, subject, magnitude, detail)
+
+    real = rt._sign_claim
+    with _patched(rt, "_sign_claim", recorder):
+        rt._free_fix_saving("PROBE_FIX")
+        rt._battery_alone("PROBE_BATTERY")
+    subjects = {token: subject for token, subject, _m in seen}
+    assert set(subjects) == {"PROBE_FIX", "PROBE_BATTERY"}, (
+        f"one of the two 'is this worth doing' resolvers does not go through the shared "
+        f"three-state ladder: {seen}")
+    assert len(set(subjects.values())) == 2, (
+        f"the two resolvers reached the ladder with the same subject, so a refusal "
+        f"cannot say which claim it is about: {subjects}")
+    magnitudes = {token: m for token, _s, m in seen}
+    assert magnitudes["PROBE_FIX"] != magnitudes["PROBE_BATTERY"], (
+        "both resolvers judged the same magnitude; they read different artifacts")
+    assert not seen[len(seen):], seen
+    return ("_free_fix_saving and _battery_alone both resolve through _sign_claim, each "
+            f"with its own subject ({sorted(subjects.values())}) and its own magnitude")
+
+
+# ===========================================================================
+# THE POISON HARNESS (issue #131, review round 5, part B).
+#
+# WHAT ROUND 4 SHIPPED, AND WHY IT COULD NOT WORK. Round 4 closed its
+# "minus inside the dollar sigil" finding with a MECHANICAL sweep -- the probe
+# in case_no_signed_currency_token_prints_a_minus_inside_the_dollar_sigil,
+# which walks TOKENS and matches each entry's NAME and declared source PATH
+# against a regex of signed-quantity words. It is a structural probe over
+# DECLARATIONS, and the population it can see is the population that declares
+# a `fmt` and a `path`. Twenty-one tokens in report_tokens.py are `derived`
+# formulas that build a dollar string with an f-string; the probe cannot see
+# one of them, and every one of them could publish "$-1,234", "$nan" or
+# "inf kg CO2/MWh" out of a single bad artifact field. Round 5 found four such
+# tokens by reading, which is how the previous four rounds found their ten
+# each. Reading does not scale and does not repeat.
+#
+# WHAT THIS DOES INSTEAD. It drives REAL RESOLUTION and reads the OUTPUT.
+# For every token, for every numeric field of every artifact the token is
+# observed to touch, it substitutes each of nan, inf, -inf, -0.0, 0 and a
+# negative value into report_tokens' in-memory artifact cache, resolves the
+# token, and requires the outcome to be one of exactly two things:
+#
+#     a SystemExit whose message NAMES the token, or
+#     a rendered string carrying none of the malformed shapes below.
+#
+# Anything else -- a nan on the page, a minus inside a sigil, a doubled
+# sigil, an empty numeric field, a blank render, an unnamed refusal, or any
+# other exception type escaping resolve_token -- is a failure.
+#
+# HOW THE FIELDS A TOKEN READS ARE DISCOVERED. Two mechanisms, and neither
+# trusts a declaration:
+#
+#   1. WHICH ARTIFACTS, by a RECORDING LOADER. report_tokens._json,
+#      ._csv_rows and .hh1 are wrapped for one clean resolution per token and
+#      record what they were asked for. This is the recording-loader option
+#      the round-5 brief judged sturdiest, and for the same reason: it
+#      observes the reads rather than believing TOKENS' `sources` list, which
+#      is prose, is not consumed by anything, and is exactly the kind of
+#      declaration finding 9 proved unreliable.
+#
+#   2. WHICH FIELDS INSIDE THEM, by OBSERVABLE EFFECT. Every numeric leaf of
+#      each touched JSON file (and every fully-numeric column of each touched
+#      CSV) is poisoned in turn and the token re-resolved. If the outcome is
+#      byte-identical to the clean one, the token PROVABLY does not read that
+#      field through that value, and there is nothing to assert. If it
+#      differs at all, the token reads it, and the outcome must satisfy the
+#      contract above.
+#
+#      This is deliberately NOT a path-recording proxy over the parsed JSON.
+#      A proxy has to intercept every way Python reaches a value --
+#      __getitem__, .get, .items(), .values(), iteration, slicing, max(key=)
+#      -- and a single missed access path is a silent blind spot pointing in
+#      exactly the direction this harness exists to remove. Poison-and-compare
+#      does not need to know how the value was reached, only whether the
+#      answer moved.
+#
+# AND THE HARNESS PROVES ITS OWN COVERAGE, which is the part round 5 left out
+# and round 6 had to add (issue #131 review round 6, finding 1).
+#
+#      Round 5's version selected the CSV columns to poison with a filter that
+#      kept a column only if every cell passed bare float().
+#      data/enphase_daily_production.csv's one numeric column ends in the
+#      Total footer "16,501.77" -- a thousands separator float() rejects, and
+#      the very cell report_tokens._annual_production_kwh reads after
+#      .replace(",", ""). So the swept-column list for that file was EMPTY,
+#      the TWELVE tokens that read it got ZERO probes, and the run still
+#      reported 51,414 probes and PASS. A guard reporting success while
+#      covering nothing is the exact shape six review rounds have been
+#      finding, and a filter that just learns about commas leaves the next
+#      such gap equally silent.
+#
+#      So coverage is no longer a by-product to be reported; it is a
+#      PROPERTY THIS CASE ASSERTS, in four parts:
+#
+#        (a) an artifact a token is OBSERVED to read must contribute at
+#            least one poisoned field. Zero is a named FAILURE carrying the
+#            token and the artifact, never a silent skip.
+#        (b) every field the sweep DECLINES to poison is recorded with a
+#            reason from a closed set, and the whole declined set is asserted
+#            against the ledger below -- so a new unparseable column, or a
+#            column that stops parsing, cannot silently join it. A column
+#            that is PARTLY numeric is a failure outright: that ambiguity is
+#            where a blind spot hides.
+#        (c) a token that reads any artifact must end with a non-zero probe
+#            count, and the tokens that legitimately end at zero (their only
+#            reads are household answers that hold no number at all -- a plan
+#            name, a PTO date) are named in a frozen set, not inferred.
+#        (d) a token this checkout cannot resolve must be unresolvable
+#            BECAUSE the private archive is absent, proven twice over: its
+#            refusal names household.yaml AND it was observed reading a
+#            household path. Nothing else may shrink coverage. Round 5
+#            asserted that bucket only where the archive is staged and it is
+#            always empty, so on the archive-less runner CI actually uses it
+#            was never asserted at all (review round 6, finding 9).
+#
+#      The reads themselves are recorded at report_tokens' own chokepoints:
+#      _json, _csv_rows and _hh_value. _hh_value, not hh1 -- hh1 is one of
+#      its callers, and the household_yaml leaf tokens, `vehicles`,
+#      `monitoring[]` and `cleaning_history` all reach household.yaml past
+#      hh1, so wrapping hh1 recorded none of them (same class as finding 1,
+#      found by asking which accessors exist rather than which one was
+#      already wrapped). A household answer is poisoned at its NUMERIC
+#      LEAVES, so the $200 inside cleaning_history's list of dicts is swept
+#      the same way a JSON leaf is.
+#
+# THERE IS NO ALLOWLIST, and that is a consequence of the contract rather than
+# an omission. The contract is on the OUTPUT, not on refusing: a count that
+# renders "0 days" on a poisoned input, a date, a name, a share that reads
+# "-1,234%" are all already permitted, because none of them puts a non-number
+# or a misplaced sign in front of a reader. The exemption mechanism a token
+# would need is therefore never reached, so adding one would document nothing.
+# ===========================================================================
+_POISON_NUMBERS = (float("nan"), float("inf"), float("-inf"), -0.0, 0, -1234.5)
+# The CSV cache holds the strings csv.DictReader produced, and every consumer
+# in report_tokens calls float() on them -- so the poison goes in as text, and
+# a nan reaches the arithmetic the same way a nan in a JSON artifact does.
+_POISON_STRINGS = ("nan", "inf", "-inf", "-0.0", "0", "-1234.5")
+
+_MALFORMED_RENDER = (
+    # "nan"/"inf" as a NUMERAL, not as a substring of a word: the lookarounds
+    # keep "information" and "infrastructure" out of it.
+    ("a non-finite numeral",
+     re.compile(r"(?<![A-Za-z])(nan|inf|infinity)(?![A-Za-z])", re.I)),
+    ("a minus inside a sigil", re.compile(r"\$-|\+\$-")),
+    ("a doubled sigil", re.compile(r"\$\$|%%|¢¢|~~")),
+    # A sigil with no number behind it, and a unit with no number in front:
+    # the shapes a formula produces when its figure formats to nothing.
+    ("an empty numeric field",
+     re.compile(r"\$(?![\d,])|(?<![\d)])%|(?<![\d)])¢")),
+)
+
+
+def _outcome(name, spec):
+    """(kind, payload) for one resolution: 'ok' with the rendered string,
+    'exit' with the refusal text, or 'raised' with the exception type."""
+    try:
+        return ("ok", rt.resolve_token(name, spec))
+    except SystemExit as e:
+        return ("exit", str(e))
+    except BaseException as e:                                   # noqa: BLE001
+        return ("raised", f"{type(e).__name__}: {e}")
+
+
+def _assert_poison_outcome(failures, name, field, poison, got):
+    kind, payload = got
+    if kind == "exit":
+        if name not in payload:
+            failures.append(f"{name} at {field} = {poison!r}: refused WITHOUT naming "
+                            f"itself, so nothing tells a maintainer which token broke "
+                            f"-- {payload[:200]}")
+        return
+    if kind == "raised":
+        failures.append(f"{name} at {field} = {poison!r}: escaped resolve_token as "
+                        f"{payload[:200]} instead of this module's named refusal")
+        return
+    if not payload.strip():
+        failures.append(f"{name} at {field} = {poison!r}: rendered blank")
+        return
+    for label, pattern in _MALFORMED_RENDER:
+        m = pattern.search(payload)
+        if m:
+            failures.append(f"{name} at {field} = {poison!r}: rendered {label} "
+                            f"({m.group(0)!r}) -- {payload[:200]}")
+            return
+
+
+def _numeric_leaf_paths(node, path=()):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _numeric_leaf_paths(value, path + (key,))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _numeric_leaf_paths(value, path + (i,))
+    elif isinstance(node, (int, float)) and not isinstance(node, bool):
+        yield path
+
+
+def _at_path(node, path):
+    for key in path[:-1]:
+        node = node[key]
+    return node, path[-1]
+
+
+def _csv_number(cell):
+    """The number a report_tokens consumer gets out of a CSV cell, or None.
+
+    NORMALISED THE WAY THE CONSUMERS NORMALISE, which is the whole point of
+    the function existing. report_tokens._annual_production_kwh reads
+    data/enphase_daily_production.csv's Total footer as
+    float(cell.replace(",", "")); _daily_production_series skips a blank cell
+    instead of parsing it; nothing in that module hands a raw cell to float()
+    without one of those two accommodations.
+
+    Round 5's filter was a bare float(), which is STRICTER than either -- and
+    a filter stricter than the consumers it stands in for stops sweeping
+    exactly the fields they read, without saying so. Three columns were
+    silently unswept by it: enphase_daily_production's only numeric column
+    (the "16,501.77" footer), gas_bill_summary[nonbaseline_rate] and
+    threeway_production_validation[meter_derived] (both blank in a few rows).
+    """
+    if not isinstance(cell, str):
+        return None
+    text = cell.strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+# The closed set of reasons the sweep may decline to poison a field. Closed on
+# purpose: a decline that does not fit one of these is not a decline, it is a
+# gap, and _poisonable_columns says so rather than inventing a fourth reason.
+_DECLINE_TEXT = "no cell parses as a number"
+_DECLINE_BLANK = "every cell is blank"
+_DECLINE_RAGGED = "csv.DictReader overflow key, not a column"
+_DECLINE_NO_NUMBER = "the household answer holds no number"
+_DECLINE_MIXED = ("SOME cells parse as numbers and some do not -- account for this "
+                  "column explicitly instead of letting it fall out of the sweep")
+
+
+def _poisonable_columns(rows):
+    """([columns to poison], {column: why it was declined}) for one CSV table.
+
+    Every column of the table lands in exactly one of the two, so the sweep
+    can assert it looked at all of them."""
+    poison, declined = [], {}
+    for column in list(rows[0]):
+        cells = [r.get(column) for r in rows]
+        if any(not isinstance(c, str) for c in cells):
+            declined[column] = _DECLINE_RAGGED
+            continue
+        filled = [c for c in cells if c.strip()]
+        if not filled:
+            declined[column] = _DECLINE_BLANK
+            continue
+        parsed = [_csv_number(c) for c in filled]
+        if all(p is not None for p in parsed):
+            poison.append(column)
+        elif all(p is None for p in parsed):
+            declined[column] = _DECLINE_TEXT
+        else:
+            declined[column] = _DECLINE_MIXED
+    return poison, declined
+
+
+# ---------------------------------------------------------------------------
+# THE COVERAGE LEDGER. Every field the sweep declines to poison, and every
+# token that therefore ends with no probes, named here rather than inferred at
+# run time -- that is what makes a NEW silent gap fail this case instead of
+# quietly enlarging the exempt set.
+#
+# The CSV half is asserted on every checkout (these files are committed). The
+# household half needs private/household.yaml to be reachable at all, so it is
+# asserted as an exact set where the archive is staged and as a subset where
+# it is not; the unresolvable-bucket assertion is what stops coverage
+# shrinking on that runner.
+# ---------------------------------------------------------------------------
+_DECLINED_CSV_COLUMNS = {
+    # Dates, plan names, TOU-period labels and provider names: text columns
+    # with no numeric form to substitute. Nothing here is a NUMBER a token
+    # could publish malformed, which is why declining them covers nothing up.
+    "data/bill_tou_detail.csv[period]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[season]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[section]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[statement_date]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[tou_period]": _DECLINE_TEXT,
+    "data/electric_bill_summary.csv[period]": _DECLINE_TEXT,
+    "data/enphase_daily_production.csv[Date/Time]": _DECLINE_TEXT,
+    "data/gas_bill_summary.csv[file_month]": _DECLINE_TEXT,
+    "data/plan_results.csv[plan]": _DECLINE_TEXT,
+    "data/plan_results.csv[provider]": _DECLINE_TEXT,
+    "data/pvoutput_daily.csv[date]": _DECLINE_TEXT,
+    "data/threeway_production_validation.csv[]": _DECLINE_TEXT,
+}
+
+_DECLINED_HOUSEHOLD_PATHS = {
+    # Household answers that are names, dates or lists of strings. A plan
+    # name has no non-finite form; a PTO date has no minus to misplace.
+    "private/household.yaml:household.cca": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.climate_zone": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.nem_version": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.plan": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.pto_date": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.utility": _DECLINE_NO_NUMBER,
+    "private/household.yaml:monitoring[].measures": _DECLINE_NO_NUMBER,
+    "private/household.yaml:monitoring[].resolution": _DECLINE_NO_NUMBER,
+    "private/household.yaml:monitoring[].source": _DECLINE_NO_NUMBER,
+    "private/household.yaml:solar.install_paid_date": _DECLINE_NO_NUMBER,
+    "private/household.yaml:solar.inverter_model": _DECLINE_NO_NUMBER,
+}
+
+# Tokens whose ONLY observed reads are declined fields, so zero probes is the
+# right answer for them and not a gap. Every one is a name, a date or a
+# provider string -- there is no number in any of them to publish malformed.
+_TOKENS_WITH_NO_POISONABLE_FIELD = {
+    "CLIMATE_ZONE", "DATA_SOURCES_DETAIL", "DATA_SOURCES_SUMMARY",
+    "GENERATION_PROVIDER", "GENERATION_PROVIDER_SHORT", "INSTALL_PAYMENT_DATE",
+    "NEM_EXPIRY_YEAR", "NEM_STATUS", "PTO_DATE", "RATE_SOURCES_DETAIL",
+    "SIZE_VERIFICATION_SOURCE", "UTILITY_NAME",
+}
+
+# Tokens that read no committed artifact at all. Every one resolves out of
+# analysis/rates.py (the tariff windows, the day-band prices, the effective
+# date) or the clock, neither of which this sweep can poison -- rates.py is
+# code, and its own guard tests live in analysis/test_rates.py. `cited_constant`
+# tokens are in the same position by construction and are excluded by KIND
+# rather than by name, so adding one needs no edit here; a DERIVED token that
+# suddenly reads nothing does need one, which is the point.
+_TOKENS_THAT_READ_NO_ARTIFACT = {
+    "BILLED_GENERATION_RATES", "CHEAP_WINDOW", "DAYBAND_OFFPEAK_PRICE",
+    "DAYBAND_ONPEAK_PRICE", "DAYBAND_SEASON_LABEL", "DAYBAND_SOP_PRICE",
+    "PEAK_WINDOW", "RATES_EFFECTIVE_DATE", "RECOMMENDED_PACKAGE_SUMMARY",
+    "REPORT_DATE", "S14_VERDICT", "SUMMER_ONPEAK_EXPORT_RATE",
+    "SUMMER_ONPEAK_IMPORT_RATE", "SUPER_OFF_PEAK_RATE",
+}
+
+
+class _recording_loaders:
+    """Wrap report_tokens' three artifact CHOKEPOINTS so one resolution
+    records WHICH artifacts it touched, without changing what any of them
+    return.
+
+    _hh_value and not hh1: hh1 is one of _hh_value's callers, and
+    resolve_token's own household_yaml branch, `vehicles`, `monitoring[]` and
+    `cleaning_history` all reach household.yaml without going through hh1. A
+    recorder on hh1 saw none of those reads."""
+
+    def __init__(self, seen):
+        self.seen = seen
+
+    def __enter__(self):
+        self.real = (rt._json, rt._csv_rows, rt._hh_value)
+        real_json, real_csv, real_hh = self.real
+
+        def json_(name):
+            self.seen.add(("json", name))
+            return real_json(name)
+
+        def csv_(name):
+            self.seen.add(("csv", name))
+            return real_csv(name)
+
+        def hh_(path):
+            self.seen.add(("household", path))
+            return real_hh(path)
+
+        rt._json, rt._csv_rows, rt._hh_value = json_, csv_, hh_
+        return self
+
+    def __exit__(self, *exc):
+        rt._json, rt._csv_rows, rt._hh_value = self.real
+
+
+class _poisoned_household_leaf:
+    """One numeric leaf of one household.yaml answer, replaced for the length
+    of the block.
+
+    A COPY is substituted rather than the cached document mutated: household
+    answers come back through privacy_tiers.resolve(), and a substitution that
+    silently failed to reach the consumer would make the sweep conclude "this
+    token does not read that field" -- a blind spot pointing the way the whole
+    harness exists to look. Returning the poisoned copy from the accessor
+    cannot fail that way, and it leaves nothing behind to restore."""
+
+    def __init__(self, path, leaf, value):
+        self.path, self.leaf, self.value = path, leaf, value
+
+    def __enter__(self):
+        self.real = rt._hh_value
+
+        def hh_(path):
+            values = self.real(path)
+            if path != self.path:
+                return values
+            values = copy.deepcopy(values)
+            parent, key = _at_path(values, self.leaf)
+            parent[key] = self.value
+            return values
+
+        rt._hh_value = hh_
+        return self
+
+    def __exit__(self, *exc):
+        rt._hh_value = self.real
+
+
+class _Sweep:
+    """Everything one run of the sweep observed. Assertions live in the cases
+    that call it, so the run itself can be driven under a deliberately broken
+    discovery step and INSPECTED rather than only passing or failing."""
+
+    def __init__(self):
+        self.failures = []        # contract violations: a malformed render
+        self.coverage = []        # coverage violations: a field never swept
+        self.probes = {}          # token -> how many poison probes ran
+        self.reads = {}           # token -> {(kind, who)} observed
+        self.declined = {}        # field -> why the sweep did not poison it
+        self.unresolvable = {}    # token -> (refusal text, reads observed)
+        self.baseline = {}        # token -> its clean render
+
+
+def _sweep_json(sw, name, spec, who, clean):
+    artifact = rt._json(who)
+    paths = list(_numeric_leaf_paths(artifact))
+    if not paths:
+        sw.coverage.append(
+            f"{name} reads data/{who}, which contributes NO poisonable field: the "
+            "artifact holds no numeric leaf, so this token is swept against none of it")
+        return
+    for path in paths:
+        parent, key = _at_path(artifact, path)
+        original = parent[key]
+        field = f"data/{who}:{'.'.join(str(k) for k in path)}"
+        for poison in _POISON_NUMBERS:
+            parent[key] = poison
+            try:
+                got = _outcome(name, spec)
+            finally:
+                parent[key] = original
+            sw.probes[name] += 1
+            if got != clean:
+                _assert_poison_outcome(sw.failures, name, field, poison, got)
+
+
+def _sweep_csv(sw, name, spec, who, clean):
+    rows = rt._csv_rows(who)
+    if not rows:
+        sw.coverage.append(f"{name} reads data/{who}, which is empty")
+        return
+    columns, declined = _poisonable_columns(rows)
+    for column, why in declined.items():
+        sw.declined[f"data/{who}[{column}]"] = why
+    if not columns:
+        sw.coverage.append(
+            f"{name} reads data/{who}, which contributes NO poisonable field: every "
+            f"column was declined ({sorted(declined.items())}), so this token is swept "
+            "against none of it")
+        return
+    # Poisoned a COLUMN at a time: a per-cell sweep over a 8,736-row series is
+    # 150k resolutions for one token and localises a failure this harness does
+    # not need localised -- the contract is on the rendered string, not on
+    # which row produced it. Cells that are BLANK stay blank: a consumer that
+    # skips them (_daily_production_series does) is then exercised on the same
+    # row shape it really sees, with only the values changed.
+    for column in columns:
+        original = [r[column] for r in rows]
+        field = f"data/{who}[{column}]"
+        for poison in _POISON_STRINGS:
+            for row in rows:
+                if row[column].strip():
+                    row[column] = poison
+            try:
+                got = _outcome(name, spec)
+            finally:
+                for row, was in zip(rows, original):
+                    row[column] = was
+            sw.probes[name] += 1
+            if got != clean:
+                _assert_poison_outcome(sw.failures, name, field, poison, got)
+
+
+def _sweep_household(sw, name, spec, who, clean):
+    """A household answer, poisoned at every NUMERIC LEAF of it.
+
+    Leaf-wise and not value-wise, because _hh_value answers with a list and
+    some of those answers are containers: cleaning_history is a list of dicts
+    whose cost_usd a token publishes behind a dollar sigil. Poisoning only
+    scalar answers left every number inside a structured answer unswept."""
+    values = rt._hh_value(who)
+    field = f"private/household.yaml:{who}"
+    leaves = list(_numeric_leaf_paths(values))
+    if not leaves:
+        sw.declined[field] = _DECLINE_NO_NUMBER
+        return
+    for leaf in leaves:
+        for poison in _POISON_NUMBERS:
+            with _poisoned_household_leaf(who, leaf, poison):
+                got = _outcome(name, spec)
+            sw.probes[name] += 1
+            if got != clean:
+                _assert_poison_outcome(sw.failures, name, field, poison, got)
+
+
+def _unresolvable_gaps(sw):
+    """The tokens that dropped out of a sweep for any reason OTHER than the
+    absent private archive -- {token: why}, empty when coverage shrank only
+    through the one door it is allowed to shrink through.
+
+    Two independent tests, so neither can be satisfied by accident: the
+    refusal must NAME household.yaml, and the token must have been OBSERVED
+    reading a household path on its way to it. Round 5 asserted this bucket
+    only under `if rt.hh.PATH.is_file()`, where it is always empty -- so on
+    the archive-less runner .github/workflows/tests.yml actually uses, the
+    bucket that holds every lost token was never asserted on at all, and
+    coverage could shrink to nothing while the case reported the same success
+    (issue #131 review round 6, finding 9)."""
+    return {name: why[:200] for name, (why, seen) in sw.unresolvable.items()
+            if "household.yaml" not in why
+            or not any(kind == "household" for kind, _who in seen)}
+
+
+def _run_poison_sweep(tokens=None):
+    """Drive every token through the sweep and return what it observed."""
+    tokens = rt.TOKENS if tokens is None else tokens
+    sw = _Sweep()
+    for name, spec in tokens.items():
+        if spec.get("kind") == "gap":
+            continue
+        seen = set()
+        with _recording_loaders(seen):
+            clean = _outcome(name, spec)
+        sw.reads[name] = seen
+        if clean[0] != "ok":
+            # A token this checkout cannot resolve at all has no clean answer
+            # to compare a poisoned one against. Recorded WITH its reason and
+            # its observed reads, both of which the case asserts on.
+            sw.unresolvable[name] = (clean[1], seen)
+            continue
+        sw.baseline[name] = clean[1]
+        sw.probes[name] = 0
+        for kind, who in sorted(seen):
+            if kind == "json":
+                _sweep_json(sw, name, spec, who, clean)
+            elif kind == "csv":
+                _sweep_csv(sw, name, spec, who, clean)
+            else:
+                _sweep_household(sw, name, spec, who, clean)
+    return sw
+
+
+@case
+def case_no_token_publishes_a_malformed_number_from_any_poisoned_artifact_field():
+    """ROUND 5, PART B. The behavioural sweep described in the block comment
+    above: every token, every numeric field it is observed to read, six poison
+    values each, and one contract on the outcome -- a refusal that names the
+    token, or a render carrying none of the malformed shapes.
+
+    WHAT THIS CASE DOES AND DOES NOT CLOSE, stated exactly, because the
+    version of this docstring that claimed to close six named findings was
+    describing something else it does (issue #131 review round 6, finding 4).
+    Its contract is on the SHAPE OF THE RENDERED STRING, so the class it
+    closes is the malformed-number one: "$nan", "-$nan", "$inf", a minus
+    inside a sigil, a doubled sigil, a sigil with no number behind it, a blank
+    render, an unnamed refusal, and any other exception escaping resolve_token.
+    It closes that class for tokens that do not exist yet, because it
+    discovers what a token reads instead of being told.
+
+    It does NOT close, and never could:
+      * PAIRING defects -- two well-formed figures for one quantity (round 5's
+        finding 10), guarded by
+        case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario;
+      * refusals that are too BROAD -- a report withheld over a figure nothing
+        prints (round 5's finding 4), guarded by
+        case_an_unusable_package_cost_only_stops_the_figures_that_need_it;
+      * a well-formed number that is simply WRONG, or a confident sentence
+        selected by a degenerate-but-finite input (round 6's finding 6).
+    Each round-5 finding keeps its own named case below; this sweep is the
+    floor under all of them, not a replacement for any.
+
+    The second half of the case asserts the sweep's own COVERAGE -- see the
+    block comment's parts (a) to (d). A harness that can report success while
+    sweeping nothing is worth less than no harness, because it also stops
+    anyone looking (review round 6, finding 1)."""
+    sw = _run_poison_sweep()
+    probes = sum(sw.probes.values())
+    covered = sorted(sw.probes)
+
+    assert not sw.failures, (
+        f"{len(sw.failures)} token/field/value combination(s) publish a malformed number "
+        "or fail without naming themselves:\n  " + "\n  ".join(sorted(sw.failures)[:40]))
+
+    # (a) every artifact a token reads contributed at least one poisoned field.
+    assert not sw.coverage, (
+        f"{len(sw.coverage)} token/artifact pair(s) were swept against NOTHING, so this "
+        "harness would have reported success while covering them not at all:\n  " +
+        "\n  ".join(sorted(sw.coverage)[:40]))
+
+    # (b) every declined field is accounted for, by name and by reason.
+    mixed = {f: why for f, why in sw.declined.items() if why == _DECLINE_MIXED}
+    assert not mixed, (
+        f"{len(mixed)} column(s) are partly numeric, which is where a blind spot hides: "
+        f"{sorted(mixed)}")
+    csv_declined = {f: w for f, w in sw.declined.items() if f.startswith("data/")}
+    hh_declined = {f: w for f, w in sw.declined.items() if not f.startswith("data/")}
+    # Per FILE, and exactly, so the check has the same force on the runner
+    # with no private archive -- where a few CSVs are simply never reached,
+    # and a whole-set equality would have to be relaxed to a subset for all of
+    # them. Every file the sweep DID open is accounted for column by column.
+    for who in sorted({w for reads in sw.reads.values() for k, w in reads if k == "csv"}):
+        prefix = f"data/{who}["
+        observed = {f: w for f, w in csv_declined.items() if f.startswith(prefix)}
+        expected = {f: w for f, w in _DECLINED_CSV_COLUMNS.items() if f.startswith(prefix)}
+        assert observed == expected, (
+            f"the columns the sweep declines to poison in data/{who} have changed; "
+            "account for each new one in _DECLINED_CSV_COLUMNS rather than letting it "
+            f"fall out of the sweep\n  joined : {sorted(set(observed) - set(expected))}\n"
+            f"  left   : {sorted(set(expected) - set(observed))}")
+    assert set(csv_declined) <= set(_DECLINED_CSV_COLUMNS), (
+        f"undeclared CSV columns: {sorted(set(csv_declined) - set(_DECLINED_CSV_COLUMNS))}")
+    if rt.hh.PATH.is_file():
+        assert csv_declined == _DECLINED_CSV_COLUMNS, (
+            "a whole CSV dropped out of the sweep on the staged archive: "
+            f"{sorted(set(_DECLINED_CSV_COLUMNS) - set(csv_declined))}")
+    if rt.hh.PATH.is_file():
+        assert hh_declined == _DECLINED_HOUSEHOLD_PATHS, (
+            "the set of household answers the sweep declines to poison has changed\n"
+            f"  joined : {sorted(set(hh_declined) - set(_DECLINED_HOUSEHOLD_PATHS))}\n"
+            f"  left   : {sorted(set(_DECLINED_HOUSEHOLD_PATHS) - set(hh_declined))}")
+    else:
+        assert set(hh_declined) <= set(_DECLINED_HOUSEHOLD_PATHS), sorted(hh_declined)
+
+    # (c) a token that read an artifact got probes; the ones that could not are named.
+    silent = {n for n in covered if sw.probes[n] == 0 and sw.reads[n]}
+    unnamed = silent - _TOKENS_WITH_NO_POISONABLE_FIELD
+    assert not unnamed, (
+        f"token(s) read an artifact and got ZERO poison probes: {sorted(unnamed)} -- "
+        "either the discovery step stopped seeing their fields, or they belong in "
+        "_TOKENS_WITH_NO_POISONABLE_FIELD with the reason written down")
+    if rt.hh.PATH.is_file():
+        assert silent == _TOKENS_WITH_NO_POISONABLE_FIELD, (
+            "_TOKENS_WITH_NO_POISONABLE_FIELD no longer matches the tokens that "
+            f"actually end at zero probes: {sorted(silent)}")
+    readless = {n for n in covered
+                if not sw.reads[n] and rt.TOKENS[n]["kind"] != "cited_constant"}
+    assert readless <= _TOKENS_THAT_READ_NO_ARTIFACT, (
+        f"token(s) resolve without reading any artifact this sweep can poison: "
+        f"{sorted(readless - _TOKENS_THAT_READ_NO_ARTIFACT)} -- if that is right, name "
+        "them in _TOKENS_THAT_READ_NO_ARTIFACT; if it is not, they reach a data file "
+        "past _json / _csv_rows / _hh_value and the recorder cannot see it")
+
+    # (d) coverage may shrink ONLY through the missing-private-archive door,
+    #     and every token that went through it is made to prove it did.
+    wrong = _unresolvable_gaps(sw)
+    assert not wrong, (
+        f"{len(wrong)} token(s) dropped out of the sweep for a reason other than the "
+        f"absent private archive, so coverage shrank silently: {wrong}")
+    if rt.hh.PATH.is_file():
+        assert not sw.unresolvable, (
+            f"token(s) do not resolve on this staged archive: {sorted(sw.unresolvable)}")
+
+    # The sweep has to have SWEPT something -- an empty run passes trivially.
+    assert probes > 20000, f"only {probes} poison probes ran; the discovery step broke"
+    assert len(covered) > 100, f"only {len(covered)} tokens were driven: {covered}"
+
+    # And nothing leaked: every substitution was restored.
+    after = {n: rt.resolve_token(n, rt.TOKENS[n]) for n in covered}
+    moved = {n: (sw.baseline[n], after[n]) for n in covered if sw.baseline[n] != after[n]}
+    assert not moved, f"the sweep left substituted values behind: {moved}"
+    return (f"{probes:,} poison probes across {len(covered)} tokens and their observed "
+            f"artifact fields: every outcome is either a refusal naming the token or a "
+            f"clean render, every artifact read contributed at least one probe, and all "
+            f"{len(sw.declined)} declined field(s) are accounted for by name"
+            + (f" ({len(sw.unresolvable)} token(s) held out: no private archive)"
+               if sw.unresolvable else ""))
+
+
+@case
+def case_the_sweep_fails_when_it_covers_an_artifact_with_nothing():
+    """ROUND 6, FINDING 1. The harness above reported 51,414 probes and PASS
+    while sweeping data/enphase_daily_production.csv with NOTHING.
+
+    Its column filter kept a column only where every cell passed bare
+    float(). That file's one numeric column ends in the Total footer
+    "16,501.77" -- the thousands separator float() rejects, and the very cell
+    report_tokens._annual_production_kwh reads after .replace(",", ""). So the
+    swept-column list was empty and the twelve tokens that read the file got
+    no probes at all, silently, while the run reported a five-figure probe
+    count and its own comment asserted it "has no blind spot available to it".
+
+    Two properties, and the second is the one that matters. FIRST, the parser
+    now normalises a cell the way the consumers do, so the three columns that
+    were silently skipped are swept. SECOND, and independently of any parser:
+    a token observed to read an artifact that contributes no poisonable field
+    is a COVERAGE FAILURE naming both, so the NEXT such gap cannot be silent
+    either. Driven by reintroducing the round-5 filter and by blinding a
+    column outright, and asserting the run FAILS on coverage rather than
+    narrowing itself."""
+    rows = rt._csv_rows("enphase_daily_production.csv")
+    columns, declined = _poisonable_columns(rows)
+    assert columns == ["Energy Delivered (kWh)"], (
+        f"the production column is no longer the swept one: {columns} / {declined}")
+    assert _csv_number("16,501.77") == 16501.77, "the Total footer must parse"
+    assert _csv_number("") is None and _csv_number("Total") is None
+
+    # The three columns round 5's filter dropped, each swept now.
+    for who, column in (("enphase_daily_production.csv", "Energy Delivered (kWh)"),
+                        ("gas_bill_summary.csv", "nonbaseline_rate"),
+                        ("threeway_production_validation.csv", "meter_derived")):
+        keep, _why = _poisonable_columns(rt._csv_rows(who))
+        assert column in keep, f"data/{who}[{column}] is still unswept: kept {keep}"
+
+    # A token that reads the file and ignores what it says: with the real
+    # parser it is covered, and it is the vehicle for blinding the column
+    # without also making the token unresolvable (an unresolvable token is a
+    # different bucket, asserted separately).
+    probe = "ZZZ_FABRICATED_READS_A_CSV_TOKEN"
+
+    def reads_it(ctx):
+        rt._csv_rows("enphase_daily_production.csv")
+        return "a constant"
+
+    fabricated = {probe: {"kind": "derived", "get": reads_it, "fmt": None},
+                  "ANNUAL_PRODUCTION_KWH": rt.TOKENS["ANNUAL_PRODUCTION_KWH"]}
+    good = _run_poison_sweep(fabricated)
+    assert not good.coverage, good.coverage
+    assert good.probes[probe] > 0 and good.probes["ANNUAL_PRODUCTION_KWH"] > 0, good.probes
+    real_probes = good.probes["ANNUAL_PRODUCTION_KWH"]
+
+    # 1. The round-5 filter, put back exactly: bare float() per cell.
+    def round_five_filter(cell):
+        try:
+            return float(cell)
+        except (TypeError, ValueError):
+            return None
+
+    with _patched(sys.modules[__name__], "_csv_number", round_five_filter):
+        regressed = _run_poison_sweep(fabricated)
+    assert regressed.probes[probe] == 0, (
+        "the round-5 filter did not reproduce the defect; this case is not testing it")
+    named = [f for f in regressed.coverage
+             if probe in f and "enphase_daily_production.csv" in f]
+    assert named, (
+        "the round-5 column filter left data/enphase_daily_production.csv swept with "
+        f"nothing and the harness did not say so: {regressed.coverage}")
+
+    # 2. Any other reason a column stops parsing, not just a comma.
+    real_csv_rows = rt._csv_rows
+    blinded = [dict(r, **{"Energy Delivered (kWh)": "n/a"}) for r in rows]
+    with _patched(rt, "_csv_rows",
+                  lambda n: blinded if n == "enphase_daily_production.csv"
+                  else real_csv_rows(n)):
+        outright = _run_poison_sweep({probe: fabricated[probe]})
+    assert outright.probes[probe] == 0, outright.probes
+    assert any(probe in f for f in outright.coverage), outright.coverage
+    return (f"the three columns round 5's filter silently dropped are swept again "
+            f"(ANNUAL_PRODUCTION_KWH: {real_probes} probes), and a token reading an "
+            f"artifact that contributes no poisonable field is a named coverage FAILURE "
+            f"-- reproduced twice, on the round-5 filter and on a blinded column")
+
+
+# --- the ten round-5 findings, one regression case each ---------------------
+def _matrix_winning_plan():
+    """The plan battery_plan_matrix.json prices cheapest in BOTH of its
+    columns -- the household's own where the private archive is staged.
+
+    _best_plan_matrix_cell gates its three tokens on the household being on
+    that plan (section 4's class="win" row asserts it in fixed markup), so a
+    case that stubs any other plan is exercising the chrome gate rather than
+    the thing it came to test. Computed from the artifact rather than skipped,
+    so these cases run on a checkout with no private data -- which is the
+    checkout .github/workflows/tests.yml uses."""
+    plans = rt._bpm_plans()
+    if rt.hh.PATH.is_file():
+        return rt.hh1("household.plan")
+    winners = [{p for p, v in plans.items()
+                if v[column] == min(x[column] for x in plans.values())}
+               for column, _phrase in rt._BPM_COLUMNS]
+    both = sorted(set.intersection(*winners))
+    assert both, (
+        f"data/battery_plan_matrix.json has no plan cheapest in both columns "
+        f"({[sorted(w) for w in winners]}); these cases cannot stub one")
+    return both[0]
+
+
+@case
+def case_a_numeric_format_spec_refuses_a_value_that_is_not_a_number():
+    """ROUND 5, FINDINGS 1 AND 2. packages.MID's battery-alone saving and
+    battery_plan_matrix's battery_value cell had no finiteness guard anywhere:
+    the first published "-$nan" (usd0_signed's `v >= 0` test is False for a
+    nan, so the NEGATIVE branch ran and manufactured a minus on a non-number)
+    and "$inf"; the second went out past a gate that had just finiteness-
+    checked six neighbouring numbers and never looked at the cell it returns.
+
+    A token declared with a numeric format spec is ASSERTING its field is a
+    number, so resolve_token holds it to that for EVERY leaf token of every
+    kind, rather than one exit per review round. Driven here on the two the
+    review named, on a leaf of each remaining kind, and on the shape that made
+    finding 1 worse than a bare "$nan"."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    plan = _matrix_winning_plan()
+    checked = {}
+    with _stub_household({"household.plan": plan}):
+        published = {n: rt.resolve_token(n)
+                     for n in ("BATTERY_MARGINAL_SAVINGS", "BATTERY_VALUE_BEST_PLAN")}
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with _mid_battery_at(mid, mid["battery_alone_yr"], bad):
+                try:
+                    value = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+                    raise AssertionError(
+                        f"BATTERY_MARGINAL_SAVINGS rendered {value!r} off a {bad} "
+                        "battery-alone saving")
+                except SystemExit as e:
+                    assert "BATTERY_MARGINAL_SAVINGS" in str(e), e
+            with _swapped(plans[plan], "battery_value", bad):
+                try:
+                    value = rt.resolve_token("BATTERY_VALUE_BEST_PLAN")
+                    raise AssertionError(
+                        f"BATTERY_VALUE_BEST_PLAN rendered {value!r} off a {bad} cell")
+                except SystemExit as e:
+                    assert "BATTERY_VALUE_BEST_PLAN" in str(e), e
+                    assert "battery_value" in str(e), (
+                        f"the refusal does not name the cell it is about: {e}")
+            checked[str(bad)] = "refused"
+        assert all(rt.resolve_token(n) == v for n, v in published.items()), (
+            "the substituted figures leaked out of this case")
+
+    # The formatter itself, at the value that made finding 1 worse than a
+    # plain "$nan": the sign test used to select the negative branch.
+    for fmt in ("usd0_signed", "usd0_tilde_signed", "usd0_plus"):
+        try:
+            out = rt.FORMATTERS[fmt](float("nan"))
+            raise AssertionError(f"FORMATTERS[{fmt!r}](nan) rendered {out!r}")
+        except SystemExit as e:
+            assert "nan" in str(e), e
+
+    # And the gate is not special-cased to currency: every numeric spec.
+    for fmt in sorted(set(rt.FORMATTERS) - rt._NON_NUMERIC_FMTS):
+        spec = {"kind": "cited_constant", "value": float("nan"), "fmt": fmt}
+        try:
+            out = rt.resolve_token("ZZZ_FABRICATED_NONFINITE_TOKEN", spec)
+            raise AssertionError(f"a cited_constant of nan rendered {out!r} through {fmt}")
+        except SystemExit as e:
+            assert "ZZZ_FABRICATED_NONFINITE_TOKEN" in str(e), e
+    return ("BATTERY_MARGINAL_SAVINGS and BATTERY_VALUE_BEST_PLAN fail closed naming "
+            f"themselves on nan/inf/-inf, and all "
+            f"{len(set(rt.FORMATTERS) - rt._NON_NUMERIC_FMTS)} numeric format specs "
+            "refuse a non-number rather than rendering one")
+
+
+@case
+def case_an_unusable_package_cost_only_stops_the_figures_that_need_it():
+    """ROUND 5, FINDING 4. Round 4 put the packages.MID.cost check at the top
+    of _battery_alone, unconditionally, so a household whose artifact carries
+    an unusable cost lost the ENTIRE report -- including the households where
+    nothing downstream quotes a payback at all, because the battery does not
+    repay and both verdicts read "never repays its own cost".
+
+    The cost is the numerator of a payback, so it gates PAYBACKS. Driven both
+    ways: with a payback in play it still refuses (the round-4 property, which
+    must not regress), and with none in play the report renders."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    pk = rt._json("package_results.json")["packages"]
+    mid, high_cost = pk["MID"], pk["HIGH"]["cost"]
+    rendered, refused = {}, {}
+    with _stub_plan(cheapest, provider):
+        for bad in (float("nan"), 0, -14500):
+            # 1. A battery that does not repay: no payback is printed anywhere,
+            #    so an unusable cost is not a reason to withhold the report.
+            #
+            #    S7_VERDICT is included only where the HIGH-vs-MID expansion
+            #    cost it computes off the same field is still usable. A nan MID
+            #    cost makes that DIFFERENCE a nan too, and section 7 has
+            #    refused on it since round 2 -- a separate, correct guard this
+            #    case must not claim credit for either way.
+            tokens = ("S0_VERDICT", "S7_VERDICT") if high_cost - bad > 0 else ("S0_VERDICT",)
+            with _mid_battery_at(mid, -100, -400), _swapped(mid, "cost", bad):
+                for token in tokens:
+                    value = rt.resolve_token(token)
+                    assert "repay" in value, value
+                    rendered[f"{token} at cost {bad}"] = _assert_within_density_cap(
+                        token, value, f"an unusable cost of {bad}")
+                try:
+                    card = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                    raise AssertionError(
+                        f"the section 0 card printed {card!r} for a battery that repays "
+                        "in neither scenario")
+                except SystemExit as e:
+                    assert "BATTERY_PAYBACK_RANGE" in str(e), e
+
+            # 2. A battery that DOES repay: a payback is about to be printed
+            #    with no verified numerator behind it, and every caller refuses.
+            with _swapped(mid, "cost", bad):
+                for token in ("S0_VERDICT", "S7_VERDICT", "BATTERY_PAYBACK_RANGE"):
+                    try:
+                        value = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} quoted a payback off an unusable cost of {bad}: "
+                            f"{value}")
+                    except SystemExit as e:
+                        assert token in str(e) and "cost" in str(e), e
+                        refused[f"{token} at cost {bad}"] = True
+    return (f"an unusable packages.MID.cost refuses every figure that needs it "
+            f"({len(refused)} refusals) and withholds none that does not "
+            f"({len(rendered)} sentences still render)")
+
+
+@case
+def case_the_evening_only_payback_is_checked_like_the_card_it_shares():
+    """ROUND 5, FINDING 5. report-template.html renders BATTERY_PAYBACK_RANGE
+    and BATTERY_PAYBACK_EVENING_ONLY into ONE section 0 card -- "Battery-alone
+    payback with price-aware dispatch (8.4 yr evening-only)". Round 4 guarded
+    the first and left the second a bare data_json read, so half the card was
+    a checked quotient and half was whatever the artifact happened to say.
+
+    analysis/package_results.py writes it as round(packages.MID.cost /
+    battery_dispatch_policies.json's pw3.evening.save, 1), so all three
+    numbers are committed and the derivation is checkable. Driven on a
+    non-finite and non-positive payback, on a saving that cannot produce one,
+    on an unusable cost, and on a pair that no longer divides."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    evening = rt._json("battery_dispatch_policies.json")["pw3"]["evening"]
+    published = rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY")
+    assert published == f"{mid['battery_alone_payback_evening_only_yr']:.1f} yr", published
+
+    checked = []
+    for node, key, bad in (
+            (mid, "battery_alone_payback_evening_only_yr", float("nan")),
+            (mid, "battery_alone_payback_evening_only_yr", float("inf")),
+            (mid, "battery_alone_payback_evening_only_yr", 0),
+            (mid, "battery_alone_payback_evening_only_yr", -8.4),
+            (mid, "cost", float("nan")),
+            (mid, "cost", 0),
+            (evening, "save", float("nan")),
+            (evening, "save", 0),
+            (evening, "save", -1720),
+            # ...and the pair that no longer divides: a real saving whose
+            # committed payback is not cost/saving at all.
+            (evening, "save", mid["cost"] / (mid["battery_alone_payback_evening_only_yr"] * 3)),
+    ):
+        with _swapped(node, key, bad):
+            try:
+                value = rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY")
+                raise AssertionError(
+                    f"the evening-only payback rendered {value!r} with {key} = {bad}")
+            except SystemExit as e:
+                assert "BATTERY_PAYBACK_EVENING_ONLY" in str(e), e
+                checked.append(f"{key}={bad}")
+
+    # It still renders on a household whose evening-only payback is simply
+    # different, so this case cannot pass on a token that always refuses.
+    doubled = mid["cost"] / (evening["save"] / 2)
+    with _swapped(evening, "save", evening["save"] / 2), \
+            _swapped(mid, "battery_alone_payback_evening_only_yr", round(doubled, 1)):
+        value = rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY")
+    assert value == f"{round(doubled, 1):.1f} yr", value
+    assert rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY") == published, (
+        "the substituted figures leaked out of this case")
+    return (f"the evening-only half of the section 0 card reads {published!r}, refuses "
+            f"{len(checked)} artifact states that cannot produce a payback "
+            f"({', '.join(checked[:4])}, ...), and still renders {value!r} on a slower "
+            "evening-only schedule")
+
+
+@case
+def case_section_five_refuses_a_non_finite_share_instead_of_crashing():
+    """ROUND 5, FINDING 6. Round 4 swept this module for non-finite inputs and
+    skipped section 5's comparison, because its branches read as a ROUNDING
+    rather than a division. round(float('inf') * 100) does not return an
+    infinity -- it raises OverflowError -- and OverflowError was not in
+    resolve_token's caught tuple, so a non-finite share crashed the whole
+    generator with a bare traceback instead of a named refusal.
+
+    Both halves are asserted: the named refusal at the site, and
+    resolve_token's own floor, which now catches ArithmeticError so a division
+    or rounding anywhere in this module cannot escape as a raw traceback."""
+    rd = rt._json("report_data.json")
+    published = rt.resolve_token("S5_VERDICT")
+    checked = []
+    for node, key, bad in ((rd["periods_chart"]["import_share"], 2, float("inf")),
+                           (rd["periods_chart"]["import_share"], 2, float("nan")),
+                           (rd["periods_chart"]["import_share"], 2, float("-inf")),
+                           (rd["onpeak"], "share_of_energy_cost", float("inf")),
+                           (rd["onpeak"], "share_of_energy_cost", float("nan")),
+                           (rd["onpeak"], "share_of_energy_cost", float("-inf"))):
+        with _swapped(node, key, bad):
+            try:
+                value = rt.resolve_token("S5_VERDICT")
+                raise AssertionError(f"S5_VERDICT rendered {value!r} off a {bad} share")
+            except SystemExit as e:
+                assert "S5_VERDICT" in str(e), e
+                assert "share" in str(e), (
+                    f"the refusal does not name which share was not a number: {e}")
+                checked.append(f"{key}={bad}")
+
+    # The floor beneath it: an ArithmeticError raised anywhere inside a
+    # derived formula becomes this module's named refusal, not a traceback.
+    def boom(ctx):
+        return round(float("inf"))
+
+    try:
+        rt.resolve_token("ZZZ_FABRICATED_OVERFLOW_TOKEN",
+                         {"kind": "derived", "get": boom, "fmt": None})
+        raise AssertionError("an OverflowError escaped resolve_token")
+    except SystemExit as e:
+        assert "ZZZ_FABRICATED_OVERFLOW_TOKEN" in str(e) and "OverflowError" in str(e), e
+    assert rt.resolve_token("S5_VERDICT") == published, (
+        "the substituted shares leaked out of this case")
+    return (f"S5_VERDICT names the share it cannot compare ({', '.join(checked)}) and "
+            "resolve_token converts an OverflowError into a named refusal instead of a "
+            "traceback")
+
+
+@case
+def case_negative_zero_is_zero_and_a_non_finite_npv_is_not_a_zero_gain():
+    """ROUND 5, FINDINGS 7 AND 8, the two defects in the sign formatters
+    themselves.
+
+    FINDING 7: _usd0_signed tested `v >= 0`, which is True for -0.0, so a
+    difference landing on the negative side of an exact zero took the
+    non-negative branch and printed _usd0(-0.0) -- "$-0", the minus back
+    inside the sigil, in the one formatter written to keep it out.
+
+    FINDING 8: _usd0_plus ended in a bare `else` returning _usd0(0), and a nan
+    reaches it because `nan > 0` and `nan < 0` are both False. An
+    indeterminate net present value published as the confident figure "$0" is
+    the opposite reading for someone deciding whether to buy."""
+    assert rt.FORMATTERS["usd0_signed"](-0.0) == "$0", rt.FORMATTERS["usd0_signed"](-0.0)
+    assert rt.FORMATTERS["usd0_signed"](0.0) == "$0"
+    assert rt.FORMATTERS["usd0_tilde_signed"](-0.0) == "~$0"
+    assert rt.FORMATTERS["usd0_plus"](-0.0) == "$0"
+    # -0.0 must still be told apart from a real negative, including one small
+    # enough to round to zero: that keeps its minus, OUTSIDE the sigil, which
+    # is the whole distinction (-0.0 is zero; -0.4 is a loss).
+    assert rt.FORMATTERS["usd0_signed"](-0.4) == "-$0", rt.FORMATTERS["usd0_signed"](-0.4)
+    assert rt.FORMATTERS["usd0_signed"](-500) == "-$500"
+    assert rt.FORMATTERS["usd0_plus"](-500) == "-$500"
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        try:
+            out = rt.FORMATTERS["usd0_plus"](bad)
+            raise AssertionError(f"usd0_plus({bad}) rendered {out!r}")
+        except SystemExit as e:
+            assert "usd0_plus" in str(e), e
+
+    # End to end, on the NPV token that calls _usd0_plus inline -- the route
+    # resolve_token's own numeric gate does not cover, because the formula
+    # returns an already-formatted string.
+    rung = rt._json("battery_dispatch_policies.json")[
+        "escalation_greedy_pw3_post_behavior"]["8%"]
+    published = rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION")
+    with _swapped(rung, "npv10", float("nan")):
+        try:
+            value = rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION")
+            raise AssertionError(f"a nan 10-year NPV published as {value!r}")
+        except SystemExit as e:
+            assert "NPV_AT_HISTORICAL_ESCALATION" in str(e), e
+    with _swapped(rung, "npv10", -8656):
+        assert rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION") == "-$8,656"
+    assert rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION") == published, (
+        "the substituted NPV leaked out of this case")
+    return ("-0.0 renders \"$0\" through all three signed formatters, a non-finite NPV "
+            f"fails closed instead of publishing \"$0\", and a real loss reads -$8,656 "
+            f"(published: {published})")
+
+
+@case
+def case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario():
+    """ROUND 5, FINDING 10. BATTERY_MARGINAL_SAVINGS read
+    packages.MID.battery_alone_yr -- the battery on the UNSHIFTED baseline --
+    while section 7's verdict had been re-based onto
+    battery_alone_post_ev_fix_yr, the same battery after the free EV fix. Two
+    figures for one purchase in one document: $2,328 and $2,238 on the
+    committed archive, and a healthy saving beside a loss on the household
+    round 4's own finding 1 introduced (+$2,328 before the fix, -$50 after).
+    Round 4's sign gate used to catch that pair by aborting the report;
+    removing it -- correctly, since the two are different scenarios -- left
+    the mismatch with nothing behind it.
+
+    This is a PAIRING defect, not a non-finite one, so the poison harness
+    above cannot see it: both readings are perfectly well-formed strings. It
+    is asserted as the property instead -- the token and the sentence move
+    together, on every pair -- which is what the sign gate was standing in
+    for and what CLAUDE.md section 3 requires of a re-based figure."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    live = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
+    assert live[0] != live[1], (
+        f"packages.MID's two battery-alone scenarios are both {live[0]}; this case "
+        "cannot tell which one the token reads")
+    seen = []
+    with _stub_plan(cheapest, provider):
+        for pre, post in ((live[0], live[1]), (2328, 2238), (500, 3000), (3000, 500)):
+            with _mid_battery_at(mid, pre, post):
+                token = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+                s7 = rt.resolve_token("S7_VERDICT")
+            assert token == rt.FORMATTERS["usd0_signed"](post), (
+                f"BATTERY_MARGINAL_SAVINGS reads {token!r} while the post-EV-fix "
+                f"scenario section 7 is written on is {post}/yr")
+            assert f"adds its own {token}/yr" in s7, (
+                f"section 7 quotes a different figure for the same battery than "
+                f"BATTERY_MARGINAL_SAVINGS does ({token!r}): {s7}")
+            seen.append(f"{pre}/{post} -> {token}")
+        # A losing battery: the token states the loss and the sentence agrees
+        # it never repays, rather than the token selling a pre-fix saving.
+        with _mid_battery_at(mid, 2328, -50):
+            token = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+            s7 = rt.resolve_token("S7_VERDICT")
+        assert token == "-$50", token
+        assert "never repays its own cost" in s7, s7
+        seen.append(f"2328/-50 -> {token}")
+    return ("BATTERY_MARGINAL_SAVINGS and section 7's battery clause quote the same "
+            f"post-EV-fix scenario on every pair ({'; '.join(seen)})")
+
+
+# --- the round-6 findings, one regression case each -------------------------
+@contextlib.contextmanager
+def _csv_column_set(who, column, value, where=lambda row: True):
+    """One committed CSV column (or the cells of it a predicate picks) set to
+    `value` in report_tokens' in-memory cache, restored on the way out.
+    Nothing on disk is touched -- data/ is a committed artifact."""
+    rows = rt._csv_rows(who)
+    original = [r[column] for r in rows]
+    try:
+        for row in rows:
+            if where(row):
+                row[column] = value
+        yield rows
+    finally:
+        for row, was in zip(rows, original):
+            row[column] = was
+
+
+@case
+def case_section_two_checks_the_production_it_prints_not_only_the_nameplate():
+    """ROUND 6, FINDING 2. _s2_verdict validated solar.kw_dc through _figures
+    and read the production total beside it unchecked -- so BOTH interpolated
+    figures went past the finiteness gate, and a non-finite Total footer in
+    data/enphase_daily_production.csv published "produced nan kWh at nan
+    kWh/kW" while ANNUAL_PRODUCTION_KWH, the LEAF token over that same cell,
+    failed closed on it. Two tokens, one cell, opposite behaviour.
+
+    CAPACITY_FACTOR had the identical shape one file over -- kw_dc checked,
+    the production quotient interpolated into an f-string as "~nan%" -- and is
+    driven here too, because a defect found at one site is swept for rather
+    than patched (CLAUDE.md section 8).
+
+    Calibration, kept honest: a full generate_report run could not PUBLISH the
+    nan, because it resolves every token and blocks the write on any non-gap
+    failure. What was broken is the per-token contract -- one figure checked,
+    the one beside it not -- and that is what is asserted."""
+    stubs = _s2_household_inputs()
+    footer = (lambda r: r["Date/Time"] == "Total")
+    names = ("ANNUAL_PRODUCTION_KWH", "CAPACITY_FACTOR", "S2_VERDICT")
+    with _stub_household(stubs):
+        published = {n: rt.resolve_token(n) for n in names}
+    assert "kWh/kW" in published["S2_VERDICT"], published["S2_VERDICT"]
+
+    checked = []
+    for bad in ("nan", "inf", "-inf"):
+        with _csv_column_set("enphase_daily_production.csv",
+                             "Energy Delivered (kWh)", bad, footer):
+            for name in names:
+                with _stub_household(stubs):
+                    try:
+                        value = rt.resolve_token(name)
+                        raise AssertionError(
+                            f"{name} rendered {value!r} off a {bad} production total")
+                    except SystemExit as e:
+                        assert name in str(e), e
+                checked.append(f"{name}@{bad}")
+
+    # A household that simply produced a different amount still gets its
+    # sentence, so none of the three can pass by always refusing.
+    with _csv_column_set("enphase_daily_production.csv",
+                         "Energy Delivered (kWh)", "9000.00", footer), \
+            _stub_household(stubs):
+        moved = {n: rt.resolve_token(n) for n in names}
+    assert moved["ANNUAL_PRODUCTION_KWH"] == "9,000", moved["ANNUAL_PRODUCTION_KWH"]
+    assert "9,000 kWh" in moved["S2_VERDICT"], moved["S2_VERDICT"]
+    assert moved["CAPACITY_FACTOR"] != published["CAPACITY_FACTOR"]
+    with _stub_household(stubs):
+        assert {n: rt.resolve_token(n) for n in names} == published, (
+            "the substituted production total leaked out of this case")
+    return (f"section 2's verdict and CAPACITY_FACTOR check the production they print, "
+            f"not only the nameplate ({len(checked)} refusals, each naming its own "
+            f"token), and all three still render on a 9,000 kWh year")
+
+
+@case
+def case_a_plan_total_that_models_below_zero_still_gets_a_report():
+    """ROUND 6, FINDINGS 3 AND 5. Round 5 made _usd0 REFUSE a negative amount
+    -- right, because "$-500" puts the minus inside the sigil -- but did not
+    sweep the inline _usd0 calls that format an artifact-SIGNED annual bill.
+    Those sites stopped rendering and started aborting.
+
+    A plan total in data/plan_results.csv is a bill NET OF EXPORTS
+    (BEST_PLAN_ANNUAL_CCA is declared usd0_signed for exactly that reason),
+    and a solar-plus-battery house on the right tariff models below zero. Two
+    populations were hit: section 3's verdict, in all three of its branches,
+    and the DETAIL string of _best_plan's chrome gate -- which _claim builds
+    eagerly on every call, so it fired even when the claim was supported. The
+    result was a household losing the entire report to the formatting of a
+    message that was never going to be raised.
+
+    Same defect one artifact over, swept rather than reported: the same claim
+    detail inside _best_plan_matrix_cell formats battery_plan_matrix.json's
+    two modeled-bill columns, whose tokens are likewise declared signed."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    others = [r for r in priced if r["plan"] != cheapest]
+    assert others, "this case needs a second priced plan"
+    runner_up = others[0]["plan"]
+    totals = {r["plan"]: r["total"] for r in priced}
+
+    @contextlib.contextmanager
+    def _repriced(prices):
+        """plan_results.csv's total column, repriced for this household's own
+        generation provider. Every plan named goes below zero."""
+        rows = rt._csv_rows("plan_results.csv")
+        original = [r["total"] for r in rows]
+        try:
+            for row in rows:
+                if row["provider"] == provider and row["plan"] in prices:
+                    row["total"] = f"{prices[row['plan']]:.2f}"
+            yield
+        finally:
+            for row, was in zip(rows, original):
+                row["total"] = was
+
+    rendered = {}
+    with _stub_plan(cheapest, provider):
+        for label, prices, quoted in (
+                ("sole cheapest", {cheapest: -5000.0, runner_up: -1200.0}, -5000.0),
+                ("tied cheapest", {cheapest: -5000.0, runner_up: -5000.0}, -5000.0),
+                ("beaten", {cheapest: -1200.0, runner_up: -5000.0}, -1200.0)):
+            with _repriced(prices):
+                s3 = rt.resolve_token("S3_VERDICT")
+                # BEST_PLAN and its two annual cells go through _best_plan's
+                # chrome gate, whose DETAIL string _claim builds on every call
+                # -- the site that aborted the report while its own claim was
+                # supported. Only reachable while this plan still wins.
+                gated = ({n: rt.resolve_token(n)
+                          for n in ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA",
+                                    "BEST_PLAN_ANNUAL_BUNDLED")}
+                         if label != "beaten" else {})
+            assert f"{quoted:,.0f}".replace("-", "-$") + "/yr" in s3, (
+                f"section 3 does not state a modeled bill below zero on the {label} "
+                f"branch: {s3}")
+            assert "$-" not in s3, f"the minus went back inside the sigil: {s3}"
+            rendered[f"S3 {label}"] = _assert_within_density_cap("S3_VERDICT", s3, label)
+            if gated:
+                assert gated["BEST_PLAN"] == cheapest, gated
+                assert gated["BEST_PLAN_ANNUAL_CCA"].startswith("-$") or \
+                    gated["BEST_PLAN_ANNUAL_BUNDLED"].startswith("-$"), gated
+
+    # The matrix's two modeled-bill columns, same sweep.
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    plan = _matrix_winning_plan()
+    with _stub_plan(plan, provider), \
+            _swapped(plans[plan], "no_battery", -4100.0), \
+            _swapped(plans[plan], "with_battery", -6200.0):
+        matrix = {n: rt.resolve_token(n)
+                  for n in ("BEST_PLAN_NOBATT_MODELED", "BEST_PLAN_BATT_MODELED")}
+    assert matrix["BEST_PLAN_NOBATT_MODELED"] == "-$4,100", matrix
+    assert matrix["BEST_PLAN_BATT_MODELED"] == "-$6,200", matrix
+
+    # Nothing leaked, and the published sentence is unchanged.
+    with _stub_plan(cheapest, provider):
+        live = rt.resolve_token("S3_VERDICT")
+    assert f"{float(totals[cheapest]):,.0f}" in live.replace("$", ""), live
+    return ("a plan total that models below zero renders as -$5,000/yr in all three of "
+            f"section 3's branches ({', '.join(rendered)}) and in the battery-vs-plan "
+            "matrix's two modeled-bill cells, instead of aborting the whole report "
+            "inside a refusal message's own formatting")
+
+
+@case
+def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
+    """ROUND 6, FINDING 6. Section 0's "is a sound optional buy" was selected
+    by battery_alone_post_ev_fix_yr > 0 and nothing else, so a battery saving
+    $50/yr against a ~$14,500 purchase read as a sound buy in the report's
+    most prominent sentence, with a 290-year payback printed beside it.
+    Nothing weighed magnitude or payback against cost; a sign test answers
+    "does this repay at all", which is a different question from the one the
+    word "sound" answers.
+
+    The horizon is READ, not invented (CLAUDE.md section 0):
+    data/uncertainty_results.json:meta.warranty_yr is what
+    analysis/uncertainty_propagation.py's WARRANTY_YR writes, the term that
+    module already reports the battery's headline probability against and the
+    term data/battery_sizing_curve.json already stops sizing at.
+
+    Driven on both sides of the boundary and ON it, because a threshold with
+    only one side exercised is a threshold nobody has checked."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    cost, warranty = mid["cost"], rt._battery_warranty_years("PROBE")
+    assert warranty == rt._json("uncertainty_results.json")["meta"]["warranty_yr"]
+    widths, seen = {}, {}
+    with _stub_plan(cheapest, provider):
+        published = rt.resolve_token("S0_VERDICT")
+        assert "sound optional buy" in published, published
+
+        # A saving that repays only long past the warranted life.
+        with _mid_battery_at(mid, 50.0, 50.0):
+            slow = rt.resolve_token("S0_VERDICT")
+        assert "sound optional buy" not in slow, (
+            f"S0_VERDICT calls a battery repaying in {cost / 50:.0f} years a sound "
+            f"optional buy: {slow}")
+        assert f"past its {warranty:g}-year warranty" in slow, slow
+        assert f"{cost / 50:.1f} years" in slow, slow
+        widths["past warranty"] = _assert_within_density_cap(
+            "S0_VERDICT", slow, "a battery repaying past its warranty")
+        seen["past warranty"] = slow
+
+        # The boundary itself: exactly at the warranty term is still sound,
+        # a tenth of a year past it is not.
+        for label, payback, sound in (("exactly at", warranty, True),
+                                      ("just past", warranty + 0.1, False)):
+            save = cost / payback
+            with _mid_battery_at(mid, save, save):
+                value = rt.resolve_token("S0_VERDICT")
+            assert ("sound optional buy" in value) is sound, (
+                f"a {payback}-year payback against a {warranty}-year warranty read "
+                f"{'un' if sound else ''}sound: {value}")
+            widths[label] = _assert_within_density_cap("S0_VERDICT", value, label)
+            seen[label] = value
+
+        # And it is the WHOLE printed range that has to clear the term, not
+        # the friendlier end of it.
+        fast, slow_save = cost / (warranty - 2), cost / (warranty + 5)
+        with _mid_battery_at(mid, fast, slow_save):
+            mixed = rt.resolve_token("S0_VERDICT")
+        assert "sound optional buy" not in mixed, (
+            f"S0_VERDICT calls the purchase sound while the top of the range it prints "
+            f"is past the warranty: {mixed}")
+        widths["range straddling"] = _assert_within_density_cap(
+            "S0_VERDICT", mixed, "a range straddling the warranty term")
+
+        # A warranty term the artifact cannot state is a refusal, not a
+        # silently-assumed number.
+        meta = rt._json("uncertainty_results.json")["meta"]
+        for bad in (float("nan"), 0, -10):
+            with _swapped(meta, "warranty_yr", bad):
+                try:
+                    value = rt.resolve_token("S0_VERDICT")
+                    raise AssertionError(
+                        f"S0_VERDICT judged the purchase against a {bad}-year warranty: "
+                        f"{value}")
+                except SystemExit as e:
+                    assert "S0_VERDICT" in str(e) and "warrant" in str(e), e
+        assert rt.resolve_token("S0_VERDICT") == published, (
+            "the substituted battery figures leaked out of this case")
+    return ("section 0 calls the battery a sound optional buy only where every payback "
+            f"it prints lands inside the {warranty:g}-year warranted life "
+            f"(at {warranty:g} yr: sound; at {warranty + 0.1:g} yr: not), and states the "
+            "payback plainly otherwise: "
+            + seen["past warranty"].split("and a ")[-1].rstrip("."))
+
+
+@case
+def case_the_expansion_tail_compares_two_paybacks_on_one_basis():
+    """ROUND 6, FINDING 7. Section 7's sentence prints the first unit's
+    payback rounded -- "(~6.5-yr payback)" -- and then compared an EXACT
+    quotient against that rounded figure to choose its tail. Near the boundary
+    the two sides were not the same quantity: an expansion repaying in 6.54 yr
+    beside a printed 6.5 read "saves too little to match that" while both
+    figures ON THE PAGE said 6.5, and 6.46 read "faster than that" on the same
+    evidence. The tie branch, written precisely so an expansion repaying at
+    the first unit's rate is not called faster, was reachable only on
+    exactly-equal floats.
+
+    Both sides now round to the tenth of a year the sentence publishes, so the
+    comparison is the one a reader can check against the two numbers printed
+    in front of them."""
+    pk = rt._json("package_results.json")["packages"]
+    exp_cost = pk["HIGH"]["cost"] - pk["MID"]["cost"]
+    mid_payback = pk["MID"]["battery_alone_payback_post_fix_yr"]
+    assert exp_cost > 0 and mid_payback > 0, (exp_cost, mid_payback)
+    printed = round(mid_payback, 1)
+    seen = {}
+    for label, payback, expected in (
+            ("0.04 yr slower — same printed figure", printed + 0.04,
+             "pays back at the same rate"),
+            ("0.04 yr faster — same printed figure", printed - 0.04,
+             "pays back at the same rate"),
+            ("exactly equal", printed, "pays back at the same rate"),
+            ("0.3 yr slower", printed + 0.3, "saves too little to match that"),
+            ("0.3 yr faster", printed - 0.3, "pays back faster than that")):
+        with _swapped(pk["HIGH"], "marginal_vs_mid_yr", exp_cost / payback):
+            value = rt.resolve_token("S7_VERDICT")
+        assert expected in value, (
+            f"an expansion repaying in {payback:.2f} yr against a printed "
+            f"{printed:.1f}-yr first unit reads {value!r}, not {expected!r}")
+        assert f"(~{printed:.1f}-yr payback)" in value, value
+        _assert_within_density_cap("S7_VERDICT", value, label)
+        seen[label] = expected
+    return ("section 7's comparative tail rounds both paybacks to the tenth of a year it "
+            f"prints, so an expansion within 0.04 yr of the first unit's {printed:.1f} "
+            "ties instead of being ranked on digits the reader is never shown "
+            f"({len(seen)} branches driven)")
+
+
+@case
+def case_a_verdict_published_in_the_wrong_section_fails_the_index_check():
+    """ROUND 6, FINDING 8. _assert_verdict_matches_index asserted the rendered
+    line appeared SOMEWHERE in index.html -- a membership test over the whole
+    report. A verdict moved under a neighbouring heading, or duplicated into
+    two sections, satisfied it exactly as well as one sitting where it
+    belongs, and "section 7's conclusion is on the page somewhere" is not the
+    claim the case exists to make.
+
+    Driven on the real published document, mutated three ways in memory: the
+    line moved out of its own section, deleted from it, and duplicated. Each
+    must fail, and the unmutated document must pass -- otherwise the check
+    would be rejecting everything rather than the right things."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    name = "S7_VERDICT"     # artifact-only, so this runs without the archive
+    assert not _needs_household(name), f"{name} is no longer archive-free"
+    value = _assert_verdict_matches_index(name, index_html)
+    line = f'<p class="verdict">{_htmllib.escape(value, quote=True)}</p>'
+    assert index_html.count(line) == 1, line
+
+    mutations = {
+        # Moved: deleted from section 7, published under section 6 instead.
+        "moved to another section": (
+            index_html.replace(line, "", 1)
+            .replace('<h2 id="s6">', line + '<h2 id="s6">', 1)),
+        "deleted from its section": index_html.replace(line, "", 1),
+        # Duplicated: still present where it belongs, and again elsewhere.
+        "duplicated into another section": index_html.replace(
+            '<h2 id="s6">', line + '<h2 id="s6">', 1),
+    }
+    caught = {}
+    for label, mutated in mutations.items():
+        assert mutated != index_html, f"the {label} mutation did not change anything"
+        # The "it should have failed" assertion is raised OUTSIDE the except
+        # clause on purpose: raising AssertionError inside a `try` whose
+        # handler catches AssertionError swallows it, and the case then passes
+        # on exactly the defect it was written to catch.
+        rejection = None
+        try:
+            _assert_verdict_matches_index(name, mutated)
+        except AssertionError as e:
+            rejection = str(e).splitlines()[0]
+            assert name in rejection, rejection
+        assert rejection is not None, (
+            f"{name} passed its index.html check with the published line {label}")
+        caught[label] = rejection
+    # The section slicer is what makes that possible, so pin its behaviour.
+    section = _index_section(index_html, "s7")
+    assert section.startswith('<h2 id="s7"'), section[:60]
+    assert '<h2 id="s15"' not in section, "section 7's slice runs into the next section"
+    assert line in section
+    return (f"a verdict line moved, deleted or duplicated is caught by name "
+            f"({len(caught)} mutations, each rejected), and _index_section slices "
+            "section 7 at its own heading and the next one")
+
+
+@case
+def case_the_sweep_asserts_the_tokens_it_could_not_drive():
+    """ROUND 6, FINDING 9. The poison harness's `unresolvable` bucket -- every
+    token this checkout cannot resolve, and therefore cannot sweep -- was
+    asserted on only inside `if rt.hh.PATH.is_file()`, where it is always
+    empty. On the runner .github/workflows/tests.yml actually uses, which has
+    no private archive and holds out 43 tokens, the bucket that holds every
+    lost token was never examined. Coverage could shrink to a handful of
+    tokens while the case reported the same success -- finding 1's shape,
+    one bucket over.
+
+    _unresolvable_gaps is now asserted on EVERY checkout, and a token may only
+    drop out through the one door: its refusal names household.yaml AND it was
+    observed reading a household path on the way to it."""
+    def refuses(ctx):
+        raise SystemExit("report_tokens: ZZZ_FABRICATED_SULKING_TOKEN is sulking")
+
+    def refuses_by_name_only(ctx):
+        raise SystemExit("report_tokens: ZZZ_FABRICATED_LIAR_TOKEN cannot read "
+                         "private/household.yaml, it says, having never opened it")
+
+    fabricated = {"ZZZ_FABRICATED_SULKING_TOKEN": {"kind": "derived", "get": refuses,
+                                                   "fmt": None},
+                  "ZZZ_FABRICATED_LIAR_TOKEN": {"kind": "derived",
+                                                "get": refuses_by_name_only, "fmt": None}}
+    sw = _run_poison_sweep(fabricated)
+    assert set(sw.unresolvable) == set(fabricated), sorted(sw.unresolvable)
+    gaps = _unresolvable_gaps(sw)
+    assert set(gaps) == set(fabricated), (
+        "a token that dropped out of the sweep for a reason other than the absent "
+        f"private archive was not reported as a coverage gap: {gaps}")
+
+    # And a genuinely household-blocked token IS allowed through the door --
+    # otherwise this check would just reject everything on the CI runner.
+    real = _run_poison_sweep()
+    assert not _unresolvable_gaps(real), _unresolvable_gaps(real)
+    if rt.hh.PATH.is_file():
+        assert not real.unresolvable, sorted(real.unresolvable)
+        note = "no token is held out on this staged archive"
+    else:
+        assert real.unresolvable, (
+            "no token is held out without a private archive; this checkout is not the "
+            "one the assertion is written for")
+        note = (f"{len(real.unresolvable)} token(s) held out, every one proved to be "
+                "household-blocked")
+    return ("a token that leaves the sweep for any reason other than the absent private "
+            f"archive is a named coverage gap on every checkout ({note})")
+
+
+@case
+def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
+    """ROUND 6, FINDING 4. The sweep's docstring claimed it closed round 5's
+    findings 1, 2, 5, 6, 7 and 8. Its contract is on the SHAPE of the rendered
+    string, so what it actually closes is the malformed-number class; findings
+    4 and 10 are a too-broad refusal and a mismatched pair, and neither is
+    visible to it -- both readings are well-formed strings.
+
+    A docstring is a claim about the code like any other, so it is checked
+    like one rather than trusted: the companion cases it now names must exist,
+    and the words that were doing the overclaiming must be gone."""
+    doc = case_no_token_publishes_a_malformed_number_from_any_poisoned_artifact_field.__doc__
+    listed = {fn.__name__ for fn in CASES}
+    named = re.findall(r"case_[a-z0-9_]+", doc)
+    assert named, "the docstring no longer points at the cases that carry the rest"
+    missing = [n for n in named if n not in listed]
+    assert not missing, (
+        f"the sweep's docstring names case(s) that do not exist: {missing}")
+    assert "does NOT close" in doc, (
+        "the docstring must state the classes this sweep cannot see, or it is back to "
+        "claiming the whole review round")
+    for overclaim in ("findings 1, 2, 5, 6, 7 and 8", "closes it for tokens"):
+        assert overclaim not in doc or "does NOT close" in doc, doc
+    # The three companion cases named are the ones that really carry those
+    # findings, so the claim is true rather than merely present.
+    for name in ("case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario",
+                 "case_an_unusable_package_cost_only_stops_the_figures_that_need_it"):
+        assert name in named, f"the docstring no longer credits {name}"
+    return (f"the poison sweep's docstring names the class it closes and the "
+            f"{len(named)} case(s) that carry the classes it cannot see, all of which "
+            "exist")
 
 
 def main():

@@ -263,6 +263,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </div>
 
 <h2 id="s0">Bottom line</h2>
+<p class="verdict">{{S0_VERDICT}}</p>
 <div class="rec">
 <b>All dollar figures below are anchored to your ACTUAL bills</b> — a complete {{ANALYSIS_DAYS}}-day audit of {{BILL_COUNT}} statements: <b>{{ACTUAL_ANNUAL_BILL}}/yr electric (~{{ACTUAL_MONTHLY_BILL}}/mo)</b>. Savings below are model <i>differences</i> at current rates, computed by physically moving energy between intervals and re-billing with the bill-validated netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>).<br><br>
 <ol class="hang">
@@ -286,10 +287,12 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </div>
 
 <h2 id="s1">1 · The data (triple-verified)</h2>
+<p class="verdict">{{S1_VERDICT}}</p>
 <!-- TODO: one paragraph — interval coverage, import/export totals from the utility meter, whole-home load from consumption metering, and production verified across independent sources with agreement stats; close with the model-validation result (bill reconstruction error, plan-ranking agreement with the utility's tool). -->
 <p>Every 15-minute interval of the last {{ANALYSIS_DAYS}} days was analyzed. Grid flows come from the utility meter ({{ANNUAL_IMPORT_KWH}} kWh imported, {{ANNUAL_EXPORT_KWH}} kWh exported); production is verified across {{PRODUCTION_SOURCE_COUNT}} independent sources agreeing within {{PRODUCTION_AGREEMENT_PCT}}.</p>
 
 <h2 id="s2">2 · Your solar system today</h2>
+<p class="verdict">{{S2_VERDICT}}</p>
 <p>Before any recommendation, the equipment it all rests on: what's on the roof, verified, and how it performed this year.</p>
 <div class="grid2">
 <div>
@@ -316,6 +319,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p class="small"><!-- TODO: the "key architectural fact" sentence — the timing mismatch (or match) between production and consumption that every later recommendation follows from. --></p>
 
 <h2 id="s3">3 · Rate plan comparison (today, without a battery)</h2>
+<p class="verdict">{{S3_VERDICT}}</p>
 <p><!-- TODO: how each plan was priced per-interval (delivery + generation + surcharges, export-credit treatment, daily fixed charge) and any ineligible plans. --></p>
 <table>
 <thead><tr><th>Plan</th><th>Annual ({{GENERATION_PROVIDER_SHORT}} gen)</th><th>Annual ({{UTILITY_NAME}} bundled)</th><th>vs. current</th><th>{{UTILITY_NAME}}'s own tool says</th></tr></thead>
@@ -340,6 +344,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p><b>Conclusion:</b> <!-- TODO: does the battery preserve or change the plan ranking, and by how much it moves the lead. --></p>
 
 <h2 id="s5">5 · Usage profile — where the money goes</h2>
+<p class="verdict">{{S5_VERDICT}}</p>
 <p>This section maps when the money leaves: your grid flows by hour, season, and month, and the behaviors behind them.</p>
 <p class="small"><!-- TODO: which data feeds the charts (meter vs inverter-platform). --></p>
 <div class="chartbox"><canvas id="hourly" height="110"></canvas></div>
@@ -356,6 +361,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </ul>
 
 <h2 id="s6">6 · Battery hardware — capability and cost</h2>
+<p class="verdict">{{S6_VERDICT}}</p>
 <p class="sub"><!-- TODO: framing — the two questions (annual savings, outage endurance); system context; whether storage affects NEM grandfathering; current incentive status ({{INCENTIVE_STATUS}}). --></p>
 <div class="grid2">
 <div>
@@ -394,6 +400,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <p class="small"><!-- TODO: pricing footnote (get quotes), hardware trade-off notes between ecosystems, and any config to skip. --></p>
 
 <h2 id="s7">7 · The decision: three packages</h2>
+<p class="verdict">{{S7_VERDICT}}</p>
 <p>All packages keep <b>{{BEST_PLAN}}</b>. <b>Baseline = your actual bills: {{ACTUAL_ANNUAL_BILL}}/yr (~{{ACTUAL_MONTHLY_BILL}}/mo), complete {{ANALYSIS_DAYS}}-day audit.</b> Savings are model differences at current rates, computed by <i>physically moving energy into destination intervals</i> and re-billing with the validated netting model (<code>{{BEHAVIOR_MODEL_SCRIPT}}</code>). No year-end lump-sum shortcuts; behavior/battery interaction is modeled so nothing is double-counted (overlap: {{OVERLAP_DEDUCTION}}/yr).</p>
 
 <div class="grid3">
@@ -429,6 +436,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <div class="rec"><b>Recommendation: {{RECOMMENDED_PACKAGE_SUMMARY}}.</b> <!-- TODO: 3–4 sentences in the reference voice — e.g. "The EV-charging fix is free, immediate, and worth {{EV_FIX_SAVINGS_100}}/yr — do it this week regardless. One {{BATTERY_MODEL}} adds ~{{BATTERY_MARGINAL_SAVINGS}}/yr of its own savings (…payback) plus genuine outage resilience." Close with the action sequence (reprogram charging, get quotes, join incentive waitlist). --></div>
 
 <h2 id="s15">What to do Monday — the implementation appendix</h2>
+<p class="verdict">{{S15_VERDICT}}</p>
 <p>The whole analysis reduces to this short checklist. Nothing here is new analysis — each item cites the section that justifies it.</p>
 <!-- TODO: content-only appendix (reusable-prompt.md Phase D spec) — no new analysis, no new artifacts; every item cites its justifying section. Four parts: -->
 <h3>1 · Reprogram charging (this week, $0)</h3>
@@ -502,6 +510,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </details>
 
 <h2 id="s10">10 · Actual bills: reconciliation, gas &amp; electrification</h2>
+<p class="verdict">{{S10_VERDICT}}</p>
 
 <p>All {{BILL_COUNT}} detailed electric statements ({{BILLING_PERIOD_COUNT}} billing periods) were parsed line-by-line. Findings:</p>
 <table>
@@ -614,6 +623,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </details>
 
 <h2 id="s14">14 · Methodology, sources &amp; caveats</h2>
+<p class="verdict">{{S14_VERDICT}}</p>
 <ul>
 <li><b>Grid data:</b> <!-- TODO: interval export details — interval count, channels, coverage. --></li>
 <li><b>Solar/load data:</b> <!-- TODO: consumption/production sources and their agreement statistics. --></li>
