@@ -4521,6 +4521,109 @@ def case_a_household_whose_artifacts_read_the_other_way_still_gets_its_sentences
 
 
 @case
+def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts():
+    """ISSUE #132, ADVERSARIAL PASS 2. _figures / _amounts / _quantities refuse
+    on sight, which is what makes them worth having and what makes them the
+    wrong thing to point at a field its generator deliberately writes as null,
+    empty or "does not apply".
+
+    The instance: tou_spread._payback returns payback_yr None when a narrowing
+    spread leaves the battery unrecovered inside its horizon, and the generator
+    says in a comment above the emission that this is "a real result, not an
+    error ... the one verdict it most needs to be able to report".
+    BATTERY_ON_MEASURED_SPREAD refused it, so the household whose battery does
+    not pay back got NO REPORT AT ALL -- a determinate answer treated as
+    NOT_DETERMINED, the mirror image of the class this module already guards.
+
+    Each stub below is one legitimate emission traced to the generator that
+    writes it, and the assertion is the same every time: it RENDERS, it says
+    what happened, and nothing about it is malformed."""
+    got = {}
+
+    # 1. The named defect: a REPORTABLE per-season run whose battery never
+    #    repays inside the horizon. NPV is present and meaningful here.
+    def unpaid(doc):
+        doc["battery"]["per_period"]["summer"] = {
+            "verdict": "widening", "payback_yr": None, "npv10": -3100}
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", unpaid)):
+        got["battery_never_repays"] = _renders("BATTERY_ON_MEASURED_SPREAD")
+    assert "does not repay within the model horizon" in got["battery_never_repays"], \
+        got["battery_never_repays"]
+    assert "-$3,100" in got["battery_never_repays"], got["battery_never_repays"]
+
+    # 2. tou_spread._fit_spread's two degenerate exits: a short corpus returns
+    #    {"n", "verdict"} with the reason INSIDE the verdict string, and no
+    #    escalation/span fields at all.
+    def short_corpus(doc):
+        doc["delivery_spread"]["summer"] = {
+            "n": 2, "verdict": "not determined -- fewer than 3 paired observations"}
+        doc["delivery_spread"]["winter"] = {
+            "n": 4, "n_independent": 1,
+            "verdict": "not determined -- fit undefined on 1 independent level(s)"}
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", short_corpus)):
+        got["short_summer"] = _renders("SPREAD_TREND_SUMMER")
+        got["short_winter"] = _renders("SPREAD_TREND_WINTER")
+    assert "fewer than 3 paired observations" in got["short_summer"], got["short_summer"]
+    assert "fit undefined" in got["short_winter"], got["short_winter"]
+
+    # 3. A reportable fit whose r2 is null (tou_spread writes the null itself)
+    #    and whose reason list came back empty.
+    def null_r2(doc):
+        s = doc["delivery_spread"]["summer"]
+        s["verdict"], s["r2"] = "widening", None
+        doc["delivery_spread"]["winter"]["not_determined_because"] = []
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", null_r2)):
+        got["null_r2"] = _renders("SPREAD_TREND_SUMMER")
+        got["no_reason"] = _renders("SPREAD_TREND_WINTER")
+    assert "r²" not in got["null_r2"], got["null_r2"]
+    assert "%/yr" in got["null_r2"], got["null_r2"]
+    assert got["no_reason"].startswith("not determined"), got["no_reason"]
+
+    # 4. behavior_rebuild.py's _not_applicable stub, for a household with no EV.
+    def no_ev(doc):
+        doc["detection"] = {"not_applicable": True,
+                            "reason": "household.has_ev is false (intake applicability flag)"}
+
+    with _patched(rt, "_json", _stub_for("behavior_rebuild.json", no_ev)):
+        for token in ("EV_SESSION_COUNT", "EV_ANNUAL_KWH", "EV_AVG_SESSION_KWH",
+                      "EV_WINDOW_DECOMPOSITION", "EV_SOP_COMPLIANCE_PCT",
+                      "EV_DETECTION_BASIS"):
+            got[f"no_ev_{token}"] = _renders(token)
+            assert "not applicable" in got[f"no_ev_{token}"], got[f"no_ev_{token}"]
+            assert "has_ev" in got[f"no_ev_{token}"], got[f"no_ev_{token}"]
+
+    # 5. The two gas artifacts collapsing to {"applicable": False} for a
+    #    household with no gas service.
+    def no_gas(doc):
+        doc.clear()
+        doc.update({"applicable": False, "reason": "household.has_gas is false"})
+
+    for artifact, tokens in (
+            ("all_electric_endgame.json",
+             ("HPWH_INSTALL_COST", "HPWH_PAYBACK", "HPWH_NET_SAVINGS",
+              "HPWH_SHARE_CAVEAT", "HPWH_PAYBACK_SENSITIVITY", "HPWH_SAVINGS_BOUND",
+              "ELECTRIFICATION_SEQUENCE", "ELECTRIFICATION_COMBINED_PAYBACK")),
+            ("heat_pump_conversion.json",
+             ("HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_PAYBACK", "HEAT_PUMP_COST_BASIS",
+              "ELECTRIFICATION_INCENTIVES"))):
+        with _patched(rt, "_json", _stub_for(artifact, no_gas)):
+            for token in tokens:
+                got[f"no_gas_{token}"] = _renders(token)
+                assert "not applicable" in got[f"no_gas_{token}"], got[f"no_gas_{token}"]
+                assert "has_gas" in got[f"no_gas_{token}"], got[f"no_gas_{token}"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return (f"{len(got)} legitimate null / degenerate / not-applicable emission(s) render "
+            "their own answer instead of aborting the report")
+
+
+@case
 def case_the_malformed_render_patterns_flag_exactly_the_shapes_they_name():
     """ISSUE #132. The sweep's whole contract is _MALFORMED_RENDER, and nothing
     tested the patterns themselves -- a lookaround loosened by one character

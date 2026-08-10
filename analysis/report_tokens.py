@@ -3581,6 +3581,54 @@ _tok("MODELED_ANNUAL_AT_CURRENT_RATES", kind="data_json", file="package_results.
 # recomputed -- but nothing here renders both, so nothing gates on it).
 # ===========================================================================
 
+# ---------------------------------------------------------------------------
+# A LEGITIMATE EMISSION IS DATA, NOT AN ERROR (issue #132, adversarial pass 2).
+#
+# _figures / _amounts / _quantities refuse on sight, which is what makes them
+# worth having -- and which makes them the wrong thing to point at a field
+# whose generator deliberately emits None, an empty list, or an explicit
+# "does not apply" marker as a REAL RESULT. Guarding against the value the
+# artifact happens to hold today is not guarding; the rule is to open the
+# generator and establish what it can legitimately write.
+#
+# The instance that proved it: tou_spread.py returns payback_yr None when a
+# narrowing spread leaves the battery unrecovered inside its horizon, and says
+# in a comment above the emission that this is "a real result, not an error ...
+# the one verdict it most needs to be able to report". Refusing it aborted the
+# WHOLE report for exactly the household whose battery does not pay back.
+# Treating a determinate answer as NOT_DETERMINED is the mirror image of the
+# defect class this module already carries three sections of commentary about.
+#
+# Two shapes recur across this repo's generators, so they get one reader each:
+# the applicability marker below, and the null-payback branch in
+# _battery_on_measured_spread.
+# ---------------------------------------------------------------------------
+def _applicability(node):
+    """(applies, reason) for a committed section that may say the domain does
+    not exist for this household.
+
+    Two markers, because two generator families write them and both are
+    deliberate: behavior_rebuild.py / extended_findings.py emit
+    {"not_applicable": True, "reason": ...} for a household whose intake flag
+    is false, and heat_pump_conversion.py / all_electric_endgame.py collapse
+    their whole artifact to {"applicable": False, "reason": ...}. Both
+    docstrings are explicit that this is not_applicable and NOT not_determined
+    -- the intake DID determine the answer, the domain simply does not exist
+    here -- so the honest render is the artifact's own reason, and a refusal
+    would withhold fifteen unrelated sections over a question this household
+    does not have."""
+    if not isinstance(node, dict):
+        return True, ""
+    if node.get("not_applicable") is True or node.get("applicable") is False:
+        return False, str(node.get("reason", "")).strip()
+    return True, ""
+
+
+def _does_not_apply(reason):
+    """The rendered form of an inapplicable section."""
+    return "not applicable to this household" + (f" — {reason}" if reason else "")
+
+
 def _measured(token, subject, unit, spec, **values):
     """ONE non-negative artifact figure, rendered with the unit the token owns.
 
@@ -3954,8 +4002,25 @@ def _ev_detection():
     issue #130 settled that section 9's body and every dollar figure downstream
     of it read behavior_rebuild's. Two DIFFERENT DETECTORS on the same series
     are the third relationship case: a difference is expected, nothing gates on
-    their agreement, and the report cites one of them by name."""
-    return _json("behavior_rebuild.json")["detection"]
+    their agreement, and the report cites one of them by name.
+
+    Returns (detection, reason): behavior_rebuild.py replaces this whole block
+    with its _not_applicable stub on a household whose intake says it has no
+    EV, so every caller below renders that answer instead of reading fields the
+    stub does not carry."""
+    det = _json("behavior_rebuild.json")["detection"]
+    applies, reason = _applicability(det)
+    return (det if applies else None), reason
+
+
+def _ev_or_not_applicable(fn):
+    """A token get() that answers the artifact's own 'no EV here' when the
+    detector block is a not-applicable stub, and runs `fn(detection)`
+    otherwise."""
+    def get(ctx):
+        det, reason = _ev_detection()
+        return _does_not_apply(reason) if det is None else fn(det)
+    return get
 
 
 # Four figures each rounded to a tenth of a kWh move a sum by at most a
@@ -3977,7 +4042,7 @@ def _ev_window_kwh(token):
     missing window at all. A real failure here means the buckets no longer
     partition the series, which is precisely what makes the compliance share
     below meaningless."""
-    det = _ev_detection()
+    det, _reason = _ev_detection()
     total, sop, off, on = _quantities(
         token, "how the year's EV charging splits across the tariff windows",
         ev_kwh_total=det["ev_kwh_total"], ev_kwh_sop_already=det["ev_kwh_sop_already"],
@@ -3991,13 +4056,13 @@ def _ev_window_kwh(token):
     return total, sop, off, on
 
 
-def _ev_window_decomposition(ctx):
+def _ev_window_decomposition(_det):
     _total, sop, off, on = _ev_window_kwh("EV_WINDOW_DECOMPOSITION")
     return (f"{sop:,.0f} kWh already super-off-peak · {off:,.0f} kWh off-peak · "
             f"{on:,.0f} kWh on-peak")
 
 
-def _ev_sop_compliance_pct(ctx):
+def _ev_sop_compliance_pct(_det):
     total, sop, _off, _on = _ev_window_kwh("EV_SOP_COMPLIANCE_PCT")
     _claim("EV_SOP_COMPLIANCE_PCT", "what share of EV charging already lands super-off-peak",
            SUPPORTED if total > 0 else NOT_DETERMINED,
@@ -4006,7 +4071,7 @@ def _ev_sop_compliance_pct(ctx):
     return f"{sop / total * 100:.0f}%"
 
 
-def _ev_detection_basis(ctx):
+def _ev_detection_basis(det):
     """What counts as a charging session, in the detector's own words.
 
     "563 sessions" is not an observation, it is the output of a rule with three
@@ -4020,7 +4085,6 @@ def _ev_detection_basis(ctx):
     literal in the generator with no committed provenance anywhere in this
     repo, so publishing it as a cross-check would give a figure an authority
     nothing supports (CLAUDE.md section 0)."""
-    det = _ev_detection()
     rule = str(det.get("rule", "")).strip()
     if not rule:
         raise SystemExit(
@@ -4030,30 +4094,68 @@ def _ev_detection_basis(ctx):
     return rule
 
 
-_tok("EV_SESSION_COUNT", kind="data_json", file="behavior_rebuild.json",
-     path=("detection", "sessions"), fmt="num0")
-_tok("EV_DETECTION_BASIS", kind="derived", get=_ev_detection_basis,
+# Every one of these six goes through _ev_or_not_applicable, so a household
+# whose intake says it has no EV renders behavior_rebuild.py's own stated
+# reason instead of aborting the report on a field its _not_applicable stub
+# does not carry. EV_SESSION_COUNT loses its data_json declaration for the
+# same reason: a leaf token cannot branch.
+_tok("EV_SESSION_COUNT", kind="derived",
+     get=_ev_or_not_applicable(lambda det: _num0(
+         _quantities("EV_SESSION_COUNT", "how many charging sessions the detector found",
+                     sessions=det["sessions"])[0])),
+     sources=["data/behavior_rebuild.json:detection.sessions"])
+_tok("EV_DETECTION_BASIS", kind="derived",
+     get=_ev_or_not_applicable(_ev_detection_basis),
      sources=["data/behavior_rebuild.json:detection.rule"])
 _tok("EV_ANNUAL_KWH", kind="derived",
-     get=lambda ctx: _measured("EV_ANNUAL_KWH",
-                               "the year of EV charging the detector found",
-                               "kWh/yr", ",.0f",
-                               ev_kwh_total=_ev_detection()["ev_kwh_total"]),
+     get=_ev_or_not_applicable(lambda det: _measured(
+         "EV_ANNUAL_KWH", "the year of EV charging the detector found",
+         "kWh/yr", ",.0f", ev_kwh_total=det["ev_kwh_total"])),
      sources=["data/behavior_rebuild.json:detection.ev_kwh_total"])
 _tok("EV_AVG_SESSION_KWH", kind="derived",
-     get=lambda ctx: _measured("EV_AVG_SESSION_KWH", "the average charging session",
-                               "kWh", ",.1f",
-                               avg_session_kwh=_ev_detection()["avg_session_kwh"]),
+     get=_ev_or_not_applicable(lambda det: _measured(
+         "EV_AVG_SESSION_KWH", "the average charging session",
+         "kWh", ",.1f", avg_session_kwh=det["avg_session_kwh"])),
      sources=["data/behavior_rebuild.json:detection.avg_session_kwh"])
-_tok("EV_WINDOW_DECOMPOSITION", kind="derived", get=_ev_window_decomposition,
+_tok("EV_WINDOW_DECOMPOSITION", kind="derived",
+     get=_ev_or_not_applicable(_ev_window_decomposition),
      sources=["data/behavior_rebuild.json:detection (ev_kwh_total and the three windows)"])
-_tok("EV_SOP_COMPLIANCE_PCT", kind="derived", get=_ev_sop_compliance_pct,
+_tok("EV_SOP_COMPLIANCE_PCT", kind="derived",
+     get=_ev_or_not_applicable(_ev_sop_compliance_pct),
      sources=["data/behavior_rebuild.json:detection (ev_kwh_total, ev_kwh_sop_already)"])
 
 
 # ---- electrification: what each appliance costs and repays (section 10) ----
+#
+# BOTH artifacts collapse to {"applicable": False, "reason": ...} on a
+# household whose intake says it has no gas service -- heat_pump_conversion.py
+# and all_electric_endgame.py each return exactly that dict instead of every
+# section below it. These were the first tokens in this module to read either
+# file, so before issue #132's second pass a no-gas household went from getting
+# a report (its gas tokens summing an empty bill corpus to zero) to getting
+# none at all. Each token now answers with the artifact's own reason.
 def _endgame():
     return _json("all_electric_endgame.json")
+
+
+def _gas_section(file, *path):
+    """(node, reason) for a gas-conversion artifact's section, or (None,
+    reason) when the artifact says this household has no gas."""
+    doc = _json(file)
+    applies, reason = _applicability(doc)
+    if not applies:
+        return None, reason
+    node = doc
+    for key in path:
+        node = node[key]
+    return node, reason
+
+
+def _gas_or_not_applicable(file, fn, *path):
+    def get(ctx):
+        node, reason = _gas_section(file, *path)
+        return _does_not_apply(reason) if node is None else fn(node)
+    return get
 
 
 def _wh_conversion():
@@ -4237,34 +4339,53 @@ def _heat_pump_payback(ctx):
             f"({min(span):,.1f}–{max(span):,.1f} yr across the scenarios modelled)")
 
 
-_tok("HPWH_INSTALL_COST", kind="derived", get=_hpwh_install_cost,
+_tok("HPWH_INSTALL_COST", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_install_cost(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost"])
-_tok("HPWH_SHARE_CAVEAT", kind="derived", get=_hpwh_share_caveat,
+_tok("HPWH_SHARE_CAVEAT", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_share_caveat(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.not_verified_caveat",
               "data/all_electric_endgame.json:water_heater_conversion."
               "water_heater_share_sensitivity.basis"])
-_tok("HPWH_PAYBACK_SENSITIVITY", kind="derived", get=_hpwh_payback_sensitivity,
+_tok("HPWH_PAYBACK_SENSITIVITY", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_payback_sensitivity(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion."
               "water_heater_share_sensitivity.scenarios"])
-_tok("HPWH_SAVINGS_BOUND", kind="derived", get=_hpwh_savings_bound,
+_tok("HPWH_SAVINGS_BOUND", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_savings_bound(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.upper_bound_caveat",
               "data/all_electric_endgame.json:water_heater_conversion."
               "floor_savings_annual_usd"])
-_tok("HEAT_PUMP_COST_BASIS", kind="derived", get=_heat_pump_cost_basis,
+_tok("HEAT_PUMP_COST_BASIS", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _heat_pump_cost_basis(None)),
      sources=["data/heat_pump_conversion.json:install_cost (note, sensitivity_range_usd)"])
 _tok("HPWH_PAYBACK", kind="derived",
-     get=lambda ctx: _wh_headline_payback()["central_install"]["payback_years"],
+     get=_gas_or_not_applicable(
+         "all_electric_endgame.json",
+         lambda _n: _yr1(_quantities(
+             "HPWH_PAYBACK", "how long the water heater takes to repay itself",
+             payback_years=_wh_headline_payback()["central_install"]["payback_years"])[0])),
      sources=["data/all_electric_endgame.json:water_heater_conversion.payback"
-              "[headline_uef].central_install.payback_years"], fmt="yr1")
+              "[headline_uef].central_install.payback_years"])
 _tok("HPWH_NET_SAVINGS", kind="derived",
-     get=lambda ctx: _usd0_signed(_wh_headline_payback()["annual_net_savings_usd"]) + "/yr",
+     get=_gas_or_not_applicable(
+         "all_electric_endgame.json",
+         lambda _n: _usd0_signed(_wh_headline_payback()["annual_net_savings_usd"]) + "/yr"),
      sources=["data/all_electric_endgame.json:water_heater_conversion.payback"
               "[headline_uef].annual_net_savings_usd"])
 _tok("HEAT_PUMP_INSTALL_COST", kind="derived",
-     get=lambda ctx: _usd0(_json("heat_pump_conversion.json")
-                           ["install_cost"]["standalone_usd"]),
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda node: _usd0(node["standalone_usd"]),
+                                "install_cost"),
      sources=["data/heat_pump_conversion.json:install_cost.standalone_usd"])
-_tok("HEAT_PUMP_PAYBACK", kind="derived", get=_heat_pump_payback,
+_tok("HEAT_PUMP_PAYBACK", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _heat_pump_payback(None)),
      sources=["data/heat_pump_conversion.json:payback[*].standalone.payback_years"])
 
 
@@ -4349,13 +4470,18 @@ def _electrification_incentives(ctx):
     return f"${usd:,.0f} (verified {when})"
 
 
-_tok("ELECTRIFICATION_SEQUENCE", kind="derived", get=_electrification_sequence,
+_tok("ELECTRIFICATION_SEQUENCE", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _electrification_sequence(None)),
      sources=["data/all_electric_endgame.json:sequencing_and_paybacks.order"])
 _tok("ELECTRIFICATION_COMBINED_PAYBACK", kind="derived",
-     get=_electrification_combined_payback,
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _electrification_combined_payback(None)),
      sources=["data/all_electric_endgame.json:sequencing_and_paybacks."
               "complete_transition_payback"])
-_tok("ELECTRIFICATION_INCENTIVES", kind="derived", get=_electrification_incentives,
+_tok("ELECTRIFICATION_INCENTIVES", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _electrification_incentives(None)),
      sources=["data/heat_pump_conversion.json:incentives"])
 
 
@@ -4423,6 +4549,29 @@ def _spread_season(token, season):
     return ds[season]
 
 
+def _spread_corpus(token, season, s):
+    """As much of the corpus line as the artifact actually carries.
+
+    tou_spread._fit_spread has THREE exits and only the last one is fully
+    populated: a season with fewer than three paired observations returns
+    {"n", "verdict"} alone, and one whose fit is undefined returns {"n",
+    "n_independent", "verdict"}. Both are ordinary outcomes on a short bill
+    corpus -- exactly the household most likely to be reading this report for
+    the first time -- so the fields are reported when present and skipped when
+    not, rather than being read unconditionally and aborting the whole run on a
+    KeyError."""
+    parts = []
+    for key, unit in (("n", "priced observations"),
+                      ("n_independent", "independent rate changes"),
+                      ("span_days", "days")):
+        if s.get(key) is None:
+            continue
+        value, = _quantities(token, f"how much rate history the {season} spread rests on",
+                             **{key: s[key]})
+        parts.append(f"{value:,.0f} {unit}")
+    return ", ".join(parts)
+
+
 def _spread_trend(token, season):
     """Either the surviving trend or the artifact's own "not determined", with
     the reason it publishes for it.
@@ -4430,34 +4579,47 @@ def _spread_trend(token, season):
     tou_spread.py writes `verdict` as a machine-readable field precisely so a
     consumer does not have to re-derive the adequacy rules, and CLAUDE.md
     section 0 makes "not determined" a required answer rather than a hole to
-    fill -- so this token renders it, reason and corpus and all, and refuses
-    only when the artifact states neither a verdict nor the figures a trend
-    would need."""
+    fill -- so this token renders it, reason and corpus and all.
+
+    THE VERDICT IS MATCHED BY PREFIX, NOT BY EQUALITY. _fit_spread's two
+    degenerate exits write "not determined -- fewer than 3 paired observations"
+    and "not determined -- fit undefined on N independent level(s)": both ARE
+    the not-determined answer and carry their reason inside the verdict string,
+    and an equality test sent them down the branch that reads
+    escalation_pct_yr, which those exits do not write (issue #132, adversarial
+    pass 2's sweep). Likewise not_determined_because can legitimately come back
+    empty -- tou_spread's own battery block defaults it -- so an absent reason
+    is reported as absent rather than raised on."""
     s = _spread_season(token, season)
     verdict = str(s.get("verdict", "")).strip()
-    n, independent, span = _quantities(
-        token, f"how much rate history the {season} spread rests on",
-        observations=s["n"], independent_rate_changes=s["n_independent"],
-        span_days=s["span_days"])
-    corpus = (f"{n:,.0f} priced observations, {independent:,.0f} independent rate "
-              f"changes, {span:,.0f} days")
-    if verdict.lower() == _NOT_DETERMINED_VERDICT:
-        because = s.get("not_determined_because") or []
-        if not because:
-            raise SystemExit(
-                f"report_tokens: {token} cannot say why the {season} spread trend is not "
-                "determined -- data/tou_spread.json:delivery_spread."
-                f"{season}.not_determined_because is empty, and a bare "
-                "'not determined' with no stated reason is not an answer this report "
-                "publishes")
-        return f"not determined ({corpus}) — {'; '.join(str(b) for b in because)}"
-    pct, r2 = _figures(token, f"the {season} spread trend",
-                       escalation_pct_yr=s["escalation_pct_yr"], r2=s["r2"])
+    if not verdict:
+        raise SystemExit(
+            f"report_tokens: {token} has no verdict to report -- "
+            f"data/tou_spread.json:delivery_spread.{season} states none, and this "
+            "sentence is that verdict")
+    corpus = _spread_corpus(token, season, s)
+    if verdict.lower().startswith(_NOT_DETERMINED_VERDICT):
+        # The reason lives in not_determined_because when the fit ran, and
+        # inside the verdict string itself on the degenerate exits.
+        because = [str(b) for b in (s.get("not_determined_because") or [])]
+        inline = verdict[len(_NOT_DETERMINED_VERDICT):].lstrip(" -–—:").strip()
+        if inline:
+            because.insert(0, inline)
+        head = f"not determined ({corpus})" if corpus else "not determined"
+        return f"{head} — {'; '.join(because)}" if because else head
+    pct, = _figures(token, f"the {season} spread trend",
+                    escalation_pct_yr=s["escalation_pct_yr"])
     lo, hi = _figures(token, f"the {season} spread trend's interval",
                       ci_low_pct_yr=s["escalation_ci95_pct_yr"][0],
                       ci_high_pct_yr=s["escalation_ci95_pct_yr"][1])
-    return (f"{pct:+,.2f}%/yr (95% CI {lo:+,.2f} to {hi:+,.2f}%/yr, r² {r2:.3f}; "
-            f"{corpus})")
+    # r2 is None when the ln-fit has no variance to explain -- tou_spread
+    # writes the null itself. That is a missing statistic, not a broken one, so
+    # the clause naming it is dropped rather than the whole trend refused.
+    r2 = s.get("r2")
+    fit = f", r² {_figures(token, f'the {season} fit quality', r2=r2)[0]:.3f}" \
+        if r2 is not None else ""
+    tail = f"; {corpus}" if corpus else ""
+    return f"{pct:+,.2f}%/yr (95% CI {lo:+,.2f} to {hi:+,.2f}%/yr{fit}{tail})"
 
 
 _tok("SPREAD_TREND_SUMMER", kind="derived",
@@ -4487,18 +4649,33 @@ def _battery_on_measured_spread(ctx):
     for season in sorted(per):
         block = per[season]
         verdict = str(block.get("verdict", "")).strip()
-        if verdict.lower() == _NOT_DETERMINED_VERDICT:
-            because = block.get("because") or []
-            if not because:
-                raise SystemExit(
-                    f"report_tokens: BATTERY_ON_MEASURED_SPREAD cannot say why the "
-                    f"{season} re-run is not determined -- data/tou_spread.json:battery."
-                    f"per_period.{season}.because is empty")
-            parts.append(f"{season}: not determined — {'; '.join(str(b) for b in because)}")
+        if verdict.lower().startswith(_NOT_DETERMINED_VERDICT):
+            # `because` can legitimately arrive empty: tou_spread builds it
+            # from a list of suppression reasons that can all be suppressed in
+            # turn, and its own reader defaults it rather than requiring it.
+            because = [str(b) for b in (block.get("because") or [])]
+            parts.append(f"{season}: not determined"
+                         + (f" — {'; '.join(because)}" if because else ""))
             continue
-        years, npv = _figures("BATTERY_ON_MEASURED_SPREAD",
-                              f"the {season} re-run's payback and net present value",
-                              payback_yr=block["payback_yr"], npv10=block["npv10"])
+        npv, = _figures("BATTERY_ON_MEASURED_SPREAD",
+                        f"the {season} re-run's net present value", npv10=block["npv10"])
+        # A NULL PAYBACK IS THE ANSWER, NOT A MISSING ONE. tou_spread._payback
+        # returns payback_yr None when a narrowing spread leaves the battery
+        # unrecovered inside its fifteen-year horizon, and the generator's own
+        # comment calls that "a real result, not an error ... the one verdict it
+        # most needs to be able to report". Refusing it withheld the entire
+        # report from the household whose battery does not pay back -- the
+        # household the answer matters most to (issue #132, adversarial pass 2).
+        # The ten-year NPV is present and meaningful in that case and is still
+        # reported; only a payback that is neither null nor a finite number is
+        # a refusal, and that one comes from _figures below.
+        years = block.get("payback_yr")
+        if years is None:
+            parts.append(f"{season}: does not repay within the model horizon, "
+                         f"{_usd0_plus(npv)} over ten years")
+            continue
+        years, = _figures("BATTERY_ON_MEASURED_SPREAD",
+                          f"the {season} re-run's payback", payback_yr=years)
         parts.append(f"{season}: {years:,.1f} yr payback, {_usd0_plus(npv)} over ten years")
     return " · ".join(parts)
 
