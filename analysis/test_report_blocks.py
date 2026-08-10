@@ -450,16 +450,18 @@ _RECLASSIFIED_FIGURES = {
     "s9#2": ("ARRAY_EFFICIENCY_SERIES", "DEGRADATION_NAIVE_RANGE",
              "DEGRADATION_WEATHER_CAVEAT"),
     "s9#3": ("PV_PEAK_OBSERVED", "PV_PEAK_HEADROOM", "PEAK_POWER_MULTIYEAR",
-             "AC_CEILING_KW"),
+             "AC_CEILING_KW", "PV_PEAK_BASIS"),
     "s9#4": ("COOLING_BASE_LOAD", "COOLING_KWH_PER_CDD", "COOLING_REGRESSION_R2",
              "ANNUAL_COOLING_KWH", "COOLING_SENSITIVITY_PER_100_CDD",
              "PRECOOL_SHIFT_VALUE", "SETPOINT_VALUE"),
     "s9#5": ("EV_SESSION_COUNT", "EV_ANNUAL_KWH", "EV_AVG_SESSION_KWH",
              "EV_WINDOW_DECOMPOSITION", "EV_SOP_COMPLIANCE_PCT",
-             "EV_FIX_SAVINGS_100", "EV_FIX_SAVINGS_80"),
+             "EV_FIX_SAVINGS_100", "EV_FIX_SAVINGS_80", "EV_DETECTION_BASIS"),
     "s10#4": ("ELECTRIFICATION_SEQUENCE", "HPWH_INSTALL_COST", "HPWH_NET_SAVINGS",
               "HPWH_PAYBACK", "HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_PAYBACK",
-              "ELECTRIFICATION_COMBINED_PAYBACK", "ELECTRIFICATION_INCENTIVES"),
+              "ELECTRIFICATION_COMBINED_PAYBACK", "ELECTRIFICATION_INCENTIVES",
+              "HPWH_SHARE_CAVEAT", "HPWH_PAYBACK_SENSITIVITY", "HPWH_SAVINGS_BOUND",
+              "HEAT_PUMP_COST_BASIS"),
     "s12#5": ("CLEANING_BEST_MONTH", "CLEANING_SINGLE_VALUE_RANGE",
               "CLEANING_SECOND_MARGINAL_RANGE", "CLEANING_PRICE", "SUPER_OFF_PEAK_RATE"),
     "s13#8": ("SPREAD_TREND_SUMMER", "SPREAD_TREND_WINTER"),
@@ -467,8 +469,82 @@ _RECLASSIFIED_FIGURES = {
               "PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
     "s13#11": ("NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_SPREAD", "NIGHT_FLOOR_SAMPLE",
                "NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
-               "NIGHT_FLOOR_CYCLING", "NIGHT_FLOOR_SEASONALITY"),
+               "NIGHT_FLOOR_CYCLING", "NIGHT_FLOOR_SEASONALITY",
+               "NIGHT_FLOOR_PRICING_BASIS"),
 }
+
+# ---------------------------------------------------------------------------
+# ISSUE #132, ADVERSARIAL REVIEW PASS 1. A FIGURE MAY NOT BE IN SCOPE WITHOUT
+# THE QUALIFIER THAT ARTIFACT SAYS IS NEEDED TO READ IT.
+#
+# The first version of s10#4's tokens put a 30.8-year water-heater payback and
+# a "cost-effective" appliance order into the block's scope and left behind the
+# caveat sitting in the same artifact object: that every one of those figures
+# is the pure 100%-water-heater computation, NOT VERIFIED against this
+# household's actual gas appliance mix. A prose block sees its scoped token
+# values and its own TODO text and nothing else, so the omission did not make
+# the block cautious -- it made the block UNABLE to be cautious, and the
+# figures would have published as household fact (CLAUDE.md section 0).
+#
+# The pairs below are the fix as a property: each names a figure token and the
+# qualifier token that must share its scope. They are pairs and not a flat
+# list because the failure mode is asymmetric -- a qualifier alone is harmless,
+# a figure alone is the defect -- and naming the pair makes the failure message
+# say which figure went unqualified.
+# ---------------------------------------------------------------------------
+_FIGURE_NEEDS_QUALIFIER = {
+    "s10#4": [
+        # Every water-heater figure inherits water_heater_conversion's own
+        # not_verified_caveat, and the sequence inherits it too by derivation
+        # (sequencing_and_paybacks.not_verified_caveat says so in as many words).
+        ("HPWH_PAYBACK", "HPWH_SHARE_CAVEAT"),
+        ("HPWH_PAYBACK", "HPWH_PAYBACK_SENSITIVITY"),
+        ("HPWH_NET_SAVINGS", "HPWH_SHARE_CAVEAT"),
+        ("HPWH_NET_SAVINGS", "HPWH_SAVINGS_BOUND"),
+        ("ELECTRIFICATION_COMBINED_PAYBACK", "HPWH_SHARE_CAVEAT"),
+        # install_cost.note prices an example system larger than this house's.
+        ("HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_COST_BASIS"),
+    ],
+    # The three maxima measure different things (an hourly mean, a lower bound,
+    # a five-minute sample); corroboration_reading and
+    # why_not_the_observed_maximum are what make them readable as a clipping
+    # answer rather than three comparable numbers.
+    "s9#3": [("PV_PEAK_OBSERVED", "PV_PEAK_BASIS"),
+             ("PV_PEAK_HEADROOM", "PV_PEAK_BASIS")],
+    # A session count is the output of a three-threshold rule, and a second
+    # committed detector reaches a different number on the same series.
+    "s9#5": [("EV_SESSION_COUNT", "EV_DETECTION_BASIS"),
+             ("EV_ANNUAL_KWH", "EV_DETECTION_BASIS")],
+    # Both annual figures extend a four-hour measurement across 8,760 hours,
+    # which quiet_night_floor.py's own confidence_labels call modeled.
+    "s13#11": [("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_PRICING_BASIS"),
+               ("NIGHT_FLOOR_ANNUAL_COST", "NIGHT_FLOOR_PRICING_BASIS")],
+}
+
+
+@case
+def case_no_figure_reaches_a_blocks_scope_without_its_qualifier():
+    _require_household()
+    html = rt.TEMPLATE.read_text()
+    blocks = {b.id: b for b in rb.parse_todo_blocks(html)}
+    unqualified, checked = [], 0
+    for bid, pairs in sorted(_FIGURE_NEEDS_QUALIFIER.items()):
+        scope = rb.scope_tokens_for_block(html, blocks[bid])
+        for figure, qualifier in pairs:
+            assert figure in scope, (
+                f"{bid}: fixture assumption broken -- {figure} is no longer in scope")
+            if qualifier not in scope:
+                unqualified.append(f"{bid}: {figure} is in scope but {qualifier} is not")
+                continue
+            value = rt.resolve_token(qualifier, rt.TOKENS[qualifier])
+            assert value.strip(), f"{bid}: {qualifier} resolved to nothing"
+            checked += 1
+    assert not unqualified, (
+        f"{len(unqualified)} figure(s) can be cited without the qualifier their own "
+        "artifact states as the condition for reading them, so the prose pass could not "
+        "disclose the limitation even if it tried:\n  " + "\n  ".join(unqualified))
+    return (f"all {checked} figure/qualifier pair(s) share a scope across "
+            f"{len(_FIGURE_NEEDS_QUALIFIER)} blocks, and every qualifier resolves")
 
 
 @case
