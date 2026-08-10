@@ -57,6 +57,10 @@ MANIFEST = {
     "report_blocks.py": "library",
     "generate_report.py": "library",
     "prose_lint.py": "library",
+    # tooling, not analysis: runs a generator in a throwaway sandbox and reports
+    # what it WOULD write. Owns no artifact, so "library" -- and it must import
+    # with no side effects, which is exactly what this role asserts.
+    "dry_run.py": "library",
     "behavior_rebuild.py": "generator",
     "battery_dispatch_policies.py": "generator",
     "battery_plan_matrix.py": "generator",
@@ -101,7 +105,8 @@ MANIFEST = {
 # documented gate compares that copy against data/), "data" = written into
 # ROOT/data directly. Drives the real-tier byte-diff and the no-two-owners check.
 # Not listed: gitignored run products (stats.json, *_relief*) and parse_bills.py,
-# whose six artifacts have their own transactional gate and test suite.
+# whose seven artifacts (six bill CSVs plus bill_corpus_boundary.json) have their own
+# transactional gate and test suite.
 OWNS = {
     "rates_history.py":             [("data", "rate_vintages.csv"),
                                      ("data", "rate_rebilling_residuals.csv")],

@@ -1,0 +1,54 @@
+{
+ "generated_by": "analysis/parse_bills.py",
+ "rule": "A statement is inside the reconcilable electric bill corpus if and only if SDG&E's billing-history export also carries a row for it. Statements with a PDF but no export row are listed under excluded_statements and appear in no artifact. The boundary is derived from the export on every run \u2014 no cutoff date is stored \u2014 so re-pulling the export publishes the statement again with nothing here to edit. An export row with no PDF is the opposite case and fails the run closed instead.",
+ "export": {
+  "path": "private/1-raw-data/electric_billing_history_2024-2026.csv",
+  "statements": 25,
+  "span": [
+   "2024-06-27",
+   "2026-07-02"
+  ]
+ },
+ "statements_parsed": 26,
+ "statements_published": 25,
+ "published_statement_span": [
+  "2024-06-27",
+  "2026-07-02"
+ ],
+ "published_period_span": [
+  "2024-05-25",
+  "2026-06-26"
+ ],
+ "excluded_statements": [
+  {
+   "statement_date": "2026-08-03",
+   "periods": [
+    "6/27/26 - 7/28/26"
+   ],
+   "billed_days": 32,
+   "period_span": [
+    "2026-06-27",
+    "2026-07-28"
+   ],
+   "reason": "electric_billing_history_2024-2026.csv carries no row for this statement, so the billing-history export reconciliation cannot cover it; publishing it would claim coverage SDG&E's own export does not corroborate",
+   "exclusion_ends_when": "the billing-history export is re-pulled so that it covers this statement. The boundary is re-derived from the export on every parse_bills.py run \u2014 no cutoff date is stored anywhere, so nothing has to be edited or remembered when the export catches up"
+  }
+ ],
+ "window_coverage": {
+  "window": [
+   "2025-07-24",
+   "2026-07-23"
+  ],
+  "window_source": "data/behavior_rebuild.json:window",
+  "window_days": 365,
+  "days_covered": 338,
+  "days_missing": 27,
+  "missing_ranges": [
+   [
+    "2026-06-27",
+    "2026-07-23"
+   ]
+  ],
+  "days_the_excluded_statements_would_supply": 27
+ }
+}

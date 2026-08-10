@@ -48,15 +48,42 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 #  engine, asserts them against battery_dispatch_policies.json, validates every required
 #  section, and writes the artifact atomically — a partial/failed run changes nothing.)
 
+# Dry run — ask "what would this generator change?" without changing it. It copies the
+# tracked tree into a temp sandbox outside the repo, symlinks private/ in, runs the
+# generator's REAL write path there (no --dry-run flag inside any script: a flag that
+# branches around the write exercises a different path and can lie), then diffs the
+# sandbox's data/ against the repo's — JSON by changed top-level key, CSV by changed rows.
+# It writes nothing into the repo, and a crash, a no-op or a rootless sandbox is reported
+# as a FAILURE (exit 2), never as "no changes". Run from anywhere:
+./.venv/bin/python analysis/dry_run.py analysis/parse_bills.py            # report only
+./.venv/bin/python analysis/dry_run.py analysis/parse_bills.py --check    # exit 1 if stale
+./.venv/bin/python analysis/test_dry_run.py                               # its guard suite
+# --check is the NON-MUTATING equivalent of the §9 gate above: use it to learn whether an
+# artifact is stale without regenerating it. The gate stays the authority when you intend
+# to commit the regeneration — it leaves the rebuilt artifact in the tree, which --check
+# deliberately does not. Two cases where they can disagree, both real: (1) --check diffs
+# against data/ as it is ON DISK, `git diff` against the index, so uncommitted edits under
+# data/ split them (pass --baseline head to match the gate exactly); (2) --check gives each
+# generator its own sandbox seeded from the COMMITTED artifacts, so a chain where one
+# generator consumes another's freshly rewritten output is not reproduced — for a chain,
+# run the gate.
+
 # Bill artifacts (rerun after adding statements to private/1-raw-data/*-bills/):
 # parse_bills.py finds the repo root itself, so run it from anywhere. It regenerates the
 # two legacy summaries as its own reproduction gate — they must not change:
 ../../.venv/bin/python parse_bills.py && git diff --exit-code ../../data/electric_bill_summary.csv \
     ../../data/gas_bill_summary.csv ../../data/bill_periods_electric.csv \
     ../../data/bill_periods_gas.csv ../../data/bill_tou_detail.csv \
-    ../../data/bill_gas_detail.csv
+    ../../data/bill_gas_detail.csv ../../data/bill_corpus_boundary.json
+# The seventh artifact, data/bill_corpus_boundary.json, states which statements the six
+# above actually contain. The published corpus is DERIVED, not declared: a statement PDF
+# with no row in the billing-history export is outside it and appears in no artifact,
+# with the exclusion printed by the run and recorded (reason, remedy, day-coverage
+# shortfall) in that file. Re-pull the export and re-run and it comes back on its own —
+# there is no date to delete. See parse_bills.py's "THE CORPUS BOUNDARY" and TECHNICAL.md.
 # Its fail-closed behaviour has negative tests (missing statement, corpus gaps, TOU
-# layout drift, mid-write failure). Run them after touching the parser:
+# layout drift, mid-write failure, and every shape of export/corpus mismatch). Run them
+# after touching the parser:
 ./.venv/bin/python analysis/test_parse_bills.py     # from the repo root
 
 # Carbon artifacts (rerun when needed): carbon_fullyear.py uses the raw CAISO day-cache

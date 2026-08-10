@@ -4760,6 +4760,31 @@ billing periods are read from the PDF text, never inferred from the filename.
 | `data/bill_tou_detail.csv` | long format: `statement_date, period, section (delivery/generation), season, tou_period, kwh, rate_per_kwh` — the rates as printed on each bill |
 | `data/bill_gas_detail.csv` | long format (issue #98): `statement_date, period, charge_type (gas_service/gas_energy/other_fees), segment, segment_days, segment_therms, baseline_rate, nonbaseline_rate, energy_rate, other_fees_rate` — one row per rate segment for EACH gas charge type. "Gas Service" (the tiered baseline/non-baseline rate) and "Gas Energy Charge" (a flat, untiered $/therm charge on every therm) split by DAY on a mid-period rate change; "other_fees" (Public Purpose Programs + State Regulatory Fee combined — Codex review, issue #98, pass 1) is also flat and untiered but splits by THERM COUNT instead. All three charge types have INDEPENDENT segment counts within one period, so `charge_type` is the discriminator and only the columns relevant to it are populated. This is what a true marginal-tier gas rebilling needs and `bill_periods_gas.csv`'s blended columns cannot provide — see `heat_pump_conversion.py`'s `gas_savings_by_period()` for the reference consumer |
 | `data/electric_bill_summary.csv`, `data/gas_bill_summary.csv` | regenerated in their original schemas |
+| `data/bill_corpus_boundary.json` | where the electric corpus stops and why: `rule`, the `export` that defines the boundary (path, statement count, span), `statements_parsed`/`statements_published`, the published statement and period spans, `excluded_statements` (each with its periods, billed days, calendar span, `reason` and `exclusion_ends_when`), and `window_coverage` (window read from `data/behavior_rebuild.json`, days covered, days missing, the missing date ranges, and how many of those days the excluded statements would supply). Written on every run — an empty `excluded_statements` list is the positive record that the export covered the whole corpus |
+
+**The corpus boundary.** A statement is inside the reconcilable corpus if and only if
+SDG&E's billing-history export (`private/1-raw-data/electric_billing_history_2024-2026.csv`)
+also carries a row for it: the export reconciliation in `bill_decomposition.py` cannot cover a
+statement the export does not carry, so publishing one would claim coverage the export does not
+corroborate. The boundary is DERIVED from the export on every run rather than stored as a cutoff
+date — re-pulling the export publishes the statement again with nothing to edit or remember,
+where a hardcoded date would go on truncating the corpus until somebody found it. The restriction
+is never silent (CLAUDE.md §1: coverage is counted in days, not files): `parse_bills.py` prints
+the excluded statements, the reason, the remedy and the day-coverage shortfall, and
+`bill_corpus_boundary.json` records the same facts alongside the artifacts it describes.
+`bill_decomposition.py` derives the same boundary from the same export — so the two cannot drift
+— and cross-checks the recorded boundary against it whenever the artifact is present, refusing a
+record that still names a statement the export has since caught up with.
+
+The asymmetry is deliberate. A PDF the export does not cover can be handled honestly by narrowing
+what is published. An export row with NO PDF cannot: it is positive evidence of a statement this
+parser has never read, i.e. a corpus missing a bill it would claim to reconcile, so it fails the
+run closed. So do an export hole in the middle of the corpus (excluding it would punch a gap into
+an otherwise contiguous series) and an export sharing no statement with the corpus at all. With no
+export staged the boundary is underivable, so nothing is excluded and the run says so.
+`test_parse_bills.py` covers all six shapes, including the pair that proves the boundary is
+derived: the same corpus and the same statement, excluded under an export that omits it and
+published under one that covers it.
 
 **Reproduction gate.** The script rewrites the two legacy summaries from the same parse.
 `gas_bill_summary.csv` regenerates byte-identically to the version committed before the

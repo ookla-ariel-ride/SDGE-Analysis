@@ -16,6 +16,8 @@ corpus is absent. Everything covering publication, rollback and concurrency runs
 pass in a clean checkout or in CI.
 """
 import csv
+import datetime as dt
+import json
 import os
 import pathlib
 import re
@@ -77,8 +79,7 @@ def _build(tmp):
             shutil.copy2(f, tmp / "private" / "1-raw-data" / dst / f.name)
     _set_flag(tmp, have_gas_corpus)
     # Pre-existing artifacts, so each case can assert they were not modified.
-    for name in ("bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
-                 "bill_gas_detail.csv", "electric_bill_summary.csv", "gas_bill_summary.csv"):
+    for name in ARTIFACTS:
         (tmp / "data" / name).write_text("SENTINEL\n")
     return tmp
 
@@ -88,10 +89,17 @@ def _run(tmp):
                           cwd=tmp, capture_output=True, text=True)
 
 
+# The whole publish set, in one place: every case that asserts "nothing was written"
+# has to cover all of it, and bill_corpus_boundary.json belongs to the same atomic
+# set as the six CSVs (it states which corpus they contain), so a rollback that left
+# it behind would be exactly the drift it exists to prevent.
+ARTIFACTS = ("bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
+             "bill_gas_detail.csv", "electric_bill_summary.csv", "gas_bill_summary.csv",
+             "bill_corpus_boundary.json")
+
+
 def _artifacts_untouched(tmp):
-    return all((tmp / "data" / n).read_text() == "SENTINEL\n" for n in (
-        "bill_periods_electric.csv", "bill_periods_gas.csv", "bill_tou_detail.csv",
-        "bill_gas_detail.csv", "electric_bill_summary.csv", "gas_bill_summary.csv"))
+    return all((tmp / "data" / n).read_text() == "SENTINEL\n" for n in ARTIFACTS)
 
 
 def _statement_date(path):
@@ -999,6 +1007,249 @@ def case_fixed_charge_total_reconciles_real_statements(tmp):
     return "fixed_charge_total reconciles real pre- and post-transition statements"
 
 
+# ---------------------------------------------------------------------------
+# The corpus boundary (parse_bills.py, "THE CORPUS BOUNDARY")
+#
+# The boundary is DERIVED from the billing-history export, never written down as a
+# date, so the pair of cases below is the real proof: the SAME corpus, the SAME
+# statement, two exports — excluded under one, published under the other. A
+# hardcoded cutoff would fail the second case, and a rule that never excludes
+# anything would fail the first.
+# ---------------------------------------------------------------------------
+EXPORT_NAME = "electric_billing_history_2024-2026.csv"
+
+
+def _corpus_dates(tmp):
+    return sorted(_statement_date(p) for p in
+                  (tmp / "private" / "1-raw-data" / "electric-bills").glob("*.pdf"))
+
+
+def _stage_export(tmp, dates):
+    """Write a synthetic billing-history export covering exactly `dates`.
+
+    parse_bills.py reads only the statement_date column, but the real export's full
+    header is written so the fixture cannot pass by being narrower than reality."""
+    path = tmp / "private" / "1-raw-data" / EXPORT_NAME
+    with open(path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["statement_date", "billing_days", "current_charges",
+                    "amount_due", "status"])
+        for d in dates:
+            w.writerow([d, 30, "0.00", "0.00", "Paid"])
+    return path
+
+
+def _stage_window(tmp, start, end):
+    """The analysis window parse_bills.py reads for its day-coverage figures. A
+    synthetic behavior_rebuild.json, so the coverage arithmetic is exercised against
+    a window this test chose and can recompute independently."""
+    (tmp / "data" / "behavior_rebuild.json").write_text(json.dumps(
+        {"window": {"start": f"{start} 00:00:00", "end": f"{end} 23:45:00"}}))
+
+
+def _summary_pinned(tmp, stmt):
+    """True when `stmt` is one of the throwaway copy's SUMMARY_STATEMENTS_* dates —
+    excluding one of those is corpus loss by presence-check 1, a different case."""
+    return stmt in (tmp / "analysis" / "parse_bills.py").read_text()
+
+
+def _period_bounds(period):
+    s, e = period.split(" - ")
+    return (dt.datetime.strptime(s.strip(), "%m/%d/%y").date(),
+            dt.datetime.strptime(e.strip(), "%m/%d/%y").date())
+
+
+def case_export_missing_a_statement_excludes_and_records_it(tmp):
+    """A statement PDF the billing-history export does not cover is outside the
+    reconcilable corpus: parse_bills must publish the rest, emit NONE of that
+    statement's rows, say so on stdout, and record the exclusion — with its reason,
+    its remedy and the resulting day-coverage shortfall — in the committed boundary
+    artifact. Silence here is the CLAUDE.md §1 failure this whole rule exists to
+    prevent (a hidden 27-day hole once understated the annual baseline ~9%)."""
+    dates = _corpus_dates(tmp)
+    victim = dates[-1]
+    if len(dates) < 3 or _summary_pinned(tmp, victim):
+        raise SkipCase("needs a newest statement outside the SUMMARY_STATEMENTS lists")
+    _stage_export(tmp, dates[:-1])
+    # A 365-day window ending on the excluded statement's own date, so it certainly
+    # overlaps both the published corpus and the excluded period and the day-coverage
+    # line has real numbers in it. The arithmetic itself is checked in
+    # case_export_day_coverage_shortfall_is_a_number.
+    w_end = dt.date.fromisoformat(victim)
+    _stage_window(tmp, (w_end - dt.timedelta(days=364)).isoformat(), w_end.isoformat())
+
+    r = _run(tmp)
+    assert r.returncode == 0, f"excluding a statement failed the run:\n{r.stderr}"
+
+    periods = _rows(tmp / "data" / "bill_periods_electric.csv")
+    tou = _rows(tmp / "data" / "bill_tou_detail.csv")
+    published = {p["statement_date"] for p in periods}
+    assert victim not in published, f"{victim} was published despite no export row"
+    assert published == set(dates[:-1]), \
+        f"published set is not the export's own coverage: {sorted(published)}"
+    assert victim not in {t["statement_date"] for t in tou}, \
+        f"{victim} left TOU rows behind in bill_tou_detail.csv"
+
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
+    rec = b["excluded_statements"][0]
+    assert b["statements_parsed"] == len(dates), b
+    assert b["statements_published"] == len(dates) - 1, b
+    assert EXPORT_NAME in rec["reason"], rec
+    assert "re-pulled" in rec["exclusion_ends_when"], rec
+    assert b["export"]["statements"] == len(dates) - 1, b["export"]
+
+    # The exclusion is announced, not merely recorded.
+    assert "EXCLUDED" in r.stdout and victim in r.stdout, \
+        f"the excluded statement is not named on stdout:\n{r.stdout}"
+    assert "day coverage" in r.stdout, f"no day-coverage figure printed:\n{r.stdout}"
+    v_start, v_end = _period_bounds(rec["periods"][0])
+    assert rec["period_span"] == [v_start.isoformat(), v_end.isoformat()], rec
+    return (f"a statement the export does not cover ({victim}) is excluded from every "
+            f"artifact, announced on stdout, and recorded with its reason and remedy")
+
+
+def case_export_covering_every_statement_publishes_every_statement(tmp):
+    """The other half of the proof, and the reason the rule is derived rather than a
+    date: the SAME corpus and the SAME statement as the case above, with an export
+    that covers it, must publish it and record ZERO exclusions. Re-pulling the export
+    is the whole remedy — nothing in the parser has to be edited."""
+    dates = _corpus_dates(tmp)
+    victim = dates[-1]
+    if len(dates) < 3:
+        raise SkipCase("needs a multi-statement corpus")
+    _stage_export(tmp, dates)                      # the export has caught up
+    r = _run(tmp)
+    assert r.returncode == 0, f"a fully-covered corpus failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_electric.csv")
+    assert {p["statement_date"] for p in periods} == set(dates), \
+        "an export covering every statement still narrowed the corpus"
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert b["excluded_statements"] == [], b
+    assert b["statements_published"] == b["statements_parsed"] == len(dates), b
+    assert "EXCLUDED" not in r.stdout, f"nothing was excluded but stdout says so:\n{r.stdout}"
+    return (f"the same corpus with an export that covers {victim} publishes it and "
+            f"records no exclusion — the boundary follows the export, not a date")
+
+
+def case_export_day_coverage_shortfall_is_a_number(tmp):
+    """CLAUDE.md §1: coverage is counted in DAYS, never in files. The boundary record
+    must state how many of the analysis window's days the published corpus actually
+    covers, which days are missing, and how many of them the excluded statement would
+    supply — recomputed here from the published artifact and the staged window, not
+    read back from the same helper that wrote them."""
+    dates = _corpus_dates(tmp)
+    victim = dates[-1]
+    if len(dates) < 3 or _summary_pinned(tmp, victim):
+        raise SkipCase("needs a newest statement outside the SUMMARY_STATEMENTS lists")
+    _stage_export(tmp, dates[:-1])
+    r = _run(tmp)                       # first pass: learn the excluded period's span
+    assert r.returncode == 0, r.stderr
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], (
+        f"the export covers {len(dates) - 1} of {len(dates)} statements but the "
+        f"boundary record excludes {[e['statement_date'] for e in b['excluded_statements']]}")
+    ex_start, ex_end = (dt.date.fromisoformat(x)
+                        for x in b["excluded_statements"][0]["period_span"])
+
+    # A window ending part-way into the excluded statement's period: the shortfall is
+    # then a genuine subset of that period, which a coverage figure that just counted
+    # the excluded period's own length would get wrong.
+    w_end = ex_start + dt.timedelta(days=(ex_end - ex_start).days // 2)
+    w_start = w_end - dt.timedelta(days=364)
+    _stage_window(tmp, w_start.isoformat(), w_end.isoformat())
+    r = _run(tmp)
+    assert r.returncode == 0, r.stderr
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    cov = b["window_coverage"]
+
+    published = _rows(tmp / "data" / "bill_periods_electric.csv")
+    bounds = [_period_bounds(p["period"]) for p in published]
+    c_start, c_end = min(s for s, _ in bounds), max(e for _, e in bounds)
+    window = [w_start + dt.timedelta(days=i) for i in range((w_end - w_start).days + 1)]
+    covered = [d for d in window if c_start <= d <= c_end]
+    missing = [d for d in window if not (c_start <= d <= c_end)]
+    supplied = [d for d in missing if ex_start <= d <= ex_end]
+
+    assert cov["window"] == [w_start.isoformat(), w_end.isoformat()], cov
+    assert cov["window_days"] == len(window) == 365, cov
+    assert cov["days_covered"] == len(covered), (cov, len(covered))
+    assert cov["days_missing"] == len(missing), (cov, len(missing))
+    assert cov["days_covered"] + cov["days_missing"] == cov["window_days"], cov
+    assert cov["days_the_excluded_statements_would_supply"] == len(supplied), cov
+    assert cov["missing_ranges"] == [[missing[0].isoformat(), missing[-1].isoformat()]], cov
+    assert f"{cov['days_covered']} of the analysis window's {cov['window_days']} days" \
+        in r.stdout, f"the day-coverage figure is not printed:\n{r.stdout}"
+    return (f"the shortfall is published as a number: {cov['days_covered']}/"
+            f"{cov['window_days']} days covered, {cov['days_missing']} missing, "
+            f"{cov['days_the_excluded_statements_would_supply']} of them supplied by "
+            f"the excluded statement")
+
+
+def case_export_row_with_no_pdf_fails_closed(tmp):
+    """The dangerous direction, and why it is NOT absorbed by narrowing the corpus:
+    an export row is positive evidence that a statement exists. A corpus missing it
+    would understate every total with nothing to reveal the hole, so the run must
+    stop rather than publish."""
+    dates = _corpus_dates(tmp)
+    _stage_export(tmp, dates + ["2099-01-01"])
+    r = _run(tmp)
+    assert r.returncode != 0, "an export row with no PDF was accepted"
+    assert "no PDF was parsed" in r.stderr and "2099-01-01" in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "export row with no PDF -> exits, artifacts untouched"
+
+
+def case_export_hole_in_the_middle_fails_closed(tmp):
+    """An export hole INSIDE the corpus cannot be resolved by narrowing it: dropping
+    the statement would punch a gap into an otherwise contiguous published series.
+    Fail closed with that diagnosis, rather than leaving the operator to read
+    continuity check 3's 'a statement is missing from the corpus'."""
+    dates = _corpus_dates(tmp)
+    if len(dates) < 3:
+        raise SkipCase("needs at least three statements to have an interior one")
+    victim = dates[len(dates) // 2]
+    _stage_export(tmp, [d for d in dates if d != victim])
+    r = _run(tmp)
+    assert r.returncode != 0, "an interior export hole was accepted"
+    assert "hole in the MIDDLE" in r.stderr and victim in r.stderr, \
+        f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return f"export hole at {victim} (interior) -> exits, artifacts untouched"
+
+
+def case_export_sharing_no_statement_fails_closed(tmp):
+    """An export documenting a different account would exclude the entire corpus.
+    Publishing nothing at all is never the honest reading of "restrict deliberately",
+    so this is a fail-closed case too."""
+    _stage_export(tmp, ["1990-01-01", "1990-02-01"])
+    r = _run(tmp)
+    assert r.returncode != 0, "an export covering none of the corpus was accepted"
+    assert "covers none of the" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "export sharing no statement with the corpus -> exits, artifacts untouched"
+
+
+def case_no_export_publishes_the_whole_corpus(tmp):
+    """No export staged: the boundary is underivable, so nothing may be excluded on a
+    guess. Every parsed statement is published and the run says the boundary was not
+    checked — the same "cannot check" vs "nothing to check" distinction
+    bill_decomposition.py draws."""
+    dates = _corpus_dates(tmp)
+    assert not (tmp / "private" / "1-raw-data" / EXPORT_NAME).exists()
+    r = _run(tmp)
+    assert r.returncode == 0, f"a corpus with no export failed:\n{r.stderr}"
+    periods = _rows(tmp / "data" / "bill_periods_electric.csv")
+    assert {p["statement_date"] for p in periods} == set(dates), \
+        "statements were dropped with no export to justify it"
+    assert "not derivable" in r.stdout, f"no notice about the missing export:\n{r.stdout}"
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert b["export"] is None and b["excluded_statements"] == [], b
+    assert b["statements_published"] == b["statements_parsed"] == len(dates), b
+    return "no export staged -> whole corpus published, boundary recorded as underived"
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
@@ -1018,7 +1269,14 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_gas_service_multi_segment_day_weighted_blend,
                 case_gas_energy_charge_multi_segment_and_detail_schema,
                 case_other_fees_multi_segment_therm_weighted_blend,
-                case_gas_rate_misread_caught_by_gas_charge_crossfoot]
+                case_gas_rate_misread_caught_by_gas_charge_crossfoot,
+                case_export_missing_a_statement_excludes_and_records_it,
+                case_export_covering_every_statement_publishes_every_statement,
+                case_export_day_coverage_shortfall_is_a_number,
+                case_export_row_with_no_pdf_fails_closed,
+                case_export_hole_in_the_middle_fails_closed,
+                case_export_sharing_no_statement_fails_closed,
+                case_no_export_publishes_the_whole_corpus]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean

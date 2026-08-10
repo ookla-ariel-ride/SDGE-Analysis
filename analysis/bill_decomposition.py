@@ -165,7 +165,12 @@ Everything reconciles to the cent, and the artifact publishes the residual.
 Inputs   data/bill_periods_electric.csv          period totals (the cost series)
          data/bill_tou_detail.csv                printed SDG&E TOU lines
          private/1-raw-data/electric-bills/*.pdf statement text, CEA TOU lines
-         private/1-raw-data/electric_billing_history_2024-2026.csv  the export
+         private/1-raw-data/electric_billing_history_2024-2026.csv  the export, and
+                                                 the corpus boundary: a statement PDF
+                                                 with no export row is outside the
+                                                 reconcilable corpus (parse_bills.py,
+                                                 "THE CORPUS BOUNDARY")
+         data/bill_corpus_boundary.json          optional cross-check of that boundary
 Output   data/bill_decomposition.json            written atomically; run twice ->
                                                  byte-identical
 """
@@ -199,6 +204,10 @@ ROOT = _repo_root()
 DATA = ROOT / "data"
 ELEC_DIR = ROOT / "private" / "1-raw-data" / "electric-bills"
 HISTORY_CSV = ROOT / "private" / "1-raw-data" / "electric_billing_history_2024-2026.csv"
+# parse_bills.py's committed record of where the electric corpus stops and why. Read
+# only to CROSS-CHECK the boundary this module derives for itself from HISTORY_CSV --
+# never as the source of it (see statement_dates()).
+BOUNDARY_JSON = DATA / "bill_corpus_boundary.json"
 
 # The two periods being compared, and why these two: the first and last statements
 # in the corpus, both early-summer (so both straddle the 6/1 winter->summer tariff
@@ -384,6 +393,18 @@ def statement_text(stmt):
     return _TEXT_CACHE[stmt]
 
 
+def export_statement_dates():
+    """The statement dates the billing-history export covers, or None when no export
+    is staged (or it carries none). Same file, same rule, as parse_bills.py's own
+    export_statement_dates() -- both derive the corpus boundary from this one file
+    rather than each declaring where the corpus stops."""
+    if not HISTORY_CSV.exists():
+        return None
+    seen = {r["statement_date"] for r in _read_csv(HISTORY_CSV)
+            if r.get("statement_date")}
+    return seen or None
+
+
 def statement_dates():
     """Every statement in the corpus, in date order, checked against the artifacts.
 
@@ -395,6 +416,23 @@ def statement_dates():
     parse_bills.py builds with its own continuity gate -- and the export is
     checked against it too, so an incomplete private corpus fails closed here
     rather than being published as a complete reconciliation.
+
+    THE CORPUS BOUNDARY. A PDF with no row in the billing-history export is
+    outside the reconcilable corpus by the same derivation parse_bills.py
+    publishes under (its module docstring, "THE CORPUS BOUNDARY"): the export
+    reconciliation below cannot cover a statement SDG&E's export does not carry,
+    so parse_bills.py does not emit it into bill_periods_electric.csv. Such a PDF
+    is therefore not an "extra" here either -- it is a statement this corpus
+    deliberately stops short of. Both scripts read the same export and apply the
+    same test, so neither can drift from the other's idea of the boundary, and
+    data/bill_corpus_boundary.json (parse_bills.py's record of the same
+    derivation) is cross-checked against it whenever it is present.
+
+    Nothing else is relaxed. A PDF that is outside the artifact for any OTHER
+    reason still fails closed; a statement present in the artifact but with no PDF
+    still fails closed; and the `gap` check below still refuses an artifact
+    claiming statements the export does not cover -- which is exactly what would
+    happen if parse_bills.py were ever run against a wider export than this one.
     """
     dates = sorted(m.group(1) for m in
                    (re.search(r"(\d{4}-\d{2}-\d{2})\.pdf$", str(p))
@@ -402,8 +440,11 @@ def statement_dates():
     if not dates:
         raise SystemExit(f"no electric statements found in {ELEC_DIR}")
     want = {s for (s, _) in periods()}
+    seen = export_statement_dates()
+    outside = sorted(set(dates) - seen) if seen else []
+    _check_recorded_boundary(seen)
     missing = sorted(want - set(dates))
-    extra = sorted(set(dates) - want)
+    extra = sorted(set(dates) - want - set(outside))
     if missing or extra:
         raise SystemExit(
             f"the statement PDFs in {ELEC_DIR} do not match the statements in "
@@ -412,18 +453,55 @@ def statement_dates():
             f"artifact row ({extra[:4]}). Every finding here is 'established by "
             "statement text', so a partial corpus cannot be scanned and reported "
             "as a complete one -- restore the statements or re-run parse_bills.py.")
-    if HISTORY_CSV.exists():
-        seen = {r["statement_date"] for r in _read_csv(HISTORY_CSV)
-                if r.get("statement_date")}
-        if seen:
-            gap = sorted(want - seen)
-            if gap:
-                raise SystemExit(
-                    f"{len(gap)} statement(s) in data/bill_periods_electric.csv have "
-                    f"no row in the billing-history export ({gap[:4]}); the export "
-                    "reconciliation would silently cover fewer statements than it "
-                    "claims. Re-pull the export or restrict the corpus deliberately.")
-    return dates
+    if seen:
+        gap = sorted(want - seen)
+        if gap:
+            raise SystemExit(
+                f"{len(gap)} statement(s) in data/bill_periods_electric.csv have "
+                f"no row in the billing-history export ({gap[:4]}); the export "
+                "reconciliation would silently cover fewer statements than it "
+                "claims. Re-pull the export or restrict the corpus deliberately.")
+    # The corpus this module scans is the PUBLISHED one, not everything on disk:
+    # returning a statement the artifacts deliberately exclude would send it
+    # straight into export_reconciliation(), which has no row to reconcile it
+    # against. `missing` above has already proved every one of these has a PDF.
+    return sorted(want)
+
+
+def _check_recorded_boundary(seen):
+    """Cross-check parse_bills.py's committed record of the boundary against the
+    export this module reads.
+
+    Optional by design: the derivation above needs only the export, so a checkout
+    without the artifact (or a sandbox seeded from an older commit) still runs. The
+    property checked is the one that actually rots -- a recorded exclusion the
+    export has since caught up with. Once the export carries a row for a statement,
+    that statement is inside the corpus again and the record naming it as excluded
+    is stale; re-running parse_bills.py both rewrites the record and publishes the
+    statement, which is the whole point of deriving the boundary instead of storing
+    a date.
+
+    Deliberately NOT checked here: whether every PDF outside the export is listed in
+    the record. That depends on which PDFs happen to be staged, not on the boundary
+    -- a run against a deliberately thinned corpus would fail for the wrong reason,
+    and the `extra` check below is what governs unexplained PDFs anyway."""
+    if not BOUNDARY_JSON.exists():
+        return
+    try:
+        recorded = sorted(e["statement_date"] for e in
+                          json.loads(BOUNDARY_JSON.read_text())["excluded_statements"])
+    except (ValueError, TypeError, KeyError) as exc:
+        raise SystemExit(
+            f"{BOUNDARY_JSON} is unreadable as a corpus-boundary record ({exc}); "
+            f"re-run analysis/parse_bills.py to rewrite it.")
+    stale = sorted(set(recorded) & set(seen or ()))
+    if stale:
+        raise SystemExit(
+            f"data/{BOUNDARY_JSON.name} still records {stale} as outside the corpus, "
+            f"but {HISTORY_CSV.name} now carries a row for each of them -- the export "
+            f"has been re-pulled and the recorded boundary is stale. Re-run "
+            f"analysis/parse_bills.py: it re-derives the boundary and publishes those "
+            f"statements, no exclusion has to be removed by hand.")
 
 
 # ---------------------------------------------------------------------------

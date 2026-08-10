@@ -22,6 +22,10 @@ INPUTS (private, gitignored — see DATA-SOURCES-CHEATSHEET.md §D for how to fe
     Filenames carry the STATEMENT date. Periods are read from the PDF text, never
     inferred from the filename: one statement can contain two billing periods when a
     rate change splits it mid-cycle (CLAUDE.md §1 — parse periods, not files).
+    private/1-raw-data/electric_billing_history_2024-2026.csv  OPTIONAL. SDG&E's own
+                                    billing-history export. When it is staged it
+                                    DEFINES the electric corpus boundary — see
+                                    THE CORPUS BOUNDARY below.
 
 OUTPUTS (committed, de-identified)
     data/bill_periods_electric.csv  one row per electric billing period
@@ -69,11 +73,65 @@ OUTPUTS (committed, de-identified)
                                     the reference implementation.
     data/electric_bill_summary.csv  regenerated (same schema as the original)
     data/gas_bill_summary.csv       regenerated (same schema as the original)
+    data/bill_corpus_boundary.json  where the electric corpus stops and why — the
+                                    export that defines it, every statement parsed
+                                    but not published, what would end each
+                                    exclusion, and the resulting day coverage of
+                                    the analysis window. Published in the SAME
+                                    atomic set as the six artifacts above, because
+                                    it describes exactly the corpus they contain;
+                                    written on every run, with an empty
+                                    excluded_statements list when the export covers
+                                    the whole corpus. See THE CORPUS BOUNDARY.
     When household.has_gas is false the three gas artifacts (bill_periods_gas.csv,
     bill_gas_detail.csv, gas_bill_summary.csv) are still published — as HEADER-ONLY
     CSVs (same headers, zero rows), in the same atomic set as the electric ones, so a
     fork can never keep another corpus's stale gas data sitting next to its own fresh
     electric data.
+
+THE CORPUS BOUNDARY — which statements get published, and why it is derived
+    A statement PDF alone is not enough to publish. Everything downstream that
+    reconciles the bills against SDG&E's own books (bill_decomposition.py's
+    export_reconciliation(), which explains every statement's export
+    current_charges line by line) needs a matching row in the billing-history
+    export. So the reconcilable corpus is defined, not declared:
+
+        a statement is INSIDE the corpus iff the billing-history export also
+        carries a row for it.
+
+    A statement whose PDF is on disk but which the export does not cover is
+    outside the corpus and is not emitted into any artifact. That is a real,
+    deliberate restriction of the published evidence, so it is made three ways
+    visible rather than silent (CLAUDE.md §1: coverage is counted in DAYS, and a
+    hidden gap once understated this household's annual baseline by ~9%):
+      - main() prints the excluded statements, the reason, and the resulting
+        day coverage of the analysis window;
+      - data/bill_corpus_boundary.json records the same facts in the same atomic
+        publish set as the artifacts it describes;
+      - the day-coverage shortfall is stated as a NUMBER (days covered, days
+        missing, the missing date ranges), computed against the analysis window
+        read from data/behavior_rebuild.json — never implied.
+
+    WHY DERIVED, NOT A DATE CONSTANT. The exclusion ends by itself: re-pull the
+    export, re-run, and the statement is published with nobody remembering to
+    delete an exclusion. A hardcoded cutoff date would have to be found and
+    removed by hand, and would go on silently truncating the corpus until someone
+    did — the same rot a stale hand-maintained list has already produced twice in
+    this repository.
+
+    FAIL CLOSED ON THE OTHER DIRECTION. The asymmetry is deliberate. A PDF the
+    export does not cover can be handled honestly by narrowing the published
+    corpus. An export row with NO PDF cannot: it is positive evidence that a
+    statement exists which this parser has never read, i.e. the corpus is missing
+    a bill it would claim to reconcile. That raises SystemExit and publishes
+    nothing. So does an export hole in the MIDDLE of the corpus (which would
+    punch a gap into an otherwise contiguous published series) and an export that
+    covers none of the parsed statements at all.
+
+    NO EXPORT STAGED. The boundary is then underivable, so nothing is excluded:
+    every parsed statement is published and the run says so. Mirrors
+    bill_decomposition.py, which also treats a missing export as "cannot check"
+    rather than "nothing to check".
 
 APPLICABILITY ENVELOPE — what this parser assumes. Read this before pointing it at
 any other account's bills; every assumption below is load-bearing in a regex.
@@ -170,7 +228,10 @@ CHARGE-LINE CROSS-FOOT (issue #27, chosen over the other two options there)
     cheap protection on the table.
 """
 import contextlib
+import csv
+import datetime as dt
 import fcntl
+import json
 import os
 import shutil
 import pathlib
@@ -201,6 +262,15 @@ ROOT = _repo_root()
 DATA = ROOT / "data"
 ELEC_DIR = ROOT / "private" / "1-raw-data" / "electric-bills"
 GAS_DIR = ROOT / "private" / "1-raw-data" / "gas-bills"
+# SDG&E's own billing-history export. Optional on disk; when present it DEFINES the
+# electric corpus boundary (see THE CORPUS BOUNDARY in the module docstring). Same
+# path bill_decomposition.py reads, so both scripts derive the boundary from one file
+# rather than each declaring its own idea of where the corpus stops.
+HISTORY_CSV = ROOT / "private" / "1-raw-data" / "electric_billing_history_2024-2026.csv"
+# The analysis window every published figure is written against. Read from the
+# committed artifact rather than restated here, so the day-coverage figures in
+# bill_corpus_boundary.json move with the window instead of drifting behind it.
+WINDOW_ARTIFACT = DATA / "behavior_rebuild.json"
 
 # WHY THESE LISTS EXIST: the corpus on disk runs longer than the analysis year, so the
 # two summary artifacts need a pinned window or they would silently widen every time
@@ -786,6 +856,256 @@ def parse_gas(path):
 
 
 # ---------------------------------------------------------------------------
+# The corpus boundary — derived from the billing-history export, never declared
+# ---------------------------------------------------------------------------
+def export_statement_dates(path=None):
+    """The statement dates SDG&E's billing-history export covers.
+
+    None means "no boundary is derivable here": either the export is not staged, or
+    it carries no statement_date values. Both are the same situation for this
+    parser — there is nothing to test the corpus against — and both must be
+    distinguishable from an export that legitimately covers nothing, which cannot
+    happen (an export with rows has dates). bill_decomposition.py reads the same
+    file with the same "if it exists and has dates" precondition."""
+    path = path or HISTORY_CSV
+    if not path.exists():
+        return None
+    with open(path, newline="") as fh:
+        seen = {(r.get("statement_date") or "").strip() for r in csv.DictReader(fh)}
+    seen.discard("")
+    return seen or None
+
+
+def _elec_period_bounds(period):
+    """('5/25/24 - 6/25/24') -> (date(2024, 5, 25), date(2024, 6, 25)), inclusive."""
+    s, e = period.split(" - ")
+    return (dt.datetime.strptime(s.strip(), "%m/%d/%y").date(),
+            dt.datetime.strptime(e.strip(), "%m/%d/%y").date())
+
+
+def _excluded_detail(elec, statement_dates):
+    """One record per statement being left outside the corpus, carrying everything a
+    reader needs to judge the exclusion: which periods it would have contributed,
+    how many billed days those cover, the calendar span, why it is out, and the one
+    thing that would put it back in."""
+    out = []
+    for stmt in sorted(statement_dates):
+        grp = elec[elec.statement_date == stmt]
+        periods = list(grp.period)
+        spans = [_elec_period_bounds(p) for p in periods]
+        out.append({
+            "statement_date": stmt,
+            "periods": periods,
+            "billed_days": int(grp.days.sum()),
+            "period_span": [min(s for s, _ in spans).isoformat(),
+                            max(e for _, e in spans).isoformat()],
+            "reason": (
+                f"{HISTORY_CSV.name} carries no row for this statement, so the "
+                f"billing-history export reconciliation cannot cover it; publishing "
+                f"it would claim coverage SDG&E's own export does not corroborate"),
+            "exclusion_ends_when": (
+                "the billing-history export is re-pulled so that it covers this "
+                "statement. The boundary is re-derived from the export on every "
+                "parse_bills.py run — no cutoff date is stored anywhere, so nothing "
+                "has to be edited or remembered when the export catches up"),
+        })
+    return out
+
+
+def _restrict_to_reconcilable_corpus(elec, tou):
+    """Drop the electric statements the billing-history export does not cover.
+
+    Returns (elec, tou, export_info, excluded_records). See THE CORPUS BOUNDARY in
+    the module docstring for why the rule is derived from the export rather than
+    written down as a date, and why the opposite direction (an export row with no
+    PDF) is fatal instead of absorbed.
+
+    Runs BEFORE _validate() on purpose: the published frame is what has to tile its
+    window with no gap or overlap, so an exclusion that would break continuity is
+    caught by the same gate a missing PDF is. The interior-hole check below fires
+    first only so the operator gets the true diagnosis (an export hole) instead of
+    check 3's "a statement is missing from the corpus"."""
+    export = export_statement_dates()
+    parsed = sorted(set(elec.statement_date))
+    if export is None:
+        print(f"NOTICE: no billing-history export at {HISTORY_CSV} — the corpus "
+              f"boundary is not derivable, so nothing is excluded and all "
+              f"{len(parsed)} parsed statement(s) are published. Stage the export "
+              f"to have the published corpus checked against SDG&E's own books.")
+        return elec, tou, None, []
+
+    kept = [s for s in parsed if s in export]
+    excluded = [s for s in parsed if s not in export]
+    # Zero overlap first, and with its own diagnosis: it is the shape the
+    # SUMMARY_STATEMENTS_* lists already recognise as "this file documents someone
+    # else's corpus". The orphan check below would fire on it too, but would send the
+    # operator off to download 1990's statements instead of looking at the export.
+    if not kept:
+        raise SystemExit(
+            f"{HISTORY_CSV.name} covers none of the {len(parsed)} statement(s) parsed "
+            f"from {ELEC_DIR} (export: {min(export)} .. {max(export)}; corpus: "
+            f"{parsed[0]} .. {parsed[-1]}). The export documents a different account "
+            f"or a different corpus — restricting to the reconcilable statements would "
+            f"publish nothing at all. Stage the matching export, or remove it.")
+
+    orphan = sorted(export - set(parsed))
+    if orphan:
+        raise SystemExit(
+            f"{len(orphan)} statement(s) appear in {HISTORY_CSV.name} but no PDF was "
+            f"parsed for them: {orphan}. That is the dangerous direction of the "
+            f"corpus boundary: the export is positive evidence that these statements "
+            f"exist, so the corpus is missing a bill it would claim to reconcile — "
+            f"totals would be understated with nothing to reveal it. Download the "
+            f"missing statement(s) into {ELEC_DIR} (DATA-SOURCES-CHEATSHEET.md §D). "
+            f"This is never absorbed by narrowing the corpus, unlike a PDF the export "
+            f"does not cover.")
+
+    interior = [s for s in excluded if kept[0] < s < kept[-1]]
+    if interior:
+        raise SystemExit(
+            f"{HISTORY_CSV.name} has a hole in the MIDDLE of the corpus: it covers "
+            f"{kept[0]} .. {kept[-1]} but carries no row for {interior}, whose PDFs "
+            f"are present. Excluding those statements would punch a gap into the "
+            f"published series (annual totals understated); publishing them would "
+            f"claim export coverage they do not have. Re-pull the export so it covers "
+            f"the whole corpus — this one cannot be resolved by narrowing it.")
+
+    records = _excluded_detail(elec, excluded)
+    export_info = {
+        "path": str(HISTORY_CSV.relative_to(ROOT)),
+        "statements": len(export),
+        "span": [min(export), max(export)],
+    }
+    if excluded:
+        elec = elec[elec.statement_date.isin(kept)].copy()
+        tou = tou[tou.statement_date.isin(kept)].copy()
+    return elec, tou, export_info, records
+
+
+def _analysis_window():
+    """(start_date, end_date) of the analysis window, from the committed
+    behavior_rebuild.json. None when that artifact is absent or does not carry a
+    window — parse_bills runs UPSTREAM of it, so a fresh fork that has not built it
+    yet must still be able to publish its bills; the boundary artifact then records
+    window_coverage as null with the reason, rather than inventing a window."""
+    if not WINDOW_ARTIFACT.exists():
+        return None
+    try:
+        w = json.loads(WINDOW_ARTIFACT.read_text())["window"]
+        return (dt.date.fromisoformat(str(w["start"])[:10]),
+                dt.date.fromisoformat(str(w["end"])[:10]))
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+def _contiguous_ranges(days):
+    """[date, ...] -> [[first, last], ...] over each contiguous run."""
+    out = []
+    for d in sorted(days):
+        if out and d - dt.date.fromisoformat(out[-1][1]) == dt.timedelta(days=1):
+            out[-1][1] = d.isoformat()
+        else:
+            out.append([d.isoformat(), d.isoformat()])
+    return out
+
+
+def _window_coverage(elec, excluded):
+    """How much of the analysis window the PUBLISHED corpus actually covers, in days.
+
+    CLAUDE.md §1: coverage is counted in days, never in files — "12 months of bills"
+    once meant 338 days with a hidden 27-day hole. _validate()'s continuity check has
+    already proved the published periods tile without gap or overlap, so the corpus
+    covers exactly [first period start .. last period end]; the shortfall against the
+    window is that interval's complement inside it."""
+    win = _analysis_window()
+    if win is None:
+        return None
+    w_start, w_end = win
+    bounds = [_elec_period_bounds(p) for p in elec.period]
+    c_start, c_end = min(s for s, _ in bounds), max(e for _, e in bounds)
+    window_days = [w_start + dt.timedelta(days=i)
+                   for i in range((w_end - w_start).days + 1)]
+    covered = [d for d in window_days if c_start <= d <= c_end]
+    missing = [d for d in window_days if not (c_start <= d <= c_end)]
+    supplied = set()
+    for rec in excluded:
+        a, b = (dt.date.fromisoformat(x) for x in rec["period_span"])
+        supplied |= {d for d in missing if a <= d <= b}
+    return {
+        "window": [w_start.isoformat(), w_end.isoformat()],
+        "window_source": f"data/{WINDOW_ARTIFACT.name}:window",
+        "window_days": len(window_days),
+        "days_covered": len(covered),
+        "days_missing": len(missing),
+        "missing_ranges": _contiguous_ranges(missing),
+        "days_the_excluded_statements_would_supply": len(supplied),
+    }
+
+
+def _boundary_record(elec, export_info, excluded):
+    """The committed statement of where the corpus stops and why.
+
+    Written on EVERY run, including the runs that exclude nothing: it is the corpus
+    boundary, not an exception log. An empty excluded_statements list is the positive
+    evidence that the export covered everything on that run — which is also what makes
+    re-pulling the export self-healing and visible in one diff."""
+    published = sorted(set(elec.statement_date))
+    bounds = [_elec_period_bounds(p) for p in elec.period]
+    return {
+        "generated_by": "analysis/parse_bills.py",
+        "rule": (
+            "A statement is inside the reconcilable electric bill corpus if and only "
+            "if SDG&E's billing-history export also carries a row for it. Statements "
+            "with a PDF but no export row are listed under excluded_statements and "
+            "appear in no artifact. The boundary is derived from the export on every "
+            "run — no cutoff date is stored — so re-pulling the export publishes the "
+            "statement again with nothing here to edit. An export row with no PDF is "
+            "the opposite case and fails the run closed instead."),
+        "export": export_info,
+        "statements_parsed": len(published) + len(excluded),
+        "statements_published": len(published),
+        "published_statement_span": [published[0], published[-1]],
+        "published_period_span": [min(s for s, _ in bounds).isoformat(),
+                                  max(e for _, e in bounds).isoformat()],
+        "excluded_statements": excluded,
+        "window_coverage": _window_coverage(elec, excluded),
+    }
+
+
+def _announce_boundary(record):
+    """Say out loud what was left out. A silent restriction is the failure CLAUDE.md
+    §1 is written about, so the run reports the statements, the reason, the remedy and
+    the day-coverage shortfall whether or not anyone reads the artifact."""
+    excluded = record["excluded_statements"]
+    exp = record["export"]
+    if exp is None:
+        return
+    print(f"corpus boundary: {record['statements_published']} of "
+          f"{record['statements_parsed']} parsed statement(s) published; the "
+          f"reconcilable corpus is what {exp['path']} covers "
+          f"({exp['statements']} statement(s), {exp['span'][0]} .. {exp['span'][1]}).")
+    for rec in excluded:
+        print(f"  NOTICE: EXCLUDED {rec['statement_date']} — period(s) "
+              f"{', '.join(rec['periods'])}, {rec['billed_days']} billed day(s), "
+              f"{rec['period_span'][0]} .. {rec['period_span'][1]}. "
+              f"It is parsed from its PDF but published in no artifact.")
+        print(f"    why:      {rec['reason']}.")
+        print(f"    ends when: {rec['exclusion_ends_when']}.")
+    cov = record["window_coverage"]
+    if cov is None:
+        print(f"    day coverage against the analysis window: not stated — "
+              f"data/{WINDOW_ARTIFACT.name} carries no readable window.")
+        return
+    gaps = ", ".join(f"{a} .. {b}" for a, b in cov["missing_ranges"]) or "none"
+    print(f"  day coverage: the published corpus covers {cov['days_covered']} of the "
+          f"analysis window's {cov['window_days']} days ({cov['window'][0]} .. "
+          f"{cov['window'][1]}); {cov['days_missing']} day(s) missing: {gaps}. "
+          f"The excluded statement(s) would supply "
+          f"{cov['days_the_excluded_statements_would_supply']} of them.")
+    print(f"  recorded in data/bill_corpus_boundary.json")
+
+
+# ---------------------------------------------------------------------------
 # Corpus-level validation and transactional publication
 # ---------------------------------------------------------------------------
 def _validate(elec, gas, tou, gas_detail=None):
@@ -1196,7 +1516,14 @@ def main():
     elec = elec.sort_values("_start").drop(columns="_start")
     tou = pd.DataFrame(tou_rows)
 
+    # The corpus boundary comes first: _validate()'s continuity and presence checks
+    # must run on the frame that is actually published, not on a wider one that
+    # happens to tile. See THE CORPUS BOUNDARY in the module docstring.
+    elec, tou, export_info, excluded = _restrict_to_reconcilable_corpus(elec, tou)
+
     _validate(elec, gas, tou, gas_detail)
+
+    boundary = _boundary_record(elec, export_info, excluded)
 
     es = _summary_frame(elec, SUMMARY_STATEMENTS_ELEC,
                         "SUMMARY_STATEMENTS_ELEC", "electric")
@@ -1231,9 +1558,16 @@ def main():
          lambda p: es.to_csv(p, index=False, lineterminator="\r\n")),
         (DATA / "gas_bill_summary.csv",
          lambda p: gas_summary_out.to_csv(p, index=False, lineterminator="\r\n")),
+        # In the SAME atomic set as the six above: it states which corpus those six
+        # contain, so it can never be left describing a corpus that was rolled back.
+        # indent=1 and a trailing newline match the other committed JSON artifacts
+        # (data/bill_decomposition.json), so a reader diffing them sees one format.
+        (DATA / "bill_corpus_boundary.json",
+         lambda p: p.write_text(json.dumps(boundary, indent=1, sort_keys=False) + "\n")),
     ]
     _write_all_atomically(writes)
 
+    _announce_boundary(boundary)
     print(f"electric: {len(elec)} billing periods from "
           f"{elec.statement_date.nunique()} statements "
           f"({elec.statement_date.min()} .. {elec.statement_date.max()})")
