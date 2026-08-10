@@ -463,7 +463,8 @@ _RECLASSIFIED_FIGURES = {
               "HPWH_SHARE_CAVEAT", "HPWH_PAYBACK_SENSITIVITY", "HPWH_SAVINGS_BOUND",
               "HEAT_PUMP_COST_BASIS"),
     "s12#5": ("CLEANING_BEST_MONTH", "CLEANING_SINGLE_VALUE_RANGE",
-              "CLEANING_SECOND_MARGINAL_RANGE", "CLEANING_PRICE", "SUPER_OFF_PEAK_RATE"),
+              "CLEANING_SECOND_MARGINAL_RANGE", "CLEANING_PRICE",
+              "MIDDAY_MARGINAL_VALUE_RANGE"),
     "s13#8": ("SPREAD_TREND_SUMMER", "SPREAD_TREND_WINTER"),
     "s13#9": ("BATTERY_ON_MEASURED_SPREAD", "SPREAD_BATTERY_SEED_SAVING",
               "PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
@@ -520,6 +521,65 @@ _FIGURE_NEEDS_QUALIFIER = {
     "s13#11": [("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_PRICING_BASIS"),
                ("NIGHT_FLOOR_ANNUAL_COST", "NIGHT_FLOOR_PRICING_BASIS")],
 }
+
+
+@case
+def case_the_cleaning_caveat_compares_against_a_range_not_a_summer_import_rate():
+    """ISSUE #132, CODEX PASS 2. s12#5's caveat compared the cadence model's
+    pricing against {{SUPER_OFF_PEAK_RATE}} and called it "what a marginal
+    midday kWh earns on today's tariff". That token is rates.allin("S", "sop")
+    -- the SUMMER SUPER-OFF-PEAK IMPORT rate -- so the instruction told the
+    model to state as fact a single figure that is wrong for every exported
+    kWh (which earns the export credit, not an import it never offsets) and
+    silent about winter.
+
+    The conclusion was right and had to survive: the cadence model prices
+    recovered kWh above ANY of those readings, so the upper-bound framing
+    holds. What changed is the comparator.
+
+    Four properties, so neither half can regress alone: the block sees the
+    range, the range really does span both sides and both seasons, the old
+    single-rate comparator is gone from this block, and the upper-bound
+    instruction is still there."""
+    _require_household()
+    html = rt.TEMPLATE.read_text()
+    block = {b.id: b for b in rb.parse_todo_blocks(html)}["s12#5"]
+    scope = rb.scope_tokens_for_block(html, block)
+
+    assert "MIDDAY_MARGINAL_VALUE_RANGE" in scope, (
+        "s12#5 cannot cite the midday-value range it is told to compare against")
+    rendered = rt.resolve_token("MIDDAY_MARGINAL_VALUE_RANGE")
+    assert rendered.strip(), "the midday-value range resolved to nothing"
+
+    # It must be a RANGE, and must not be the bare summer import rate the old
+    # comparator used -- both ends are checked against rates.py itself.
+    summer_import = rt._cents1(rt.R.allin("S", "sop"))
+    # Numeric min/max, THEN formatted: sorting the rendered strings compares
+    # "12.5¢" against "7.6¢" lexicographically and picks the wrong ends.
+    cells = [rt.R.credit(s, "sop") for s in ("S", "W")] + \
+            [rt.R.allin(s, "sop") for s in ("S", "W")]
+    assert "–" in rendered, f"the comparator is not a range: {rendered}"
+    assert rendered.split("/kWh")[0].strip() != summer_import, (
+        f"the comparator collapsed back to the summer import rate: {rendered}")
+    for end in (rt._cents1(min(cells)), rt._cents1(max(cells))):
+        assert end in rendered, (
+            f"the range does not span both sides and both seasons -- {end} missing "
+            f"from {rendered!r} (cells: {[rt._cents1(c) for c in cells]})")
+
+    # The old comparator must not be back in THIS block's own instruction.
+    named = rb.tokens_mentioned(block.text)
+    assert "SUPER_OFF_PEAK_RATE" not in named, (
+        "s12#5's TODO names SUPER_OFF_PEAK_RATE again -- a summer-only IMPORT rate "
+        "cannot stand for what a marginal midday kWh earns")
+    assert "MIDDAY_MARGINAL_VALUE_RANGE" in named, (
+        "s12#5's TODO no longer names the range it must compare against")
+
+    # And the caveat itself survives.
+    assert "upper bound" in block.text, (
+        "s12#5's TODO lost the upper-bound caveat, which the corrected comparator "
+        "still supports")
+    return (f"s12#5 compares against {rendered!r} -- a both-seasons, both-sides range "
+            "from rates.py -- and keeps its upper-bound caveat")
 
 
 @case

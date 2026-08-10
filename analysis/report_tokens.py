@@ -4565,6 +4565,52 @@ def _cleaning_value_range(token, field, tail):
             f"%/month soiling bracket{tail}")
 
 
+_SOP_SEASON_LABEL = {"S": "summer", "W": "winter"}
+
+
+def _midday_marginal_value_range(ctx):
+    """What a marginal midday kWh is actually worth, as the RANGE it is.
+
+    s12#5's caveat used to compare the cadence model's pricing against
+    {{SUPER_OFF_PEAK_RATE}} -- rates.allin("S", "sop"), the SUMMER SUPER-OFF-PEAK
+    IMPORT rate -- and called it "what a marginal midday kWh earns" (issue #132,
+    Codex pass 2). Three things are wrong with that comparator and only the
+    direction of the conclusion survives them:
+
+      * recovered midday production that is EXPORTED earns the export credit,
+        not an import rate it never offsets;
+      * the token is summer-only, and the winter cells differ;
+      * self-consumed and exported energy are two different readings, so the
+        answer is a span, not a point.
+
+    So all four super-off-peak cells are read from the canonical rates module
+    -- both seasons, both sides -- and the span between them is the answer.
+    WHICH END IS WHICH IS COMPUTED, not assumed: nothing here asserts that the
+    export credit is the lower one, because that is exactly the shape of
+    assertion the previous pass spent its findings on. rates.py rather than
+    extra_results.json's frozen price_map copy, for CLAUDE.md section 9's
+    single-rates-module rule -- the copy is itself cross-checked against these
+    same calls by quiet_night_floor.py."""
+    readings = []
+    for season in sorted(_SOP_SEASON_LABEL):
+        label = _SOP_SEASON_LABEL[season]
+        readings.append((f"{label} export credit", R.credit(season, "sop")))
+        readings.append((f"{label} super-off-peak import", R.allin(season, "sop")))
+    values = _quantities(
+        "MIDDAY_MARGINAL_VALUE_RANGE", "what a marginal midday kWh is worth",
+        **{f"cell_{i}": v for i, (_lab, v) in enumerate(readings)})
+    priced = sorted(zip(values, (lab for lab, _v in readings)))
+    (lo, lo_label), (hi, hi_label) = priced[0], priced[-1]
+    if lo == hi:
+        return (f"{_cents1(lo)}/kWh — every super-off-peak cell, import-offset and "
+                "export-credit, prices the same in both seasons")
+    return (f"{_cents1(lo)}–{_cents1(hi)}/kWh — {lo_label} at the low end, "
+            f"{hi_label} at the high end")
+
+
+_tok("MIDDAY_MARGINAL_VALUE_RANGE", kind="derived", get=_midday_marginal_value_range,
+     sources=["analysis/rates.py: allin(season, 'sop') and credit(season, 'sop') "
+              "for both seasons -- the four super-off-peak price-map cells"])
 _tok("CLEANING_BEST_MONTH", kind="derived", get=_cleaning_best_month,
      sources=["data/extra_results.json:cleaning[*].best1"])
 _tok("CLEANING_SINGLE_VALUE_RANGE", kind="derived",
