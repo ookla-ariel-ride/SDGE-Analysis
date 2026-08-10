@@ -462,7 +462,9 @@ _RECLASSIFIED_FIGURES = {
               "HPWH_PAYBACK", "HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_PAYBACK",
               "ELECTRIFICATION_COMBINED_PAYBACK", "ELECTRIFICATION_INCENTIVES",
               "HPWH_SHARE_CAVEAT", "HPWH_PAYBACK_SENSITIVITY", "HPWH_SAVINGS_BOUND",
-              "HEAT_PUMP_COST_BASIS", "HPWH_COST_BASIS"),
+              "HEAT_PUMP_COST_BASIS", "HPWH_COST_BASIS",
+              "HEAT_PUMP_MARGINAL_INSTALL_COST", "HEAT_PUMP_MARGINAL_PAYBACK",
+              "ELECTRIFICATION_METER_REMOVAL_CAVEAT"),
     "s12#5": ("CLEANING_BEST_MONTH", "CLEANING_SINGLE_VALUE_RANGE",
               "CLEANING_SECOND_MARGINAL_RANGE", "CLEANING_PRICE",
               "MIDDAY_MARGINAL_VALUE_RANGE"),
@@ -472,7 +474,7 @@ _RECLASSIFIED_FIGURES = {
     "s13#11": ("NIGHT_FLOOR_MEDIAN", "NIGHT_FLOOR_SPREAD", "NIGHT_FLOOR_SAMPLE",
                "NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
                "NIGHT_FLOOR_CYCLING", "NIGHT_FLOOR_SEASONALITY",
-               "NIGHT_FLOOR_PRICING_BASIS"),
+               "NIGHT_FLOOR_PRICING_BASIS", "PHANTOM_METHOD_DISCREPANCY"),
 }
 
 # ---------------------------------------------------------------------------
@@ -509,6 +511,8 @@ _FIGURE_NEEDS_QUALIFIER = {
         # ... and its water-heater companion, which the artifact's own note
         # exists to contrast with (issue #132, Codex pass 3).
         ("HPWH_INSTALL_COST", "HPWH_COST_BASIS"),
+        # The whole-transition payback is not a confirmed meter removal.
+        ("ELECTRIFICATION_COMBINED_PAYBACK", "ELECTRIFICATION_METER_REMOVAL_CAVEAT"),
     ],
     # The three maxima measure different things (an hourly mean, a lower bound,
     # a five-minute sample); corroboration_reading and
@@ -523,7 +527,11 @@ _FIGURE_NEEDS_QUALIFIER = {
     # Both annual figures extend a four-hour measurement across 8,760 hours,
     # which quiet_night_floor.py's own confidence_labels call modeled.
     "s13#11": [("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_PRICING_BASIS"),
-               ("NIGHT_FLOOR_ANNUAL_COST", "NIGHT_FLOOR_PRICING_BASIS")],
+               ("NIGHT_FLOOR_ANNUAL_COST", "NIGHT_FLOOR_PRICING_BASIS"),
+               # Section 9 publishes a different figure for this same load, and
+               # CLAUDE.md section 0 forbids carrying both silently.
+               ("NIGHT_FLOOR_ANNUAL_KWH", "PHANTOM_METHOD_DISCREPANCY"),
+               ("NIGHT_FLOOR_ANNUAL_COST", "PHANTOM_METHOD_DISCREPANCY")],
 }
 
 
@@ -704,7 +712,17 @@ def _derive_qualifier_candidates(html, blocks, block_ids):
                     finally:
                         parent[key] = original
                     if moved:
-                        touched.setdefault(who, set()).add(path[:-1])
+                        # EVERY ANCESTOR, not just the immediate parent. A
+                        # qualifier is routinely written one level up from the
+                        # number it qualifies -- install_cost.note sits beside
+                        # install_cost.central_usd, but water_heater_conversion's
+                        # not_verified_caveat sits a level above the payback it
+                        # governs. `path[:-1]` alone made every one of those
+                        # invisible, so the mechanism built to replace the hand
+                        # list had the hand list's own blind spot (issue #132,
+                        # /review finding 9).
+                        for depth in range(len(path)):
+                            touched.setdefault(who, set()).add(path[:depth])
         for who, objects in sorted(touched.items()):
             doc = rt._json(who)
             for objpath in sorted(objects):
@@ -779,18 +797,133 @@ _QUALIFIER_ACCOUNTED = {
     ("s13#11", "quiet_night_floor.json", "pricing.floor_assumption_violations", "note"):
         ("NIGHT_FLOOR_PRICING_BASIS computes this note's direction and magnitude from "
          "usd_dropped_at_export_rate", None),
+    # --- raised by the ancestor walk (issue #132, /review finding 9) --------
+    ("s10#4", "all_electric_endgame.json", "(root)", "basis"):
+        ("states how the two conversions were computed -- provenance for the "
+         "arithmetic, not a condition on reading its result", None),
+    ("s10#4", "all_electric_endgame.json", "sequencing_and_paybacks", "basis"):
+        ("states how the ORDER was chosen; ELECTRIFICATION_SEQUENCE carries that "
+         "order's own robustness and crossover share", None),
+    ("s10#4", "all_electric_endgame.json", "sequencing_and_paybacks",
+     "not_verified_caveat"):
+        ("the sequencing copy of water_heater_conversion.not_verified_caveat; "
+         "HPWH_SHARE_CAVEAT states it and ELECTRIFICATION_SEQUENCE repeats it inline "
+         "('on an unverified water-heater-share assumption')", None),
+    ("s10#4", "all_electric_endgame.json", "water_heater_conversion."
+     "water_heater_share_sensitivity", "basis"):
+        ("HPWH_SHARE_CAVEAT states this basis's own conclusion -- illustrative "
+         "scenarios, not a proven bound, true share could be lower still", None),
+    ("s10#4", "heat_pump_conversion.json", "(root)", "basis"):
+        ("states how the furnace therms were isolated and re-billed -- method "
+         "provenance, not a condition on the payback", None),
+    ("s9#3", "service_headroom.json", "(root)", "caveat"):
+        ("scopes the SERVICE-CAPACITY verdicts to a licensed electrician's permit "
+         "calculation; s9#3 publishes measured PV power against the inverter "
+         "nameplate, not a capacity verdict", None),
+    ("s9#3", "service_headroom.json", "gross_reconstruction.pv_ac_ceiling", "basis"):
+        ("names the nameplate as the ceiling's source; AC_CEILING_KW is that same "
+         "intake field and PV_PEAK_BASIS states the corroboration's standing", None),
+    ("s9#3", "service_headroom.json", "gross_reconstruction.pv_ac_ceiling",
+     "why_not_the_observed_maximum"):
+        ("PV_PEAK_BASIS states this argument in its own closing clause -- a "
+         "quarter-hour can carry more than a quarter of the best full hour", None),
+    ("s9#2", "behavior_rebuild.json", "(root)", "note"):
+        ("governs the model's ABSOLUTE bill figures ('report DELTAS'); the section 9 "
+         "tokens publish session counts and kWh, not bills", None),
+    ("s9#3", "behavior_rebuild.json", "(root)", "note"): ("same", None),
+    ("s9#4", "behavior_rebuild.json", "(root)", "note"): ("same", None),
+    ("s9#5", "behavior_rebuild.json", "(root)", "note"): ("same", None),
+    ("s13#11", "deep_results.json", "phantom", "note"):
+        ("PHANTOM_METHOD_DISCREPANCY names section 9's method inline -- 'from a "
+         "25th-percentile 3-5am draw' -- which is what this note states", None),
 }
 
 # Candidates whose FIGURE comes from a token this PR did not add. Out of scope
 # here by the same rule that left EV_FIX_SAVINGS_* alone (issue #147); listed
 # so they are visibly excluded rather than quietly absent.
+# Keyed PER BLOCK, not per artifact: the same object can carry a pre-existing
+# token's figures in one section and this PR's in another. quiet_night_floor's
+# night_floor is exactly that -- section 2 reads it only through the
+# pre-existing S2_VERDICT, section 13 reads it through the NIGHT_FLOOR_* tokens
+# this PR added, and an artifact-keyed entry silently exempted both.
 _QUALIFIER_PRE_EXISTING = {
-    ("deep_results.json", "phantom"): ("SEC9_TEASER",),
-    ("nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
-        ("NEM_GRANDFATHER_VALUE_RANGE", "SEC13_TEASER"),
-    ("cca_bundled_counterfactual.json", "direction_a_cca_repriced_at_bundled"):
-        ("S10_VERDICT",),
+    ("s9#2", "deep_results.json", "phantom"): ("SEC9_TEASER",),
+    ("s9#3", "deep_results.json", "phantom"): ("SEC9_TEASER",),
+    ("s9#4", "deep_results.json", "phantom"): ("SEC9_TEASER",),
+    ("s9#5", "deep_results.json", "phantom"): ("SEC9_TEASER",),
+    ("s2#3", "quiet_night_floor.json", "night_floor"): ("S2_VERDICT",),
+    ("s2#4", "quiet_night_floor.json", "night_floor"): ("S2_VERDICT",),
+    ("s13#8", "battery_dispatch_policies.json", "(root)"):
+        ("PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
+    ("s13#9", "battery_dispatch_policies.json", "(root)"):
+        ("PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
+    ("s13#11", "battery_dispatch_policies.json", "(root)"):
+        ("PAYBACK_AT_HISTORICAL_ESCALATION", "NPV_AT_HISTORICAL_ESCALATION"),
+    ("s13#8", "carbon_fullyear_results.json", "(root)"): ("SEC13_TEASER",),
+    ("s13#9", "carbon_fullyear_results.json", "(root)"): ("SEC13_TEASER",),
+    ("s13#11", "carbon_fullyear_results.json", "(root)"): ("SEC13_TEASER",),
+    ("s13#8", "nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
+        ("NEM_GRANDFATHER_VALUE_RANGE",),
+    ("s13#9", "nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
+        ("NEM_GRANDFATHER_VALUE_RANGE",),
+    ("s13#11", "nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
+        ("NEM_GRANDFATHER_VALUE_RANGE",),
+    ("s10#4", "cca_bundled_counterfactual.json",
+     "direction_a_cca_repriced_at_bundled"): ("S10_VERDICT",),
 }
+
+
+@case
+def case_each_instruction_names_the_branch_the_recommendation_it_makes_needs():
+    """ISSUE #132, /review FINDINGS 6, 7 AND 10. Three TODOs whose instruction
+    and whose scoped figures pointed at different things.
+
+    s10#4 concluded "the decision belongs at the moment the existing appliance
+    dies" with only the STANDALONE furnace figures in scope ($14,529 / 167.2
+    yr). heat_pump_conversion's marginal_over_ac_replacement branch ($4,098 /
+    47.2 yr) is the one that prices replacing at failure, and it was not
+    tokenized at all -- so the instruction argued for waiting while showing the
+    number for not waiting.
+
+    s9#3 called a 60-row cleaning-study export "the closest approach anywhere
+    in the committed record", a superlative over a record that token never
+    opens.
+
+    s9#5 put the compliance share and the two savings figures in one sentence,
+    inviting prose that reads them as one basis when the savings come from
+    re-billing whole shifted sessions."""
+    _require_household()
+    html = rt.TEMPLATE.read_text()
+    blocks = {b.id: b for b in rb.parse_todo_blocks(html)}
+    checked = {}
+
+    s10 = blocks["s10#4"].text
+    for token in ("HEAT_PUMP_MARGINAL_INSTALL_COST", "HEAT_PUMP_MARGINAL_PAYBACK"):
+        assert token in rb.tokens_mentioned(s10), (
+            f"s10#4 recommends replace-on-failure but cannot cite {token}, the branch "
+            "that prices it")
+        checked[token] = rt.resolve_token(token)
+    assert "replace-on-failure" in s10, "s10#4 lost the replace-on-failure recommendation"
+    assert "do not support the recommendation with the standalone figures" in s10, (
+        "s10#4 no longer forbids pricing replace-on-failure with the standalone branch")
+
+    s9_3 = blocks["s9#3"].text
+    assert "anywhere in the committed record" not in s9_3, (
+        "s9#3 claims a record-wide maximum again from a token that reads one "
+        "60-row cleaning-study export")
+    assert "NOT a record-wide maximum" in s9_3, (
+        "s9#3 no longer tells the writer the peak is not a record-wide maximum")
+    checked["PEAK_POWER_MULTIYEAR"] = rt.resolve_token("PEAK_POWER_MULTIYEAR")
+    assert "sample" in checked["PEAK_POWER_MULTIYEAR"], (
+        "the peak token no longer names the window it covers")
+
+    s9_5 = blocks["s9#5"].text
+    assert "SEPARATE sentence" in s9_5 and "do not present them as one basis" in s9_5, (
+        "s9#5 no longer separates the compliance share from the re-billed savings")
+    return (f"s10#4 prices replace-on-failure with the marginal branch "
+            f"({checked['HEAT_PUMP_MARGINAL_INSTALL_COST']} / "
+            f"{checked['HEAT_PUMP_MARGINAL_PAYBACK']}), s9#3 drops the record-wide "
+            "superlative, and s9#5 splits the two EV bases")
 
 
 @case
@@ -807,7 +940,7 @@ def case_every_derived_figure_qualifier_candidate_is_accounted_for():
         if is_covered:
             covered += 1
             continue
-        if (who, objpath) in _QUALIFIER_PRE_EXISTING:
+        if (bid, who, objpath) in _QUALIFIER_PRE_EXISTING:
             pre_existing += 1
             continue
         entry = _QUALIFIER_ACCOUNTED.get((bid, who, objpath, key))
@@ -829,6 +962,11 @@ def case_every_derived_figure_qualifier_candidate_is_accounted_for():
         "is discharged in _QUALIFIER_ACCOUNTED:\n  " + "\n  ".join(unaccounted))
     assert not stale, (
         f"_QUALIFIER_ACCOUNTED has entries the derivation no longer raises: {sorted(stale)}")
+    raised = {(bid, who, objpath) for bid, who, objpath, _k, cov in candidates if not cov}
+    stale_pre = set(_QUALIFIER_PRE_EXISTING) - raised
+    assert not stale_pre, (
+        "_QUALIFIER_PRE_EXISTING has entries the derivation no longer raises: "
+        f"{sorted(stale_pre)}")
     return (f"{len(candidates)} qualifier candidates derived across "
             f"{len(_RECLASSIFIED_FIGURES)} blocks: {covered} discharged by a token that "
             f"reads them, {pre_existing} belong to pre-existing figures, "

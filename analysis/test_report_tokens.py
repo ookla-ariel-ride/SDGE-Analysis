@@ -4838,6 +4838,129 @@ def case_the_install_cost_caveat_is_the_artifacts_own_words_not_a_paraphrase():
 
 
 @case
+def case_the_second_sweep_of_legitimate_generator_emissions():
+    """ISSUE #132, /review FINDINGS 1-4 AND 8. The pass-2 sweep produced the
+    right principle -- a value the generator writes ON PURPOSE is data, not an
+    error -- and then was not run exhaustively. Five more sites had the same
+    shape, four of them the identical null-payback defect the sweep had just
+    fixed in tou_spread.
+
+    heat_pump_conversion.payback_and_npv() returns {"payback_years": None,
+    "note": "no positive annual savings on this basis -- no payback"}, and
+    every payback in all_electric_endgame comes through it. Four tokens pushed
+    that null into _quantities and aborted the WHOLE report for the household
+    the conversion does not pay off on -- while HPWH_NET_SAVINGS beside them
+    rendered its negative saving quite happily."""
+    got = {}
+
+    def endgame(edit):
+        return _stub_for("all_electric_endgame.json", edit)
+
+    def never_pay(node):
+        node["payback_years"] = None
+        node.pop("npv", None)          # the generator omits npv on this branch too
+
+    # 1. All four payback tokens, each on its own null.
+    def wh_never(doc):
+        wh = doc["water_heater_conversion"]
+        never_pay(wh["payback"][wh["headline_uef"]]["central_install"])
+        for s in wh["water_heater_share_sensitivity"]["scenarios"].values():
+            never_pay(s["payback"]["central_install"])
+        never_pay(doc["sequencing_and_paybacks"]["complete_transition_payback"])
+
+    with _patched(rt, "_json", endgame(wh_never)):
+        for token in ("HPWH_PAYBACK", "HPWH_PAYBACK_SENSITIVITY",
+                      "ELECTRIFICATION_COMBINED_PAYBACK"):
+            got[token] = _renders(token)
+            assert "never repays" in got[token], got[token]
+    assert "$18,729" in got["ELECTRIFICATION_COMBINED_PAYBACK"], (
+        "the install cost is still known when the payback is not")
+
+    def hp_never(doc):
+        for scenario in doc["payback"].values():
+            never_pay(scenario["standalone"])
+
+    with _patched(rt, "_json", _stub_for("heat_pump_conversion.json", hp_never)):
+        got["HEAT_PUMP_PAYBACK"] = _renders("HEAT_PUMP_PAYBACK")
+    assert "never repays" in got["HEAT_PUMP_PAYBACK"], got["HEAT_PUMP_PAYBACK"]
+
+    # ... and a partial one: some scenarios repay, some never do.
+    def hp_mixed(doc):
+        keys = sorted(doc["payback"])
+        never_pay(doc["payback"][keys[0]]["standalone"])
+
+    with _patched(rt, "_json", _stub_for("heat_pump_conversion.json", hp_mixed)):
+        got["HEAT_PUMP_PAYBACK_mixed"] = _renders("HEAT_PUMP_PAYBACK")
+    assert "never repay" in got["HEAT_PUMP_PAYBACK_mixed"], got["HEAT_PUMP_PAYBACK_mixed"]
+
+    # 2. soiling_analysis publishes no measured cleaning gain: the geometry
+    #    half of the caveat stands, the soiling half is not determined.
+    def no_gain(doc):
+        doc["degradation"]["single_event_soiling_swing_pct"] = None
+
+    with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", no_gain)):
+        got["DEGRADATION_WEATHER_CAVEAT"] = _renders("DEGRADATION_WEATHER_CAVEAT")
+    assert "not determined" in got["DEGRADATION_WEATHER_CAVEAT"], \
+        got["DEGRADATION_WEATHER_CAVEAT"]
+    assert "cannot explain" in got["DEGRADATION_WEATHER_CAVEAT"], \
+        got["DEGRADATION_WEATHER_CAVEAT"]
+
+    # 3. service_headroom OMITS pv_ac_ceiling on a household with no PV --
+    #    "a computation that does not apply is not the same as one that ran
+    #    and found nothing", in the generator's own words.
+    def no_pv(doc):
+        doc["gross_reconstruction"].pop("pv_ac_ceiling", None)
+        doc["gross_reconstruction"]["identity"] = \
+            "gross = import (no on-site generation to net out)"
+
+    with _patched(rt, "_json", _stub_for("service_headroom.json", no_pv)):
+        for token in ("PV_PEAK_OBSERVED", "PV_PEAK_HEADROOM", "PV_PEAK_BASIS"):
+            got[token] = _renders(token)
+            assert "not applicable" in got[token], got[token]
+            assert "no on-site generation" in got[token], got[token]
+
+    # 4. One fitted slope cannot be publishable and not: the annual figure
+    #    takes the same sign the slope it is multiplied out from takes.
+    def cooling_negative(doc):
+        doc["annual_cooling_kwh"] = -420
+        doc["kwh_per_cdd65"] = -1.4
+
+    with _patched(rt, "_json", _stub_for("weather_results.json", cooling_negative)):
+        got["ANNUAL_COOLING_KWH"] = _renders("ANNUAL_COOLING_KWH")
+        got["COOLING_KWH_PER_CDD"] = _renders("COOLING_KWH_PER_CDD")
+    assert "-420" in got["ANNUAL_COOLING_KWH"], got["ANNUAL_COOLING_KWH"]
+    assert "-1.4" in got["COOLING_KWH_PER_CDD"], got["COOLING_KWH_PER_CDD"]
+
+    # 8. A measured peak ABOVE the stated ceiling is a contradiction, not a
+    #    percentage. Gated on the archive, and ONLY this part: the ceiling it
+    #    compares against is household.yaml's solar.kw_ac, while the four
+    #    checks above need no private data and must keep running on CI.
+    if rt.hh.PATH.is_file():
+        real_csv = rt._csv_rows
+
+        def over_ceiling(name):
+            rows = real_csv(name)
+            if name != "cleaning_study_peaks_2024.csv":
+                return rows
+            return [dict(r, peak_w="99000") for r in rows]
+
+        with _patched(rt, "_csv_rows", over_ceiling):
+            got["PEAK_POWER_MULTIYEAR"] = _renders("PEAK_POWER_MULTIYEAR")
+        assert "ABOVE the inverter AC ceiling" in got["PEAK_POWER_MULTIYEAR"], \
+            got["PEAK_POWER_MULTIYEAR"]
+        assert "% of the inverter" not in got["PEAK_POWER_MULTIYEAR"], \
+            got["PEAK_POWER_MULTIYEAR"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return (f"{len(got)} render(s) across the five sites the pass-2 sweep missed: a null "
+            "payback, an unmeasured cleaning gain, an omitted PV ceiling, a negative "
+            "cooling fit and an above-nameplate peak are all answers, not aborts")
+
+
+@case
 def case_the_malformed_render_patterns_flag_exactly_the_shapes_they_name():
     """ISSUE #132. The sweep's whole contract is _MALFORMED_RENDER, and nothing
     tested the patterns themselves -- a lookaround loosened by one character
