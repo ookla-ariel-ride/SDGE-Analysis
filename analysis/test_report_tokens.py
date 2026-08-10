@@ -3769,8 +3769,32 @@ _MALFORMED_RENDER = (
     ("a doubled sigil", re.compile(r"\$\$|%%|¢¢|~~")),
     # A sigil with no number behind it, and a unit with no number in front:
     # the shapes a formula produces when its figure formats to nothing.
+    #
+    # THE "]" EXEMPTION, AND WHY IT IS CONDITIONAL. tou_spread.py writes its
+    # confidence intervals as "[1.68, 21.0]%/yr" and publishes that string in
+    # the not_determined_because reasons SPREAD_TREND_WINTER renders verbatim
+    # (issue #132) -- a percent sign with a fully-formed number behind it,
+    # which is the opposite of the shape this pattern hunts.
+    #
+    # The first version of that exemption was `(?<![\d)\]])%`, which exempts a
+    # BRACKET rather than a NUMBER: it let "[]%" through -- an interval that
+    # formatted to nothing, wearing a percent sign -- which is precisely the
+    # class this pattern exists for. Reviewer catch on issue #132; latent
+    # rather than live (an empty ci95 list sends both spread tokens down the
+    # not-determined branch, which prints no interval at all), but a guard that
+    # covers less than it claims is the failure this project keeps paying for.
+    #
+    # So the exemption is two fixed-width lookbehinds and requires a DIGIT
+    # immediately before the bracket: "21.0]%" passes, "[]%" and "[nan]%" are
+    # flagged, and "%" after a space or a letter is untouched. "(1.3)%" still
+    # passes on the first lookbehind, which has exempted ")" since round 5.
+    #
+    # The cents pattern is left exactly as it was BEFORE issue #132. Nothing
+    # renders "]¢", so widening it bought no render and only ever cost
+    # coverage; the smallest correct change is to give that back rather than
+    # to grant a narrower version of an exemption no token uses.
     ("an empty numeric field",
-     re.compile(r"\$(?![\d,])|(?<![\d)])%|(?<![\d)])¢")),
+     re.compile(r"\$(?![\d,])|(?<![\d)])(?<!\d\])%|(?<![\d)])¢")),
 )
 
 
@@ -3955,6 +3979,7 @@ _TOKENS_WITH_NO_POISONABLE_FIELD = {
 _TOKENS_THAT_READ_NO_ARTIFACT = {
     "BILLED_GENERATION_RATES", "CHEAP_WINDOW", "DAYBAND_OFFPEAK_PRICE",
     "DAYBAND_ONPEAK_PRICE", "DAYBAND_SEASON_LABEL", "DAYBAND_SOP_PRICE",
+    "MIDDAY_MARGINAL_VALUE_RANGE",
     "PEAK_WINDOW", "RATES_EFFECTIVE_DATE", "RECOMMENDED_PACKAGE_SUMMARY",
     "REPORT_DATE", "S14_VERDICT", "SUMMER_ONPEAK_EXPORT_RATE",
     "SUMMER_ONPEAK_IMPORT_RATE", "SUPER_OFF_PEAK_RATE",
@@ -4382,6 +4407,623 @@ def case_the_sweep_fails_when_it_covers_an_artifact_with_nothing():
             f"(ANNUAL_PRODUCTION_KWH: {real_probes} probes), and a token reading an "
             f"artifact that contributes no poisonable field is a named coverage FAILURE "
             f"-- reproduced twice, on the round-5 filter and on a blinded column")
+
+
+def _stub_for(artifact, edit):
+    """A drop-in rt._json that hands out an EDITED DEEP COPY of one artifact
+    and the real document for every other, so a stub cannot leak into the
+    module's cache or into a later case."""
+    real = rt._json
+
+    def stubbed(name):
+        if name != artifact:
+            return real(name)
+        doc = copy.deepcopy(real(name))
+        edit(doc)
+        return doc
+
+    return stubbed
+
+
+def _renders(token):
+    """resolve_token, with a REFUSAL turned into this case's own failure.
+
+    resolve_token signals refusal with SystemExit, which is a BaseException:
+    left to propagate it would end the whole run instead of failing the case
+    that provoked it, and "the suite stopped" reads nothing like "this token
+    refuses a household that merely differs", which is the defect being
+    tested."""
+    try:
+        return rt.resolve_token(token)
+    except SystemExit as e:
+        raise AssertionError(
+            f"{token} REFUSED an artifact state that is simply the other reading, "
+            f"instead of rendering the sentence written for it: {e}")
+
+
+@case
+def case_a_household_whose_artifacts_read_the_other_way_still_gets_its_sentences():
+    """ISSUE #132. Round one's defect, in the shape issue #132's own tokens
+    could take: four of them BRANCH on what the artifacts say, and this
+    household's artifacts only ever select one branch each. An array that
+    gained instead of declining, a cadence model whose soiling scenarios pick
+    different months, a spread trend that survives its structural-break check,
+    a battery re-run that produces a real payback -- every one of those is an
+    ordinary household with an ordinary sentence to print, and none of them may
+    reach a refusal or a branch written for the opposite reading.
+
+    The committed artifacts are never edited; each stub is a deep copy."""
+    got = {}
+
+    # 1. An array that GAINED, and one whose three estimators disagree on the
+    #    direction -- neither is a refusal, and neither may print "decline".
+    def gained(doc):
+        d = doc["degradation"]
+        d["ols_pct_per_yr"], d["cagr_pct_per_yr"], d["theil_sen_pct_per_yr"] = 0.4, 1.1, 0.9
+
+    def split(doc):
+        d = doc["degradation"]
+        d["ols_pct_per_yr"], d["cagr_pct_per_yr"], d["theil_sen_pct_per_yr"] = -0.6, 0.2, -0.1
+
+    for label, edit in (("gain", gained), ("split", split)):
+        with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", edit)):
+            got[f"degradation_{label}"] = _renders("DEGRADATION_NAIVE_RANGE")
+    assert "of gain" in got["degradation_gain"], got["degradation_gain"]
+    assert "decline" not in got["degradation_gain"], got["degradation_gain"]
+    assert "disagree on the direction" in got["degradation_split"], got["degradation_split"]
+
+    # 2. Soiling scenarios that pick DIFFERENT best months: every scenario's
+    #    own answer is named, rather than one of them being published as "the"
+    #    month or the disagreement being refused.
+    def months_differ(doc):
+        for i, key in enumerate(sorted(doc["cleaning"], key=float)):
+            doc["cleaning"][key]["best1"] = ["Jun 2", "Jul 17", "Aug 30"][i % 3]
+
+    with _patched(rt, "_json", _stub_for("extra_results.json", months_differ)):
+        got["cleaning"] = _renders("CLEANING_BEST_MONTH")
+    for month in ("Jun 2", "Jul 17", "Aug 30"):
+        assert month in got["cleaning"], got["cleaning"]
+    assert "every soiling rate" not in got["cleaning"], got["cleaning"]
+
+    # 3. A spread trend that SURVIVES, and a battery re-run that produces a
+    #    real payback and NPV on it.
+    def determined(doc):
+        for season in ("summer", "winter"):
+            doc["delivery_spread"][season]["verdict"] = "escalating"
+            doc["delivery_spread"][season]["reportable"] = True
+        for season, npv in (("summer", 4200), ("winter", -900)):
+            doc["battery"]["per_period"][season] = {
+                "verdict": "escalating", "payback_yr": 5.4, "npv10": npv}
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", determined)):
+        got["summer"] = _renders("SPREAD_TREND_SUMMER")
+        got["battery"] = _renders("BATTERY_ON_MEASURED_SPREAD")
+    assert "%/yr" in got["summer"] and "95% CI" in got["summer"], got["summer"]
+    assert "not determined" not in got["summer"], got["summer"]
+    assert "5.4 yr payback" in got["battery"], got["battery"]
+    assert "+$4,200" in got["battery"] and "-$900" in got["battery"], got["battery"]
+
+    # 4. And an instrument reading ABOVE the inverter nameplate says so rather
+    #    than printing a negative headroom as though it were clearance.
+    def over_nameplate(doc):
+        doc["gross_reconstruction"]["pv_ac_ceiling"]["corroboration"][0][
+            "below_nameplate_by_kw"] = -0.4
+
+    with _patched(rt, "_json", _stub_for("service_headroom.json", over_nameplate)):
+        got["headroom"] = _renders("PV_PEAK_HEADROOM")
+    assert "ABOVE the inverter nameplate" in got["headroom"], got["headroom"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return ("the alternate reading of every branching issue-#132 token renders a real "
+            f"sentence rather than a refusal: {sorted(got)}")
+
+
+@case
+def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts():
+    """ISSUE #132, ADVERSARIAL PASS 2. _figures / _amounts / _quantities refuse
+    on sight, which is what makes them worth having and what makes them the
+    wrong thing to point at a field its generator deliberately writes as null,
+    empty or "does not apply".
+
+    The instance: tou_spread._payback returns payback_yr None when a narrowing
+    spread leaves the battery unrecovered inside its horizon, and the generator
+    says in a comment above the emission that this is "a real result, not an
+    error ... the one verdict it most needs to be able to report".
+    BATTERY_ON_MEASURED_SPREAD refused it, so the household whose battery does
+    not pay back got NO REPORT AT ALL -- a determinate answer treated as
+    NOT_DETERMINED, the mirror image of the class this module already guards.
+
+    Each stub below is one legitimate emission traced to the generator that
+    writes it, and the assertion is the same every time: it RENDERS, it says
+    what happened, and nothing about it is malformed."""
+    got = {}
+
+    # 1. The named defect: a REPORTABLE per-season run whose battery never
+    #    repays inside the horizon. NPV is present and meaningful here.
+    def unpaid(doc):
+        doc["battery"]["per_period"]["summer"] = {
+            "verdict": "widening", "payback_yr": None, "npv10": -3100}
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", unpaid)):
+        got["battery_never_repays"] = _renders("BATTERY_ON_MEASURED_SPREAD")
+    assert "does not repay within the model horizon" in got["battery_never_repays"], \
+        got["battery_never_repays"]
+    assert "-$3,100" in got["battery_never_repays"], got["battery_never_repays"]
+
+    # 2. tou_spread._fit_spread's two degenerate exits: a short corpus returns
+    #    {"n", "verdict"} with the reason INSIDE the verdict string, and no
+    #    escalation/span fields at all.
+    def short_corpus(doc):
+        doc["delivery_spread"]["summer"] = {
+            "n": 2, "verdict": "not determined -- fewer than 3 paired observations"}
+        doc["delivery_spread"]["winter"] = {
+            "n": 4, "n_independent": 1,
+            "verdict": "not determined -- fit undefined on 1 independent level(s)"}
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", short_corpus)):
+        got["short_summer"] = _renders("SPREAD_TREND_SUMMER")
+        got["short_winter"] = _renders("SPREAD_TREND_WINTER")
+    assert "fewer than 3 paired observations" in got["short_summer"], got["short_summer"]
+    assert "fit undefined" in got["short_winter"], got["short_winter"]
+
+    # 3. A reportable fit whose r2 is null (tou_spread writes the null itself)
+    #    and whose reason list came back empty.
+    def null_r2(doc):
+        s = doc["delivery_spread"]["summer"]
+        s["verdict"], s["r2"] = "widening", None
+        doc["delivery_spread"]["winter"]["not_determined_because"] = []
+
+    with _patched(rt, "_json", _stub_for("tou_spread.json", null_r2)):
+        got["null_r2"] = _renders("SPREAD_TREND_SUMMER")
+        got["no_reason"] = _renders("SPREAD_TREND_WINTER")
+    assert "r²" not in got["null_r2"], got["null_r2"]
+    assert "%/yr" in got["null_r2"], got["null_r2"]
+    assert got["no_reason"].startswith("not determined"), got["no_reason"]
+
+    # 4. behavior_rebuild.py's _not_applicable stub, for a household with no EV.
+    def no_ev(doc):
+        doc["detection"] = {"not_applicable": True,
+                            "reason": "household.has_ev is false (intake applicability flag)"}
+
+    with _patched(rt, "_json", _stub_for("behavior_rebuild.json", no_ev)):
+        for token in ("EV_SESSION_COUNT", "EV_ANNUAL_KWH", "EV_AVG_SESSION_KWH",
+                      "EV_WINDOW_DECOMPOSITION", "EV_SOP_COMPLIANCE_PCT",
+                      "EV_DETECTION_BASIS"):
+            got[f"no_ev_{token}"] = _renders(token)
+            assert "not applicable" in got[f"no_ev_{token}"], got[f"no_ev_{token}"]
+            assert "has_ev" in got[f"no_ev_{token}"], got[f"no_ev_{token}"]
+
+    # 5. The two gas artifacts collapsing to {"applicable": False} for a
+    #    household with no gas service.
+    def no_gas(doc):
+        doc.clear()
+        doc.update({"applicable": False, "reason": "household.has_gas is false"})
+
+    for artifact, tokens in (
+            ("all_electric_endgame.json",
+             ("HPWH_INSTALL_COST", "HPWH_PAYBACK", "HPWH_NET_SAVINGS",
+              "HPWH_SHARE_CAVEAT", "HPWH_PAYBACK_SENSITIVITY", "HPWH_SAVINGS_BOUND",
+              "ELECTRIFICATION_SEQUENCE", "ELECTRIFICATION_COMBINED_PAYBACK")),
+            ("heat_pump_conversion.json",
+             ("HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_PAYBACK", "HEAT_PUMP_COST_BASIS",
+              "ELECTRIFICATION_INCENTIVES"))):
+        with _patched(rt, "_json", _stub_for(artifact, no_gas)):
+            for token in tokens:
+                got[f"no_gas_{token}"] = _renders(token)
+                assert "not applicable" in got[f"no_gas_{token}"], got[f"no_gas_{token}"]
+                assert "has_gas" in got[f"no_gas_{token}"], got[f"no_gas_{token}"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return (f"{len(got)} legitimate null / degenerate / not-applicable emission(s) render "
+            "their own answer instead of aborting the report")
+
+
+@case
+def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_unit():
+    """ISSUE #132, PASS 3 AND CODEX PASS 1 FINDING 1. NIGHT_FLOOR_ANNUAL_KWH
+    annualizes floor_kw x nights x 24 and labels it "/yr", while the artifact
+    declares its own basis as the floor "applied as a constant across all 8,760
+    hours of the year". nights_total is only the count of dated rows, so the
+    two agree at 365 BY COINCIDENCE.
+
+    The gate is tested at BOTH ENDS and against a scattered record, because
+    each was a separate way to publish a false unit:
+      * short  -- 200 nights understated the year and still said "/yr";
+      * long   -- 730 nights rendered "18,046 kWh/yr", roughly two years of
+                  energy wearing an annual unit, which the first version of
+                  this gate let straight through (it tested only `>= 365`);
+      * gappy  -- 365 dates scattered over three calendar years is not a year,
+                  and a bare count cannot tell the difference, which is why
+                  coverage is read from daily_series' own first and last date.
+
+    And the complete case must still render exactly what it renders today."""
+    complete = {n: rt.resolve_token(n) for n in
+                ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST")}
+    assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
+    assert "/yr" in complete["NIGHT_FLOOR_ANNUAL_COST"], complete
+
+    def corpus(nights, step=1, hole_to=None):
+        """A coherent stub: `nights` dates every `step` days, with nights_total
+        agreeing with the series it is a count of. `hole_to` instead lays down
+        `nights - 1` consecutive dates and then one final date at that offset,
+        which is how you get a record that spans exactly a year while missing
+        days inside it."""
+        def edit(doc):
+            first = dt.date(2025, 7, 24)
+            if hole_to is None:
+                offsets = [i * step for i in range(nights)]
+            else:
+                offsets = list(range(nights - 1)) + [hole_to]
+            doc["night_floor"]["daily_series"] = [
+                {"date": (first + dt.timedelta(days=o)).isoformat(),
+                 "median_kw": 1.0, "excluded_high_demand": False}
+                for o in offsets]
+            doc["night_floor"]["nights_total"] = nights
+        return edit
+
+    checked = {}
+    for label, kwargs, expect in (
+            ("short", dict(nights=200), "less than a full year"),
+            ("short", dict(nights=90), "less than a full year"),
+            ("long", dict(nights=730), "more than a full year"),
+            ("long", dict(nights=400), "more than a full year"),
+            # 365 dates every third day: the right COUNT, three calendar years
+            # of window -- the case a bare count cannot see at all.
+            ("scattered", dict(nights=365, step=3), "spanning more than a full year"),
+            # 300 dates inside a 365-day window: the right SPAN, holes in it.
+            ("gappy", dict(nights=300, hole_to=364), "gaps")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                             corpus(**kwargs))):
+            for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST"):
+                text = _renders(token)
+                checked[f"{token}@{label}:{kwargs}"] = text
+                assert "/yr" not in text, (
+                    f"{token} publishes an ANNUAL figure from a {label} corpus "
+                    f"({kwargs}), which is not a year: {text}")
+                assert expect in text, f"{token} did not say why ({expect!r}): {text}"
+                for pat_label, pattern in _MALFORMED_RENDER:
+                    assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
+
+    # A leap year is still a year: the gate asks about coverage, not length.
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", corpus(nights=366))):
+        leap = _renders("NIGHT_FLOOR_ANNUAL_KWH")
+    assert leap.endswith("kWh/yr"), leap
+
+    # The rate is the one the pricing used: a floor_kw_priced that no longer
+    # matches median_kw beyond its own rounding means the kWh figure and the $
+    # figure would rest on different floors, and that IS a refusal.
+    def drifted(doc):
+        doc["pricing"]["floor_kw_priced"] = doc["night_floor"]["median_kw"] + 0.5
+
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", drifted)):
+        try:
+            rt.resolve_token("NIGHT_FLOOR_ANNUAL_KWH")
+            raise AssertionError("a drifted floor_kw_priced was accepted")
+        except SystemExit as e:
+            assert "NIGHT_FLOOR_ANNUAL_KWH" in str(e), e
+
+    after = {n: rt.resolve_token(n) for n in complete}
+    assert after == complete, f"the stubs leaked: {after} != {complete}"
+    return (f"{len(checked)} renders across short / long / gappy corpora report their own "
+            f"window instead of an annual claim, a real year still reads "
+            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, and a drifted priced floor refuses")
+
+
+@case
+def case_a_degradation_sentence_never_contradicts_its_own_numbers():
+    """ISSUE #132, CODEX PASS 1, FINDINGS 2 AND 3. Two sentences whose
+    conclusion WORD was fixed text sitting beside numbers it never compared.
+
+    DEGRADATION_NAIVE_RANGE tested `hi <= 0` first, so an array whose three
+    estimators all sat at zero published "0.0-0.0%/yr of decline" -- a
+    direction attached to a magnitude of nothing, and the one reading a
+    stable-array owner would most want to be right.
+
+    DEGRADATION_WEATHER_CAVEAT asserted that clear-sky variation "cannot
+    explain" the observed spread without comparing the two, so an artifact
+    whose clear-sky spread was the larger of the pair published "varies only
+    99.00% ... so geometry cannot explain the 14.0% spread".
+
+    Every case below is a legitimate artifact state; the assertion each time is
+    that the WORD agrees with the DIGITS printed next to it."""
+    def degradation(**fields):
+        def edit(doc):
+            doc["degradation"].update(fields)
+        return edit
+
+    def trend(ols, cagr, theil):
+        return degradation(ols_pct_per_yr=ols, cagr_pct_per_yr=cagr,
+                           theil_sen_pct_per_yr=theil)
+
+    got = {}
+    # 1. Exact zero, and a trend too small to survive the printed rounding:
+    #    neither may carry a direction word.
+    for label, edit in (("all_zero", trend(0.0, 0.0, 0.0)),
+                        ("negative_zero", trend(-0.0, 0.0, -0.0)),
+                        ("rounds_to_zero", trend(-0.04, -0.02, -0.01)),
+                        ("rounds_to_zero_up", trend(0.04, 0.02, 0.01))):
+        with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", edit)):
+            text = _renders("DEGRADATION_NAIVE_RANGE")
+        got[label] = text
+        assert "decline" not in text and "gain" not in text, (
+            f"a trend that prints as 0.0 was called a direction: {text}")
+        assert "no measurable change" in text, text
+
+    # 2. The directions themselves still read correctly on either side.
+    for label, edit, word in (("real_decline", trend(-1.8, -1.3, -1.5), "decline"),
+                              ("real_gain", trend(1.8, 1.3, 1.5), "gain")):
+        with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", edit)):
+            text = _renders("DEGRADATION_NAIVE_RANGE")
+        got[label] = text
+        assert word in text, text
+        other = "gain" if word == "decline" else "decline"
+        assert other not in text, f"{label} also claimed {other}: {text}"
+
+    # 3. Clear-sky variation at least as large as the observed spread: the
+    #    sentence must stop claiming geometry cannot account for it.
+    for label, cs, spread in (("clearsky_larger", 99.0, 14.0),
+                              ("clearsky_equal", 14.0, 14.0)):
+        with _patched(rt, "_json", _stub_for(
+                "gross_import_decomposition.json",
+                degradation(clearsky_annual_spread_pct=cs,
+                            peak_to_trough_pct_2021_2025=spread))):
+            text = _renders("DEGRADATION_WEATHER_CAVEAT")
+        got[label] = text
+        assert "cannot explain" not in text, (
+            f"clear-sky varies by {cs}% against a {spread}% spread and the sentence "
+            f"still says geometry cannot explain it: {text}")
+        assert "varies only" not in text, text
+        assert "could account for it" in text, text
+
+    # ... and still says it where the comparison really does support it.
+    with _patched(rt, "_json", _stub_for(
+            "gross_import_decomposition.json",
+            degradation(clearsky_annual_spread_pct=0.15,
+                        peak_to_trough_pct_2021_2025=14.0))):
+        got["clearsky_smaller"] = _renders("DEGRADATION_WEATHER_CAVEAT")
+    assert "cannot explain" in got["clearsky_smaller"], got["clearsky_smaller"]
+
+    # 4. The soiling clause's own boundary: an event exactly the size of the
+    #    whole change is neither larger nor smaller than it.
+    with _patched(rt, "_json", _stub_for(
+            "gross_import_decomposition.json",
+            degradation(single_event_soiling_swing_pct=5.2,
+                        total_change_pct_2021_2025=-5.2))):
+        got["swing_equals_change"] = _renders("DEGRADATION_WEATHER_CAVEAT")
+    assert "exactly the size of" in got["swing_equals_change"], got["swing_equals_change"]
+    assert "smaller than" not in got["swing_equals_change"], got["swing_equals_change"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return (f"{len(got)} degradation sentences select their conclusion word from the "
+            "comparison they describe, including at both zero boundaries")
+
+
+@case
+def case_the_install_cost_caveat_is_the_artifacts_own_words_not_a_paraphrase():
+    """ISSUE #132, CODEX PASS 1's SWEEP. HEAT_PUMP_COST_BASIS asserted the
+    study's example system was "larger than this household's own sizing" -- a
+    comparison this module never makes and cannot make from what it reads. It
+    happened to be true of today's artifact (a 4-ton example against a 3.0-ton
+    sizing) and would have gone on reading as fact against any other.
+
+    heat_pump_conversion.py states that comparison itself, tonnages and "not
+    quantified" included, so the fix is to render its note rather than restate
+    it -- and to refuse rather than publish a cost with no basis at all."""
+    note = rt._json("heat_pump_conversion.json")["install_cost"]["note"]
+    text = rt.resolve_token("HEAT_PUMP_COST_BASIS")
+    assert note in text, f"the artifact's own note is not carried: {text}"
+    assert "larger than this household" not in text, (
+        f"the unchecked paraphrase is back: {text}")
+
+    def blanked(doc):
+        doc["install_cost"]["note"] = ""
+
+    with _patched(rt, "_json", _stub_for("heat_pump_conversion.json", blanked)):
+        try:
+            rt.resolve_token("HEAT_PUMP_COST_BASIS")
+            raise AssertionError("an install cost with no stated basis was published")
+        except SystemExit as e:
+            assert "HEAT_PUMP_COST_BASIS" in str(e) and "note" in str(e), e
+    return ("HEAT_PUMP_COST_BASIS carries data/heat_pump_conversion.json's own "
+            "install_cost.note verbatim and refuses when it is absent")
+
+
+@case
+def case_the_second_sweep_of_legitimate_generator_emissions():
+    """ISSUE #132, /review FINDINGS 1-4 AND 8. The pass-2 sweep produced the
+    right principle -- a value the generator writes ON PURPOSE is data, not an
+    error -- and then was not run exhaustively. Five more sites had the same
+    shape, four of them the identical null-payback defect the sweep had just
+    fixed in tou_spread.
+
+    heat_pump_conversion.payback_and_npv() returns {"payback_years": None,
+    "note": "no positive annual savings on this basis -- no payback"}, and
+    every payback in all_electric_endgame comes through it. Four tokens pushed
+    that null into _quantities and aborted the WHOLE report for the household
+    the conversion does not pay off on -- while HPWH_NET_SAVINGS beside them
+    rendered its negative saving quite happily."""
+    got = {}
+
+    def endgame(edit):
+        return _stub_for("all_electric_endgame.json", edit)
+
+    def never_pay(node):
+        node["payback_years"] = None
+        node.pop("npv", None)          # the generator omits npv on this branch too
+
+    # 1. All four payback tokens, each on its own null.
+    def wh_never(doc):
+        wh = doc["water_heater_conversion"]
+        never_pay(wh["payback"][wh["headline_uef"]]["central_install"])
+        for s in wh["water_heater_share_sensitivity"]["scenarios"].values():
+            never_pay(s["payback"]["central_install"])
+        never_pay(doc["sequencing_and_paybacks"]["complete_transition_payback"])
+
+    with _patched(rt, "_json", endgame(wh_never)):
+        for token in ("HPWH_PAYBACK", "HPWH_PAYBACK_SENSITIVITY",
+                      "ELECTRIFICATION_COMBINED_PAYBACK"):
+            got[token] = _renders(token)
+            assert "never repays" in got[token], got[token]
+    assert "$18,729" in got["ELECTRIFICATION_COMBINED_PAYBACK"], (
+        "the install cost is still known when the payback is not")
+
+    def hp_never(doc):
+        for scenario in doc["payback"].values():
+            never_pay(scenario["standalone"])
+
+    with _patched(rt, "_json", _stub_for("heat_pump_conversion.json", hp_never)):
+        got["HEAT_PUMP_PAYBACK"] = _renders("HEAT_PUMP_PAYBACK")
+    assert "never repays" in got["HEAT_PUMP_PAYBACK"], got["HEAT_PUMP_PAYBACK"]
+
+    # ... and a partial one: some scenarios repay, some never do.
+    def hp_mixed(doc):
+        keys = sorted(doc["payback"])
+        never_pay(doc["payback"][keys[0]]["standalone"])
+
+    with _patched(rt, "_json", _stub_for("heat_pump_conversion.json", hp_mixed)):
+        got["HEAT_PUMP_PAYBACK_mixed"] = _renders("HEAT_PUMP_PAYBACK")
+    assert "never repay" in got["HEAT_PUMP_PAYBACK_mixed"], got["HEAT_PUMP_PAYBACK_mixed"]
+
+    # 2. soiling_analysis publishes no measured cleaning gain: the geometry
+    #    half of the caveat stands, the soiling half is not determined.
+    def no_gain(doc):
+        doc["degradation"]["single_event_soiling_swing_pct"] = None
+
+    with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", no_gain)):
+        got["DEGRADATION_WEATHER_CAVEAT"] = _renders("DEGRADATION_WEATHER_CAVEAT")
+    assert "not determined" in got["DEGRADATION_WEATHER_CAVEAT"], \
+        got["DEGRADATION_WEATHER_CAVEAT"]
+    assert "cannot explain" in got["DEGRADATION_WEATHER_CAVEAT"], \
+        got["DEGRADATION_WEATHER_CAVEAT"]
+
+    # 3. service_headroom OMITS pv_ac_ceiling on a household with no PV --
+    #    "a computation that does not apply is not the same as one that ran
+    #    and found nothing", in the generator's own words.
+    def no_pv(doc):
+        doc["gross_reconstruction"].pop("pv_ac_ceiling", None)
+        doc["gross_reconstruction"]["identity"] = \
+            "gross = import (no on-site generation to net out)"
+
+    with _patched(rt, "_json", _stub_for("service_headroom.json", no_pv)):
+        for token in ("PV_PEAK_OBSERVED", "PV_PEAK_HEADROOM", "PV_PEAK_BASIS"):
+            got[token] = _renders(token)
+            assert "not applicable" in got[token], got[token]
+            assert "no on-site generation" in got[token], got[token]
+
+    # 4. One fitted slope cannot be publishable and not: the annual figure
+    #    takes the same sign the slope it is multiplied out from takes.
+    def cooling_negative(doc):
+        doc["annual_cooling_kwh"] = -420
+        doc["kwh_per_cdd65"] = -1.4
+
+    with _patched(rt, "_json", _stub_for("weather_results.json", cooling_negative)):
+        got["ANNUAL_COOLING_KWH"] = _renders("ANNUAL_COOLING_KWH")
+        got["COOLING_KWH_PER_CDD"] = _renders("COOLING_KWH_PER_CDD")
+    assert "-420" in got["ANNUAL_COOLING_KWH"], got["ANNUAL_COOLING_KWH"]
+    assert "-1.4" in got["COOLING_KWH_PER_CDD"], got["COOLING_KWH_PER_CDD"]
+
+    # 8. A measured peak ABOVE the stated ceiling is a contradiction, not a
+    #    percentage. Gated on the archive, and ONLY this part: the ceiling it
+    #    compares against is household.yaml's solar.kw_ac, while the four
+    #    checks above need no private data and must keep running on CI.
+    if rt.hh.PATH.is_file():
+        real_csv = rt._csv_rows
+
+        def over_ceiling(name):
+            rows = real_csv(name)
+            if name != "cleaning_study_peaks_2024.csv":
+                return rows
+            return [dict(r, peak_w="99000") for r in rows]
+
+        with _patched(rt, "_csv_rows", over_ceiling):
+            got["PEAK_POWER_MULTIYEAR"] = _renders("PEAK_POWER_MULTIYEAR")
+        assert "ABOVE the inverter AC ceiling" in got["PEAK_POWER_MULTIYEAR"], \
+            got["PEAK_POWER_MULTIYEAR"]
+        assert "% of the inverter" not in got["PEAK_POWER_MULTIYEAR"], \
+            got["PEAK_POWER_MULTIYEAR"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return (f"{len(got)} render(s) across the five sites the pass-2 sweep missed: a null "
+            "payback, an unmeasured cleaning gain, an omitted PV ceiling, a negative "
+            "cooling fit and an above-nameplate peak are all answers, not aborts")
+
+
+@case
+def case_the_malformed_render_patterns_flag_exactly_the_shapes_they_name():
+    """ISSUE #132. The sweep's whole contract is _MALFORMED_RENDER, and nothing
+    tested the patterns themselves -- a lookaround loosened by one character
+    would disable the guard while every case above still reported PASS, which
+    is the shape six review rounds have been finding.
+
+    So the patterns are pinned from both sides. The first list is what must
+    still be caught, one entry per pattern including the shapes an earlier
+    round actually shipped ("-$nan", "$-1,234", a bare "$" before a word). The
+    second is what must NOT be caught, and it is short on purpose: the only
+    entries are ones a real token renders, and the bracket-then-percent one is
+    the exemption issue #132 added when SPREAD_TREND_WINTER began rendering
+    tou_spread.py's own confidence intervals ("[1.68, 21.0]%/yr"). Written out here
+    the exemption is a fact this case asserts rather than a lookbehind nobody
+    reads."""
+    def flagged(text):
+        return [label for label, pattern in _MALFORMED_RENDER if pattern.search(text)]
+
+    must_flag = {
+        "$nan": "a non-finite numeral",
+        "-$nan": "a non-finite numeral",
+        "$inf/yr": "a non-finite numeral",
+        "1.2 kW is infinity": "a non-finite numeral",
+        "$-1,234": "a minus inside a sigil",
+        "+$-3,000": "a minus inside a sigil",
+        "$$4,200": "a doubled sigil",
+        "12%%": "a doubled sigil",
+        "8.4¢¢": "a doubled sigil",
+        "~~$500": "a doubled sigil",
+        "costs $ a year": "an empty numeric field",
+        "a share of %": "an empty numeric field",
+        "stored energy costs ¢": "an empty numeric field",
+        # The bracket exemption must require a NUMBER, not merely a bracket:
+        # an interval that formatted to nothing is the exact shape this
+        # pattern exists for, and the first version of the exemption let all
+        # three of these through (reviewer catch, issue #132).
+        "95% CI []%/yr": "an empty numeric field",
+        "[ ]%/yr": "an empty numeric field",
+        "[nan]%/yr": "an empty numeric field",
+        "[]¢": "an empty numeric field",
+    }
+    for text, label in must_flag.items():
+        assert label in flagged(text), (
+            f"{text!r} must be flagged as {label!r}; the patterns matched {flagged(text)}")
+
+    must_not_flag = (
+        # The real renders of tokens this repo publishes today.
+        "not determined — the post-break slope is significant on its own interval "
+        "([1.68, 21.0]%/yr) but not once that interval is widened",
+        "$4,200 installed (quoted range $2,800–8,000)",
+        "-$500/yr",
+        "45.2 kWh/day",
+        "97% of the inverter AC ceiling",
+        "~8.4¢",
+        "the information in the infrastructure is fine",
+        "carried by a single step of $0.04844/kWh on 2025-06-14 (21.4% of the prior level)",
+    )
+    for text in must_not_flag:
+        assert not flagged(text), f"{text!r} is a legitimate render but was flagged: " \
+                                  f"{flagged(text)}"
+    return (f"all {len(_MALFORMED_RENDER)} malformed-render patterns flag the "
+            f"{len(must_flag)} shapes they name and none of the {len(must_not_flag)} "
+            "legitimate renders, including a bracketed confidence interval's percent sign")
 
 
 # --- the ten round-5 findings, one regression case each ---------------------

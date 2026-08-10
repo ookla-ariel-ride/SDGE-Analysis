@@ -601,12 +601,43 @@ def _amounts(token, subject, **values):
     below because it IS zero, and then `f"${-0.0:,.2f}"` renders "$-0.00" --
     the minus back inside the sigil, from a value the check correctly let
     through. abs() is the identity on every other value the check permits."""
+    return _not_below_zero(
+        token, subject,
+        "this sentence prints it behind a dollar sigil, where a negative renders "
+        "the minus inside the sigil",
+        **values)
+
+
+def _quantities(token, subject, **values):
+    """_amounts' test, for a figure that carries no sigil but cannot be negative.
+
+    A daily production total, an inverter's measured peak power, a
+    cooling-degree-day coefficient's annual kWh: each is a magnitude whose
+    sign is fixed by what it MEASURES, not by a formatter's punctuation. A
+    negative one renders perfectly well ("-1,234.5 kW") and is exactly the
+    reading the poison sweep's output contract cannot catch, because nothing
+    about the string is malformed -- only the physics is. So the refusal is
+    stated here rather than left to the formatter.
+
+    Shares its ladder with _amounts rather than copying it, for the reason
+    _sign_claim gives one section up: two byte-identical copies of a check is
+    how the two of them drift. What is NOT shared is the REASON, which is the
+    half a maintainer reads in the failure message -- _amounts refuses because
+    of where the minus lands, this refuses because the quantity has no negative
+    reading at all."""
+    return _not_below_zero(
+        token, subject,
+        "this is a magnitude with no negative reading, so a value below zero "
+        "means the artifact behind it is wrong",
+        **values)
+
+
+def _not_below_zero(token, subject, why, **values):
+    """The shared finite-and-not-negative ladder behind _amounts/_quantities."""
     _figures(token, subject, **values)
     bad = {k: v for k, v in values.items() if v < 0}
     _claim(token, subject, SUPPORTED if not bad else NOT_DETERMINED,
-           ", ".join(f"{k} is {v!r}" for k, v in bad.items()) +
-           " -- this sentence prints it behind a dollar sigil, where a negative "
-           "renders the minus inside the sigil")
+           ", ".join(f"{k} is {v!r}" for k, v in bad.items()) + " -- " + why)
     return tuple(abs(v) for v in values.values())
 
 
@@ -3508,6 +3539,1694 @@ _tok("MODELED_ANNUAL_AT_CURRENT_RATES", kind="data_json", file="package_results.
 # ELECTRIFICATION_VERDICT_SHORT is declared in KNOWN_GAPS above (heat-pump
 # space heating has a committed install-cost basis since issue #1; HPWH
 # still does not, so a "which pencils" verdict needing both still isn't).
+
+
+# ===========================================================================
+# ISSUE #132. THE FIGURES A COMMITTED ARTIFACT ALREADY ANSWERS, BUT NO TOKEN
+# EXPOSED.
+#
+# report_blocks.CLASSIFICATION marked fourteen TODO blocks "human". For eleven
+# of them the fact the block asks for is sitting in a committed data/*.json or
+# data/*.csv file; what was missing was a TOKENS entry, so the pipeline could
+# not hand the value to a prose pass and the block stayed blocked. Eight of the
+# fourteen HUMAN_REASONS entries said so in as many words -- "no
+# report_tokens.py entry" -- which is a test of THIS MODULE's inventory, not of
+# the evidence. That is the wrong test, and it is why the map rotted: every
+# artifact added after the map was written left a stale "human" behind it.
+#
+# So the tokens below exist to move the test back onto the evidence. Each one
+# names the artifact and field it reads, and each is written to the same three
+# rules the rest of this module follows:
+#
+#   * a formula that interpolates a number states its preconditions first
+#     (_figures / _amounts / _quantities), so a poisoned artifact field
+#     produces a refusal naming the token rather than "nan kW";
+#   * a clause that makes a QUALITATIVE claim resolves to one of the three
+#     states above, and a household whose artifacts read the other way gets
+#     the other sentence rather than a refusal;
+#   * "not determined" is rendered, not papered over. Two of these blocks
+#     (the per-season spread trend, the battery re-run on the measured spread)
+#     have artifacts whose own published verdict IS "not determined", and the
+#     tokens carry that verdict and its stated reason verbatim from the
+#     artifact's own machine-readable fields.
+#
+# NO CROSS-ARTIFACT COMPARISON IS MADE HERE WITHOUT ITS RELATIONSHIP TRACED
+# FIRST (the rule three sections up). Three pairs were considered and the
+# reasoning is recorded at the site: the enphase daily mean vs
+# soiling_results' own mean (different day sets by construction -- not
+# compared), the EV window buckets vs the EV total (one derived from the
+# other, a partition of the same series -- compared, with the rounding
+# tolerance), and the tou_spread uniform ladder vs
+# battery_dispatch_policies' ladder (the same quantity independently
+# recomputed -- but nothing here renders both, so nothing gates on it).
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# A LEGITIMATE EMISSION IS DATA, NOT AN ERROR (issue #132, adversarial pass 2).
+#
+# _figures / _amounts / _quantities refuse on sight, which is what makes them
+# worth having -- and which makes them the wrong thing to point at a field
+# whose generator deliberately emits None, an empty list, or an explicit
+# "does not apply" marker as a REAL RESULT. Guarding against the value the
+# artifact happens to hold today is not guarding; the rule is to open the
+# generator and establish what it can legitimately write.
+#
+# The instance that proved it: tou_spread.py returns payback_yr None when a
+# narrowing spread leaves the battery unrecovered inside its horizon, and says
+# in a comment above the emission that this is "a real result, not an error ...
+# the one verdict it most needs to be able to report". Refusing it aborted the
+# WHOLE report for exactly the household whose battery does not pay back.
+# Treating a determinate answer as NOT_DETERMINED is the mirror image of the
+# defect class this module already carries three sections of commentary about.
+#
+# Two shapes recur across this repo's generators, so they get one reader each:
+# the applicability marker below, and the null-payback branch in
+# _battery_on_measured_spread.
+# ---------------------------------------------------------------------------
+def _applicability(node):
+    """(applies, reason) for a committed section that may say the domain does
+    not exist for this household.
+
+    Two markers, because two generator families write them and both are
+    deliberate: behavior_rebuild.py / extended_findings.py emit
+    {"not_applicable": True, "reason": ...} for a household whose intake flag
+    is false, and heat_pump_conversion.py / all_electric_endgame.py collapse
+    their whole artifact to {"applicable": False, "reason": ...}. Both
+    docstrings are explicit that this is not_applicable and NOT not_determined
+    -- the intake DID determine the answer, the domain simply does not exist
+    here -- so the honest render is the artifact's own reason, and a refusal
+    would withhold fifteen unrelated sections over a question this household
+    does not have."""
+    if not isinstance(node, dict):
+        return True, ""
+    if node.get("not_applicable") is True or node.get("applicable") is False:
+        return False, str(node.get("reason", "")).strip()
+    return True, ""
+
+
+def _does_not_apply(reason):
+    """The rendered form of an inapplicable section."""
+    return "not applicable to this household" + (f" — {reason}" if reason else "")
+
+
+def _measured(token, subject, unit, spec, **values):
+    """ONE non-negative artifact figure, rendered with the unit the token owns.
+
+    Issue #129's rule is that a sentence-building token carries its own sigils
+    and units, which turns a one-field token into three lines of boilerplate --
+    the precondition, the format, the unit. Written out at each site those
+    three lines were a lambda long enough that the precondition was the easiest
+    part to leave out, which is the whole failure mode _quantities exists to
+    close. So they are one call."""
+    value, = _quantities(token, subject, **values)
+    return f"{value:{spec}} {unit}"
+
+
+# ---- daily production range (section 2) -----------------------------------
+_ENPHASE_DAILY = "enphase_daily_production.csv"
+_ENPHASE_TOTAL_ROW = "Total"
+
+
+def _enphase_daily_rows():
+    """[(date, kWh)] for data/enphase_daily_production.csv's DAILY rows.
+
+    The file ends in a "Total" footer row whose energy cell carries a
+    thousands separator ("16,501.77"); _annual_production_kwh reads exactly
+    that cell, and every per-day statistic must exclude exactly that row or
+    the maximum is the year and the mean is off by a factor of a day."""
+    rows = _csv_rows(_ENPHASE_DAILY)
+    if not rows:
+        raise SystemExit(f"report_tokens: data/{_ENPHASE_DAILY} is empty")
+    date_key, energy_key = list(rows[0])[0], list(rows[0])[1]
+    out = []
+    for r in rows:
+        label = (r[date_key] or "").strip()
+        if label == _ENPHASE_TOTAL_ROW or not label:
+            continue
+        cell = (r[energy_key] or "").strip().replace(",", "")
+        if not cell:
+            continue
+        out.append((dt.datetime.strptime(label, "%m/%d/%Y").date(), float(cell)))
+    if not out:
+        raise SystemExit(f"report_tokens: data/{_ENPHASE_DAILY} holds no dated daily "
+                          "production rows, only its Total footer")
+    return out
+
+
+def _long_date(d):
+    return f"{_MONTH_ABBR[d.month]} {d.day}, {d.year}"
+
+
+def _daily_production_mean(ctx):
+    days = _enphase_daily_rows()
+    # NOT cross-checked against soiling_results.json's own
+    # production_crosscheck.enphase_mean_kwh, and the relationship is why:
+    # soiling_analysis.py averages the SAME file over the days it shares with
+    # data/pvoutput_daily.csv (its `common` intersection), so the two means are
+    # equal only while the two instruments cover identical calendars. A day
+    # PVOutput missed is a legitimate divergence, not a contradiction, and
+    # gating on their agreement would abort the report over an ordinary gap in
+    # a second monitoring feed.
+    total, = _quantities("DAILY_PRODUCTION_MEAN", "the array's mean daily output",
+                         year_total_kwh=sum(v for _d, v in days))
+    return f"{total / len(days):,.1f} kWh/day"
+
+
+def _daily_production_extreme(token, best):
+    days = _enphase_daily_rows()
+    date, kwh = (max if best else min)(days, key=lambda dv: (dv[1], dv[0]))
+    kwh, = _quantities(token, "the array's best or worst measured day",
+                       day_kwh=kwh)
+    return f"{kwh:,.1f} kWh on {_long_date(date)}"
+
+
+_tok("DAILY_PRODUCTION_MEAN", kind="derived", get=_daily_production_mean,
+     sources=[f"data/{_ENPHASE_DAILY} (daily rows, Total footer excluded)"])
+_tok("DAILY_PRODUCTION_BEST", kind="derived",
+     get=lambda ctx: _daily_production_extreme("DAILY_PRODUCTION_BEST", True),
+     sources=[f"data/{_ENPHASE_DAILY} (daily rows, Total footer excluded)"])
+_tok("DAILY_PRODUCTION_WORST", kind="derived",
+     get=lambda ctx: _daily_production_extreme("DAILY_PRODUCTION_WORST", False),
+     sources=[f"data/{_ENPHASE_DAILY} (daily rows, Total footer excluded)"])
+
+
+# ---- array degradation (sections 2 and 9) ---------------------------------
+def _degradation():
+    return _json("gross_import_decomposition.json")["degradation"]
+
+
+def _degradation_naive_range(ctx):
+    """The naive multi-year trend, as the SPAN of the three estimators
+    gross_import_decomposition.py fits to the same annual series.
+
+    Three estimators of one quantity, computed by one script from one series:
+    they are MEANT to differ (OLS is pulled by the endpoints, CAGR uses only
+    them, Theil-Sen uses neither), so their spread is the answer and not a
+    contradiction -- nothing here gates on their agreement.
+
+    Direction is read off the span rather than assumed. An array that gained
+    over the window is an ordinary array with an ordinary sentence to print,
+    and a span that straddles zero is neither claim -- the third branch says
+    the estimators disagree instead of picking whichever one is written last.
+    """
+    deg = _degradation()
+    ols, cagr, theil = _figures(
+        "DEGRADATION_NAIVE_RANGE", "how fast the array's output is trending",
+        ols_pct_per_yr=deg["ols_pct_per_yr"], cagr_pct_per_yr=deg["cagr_pct_per_yr"],
+        theil_sen_pct_per_yr=deg["theil_sen_pct_per_yr"])
+    lo, hi = min(ols, cagr, theil), max(ols, cagr, theil)
+    # NO CHANGE IS ITS OWN ANSWER, tested FIRST and tested on the DIGITS THIS
+    # SENTENCE PRINTS (issue #132, Codex pass 1, finding 2). `hi <= 0` was the
+    # first branch, so an array whose three estimators all sat at zero -- a
+    # stable array, the outcome an owner most wants to hear -- published as
+    # "0.0–0.0%/yr of decline", a direction word attached to a magnitude of
+    # nothing. Rounding makes the same sentence reachable without an exact
+    # zero: a -0.04%/yr trend also prints "0.0–0.0". So the test is on the
+    # rendered tenths rather than on the raw floats, which is the only version
+    # that can promise the printed figure and the printed word agree.
+    if f"{abs(lo):,.1f}" == "0.0" and f"{abs(hi):,.1f}" == "0.0":
+        return "no measurable change — all three estimators round to 0.0%/yr"
+    if hi <= 0:
+        return f"{abs(hi):,.1f}–{abs(lo):,.1f}%/yr of decline"
+    if lo >= 0:
+        return f"{lo:,.1f}–{hi:,.1f}%/yr of gain"
+    return (f"between {lo:+,.1f}%/yr and {hi:+,.1f}%/yr — the three estimators "
+            "disagree on the direction")
+
+
+def _array_efficiency_series(ctx):
+    eff = _degradation()["annual_efficiency_kwh_per_kw_day"]
+    if not eff:
+        raise SystemExit("report_tokens: ARRAY_EFFICIENCY_SERIES has no years to print -- "
+                          "data/gross_import_decomposition.json:degradation."
+                          "annual_efficiency_kwh_per_kw_day is empty")
+    years = sorted(eff, key=str)
+    values = _quantities("ARRAY_EFFICIENCY_SERIES", "the array's yearly size-normalized output",
+                         **{f"year_{y}": eff[y] for y in years})
+    body = " · ".join(f"{y} {v:,.2f}" for y, v in zip(years, values))
+    return f"{body} kWh/kW/day"
+
+
+def _degradation_weather_caveat(ctx):
+    """Why the naive trend is not a degradation rate: the two confounders,
+    sized against the trend itself.
+
+    THE ONE COMPARISON HERE, and its relationship. single_event_soiling_swing_
+    pct is a VALIDATED before/after gain measured across one 2024 cleaning
+    (soiling_analysis.py's own figure, re-used read-only by
+    gross_import_decomposition.py); total_change_pct_2021_2025 is that same
+    script's multi-year change in annual size-normalized output. They are
+    DIFFERENT QUANTITIES on the same array -- a single event against a
+    multi-year trend -- so their sizes carry no agreement obligation at all,
+    and the comparison is a magnitude reading, not a consistency gate. Both
+    orderings are renderable; neither refuses."""
+    deg = _degradation()
+    clearsky, spread, change = _quantities(
+        "DEGRADATION_WEATHER_CAVEAT", "how large the confounders are next to the trend",
+        clearsky_annual_spread_pct=deg["clearsky_annual_spread_pct"],
+        peak_to_trough_pct=deg["peak_to_trough_pct_2021_2025"],
+        total_change_pct=abs(deg["total_change_pct_2021_2025"]))
+    # gross_import_decomposition.py reads this straight off
+    # soiling_results.json's sanity_check with .get(), so it is None whenever no
+    # cleaning gain was ever measured -- an ordinary household that has not had
+    # its panels cleaned (issue #132, /review finding 2). The geometry half of
+    # this sentence stands on its own; the soiling half is simply not available.
+    swing_raw = deg.get("single_event_soiling_swing_pct")
+    # THE GEOMETRY CONCLUSION IS COMPUTED, NOT ASSERTED (issue #132, Codex pass
+    # 1, finding 3). "varies only X%, so geometry cannot explain the Y% spread"
+    # was fixed text sitting beside two numbers it never compared, so an
+    # artifact whose clear-sky spread equalled or exceeded the observed one
+    # published a sentence contradicting its own figures -- "varies only
+    # 99.00% ... so geometry cannot explain the 14.0% spread". Both readings
+    # are real and both are renderable, so the comparison selects the clause
+    # rather than decorating it.
+    _require_finite("DEGRADATION_WEATHER_CAVEAT",
+                    "whether array geometry could account for the observed spread",
+                    clearsky_annual_spread_pct=clearsky, peak_to_trough_pct=spread)
+    if clearsky < spread:
+        head = (f"clear-sky insolation varies only {clearsky:,.2f}% between years, so "
+                f"array geometry cannot explain the {spread:,.1f}% peak-to-trough spread")
+    else:
+        head = (f"clear-sky insolation varies by {clearsky:,.2f}% between years, as much "
+                f"as the {spread:,.1f}% peak-to-trough spread itself, so array geometry "
+                "alone could account for it")
+    # The same treatment for the soiling clause's own boundary: _sign_claim
+    # returns SUPPORTED_OPPOSITE at EXACTLY zero, so an event precisely the
+    # size of the whole change read "smaller than" it. Equality gets its own
+    # words.
+    if swing_raw is None:
+        return (f"{head}; no cleaning gain has been measured on this array, so the size "
+                "of the soiling confounder is not determined")
+    swing, = _quantities("DEGRADATION_WEATHER_CAVEAT",
+                         "how large the measured soiling event is",
+                         single_event_soiling_swing_pct=swing_raw)
+    _sign_claim(
+        "DEGRADATION_WEATHER_CAVEAT",
+        "whether one measured soiling event is larger than the whole multi-year change",
+        swing - change,
+        f"a validated single-event soiling swing of {swing}% against a "
+        f"{change}% total change across the record")
+    if swing > change:
+        tail = f"larger than the {change:,.1f}% total change across the record"
+    elif swing < change:
+        tail = f"smaller than the {change:,.1f}% total change across the record"
+    else:
+        tail = f"exactly the size of the {change:,.1f}% total change across the record"
+    return (f"{head}; one validated cleaning measured an {swing:,.1f}% single-event "
+            f"soiling swing, {tail}")
+
+
+_tok("DEGRADATION_NAIVE_RANGE", kind="derived", get=_degradation_naive_range,
+     sources=["data/gross_import_decomposition.json:degradation "
+              "(ols/cagr/theil_sen_pct_per_yr)"])
+_tok("ARRAY_EFFICIENCY_SERIES", kind="derived", get=_array_efficiency_series,
+     sources=["data/gross_import_decomposition.json:degradation."
+              "annual_efficiency_kwh_per_kw_day"])
+_tok("DEGRADATION_WEATHER_CAVEAT", kind="derived", get=_degradation_weather_caveat,
+     sources=["data/gross_import_decomposition.json:degradation "
+              "(clearsky_annual_spread_pct, peak_to_trough_pct_2021_2025, "
+              "single_event_soiling_swing_pct, total_change_pct_2021_2025)"])
+
+
+# ---- measured PV peak power vs the AC ceiling (section 9) -------------------
+def _pv_ac_ceiling():
+    """(ceiling, reason) -- (None, why) when the run had no PV to reconstruct.
+
+    service_headroom.py OMITS pv_ac_ceiling entirely on a household with no
+    on-site generation, and says why in its own words: "a computation that does
+    not apply is not the same as one that ran and found nothing". Reading
+    straight through the missing key turned that into a resolve failure that
+    took the whole report with it (issue #132, /review finding 3)."""
+    gr = _json("service_headroom.json").get("gross_reconstruction") or {}
+    ceiling = gr.get("pv_ac_ceiling")
+    if ceiling is None:
+        return None, str(gr.get("identity", "")).strip()
+    return ceiling, ""
+
+
+def _pv_peak_or_not_applicable(fn):
+    def get(ctx):
+        ceiling, identity = _pv_ac_ceiling()
+        if ceiling is None:
+            return _does_not_apply(
+                "data/service_headroom.json reconstructs no PV for this household"
+                + (f" ({identity})" if identity else ""))
+        return fn(ceiling)
+    return get
+
+
+def _pv_peak_observed(ceiling):
+    corr = ceiling["corroboration"]
+    if not corr:
+        raise SystemExit("report_tokens: PV_PEAK_OBSERVED has no instruments to quote -- "
+                          "data/service_headroom.json:gross_reconstruction.pv_ac_ceiling."
+                          "corroboration is empty")
+    observed = _quantities(
+        "PV_PEAK_OBSERVED", "the largest output each instrument recorded",
+        **{f"instrument_{i}_kw": c["observed_kw"] for i, c in enumerate(corr)})
+    parts = [f"{kw:,.2f} kW ({c['instrument']})" for kw, c in zip(observed, corr)]
+    return " · ".join(parts)
+
+
+def _pv_peak_headroom(ceiling):
+    """How close the closest instrument got to the inverter nameplate.
+
+    Read from the artifact's own below_nameplate_by_kw rather than recomputed
+    as (ceiling - observed): service_headroom.py writes both, so recomputing
+    it here would be a second implementation of one subtraction with nothing
+    to check it against. The SMALLEST gap is the one the clipping question
+    turns on -- 'nothing got closer than this'."""
+    corr = ceiling["corroboration"]
+    if not corr:
+        raise SystemExit("report_tokens: PV_PEAK_HEADROOM has no instruments to quote -- "
+                          "data/service_headroom.json:gross_reconstruction.pv_ac_ceiling."
+                          "corroboration is empty")
+    gaps = _figures(
+        "PV_PEAK_HEADROOM", "how far the measured peaks sit below the inverter nameplate",
+        **{f"instrument_{i}_gap_kw": c["below_nameplate_by_kw"] for i, c in enumerate(corr)})
+    closest = min(gaps)
+    if closest < 0:
+        return (f"{abs(closest):,.2f} kW ABOVE the inverter nameplate — an instrument "
+                "recorded more than the array can deliver")
+    return f"{closest:,.2f} kW below the inverter nameplate"
+
+
+_CLEANING_PEAKS = "cleaning_study_peaks_2024.csv"
+
+
+def _multiyear_peak(ctx):
+    """The largest instantaneous power in data/cleaning_study_peaks_2024.csv,
+    as a share of the inverter AC ceiling.
+
+    A DIFFERENT WINDOW from the corroboration maxima above -- that file covers
+    the 2024 cleaning study, this report's analysis year is later -- so a
+    larger value here is not a contradiction of them and nothing gates on the
+    two agreeing. What it IS is the closest approach to the ceiling anywhere in
+    the committed record, which is the number the clipping question needs.
+
+    The ceiling comes from household.yaml's solar.kw_ac, the same intake field
+    service_headroom.py's own pv_ac_ceiling.basis names as its source, so the
+    percentage is measurement-over-nameplate and not one artifact checked
+    against another."""
+    rows = _csv_rows(_CLEANING_PEAKS)
+    if not rows:
+        raise SystemExit(f"report_tokens: data/{_CLEANING_PEAKS} is empty")
+    date_key, watt_key = list(rows[0])[0], list(rows[0])[1]
+    peaks = [(r[date_key], float(r[watt_key])) for r in rows if (r[watt_key] or "").strip()]
+    if not peaks:
+        raise SystemExit(f"report_tokens: data/{_CLEANING_PEAKS} holds no peak-power values")
+    date, watts = max(peaks, key=lambda dw: (dw[1], dw[0]))
+    watts, ceiling_kw = _quantities(
+        "PEAK_POWER_MULTIYEAR", "the largest measured instantaneous PV output",
+        peak_w=watts, inverter_ac_ceiling_kw=float(hh1("solar.kw_ac")))
+    _claim("PEAK_POWER_MULTIYEAR", "what share of the inverter ceiling the peak reached",
+           SUPPORTED if ceiling_kw > 0 else NOT_DETERMINED,
+           f"private/household.yaml:solar.kw_ac is {ceiling_kw!r}, which is not an "
+           "inverter rating a measured peak can be expressed as a share of")
+    when = dt.datetime.strptime(date.strip(), "%Y%m%d").date()
+    # The FILE'S OWN SPAN, named in the sentence. This reads one 60-row
+    # cleaning-study export covering part of one summer, and section 9 framed
+    # it as the closest approach "anywhere in the committed record" -- a
+    # superlative over a record this token never opens (issue #132, /review
+    # finding 7). It says what it covers instead.
+    days = sorted(dt.datetime.strptime(d.strip(), "%Y%m%d").date() for d, _w in peaks)
+    window = f"{_long_date(days[0])} – {_long_date(days[-1])}"
+    share = watts / 1000 / ceiling_kw * 100
+    # And an instrument reading ABOVE the nameplate is a contradiction of the
+    # stated ceiling, not a percentage to print as fact (finding 8).
+    if watts / 1000 > ceiling_kw:
+        return (f"{watts / 1000:,.2f} kW on {_long_date(when)}, ABOVE the inverter AC "
+                f"ceiling — the {window} sample contradicts the stated nameplate")
+    return (f"{watts / 1000:,.2f} kW on {_long_date(when)}, {share:.0f}% of the inverter "
+            f"AC ceiling, across the {window} sample")
+
+
+def _pv_peak_basis(ceiling):
+    """What each of those maxima actually measures, and why the largest of
+    them is not a ceiling.
+
+    The three figures PV_PEAK_OBSERVED prints are not comparable readings of
+    one quantity: service_headroom's own `measures` fields say one is a mean
+    over an hour, one is a lower bound on production in a quarter-hour, and one
+    is a five-minute AC sample. Its corroboration_reading adds that they
+    corroborate the nameplate rather than establish it, and
+    why_not_the_observed_maximum warns that a quarter-hour can legitimately
+    carry more than a quarter of the best full hour. Without those, a reader
+    cannot tell whether the numbers rule clipping in or out -- which is the
+    only question section 9 asks of them."""
+    corr = ceiling["corroboration"]
+    if not corr:
+        raise SystemExit("report_tokens: PV_PEAK_BASIS has no instruments to describe -- "
+                          "data/service_headroom.json:gross_reconstruction.pv_ac_ceiling."
+                          "corroboration is empty")
+    missing = [c.get("instrument") for c in corr if not str(c.get("measures", "")).strip()]
+    if missing:
+        raise SystemExit(
+            f"report_tokens: PV_PEAK_BASIS cannot say what {missing} measure -- "
+            "data/service_headroom.json's corroboration entries have no `measures` text, "
+            "and the peaks are not comparable without it")
+    if not str(ceiling.get("corroboration_reading", "")).strip():
+        raise SystemExit(
+            "report_tokens: PV_PEAK_BASIS will not describe the measured peaks without "
+            "data/service_headroom.json:gross_reconstruction.pv_ac_ceiling."
+            "corroboration_reading, the condition that artifact states for reading them")
+    parts = [f"{c['instrument']} is {c['measures']}" for c in corr]
+    return (" · ".join(parts) + " — these corroborate the inverter nameplate rather than "
+            "establish it, and the largest is not a per-interval ceiling: a quarter-hour "
+            "can carry more than a quarter of the best full hour")
+
+
+_tok("PV_PEAK_OBSERVED", kind="derived", get=_pv_peak_or_not_applicable(_pv_peak_observed),
+     sources=["data/service_headroom.json:gross_reconstruction.pv_ac_ceiling.corroboration"])
+_tok("PV_PEAK_BASIS", kind="derived", get=_pv_peak_or_not_applicable(_pv_peak_basis),
+     sources=["data/service_headroom.json:gross_reconstruction.pv_ac_ceiling "
+              "(corroboration[].measures, corroboration_reading, "
+              "why_not_the_observed_maximum)"])
+_tok("PV_PEAK_HEADROOM", kind="derived", get=_pv_peak_or_not_applicable(_pv_peak_headroom),
+     sources=["data/service_headroom.json:gross_reconstruction.pv_ac_ceiling.corroboration"])
+_tok("PEAK_POWER_MULTIYEAR", kind="derived", get=_multiyear_peak,
+     sources=[f"data/{_CLEANING_PEAKS}", "private/household.yaml:solar.kw_ac"])
+
+
+# ---- weather-normalized cooling regression (section 9) ---------------------
+def _weather():
+    return _json("weather_results.json")
+
+
+def _cooling_regression_r2(ctx):
+    r2, = _figures("COOLING_REGRESSION_R2", "how much of the daily load temperature explains",
+                   r2=_weather()["r2"])
+    _claim("COOLING_REGRESSION_R2", "how much of the daily load temperature explains",
+           SUPPORTED if 0.0 <= r2 <= 1.0 else NOT_DETERMINED,
+           f"data/weather_results.json:r2 is {r2!r}, which is outside the [0, 1] range a "
+           "coefficient of determination can take")
+    return f"{r2:.2f}"
+
+
+def _cooling_sensitivity_per_100_cdd(ctx):
+    """The load the fitted slope implies for 100 extra cooling-degree-days.
+
+    Energy, not dollars: nothing committed prices a marginal cooling kWh at the
+    hours a hot spell actually puts it in, and multiplying by a blended rate
+    here would be exactly the year-end-lump-sum shortcut CLAUDE.md section 1b
+    forbids. The slope is SIGNED (a house can draw less on hotter days) and
+    prints its own minus, so this one takes _figures rather than
+    _quantities."""
+    slope, = _figures("COOLING_SENSITIVITY_PER_100_CDD",
+                      "how much load 100 extra cooling-degree-days add",
+                      kwh_per_cdd65=_weather()["kwh_per_cdd65"])
+    return f"{slope * 100:,.0f} kWh"
+
+
+_tok("COOLING_BASE_LOAD", kind="derived",
+     get=lambda ctx: _measured("COOLING_BASE_LOAD",
+                               "the temperature-independent daily load",
+                               "kWh/day", ",.1f", base_kwh_day=_weather()["base_kwh_day"]),
+     sources=["data/weather_results.json:base_kwh_day"])
+# _figures, not _quantities: a fitted slope's sign is the fit's to decide (a
+# household can draw LESS on hotter days), and a leading minus outside a sigil
+# is a reading, not a malformed render.
+_tok("COOLING_KWH_PER_CDD", kind="derived",
+     get=lambda ctx: "%s kWh per cooling-degree-day" % f"""{_figures(
+         "COOLING_KWH_PER_CDD", "the fitted cooling slope",
+         kwh_per_cdd65=_weather()["kwh_per_cdd65"])[0]:,.1f}""",
+     sources=["data/weather_results.json:kwh_per_cdd65"])
+_tok("COOLING_REGRESSION_R2", kind="derived", get=_cooling_regression_r2,
+     sources=["data/weather_results.json:r2"])
+# _figures, not _quantities, for COOLING_KWH_PER_CDD's reason one line up:
+# annual_cooling_kwh is that same fitted slope multiplied out over the year, so
+# a fit that runs the other way produces a negative here too. Refusing it while
+# publishing the slope it came from made one regression simultaneously
+# publishable and not (issue #132, /review finding 4).
+_tok("ANNUAL_COOLING_KWH", kind="derived",
+     get=lambda ctx: "%s kWh/yr" % f"""{_figures(
+         "ANNUAL_COOLING_KWH", "the year of cooling load the fit attributes",
+         annual_cooling_kwh=_weather()["annual_cooling_kwh"])[0]:,.0f}""",
+     sources=["data/weather_results.json:annual_cooling_kwh"])
+_tok("COOLING_SENSITIVITY_PER_100_CDD", kind="derived",
+     get=_cooling_sensitivity_per_100_cdd,
+     sources=["data/weather_results.json:kwh_per_cdd65"])
+# usd0_signed on both: these are modeled savings, whose sign the artifact
+# decides -- a pre-cooling shift that costs money on this tariff is a real
+# answer and belongs outside the sigil, not inside it.
+_tok("PRECOOL_SHIFT_VALUE", kind="derived",
+     get=lambda ctx: _usd0_signed(_weather()["precool_shift_value"]) + "/yr",
+     sources=["data/weather_results.json:precool_shift_value"])
+_tok("SETPOINT_VALUE", kind="derived",
+     get=lambda ctx: _usd0_signed(_weather()["setpoint_value"]) + "/yr",
+     sources=["data/weather_results.json:setpoint_value"])
+
+
+# ---- EV charging report card (section 9) -----------------------------------
+def _ev_detection():
+    """behavior_rebuild.json's detector, NOT deep_results.json's.
+
+    The two are committed and they disagree (563 sessions vs 580) because they
+    detect differently -- SEC9_TEASER's own comment traces the mechanism, and
+    issue #130 settled that section 9's body and every dollar figure downstream
+    of it read behavior_rebuild's. Two DIFFERENT DETECTORS on the same series
+    are the third relationship case: a difference is expected, nothing gates on
+    their agreement, and the report cites one of them by name.
+
+    Returns (detection, reason): behavior_rebuild.py replaces this whole block
+    with its _not_applicable stub on a household whose intake says it has no
+    EV, so every caller below renders that answer instead of reading fields the
+    stub does not carry."""
+    det = _json("behavior_rebuild.json")["detection"]
+    applies, reason = _applicability(det)
+    return (det if applies else None), reason
+
+
+def _ev_or_not_applicable(fn):
+    """A token get() that answers the artifact's own 'no EV here' when the
+    detector block is a not-applicable stub, and runs `fn(detection)`
+    otherwise."""
+    def get(ctx):
+        det, reason = _ev_detection()
+        return _does_not_apply(reason) if det is None else fn(det)
+    return get
+
+
+# Four figures each rounded to a tenth of a kWh move a sum by at most a
+# twentieth each; the epsilon is for the binary representation of the boundary,
+# the same way _WHOLE_DOLLAR_ROUNDING's is.
+_TENTH_KWH_ROUNDING = 0.05 + 1e-9
+
+
+def _ev_window_kwh(token):
+    """(total, sop, off, on), after checking the three windows really do
+    partition the total.
+
+    ONE DERIVED FROM THE OTHER, not two independent measurements:
+    behavior_rebuild.py sums one EV series into rates.period()'s three labels
+    ("on"/"off"/"sop" -- there is no fourth) and writes the total alongside,
+    each rounded to a tenth of a kWh. So the only honest test is the sum
+    against the total WITHIN four roundings' worth of slack; an equality test
+    would call the rounding a contradiction, and a sign test could not see a
+    missing window at all. A real failure here means the buckets no longer
+    partition the series, which is precisely what makes the compliance share
+    below meaningless."""
+    det, _reason = _ev_detection()
+    total, sop, off, on = _quantities(
+        token, "how the year's EV charging splits across the tariff windows",
+        ev_kwh_total=det["ev_kwh_total"], ev_kwh_sop_already=det["ev_kwh_sop_already"],
+        ev_kwh_offpeak=det["ev_kwh_offpeak"], ev_kwh_onpeak=det["ev_kwh_onpeak"])
+    _require_derived(
+        token, "how the year's EV charging splits across the tariff windows",
+        sop + off + on, total, _TENTH_KWH_ROUNDING * 4,
+        f"the three TOU windows sum to {sop + off + on:,.1f} kWh while "
+        f"data/behavior_rebuild.json:detection.ev_kwh_total states {total:,.1f} kWh -- "
+        "they no longer partition the same series")
+    return total, sop, off, on
+
+
+def _ev_window_decomposition(_det):
+    _total, sop, off, on = _ev_window_kwh("EV_WINDOW_DECOMPOSITION")
+    return (f"{sop:,.0f} kWh already super-off-peak · {off:,.0f} kWh off-peak · "
+            f"{on:,.0f} kWh on-peak")
+
+
+def _ev_sop_compliance_pct(_det):
+    total, sop, _off, _on = _ev_window_kwh("EV_SOP_COMPLIANCE_PCT")
+    _claim("EV_SOP_COMPLIANCE_PCT", "what share of EV charging already lands super-off-peak",
+           SUPPORTED if total > 0 else NOT_DETERMINED,
+           f"data/behavior_rebuild.json:detection.ev_kwh_total is {total!r} kWh, which is "
+           "not a year of charging a share can be taken of")
+    return f"{sop / total * 100:.0f}%"
+
+
+def _ev_detection_basis(det):
+    """What counts as a charging session, in the detector's own words.
+
+    "563 sessions" is not an observation, it is the output of a rule with three
+    thresholds in it, and behavior_rebuild.py publishes that rule beside the
+    count precisely so the count can be read. A second committed detector
+    (deep_results.json) applies a different rule to the same series and reaches
+    a different number; naming the rule is what lets the report say which one
+    it is quoting.
+
+    detection.ev_kwh_expected is deliberately NOT rendered here: it is a bare
+    literal in the generator with no committed provenance anywhere in this
+    repo, so publishing it as a cross-check would give a figure an authority
+    nothing supports (CLAUDE.md section 0)."""
+    rule = str(det.get("rule", "")).strip()
+    if not rule:
+        raise SystemExit(
+            "report_tokens: EV_DETECTION_BASIS will not publish a session count without "
+            "data/behavior_rebuild.json:detection.rule, the definition that count is the "
+            "output of")
+    return rule
+
+
+# Every one of these six goes through _ev_or_not_applicable, so a household
+# whose intake says it has no EV renders behavior_rebuild.py's own stated
+# reason instead of aborting the report on a field its _not_applicable stub
+# does not carry. EV_SESSION_COUNT loses its data_json declaration for the
+# same reason: a leaf token cannot branch.
+_tok("EV_SESSION_COUNT", kind="derived",
+     get=_ev_or_not_applicable(lambda det: _num0(
+         _quantities("EV_SESSION_COUNT", "how many charging sessions the detector found",
+                     sessions=det["sessions"])[0])),
+     sources=["data/behavior_rebuild.json:detection.sessions"])
+_tok("EV_DETECTION_BASIS", kind="derived",
+     get=_ev_or_not_applicable(_ev_detection_basis),
+     sources=["data/behavior_rebuild.json:detection.rule"])
+_tok("EV_ANNUAL_KWH", kind="derived",
+     get=_ev_or_not_applicable(lambda det: _measured(
+         "EV_ANNUAL_KWH", "the year of EV charging the detector found",
+         "kWh/yr", ",.0f", ev_kwh_total=det["ev_kwh_total"])),
+     sources=["data/behavior_rebuild.json:detection.ev_kwh_total"])
+_tok("EV_AVG_SESSION_KWH", kind="derived",
+     get=_ev_or_not_applicable(lambda det: _measured(
+         "EV_AVG_SESSION_KWH", "the average charging session",
+         "kWh", ",.1f", avg_session_kwh=det["avg_session_kwh"])),
+     sources=["data/behavior_rebuild.json:detection.avg_session_kwh"])
+_tok("EV_WINDOW_DECOMPOSITION", kind="derived",
+     get=_ev_or_not_applicable(_ev_window_decomposition),
+     sources=["data/behavior_rebuild.json:detection (ev_kwh_total and the three windows)"])
+_tok("EV_SOP_COMPLIANCE_PCT", kind="derived",
+     get=_ev_or_not_applicable(_ev_sop_compliance_pct),
+     sources=["data/behavior_rebuild.json:detection (ev_kwh_total, ev_kwh_sop_already)"])
+
+
+# ---- electrification: what each appliance costs and repays (section 10) ----
+#
+# BOTH artifacts collapse to {"applicable": False, "reason": ...} on a
+# household whose intake says it has no gas service -- heat_pump_conversion.py
+# and all_electric_endgame.py each return exactly that dict instead of every
+# section below it. These were the first tokens in this module to read either
+# file, so before issue #132's second pass a no-gas household went from getting
+# a report (its gas tokens summing an empty bill corpus to zero) to getting
+# none at all. Each token now answers with the artifact's own reason.
+def _endgame():
+    return _json("all_electric_endgame.json")
+
+
+def _gas_section(file, *path):
+    """(node, reason) for a gas-conversion artifact's section, or (None,
+    reason) when the artifact says this household has no gas."""
+    doc = _json(file)
+    applies, reason = _applicability(doc)
+    if not applies:
+        return None, reason
+    node = doc
+    for key in path:
+        node = node[key]
+    return node, reason
+
+
+def _gas_or_not_applicable(file, fn, *path):
+    def get(ctx):
+        node, reason = _gas_section(file, *path)
+        return _does_not_apply(reason) if node is None else fn(node)
+    return get
+
+
+def _wh_conversion():
+    return _endgame()["water_heater_conversion"]
+
+
+def _payback_or_never(token, subject, node):
+    """A payback_years that may legitimately be null.
+
+    heat_pump_conversion.payback_and_npv() returns {"payback_years": None,
+    "note": "no positive annual savings on this basis -- no payback"} whenever
+    the conversion does not save money, and every payback in
+    all_electric_endgame comes through that same function. That is the answer
+    for a household the conversion does not pay off on -- and the four tokens
+    reading it pushed the null through _quantities, which refuses it, aborting
+    the WHOLE report for exactly that household (issue #132, /review finding
+    1). It is the tou_spread null-payback defect again, at four sites the
+    pass-2 sweep did not open.
+
+    Returns None for "never repays" and a checked float otherwise, so each
+    caller writes the sentence its own reader needs."""
+    if node is None:
+        raise SystemExit(f"report_tokens: {token} has no payback record to read for "
+                          f"{subject}")
+    years = node.get("payback_years")
+    if years is None:
+        return None
+    return _quantities(token, subject, payback_years=years)[0]
+
+
+def _wh_headline_payback():
+    """The water heater's own payback at the artifact's OWN headline scenario.
+
+    headline_uef names the COP scenario rather than this module picking one,
+    so a regenerated artifact that moves its headline moves this token with
+    it instead of silently quoting a scenario the generator no longer leads
+    with."""
+    wh = _wh_conversion()
+    key = wh["headline_uef"]
+    scenarios = wh["payback"]
+    if key not in scenarios:
+        raise SystemExit(
+            f"report_tokens: data/all_electric_endgame.json's water heater names "
+            f"{key!r} as its headline scenario, but water_heater_conversion.payback has "
+            f"only {sorted(scenarios)}")
+    return scenarios[key]
+
+
+# ---------------------------------------------------------------------------
+# THE QUALIFIER TRAVELS WITH THE FIGURE (issue #132, adversarial review pass 1).
+#
+# The first version of these tokens exposed all_electric_endgame.json's
+# headline electrification economics -- a 30.8-year water-heater payback, a
+# 96.4-year combined payback, a "cost-effective" order -- and left behind the
+# caveat sitting in the SAME object saying every one of them is the pure
+# 100%-water-heater computation, NOT VERIFIED against this household's actual
+# appliance fuel mix. A prose block is handed its scoped token VALUES and
+# nothing else, so withholding the caveat does not make the block cautious; it
+# makes the block unable to be cautious. The figures would have published as
+# household fact.
+#
+# So the rule this section follows, and which the audit behind it applied to
+# all forty-three of issue #132's tokens: where the artifact itself states a
+# condition for reading a number, that condition is exposed too -- INLINE with
+# the value when it is short (a range, a share, a date), as its own token when
+# the artifact wrote a sentence. Nothing is paraphrased into something softer,
+# and no bound is invented where the artifact declines to give one: this
+# household's water-heater share sensitivity is explicit that its scenarios are
+# ILLUSTRATIVE and "NOT a proven bound -- the true share could be lower still",
+# and the tokens below say exactly that.
+# ---------------------------------------------------------------------------
+def _wh_share_sensitivity():
+    return _wh_conversion()["water_heater_share_sensitivity"]
+
+
+def _hpwh_share_caveat(ctx):
+    """What the water-heater figures rest on, in the artifact's own terms.
+
+    Reads the two caveat strings water_heater_conversion publishes beside the
+    payback -- not_verified_caveat and the sensitivity's own basis -- and
+    states the two facts they turn on: the fuel-mix assumption is unverified,
+    and the scenarios that propagate it are illustrative rather than a bound.
+    The artifact's wording is condensed, never softened; a reader who wants the
+    full paragraph has the artifact named in this token's sources."""
+    wh = _wh_conversion()
+    for field in ("not_verified_caveat", "upper_bound_caveat"):
+        if not str(wh.get(field, "")).strip():
+            raise SystemExit(
+                f"report_tokens: HPWH_SHARE_CAVEAT will not publish a water-heater "
+                f"payback without data/all_electric_endgame.json:water_heater_conversion."
+                f"{field}, the condition that artifact states for reading it")
+    share, = _figures("HPWH_SHARE_CAVEAT", "what share of the gas floor the water heater uses",
+                      headline_water_heater_share=_wh_share_sensitivity()
+                      ["scenarios"]["100pct_full_floor"]["water_heater_share"])
+    return (f"the pure {share * 100:.0f}%-water-heater computation, NOT VERIFIED against this "
+            "household's own appliance fuel mix, which is not determined — the share "
+            "scenarios below are illustrative, not a proven bound, and the true share "
+            "could be lower still")
+
+
+def _hpwh_payback_sensitivity(ctx):
+    """The same payback across the artifact's own illustrative share scenarios.
+
+    Every scenario is named with its own share, rather than reduced to a span:
+    a span reads as a bracket, and the artifact is explicit that these are NOT
+    a bracket -- the true share could sit below all of them."""
+    scenarios = _wh_share_sensitivity()["scenarios"]
+    if not scenarios:
+        raise SystemExit("report_tokens: data/all_electric_endgame.json:"
+                          "water_heater_conversion.water_heater_share_sensitivity.scenarios "
+                          "is empty -- there is no sensitivity to state")
+    rows = []
+    for key in sorted(scenarios, key=lambda k: -scenarios[k]["water_heater_share"]):
+        s = scenarios[key]
+        share, = _quantities("HPWH_PAYBACK_SENSITIVITY", f"the {key} scenario's share",
+                             water_heater_share=s["water_heater_share"])
+        years = _payback_or_never("HPWH_PAYBACK_SENSITIVITY",
+                                  f"the {key} scenario's payback",
+                                  s["payback"]["central_install"])
+        rows.append(f"{share * 100:.0f}% share → "
+                    + (f"{years:,.1f} yr" if years is not None else "never repays"))
+    return " · ".join(rows) + " (illustrative scenarios, not a bound)"
+
+
+def _hpwh_savings_bound(ctx):
+    """Why the gas saving behind the payback is an upper bound.
+
+    all_electric_endgame prices the WHOLE non-heating gas floor, which its own
+    upper_bound_caveat says may contain end uses a heat-pump water heater does
+    not replace and which this household's single unsplit gas meter cannot
+    separate."""
+    wh = _wh_conversion()
+    if not str(wh.get("upper_bound_caveat", "")).strip():
+        raise SystemExit(
+            "report_tokens: HPWH_SAVINGS_BOUND has no upper_bound_caveat to state in "
+            "data/all_electric_endgame.json:water_heater_conversion")
+    saving, = _amounts("HPWH_SAVINGS_BOUND", "the gas saving the payback is built on",
+                       floor_savings_annual_usd=wh["floor_savings_annual_usd"])
+    return (f"${saving:,.0f}/yr prices the WHOLE non-heating gas floor, which one unsplit "
+            "gas meter cannot separate into end uses — an upper bound on the water "
+            "heater's own gas saving, not a water-heater-only figure")
+
+
+def _hpwh_cost_basis(ctx):
+    """What the water-heater install cost IS -- the companion to
+    HEAT_PUMP_COST_BASIS, and the artifact wrote its note to draw exactly that
+    contrast.
+
+    all_electric_endgame's install_cost.note says the water-heater figure comes
+    from general contractor-pricing guides and is explicitly "not a CA-specific
+    engineering study the way heat_pump_conversion.py's furnace figure is". A
+    reader handed "$4,200 installed" with no note reads household-specific
+    pricing; the two costs in this block do not have the same standing, and
+    only the furnace one could be qualified (issue #132, Codex pass 3).
+
+    The note is RENDERED, not restated, for HEAT_PUMP_COST_BASIS's reason: the
+    comparison between the two sources is one the artifact makes and this
+    module cannot."""
+    note = str(_wh_conversion()["install_cost"].get("note", "")).strip()
+    if not note:
+        raise SystemExit(
+            "report_tokens: HPWH_COST_BASIS will not describe an install cost without "
+            "data/all_electric_endgame.json:water_heater_conversion.install_cost.note, "
+            "which is where that figure's source and its standing are stated")
+    return note
+
+
+def _hpwh_install_cost(ctx):
+    cost = _wh_conversion()["install_cost"]
+    central, low, high = _amounts(
+        "HPWH_INSTALL_COST", "what a heat-pump water heater costs installed",
+        central_usd=cost["central_usd"], low_usd=cost["low_usd"], high_usd=cost["high_usd"])
+    return f"${central:,.0f} installed (quoted range ${low:,.0f}–{high:,.0f})"
+
+
+def _heat_pump_central_payback():
+    """The furnace conversion at the CENTRAL COP scenario, selected by the
+    generator's own "central_" key prefix rather than by this module hardcoding
+    a COP -- data/heat_pump_conversion.json's COP_SCENARIOS have moved before
+    and the key would go stale silently."""
+    paybacks = _json("heat_pump_conversion.json")["payback"]
+    central = sorted(k for k in paybacks if str(k).startswith("central"))
+    if len(central) != 1:
+        raise SystemExit(
+            "report_tokens: data/heat_pump_conversion.json:payback needs exactly one "
+            f"'central_*' COP scenario to quote; found {central}")
+    return paybacks[central[0]]
+
+
+def _heat_pump_cost_basis(ctx):
+    """What the furnace install cost is, and is not.
+
+    THE QUALIFYING CLAUSE IS THE ARTIFACT'S OWN, VERBATIM. An earlier version
+    paraphrased install_cost.note as "priced on an example system larger than
+    this household's own sizing" -- a comparison between the study's example
+    and this house that this module never made and cannot make (issue #132,
+    Codex pass 1's sweep: a conclusion asserted without checking the condition
+    that makes it true). heat_pump_conversion.py states that comparison itself,
+    with the tonnages and the "not quantified" it belongs with, so the note is
+    rendered rather than restated."""
+    cost = _json("heat_pump_conversion.json")["install_cost"]
+    span = cost.get("sensitivity_range_usd") or []
+    if len(span) < 2:
+        raise SystemExit(
+            "report_tokens: HEAT_PUMP_COST_BASIS needs data/heat_pump_conversion.json:"
+            f"install_cost.sensitivity_range_usd to span at least two values, got {span!r}")
+    note = str(cost.get("note", "")).strip()
+    if not note:
+        raise SystemExit(
+            "report_tokens: HEAT_PUMP_COST_BASIS will not describe an install cost without "
+            "data/heat_pump_conversion.json:install_cost.note, which is where the study, "
+            "its example system and its own caveats are stated")
+    values = _amounts("HEAT_PUMP_COST_BASIS", "the install-cost range the study supports",
+                      **{f"bound_{i}_usd": v for i, v in enumerate(span)})
+    return f"${min(values):,.0f}–{max(values):,.0f} across the study's own range; {note}"
+
+
+def _heat_pump_payback(ctx):
+    """The furnace payback at the central efficiency scenario, WITH the span
+    the other committed scenarios produce.
+
+    The efficiency assumption dominates this figure -- the committed scenarios
+    run from about a century to millennia -- so a bare central number reads as
+    a precision the model does not have. Both are rendered together, and the
+    scenario keys are the generator's own."""
+    paybacks = _json("heat_pump_conversion.json")["payback"]
+    central = _payback_or_never(
+        "HEAT_PUMP_PAYBACK", "the furnace payback at the central efficiency assumption",
+        _heat_pump_central_payback()["standalone"])
+    span = [_payback_or_never("HEAT_PUMP_PAYBACK", f"the {k} scenario's furnace payback",
+                              paybacks[k]["standalone"]) for k in sorted(paybacks)]
+    repaying = [y for y in span if y is not None]
+    never = len(span) - len(repaying)
+    head = (f"{central:,.1f} yr at the central efficiency assumption" if central is not None
+            else "never repays at the central efficiency assumption")
+    if not repaying:
+        return f"{head} — and on none of the {len(span)} scenarios modelled"
+    tail = (f"{min(repaying):,.1f}–{max(repaying):,.1f} yr across the scenarios modelled"
+            if len(repaying) > 1 else f"{repaying[0]:,.1f} yr on the only scenario that repays")
+    return f"{head} ({tail}" + (f"; {never} never repay)" if never else ")")
+
+
+_tok("HPWH_INSTALL_COST", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_install_cost(None)),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost"])
+_tok("HPWH_COST_BASIS", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_cost_basis(None)),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost.note"])
+_tok("HPWH_SHARE_CAVEAT", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_share_caveat(None)),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.not_verified_caveat",
+              "data/all_electric_endgame.json:water_heater_conversion."
+              "water_heater_share_sensitivity.basis"])
+_tok("HPWH_PAYBACK_SENSITIVITY", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_payback_sensitivity(None)),
+     sources=["data/all_electric_endgame.json:water_heater_conversion."
+              "water_heater_share_sensitivity.scenarios"])
+_tok("HPWH_SAVINGS_BOUND", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_savings_bound(None)),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.upper_bound_caveat",
+              "data/all_electric_endgame.json:water_heater_conversion."
+              "floor_savings_annual_usd"])
+_tok("HEAT_PUMP_COST_BASIS", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _heat_pump_cost_basis(None)),
+     sources=["data/heat_pump_conversion.json:install_cost (note, sensitivity_range_usd)"])
+_tok("HPWH_PAYBACK", kind="derived",
+     get=_gas_or_not_applicable(
+         "all_electric_endgame.json",
+         lambda _n: (lambda y: _yr1(y) if y is not None
+                     else "never repays on this basis — no positive annual saving")(
+             _payback_or_never("HPWH_PAYBACK",
+                               "how long the water heater takes to repay itself",
+                               _wh_headline_payback()["central_install"]))),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.payback"
+              "[headline_uef].central_install.payback_years"])
+_tok("HPWH_NET_SAVINGS", kind="derived",
+     get=_gas_or_not_applicable(
+         "all_electric_endgame.json",
+         lambda _n: _usd0_signed(_wh_headline_payback()["annual_net_savings_usd"]) + "/yr"),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.payback"
+              "[headline_uef].annual_net_savings_usd"])
+_tok("HEAT_PUMP_INSTALL_COST", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda node: _usd0(node["standalone_usd"]),
+                                "install_cost"),
+     sources=["data/heat_pump_conversion.json:install_cost.standalone_usd"])
+def _heat_pump_marginal(field):
+    """The furnace conversion priced as an UPGRADE AT REPLACEMENT TIME.
+
+    heat_pump_conversion.py carries two install-cost bases and two paybacks:
+    `standalone`, which charges the whole system to the decision, and
+    `marginal_over_ac_replacement`, which charges only the difference over the
+    air-conditioner replacement that was happening anyway. Section 10's own
+    recommendation is replace-on-failure -- the second basis is the one that
+    prices that recommendation, and only the first was tokenized, so the
+    instruction concluded "wait for it to die" while showing the number for
+    not waiting (issue #132, /review finding 6)."""
+    doc = _json("heat_pump_conversion.json")
+    if field == "cost":
+        return _usd0(doc["install_cost"]["marginal_over_ac_replacement_usd"])
+    node = _heat_pump_central_payback()["marginal_over_ac_replacement"]
+    years = _payback_or_never("HEAT_PUMP_MARGINAL_PAYBACK",
+                              "the furnace payback as an upgrade at replacement time", node)
+    return (f"{years:,.1f} yr" if years is not None
+            else "never repays even as an upgrade at replacement time")
+
+
+_tok("HEAT_PUMP_MARGINAL_INSTALL_COST", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _heat_pump_marginal("cost")),
+     sources=["data/heat_pump_conversion.json:install_cost."
+              "marginal_over_ac_replacement_usd"])
+_tok("HEAT_PUMP_MARGINAL_PAYBACK", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _heat_pump_marginal("payback")),
+     sources=["data/heat_pump_conversion.json:payback[central_*]."
+              "marginal_over_ac_replacement.payback_years"])
+_tok("HEAT_PUMP_PAYBACK", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _heat_pump_payback(None)),
+     sources=["data/heat_pump_conversion.json:payback[*].standalone.payback_years"])
+
+
+_ENDGAME_STEP_LABEL = {"water_heater": "the water heater", "furnace": "the furnace"}
+
+
+def _electrification_sequence(ctx):
+    """The cost-effective order, WITH the condition under which it holds.
+
+    The order is computed on the same unverified 100%-water-heater basis as
+    every figure beside it, and the artifact's own share_robustness says both
+    how far the share can fall before the order REVERSES and that on the
+    furnace's other committed install-cost basis it does not survive the named
+    scenarios at all. Rendering the bare order would publish "water heater
+    first" as a settled recommendation; the crossover travels with it instead,
+    so the qualifier cannot be dropped by whoever writes the prose."""
+    seq = _endgame()["sequencing_and_paybacks"]
+    order = seq["order"]
+    if not order:
+        raise SystemExit("report_tokens: data/all_electric_endgame.json:"
+                          "sequencing_and_paybacks.order is empty -- there is no sequence "
+                          "to state")
+    unknown = [s for s in order if s not in _ENDGAME_STEP_LABEL]
+    if unknown:
+        raise SystemExit(
+            f"report_tokens: ELECTRIFICATION_SEQUENCE has no label for step(s) {unknown} "
+            "in data/all_electric_endgame.json:sequencing_and_paybacks.order")
+    steps = ", then ".join(_ENDGAME_STEP_LABEL[s] for s in order)
+    rob = seq.get("share_robustness")
+    if not rob:
+        raise SystemExit(
+            "report_tokens: ELECTRIFICATION_SEQUENCE will not publish an order without "
+            "data/all_electric_endgame.json:sequencing_and_paybacks.share_robustness, the "
+            "check that artifact runs on whether the order survives its own unverified "
+            "water-heater-share assumption")
+    crossover, = _quantities(
+        "ELECTRIFICATION_SEQUENCE", "the share at which the order reverses",
+        crossover_water_heater_share=rob["crossover_water_heater_share"])
+    survives = _claim(
+        "ELECTRIFICATION_SEQUENCE", "whether the order survives the share uncertainty",
+        SUPPORTED if rob.get("robust_across_named_scenarios") is True
+        else SUPPORTED_OPPOSITE if rob.get("robust_across_named_scenarios") is False
+        else NOT_DETERMINED,
+        "share_robustness.robust_across_named_scenarios is "
+        f"{rob.get('robust_across_named_scenarios')!r}, neither true nor false")
+    held = ("holds across every illustrative share scenario modelled"
+            if survives else "does NOT hold across the illustrative share scenarios modelled")
+    return (f"{steps} — on an unverified water-heater-share assumption; the order {held}, "
+            f"and reverses below a {crossover * 100:.0f}% water-heater share")
+
+
+def _electrification_combined_payback(ctx):
+    combined = _endgame()["sequencing_and_paybacks"]["complete_transition_payback"]
+    years = _payback_or_never("ELECTRIFICATION_COMBINED_PAYBACK",
+                              "how long the whole transition takes to repay itself",
+                              combined)
+    cost, = _amounts("ELECTRIFICATION_COMBINED_PAYBACK",
+                     "what the whole transition costs to install",
+                     combined_install_usd=combined["combined_install_usd"])
+    if years is None:
+        return (f"never repays the ${cost:,.0f} of installed cost — no positive annual "
+                "saving on this basis")
+    return f"{years:,.1f} yr on ${cost:,.0f} of installed cost"
+
+
+def _electrification_incentives(ctx):
+    """What the committed incentive research found for the ELECTRIFICATION
+    appliances, with the date it was verified attached.
+
+    Deliberately NOT the same fact as {{INCENTIVE_STATUS}}, which is still a
+    KNOWN_GAPS token: that one is about STORAGE, and no committed artifact
+    records today's federal residential storage-credit status. This one reads
+    heat_pump_conversion.json's own incentives block, which does carry a
+    dollar figure, a verified_date and its sources."""
+    inc = _json("heat_pump_conversion.json")["incentives"]
+    usd, = _amounts("ELECTRIFICATION_INCENTIVES",
+                    "what electrification incentives this household can claim",
+                    incentive_usd=inc["usd"])
+    when = inc.get("verified_date")
+    if not when:
+        raise SystemExit(
+            "report_tokens: data/heat_pump_conversion.json:incentives has no "
+            "verified_date -- an incentive figure with no as-of date is not something "
+            "this report may publish (CLAUDE.md section 0)")
+    return f"${usd:,.0f} (verified {when})"
+
+
+_tok("ELECTRIFICATION_SEQUENCE", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _electrification_sequence(None)),
+     sources=["data/all_electric_endgame.json:sequencing_and_paybacks.order"])
+_tok("ELECTRIFICATION_COMBINED_PAYBACK", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _electrification_combined_payback(None)),
+     sources=["data/all_electric_endgame.json:sequencing_and_paybacks."
+              "complete_transition_payback"])
+def _electrification_meter_removal_caveat(ctx):
+    """Why "the whole transition" is not a confirmed gas-meter removal.
+
+    all_electric_endgame states, beside the combined payback, that neither
+    payback represents a confirmed meter removal while a possible third gas end
+    use remains unpriced. s10#4 publishes that payback as the cost of going
+    all-electric, so the caveat has to travel with it (issue #132, /review
+    finding 9's ancestor walk). Rendered verbatim, for HEAT_PUMP_COST_BASIS's
+    reason: the artifact states the gap and this module cannot."""
+    caveat = str(_endgame()["sequencing_and_paybacks"].get(
+        "third_end_use_caveat", "")).strip()
+    if not caveat:
+        raise SystemExit(
+            "report_tokens: ELECTRIFICATION_METER_REMOVAL_CAVEAT will not publish a "
+            "whole-transition payback without data/all_electric_endgame.json:"
+            "sequencing_and_paybacks.third_end_use_caveat, which states what that "
+            "payback does and does not establish")
+    return caveat
+
+
+_tok("ELECTRIFICATION_METER_REMOVAL_CAVEAT", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _electrification_meter_removal_caveat(None)),
+     sources=["data/all_electric_endgame.json:sequencing_and_paybacks."
+              "third_end_use_caveat"])
+_tok("ELECTRIFICATION_INCENTIVES", kind="derived",
+     get=_gas_or_not_applicable("heat_pump_conversion.json",
+                                lambda _n: _electrification_incentives(None)),
+     sources=["data/heat_pump_conversion.json:incentives"])
+
+
+# ---- cleaning cadence (section 12) -----------------------------------------
+def _cleaning_cadence():
+    """data/extra_results.json's optimal-cadence model, keyed by soiling rate.
+
+    The keys ARE the modeled soiling rates in %/month (TECHNICAL.md section
+    3.11), so the bracket this token names is read off the artifact's own keys
+    rather than assumed to match SOILING_RATE_RANGE's -- that token brackets
+    two scenarios in data/soiling_results.json, a different pair of estimates,
+    and asserting the two brackets are the same would be a cross-artifact claim
+    nothing here checks."""
+    cad = _json("extra_results.json")["cleaning"]
+    if not cad:
+        raise SystemExit("report_tokens: data/extra_results.json:cleaning is empty -- "
+                          "there is no cadence model to quote")
+    return cad, sorted(cad, key=lambda k: float(k))
+
+
+def _cleaning_best_month(ctx):
+    """When one cleaning a year should happen.
+
+    The three soiling rates are DIFFERENT SCENARIOS of the same model, so
+    disagreement between them is an expected outcome and not a contradiction:
+    when they agree the answer is one date, and when they do not, every
+    scenario's own answer is named. Nothing refuses on their disagreement."""
+    cad, keys = _cleaning_cadence()
+    picks = [str(cad[k]["best1"]) for k in keys]
+    if len(set(picks)) == 1:
+        return f"{picks[0]}, at every soiling rate modelled"
+    return " · ".join(f"{k}%/month: {p}" for k, p in zip(keys, picks))
+
+
+def _cleaning_value_range(token, field, tail):
+    cad, keys = _cleaning_cadence()
+    values = _amounts(token, "what a cleaning is worth at each modelled soiling rate",
+                      **{f"soiling_{k.replace('.', '_')}_pct_per_month": cad[k][field]
+                         for k in keys})
+    lo, hi = min(values), max(values)
+    return (f"${lo:,.0f}–{hi:,.0f}/yr across the {float(keys[0]):g}–{float(keys[-1]):g}"
+            f"%/month soiling bracket{tail}")
+
+
+_SOP_SEASON_LABEL = {"S": "summer", "W": "winter"}
+
+
+def _midday_marginal_value_range(ctx):
+    """What a marginal midday kWh is actually worth, as the RANGE it is.
+
+    s12#5's caveat used to compare the cadence model's pricing against
+    {{SUPER_OFF_PEAK_RATE}} -- rates.allin("S", "sop"), the SUMMER SUPER-OFF-PEAK
+    IMPORT rate -- and called it "what a marginal midday kWh earns" (issue #132,
+    Codex pass 2). Three things are wrong with that comparator and only the
+    direction of the conclusion survives them:
+
+      * recovered midday production that is EXPORTED earns the export credit,
+        not an import rate it never offsets;
+      * the token is summer-only, and the winter cells differ;
+      * self-consumed and exported energy are two different readings, so the
+        answer is a span, not a point.
+
+    So all four super-off-peak cells are read from the canonical rates module
+    -- both seasons, both sides -- and the span between them is the answer.
+    WHICH END IS WHICH IS COMPUTED, not assumed: nothing here asserts that the
+    export credit is the lower one, because that is exactly the shape of
+    assertion the previous pass spent its findings on. rates.py rather than
+    extra_results.json's frozen price_map copy, for CLAUDE.md section 9's
+    single-rates-module rule -- the copy is itself cross-checked against these
+    same calls by quiet_night_floor.py."""
+    readings = []
+    for season in sorted(_SOP_SEASON_LABEL):
+        label = _SOP_SEASON_LABEL[season]
+        readings.append((f"{label} export credit", R.credit(season, "sop")))
+        readings.append((f"{label} super-off-peak import", R.allin(season, "sop")))
+    values = _quantities(
+        "MIDDAY_MARGINAL_VALUE_RANGE", "what a marginal midday kWh is worth",
+        **{f"cell_{i}": v for i, (_lab, v) in enumerate(readings)})
+    priced = sorted(zip(values, (lab for lab, _v in readings)))
+    (lo, lo_label), (hi, hi_label) = priced[0], priced[-1]
+    if lo == hi:
+        return (f"{_cents1(lo)}/kWh — every super-off-peak cell, import-offset and "
+                "export-credit, prices the same in both seasons")
+    return (f"{_cents1(lo)}–{_cents1(hi)}/kWh — {lo_label} at the low end, "
+            f"{hi_label} at the high end")
+
+
+_tok("MIDDAY_MARGINAL_VALUE_RANGE", kind="derived", get=_midday_marginal_value_range,
+     sources=["analysis/rates.py: allin(season, 'sop') and credit(season, 'sop') "
+              "for both seasons -- the four super-off-peak price-map cells"])
+_tok("CLEANING_BEST_MONTH", kind="derived", get=_cleaning_best_month,
+     sources=["data/extra_results.json:cleaning[*].best1"])
+_tok("CLEANING_SINGLE_VALUE_RANGE", kind="derived",
+     get=lambda ctx: _cleaning_value_range("CLEANING_SINGLE_VALUE_RANGE", "save1", ""),
+     sources=["data/extra_results.json:cleaning[*].save1"])
+_tok("CLEANING_SECOND_MARGINAL_RANGE", kind="derived",
+     get=lambda ctx: _cleaning_value_range("CLEANING_SECOND_MARGINAL_RANGE", "marginal2nd",
+                                           ", for the second cleaning of the year"),
+     sources=["data/extra_results.json:cleaning[*].marginal2nd"])
+
+
+# ---- the measured TOU spread, per season (section 13) ----------------------
+_NOT_DETERMINED_VERDICT = "not determined"
+
+
+def _spread_season(token, season):
+    ds = _json("tou_spread.json")["delivery_spread"]
+    if season not in ds:
+        raise SystemExit(f"report_tokens: data/tou_spread.json:delivery_spread has no "
+                          f"{season!r} season for {token} to report")
+    return ds[season]
+
+
+def _spread_corpus(token, season, s):
+    """As much of the corpus line as the artifact actually carries.
+
+    tou_spread._fit_spread has THREE exits and only the last one is fully
+    populated: a season with fewer than three paired observations returns
+    {"n", "verdict"} alone, and one whose fit is undefined returns {"n",
+    "n_independent", "verdict"}. Both are ordinary outcomes on a short bill
+    corpus -- exactly the household most likely to be reading this report for
+    the first time -- so the fields are reported when present and skipped when
+    not, rather than being read unconditionally and aborting the whole run on a
+    KeyError."""
+    parts = []
+    for key, unit in (("n", "priced observations"),
+                      ("n_independent", "independent rate changes"),
+                      ("span_days", "days")):
+        if s.get(key) is None:
+            continue
+        value, = _quantities(token, f"how much rate history the {season} spread rests on",
+                             **{key: s[key]})
+        parts.append(f"{value:,.0f} {unit}")
+    return ", ".join(parts)
+
+
+def _spread_trend(token, season):
+    """Either the surviving trend or the artifact's own "not determined", with
+    the reason it publishes for it.
+
+    tou_spread.py writes `verdict` as a machine-readable field precisely so a
+    consumer does not have to re-derive the adequacy rules, and CLAUDE.md
+    section 0 makes "not determined" a required answer rather than a hole to
+    fill -- so this token renders it, reason and corpus and all.
+
+    THE VERDICT IS MATCHED BY PREFIX, NOT BY EQUALITY. _fit_spread's two
+    degenerate exits write "not determined -- fewer than 3 paired observations"
+    and "not determined -- fit undefined on N independent level(s)": both ARE
+    the not-determined answer and carry their reason inside the verdict string,
+    and an equality test sent them down the branch that reads
+    escalation_pct_yr, which those exits do not write (issue #132, adversarial
+    pass 2's sweep). Likewise not_determined_because can legitimately come back
+    empty -- tou_spread's own battery block defaults it -- so an absent reason
+    is reported as absent rather than raised on."""
+    s = _spread_season(token, season)
+    verdict = str(s.get("verdict", "")).strip()
+    if not verdict:
+        raise SystemExit(
+            f"report_tokens: {token} has no verdict to report -- "
+            f"data/tou_spread.json:delivery_spread.{season} states none, and this "
+            "sentence is that verdict")
+    corpus = _spread_corpus(token, season, s)
+    if verdict.lower().startswith(_NOT_DETERMINED_VERDICT):
+        # The reason lives in not_determined_because when the fit ran, and
+        # inside the verdict string itself on the degenerate exits.
+        because = [str(b) for b in (s.get("not_determined_because") or [])]
+        inline = verdict[len(_NOT_DETERMINED_VERDICT):].lstrip(" -–—:").strip()
+        if inline:
+            because.insert(0, inline)
+        head = f"not determined ({corpus})" if corpus else "not determined"
+        return f"{head} — {'; '.join(because)}" if because else head
+    pct, = _figures(token, f"the {season} spread trend",
+                    escalation_pct_yr=s["escalation_pct_yr"])
+    lo, hi = _figures(token, f"the {season} spread trend's interval",
+                      ci_low_pct_yr=s["escalation_ci95_pct_yr"][0],
+                      ci_high_pct_yr=s["escalation_ci95_pct_yr"][1])
+    # r2 is None when the ln-fit has no variance to explain -- tou_spread
+    # writes the null itself. That is a missing statistic, not a broken one, so
+    # the clause naming it is dropped rather than the whole trend refused.
+    r2 = s.get("r2")
+    fit = f", r² {_figures(token, f'the {season} fit quality', r2=r2)[0]:.3f}" \
+        if r2 is not None else ""
+    tail = f"; {corpus}" if corpus else ""
+    return f"{pct:+,.2f}%/yr (95% CI {lo:+,.2f} to {hi:+,.2f}%/yr{fit}{tail})"
+
+
+_tok("SPREAD_TREND_SUMMER", kind="derived",
+     get=lambda ctx: _spread_trend("SPREAD_TREND_SUMMER", "summer"),
+     sources=["data/tou_spread.json:delivery_spread.summer"])
+_tok("SPREAD_TREND_WINTER", kind="derived",
+     get=lambda ctx: _spread_trend("SPREAD_TREND_WINTER", "winter"),
+     sources=["data/tou_spread.json:delivery_spread.winter"])
+
+
+def _battery_on_measured_spread(ctx):
+    """The battery re-run on the MEASURED spread, per season.
+
+    The uniform ladder section 13's own table prints is
+    battery_dispatch_policies.json's; tou_spread.py recomputes the same ladder
+    from the same seed saving, which makes those two the SAME QUANTITY
+    INDEPENDENTLY COMPUTED -- but nothing in this token renders both, so there
+    is no comparison to gate on. What it renders is the per-season re-run,
+    which on a corpus whose spread trend is not determined is itself not
+    determined, and says so with the artifact's own reason."""
+    batt = _json("tou_spread.json")["battery"]
+    per = batt.get("per_period") or {}
+    if not per:
+        raise SystemExit("report_tokens: data/tou_spread.json:battery.per_period is "
+                          "empty -- there is no per-season re-run to report")
+    parts = []
+    for season in sorted(per):
+        block = per[season]
+        verdict = str(block.get("verdict", "")).strip()
+        if verdict.lower().startswith(_NOT_DETERMINED_VERDICT):
+            # `because` can legitimately arrive empty: tou_spread builds it
+            # from a list of suppression reasons that can all be suppressed in
+            # turn, and its own reader defaults it rather than requiring it.
+            because = [str(b) for b in (block.get("because") or [])]
+            parts.append(f"{season}: not determined"
+                         + (f" — {'; '.join(because)}" if because else ""))
+            continue
+        npv, = _figures("BATTERY_ON_MEASURED_SPREAD",
+                        f"the {season} re-run's net present value", npv10=block["npv10"])
+        # A NULL PAYBACK IS THE ANSWER, NOT A MISSING ONE. tou_spread._payback
+        # returns payback_yr None when a narrowing spread leaves the battery
+        # unrecovered inside its fifteen-year horizon, and the generator's own
+        # comment calls that "a real result, not an error ... the one verdict it
+        # most needs to be able to report". Refusing it withheld the entire
+        # report from the household whose battery does not pay back -- the
+        # household the answer matters most to (issue #132, adversarial pass 2).
+        # The ten-year NPV is present and meaningful in that case and is still
+        # reported; only a payback that is neither null nor a finite number is
+        # a refusal, and that one comes from _figures below.
+        years = block.get("payback_yr")
+        if years is None:
+            parts.append(f"{season}: does not repay within the model horizon, "
+                         f"{_usd0_plus(npv)} over ten years")
+            continue
+        years, = _figures("BATTERY_ON_MEASURED_SPREAD",
+                          f"the {season} re-run's payback", payback_yr=years)
+        parts.append(f"{season}: {years:,.1f} yr payback, {_usd0_plus(npv)} over ten years")
+    return " · ".join(parts)
+
+
+_tok("BATTERY_ON_MEASURED_SPREAD", kind="derived", get=_battery_on_measured_spread,
+     sources=["data/tou_spread.json:battery.per_period"])
+_tok("SPREAD_BATTERY_SEED_SAVING", kind="derived",
+     get=lambda ctx: _usd0_signed(_json("tou_spread.json")["battery"]
+                                  ["seed_year1_saving_usd"]) + "/yr",
+     sources=["data/tou_spread.json:battery.seed_year1_saving_usd"])
+
+
+# ---- the quiet-night floor, decomposed (section 13) ------------------------
+# A year of nights. A leap year's 366 clears it too, which is right: the gate
+# asks whether the corpus covers a year, not whether it is exactly 365 long.
+# BOTH ENDS, and this is the whole point of the pair (issue #132, Codex pass 1,
+# finding 1): the first version tested only `nights >= 365`, so a two-year
+# corpus rendered 730 nights of energy as "18,046 kWh/yr" -- an annual unit on
+# roughly double a year, which is a worse error than the short-corpus case it
+# was written to catch, because the number is inflated rather than reduced.
+# A gate on a range tests the range.
+_FULL_YEAR_NIGHTS = (365, 366)
+# floor_kw_priced is round(median_kw, 4) in quiet_night_floor.py; half of the
+# last retained decimal is the whole slack that derivation introduces.
+_FOUR_DECIMAL_ROUNDING = 0.00005 + 1e-12
+
+
+def _night_floor_coverage():
+    """(covers_a_year, nights, why) for the quiet-night corpus.
+
+    A COUNT IS NOT A WINDOW. nights_total is only how many dated rows the run
+    produced, so on its own it cannot tell one complete year from 365 dates
+    scattered across three (Codex pass 1's second half of finding 1). The
+    artifact does carry the window: night_floor.daily_series is one row per
+    date, so its first and last give a real span, and comparing that span to
+    the row count says whether the record is also gapless.
+
+    Complete therefore means all three: the span is one calendar year, the
+    count matches the span (no holes), and the count is itself a year. Where
+    daily_series is absent or carries no parseable dates there is no window to
+    read, and the count alone is constrained to a single 365/366-day year --
+    the fallback stated rather than assumed."""
+    nf = _night_floor()
+    nights, = _quantities("NIGHT_FLOOR_COVERAGE", "how many nights the corpus holds",
+                          nights_total=nf["nights_total"])
+    nights = int(nights)
+    lo, hi = _FULL_YEAR_NIGHTS
+    dates = []
+    for row in (nf.get("daily_series") or []):
+        try:
+            dates.append(dt.date.fromisoformat(str(row["date"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not dates:
+        if lo <= nights <= hi:
+            return True, nights, ""
+        return False, nights, ("more than a full year" if nights > hi
+                               else "less than a full year")
+    span = (max(dates) - min(dates)).days + 1
+    if not lo <= span <= hi:
+        return False, nights, ("spanning more than a full year" if span > hi
+                               else "spanning less than a full year")
+    if nights != span or len(set(dates)) != span:
+        return False, nights, f"with gaps across a {span}-day window"
+    if not lo <= nights <= hi:
+        return False, nights, ("more than a full year" if nights > hi
+                               else "less than a full year")
+    return True, nights, ""
+
+
+def _night_floor():
+    return _json("quiet_night_floor.json")["night_floor"]
+
+
+def _night_floor_sample(ctx):
+    nf = _night_floor()
+    quiet, total = _quantities(
+        "NIGHT_FLOOR_SAMPLE", "how many nights the floor is measured on",
+        quiet_nights=nf["quiet_nights"], nights_total=nf["nights_total"])
+    _claim("NIGHT_FLOOR_SAMPLE", "what share of nights were excluded",
+           SUPPORTED if total > 0 else NOT_DETERMINED,
+           f"data/quiet_night_floor.json:night_floor.nights_total is {total!r}, which is "
+           "not a year of nights a sample can be taken from")
+    return (f"{quiet:,.0f} of {total:,.0f} nights "
+            f"({(total - quiet) / total * 100:.1f}% excluded for a high-power interval)")
+
+
+def _night_floor_annual_kwh(ctx):
+    """The floor's implied annual energy, on the artifact's OWN stated method.
+
+    quiet_night_floor.py prices the measured floor as a CONSTANT across every
+    hour of the year (pricing.floor_kw_basis says so in as many words), so the
+    implied energy is that constant times the hours it was applied to.
+
+    THE RATE IS THE ONE THE PRICING USED, NOT A PARALLEL READ OF THE SAME
+    FIELD. pricing.floor_kw_priced is literally round(night_floor.median_kw, 4)
+    in the generator -- ONE DERIVED FROM THE OTHER, so they are compared within
+    that rounding and the priced value is what this figure is built on. Reading
+    median_kw instead would have let the kWh figure and the $ figure beside it
+    drift apart silently if the generator ever priced something else.
+
+    AND THE /yr LABEL IS EARNED, NOT ASSUMED (issue #132, adversarial pass 3).
+    The previous version annualized as nights_total x 24 and called the result
+    "/yr". nights_total is only the count of dates present in the series, so a
+    partial or gappy corpus produced a SMALLER number still wearing an annual
+    unit -- understating the load and contradicting the 8,760-hour basis the
+    artifact declares. The arithmetic is unchanged where the corpus really does
+    cover a year (365 x 24 = 8,760, which is exactly the artifact's stated
+    basis); where it does not, the figure is reported over the window it
+    actually measures and says so, rather than being refused. A refusal here
+    would withhold the whole report over a label, which is the failure the
+    previous pass corrected."""
+    nf = _night_floor()
+    priced = _json("quiet_night_floor.json")["pricing"]["floor_kw_priced"]
+    covers, nights, why = _night_floor_coverage()
+    kw, median = _quantities(
+        "NIGHT_FLOOR_ANNUAL_KWH", "how much energy the always-on floor draws",
+        floor_kw_priced=priced, median_kw=nf["median_kw"])
+    _require_derived(
+        "NIGHT_FLOOR_ANNUAL_KWH", "which floor the annual energy is built on",
+        median, kw, _FOUR_DECIMAL_ROUNDING,
+        f"data/quiet_night_floor.json prices {kw!r} kW while night_floor.median_kw is "
+        f"{median!r} kW -- the energy figure and the cost figure beside it would be "
+        "built on different floors")
+    kwh = kw * nights * 24
+    return (f"{kwh:,.0f} kWh/yr" if covers
+            else f"{kwh:,.0f} kWh across the {nights:,.0f} nights measured, {why}")
+
+
+def _night_floor_annual_cost(ctx):
+    """Both committed pricings of the same floor, side by side.
+
+    They are the SAME QUANTITY INDEPENDENTLY COMPUTED -- a price-map
+    multiplication and a full re-bill of a counterfactual load series -- and
+    the artifact's own `reconciliation` block already explains the gap between
+    them (a PCIA effect on kWh left in still-net-positive buckets). So both are
+    printed and NEITHER gates the other: an artifact that has already
+    reconciled its two methods to a stated cause is not evidence of a
+    contradiction, and refusing on their difference would withhold the section
+    over the very disagreement the generator documents.
+
+    A THIRD figure for the same load lives in data/extra_results.json:phantom
+    (a 25th-percentile 3-5am draw over 44 nights, 8,979 kWh/yr) and is what
+    sections 0 and 9 currently quote. It is a DIFFERENT MEASUREMENT -- a
+    different window, a different statistic, a different night-selection gate
+    -- not a competing value for this one, so nothing here compares the two.
+    That the report carries both is a real, unresolved split, tracked in issue
+    #140 because settling it means changing published figures; SEC9_TEASER's
+    own comment traces it. This token names its own artifact so a reader can
+    see which of the three it is.
+
+    THE SAME COVERAGE GATE AS THE kWh FIGURE, for the same reason: both
+    pricing methods sum over the interval series the run was given, so on a
+    short corpus their totals are window totals and "/yr" would be a claim
+    neither of them makes."""
+    pricing = _json("quiet_night_floor.json")["pricing"]
+    covers, nights, why = _night_floor_coverage()
+    a, b = _amounts("NIGHT_FLOOR_ANNUAL_COST", "what the always-on floor costs",
+                    price_map_usd=pricing["method_a_price_map"]["total_usd"],
+                    rebill_usd=pricing["method_b_rebill"]["total_usd"])
+    if covers:
+        return f"${a:,.0f}/yr by the price map · ${b:,.0f}/yr by a full re-bill"
+    return (f"${a:,.0f} by the price map · ${b:,.0f} by a full re-bill, across the "
+            f"{nights:,.0f} nights measured, {why}")
+
+
+def _phantom_method_discrepancy(ctx):
+    """The OTHER live figure for this same always-on load, and the size of the
+    disagreement.
+
+    Section 9 publishes deep_results.json's phantom (a 25th-percentile 3-5am
+    non-EV draw) and section 13 now publishes quiet_night_floor.json's (a
+    1-5am quiet-night median, priced two ways). They are two live methods on
+    one load, two sections apart, and CLAUDE.md section 0 requires that a
+    disagreement between two live methods be reconciled explicitly rather than
+    both being published and left to the reader.
+
+    Reclassifying s13#11 to prose is what created the exposure: the retired
+    HUMAN_REASONS entry's own invariant was that these figures existed only
+    inside SEC9_TEASER's fixed sentence. So the reconciliation is this token's
+    to supply.
+
+    It does NOT decide which is right -- issue #140 tracks that, and settling
+    it means changing published figures in three sections. It states both,
+    computes how far apart each half is, and says the report does not settle
+    it. DIFFERENT METHODS on the same load: nothing here gates on agreement."""
+    dr = _json("deep_results.json")["phantom"]
+    nf = _night_floor()
+    pricing = _json("quiet_night_floor.json")["pricing"]
+    s9_kwh, = _quantities("PHANTOM_METHOD_DISCREPANCY",
+                          "how much energy section 9 attributes to the always-on load",
+                          annual_kwh=dr["annual_kwh"])
+    s9_usd, = _amounts("PHANTOM_METHOD_DISCREPANCY",
+                       "what section 9 says the always-on load costs",
+                       annual_cost_at_blend=dr["annual_cost_at_blend"])
+    kw, nights = _quantities("PHANTOM_METHOD_DISCREPANCY",
+                             "what this section measures the same load at",
+                             median_kw=nf["median_kw"], nights_total=nf["nights_total"])
+    s13_usd, = _amounts("PHANTOM_METHOD_DISCREPANCY",
+                        "what this section says the same load costs",
+                        price_map_usd=pricing["method_a_price_map"]["total_usd"])
+    s13_kwh = kw * nights * 24
+    _claim("PHANTOM_METHOD_DISCREPANCY", "how far apart the two methods are",
+           SUPPORTED if s9_kwh > 0 and s9_usd > 0 else NOT_DETERMINED,
+           f"section 9's figures are {s9_kwh!r} kWh and ${s9_usd!r}, which cannot be a "
+           "base for the difference")
+    return (f"section 9 prices this same always-on load at {s9_kwh:,.0f} kWh/yr and "
+            f"${s9_usd:,.0f}/yr from a 25th-percentile 3–5am draw, against "
+            f"{s13_kwh:,.0f} kWh/yr and ${s13_usd:,.0f}/yr here — the energy differs by "
+            f"{abs(s13_kwh - s9_kwh) / s9_kwh * 100:.0f}% and the cost by "
+            f"{abs(s13_usd - s9_usd) / s9_usd * 100:.0f}%, and this report does not settle "
+            "which pricing is right")
+
+
+_tok("PHANTOM_METHOD_DISCREPANCY", kind="derived", get=_phantom_method_discrepancy,
+     sources=["data/deep_results.json:phantom (annual_kwh, annual_cost_at_blend)",
+              "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
+              "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
+
+
+def _night_floor_seasonality(ctx):
+    nf = _night_floor()
+    monthly = nf.get("monthly_median_kw") or {}
+    if not monthly:
+        raise SystemExit("report_tokens: data/quiet_night_floor.json:night_floor."
+                          "monthly_median_kw is empty -- there is no seasonality to state")
+    values = _quantities("NIGHT_FLOOR_SEASONALITY", "how the floor moves through the year",
+                         **{f"month_{m}_kw": v for m, v in sorted(monthly.items(), key=str)})
+    keys = [m for m, _v in sorted(monthly.items(), key=str)]
+    pairs = sorted(zip(values, keys), key=lambda vk: (vk[0], str(vk[1])))
+    lo_kw, lo_m = pairs[0]
+    hi_kw, hi_m = pairs[-1]
+    return (f"{lo_kw:,.2f} kW in {_MONTH_ABBR[int(lo_m)]} to "
+            f"{hi_kw:,.2f} kW in {_MONTH_ABBR[int(hi_m)]}")
+
+
+def _night_floor_pricing_basis(ctx):
+    """The assumption both annual figures rest on, and its own label.
+
+    NIGHT_FLOOR_ANNUAL_KWH and NIGHT_FLOOR_ANNUAL_COST extend a floor MEASURED
+    in a four-hour overnight window across every hour of the year.
+    quiet_night_floor.py labels that step "modeled", not measured, in
+    confidence_labels.pricing -- and section 13's own heading pill for this
+    subsection reads `measured`, which is true of the floor and not of the
+    year built from it. Its floor_assumption_violations block adds the
+    direction of the resulting error, which is the part a reader needs: the
+    shortfall is DROPPED rather than credited, so the annual figures are
+    conservative by roughly that amount rather than inflated by it."""
+    doc = _json("quiet_night_floor.json")
+    label = str(doc.get("confidence_labels", {}).get("pricing", "")).strip()
+    if not label:
+        raise SystemExit(
+            "report_tokens: NIGHT_FLOOR_PRICING_BASIS will not publish an annual figure "
+            "without data/quiet_night_floor.json:confidence_labels.pricing, the label that "
+            "artifact puts on extending a four-hour measurement across the year")
+    violations = doc["pricing"]["floor_assumption_violations"]
+    dropped, = _amounts("NIGHT_FLOOR_PRICING_BASIS",
+                        "how much the constant-floor assumption drops rather than credits",
+                        usd_dropped_at_export_rate=violations["usd_dropped_at_export_rate"])
+    kind = label.split("--")[0].strip().rstrip(":").strip() or "modeled"
+    return (f"{kind}, not measured: the floor is measured in a four-hour overnight window "
+            "and then applied as a constant across every hour of the year — where that "
+            f"assumption exceeds what the meter can account for, the shortfall is dropped "
+            f"rather than credited, leaving the annual figures conservative by about "
+            f"${dropped:,.0f}")
+
+
+_tok("NIGHT_FLOOR_PRICING_BASIS", kind="derived", get=_night_floor_pricing_basis,
+     sources=["data/quiet_night_floor.json:confidence_labels.pricing",
+              "data/quiet_night_floor.json:pricing.floor_assumption_violations"])
+_tok("NIGHT_FLOOR_MEDIAN", kind="derived",
+     get=lambda ctx: _measured("NIGHT_FLOOR_MEDIAN", "the quiet-night floor",
+                               "kW", ",.2f", median_kw=_night_floor()["median_kw"]),
+     sources=["data/quiet_night_floor.json:night_floor.median_kw"])
+_tok("NIGHT_FLOOR_SPREAD", kind="derived",
+     get=lambda ctx: "%s kW (p10) to %s kW (p90)" % tuple(
+         f"{v:,.2f}" for v in _quantities(
+             "NIGHT_FLOOR_SPREAD", "how much the quiet-night floor varies",
+             p10_kw=_night_floor()["p10_kw"], p90_kw=_night_floor()["p90_kw"])),
+     sources=["data/quiet_night_floor.json:night_floor (p10_kw, p90_kw)"])
+_tok("NIGHT_FLOOR_SAMPLE", kind="derived", get=_night_floor_sample,
+     sources=["data/quiet_night_floor.json:night_floor (quiet_nights, nights_total)"])
+_tok("NIGHT_FLOOR_ANNUAL_KWH", kind="derived", get=_night_floor_annual_kwh,
+     sources=["data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
+              "data/quiet_night_floor.json:pricing.floor_kw_basis (the constant-load method)"])
+_tok("NIGHT_FLOOR_ANNUAL_COST", kind="derived", get=_night_floor_annual_cost,
+     sources=["data/quiet_night_floor.json:pricing.method_a_price_map.total_usd",
+              "data/quiet_night_floor.json:pricing.method_b_rebill.total_usd"])
+_tok("NIGHT_FLOOR_CYCLING", kind="derived",
+     get=lambda ctx: _measured(
+         "NIGHT_FLOOR_CYCLING", "how much the floor cycles within a night", "kW", ",.2f",
+         cycling_within_night_std_kw_median=_night_floor()
+         ["cycling_within_night_std_kw_median"]),
+     sources=["data/quiet_night_floor.json:night_floor."
+              "cycling_within_night_std_kw_median"])
+_tok("NIGHT_FLOOR_SEASONALITY", kind="derived", get=_night_floor_seasonality,
+     sources=["data/quiet_night_floor.json:night_floor.monthly_median_kw"])
 
 
 # ---------------------------------------------------------------------------
