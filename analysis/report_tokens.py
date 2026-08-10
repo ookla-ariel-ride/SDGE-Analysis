@@ -3735,6 +3735,17 @@ def _degradation_naive_range(ctx):
         ols_pct_per_yr=deg["ols_pct_per_yr"], cagr_pct_per_yr=deg["cagr_pct_per_yr"],
         theil_sen_pct_per_yr=deg["theil_sen_pct_per_yr"])
     lo, hi = min(ols, cagr, theil), max(ols, cagr, theil)
+    # NO CHANGE IS ITS OWN ANSWER, tested FIRST and tested on the DIGITS THIS
+    # SENTENCE PRINTS (issue #132, Codex pass 1, finding 2). `hi <= 0` was the
+    # first branch, so an array whose three estimators all sat at zero -- a
+    # stable array, the outcome an owner most wants to hear -- published as
+    # "0.0–0.0%/yr of decline", a direction word attached to a magnitude of
+    # nothing. Rounding makes the same sentence reachable without an exact
+    # zero: a -0.04%/yr trend also prints "0.0–0.0". So the test is on the
+    # rendered tenths rather than on the raw floats, which is the only version
+    # that can promise the printed figure and the printed word agree.
+    if f"{abs(lo):,.1f}" == "0.0" and f"{abs(hi):,.1f}" == "0.0":
+        return "no measurable change — all three estimators round to 0.0%/yr"
     if hi <= 0:
         return f"{abs(hi):,.1f}–{abs(lo):,.1f}%/yr of decline"
     if lo >= 0:
@@ -3776,18 +3787,42 @@ def _degradation_weather_caveat(ctx):
         peak_to_trough_pct=deg["peak_to_trough_pct_2021_2025"],
         single_event_soiling_swing_pct=deg["single_event_soiling_swing_pct"],
         total_change_pct=abs(deg["total_change_pct_2021_2025"]))
-    swamps = _sign_claim(
+    # THE GEOMETRY CONCLUSION IS COMPUTED, NOT ASSERTED (issue #132, Codex pass
+    # 1, finding 3). "varies only X%, so geometry cannot explain the Y% spread"
+    # was fixed text sitting beside two numbers it never compared, so an
+    # artifact whose clear-sky spread equalled or exceeded the observed one
+    # published a sentence contradicting its own figures -- "varies only
+    # 99.00% ... so geometry cannot explain the 14.0% spread". Both readings
+    # are real and both are renderable, so the comparison selects the clause
+    # rather than decorating it.
+    _require_finite("DEGRADATION_WEATHER_CAVEAT",
+                    "whether array geometry could account for the observed spread",
+                    clearsky_annual_spread_pct=clearsky, peak_to_trough_pct=spread)
+    if clearsky < spread:
+        head = (f"clear-sky insolation varies only {clearsky:,.2f}% between years, so "
+                f"array geometry cannot explain the {spread:,.1f}% peak-to-trough spread")
+    else:
+        head = (f"clear-sky insolation varies by {clearsky:,.2f}% between years, as much "
+                f"as the {spread:,.1f}% peak-to-trough spread itself, so array geometry "
+                "alone could account for it")
+    # The same treatment for the soiling clause's own boundary: _sign_claim
+    # returns SUPPORTED_OPPOSITE at EXACTLY zero, so an event precisely the
+    # size of the whole change read "smaller than" it. Equality gets its own
+    # words.
+    _sign_claim(
         "DEGRADATION_WEATHER_CAVEAT",
         "whether one measured soiling event is larger than the whole multi-year change",
         swing - change,
         f"a validated single-event soiling swing of {swing}% against a "
         f"{change}% total change across the record")
-    tail = ("larger than the {c:,.1f}% total change across the record"
-            if swamps else "smaller than the {c:,.1f}% total change across the record")
-    return (f"clear-sky insolation varies only {clearsky:,.2f}% between years, so array "
-            f"geometry cannot explain the {spread:,.1f}% peak-to-trough spread; one "
-            f"validated cleaning measured an {swing:,.1f}% single-event soiling swing, "
-            + tail.format(c=change))
+    if swing > change:
+        tail = f"larger than the {change:,.1f}% total change across the record"
+    elif swing < change:
+        tail = f"smaller than the {change:,.1f}% total change across the record"
+    else:
+        tail = f"exactly the size of the {change:,.1f}% total change across the record"
+    return (f"{head}; one validated cleaning measured an {swing:,.1f}% single-event "
+            f"soiling swing, {tail}")
 
 
 _tok("DEGRADATION_NAIVE_RANGE", kind="derived", get=_degradation_naive_range,
@@ -4298,25 +4333,29 @@ def _heat_pump_central_payback():
 def _heat_pump_cost_basis(ctx):
     """What the furnace install cost is, and is not.
 
-    heat_pump_conversion's install_cost.note names a 4-ton example system from
-    the CPUC study while this household's own sizing table puts it at three
-    tons, and says a smaller system "would likely cost somewhat less, not
-    quantified". So the study's own sensitivity range is the honest span, and
-    the direction of the un-quantified sizing difference is stated as the
-    artifact states it -- as a direction, not as a number the artifact refuses
-    to give."""
+    THE QUALIFYING CLAUSE IS THE ARTIFACT'S OWN, VERBATIM. An earlier version
+    paraphrased install_cost.note as "priced on an example system larger than
+    this household's own sizing" -- a comparison between the study's example
+    and this house that this module never made and cannot make (issue #132,
+    Codex pass 1's sweep: a conclusion asserted without checking the condition
+    that makes it true). heat_pump_conversion.py states that comparison itself,
+    with the tonnages and the "not quantified" it belongs with, so the note is
+    rendered rather than restated."""
     cost = _json("heat_pump_conversion.json")["install_cost"]
     span = cost.get("sensitivity_range_usd") or []
     if len(span) < 2:
         raise SystemExit(
             "report_tokens: HEAT_PUMP_COST_BASIS needs data/heat_pump_conversion.json:"
             f"install_cost.sensitivity_range_usd to span at least two values, got {span!r}")
+    note = str(cost.get("note", "")).strip()
+    if not note:
+        raise SystemExit(
+            "report_tokens: HEAT_PUMP_COST_BASIS will not describe an install cost without "
+            "data/heat_pump_conversion.json:install_cost.note, which is where the study, "
+            "its example system and its own caveats are stated")
     values = _amounts("HEAT_PUMP_COST_BASIS", "the install-cost range the study supports",
                       **{f"bound_{i}_usd": v for i, v in enumerate(span)})
-    return (f"a published cost-effectiveness study's range, ${min(values):,.0f}–"
-            f"{max(values):,.0f}, priced on an example system larger than this "
-            "household's own sizing — a smaller one would likely cost somewhat less, "
-            "which the study does not quantify")
+    return f"${min(values):,.0f}–{max(values):,.0f} across the study's own range; {note}"
 
 
 def _heat_pump_payback(ctx):
@@ -4691,14 +4730,59 @@ _tok("SPREAD_BATTERY_SEED_SAVING", kind="derived",
 # ---- the quiet-night floor, decomposed (section 13) ------------------------
 # A year of nights. A leap year's 366 clears it too, which is right: the gate
 # asks whether the corpus covers a year, not whether it is exactly 365 long.
-_FULL_YEAR_NIGHTS = 365
+# BOTH ENDS, and this is the whole point of the pair (issue #132, Codex pass 1,
+# finding 1): the first version tested only `nights >= 365`, so a two-year
+# corpus rendered 730 nights of energy as "18,046 kWh/yr" -- an annual unit on
+# roughly double a year, which is a worse error than the short-corpus case it
+# was written to catch, because the number is inflated rather than reduced.
+# A gate on a range tests the range.
+_FULL_YEAR_NIGHTS = (365, 366)
 # floor_kw_priced is round(median_kw, 4) in quiet_night_floor.py; half of the
 # last retained decimal is the whole slack that derivation introduces.
 _FOUR_DECIMAL_ROUNDING = 0.00005 + 1e-12
 
 
-def _covers_a_full_year(nights):
-    return nights >= _FULL_YEAR_NIGHTS
+def _night_floor_coverage():
+    """(covers_a_year, nights, why) for the quiet-night corpus.
+
+    A COUNT IS NOT A WINDOW. nights_total is only how many dated rows the run
+    produced, so on its own it cannot tell one complete year from 365 dates
+    scattered across three (Codex pass 1's second half of finding 1). The
+    artifact does carry the window: night_floor.daily_series is one row per
+    date, so its first and last give a real span, and comparing that span to
+    the row count says whether the record is also gapless.
+
+    Complete therefore means all three: the span is one calendar year, the
+    count matches the span (no holes), and the count is itself a year. Where
+    daily_series is absent or carries no parseable dates there is no window to
+    read, and the count alone is constrained to a single 365/366-day year --
+    the fallback stated rather than assumed."""
+    nf = _night_floor()
+    nights, = _quantities("NIGHT_FLOOR_COVERAGE", "how many nights the corpus holds",
+                          nights_total=nf["nights_total"])
+    nights = int(nights)
+    lo, hi = _FULL_YEAR_NIGHTS
+    dates = []
+    for row in (nf.get("daily_series") or []):
+        try:
+            dates.append(dt.date.fromisoformat(str(row["date"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not dates:
+        if lo <= nights <= hi:
+            return True, nights, ""
+        return False, nights, ("more than a full year" if nights > hi
+                               else "less than a full year")
+    span = (max(dates) - min(dates)).days + 1
+    if not lo <= span <= hi:
+        return False, nights, ("spanning more than a full year" if span > hi
+                               else "spanning less than a full year")
+    if nights != span or len(set(dates)) != span:
+        return False, nights, f"with gaps across a {span}-day window"
+    if not lo <= nights <= hi:
+        return False, nights, ("more than a full year" if nights > hi
+                               else "less than a full year")
+    return True, nights, ""
 
 
 def _night_floor():
@@ -4745,10 +4829,10 @@ def _night_floor_annual_kwh(ctx):
     previous pass corrected."""
     nf = _night_floor()
     priced = _json("quiet_night_floor.json")["pricing"]["floor_kw_priced"]
-    kw, nights, median = _quantities(
+    covers, nights, why = _night_floor_coverage()
+    kw, median = _quantities(
         "NIGHT_FLOOR_ANNUAL_KWH", "how much energy the always-on floor draws",
-        floor_kw_priced=priced, nights_total=nf["nights_total"],
-        median_kw=nf["median_kw"])
+        floor_kw_priced=priced, median_kw=nf["median_kw"])
     _require_derived(
         "NIGHT_FLOOR_ANNUAL_KWH", "which floor the annual energy is built on",
         median, kw, _FOUR_DECIMAL_ROUNDING,
@@ -4756,9 +4840,8 @@ def _night_floor_annual_kwh(ctx):
         f"{median!r} kW -- the energy figure and the cost figure beside it would be "
         "built on different floors")
     kwh = kw * nights * 24
-    return (f"{kwh:,.0f} kWh/yr" if _covers_a_full_year(nights)
-            else f"{kwh:,.0f} kWh across the {nights:,.0f} nights measured, "
-                 "which is less than a full year")
+    return (f"{kwh:,.0f} kWh/yr" if covers
+            else f"{kwh:,.0f} kWh across the {nights:,.0f} nights measured, {why}")
 
 
 def _night_floor_annual_cost(ctx):
@@ -4787,18 +4870,15 @@ def _night_floor_annual_cost(ctx):
     pricing methods sum over the interval series the run was given, so on a
     short corpus their totals are window totals and "/yr" would be a claim
     neither of them makes."""
-    nf = _night_floor()
     pricing = _json("quiet_night_floor.json")["pricing"]
-    nights, = _quantities("NIGHT_FLOOR_ANNUAL_COST",
-                          "how many nights the pricing covers",
-                          nights_total=nf["nights_total"])
+    covers, nights, why = _night_floor_coverage()
     a, b = _amounts("NIGHT_FLOOR_ANNUAL_COST", "what the always-on floor costs",
                     price_map_usd=pricing["method_a_price_map"]["total_usd"],
                     rebill_usd=pricing["method_b_rebill"]["total_usd"])
-    if _covers_a_full_year(nights):
+    if covers:
         return f"${a:,.0f}/yr by the price map · ${b:,.0f}/yr by a full re-bill"
     return (f"${a:,.0f} by the price map · ${b:,.0f} by a full re-bill, across the "
-            f"{nights:,.0f} nights measured, which is less than a full year")
+            f"{nights:,.0f} nights measured, {why}")
 
 
 def _night_floor_seasonality(ctx):

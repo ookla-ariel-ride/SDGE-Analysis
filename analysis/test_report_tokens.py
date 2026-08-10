@@ -4624,47 +4624,73 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
 
 
 @case
-def case_a_partial_corpus_never_publishes_a_figure_wearing_an_annual_unit():
-    """ISSUE #132, ADVERSARIAL PASS 3. NIGHT_FLOOR_ANNUAL_KWH annualized as
-    median_kw x nights_total x 24 and labelled the result "/yr", while the
-    artifact declares its own basis as the floor "applied as a constant across
-    all 8,760 hours of the year". nights_total is only the count of dates
-    present in the series, so the two agree at 365 BY COINCIDENCE: a partial or
-    gappy corpus produced a smaller number still wearing an annual unit --
-    understating the load, and contradicting the basis the artifact states.
+def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_unit():
+    """ISSUE #132, PASS 3 AND CODEX PASS 1 FINDING 1. NIGHT_FLOOR_ANNUAL_KWH
+    annualizes floor_kw x nights x 24 and labels it "/yr", while the artifact
+    declares its own basis as the floor "applied as a constant across all 8,760
+    hours of the year". nights_total is only the count of dated rows, so the
+    two agree at 365 BY COINCIDENCE.
 
-    The same gate belongs on NIGHT_FLOOR_ANNUAL_COST, whose two pricing methods
-    both sum over whatever interval series the run was given.
+    The gate is tested at BOTH ENDS and against a scattered record, because
+    each was a separate way to publish a false unit:
+      * short  -- 200 nights understated the year and still said "/yr";
+      * long   -- 730 nights rendered "18,046 kWh/yr", roughly two years of
+                  energy wearing an annual unit, which the first version of
+                  this gate let straight through (it tested only `>= 365`);
+      * gappy  -- 365 dates scattered over three calendar years is not a year,
+                  and a bare count cannot tell the difference, which is why
+                  coverage is read from daily_series' own first and last date.
 
-    Two properties, and the second is the one that would have caught the
-    original defect: a short corpus must not produce "/yr", and a complete one
-    must render exactly what it renders today."""
+    And the complete case must still render exactly what it renders today."""
     complete = {n: rt.resolve_token(n) for n in
                 ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST")}
     assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
     assert "/yr" in complete["NIGHT_FLOOR_ANNUAL_COST"], complete
 
-    def partial(nights):
+    def corpus(nights, step=1, hole_to=None):
+        """A coherent stub: `nights` dates every `step` days, with nights_total
+        agreeing with the series it is a count of. `hole_to` instead lays down
+        `nights - 1` consecutive dates and then one final date at that offset,
+        which is how you get a record that spans exactly a year while missing
+        days inside it."""
         def edit(doc):
+            first = dt.date(2025, 7, 24)
+            if hole_to is None:
+                offsets = [i * step for i in range(nights)]
+            else:
+                offsets = list(range(nights - 1)) + [hole_to]
+            doc["night_floor"]["daily_series"] = [
+                {"date": (first + dt.timedelta(days=o)).isoformat(),
+                 "median_kw": 1.0, "excluded_high_demand": False}
+                for o in offsets]
             doc["night_floor"]["nights_total"] = nights
         return edit
 
-    short = {}
-    for nights in (90, 200, 364):
-        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", partial(nights))):
+    checked = {}
+    for label, kwargs, expect in (
+            ("short", dict(nights=200), "less than a full year"),
+            ("short", dict(nights=90), "less than a full year"),
+            ("long", dict(nights=730), "more than a full year"),
+            ("long", dict(nights=400), "more than a full year"),
+            # 365 dates every third day: the right COUNT, three calendar years
+            # of window -- the case a bare count cannot see at all.
+            ("scattered", dict(nights=365, step=3), "spanning more than a full year"),
+            # 300 dates inside a 365-day window: the right SPAN, holes in it.
+            ("gappy", dict(nights=300, hole_to=364), "gaps")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                             corpus(**kwargs))):
             for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST"):
                 text = _renders(token)
-                short[f"{token}@{nights}"] = text
+                checked[f"{token}@{label}:{kwargs}"] = text
                 assert "/yr" not in text, (
-                    f"{token} publishes an ANNUAL figure from a {nights}-night corpus, "
-                    f"which is less than a full year: {text}")
-                assert "less than a full year" in text and f"{nights:,}" in text, text
-                for label, pattern in _MALFORMED_RENDER:
-                    assert not pattern.search(text), f"{token} rendered {label}: {text}"
+                    f"{token} publishes an ANNUAL figure from a {label} corpus "
+                    f"({kwargs}), which is not a year: {text}")
+                assert expect in text, f"{token} did not say why ({expect!r}): {text}"
+                for pat_label, pattern in _MALFORMED_RENDER:
+                    assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
 
-    # A leap year's 366 is still a year -- the gate asks about coverage, not
-    # about an exact length.
-    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", partial(366))):
+    # A leap year is still a year: the gate asks about coverage, not length.
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", corpus(nights=366))):
         leap = _renders("NIGHT_FLOOR_ANNUAL_KWH")
     assert leap.endswith("kWh/yr"), leap
 
@@ -4683,9 +4709,131 @@ def case_a_partial_corpus_never_publishes_a_figure_wearing_an_annual_unit():
 
     after = {n: rt.resolve_token(n) for n in complete}
     assert after == complete, f"the stubs leaked: {after} != {complete}"
-    return (f"a partial corpus renders its own window instead of an annual claim "
-            f"({len(short)} renders across 90/200/364 nights), a full year still reads "
+    return (f"{len(checked)} renders across short / long / gappy corpora report their own "
+            f"window instead of an annual claim, a real year still reads "
             f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, and a drifted priced floor refuses")
+
+
+@case
+def case_a_degradation_sentence_never_contradicts_its_own_numbers():
+    """ISSUE #132, CODEX PASS 1, FINDINGS 2 AND 3. Two sentences whose
+    conclusion WORD was fixed text sitting beside numbers it never compared.
+
+    DEGRADATION_NAIVE_RANGE tested `hi <= 0` first, so an array whose three
+    estimators all sat at zero published "0.0-0.0%/yr of decline" -- a
+    direction attached to a magnitude of nothing, and the one reading a
+    stable-array owner would most want to be right.
+
+    DEGRADATION_WEATHER_CAVEAT asserted that clear-sky variation "cannot
+    explain" the observed spread without comparing the two, so an artifact
+    whose clear-sky spread was the larger of the pair published "varies only
+    99.00% ... so geometry cannot explain the 14.0% spread".
+
+    Every case below is a legitimate artifact state; the assertion each time is
+    that the WORD agrees with the DIGITS printed next to it."""
+    def degradation(**fields):
+        def edit(doc):
+            doc["degradation"].update(fields)
+        return edit
+
+    def trend(ols, cagr, theil):
+        return degradation(ols_pct_per_yr=ols, cagr_pct_per_yr=cagr,
+                           theil_sen_pct_per_yr=theil)
+
+    got = {}
+    # 1. Exact zero, and a trend too small to survive the printed rounding:
+    #    neither may carry a direction word.
+    for label, edit in (("all_zero", trend(0.0, 0.0, 0.0)),
+                        ("negative_zero", trend(-0.0, 0.0, -0.0)),
+                        ("rounds_to_zero", trend(-0.04, -0.02, -0.01)),
+                        ("rounds_to_zero_up", trend(0.04, 0.02, 0.01))):
+        with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", edit)):
+            text = _renders("DEGRADATION_NAIVE_RANGE")
+        got[label] = text
+        assert "decline" not in text and "gain" not in text, (
+            f"a trend that prints as 0.0 was called a direction: {text}")
+        assert "no measurable change" in text, text
+
+    # 2. The directions themselves still read correctly on either side.
+    for label, edit, word in (("real_decline", trend(-1.8, -1.3, -1.5), "decline"),
+                              ("real_gain", trend(1.8, 1.3, 1.5), "gain")):
+        with _patched(rt, "_json", _stub_for("gross_import_decomposition.json", edit)):
+            text = _renders("DEGRADATION_NAIVE_RANGE")
+        got[label] = text
+        assert word in text, text
+        other = "gain" if word == "decline" else "decline"
+        assert other not in text, f"{label} also claimed {other}: {text}"
+
+    # 3. Clear-sky variation at least as large as the observed spread: the
+    #    sentence must stop claiming geometry cannot account for it.
+    for label, cs, spread in (("clearsky_larger", 99.0, 14.0),
+                              ("clearsky_equal", 14.0, 14.0)):
+        with _patched(rt, "_json", _stub_for(
+                "gross_import_decomposition.json",
+                degradation(clearsky_annual_spread_pct=cs,
+                            peak_to_trough_pct_2021_2025=spread))):
+            text = _renders("DEGRADATION_WEATHER_CAVEAT")
+        got[label] = text
+        assert "cannot explain" not in text, (
+            f"clear-sky varies by {cs}% against a {spread}% spread and the sentence "
+            f"still says geometry cannot explain it: {text}")
+        assert "varies only" not in text, text
+        assert "could account for it" in text, text
+
+    # ... and still says it where the comparison really does support it.
+    with _patched(rt, "_json", _stub_for(
+            "gross_import_decomposition.json",
+            degradation(clearsky_annual_spread_pct=0.15,
+                        peak_to_trough_pct_2021_2025=14.0))):
+        got["clearsky_smaller"] = _renders("DEGRADATION_WEATHER_CAVEAT")
+    assert "cannot explain" in got["clearsky_smaller"], got["clearsky_smaller"]
+
+    # 4. The soiling clause's own boundary: an event exactly the size of the
+    #    whole change is neither larger nor smaller than it.
+    with _patched(rt, "_json", _stub_for(
+            "gross_import_decomposition.json",
+            degradation(single_event_soiling_swing_pct=5.2,
+                        total_change_pct_2021_2025=-5.2))):
+        got["swing_equals_change"] = _renders("DEGRADATION_WEATHER_CAVEAT")
+    assert "exactly the size of" in got["swing_equals_change"], got["swing_equals_change"]
+    assert "smaller than" not in got["swing_equals_change"], got["swing_equals_change"]
+
+    for name, text in got.items():
+        assert text.strip(), f"{name} rendered blank"
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"{name} rendered {label}: {text}"
+    return (f"{len(got)} degradation sentences select their conclusion word from the "
+            "comparison they describe, including at both zero boundaries")
+
+
+@case
+def case_the_install_cost_caveat_is_the_artifacts_own_words_not_a_paraphrase():
+    """ISSUE #132, CODEX PASS 1's SWEEP. HEAT_PUMP_COST_BASIS asserted the
+    study's example system was "larger than this household's own sizing" -- a
+    comparison this module never makes and cannot make from what it reads. It
+    happened to be true of today's artifact (a 4-ton example against a 3.0-ton
+    sizing) and would have gone on reading as fact against any other.
+
+    heat_pump_conversion.py states that comparison itself, tonnages and "not
+    quantified" included, so the fix is to render its note rather than restate
+    it -- and to refuse rather than publish a cost with no basis at all."""
+    note = rt._json("heat_pump_conversion.json")["install_cost"]["note"]
+    text = rt.resolve_token("HEAT_PUMP_COST_BASIS")
+    assert note in text, f"the artifact's own note is not carried: {text}"
+    assert "larger than this household" not in text, (
+        f"the unchecked paraphrase is back: {text}")
+
+    def blanked(doc):
+        doc["install_cost"]["note"] = ""
+
+    with _patched(rt, "_json", _stub_for("heat_pump_conversion.json", blanked)):
+        try:
+            rt.resolve_token("HEAT_PUMP_COST_BASIS")
+            raise AssertionError("an install cost with no stated basis was published")
+        except SystemExit as e:
+            assert "HEAT_PUMP_COST_BASIS" in str(e) and "note" in str(e), e
+    return ("HEAT_PUMP_COST_BASIS carries data/heat_pump_conversion.json's own "
+            "install_cost.note verbatim and refuses when it is absent")
 
 
 @case
