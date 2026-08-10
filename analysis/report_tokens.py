@@ -226,48 +226,122 @@ def hh1(path):
 # "cited_constant" tokens usually build their own final string and pass
 # fmt=None (str() passthrough).
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# TWO PRECONDITIONS EVERY FORMATTER BELOW ENFORCES ITSELF (issue #131, review
+# round 5, part B).
+#
+# A formatter is the last code a figure passes through before a reader sees
+# it, and it is the one place that cannot be reached by a route that skips the
+# check. Four review rounds of adding a guard at whichever call site that
+# round's reader happened to open left "$nan", "$inf", "-$nan", "$-0" and
+# "$-1,234" all still reachable, each from a different token. So the two
+# preconditions are stated once, here:
+#
+#   FINITE. Every formatter is a number-to-prose function and none of them has
+#   a rendering for a non-number. `f"${nan:,.0f}"` does not fail -- it
+#   cheerfully produces "$nan" -- so the check has to be explicit.
+#
+#   NON-NEGATIVE, for the CURRENCY formatters that carry no sign. _usd0 and
+#   its relatives are the formatters a value uses when its sign is fixed by
+#   CONSTRUCTION: a purchase price, a billed total, a published rate. Handed a
+#   negative they print the minus INSIDE the sigil ("$-1,234"), which is the
+#   defect this module has now corrected at seven exits over four rounds. A
+#   figure whose sign the artifact decides belongs in _usd0_signed below --
+#   which renders every non-negative value identically, so moving a token
+#   across costs nothing -- and a structurally non-negative figure that
+#   arrives negative is a broken artifact, which is a refusal.
+#
+# -0.0 is NOT negative for either purpose: it is zero, it prints "$0", and the
+# `abs()` below is what stops `f"{-0.0:,.0f}"` rendering "-0".
+# ---------------------------------------------------------------------------
+def _unsigned_currency(fmt, v):
+    """The shared precondition for the sign-free currency formatters."""
+    if not _finite(v):
+        raise SystemExit(f"report_tokens: {fmt} cannot render {v!r} -- it is not a "
+                          "finite number")
+    if v < 0:
+        raise SystemExit(
+            f"report_tokens: {fmt} refuses to render {v!r}, a NEGATIVE amount, because "
+            "it would print the minus inside the dollar sigil. A figure whose sign the "
+            "artifact decides belongs in usd0_signed; a figure that is non-negative by "
+            "construction and arrived negative means the artifact behind it is wrong")
+    return abs(v)
+
+
+def _numeric(fmt, v):
+    """The shared precondition for the sign-free NON-currency formatters. No
+    sign test: a negative count, share or delta prints its own minus with
+    nothing to sit inside, so only finiteness is at stake."""
+    if not _finite(v):
+        raise SystemExit(f"report_tokens: {fmt} cannot render {v!r} -- it is not a "
+                          "finite number")
+    return v
+
+
 def _usd0(v):
-    return f"${v:,.0f}"
+    return f"${_unsigned_currency('usd0', v):,.0f}"
 
 
 def _usd0_tilde(v):
-    return f"~${v:,.0f}"
+    return f"~${_unsigned_currency('usd0_tilde', v):,.0f}"
 
 
 def _usd2(v):
-    return f"${v:,.2f}"
+    return f"${_unsigned_currency('usd2', v):,.2f}"
 
 
 def _usd3(v):
-    return f"${v:,.3f}"
+    return f"${_unsigned_currency('usd3', v):,.3f}"
 
 
 def _num0(v):
-    return f"{v:,.0f}"
+    return f"{_numeric('num0', v):,.0f}"
 
 
 def _num1(v):
-    return f"{v:,.1f}"
+    return f"{_numeric('num1', v):,.1f}"
 
 
 def _num2(v):
-    return f"{v:,.2f}"
+    return f"{_numeric('num2', v):,.2f}"
 
 
 def _pct0(v):
-    return f"{round(v)}%"
+    return f"{round(_numeric('pct0', v))}%"
 
 
 def _pct1(v):
-    return f"{v:.1f}%"
+    return f"{_numeric('pct1', v):.1f}%"
 
 
 def _yr1(v):
-    return f"{v:.1f} yr"
+    return f"{_numeric('yr1', v):.1f} yr"
 
 
 def _cents1(v):
-    return f"{v * 100:.1f}¢"
+    return f"{_numeric('cents1', v) * 100:.1f}¢"
+
+
+def _no_sign_for_a_non_number(fmt, v):
+    """Refuse to put a SIGN on something that is not a number.
+
+    The three formatters below exist to decide where a minus goes. A nan has
+    no sign to place and an infinity has no magnitude to place it in front of,
+    so every one of them fell through its own sign tests and rendered the
+    Python repr with a sigil glued to it: `_usd0_signed(nan)` read "-$nan"
+    (the `v >= 0` test is False for nan, so the NEGATIVE branch ran and
+    MANUFACTURED a minus on a non-number), and `_usd0_plus(nan)` fell past
+    both `>` and `<` and published "$0" -- a nan NPV rendered as an exact zero
+    gain (issue #131 review round 5, findings 1, 2 and 8).
+
+    Raised as SystemExit, not returned as a string, because resolve_token
+    formats inside its own try and re-raises with the token's name attached:
+    the refusal names the token whichever of the two ways the formatter was
+    reached (declared as a token's `fmt`, or called inline by a derived
+    formula, as NPV_AT_HISTORICAL_ESCALATION calls _usd0_plus)."""
+    raise SystemExit(
+        f"report_tokens: {fmt} cannot render {v!r} -- a sign belongs to a finite "
+        "number, and this is not one")
 
 
 def _usd0_signed(v):
@@ -286,14 +360,28 @@ def _usd0_signed(v):
     -- two verdict clauses (round 2, finding 5), the section 7 expansion-cost
     refusal and the battery's own marginal-saving token (round 4, findings 8
     and 10) -- which is why the rule is written down here rather than left as
-    a habit at each site."""
-    return _usd0(v) if v >= 0 else f"-{_usd0(-v)}"
+    a habit at each site.
+
+    NEGATIVE ZERO IS NOT NEGATIVE. The test used to be `v >= 0`, which is True
+    for -0.0, so a difference that lands on the negative side of an exact zero
+    -- `0.0 - 0.0` under a subtraction whose left operand was itself -0.0, or
+    any `round()` of a tiny loss -- took the non-negative branch and printed
+    `_usd0(-0.0)`, which Python renders "$-0": the minus back inside the
+    sigil, in the one formatter written to keep it out (issue #131 review
+    round 5, finding 7). Only a value that is STRICTLY below zero gets the
+    leading minus, and every other finite value formats its own magnitude, so
+    -0.0 and +0.0 both read "$0"."""
+    if not _finite(v):
+        _no_sign_for_a_non_number("usd0_signed", v)
+    return f"-{_usd0(-v)}" if v < 0 else _usd0(abs(v))
 
 
 def _usd0_tilde_signed(v):
     """_usd0_tilde for a signed quantity: "~$4,900", "~-$500". Identical
     output at every non-negative value, so an approximate SAVING or VALUE can
     use it without changing what a positive one renders as."""
+    if not _finite(v):
+        _no_sign_for_a_non_number("usd0_tilde_signed", v)
     return f"~{_usd0_signed(v)}"
 
 
@@ -302,7 +390,18 @@ def _usd0_plus(v):
     "-$8,656", "$0". For a figure the report presents as a signed gain (an
     NPV), where the leading "+" is part of the reading rather than
     decoration -- it used to be a hardcoded "+" in front of an unsigned
-    format, which rendered a negative NPV as "+$-3,000"."""
+    format, which rendered a negative NPV as "+$-3,000".
+
+    The trailing case is `v == 0` and NOT a bare else. Written as an else it
+    was the branch a nan reached -- `nan > 0` and `nan < 0` are both False --
+    and it published an indeterminate net present value as the exact,
+    confident figure "$0" (issue #131 review round 5, finding 8). A zero gain
+    and an unknown one are opposite readings for someone deciding whether to
+    buy, so the third state fails closed instead. Checked up front as well as
+    in the trailing branch, so an INFINITY -- which does pass `v > 0` -- is
+    refused by this formatter's own name rather than by _usd0's."""
+    if not _finite(v):
+        _no_sign_for_a_non_number("usd0_plus", v)
     if v > 0:
         return f"+{_usd0(v)}"
     if v < 0:
@@ -315,7 +414,7 @@ def _raw(v):
 
 
 def _year(v):
-    return f"{int(v):d}"
+    return f"{int(_numeric('year', v)):d}"
 
 
 FORMATTERS = {
@@ -326,6 +425,16 @@ FORMATTERS = {
     "num0": _num0, "num1": _num1, "num2": _num2, "year": _year,
     "pct0": _pct0, "pct1": _pct1, "yr1": _yr1, "cents1": _cents1,
 }
+
+# Every format spec above that means "this value is a NUMBER, render it as
+# one". A token declared with any of them is asserting the artifact field
+# behind it is a finite quantity, and resolve_token holds it to that before
+# the formatter ever sees the value -- see _NON_NUMERIC_FMTS' use there.
+# Maintained by SUBTRACTION from FORMATTERS, so a format spec added later is
+# numeric until someone says otherwise: the failure mode this closes is a new
+# leaf token quietly publishing "$nan", and the safe default for an unknown
+# formatter is to be checked rather than skipped.
+_NON_NUMERIC_FMTS = frozenset({None, "raw"})
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +557,57 @@ def _require_finite(token, subject, **values):
     bad = {k: v for k, v in values.items() if not _finite(v)}
     _claim(token, subject, SUPPORTED if not bad else NOT_DETERMINED,
            ", ".join(f"{k} is {v!r}" for k, v in (bad or values).items()))
+
+
+# ---------------------------------------------------------------------------
+# THE SAME TWO PRECONDITIONS, FOR A FORMULA THAT WRITES ITS OWN PROSE
+# (issue #131, review round 5, part B).
+#
+# The formatters above hold every LEAF token to "finite, and not negative
+# behind a sigil". A `derived` formula that builds its own sentence with an
+# f-string never reaches them -- `f"{peak_kw:.1f} kW"` and `f"${low:,.0f}"`
+# format the value themselves -- and that is exactly the population round
+# four's structural probe could not see, because it inspected declarations
+# (issue #131 review round 5, finding 9). Twenty-one tokens in this module
+# were in it, every one able to publish "nan kW", "inf kg CO2/MWh" or
+# "$-1,234" out of a single bad artifact field.
+#
+# So a formula that interpolates a number states it here first. Two helpers
+# rather than one, because a figure behind a DOLLAR SIGIL has the extra
+# precondition and a kWh count does not, and collapsing them would either
+# forbid a legitimate negative delta or wave a negative dollar figure through.
+# Both RETURN their values in declaration order, so the check reads as part of
+# the formula rather than as a line that can be deleted without the formula
+# noticing.
+# ---------------------------------------------------------------------------
+def _figures(token, subject, **values):
+    """The numbers a prose formula is about to interpolate: finite, in order."""
+    _require_finite(token, subject, **values)
+    return tuple(values.values())
+
+
+def _amounts(token, subject, **values):
+    """_figures for numbers a sentence prints behind a "$" it writes itself.
+
+    Also NOT NEGATIVE, for _usd0's reason one level up: `f"${-1234:,.0f}"`
+    puts the minus inside the sigil. A formula whose figure really can go
+    either way calls _usd0_signed on it and passes it through _figures
+    instead; this is for the ones whose own wording ("worth $X", "risks the
+    $X-$Y grandfathering") presupposes an amount at or above zero, where a
+    negative means the artifact behind the sentence is wrong.
+
+    Returned through abs(), for _usd0_signed's negative-zero reason (issue
+    #131 review round 5, finding 7, one level up): -0.0 passes the `< 0` test
+    below because it IS zero, and then `f"${-0.0:,.2f}"` renders "$-0.00" --
+    the minus back inside the sigil, from a value the check correctly let
+    through. abs() is the identity on every other value the check permits."""
+    _figures(token, subject, **values)
+    bad = {k: v for k, v in values.items() if v < 0}
+    _claim(token, subject, SUPPORTED if not bad else NOT_DETERMINED,
+           ", ".join(f"{k} is {v!r}" for k, v in bad.items()) +
+           " -- this sentence prints it behind a dollar sigil, where a negative "
+           "renders the minus inside the sigil")
+    return tuple(abs(v) for v in values.values())
 
 
 # ---------------------------------------------------------------------------
@@ -815,13 +975,19 @@ _tok("NEM_EXPIRY_YEAR", kind="derived",
      sources=["private/household.yaml:household.pto_date (+20 yr NEM 2.0 term)"], fmt="year")
 
 _tok("INVERTER_DESCRIPTION", kind="derived",
-     get=lambda ctx: (
-         f"{int(hh1('solar.inverter_count'))} × {hh1('solar.inverter_model')}"
-         f", ~{hh1('solar.kw_ac') * 1000 / hh1('solar.inverter_count'):.0f} VA each"),
+     get=lambda ctx: (lambda count, kw_ac:
+         f"{int(count)} × {hh1('solar.inverter_model')}"
+         f", ~{kw_ac * 1000 / count:.0f} VA each")(
+         *_figures("INVERTER_DESCRIPTION", "what each microinverter is rated at",
+                   **{"solar.inverter_count": hh1("solar.inverter_count"),
+                      "solar.kw_ac": hh1("solar.kw_ac")})),
      sources=["private/household.yaml:solar.inverter_count/inverter_model/kw_ac"])
 
 _tok("PANEL_MODEL_WATTS", kind="derived",
-     get=lambda ctx: f"{hh1('solar.kw_dc') * 1000 / hh1('solar.module_count'):.0f} W",
+     get=lambda ctx: (lambda kw_dc, modules: f"{kw_dc * 1000 / modules:.0f} W")(
+         *_figures("PANEL_MODEL_WATTS", "what each module is rated at",
+                   **{"solar.kw_dc": hh1("solar.kw_dc"),
+                      "solar.module_count": hh1("solar.module_count")})),
      sources=["private/household.yaml:solar.kw_dc/module_count"])
 
 
@@ -930,7 +1096,9 @@ _tok("EXPORTED_SHARE", kind="derived",
          _annual_production_kwh(ctx), _json("report_data.json")["totals"]["exp"]),
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="pct0")
 _tok("CAPACITY_FACTOR", kind="derived",
-     get=lambda ctx: f"~{_annual_production_kwh(ctx) / (hh1('solar.kw_dc') * 8760) * 100:.1f}%",
+     get=lambda ctx: (lambda kw_dc: f"~{_annual_production_kwh(ctx) / (kw_dc * 8760) * 100:.1f}%")(
+         *_figures("CAPACITY_FACTOR", "what fraction of nameplate the array delivers",
+                   **{"solar.kw_dc": hh1("solar.kw_dc")})),
      sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"])
 _tok("SPECIFIC_YIELD", kind="derived",
      get=lambda ctx: round(_annual_production_kwh(ctx) / hh1("solar.kw_dc")),
@@ -960,6 +1128,11 @@ _tok("CHART_TITLE_PERIODS", kind="derived",
 
 def _chart_title_hourly(ctx):
     kws = _json("report_data.json")["onpeak_kw_S"]
+    # Every hour, not just the winner: max() over a series containing a nan
+    # returns whichever element the comparison chain happens to leave standing,
+    # so the WINNER can be finite while the series it was picked out of is not.
+    _require_finite("CHART_TITLE_HOURLY", "which hour carries the summer on-peak peak",
+                    **{f"onpeak_kw_S_{h}": v for h, v in sorted(kws.items())})
     peak_h, peak_kw = max(kws.items(), key=lambda kv: kv[1])
     return (f"Average demand by hour of day — on-peak ({_peak_window()}) reaches "
             f"{peak_kw:.1f} kW average summer draw at {_hour_label(int(peak_h))}")
@@ -971,8 +1144,12 @@ _tok("CHART_TITLE_HOURLY", kind="derived", get=_chart_title_hourly,
 
 def _chart_title_battery(ctx):
     dp = _json("battery_dispatch_policies.json")
+    before, after = _figures(
+        "CHART_TITLE_BATTERY", "how far a battery moves on-peak imports",
+        onpeak_import_kwh=dp["inputs"]["onpeak_import_kwh"],
+        onpeak_after_greedy=dp["pw3"]["onpeak_after_greedy"])
     return (f"Projected grid import with a battery — on-peak imports fall from "
-            f"{dp['inputs']['onpeak_import_kwh']:,} to {dp['pw3']['onpeak_after_greedy']:,} "
+            f"{before:,} to {after:,} "
             "kWh/yr with one battery")
 
 
@@ -982,8 +1159,12 @@ _tok("CHART_TITLE_BATTERY", kind="derived", get=_chart_title_battery,
 
 def _chart_title_carbon(ctx):
     wm = _json("carbon_fullyear_results.json")["intensity_kg_per_mwh"]["window_means_annual"]
+    overnight, midday = _figures(
+        "CHART_TITLE_CARBON", "how the two windows' measured carbon intensities compare",
+        sop_overnight_00_06=wm["sop_overnight_00_06"],
+        solar_midday_10_14=wm["solar_midday_10_14"])
     return (f"Grid carbon by hour (measured) — overnight super-off-peak averages "
-            f"{wm['sop_overnight_00_06']:.0f} kg CO₂/MWh vs {wm['solar_midday_10_14']:.0f} "
+            f"{overnight:.0f} kg CO₂/MWh vs {midday:.0f} "
             "at solar midday")
 
 
@@ -993,8 +1174,11 @@ _tok("CHART_TITLE_CARBON", kind="derived", get=_chart_title_carbon,
 
 def _chart_title_spread(ctx):
     ds = _json("tou_spread.json")["delivery_spread"]
+    summer, winter = _figures(
+        "CHART_TITLE_SPREAD", "how many priced segments the spread rests on",
+        summer_n=ds["summer"]["n"], winter_n=ds["winter"]["n"])
     return (f"On-peak minus super-off-peak delivery spread by rate segment — "
-            f"{ds['summer']['n']} summer and {ds['winter']['n']} winter priced segments")
+            f"{summer} summer and {winter} winter priced segments")
 
 
 _tok("CHART_TITLE_SPREAD", kind="derived", get=_chart_title_spread,
@@ -1028,9 +1212,14 @@ def _sec9_teaser(ctx):
     # published figures in sections 0/9/13.
     br = _json("behavior_rebuild.json")
     dr = _json("deep_results.json")
-    return (f"{br['detection']['sessions']} EV charging sessions logged; overnight "
-            f"phantom baseload {dr['phantom']['annual_kwh']:,} kWh/yr "
-            f"(~${dr['phantom']['annual_cost_at_blend']:,}/yr)")
+    sessions, kwh = _figures(
+        "SEC9_TEASER", "how much overnight load section 9 found",
+        ev_sessions=br["detection"]["sessions"], phantom_annual_kwh=dr["phantom"]["annual_kwh"])
+    cost, = _amounts("SEC9_TEASER", "what the overnight phantom baseload costs",
+                     phantom_annual_cost_at_blend=dr["phantom"]["annual_cost_at_blend"])
+    return (f"{sessions} EV charging sessions logged; overnight "
+            f"phantom baseload {kwh:,} kWh/yr "
+            f"(~${cost:,}/yr)")
 
 
 _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
@@ -1040,7 +1229,9 @@ _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
 
 def _sec12_teaser(ctx):
     sc = _json("soiling_results.json")["sanity_check_2024_cleaning"]
-    return f"the {sc['cleaning_date']} cleaning measured a {sc['known_cleaning_gain_pct']}% production gain"
+    gain, = _figures("SEC12_TEASER", "how much production the cleaning recovered",
+                     known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
+    return f"the {sc['cleaning_date']} cleaning measured a {gain}% production gain"
 
 
 _tok("SEC12_TEASER", kind="derived", get=_sec12_teaser,
@@ -1051,7 +1242,11 @@ def _sec13_teaser(ctx):
     nem = _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
     swing = _json("carbon_fullyear_results.json")["footprints_kg_co2_per_yr"]["detail"][
         "midday_cleaner_than_overnight_by"]
-    return (f"NEM 2.0 worth ${nem['low']:,.0f}–{nem['high']:,.0f}/yr; overnight grid "
+    low, high = _amounts("SEC13_TEASER", "what NEM 2.0 grandfathering is worth",
+                         grandfathering_low=nem["low"], grandfathering_high=nem["high"])
+    swing, = _figures("SEC13_TEASER", "how much dirtier overnight grid power is",
+                      midday_cleaner_than_overnight_by=swing)
+    return (f"NEM 2.0 worth ${low:,.0f}–{high:,.0f}/yr; overnight grid "
             f"power runs {swing:.0f} kg CO₂/yr dirtier than midday for the same load")
 
 
@@ -1060,11 +1255,20 @@ _tok("SEC13_TEASER", kind="derived", get=_sec13_teaser,
 
 
 # ---- bottom line / bills ----------------------------------------------------
+# A YEAR'S ELECTRIC BILL IS NOT A STRUCTURALLY NON-NEGATIVE QUANTITY, so both
+# of these take the signed formatter (issue #131 review round 5, part B's
+# sweep). The round-4 rule read "a purchase price, a billed total, a kWh
+# count" as the unsigned class, and a billed total does not belong in that
+# list: under NEM a heavily over-producing household settles a year in CREDIT,
+# and `f"${-412:,.0f}"` puts the minus inside the sigil. usd0_signed renders
+# every non-negative value identically, so this house's own figures do not
+# move. The same reasoning moves the four plan totals and the modeled annual
+# below -- every one of them is a net-of-export bill, not a price.
 _tok("ACTUAL_ANNUAL_BILL", kind="data_json", file="behavior_rebuild.json",
-     path=("baseline", "actual_billed"), fmt="usd0")
+     path=("baseline", "actual_billed"), fmt="usd0_signed")
 _tok("ACTUAL_MONTHLY_BILL", kind="derived",
      get=lambda ctx: _json("behavior_rebuild.json")["baseline"]["actual_billed"] / 12,
-     sources=["data/behavior_rebuild.json:baseline.actual_billed"], fmt="usd0")
+     sources=["data/behavior_rebuild.json:baseline.actual_billed"], fmt="usd0_signed")
 _tok("ANALYSIS_DAYS", kind="data_json", file="behavior_rebuild.json",
      path=("window", "days"), fmt="num0")
 _tok("ANALYSIS_START_DATE", kind="derived",
@@ -1210,19 +1414,34 @@ def _payback_range(ctx):
     scenario whose saving is not positive contributes no payback at all, and
     the card falls back to naming the one that does.
 
-    The one refusal left is a battery with no payback in either scenario.
-    report-template.html's card asserts one in fixed markup this module cannot
+    IT ALSO READS THE VERDICT'S OWN FLAG, not just the surviving quotients.
+    Gating on `quotable` alone put the card back in the state finding 6
+    described, one household along: the pair (+$2,328 before the free EV fix,
+    -$50 after it) leaves the PRE-fix payback quotable, so the card printed
+    "6.2 yr" while the verdict a few pixels above it -- correctly, off the
+    post-fix scenario every package is built on -- read "does not repay its
+    own cost" (issue #131 review round 5, finding 3). A payback the battery
+    does not have is a payback the card must not assert, and whether it has
+    one is _battery_alone's decision, made once, on the post-fix scenario.
+    `quotable` stays in the test beside it, not because a household can fail
+    only that half -- _battery_alone refuses a repaying battery with no
+    quotable payback before it ever returns -- but so the emptiness cannot
+    reach _payback_span's min() as a ValueError if that ever stops holding.
+
+    The refusal left is a battery the report does not say repays. report-
+    template.html's card asserts a payback in fixed markup this module cannot
     reach ("Battery-alone payback with price-aware dispatch"), so there is no
     string to render into it that makes the page true -- the same shape as
     _best_plan's chrome gate, and it goes away the same day that card is made
     conditional."""
-    _repays, _post, _pb_post, quotable = _battery_alone("BATTERY_PAYBACK_RANGE")
+    repays, post, _pb_post, quotable = _battery_alone("BATTERY_PAYBACK_RANGE")
     mid = _json("package_results.json")["packages"]["MID"]
     _claim("BATTERY_PAYBACK_RANGE", "how long the battery takes to repay its own cost",
-           SUPPORTED if quotable else NOT_DETERMINED,
+           SUPPORTED if repays and quotable else NOT_DETERMINED,
            "data/package_results.json:packages.MID reports battery-alone savings of " +
            ", ".join(f"{k}={mid[k]!r}/yr" for k, _pb, _lab in _MID_BATTERY_SCENARIOS) +
-           ", none of them positive, so neither scenario has a payback",
+           f", and the scenario the report's verdicts are written on -- "
+           f"battery_alone_post_ev_fix_yr, at {post!r}/yr -- does not repay the battery",
            unsettled="report-template.html's section 0 card asserts a battery-alone "
                      "payback as fixed markup no token can reach, so no value rendered "
                      "into this slot makes the page true")
@@ -1231,27 +1450,121 @@ def _payback_range(ctx):
 
 _tok("BATTERY_PAYBACK_RANGE", kind="derived", get=_payback_range,
      sources=["data/package_results.json:packages.MID"])
-_tok("BATTERY_PAYBACK_EVENING_ONLY", kind="data_json", file="package_results.json",
-     path=("packages", "MID", "battery_alone_payback_evening_only_yr"), fmt="yr1")
 
 
-# A MODELED SAVING, so usd0_signed: packages.MID.battery_alone_yr is
-# `base - billed(the year with a battery)` and comes back negative on any
-# household the battery costs money, which fmt="usd0" rendered as "$-120"
-# (issue #131 review round 4, finding 8). Identical output at every
-# non-negative value. Every sibling below is the same class of figure and
-# takes the same formatter -- a modeled saving, a value, an NPV, an overlap
-# deduction: quantities whose sign the artifact decides, not the schema.
-_tok("BATTERY_MARGINAL_SAVINGS", kind="data_json", file="package_results.json",
-     path=("packages", "MID", "battery_alone_yr"), fmt="usd0_signed")
+def _payback_evening_only(ctx):
+    """The OTHER half of section 0's payback card: the same battery on an
+    evening-only dispatch schedule.
+
+    report-template.html renders the two into one label -- "Battery-alone
+    payback with price-aware dispatch ({{BATTERY_PAYBACK_EVENING_ONLY}}
+    evening-only)" -- so they are one card making one claim, and round four
+    guarded exactly one of them. This one stayed a bare data_json read with
+    no check of any kind, which is how "8.4 yr" and "nan yr" were the same
+    code path (issue #131 review round 5, finding 5).
+
+    RELATIONSHIP: ONE DERIVED FROM THE OTHER, and traceable the same way
+    _battery_alone's paybacks are. analysis/package_results.py writes this
+    field as `round(packages.MID.cost / evening, 1)` where `evening` is
+    data/battery_dispatch_policies.json's pw3.evening.save -- so all three
+    numbers are committed and the division is checkable to the twentieth of a
+    year its own rounding moves it.
+
+    It is REFUSED rather than inverted at a non-positive saving for the same
+    reason BATTERY_PAYBACK_RANGE is: the card's label asserts a payback in
+    fixed markup no token can reach, and a cost divided by a loss is not a
+    length of time.
+    """
+    mid = _json("package_results.json")["packages"]["MID"]
+    cost, pb = mid["cost"], mid["battery_alone_payback_evening_only_yr"]
+    save = _json("battery_dispatch_policies.json")["pw3"]["evening"]["save"]
+    token = "BATTERY_PAYBACK_EVENING_ONLY"
+    subject = "how long the battery takes to repay on an evening-only schedule"
+    _claim(token, subject,
+           SUPPORTED if _finite(cost, save, pb) and cost > 0 and save > 0 and pb > 0
+           else NOT_DETERMINED,
+           f"data/package_results.json:packages.MID pairs a cost of {cost!r} with an "
+           f"evening-only payback of {pb!r} yr, against a pw3.evening.save of {save!r}"
+           "/yr in data/battery_dispatch_policies.json -- a payback needs a positive, "
+           "finite cost and a positive, finite saving to be a length of time",
+           unsettled="report-template.html's section 0 card names an evening-only "
+                     "payback in fixed markup no token can reach, so no value rendered "
+                     "into this slot makes the page true")
+    _require_derived(
+        token, subject, cost / save, pb, _TENTH_YEAR_ROUNDING,
+        f"data/package_results.json:packages.MID divides its {cost!r} cost by the "
+        f"{save!r}/yr evening-only saving in data/battery_dispatch_policies.json:"
+        f"pw3.evening.save to {cost / save:.4f} yr, but reports "
+        f"battery_alone_payback_evening_only_yr as {pb!r} -- more than rounding apart, "
+        "so the two artifacts were composed from different runs")
+    return pb
+
+
+_tok("BATTERY_PAYBACK_EVENING_ONLY", kind="derived", get=_payback_evening_only,
+     sources=["data/package_results.json:packages.MID",
+              "data/battery_dispatch_policies.json:pw3.evening.save"], fmt="yr1")
+
+
+def _battery_marginal_savings(ctx):
+    """The battery's OWN annual saving, as the report states it.
+
+    THE POST-EV-FIX SCENARIO, through _battery_alone -- not a second read of
+    packages.MID. This token used to read battery_alone_yr, the battery on the
+    UNSHIFTED baseline, while section 7's verdict had been re-based onto
+    battery_alone_post_ev_fix_yr, the battery after the free fix. Two figures
+    for one purchase, in one document: on the committed archive they read
+    $2,328 and $2,238, and on a household whose battery value is mostly EV
+    arbitrage the free fix already captures (+$2,328 before, -$50 after) they
+    read a healthy saving and a loss. Round four's sign gate used to catch
+    that pair by aborting; removing the gate -- correctly, since the two are
+    DIFFERENT SCENARIOS and neither constrains the other -- left the mismatch
+    with nothing behind it (issue #131 review round 5, finding 10).
+
+    The fix is not another gate. Two scenarios cannot be made to agree, so the
+    report quotes ONE of them, and it is the one every package, every payback
+    and both battery verdicts are already built on: the saving that coexists
+    with the behavior fix section 7 recommends first. CLAUDE.md section 3 is
+    the rule -- when a figure is re-based, every instance moves -- and this
+    was the instance left behind.
+
+    Going through _battery_alone rather than re-reading the field is what
+    makes that structural: the sentence and the figure now come out of one
+    call, so a future re-basing cannot move one without the other.
+    """
+    _repays, post, _pb_post, _quotable = _battery_alone("BATTERY_MARGINAL_SAVINGS")
+    return post
+
+
+# A MODELED SAVING, so usd0_signed: the battery-alone figure is
+# `b_sh - b2`, the battery billed against the EV-shifted year, and comes back
+# negative on any household the battery costs money, which fmt="usd0"
+# rendered as "$-120" (issue #131 review round 4, finding 8). Identical
+# output at every non-negative value. Every sibling below is the same class of
+# figure and takes the same formatter -- a modeled saving, a value, an NPV, an
+# overlap deduction: quantities whose sign the artifact decides, not the
+# schema.
+_tok("BATTERY_MARGINAL_SAVINGS", kind="derived", get=_battery_marginal_savings,
+     sources=["data/package_results.json:packages.MID.battery_alone_post_ev_fix_yr"],
+     fmt="usd0_signed")
+
+def _endurance(token, config):
+    """A backup-endurance token's "336 h (p10 90 h)" pair, both hours checked.
+
+    The pair used to be interpolated straight out of the artifact, so a nan
+    median published "nan h (p10 90 h)" as an outage-endurance figure a reader
+    would plan around (issue #131 review round 5, part B's sweep)."""
+    e = _json("backup_endurance.json")[config]
+    median, p10 = _figures(token, f"how long the battery runs {config} loads",
+                           **{f"{config}_median_h": e["median_h"],
+                              f"{config}_p10_h": e["p10_h"]})
+    return f"{median} h (p10 {p10} h)"
+
 
 _tok("ENDURANCE_ESSENTIALS", kind="derived",
-     get=lambda ctx: (lambda e: f"{e['median_h']} h (p10 {e['p10_h']} h)")(
-         _json("backup_endurance.json")["PW3|t1"]),
+     get=lambda ctx: _endurance("ENDURANCE_ESSENTIALS", "PW3|t1"),
      sources=["data/backup_endurance.json:'PW3|t1'"])
 _tok("ENDURANCE_HOUSE", kind="derived",
-     get=lambda ctx: (lambda e: f"{e['median_h']} h (p10 {e['p10_h']} h)")(
-         _json("backup_endurance.json")["PW3|t2"]),
+     get=lambda ctx: _endurance("ENDURANCE_HOUSE", "PW3|t2"),
      sources=["data/backup_endurance.json:'PW3|t2'"])
 _tok("ESSENTIALS_KWH_DAY", kind="cited_constant", value=17, fmt="num0",
      source="analysis/battery_backup_sims.py's essentials tier cap (t1 = "
@@ -1284,7 +1597,7 @@ _tok("DISCOUNT_RATE", kind="data_json", file="tou_spread.json",
 
 
 def _pct0_from_fraction(v):
-    return f"{round(v * 100)}%"
+    return f"{round(_numeric('pct0_frac', v) * 100)}%"
 
 
 FORMATTERS["pct0_frac"] = _pct0_from_fraction
@@ -1324,7 +1637,10 @@ def _spread_observation_count(ctx):
     rows = _csv_rows("bill_tou_detail.csv")
     n_periods = len({r["period"] for r in rows})
     n_statements = len({r["statement_date"] for r in rows})
-    return (f"{ts['inputs']['rows_priced']} priced cells across {n_periods} "
+    priced, = _figures("SPREAD_OBSERVATION_COUNT",
+                       "how many priced cells the spread rests on",
+                       rows_priced=ts["inputs"]["rows_priced"])
+    return (f"{priced} priced cells across {n_periods} "
             f"billing periods on {n_statements} statements")
 
 
@@ -1332,9 +1648,12 @@ _tok("SPREAD_OBSERVATION_COUNT", kind="derived", get=_spread_observation_count,
      sources=["data/tou_spread.json:inputs", "data/bill_tou_detail.csv"])
 
 _tok("CARBON_SAMPLE_DESCRIPTION", kind="derived",
-     get=lambda ctx: (lambda cov: f"{cov['days_covered']} of the analysis year's "
-                       f"{cov['days_covered'] + len(cov['missing_dates'])} days")(
-         _json("carbon_fullyear_results.json")["coverage"]),
+     get=lambda ctx: (lambda cov, covered: f"{covered} of the analysis year's "
+                       f"{covered + len(cov['missing_dates'])} days")(
+         _json("carbon_fullyear_results.json")["coverage"],
+         *_figures("CARBON_SAMPLE_DESCRIPTION", "how much of the year CAISO data covers",
+                   days_covered=_json("carbon_fullyear_results.json")
+                   ["coverage"]["days_covered"])),
      sources=["data/carbon_fullyear_results.json:coverage"])
 
 
@@ -1461,12 +1780,15 @@ def _best_plan_annual(token, provider):
     return float(_plan_row(provider)["total"])
 
 
+# usd0_signed for the reason ACTUAL_ANNUAL_BILL takes it: a plan's annual
+# total is a bill net of exports, not a price, and nothing in
+# data/plan_results.csv holds it above zero.
 _tok("BEST_PLAN_ANNUAL_CCA", kind="derived",
      get=lambda ctx: _best_plan_annual("BEST_PLAN_ANNUAL_CCA", "CEA"),
-     sources=["data/plan_results.csv"], fmt="usd0")
+     sources=["data/plan_results.csv"], fmt="usd0_signed")
 _tok("BEST_PLAN_ANNUAL_BUNDLED", kind="derived",
      get=lambda ctx: _best_plan_annual("BEST_PLAN_ANNUAL_BUNDLED", "SDGE"),
-     sources=["data/plan_results.csv"], fmt="usd0")
+     sources=["data/plan_results.csv"], fmt="usd0_signed")
 
 
 def _bpm_plans():
@@ -1550,15 +1872,33 @@ def _best_plan_matrix_cell(token, key):
                       'class="win" row, which asserts the answer as fixed markup no '
                       "token can reach, so no value rendered into this slot makes the "
                       "page true")
-    return row[key]
+    # THE CELL THIS TOKEN ACTUALLY PRINTS, checked last and by name.
+    #
+    # The loop above ranks the two COLUMNS, and two of the three tokens read a
+    # cell inside one of them -- so for those two the finiteness test above
+    # already covered the value returned here. BATTERY_VALUE_BEST_PLAN does
+    # not: `battery_value` is a third field, in neither column, ranked by
+    # nothing, and it went out unchecked past a gate that had just verified
+    # six other numbers (issue #131 review round 5, finding 2). A guard that
+    # checks its neighbours and not its own return value is the shape this
+    # review keeps finding, so the return is checked on the way out rather
+    # than left to whichever column happens to contain it.
+    cell = row[key]
+    _claim(token, f"what data/battery_plan_matrix.json prices {plan}'s {key} at",
+           SUPPORTED if _finite(cell) else NOT_DETERMINED,
+           f"data/battery_plan_matrix.json:plans.{plan}.{key} is {cell!r}")
+    return cell
 
 
+# usd0_signed, same reason again: both cells are modeled annual BILLS under
+# a plan, and a battery-plus-solar house on the right tariff can model below
+# zero.
 _tok("BEST_PLAN_NOBATT_MODELED", kind="derived",
      get=lambda ctx: _best_plan_matrix_cell("BEST_PLAN_NOBATT_MODELED", "no_battery"),
-     sources=["data/battery_plan_matrix.json:plans"], fmt="usd0")
+     sources=["data/battery_plan_matrix.json:plans"], fmt="usd0_signed")
 _tok("BEST_PLAN_BATT_MODELED", kind="derived",
      get=lambda ctx: _best_plan_matrix_cell("BEST_PLAN_BATT_MODELED", "with_battery"),
-     sources=["data/battery_plan_matrix.json:plans"], fmt="usd0")
+     sources=["data/battery_plan_matrix.json:plans"], fmt="usd0_signed")
 _tok("BATTERY_VALUE_BEST_PLAN", kind="derived",
      get=lambda ctx: _best_plan_matrix_cell("BATTERY_VALUE_BEST_PLAN", "battery_value"),
      sources=["data/battery_plan_matrix.json:plans"], fmt="usd0_signed")
@@ -1673,18 +2013,24 @@ _tok("PLAN_MARGIN_VS_RUNNER_UP", kind="derived", get=_plan_margin_vs_runner_up,
               "data/plan_results.csv, asserted in-script)"])
 
 _tok("NEM_GRANDFATHER_VALUE_RANGE", kind="derived",
-     get=lambda ctx: (lambda r: f"${r['low']:,.2f}–{r['high']:,.2f}")(
-         _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]),
+     get=lambda ctx: (lambda low, high: f"${low:,.2f}–{high:,.2f}")(
+         *_amounts("NEM_GRANDFATHER_VALUE_RANGE",
+                   "what NEM 2.0 grandfathering is worth",
+                   **{k: _json("nem3_grandfathering.json")
+                      ["grandfathering_value_range_usd_per_yr"][k]
+                      for k in ("low", "high")})),
      sources=["data/nem3_grandfathering.json:grandfathering_value_range_usd_per_yr"])
 
 
 def _s8_verdict_short(ctx):
     nem = _json("nem3_grandfathering.json")["grandfathering_value_range_usd_per_yr"]
+    low, high = _amounts("S8_VERDICT_SHORT", "what NEM 2.0 grandfathering is worth",
+                         grandfathering_low=nem["low"], grandfathering_high=nem["high"])
     exp_pct = round(_json("report_data.json")["totals"]["exp"] /
                      _annual_production_kwh(ctx) * 100)
     return (f"No, no, and not yet — the array already exports {exp_pct}% of "
             f"production at low value, and expansion risks the "
-            f"${nem['low']:,.0f}–{nem['high']:,.0f}/yr NEM 2.0 grandfathering")
+            f"${low:,.0f}–{high:,.0f}/yr NEM 2.0 grandfathering")
 
 
 _tok("S8_VERDICT_SHORT", kind="derived", get=_s8_verdict_short,
@@ -1720,8 +2066,20 @@ def _crossover_season_year(which):
     "today" can do it chronologically instead of by comparing season NAMES,
     which sort alphabetically, not by calendar order (see _paid_off)."""
     c = _json("lifetime_payback.json")["crossover"][which]
-    month = _fraction_to_month(c["fraction_through_year"])
-    return _season_for_month(month), c["year"], month
+    # Checked HERE, once, because four tokens read this one helper --
+    # PAYBACK_CROSSOVER_DATE, PAYBACK_HEADLINE, PAYBACK_STATUS_SHORT and
+    # S11_VERDICT_SHORT -- and every one of them prints the year into a
+    # sentence about when the array pays for itself. A nan year published
+    # "on pace to pay for itself by fall nan" from all four (issue #131
+    # review round 5, part B's sweep). _paid_off also COMPARES it against
+    # today, and a nan loses every comparison silently.
+    token = f"crossover.{which}"
+    year, fraction = _figures(
+        token, "when the array's cumulative value crosses its cost",
+        **{f"crossover_{which}_year": c["year"],
+           f"crossover_{which}_fraction_through_year": c["fraction_through_year"]})
+    month = _fraction_to_month(fraction)
+    return _season_for_month(month), year, month
 
 
 _tok("PAYBACK_CROSSOVER_DATE", kind="derived",
@@ -1757,12 +2115,13 @@ _tok("S11_VERDICT_SHORT", kind="derived",
      (lambda s, y, m: f"on pace to pay for itself by {s} {y}")(*_crossover_season_year("gross")),
      sources=["data/lifetime_payback.json:crossover.gross", "system clock"])
 _tok("PAYBACK_HEADLINE", kind="derived",
-     get=lambda ctx: (lambda s, y, m: (
-         f"Paid off — cumulative value crossed the "
-         f"${hh1('solar.install_invoice_usd'):,.0f} gross cost in {s} {y}."))(
-         *_crossover_season_year("gross")) if _paid_off(ctx) else
-     (lambda s, y, m: f"On pace to cross the ${hh1('solar.install_invoice_usd'):,.0f} "
-      f"gross cost by {s} {y}.")(*_crossover_season_year("gross")),
+     get=lambda ctx: (lambda s, y, m, cost: (
+         f"Paid off — cumulative value crossed the ${cost:,.0f} gross cost in {s} {y}."
+         if _paid_off(ctx) else
+         f"On pace to cross the ${cost:,.0f} gross cost by {s} {y}."))(
+         *_crossover_season_year("gross"),
+         *_amounts("PAYBACK_HEADLINE", "what the array cost to install",
+                   **{"solar.install_invoice_usd": hh1("solar.install_invoice_usd")})),
      sources=["data/lifetime_payback.json:crossover.gross",
               "private/household.yaml:solar.install_invoice_usd"])
 
@@ -1842,15 +2201,34 @@ _tok("CLEANED_POST_MEDIAN", kind="derived",
 _tok("CLEANED_RATIO", kind="derived",
      get=lambda ctx: (lambda pre, post: round(post / pre, 3))(*_cleaning_window_medians(ctx)),
      sources=["data/cleaning_study_daily.csv"], fmt="num2")
-_tok("CLEANING_EFFECT_PCT", kind="derived",
-     get=lambda ctx: (lambda pre, post: f"{(post / pre - 1) * 100:.1f}%")(
-         *_cleaning_window_medians(ctx)),
+def _cleaning_effect_pct(ctx):
+    """The cleaning's measured production gain, as a percentage.
+
+    Both medians checked, and the PRE median checked for being a real
+    denominator: a zero pre-window median makes the quotient a
+    ZeroDivisionError and a nan in either window renders "nan%" as a measured
+    effect (issue #131 review round 5, part B's sweep)."""
+    pre, post = _figures("CLEANING_EFFECT_PCT", "what the cleaning recovered",
+                         **dict(zip(("pre_window_median_kwh", "post_window_median_kwh"),
+                                    _cleaning_window_medians(ctx))))
+    _claim("CLEANING_EFFECT_PCT", "what the cleaning recovered",
+           SUPPORTED if pre > 0 else NOT_DETERMINED,
+           f"data/cleaning_study_daily.csv's 30-day pre-cleaning window has a median "
+           f"of {pre!r} kWh/day, which is not a production level a gain can be "
+           "measured against")
+    return f"{(post / pre - 1) * 100:.1f}%"
+
+
+_tok("CLEANING_EFFECT_PCT", kind="derived", get=_cleaning_effect_pct,
      sources=["data/cleaning_study_daily.csv"])
 _tok("SOILING_RATE_RANGE", kind="derived",
-     get=lambda ctx: (lambda ae: (
-         f"{min(ae['scenario_A_this_years_evidence']['rate_pct_per_month'], ae['scenario_B_2024_cleaning_evidence']['rate_pct_per_month']):.1f}"
-         f"–{max(ae['scenario_A_this_years_evidence']['rate_pct_per_month'], ae['scenario_B_2024_cleaning_evidence']['rate_pct_per_month']):.1f}%/month"))(
-         _json("soiling_results.json")["annual_economics"]),
+     get=lambda ctx: (lambda a, b: f"{min(a, b):.1f}–{max(a, b):.1f}%/month")(
+         *_figures("SOILING_RATE_RANGE", "how fast the array soils",
+                   **{f"scenario_{s}_rate_pct_per_month":
+                      _json("soiling_results.json")["annual_economics"][k]
+                      ["rate_pct_per_month"]
+                      for s, k in (("A", "scenario_A_this_years_evidence"),
+                                   ("B", "scenario_B_2024_cleaning_evidence"))})),
      sources=["data/soiling_results.json:annual_economics"])
 
 
@@ -1971,16 +2349,23 @@ def _free_fix_saving(token):
 def _free_fix_clause(saving, saves, sell):
     """One free-fix clause, in the sentence the state calls for.
 
-    `sell` is the SUPPORTED wording (each section sells the move in its own
-    words); the two SUPPORTED_OPPOSITE wordings are shared, because a zero and
-    a loss mean the same thing in all three sections and only the selling
-    sentence differs between them.
+    `sell` is a CALLABLE returning the SUPPORTED wording (each section sells
+    the move in its own words); the two SUPPORTED_OPPOSITE wordings are
+    shared, because a zero and a loss mean the same thing in all three
+    sections and only the selling sentence differs between them.
+
+    A callable and not a string, because both selling sentences interpolate
+    the saving behind a dollar sigil -- "saves a modeled $X/yr" -- and passing
+    them by value built that string on the loss branch too, where the figure
+    is negative and _usd0 has nothing honest to render (issue #131 review
+    round 5, part B). The sentence that cannot be true is now never composed,
+    rather than composed as "$-800" and then thrown away.
 
     `saving` is the WHOLE-DOLLAR figure the caller also prints, never the
     unrounded one -- see _free_fix_saving -- so the zero branch is reached by
     exactly the values that render as "$0"."""
     if saves:
-        return sell
+        return sell()
     if saving == 0:
         return "shifting EV charging adds no modeled saving"
     return f"shifting EV charging costs a modeled {_usd0(-saving)}/yr"
@@ -2050,14 +2435,22 @@ def _battery_alone(token):
     mid = _json("package_results.json")["packages"]["MID"]
     cost = mid["cost"]
     # The cost is the numerator of every payback below, so without a usable
-    # one the derivation cannot be checked AT ALL and each payback would be
-    # quoted on the artifact's own say-so. Checked once, up front, rather
-    # than folded into the per-scenario test where an unusable cost would
-    # silently switch the check off instead of failing closed.
-    _claim(token, "how long the battery takes to repay its own cost",
-           SUPPORTED if _finite(cost) and cost > 0 else NOT_DETERMINED,
-           f"data/package_results.json:packages.MID reports a cost of {cost!r}, which "
-           "is not a positive, finite amount to divide by a saving")
+    # one no payback can be CHECKED -- each would be quoted on the artifact's
+    # own say-so.
+    #
+    # But that is a reason to refuse a PAYBACK, not a reason to refuse the
+    # report. Round four checked it unconditionally, up front, and so aborted
+    # every household whose package_results.json carries an unusable MID cost
+    # even where nothing downstream quotes a payback at all: the battery does
+    # not repay, both callers render "never repays its own cost", section 0's
+    # card fails closed on its own, and fifteen sections went with it anyway
+    # (issue #131 review round 5, finding 4). So it is a condition on the
+    # value being USED, checked below once it is known whether any payback
+    # survives to be printed. The derivation check is skipped rather than
+    # silently passed while the cost is unusable -- skipping it cannot leak a
+    # payback, because the same unusable cost makes the refusal below fire on
+    # every path that would have printed one.
+    cost_ok = _finite(cost) and cost > 0
     savings, paybacks, quotable = [], [], []
     for save_key, pb_key, label in _MID_BATTERY_SCENARIOS:
         save, pb = mid[save_key], mid[pb_key]
@@ -2065,7 +2458,7 @@ def _battery_alone(token):
         # zero saving has none. A non-finite PAYBACK is not excused the same
         # way -- an infinity is exactly what a broken artifact reports beside
         # a real saving, and _require_derived refuses it by name.
-        if _finite(save) and save != 0:
+        if cost_ok and _finite(save) and save != 0:
             _require_derived(
                 token, f"how long the battery takes to repay its own cost {label}",
                 cost / save, pb, _TENTH_YEAR_ROUNDING,
@@ -2082,6 +2475,14 @@ def _battery_alone(token):
         token, "whether the battery repays its own cost", post,
         f"data/package_results.json:packages.MID reports a "
         f"battery_alone_post_ev_fix_yr of {post!r}/yr")
+    # NOW the cost matters, and only now: a payback is about to be quoted --
+    # by section 7's "(~6.5-yr payback)" clause, which renders whenever the
+    # battery repays, or by section 0's card, which prints every quotable
+    # payback -- and there is no verified numerator behind it.
+    _claim(token, "how long the battery takes to repay its own cost",
+           SUPPORTED if cost_ok or not (repays or quotable) else NOT_DETERMINED,
+           f"data/package_results.json:packages.MID reports a cost of {cost!r}, which "
+           "is not a positive, finite amount to divide by a saving")
     # A battery that repays has a payback, and both callers go on to print
     # one. The derivation check above already rules this out through every
     # path a real artifact can take -- it is here so that the emptiness can
@@ -2130,7 +2531,8 @@ def _s0_verdict(ctx):
     _saved, low, free_fix_saves = _free_fix_saving("S0_VERDICT")
     fix_clause = _free_fix_clause(
         low, free_fix_saves,
-        f"the free EV-charging fix saves a modeled {_usd0(low)}/yr whatever you buy")
+        lambda: f"the free EV-charging fix saves a modeled {_usd0(low)}/yr "
+                "whatever you buy")
     # Whether the battery repays its own cost is decided in ONE place, off ONE
     # scenario, shared with section 7 and with the payback card -- the three
     # used to read the package independently and could publish opposite
@@ -2296,6 +2698,14 @@ def _s1_verdict(ctx):
     # against the artifact's own stated whole-kWh rounding bound.
     bound = _whole_kwh_rounding_bound()
     residual = ab["max_abs_residual_kwh"]
+    # Finiteness before the two comparisons and before the sentence prints the
+    # bucket count: `nan > bound` and `nan < MIN_AGREEMENT_CORRELATION` are
+    # both False, so a nan walked past BOTH refusals below and published
+    # "all nan billed TOU buckets rebuild ... at nan daily correlation" as a
+    # measured claim (issue #131 review round 5, part B's sweep).
+    _require_finite("S1_VERDICT", "whether the billed TOU buckets rebuild",
+                    buckets=ab["buckets"], max_abs_residual_kwh=residual,
+                    whole_kwh_rounding_bound=bound)
     if residual > bound:
         raise SystemExit(
             f"report_tokens: S1_VERDICT refuses to claim the billed TOU buckets rebuild "
@@ -2312,6 +2722,8 @@ def _s1_verdict(ctx):
     # agreement, so it has to clear the weakest agreement the artifact's own
     # generator would ever publish (MIN_AGREEMENT_CORRELATION above).
     r = _min_pairwise_daily_correlation()
+    _require_finite("S1_VERDICT", "whether the production series agree",
+                    weakest_pairwise_daily_correlation=r)
     if r < MIN_AGREEMENT_CORRELATION:
         raise SystemExit(
             f"report_tokens: S1_VERDICT refuses to say the independent production series "
@@ -2462,7 +2874,8 @@ def _overnight_ev_night_counts(ctx):
 
 def _s2_verdict(ctx):
     production = _annual_production_kwh(ctx)
-    kw_dc = hh1("solar.kw_dc")
+    kw_dc, = _figures("S2_VERDICT", "how big the array is",
+                      **{"solar.kw_dc": hh1("solar.kw_dc")})
     # The specific yield below divides by this. Same exposure as totals.exp in
     # _midday_export_share: ZeroDivisionError is not in resolve_token's caught
     # set, so a household.yaml with no array size (or a zero one) would crash
@@ -2600,6 +3013,18 @@ def _s5_verdict(ctx):
     # And it INVERTS rather than refusing. A house whose on-peak window costs
     # no more than its share of kWh is a house where timing does not drive the
     # bill -- an ordinary result, and the one its section 5 needs to be told.
+    #
+    # Finiteness FIRST, before the rounding: round(float('inf')) does not
+    # return an infinity, it raises OverflowError, and OverflowError was not in
+    # resolve_token's caught tuple -- so a non-finite share in either artifact
+    # crashed the generator with a bare traceback instead of a named refusal,
+    # in the one non-finite sweep of round four that skipped this comparison
+    # because its branches read as a rounding, not a division (issue #131
+    # review round 5, finding 6). The tuple has ArithmeticError in it now too,
+    # but that is a floor: this says WHICH share was not a number.
+    _require_finite("S5_VERDICT",
+                    "whether the on-peak window costs more than its share of kWh",
+                    onpeak_import_share=kwh_share, onpeak_share_of_energy_cost=cost_share)
     kwh_pct, cost_pct = round(kwh_share * 100), round(cost_share * 100)
     if cost_pct > kwh_pct:
         claim = (f"{kwh_pct}% of imported kWh but {cost_pct}% of the import energy cost, "
@@ -2676,8 +3101,8 @@ def _s7_verdict(ctx):
     _saved, low_savings, free_fix_saves = _free_fix_saving("S7_VERDICT")
     fix_clause = _free_fix_clause(
         low_savings, free_fix_saves,
-        f"the free EV-charging fix is worth a modeled {_usd0(low_savings)}/yr "
-        "whatever you buy")
+        lambda: f"the free EV-charging fix is worth a modeled "
+                f"{_usd0(low_savings)}/yr whatever you buy")
     if low["cost"]:
         raise SystemExit(f"report_tokens: S7_VERDICT refuses to call the behavior package "
                           f"free -- data/package_results.json:packages.LOW.cost is "
@@ -2773,8 +3198,11 @@ def _s10_verdict(ctx):
     # GENERATION_PROVIDER_SHORT takes its acronym off the same field.
     cca_name = re.split(r"\s+[—–-]\s+|\(", hh1("household.cca"))[0].strip()
     delta = a["delta_usd_per_year"]
+    # `days` is in the same check because the sentence prints it as its own
+    # evidence ("same-date bill rates, 335 days"), and a non-finite day count
+    # published "nan days" as the window the comparison rests on.
     _require_finite("S10_VERDICT", "which generation arrangement cost this household more",
-                    delta_usd_per_year=delta)
+                    delta_usd_per_year=delta, days=a["days"])
     # This clause reports a DIRECTION, and at an exact tie there is no
     # direction to report. A two-way ternary has to send delta == 0 somewhere,
     # and "less than" is where it went: "$0/yr less than bundled generation"
@@ -2959,11 +3387,14 @@ _tok("REVIEW_TOOL_2", kind="cited_constant", value="Codex (GPT-5.6 Sol)",
 
 
 # ---- gas / electrification ------------------------------------------------
+# usd0_signed on both, for ACTUAL_ANNUAL_BILL's reason: a summed year of gas
+# service and a modeled annual electric baseline are bills, and a bill can
+# settle in credit.
 _tok("ACTUAL_ANNUAL_GAS_BILL", kind="derived",
      get=lambda ctx: sum(float(r["total_gas_service"]) for r in _csv_rows("gas_bill_summary.csv")),
-     sources=["data/gas_bill_summary.csv"], fmt="usd0")
+     sources=["data/gas_bill_summary.csv"], fmt="usd0_signed")
 _tok("MODELED_ANNUAL_AT_CURRENT_RATES", kind="data_json", file="package_results.json",
-     path=("model_baseline_current_rates",), fmt="usd0")
+     path=("model_baseline_current_rates",), fmt="usd0_signed")
 # ELECTRIFICATION_VERDICT_SHORT is declared in KNOWN_GAPS above (heat-pump
 # space heating has a committed install-cost basis since issue #1; HPWH
 # still does not, so a "which pencils" verdict needing both still isn't).
@@ -3015,20 +3446,51 @@ def resolve_token(name, spec=None):
             raw = spec["get"](CTX)
         else:
             raise SystemExit(f"unknown token kind {kind!r}")
+
+        # FORMATTING HAPPENS INSIDE THE TRY, and the finiteness of a numeric
+        # value is checked before a formatter is handed it (issue #131 review
+        # round 5, findings 1, 2 and 5). Both halves of that sentence were
+        # defects:
+        #
+        #   * A leaf token declared with a numeric format spec is ASSERTING
+        #     its artifact field is a number. Nothing checked it, so a nan in
+        #     packages.MID.battery_alone_yr published "-$nan" and an infinity
+        #     published "$inf" -- and the per-token guards that did exist were
+        #     added one review finding at a time, at whichever exit that
+        #     round's reader happened to reach. This is the guard the class
+        #     needed: EVERY leaf token, of every kind, checked once, here.
+        #   * The formatter used to run outside the try, so a refusal raised
+        #     inside one (the three signed formatters now raise on a
+        #     non-number) reached the caller WITHOUT the token's name on it,
+        #     and no ValueError or ArithmeticError from a formatter was
+        #     converted into this module's named failure either.
+        #
+        # It does not replace the named per-site guards -- "S5_VERDICT cannot
+        # say which share is larger" tells a maintainer what broke and this
+        # says only that something did -- it is the floor beneath them.
+        fmt = spec.get("fmt")
+        if fmt is not None and fmt not in FORMATTERS:
+            raise SystemExit(f"report_tokens: token {name} has unknown format spec {fmt!r}")
+        if fmt not in _NON_NUMERIC_FMTS and not _finite(raw):
+            raise SystemExit(
+                f"report_tokens: token {name} resolved to {raw!r}, which is not a "
+                f"finite number -- its format spec {fmt!r} has nothing honest to "
+                "render for it")
+        return FORMATTERS.get(fmt, _raw)(raw)
     except SystemExit as e:
         msg = str(e)
         if name in msg or kind == "gap":
             raise
         raise SystemExit(f"report_tokens: failed to resolve token {name} ({kind}): {msg}")
-    except (KeyError, IndexError, TypeError, ValueError) as e:
+    # ArithmeticError, not just ValueError: round(float('inf')) and
+    # int(float('inf')) raise OverflowError, and a per-interval quotient can
+    # raise ZeroDivisionError. Neither was in this tuple, so an infinity in a
+    # share field left section 5's verdict crashing out of the generator with
+    # a bare OverflowError instead of this module's named refusal (issue #131
+    # review round 5, finding 6).
+    except (KeyError, IndexError, TypeError, ValueError, ArithmeticError) as e:
         raise SystemExit(f"report_tokens: failed to resolve token {name} ({kind}): "
                           f"{type(e).__name__}: {e}")
-
-    fmt = spec.get("fmt")
-    if fmt is not None and fmt not in FORMATTERS:
-        raise SystemExit(f"report_tokens: token {name} has unknown format spec {fmt!r}")
-    formatter = FORMATTERS.get(fmt, _raw)
-    return formatter(raw)
 
 
 def resolve_all(include_gaps=False):

@@ -3295,10 +3295,23 @@ def case_the_payback_card_never_prints_a_payback_the_battery_does_not_have():
     not repay its own cost.
 
     It goes through the shared resolver now and spans only the paybacks that
-    EXIST. Driven at: one scenario losing money (the card names the one that
-    repays), both losing (no payback in either, so the card fails closed
-    naming the chrome), and an artifact whose payback contradicts its own
-    saving (the resolver's own refusal, which this token used to skip)."""
+    EXIST. Driven at: the PRE-fix scenario losing money (the card names the
+    post-fix payback, which is the one the report's verdicts are written on),
+    the POST-fix scenario losing money (no payback the report says the battery
+    has, so the card fails closed -- see the round-5 note below), both losing,
+    and an artifact whose payback contradicts its own saving (the resolver's
+    own refusal, which this token used to skip).
+
+    ROUND 5, FINDING 3 amended arm 1 of this case. It used to assert that a
+    battery losing money AFTER the free fix but repaying before it prints the
+    PRE-fix payback -- pinning, as the correct answer, the card reading "6.2
+    yr" a few pixels above a verdict that reads "does not repay its own cost"
+    on the very household round 4's own finding 1 introduced (+$2,328 before
+    the fix, -$50 after it). The card and the verdict describe one purchase,
+    the verdict is written on the post-fix scenario, and a card asserting a
+    payback the sentence beside it denies is the defect this case exists to
+    prevent. So that arm now asserts the refusal, and arm 5 below drives the
+    card and both verdicts together across every mixed pair."""
     mid = rt._json("package_results.json")["packages"]["MID"]
     live = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
     assert min(live) > 0, live
@@ -3306,21 +3319,24 @@ def case_the_payback_card_never_prints_a_payback_the_battery_does_not_have():
     assert "-" not in published.replace("–", ""), (
         f"the published card already carries a minus sign: {published!r}")
 
-    # 1. One scenario losing money: the card quotes the one that repays and
-    #    never the cost divided by a loss.
-    for pre, post, survivor in ((-50, live[1], live[1]), (live[0], -50, live[0])):
-        with _mid_battery_at(mid, pre, post):
-            value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
-        expected = f"{round(mid['cost'] / survivor, 1):.1f} yr"
-        assert value == expected, (
-            f"the payback card reads {value!r} with a {min(pre, post)}/yr battery-alone "
-            f"saving in one scenario; the only real payback is {expected!r}")
-        assert "-" not in value, (
-            f"the payback card printed a cost divided by a loss as a payback: {value}")
+    # 1. The PRE-fix scenario losing money: the card quotes the post-fix
+    #    payback, which is the one every verdict is written on, and never the
+    #    cost divided by a loss.
+    with _mid_battery_at(mid, -50, live[1]):
+        value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+    expected = f"{round(mid['cost'] / live[1], 1):.1f} yr"
+    assert value == expected, (
+        f"the payback card reads {value!r} with a -50/yr pre-fix battery-alone saving; "
+        f"the only payback the report's verdicts stand behind is {expected!r}")
+    assert "-" not in value, (
+        f"the payback card printed a cost divided by a loss as a payback: {value}")
 
-    # 2. Neither scenario repays: there is no payback for the card to assert,
-    #    and it says so rather than printing a negative one.
-    for pre, post in ((-50, -400), (0, 0), (0, -400)):
+    # 2. The post-fix scenario does not repay -- whatever the other one says.
+    #    There is no payback the report stands behind, so the card refuses
+    #    rather than quoting the surviving scenario's. (2328, -50) is the
+    #    review's own household, the one arm 1 used to pin the other way.
+    for pre, post in ((-50, -400), (0, 0), (0, -400),
+                      (2328, -50), (live[0], -50), (live[0], 0)):
         with _mid_battery_at(mid, pre, post):
             try:
                 value = rt.resolve_token("BATTERY_PAYBACK_RANGE")
@@ -3356,11 +3372,37 @@ def case_the_payback_card_never_prints_a_payback_the_battery_does_not_have():
             except SystemExit as e:
                 assert "BATTERY_PAYBACK_RANGE" in str(e) and "cost" in str(e), e
 
+    # 5. ROUND 5, FINDING 3, as the property rather than as three examples:
+    #    the card never asserts a payback while the two verdicts printed
+    #    around it deny the battery repays. Driven across every mixed pair,
+    #    with the verdicts resolved in the same substituted state.
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    agreed = []
+    with _stub_plan(cheapest, provider):
+        for pre, post in ((2328, -50), (live[0], -50), (-50, live[1]),
+                          (live[0], 0), (0, live[1]), (live[0], live[1])):
+            with _mid_battery_at(mid, pre, post):
+                s0, s7 = rt.resolve_token("S0_VERDICT"), rt.resolve_token("S7_VERDICT")
+                try:
+                    card = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                except SystemExit:
+                    card = None
+            says_repays = _battery_reading(s0, s7) == ("repays", "repays")
+            assert (card is not None) == says_repays, (
+                f"at pre {pre}/post {post} the section 0 card reads {card!r} while the "
+                f"two verdicts read {_battery_reading(s0, s7)} -- a card asserting a "
+                "payback the sentences beside it deny")
+            agreed.append(f"{pre}/{post}:{'quoted' if card else 'withheld'}")
+        assert len({a.split(':')[1] for a in agreed}) == 2, (
+            f"every pair went the same way, so agreement proves nothing: {agreed}")
+
     assert rt.resolve_token("BATTERY_PAYBACK_RANGE") == published, (
         "the substituted battery figures leaked out of this case")
     return (f"the section 0 payback card reads {published!r} on the committed artifact, "
-            "names only the scenario that repays when the other loses money, and fails "
-            "closed rather than printing a cost divided by a loss")
+            "names the post-fix payback when the pre-fix scenario loses money, withholds "
+            "the card whenever the verdicts beside it say the battery does not repay "
+            f"({', '.join(agreed)}), and fails closed rather than printing a cost "
+            "divided by a loss")
 
 
 @case
@@ -3460,9 +3502,13 @@ def case_no_signed_currency_token_prints_a_minus_inside_the_dollar_sigil():
     assert rt.FORMATTERS["usd0_plus"](0) == "$0"
     assert rt.FORMATTERS["usd0_tilde_signed"](4900) == "~$4,900"
 
-    # End to end, on the token the review named.
+    # End to end, on the token the review named. The substitution moves the
+    # POST-fix scenario, which is the one this token has read since round 5's
+    # finding 10 re-based it onto the scenario section 7's verdict quotes --
+    # and it moves the payback with it, because package_results.py writes the
+    # payback as cost / saving and report_tokens checks that derivation.
     mid = rt._json("package_results.json")["packages"]["MID"]
-    with _swapped(mid, "battery_alone_yr", -120):
+    with _mid_battery_at(mid, mid["battery_alone_yr"], -120):
         value = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
     assert value == "-$120", value
 
@@ -3528,6 +3574,650 @@ def case_both_worth_doing_clauses_resolve_through_one_shared_ladder():
     assert not seen[len(seen):], seen
     return ("_free_fix_saving and _battery_alone both resolve through _sign_claim, each "
             f"with its own subject ({sorted(subjects.values())}) and its own magnitude")
+
+
+# ===========================================================================
+# THE POISON HARNESS (issue #131, review round 5, part B).
+#
+# WHAT ROUND 4 SHIPPED, AND WHY IT COULD NOT WORK. Round 4 closed its
+# "minus inside the dollar sigil" finding with a MECHANICAL sweep -- the probe
+# in case_no_signed_currency_token_prints_a_minus_inside_the_dollar_sigil,
+# which walks TOKENS and matches each entry's NAME and declared source PATH
+# against a regex of signed-quantity words. It is a structural probe over
+# DECLARATIONS, and the population it can see is the population that declares
+# a `fmt` and a `path`. Twenty-one tokens in report_tokens.py are `derived`
+# formulas that build a dollar string with an f-string; the probe cannot see
+# one of them, and every one of them could publish "$-1,234", "$nan" or
+# "inf kg CO2/MWh" out of a single bad artifact field. Round 5 found four such
+# tokens by reading, which is how the previous four rounds found their ten
+# each. Reading does not scale and does not repeat.
+#
+# WHAT THIS DOES INSTEAD. It drives REAL RESOLUTION and reads the OUTPUT.
+# For every token, for every numeric field of every artifact the token is
+# observed to touch, it substitutes each of nan, inf, -inf, -0.0, 0 and a
+# negative value into report_tokens' in-memory artifact cache, resolves the
+# token, and requires the outcome to be one of exactly two things:
+#
+#     a SystemExit whose message NAMES the token, or
+#     a rendered string carrying none of the malformed shapes below.
+#
+# Anything else -- a nan on the page, a minus inside a sigil, a doubled
+# sigil, an empty numeric field, a blank render, an unnamed refusal, or any
+# other exception type escaping resolve_token -- is a failure.
+#
+# HOW THE FIELDS A TOKEN READS ARE DISCOVERED. Two mechanisms, and neither
+# trusts a declaration:
+#
+#   1. WHICH ARTIFACTS, by a RECORDING LOADER. report_tokens._json,
+#      ._csv_rows and .hh1 are wrapped for one clean resolution per token and
+#      record what they were asked for. This is the recording-loader option
+#      the round-5 brief judged sturdiest, and for the same reason: it
+#      observes the reads rather than believing TOKENS' `sources` list, which
+#      is prose, is not consumed by anything, and is exactly the kind of
+#      declaration finding 9 proved unreliable.
+#
+#   2. WHICH FIELDS INSIDE THEM, by OBSERVABLE EFFECT. Every numeric leaf of
+#      each touched JSON file (and every fully-numeric column of each touched
+#      CSV) is poisoned in turn and the token re-resolved. If the outcome is
+#      byte-identical to the clean one, the token PROVABLY does not read that
+#      field through that value, and there is nothing to assert. If it
+#      differs at all, the token reads it, and the outcome must satisfy the
+#      contract above.
+#
+#      This is deliberately NOT a path-recording proxy over the parsed JSON.
+#      A proxy has to intercept every way Python reaches a value --
+#      __getitem__, .get, .items(), .values(), iteration, slicing, max(key=)
+#      -- and a single missed access path is a silent blind spot pointing in
+#      exactly the direction this harness exists to remove. Poison-and-compare
+#      has no blind spot available to it: it does not need to know how the
+#      value was reached, only whether the answer moved.
+#
+# THERE IS NO ALLOWLIST, and that is a consequence of the contract rather than
+# an omission. The contract is on the OUTPUT, not on refusing: a count that
+# renders "0 days" on a poisoned input, a date, a name, a share that reads
+# "-1,234%" are all already permitted, because none of them puts a non-number
+# or a misplaced sign in front of a reader. The exemption mechanism a token
+# would need is therefore never reached, so adding one would document nothing.
+# ===========================================================================
+_POISON_NUMBERS = (float("nan"), float("inf"), float("-inf"), -0.0, 0, -1234.5)
+# The CSV cache holds the strings csv.DictReader produced, and every consumer
+# in report_tokens calls float() on them -- so the poison goes in as text, and
+# a nan reaches the arithmetic the same way a nan in a JSON artifact does.
+_POISON_STRINGS = ("nan", "inf", "-inf", "-0.0", "0", "-1234.5")
+
+_MALFORMED_RENDER = (
+    # "nan"/"inf" as a NUMERAL, not as a substring of a word: the lookarounds
+    # keep "information" and "infrastructure" out of it.
+    ("a non-finite numeral",
+     re.compile(r"(?<![A-Za-z])(nan|inf|infinity)(?![A-Za-z])", re.I)),
+    ("a minus inside a sigil", re.compile(r"\$-|\+\$-")),
+    ("a doubled sigil", re.compile(r"\$\$|%%|¢¢|~~")),
+    # A sigil with no number behind it, and a unit with no number in front:
+    # the shapes a formula produces when its figure formats to nothing.
+    ("an empty numeric field",
+     re.compile(r"\$(?![\d,])|(?<![\d)])%|(?<![\d)])¢")),
+)
+
+
+def _outcome(name, spec):
+    """(kind, payload) for one resolution: 'ok' with the rendered string,
+    'exit' with the refusal text, or 'raised' with the exception type."""
+    try:
+        return ("ok", rt.resolve_token(name, spec))
+    except SystemExit as e:
+        return ("exit", str(e))
+    except BaseException as e:                                   # noqa: BLE001
+        return ("raised", f"{type(e).__name__}: {e}")
+
+
+def _assert_poison_outcome(failures, name, field, poison, got):
+    kind, payload = got
+    if kind == "exit":
+        if name not in payload:
+            failures.append(f"{name} at {field} = {poison!r}: refused WITHOUT naming "
+                            f"itself, so nothing tells a maintainer which token broke "
+                            f"-- {payload[:200]}")
+        return
+    if kind == "raised":
+        failures.append(f"{name} at {field} = {poison!r}: escaped resolve_token as "
+                        f"{payload[:200]} instead of this module's named refusal")
+        return
+    if not payload.strip():
+        failures.append(f"{name} at {field} = {poison!r}: rendered blank")
+        return
+    for label, pattern in _MALFORMED_RENDER:
+        m = pattern.search(payload)
+        if m:
+            failures.append(f"{name} at {field} = {poison!r}: rendered {label} "
+                            f"({m.group(0)!r}) -- {payload[:200]}")
+            return
+
+
+def _numeric_leaf_paths(node, path=()):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _numeric_leaf_paths(value, path + (key,))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _numeric_leaf_paths(value, path + (i,))
+    elif isinstance(node, (int, float)) and not isinstance(node, bool):
+        yield path
+
+
+def _at_path(node, path):
+    for key in path[:-1]:
+        node = node[key]
+    return node, path[-1]
+
+
+def _looks_numeric(text):
+    try:
+        float(text)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+class _recording_loaders:
+    """Wrap report_tokens' three artifact readers so one resolution records
+    WHICH artifacts it touched, without changing what any of them return."""
+
+    def __init__(self, seen):
+        self.seen = seen
+
+    def __enter__(self):
+        self.real = (rt._json, rt._csv_rows, rt.hh1)
+        real_json, real_csv, real_hh1 = self.real
+
+        def json_(name):
+            self.seen.add(("json", name))
+            return real_json(name)
+
+        def csv_(name):
+            self.seen.add(("csv", name))
+            return real_csv(name)
+
+        def hh1_(path):
+            self.seen.add(("household", path))
+            return real_hh1(path)
+
+        rt._json, rt._csv_rows, rt.hh1 = json_, csv_, hh1_
+        return self
+
+    def __exit__(self, *exc):
+        rt._json, rt._csv_rows, rt.hh1 = self.real
+
+
+class _stub_one_household_value:
+    """_stub_household narrowed to a single path, for the poison sweep."""
+
+    def __init__(self, path, value):
+        self.path, self.value = path, value
+
+    def __enter__(self):
+        self.old = rt.hh1
+        rt.hh1 = lambda p: self.value if p == self.path else self.old(p)
+
+    def __exit__(self, *exc):
+        rt.hh1 = self.old
+
+
+@case
+def case_no_token_publishes_a_malformed_number_from_any_poisoned_artifact_field():
+    """ROUND 5, PART B. The behavioural sweep described in the block comment
+    above: every token, every numeric field it is observed to read, six poison
+    values each, and one contract on the outcome.
+
+    It closes the class the four previous rounds each patched a corner of --
+    round 2's two verdict clauses, round 4's findings 8 and 10, round 5's
+    findings 1, 2, 5, 6, 7 and 8 -- and it closes it for tokens that do not
+    exist yet, because it discovers what a token reads instead of being told.
+    """
+    gaps = {n for n, s in rt.TOKENS.items() if s.get("kind") == "gap"}
+    failures, probes, covered, unresolvable = [], 0, [], []
+    baseline = {}
+
+    for name, spec in rt.TOKENS.items():
+        if name in gaps:
+            continue
+        seen = set()
+        with _recording_loaders(seen):
+            clean = _outcome(name, spec)
+        if clean[0] != "ok":
+            # A token this checkout cannot resolve at all (no private archive)
+            # has no clean answer to compare a poisoned one against. Recorded,
+            # and asserted below to be only the household-sourced ones.
+            unresolvable.append(name)
+            continue
+        baseline[name] = clean[1]
+        covered.append(name)
+
+        for kind, who in sorted(seen):
+            if kind == "json":
+                artifact = rt._json(who)
+                for path in list(_numeric_leaf_paths(artifact)):
+                    parent, key = _at_path(artifact, path)
+                    original = parent[key]
+                    field = f"data/{who}:{'.'.join(str(k) for k in path)}"
+                    for poison in _POISON_NUMBERS:
+                        parent[key] = poison
+                        try:
+                            got = _outcome(name, spec)
+                        finally:
+                            parent[key] = original
+                        probes += 1
+                        if got != clean:
+                            _assert_poison_outcome(failures, name, field, poison, got)
+            elif kind == "csv":
+                rows = rt._csv_rows(who)
+                if not rows:
+                    continue
+                # Poisoned a COLUMN at a time: a per-cell sweep over a 8,736-row
+                # series is 150k resolutions for one token and localises a
+                # failure this harness does not need localised -- the contract
+                # is on the rendered string, not on which row produced it.
+                for column in [c for c in rows[0] if all(_looks_numeric(r[c]) for r in rows)]:
+                    original = [r[column] for r in rows]
+                    field = f"data/{who}[{column}]"
+                    for poison in _POISON_STRINGS:
+                        for row in rows:
+                            row[column] = poison
+                        try:
+                            got = _outcome(name, spec)
+                        finally:
+                            for row, was in zip(rows, original):
+                                row[column] = was
+                        probes += 1
+                        if got != clean:
+                            _assert_poison_outcome(failures, name, field, poison, got)
+            else:
+                # household.yaml answers, poisoned only where the real answer is
+                # itself a number -- a plan name or a PTO date has no non-finite
+                # form to substitute.
+                real = rt.hh1(who)
+                if isinstance(real, bool) or not isinstance(real, (int, float)):
+                    continue
+                for poison in _POISON_NUMBERS:
+                    with _stub_one_household_value(who, poison):
+                        got = _outcome(name, spec)
+                    probes += 1
+                    if got != clean:
+                        _assert_poison_outcome(
+                            failures, name, f"private/household.yaml:{who}", poison, got)
+
+    assert not failures, (
+        f"{len(failures)} token/field/value combination(s) publish a malformed number "
+        "or fail without naming themselves:\n  " + "\n  ".join(sorted(failures)[:40]))
+
+    # The sweep has to have SWEPT something -- an empty run passes trivially.
+    assert probes > 20000, f"only {probes} poison probes ran; the discovery step broke"
+    assert len(covered) > 100, f"only {len(covered)} tokens were driven: {covered}"
+    if rt.hh.PATH.is_file():
+        assert not unresolvable, (
+            f"token(s) do not resolve on this staged archive: {unresolvable}")
+
+    # And nothing leaked: every substitution was restored.
+    after = {n: rt.resolve_token(n, rt.TOKENS[n]) for n in covered}
+    moved = {n: (baseline[n], after[n]) for n in covered if baseline[n] != after[n]}
+    assert not moved, f"the sweep left substituted values behind: {moved}"
+    return (f"{probes:,} poison probes across {len(covered)} tokens and their observed "
+            "artifact fields: every outcome is either a refusal naming the token or a "
+            "clean render")
+
+
+# --- the ten round-5 findings, one regression case each ---------------------
+def _matrix_winning_plan():
+    """The plan battery_plan_matrix.json prices cheapest in BOTH of its
+    columns -- the household's own where the private archive is staged.
+
+    _best_plan_matrix_cell gates its three tokens on the household being on
+    that plan (section 4's class="win" row asserts it in fixed markup), so a
+    case that stubs any other plan is exercising the chrome gate rather than
+    the thing it came to test. Computed from the artifact rather than skipped,
+    so these cases run on a checkout with no private data -- which is the
+    checkout .github/workflows/tests.yml uses."""
+    plans = rt._bpm_plans()
+    if rt.hh.PATH.is_file():
+        return rt.hh1("household.plan")
+    winners = [{p for p, v in plans.items()
+                if v[column] == min(x[column] for x in plans.values())}
+               for column, _phrase in rt._BPM_COLUMNS]
+    both = sorted(set.intersection(*winners))
+    assert both, (
+        f"data/battery_plan_matrix.json has no plan cheapest in both columns "
+        f"({[sorted(w) for w in winners]}); these cases cannot stub one")
+    return both[0]
+
+
+@case
+def case_a_numeric_format_spec_refuses_a_value_that_is_not_a_number():
+    """ROUND 5, FINDINGS 1 AND 2. packages.MID's battery-alone saving and
+    battery_plan_matrix's battery_value cell had no finiteness guard anywhere:
+    the first published "-$nan" (usd0_signed's `v >= 0` test is False for a
+    nan, so the NEGATIVE branch ran and manufactured a minus on a non-number)
+    and "$inf"; the second went out past a gate that had just finiteness-
+    checked six neighbouring numbers and never looked at the cell it returns.
+
+    A token declared with a numeric format spec is ASSERTING its field is a
+    number, so resolve_token holds it to that for EVERY leaf token of every
+    kind, rather than one exit per review round. Driven here on the two the
+    review named, on a leaf of each remaining kind, and on the shape that made
+    finding 1 worse than a bare "$nan"."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    plan = _matrix_winning_plan()
+    checked = {}
+    with _stub_household({"household.plan": plan}):
+        published = {n: rt.resolve_token(n)
+                     for n in ("BATTERY_MARGINAL_SAVINGS", "BATTERY_VALUE_BEST_PLAN")}
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with _mid_battery_at(mid, mid["battery_alone_yr"], bad):
+                try:
+                    value = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+                    raise AssertionError(
+                        f"BATTERY_MARGINAL_SAVINGS rendered {value!r} off a {bad} "
+                        "battery-alone saving")
+                except SystemExit as e:
+                    assert "BATTERY_MARGINAL_SAVINGS" in str(e), e
+            with _swapped(plans[plan], "battery_value", bad):
+                try:
+                    value = rt.resolve_token("BATTERY_VALUE_BEST_PLAN")
+                    raise AssertionError(
+                        f"BATTERY_VALUE_BEST_PLAN rendered {value!r} off a {bad} cell")
+                except SystemExit as e:
+                    assert "BATTERY_VALUE_BEST_PLAN" in str(e), e
+                    assert "battery_value" in str(e), (
+                        f"the refusal does not name the cell it is about: {e}")
+            checked[str(bad)] = "refused"
+        assert all(rt.resolve_token(n) == v for n, v in published.items()), (
+            "the substituted figures leaked out of this case")
+
+    # The formatter itself, at the value that made finding 1 worse than a
+    # plain "$nan": the sign test used to select the negative branch.
+    for fmt in ("usd0_signed", "usd0_tilde_signed", "usd0_plus"):
+        try:
+            out = rt.FORMATTERS[fmt](float("nan"))
+            raise AssertionError(f"FORMATTERS[{fmt!r}](nan) rendered {out!r}")
+        except SystemExit as e:
+            assert "nan" in str(e), e
+
+    # And the gate is not special-cased to currency: every numeric spec.
+    for fmt in sorted(set(rt.FORMATTERS) - rt._NON_NUMERIC_FMTS):
+        spec = {"kind": "cited_constant", "value": float("nan"), "fmt": fmt}
+        try:
+            out = rt.resolve_token("ZZZ_FABRICATED_NONFINITE_TOKEN", spec)
+            raise AssertionError(f"a cited_constant of nan rendered {out!r} through {fmt}")
+        except SystemExit as e:
+            assert "ZZZ_FABRICATED_NONFINITE_TOKEN" in str(e), e
+    return ("BATTERY_MARGINAL_SAVINGS and BATTERY_VALUE_BEST_PLAN fail closed naming "
+            f"themselves on nan/inf/-inf, and all "
+            f"{len(set(rt.FORMATTERS) - rt._NON_NUMERIC_FMTS)} numeric format specs "
+            "refuse a non-number rather than rendering one")
+
+
+@case
+def case_an_unusable_package_cost_only_stops_the_figures_that_need_it():
+    """ROUND 5, FINDING 4. Round 4 put the packages.MID.cost check at the top
+    of _battery_alone, unconditionally, so a household whose artifact carries
+    an unusable cost lost the ENTIRE report -- including the households where
+    nothing downstream quotes a payback at all, because the battery does not
+    repay and both verdicts read "never repays its own cost".
+
+    The cost is the numerator of a payback, so it gates PAYBACKS. Driven both
+    ways: with a payback in play it still refuses (the round-4 property, which
+    must not regress), and with none in play the report renders."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    pk = rt._json("package_results.json")["packages"]
+    mid, high_cost = pk["MID"], pk["HIGH"]["cost"]
+    rendered, refused = {}, {}
+    with _stub_plan(cheapest, provider):
+        for bad in (float("nan"), 0, -14500):
+            # 1. A battery that does not repay: no payback is printed anywhere,
+            #    so an unusable cost is not a reason to withhold the report.
+            #
+            #    S7_VERDICT is included only where the HIGH-vs-MID expansion
+            #    cost it computes off the same field is still usable. A nan MID
+            #    cost makes that DIFFERENCE a nan too, and section 7 has
+            #    refused on it since round 2 -- a separate, correct guard this
+            #    case must not claim credit for either way.
+            tokens = ("S0_VERDICT", "S7_VERDICT") if high_cost - bad > 0 else ("S0_VERDICT",)
+            with _mid_battery_at(mid, -100, -400), _swapped(mid, "cost", bad):
+                for token in tokens:
+                    value = rt.resolve_token(token)
+                    assert "repay" in value, value
+                    rendered[f"{token} at cost {bad}"] = _assert_within_density_cap(
+                        token, value, f"an unusable cost of {bad}")
+                try:
+                    card = rt.resolve_token("BATTERY_PAYBACK_RANGE")
+                    raise AssertionError(
+                        f"the section 0 card printed {card!r} for a battery that repays "
+                        "in neither scenario")
+                except SystemExit as e:
+                    assert "BATTERY_PAYBACK_RANGE" in str(e), e
+
+            # 2. A battery that DOES repay: a payback is about to be printed
+            #    with no verified numerator behind it, and every caller refuses.
+            with _swapped(mid, "cost", bad):
+                for token in ("S0_VERDICT", "S7_VERDICT", "BATTERY_PAYBACK_RANGE"):
+                    try:
+                        value = rt.resolve_token(token)
+                        raise AssertionError(
+                            f"{token} quoted a payback off an unusable cost of {bad}: "
+                            f"{value}")
+                    except SystemExit as e:
+                        assert token in str(e) and "cost" in str(e), e
+                        refused[f"{token} at cost {bad}"] = True
+    return (f"an unusable packages.MID.cost refuses every figure that needs it "
+            f"({len(refused)} refusals) and withholds none that does not "
+            f"({len(rendered)} sentences still render)")
+
+
+@case
+def case_the_evening_only_payback_is_checked_like_the_card_it_shares():
+    """ROUND 5, FINDING 5. report-template.html renders BATTERY_PAYBACK_RANGE
+    and BATTERY_PAYBACK_EVENING_ONLY into ONE section 0 card -- "Battery-alone
+    payback with price-aware dispatch (8.4 yr evening-only)". Round 4 guarded
+    the first and left the second a bare data_json read, so half the card was
+    a checked quotient and half was whatever the artifact happened to say.
+
+    analysis/package_results.py writes it as round(packages.MID.cost /
+    battery_dispatch_policies.json's pw3.evening.save, 1), so all three
+    numbers are committed and the derivation is checkable. Driven on a
+    non-finite and non-positive payback, on a saving that cannot produce one,
+    on an unusable cost, and on a pair that no longer divides."""
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    evening = rt._json("battery_dispatch_policies.json")["pw3"]["evening"]
+    published = rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY")
+    assert published == f"{mid['battery_alone_payback_evening_only_yr']:.1f} yr", published
+
+    checked = []
+    for node, key, bad in (
+            (mid, "battery_alone_payback_evening_only_yr", float("nan")),
+            (mid, "battery_alone_payback_evening_only_yr", float("inf")),
+            (mid, "battery_alone_payback_evening_only_yr", 0),
+            (mid, "battery_alone_payback_evening_only_yr", -8.4),
+            (mid, "cost", float("nan")),
+            (mid, "cost", 0),
+            (evening, "save", float("nan")),
+            (evening, "save", 0),
+            (evening, "save", -1720),
+            # ...and the pair that no longer divides: a real saving whose
+            # committed payback is not cost/saving at all.
+            (evening, "save", mid["cost"] / (mid["battery_alone_payback_evening_only_yr"] * 3)),
+    ):
+        with _swapped(node, key, bad):
+            try:
+                value = rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY")
+                raise AssertionError(
+                    f"the evening-only payback rendered {value!r} with {key} = {bad}")
+            except SystemExit as e:
+                assert "BATTERY_PAYBACK_EVENING_ONLY" in str(e), e
+                checked.append(f"{key}={bad}")
+
+    # It still renders on a household whose evening-only payback is simply
+    # different, so this case cannot pass on a token that always refuses.
+    doubled = mid["cost"] / (evening["save"] / 2)
+    with _swapped(evening, "save", evening["save"] / 2), \
+            _swapped(mid, "battery_alone_payback_evening_only_yr", round(doubled, 1)):
+        value = rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY")
+    assert value == f"{round(doubled, 1):.1f} yr", value
+    assert rt.resolve_token("BATTERY_PAYBACK_EVENING_ONLY") == published, (
+        "the substituted figures leaked out of this case")
+    return (f"the evening-only half of the section 0 card reads {published!r}, refuses "
+            f"{len(checked)} artifact states that cannot produce a payback "
+            f"({', '.join(checked[:4])}, ...), and still renders {value!r} on a slower "
+            "evening-only schedule")
+
+
+@case
+def case_section_five_refuses_a_non_finite_share_instead_of_crashing():
+    """ROUND 5, FINDING 6. Round 4 swept this module for non-finite inputs and
+    skipped section 5's comparison, because its branches read as a ROUNDING
+    rather than a division. round(float('inf') * 100) does not return an
+    infinity -- it raises OverflowError -- and OverflowError was not in
+    resolve_token's caught tuple, so a non-finite share crashed the whole
+    generator with a bare traceback instead of a named refusal.
+
+    Both halves are asserted: the named refusal at the site, and
+    resolve_token's own floor, which now catches ArithmeticError so a division
+    or rounding anywhere in this module cannot escape as a raw traceback."""
+    rd = rt._json("report_data.json")
+    published = rt.resolve_token("S5_VERDICT")
+    checked = []
+    for node, key, bad in ((rd["periods_chart"]["import_share"], 2, float("inf")),
+                           (rd["periods_chart"]["import_share"], 2, float("nan")),
+                           (rd["periods_chart"]["import_share"], 2, float("-inf")),
+                           (rd["onpeak"], "share_of_energy_cost", float("inf")),
+                           (rd["onpeak"], "share_of_energy_cost", float("nan")),
+                           (rd["onpeak"], "share_of_energy_cost", float("-inf"))):
+        with _swapped(node, key, bad):
+            try:
+                value = rt.resolve_token("S5_VERDICT")
+                raise AssertionError(f"S5_VERDICT rendered {value!r} off a {bad} share")
+            except SystemExit as e:
+                assert "S5_VERDICT" in str(e), e
+                assert "share" in str(e), (
+                    f"the refusal does not name which share was not a number: {e}")
+                checked.append(f"{key}={bad}")
+
+    # The floor beneath it: an ArithmeticError raised anywhere inside a
+    # derived formula becomes this module's named refusal, not a traceback.
+    def boom(ctx):
+        return round(float("inf"))
+
+    try:
+        rt.resolve_token("ZZZ_FABRICATED_OVERFLOW_TOKEN",
+                         {"kind": "derived", "get": boom, "fmt": None})
+        raise AssertionError("an OverflowError escaped resolve_token")
+    except SystemExit as e:
+        assert "ZZZ_FABRICATED_OVERFLOW_TOKEN" in str(e) and "OverflowError" in str(e), e
+    assert rt.resolve_token("S5_VERDICT") == published, (
+        "the substituted shares leaked out of this case")
+    return (f"S5_VERDICT names the share it cannot compare ({', '.join(checked)}) and "
+            "resolve_token converts an OverflowError into a named refusal instead of a "
+            "traceback")
+
+
+@case
+def case_negative_zero_is_zero_and_a_non_finite_npv_is_not_a_zero_gain():
+    """ROUND 5, FINDINGS 7 AND 8, the two defects in the sign formatters
+    themselves.
+
+    FINDING 7: _usd0_signed tested `v >= 0`, which is True for -0.0, so a
+    difference landing on the negative side of an exact zero took the
+    non-negative branch and printed _usd0(-0.0) -- "$-0", the minus back
+    inside the sigil, in the one formatter written to keep it out.
+
+    FINDING 8: _usd0_plus ended in a bare `else` returning _usd0(0), and a nan
+    reaches it because `nan > 0` and `nan < 0` are both False. An
+    indeterminate net present value published as the confident figure "$0" is
+    the opposite reading for someone deciding whether to buy."""
+    assert rt.FORMATTERS["usd0_signed"](-0.0) == "$0", rt.FORMATTERS["usd0_signed"](-0.0)
+    assert rt.FORMATTERS["usd0_signed"](0.0) == "$0"
+    assert rt.FORMATTERS["usd0_tilde_signed"](-0.0) == "~$0"
+    assert rt.FORMATTERS["usd0_plus"](-0.0) == "$0"
+    # -0.0 must still be told apart from a real negative, including one small
+    # enough to round to zero: that keeps its minus, OUTSIDE the sigil, which
+    # is the whole distinction (-0.0 is zero; -0.4 is a loss).
+    assert rt.FORMATTERS["usd0_signed"](-0.4) == "-$0", rt.FORMATTERS["usd0_signed"](-0.4)
+    assert rt.FORMATTERS["usd0_signed"](-500) == "-$500"
+    assert rt.FORMATTERS["usd0_plus"](-500) == "-$500"
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        try:
+            out = rt.FORMATTERS["usd0_plus"](bad)
+            raise AssertionError(f"usd0_plus({bad}) rendered {out!r}")
+        except SystemExit as e:
+            assert "usd0_plus" in str(e), e
+
+    # End to end, on the NPV token that calls _usd0_plus inline -- the route
+    # resolve_token's own numeric gate does not cover, because the formula
+    # returns an already-formatted string.
+    rung = rt._json("battery_dispatch_policies.json")[
+        "escalation_greedy_pw3_post_behavior"]["8%"]
+    published = rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION")
+    with _swapped(rung, "npv10", float("nan")):
+        try:
+            value = rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION")
+            raise AssertionError(f"a nan 10-year NPV published as {value!r}")
+        except SystemExit as e:
+            assert "NPV_AT_HISTORICAL_ESCALATION" in str(e), e
+    with _swapped(rung, "npv10", -8656):
+        assert rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION") == "-$8,656"
+    assert rt.resolve_token("NPV_AT_HISTORICAL_ESCALATION") == published, (
+        "the substituted NPV leaked out of this case")
+    return ("-0.0 renders \"$0\" through all three signed formatters, a non-finite NPV "
+            f"fails closed instead of publishing \"$0\", and a real loss reads -$8,656 "
+            f"(published: {published})")
+
+
+@case
+def case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario():
+    """ROUND 5, FINDING 10. BATTERY_MARGINAL_SAVINGS read
+    packages.MID.battery_alone_yr -- the battery on the UNSHIFTED baseline --
+    while section 7's verdict had been re-based onto
+    battery_alone_post_ev_fix_yr, the same battery after the free EV fix. Two
+    figures for one purchase in one document: $2,328 and $2,238 on the
+    committed archive, and a healthy saving beside a loss on the household
+    round 4's own finding 1 introduced (+$2,328 before the fix, -$50 after).
+    Round 4's sign gate used to catch that pair by aborting the report;
+    removing it -- correctly, since the two are different scenarios -- left
+    the mismatch with nothing behind it.
+
+    This is a PAIRING defect, not a non-finite one, so the poison harness
+    above cannot see it: both readings are perfectly well-formed strings. It
+    is asserted as the property instead -- the token and the sentence move
+    together, on every pair -- which is what the sign gate was standing in
+    for and what CLAUDE.md section 3 requires of a re-based figure."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    live = (mid["battery_alone_yr"], mid["battery_alone_post_ev_fix_yr"])
+    assert live[0] != live[1], (
+        f"packages.MID's two battery-alone scenarios are both {live[0]}; this case "
+        "cannot tell which one the token reads")
+    seen = []
+    with _stub_plan(cheapest, provider):
+        for pre, post in ((live[0], live[1]), (2328, 2238), (500, 3000), (3000, 500)):
+            with _mid_battery_at(mid, pre, post):
+                token = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+                s7 = rt.resolve_token("S7_VERDICT")
+            assert token == rt.FORMATTERS["usd0_signed"](post), (
+                f"BATTERY_MARGINAL_SAVINGS reads {token!r} while the post-EV-fix "
+                f"scenario section 7 is written on is {post}/yr")
+            assert f"adds its own {token}/yr" in s7, (
+                f"section 7 quotes a different figure for the same battery than "
+                f"BATTERY_MARGINAL_SAVINGS does ({token!r}): {s7}")
+            seen.append(f"{pre}/{post} -> {token}")
+        # A losing battery: the token states the loss and the sentence agrees
+        # it never repays, rather than the token selling a pre-fix saving.
+        with _mid_battery_at(mid, 2328, -50):
+            token = rt.resolve_token("BATTERY_MARGINAL_SAVINGS")
+            s7 = rt.resolve_token("S7_VERDICT")
+        assert token == "-$50", token
+        assert "never repays its own cost" in s7, s7
+        seen.append(f"2328/-50 -> {token}")
+    return ("BATTERY_MARGINAL_SAVINGS and section 7's battery clause quote the same "
+            f"post-EV-fix scenario on every pair ({'; '.join(seen)})")
 
 
 def main():
