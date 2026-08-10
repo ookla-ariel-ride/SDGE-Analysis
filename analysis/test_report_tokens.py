@@ -12,6 +12,7 @@ the real path rather than skipping.
 Run from the repo root:  ./.venv/bin/python analysis/test_report_tokens.py
 """
 import contextlib
+import copy
 import datetime as dt
 import html as _htmllib
 import pathlib
@@ -544,22 +545,66 @@ def _needs_household(name):
     return any("private/household.yaml" in s for s in rt.TOKENS[name].get("sources", []))
 
 
+_H2_ID_RE = re.compile(r'<h2 id="([^"]+)"')
+
+
+def _verdict_section_id(name):
+    """The section a verdict token OWNS. S7_VERDICT is section 7's conclusion
+    and belongs under <h2 id="s7">; nowhere else in the document is the right
+    place for it."""
+    m = re.fullmatch(r"S(\d+)_VERDICT", name)
+    assert m, f"{name} is not a section-verdict token name"
+    return f"s{m.group(1)}"
+
+
+def _index_section(index_html, section_id):
+    """index.html from this section's own <h2 id="..."> to the next <h2 id=.
+
+    Document order, not numeric order: the report puts the "What to do Monday"
+    appendix (id="s15") between sections 7 and 8, and three audit sections
+    carry their h2 inside a <summary>. Slicing on the h2s as they appear
+    handles both without a table of where anything is."""
+    heads = [(m.group(1), m.start()) for m in _H2_ID_RE.finditer(index_html)]
+    ids = [i for i, _ in heads]
+    assert section_id in ids, (
+        f'index.html has no <h2 id="{section_id}"> for this verdict to sit under; it '
+        f"has {ids}")
+    at = ids.index(section_id)
+    end = heads[at + 1][1] if at + 1 < len(heads) else len(index_html)
+    return index_html[heads[at][1]:end]
+
+
 def _assert_verdict_matches_index(name, index_html):
     """The published line must equal the token AS RENDERED -- i.e. after the
     same html.escape(value, quote=True) generate_report.py applies. Comparing
     the raw value instead would have been wrong in both directions: "&" is
     fine (it escapes to "&amp;", which is exactly what index.html carries),
     while "'" is not (it escapes to "&#x27;"). Escaping here reproduces the
-    render contract rather than approximating it."""
+    render contract rather than approximating it.
+
+    AND IN THE SECTION THAT OWNS IT, exactly once in the document. This used
+    to be a bare `in index_html`, which is a membership test over 800 lines of
+    report: a verdict line moved into a neighbouring section, or duplicated
+    into two, satisfied it just as well as one sitting where it belongs
+    (issue #131 review round 6, finding 8). "Section 7's conclusion appears
+    somewhere on the page" is not the claim this case is making."""
     value = rt.resolve_token(name)
     assert value.startswith("In one sentence: "), (
         f"{name} must open with the same stem the other section verdicts use, got: {value!r}")
     assert not (set("<>") & set(value)), (
         f"{name} contains markup characters; these tokens carry plain text only: {value!r}")
     rendered = _htmllib.escape(value, quote=True)
-    assert f'<p class="verdict">{rendered}</p>' in index_html, (
-        f"{name} does not round-trip into index.html:\n  token    : {value!r}\n"
-        f"  rendered : {rendered!r}")
+    line = f'<p class="verdict">{rendered}</p>'
+    section_id = _verdict_section_id(name)
+    section = _index_section(index_html, section_id)
+    assert line in section, (
+        f"{name} does not round-trip into the section it owns "
+        f'(<h2 id="{section_id}">):\n  token    : {value!r}\n  rendered : {rendered!r}\n'
+        + ("  (it IS published elsewhere in index.html, under a different heading)"
+           if line in index_html else "  (it is not published anywhere in index.html)"))
+    assert index_html.count(line) == 1, (
+        f"{name}'s line is published {index_html.count(line)} times in index.html; a "
+        "verdict is one section's conclusion and belongs in one place")
     return value
 
 
@@ -1043,7 +1088,13 @@ def _assert_verdict_skeleton_matches_index(name, index_html, value, variables):
     """index.html agreement for a verdict carrying figures that have no
     committed source: every literal fragment BETWEEN those figures must appear,
     in order, inside the published <p class="verdict"> line, which must also
-    end where the sentence does."""
+    end where the sentence does.
+
+    Scoped to the section that owns the verdict, and required to be the only
+    verdict line in it -- finding 8's other half. Searching every
+    <p class="verdict"> in the document for one that happens to start the
+    right way accepted a line that had moved sections, and would have picked
+    an arbitrary one of two duplicates."""
     fragments, rest = [], value
     for var in variables:
         head, sep, rest = rest.partition(var)
@@ -1056,11 +1107,19 @@ def _assert_verdict_skeleton_matches_index(name, index_html, value, variables):
         f"{name} is mostly household figures ({fragments!r}); a skeleton check would "
         "assert almost nothing")
 
-    published = [p for p in re.findall(r'<p class="verdict">(.*?)</p>', index_html, re.S)
+    section_id = _verdict_section_id(name)
+    section = _index_section(index_html, section_id)
+    in_section = re.findall(r'<p class="verdict">(.*?)</p>', section, re.S)
+    assert len(in_section) == 1, (
+        f'<h2 id="{section_id}"> carries {len(in_section)} verdict lines, so {name} '
+        "cannot be matched to the one it owns")
+    published = [p for p in in_section
                  if p.startswith(_htmllib.escape(fragments[0], quote=True))]
-    assert len(published) == 1, (
-        f"{len(published)} published verdict lines open with {fragments[0]!r}; "
-        f"{name} cannot be matched to one")
+    assert published, (
+        f"{name}'s own section publishes a verdict that does not open with "
+        f"{fragments[0]!r}: {in_section[0]!r}")
+    assert index_html.count(f'<p class="verdict">{in_section[0]}</p>') == 1, (
+        f"{name}'s published line appears more than once in index.html")
     line, pos = published[0], 0
     for fragment in fragments:
         escaped = _htmllib.escape(fragment, quote=True)
@@ -2394,13 +2453,20 @@ def _battery_reading(s0, s7):
     """(section 0's verdict, section 7's verdict) on the SAME battery, as the
     two words a reader would take away."""
     def read(value, sells, denies):
-        if sells in value:
+        # Section 0's selling clause has TWO shapes since round 6's finding 6
+        # -- "a sound optional buy at a 6.2-6.5-year payback" where every
+        # payback lands inside the warranted life, and "repays in N years,
+        # past its 10-year warranty" where it does not. Both say the battery
+        # repays; only one recommends buying it, which is a distinction this
+        # helper is not the place to make.
+        if any(s in value for s in sells):
             return "repays"
         if denies in value:
             return "does not repay"
         raise AssertionError(f"neither battery clause is present: {value}")
-    return (read(s0, "sound optional buy", "does not repay its own cost"),
-            read(s7, "adds its own", "never repays its own cost"))
+    return (read(s0, ("sound optional buy", "-year warranty"),
+                 "does not repay its own cost"),
+            read(s7, ("adds its own",), "never repays its own cost"))
 
 
 @case
@@ -3629,8 +3695,57 @@ def case_both_worth_doing_clauses_resolve_through_one_shared_ladder():
 #      __getitem__, .get, .items(), .values(), iteration, slicing, max(key=)
 #      -- and a single missed access path is a silent blind spot pointing in
 #      exactly the direction this harness exists to remove. Poison-and-compare
-#      has no blind spot available to it: it does not need to know how the
-#      value was reached, only whether the answer moved.
+#      does not need to know how the value was reached, only whether the
+#      answer moved.
+#
+# AND THE HARNESS PROVES ITS OWN COVERAGE, which is the part round 5 left out
+# and round 6 had to add (issue #131 review round 6, finding 1).
+#
+#      Round 5's version selected the CSV columns to poison with a filter that
+#      kept a column only if every cell passed bare float().
+#      data/enphase_daily_production.csv's one numeric column ends in the
+#      Total footer "16,501.77" -- a thousands separator float() rejects, and
+#      the very cell report_tokens._annual_production_kwh reads after
+#      .replace(",", ""). So the swept-column list for that file was EMPTY,
+#      the TWELVE tokens that read it got ZERO probes, and the run still
+#      reported 51,414 probes and PASS. A guard reporting success while
+#      covering nothing is the exact shape six review rounds have been
+#      finding, and a filter that just learns about commas leaves the next
+#      such gap equally silent.
+#
+#      So coverage is no longer a by-product to be reported; it is a
+#      PROPERTY THIS CASE ASSERTS, in four parts:
+#
+#        (a) an artifact a token is OBSERVED to read must contribute at
+#            least one poisoned field. Zero is a named FAILURE carrying the
+#            token and the artifact, never a silent skip.
+#        (b) every field the sweep DECLINES to poison is recorded with a
+#            reason from a closed set, and the whole declined set is asserted
+#            against the ledger below -- so a new unparseable column, or a
+#            column that stops parsing, cannot silently join it. A column
+#            that is PARTLY numeric is a failure outright: that ambiguity is
+#            where a blind spot hides.
+#        (c) a token that reads any artifact must end with a non-zero probe
+#            count, and the tokens that legitimately end at zero (their only
+#            reads are household answers that hold no number at all -- a plan
+#            name, a PTO date) are named in a frozen set, not inferred.
+#        (d) a token this checkout cannot resolve must be unresolvable
+#            BECAUSE the private archive is absent, proven twice over: its
+#            refusal names household.yaml AND it was observed reading a
+#            household path. Nothing else may shrink coverage. Round 5
+#            asserted that bucket only where the archive is staged and it is
+#            always empty, so on the archive-less runner CI actually uses it
+#            was never asserted at all (review round 6, finding 9).
+#
+#      The reads themselves are recorded at report_tokens' own chokepoints:
+#      _json, _csv_rows and _hh_value. _hh_value, not hh1 -- hh1 is one of
+#      its callers, and the household_yaml leaf tokens, `vehicles`,
+#      `monitoring[]` and `cleaning_history` all reach household.yaml past
+#      hh1, so wrapping hh1 recorded none of them (same class as finding 1,
+#      found by asking which accessors exist rather than which one was
+#      already wrapped). A household answer is poisoned at its NUMERIC
+#      LEAVES, so the $200 inside cleaning_history's list of dicts is swept
+#      the same way a JSON leaf is.
 #
 # THERE IS NO ALLOWLIST, and that is a consequence of the contract rather than
 # an omission. The contract is on the OUTPUT, not on refusing: a count that
@@ -3710,24 +3825,158 @@ def _at_path(node, path):
     return node, path[-1]
 
 
-def _looks_numeric(text):
+def _csv_number(cell):
+    """The number a report_tokens consumer gets out of a CSV cell, or None.
+
+    NORMALISED THE WAY THE CONSUMERS NORMALISE, which is the whole point of
+    the function existing. report_tokens._annual_production_kwh reads
+    data/enphase_daily_production.csv's Total footer as
+    float(cell.replace(",", "")); _daily_production_series skips a blank cell
+    instead of parsing it; nothing in that module hands a raw cell to float()
+    without one of those two accommodations.
+
+    Round 5's filter was a bare float(), which is STRICTER than either -- and
+    a filter stricter than the consumers it stands in for stops sweeping
+    exactly the fields they read, without saying so. Three columns were
+    silently unswept by it: enphase_daily_production's only numeric column
+    (the "16,501.77" footer), gas_bill_summary[nonbaseline_rate] and
+    threeway_production_validation[meter_derived] (both blank in a few rows).
+    """
+    if not isinstance(cell, str):
+        return None
+    text = cell.strip().replace(",", "")
+    if not text:
+        return None
     try:
-        float(text)
-        return True
-    except (TypeError, ValueError):
-        return False
+        return float(text)
+    except ValueError:
+        return None
+
+
+# The closed set of reasons the sweep may decline to poison a field. Closed on
+# purpose: a decline that does not fit one of these is not a decline, it is a
+# gap, and _poisonable_columns says so rather than inventing a fourth reason.
+_DECLINE_TEXT = "no cell parses as a number"
+_DECLINE_BLANK = "every cell is blank"
+_DECLINE_RAGGED = "csv.DictReader overflow key, not a column"
+_DECLINE_NO_NUMBER = "the household answer holds no number"
+_DECLINE_MIXED = ("SOME cells parse as numbers and some do not -- account for this "
+                  "column explicitly instead of letting it fall out of the sweep")
+
+
+def _poisonable_columns(rows):
+    """([columns to poison], {column: why it was declined}) for one CSV table.
+
+    Every column of the table lands in exactly one of the two, so the sweep
+    can assert it looked at all of them."""
+    poison, declined = [], {}
+    for column in list(rows[0]):
+        cells = [r.get(column) for r in rows]
+        if any(not isinstance(c, str) for c in cells):
+            declined[column] = _DECLINE_RAGGED
+            continue
+        filled = [c for c in cells if c.strip()]
+        if not filled:
+            declined[column] = _DECLINE_BLANK
+            continue
+        parsed = [_csv_number(c) for c in filled]
+        if all(p is not None for p in parsed):
+            poison.append(column)
+        elif all(p is None for p in parsed):
+            declined[column] = _DECLINE_TEXT
+        else:
+            declined[column] = _DECLINE_MIXED
+    return poison, declined
+
+
+# ---------------------------------------------------------------------------
+# THE COVERAGE LEDGER. Every field the sweep declines to poison, and every
+# token that therefore ends with no probes, named here rather than inferred at
+# run time -- that is what makes a NEW silent gap fail this case instead of
+# quietly enlarging the exempt set.
+#
+# The CSV half is asserted on every checkout (these files are committed). The
+# household half needs private/household.yaml to be reachable at all, so it is
+# asserted as an exact set where the archive is staged and as a subset where
+# it is not; the unresolvable-bucket assertion is what stops coverage
+# shrinking on that runner.
+# ---------------------------------------------------------------------------
+_DECLINED_CSV_COLUMNS = {
+    # Dates, plan names, TOU-period labels and provider names: text columns
+    # with no numeric form to substitute. Nothing here is a NUMBER a token
+    # could publish malformed, which is why declining them covers nothing up.
+    "data/bill_tou_detail.csv[period]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[season]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[section]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[statement_date]": _DECLINE_TEXT,
+    "data/bill_tou_detail.csv[tou_period]": _DECLINE_TEXT,
+    "data/electric_bill_summary.csv[period]": _DECLINE_TEXT,
+    "data/enphase_daily_production.csv[Date/Time]": _DECLINE_TEXT,
+    "data/gas_bill_summary.csv[file_month]": _DECLINE_TEXT,
+    "data/plan_results.csv[plan]": _DECLINE_TEXT,
+    "data/plan_results.csv[provider]": _DECLINE_TEXT,
+    "data/pvoutput_daily.csv[date]": _DECLINE_TEXT,
+    "data/threeway_production_validation.csv[]": _DECLINE_TEXT,
+}
+
+_DECLINED_HOUSEHOLD_PATHS = {
+    # Household answers that are names, dates or lists of strings. A plan
+    # name has no non-finite form; a PTO date has no minus to misplace.
+    "private/household.yaml:household.cca": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.climate_zone": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.nem_version": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.plan": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.pto_date": _DECLINE_NO_NUMBER,
+    "private/household.yaml:household.utility": _DECLINE_NO_NUMBER,
+    "private/household.yaml:monitoring[].measures": _DECLINE_NO_NUMBER,
+    "private/household.yaml:monitoring[].resolution": _DECLINE_NO_NUMBER,
+    "private/household.yaml:monitoring[].source": _DECLINE_NO_NUMBER,
+    "private/household.yaml:solar.install_paid_date": _DECLINE_NO_NUMBER,
+    "private/household.yaml:solar.inverter_model": _DECLINE_NO_NUMBER,
+}
+
+# Tokens whose ONLY observed reads are declined fields, so zero probes is the
+# right answer for them and not a gap. Every one is a name, a date or a
+# provider string -- there is no number in any of them to publish malformed.
+_TOKENS_WITH_NO_POISONABLE_FIELD = {
+    "CLIMATE_ZONE", "DATA_SOURCES_DETAIL", "DATA_SOURCES_SUMMARY",
+    "GENERATION_PROVIDER", "GENERATION_PROVIDER_SHORT", "INSTALL_PAYMENT_DATE",
+    "NEM_EXPIRY_YEAR", "NEM_STATUS", "PTO_DATE", "RATE_SOURCES_DETAIL",
+    "SIZE_VERIFICATION_SOURCE", "UTILITY_NAME",
+}
+
+# Tokens that read no committed artifact at all. Every one resolves out of
+# analysis/rates.py (the tariff windows, the day-band prices, the effective
+# date) or the clock, neither of which this sweep can poison -- rates.py is
+# code, and its own guard tests live in analysis/test_rates.py. `cited_constant`
+# tokens are in the same position by construction and are excluded by KIND
+# rather than by name, so adding one needs no edit here; a DERIVED token that
+# suddenly reads nothing does need one, which is the point.
+_TOKENS_THAT_READ_NO_ARTIFACT = {
+    "BILLED_GENERATION_RATES", "CHEAP_WINDOW", "DAYBAND_OFFPEAK_PRICE",
+    "DAYBAND_ONPEAK_PRICE", "DAYBAND_SEASON_LABEL", "DAYBAND_SOP_PRICE",
+    "PEAK_WINDOW", "RATES_EFFECTIVE_DATE", "RECOMMENDED_PACKAGE_SUMMARY",
+    "REPORT_DATE", "S14_VERDICT", "SUMMER_ONPEAK_EXPORT_RATE",
+    "SUMMER_ONPEAK_IMPORT_RATE", "SUPER_OFF_PEAK_RATE",
+}
 
 
 class _recording_loaders:
-    """Wrap report_tokens' three artifact readers so one resolution records
-    WHICH artifacts it touched, without changing what any of them return."""
+    """Wrap report_tokens' three artifact CHOKEPOINTS so one resolution
+    records WHICH artifacts it touched, without changing what any of them
+    return.
+
+    _hh_value and not hh1: hh1 is one of _hh_value's callers, and
+    resolve_token's own household_yaml branch, `vehicles`, `monitoring[]` and
+    `cleaning_history` all reach household.yaml without going through hh1. A
+    recorder on hh1 saw none of those reads."""
 
     def __init__(self, seen):
         self.seen = seen
 
     def __enter__(self):
-        self.real = (rt._json, rt._csv_rows, rt.hh1)
-        real_json, real_csv, real_hh1 = self.real
+        self.real = (rt._json, rt._csv_rows, rt._hh_value)
+        real_json, real_csv, real_hh = self.real
 
         def json_(name):
             self.seen.add(("json", name))
@@ -3737,132 +3986,402 @@ class _recording_loaders:
             self.seen.add(("csv", name))
             return real_csv(name)
 
-        def hh1_(path):
+        def hh_(path):
             self.seen.add(("household", path))
-            return real_hh1(path)
+            return real_hh(path)
 
-        rt._json, rt._csv_rows, rt.hh1 = json_, csv_, hh1_
+        rt._json, rt._csv_rows, rt._hh_value = json_, csv_, hh_
         return self
 
     def __exit__(self, *exc):
-        rt._json, rt._csv_rows, rt.hh1 = self.real
+        rt._json, rt._csv_rows, rt._hh_value = self.real
 
 
-class _stub_one_household_value:
-    """_stub_household narrowed to a single path, for the poison sweep."""
+class _poisoned_household_leaf:
+    """One numeric leaf of one household.yaml answer, replaced for the length
+    of the block.
 
-    def __init__(self, path, value):
-        self.path, self.value = path, value
+    A COPY is substituted rather than the cached document mutated: household
+    answers come back through privacy_tiers.resolve(), and a substitution that
+    silently failed to reach the consumer would make the sweep conclude "this
+    token does not read that field" -- a blind spot pointing the way the whole
+    harness exists to look. Returning the poisoned copy from the accessor
+    cannot fail that way, and it leaves nothing behind to restore."""
+
+    def __init__(self, path, leaf, value):
+        self.path, self.leaf, self.value = path, leaf, value
 
     def __enter__(self):
-        self.old = rt.hh1
-        rt.hh1 = lambda p: self.value if p == self.path else self.old(p)
+        self.real = rt._hh_value
+
+        def hh_(path):
+            values = self.real(path)
+            if path != self.path:
+                return values
+            values = copy.deepcopy(values)
+            parent, key = _at_path(values, self.leaf)
+            parent[key] = self.value
+            return values
+
+        rt._hh_value = hh_
+        return self
 
     def __exit__(self, *exc):
-        rt.hh1 = self.old
+        rt._hh_value = self.real
+
+
+class _Sweep:
+    """Everything one run of the sweep observed. Assertions live in the cases
+    that call it, so the run itself can be driven under a deliberately broken
+    discovery step and INSPECTED rather than only passing or failing."""
+
+    def __init__(self):
+        self.failures = []        # contract violations: a malformed render
+        self.coverage = []        # coverage violations: a field never swept
+        self.probes = {}          # token -> how many poison probes ran
+        self.reads = {}           # token -> {(kind, who)} observed
+        self.declined = {}        # field -> why the sweep did not poison it
+        self.unresolvable = {}    # token -> (refusal text, reads observed)
+        self.baseline = {}        # token -> its clean render
+
+
+def _sweep_json(sw, name, spec, who, clean):
+    artifact = rt._json(who)
+    paths = list(_numeric_leaf_paths(artifact))
+    if not paths:
+        sw.coverage.append(
+            f"{name} reads data/{who}, which contributes NO poisonable field: the "
+            "artifact holds no numeric leaf, so this token is swept against none of it")
+        return
+    for path in paths:
+        parent, key = _at_path(artifact, path)
+        original = parent[key]
+        field = f"data/{who}:{'.'.join(str(k) for k in path)}"
+        for poison in _POISON_NUMBERS:
+            parent[key] = poison
+            try:
+                got = _outcome(name, spec)
+            finally:
+                parent[key] = original
+            sw.probes[name] += 1
+            if got != clean:
+                _assert_poison_outcome(sw.failures, name, field, poison, got)
+
+
+def _sweep_csv(sw, name, spec, who, clean):
+    rows = rt._csv_rows(who)
+    if not rows:
+        sw.coverage.append(f"{name} reads data/{who}, which is empty")
+        return
+    columns, declined = _poisonable_columns(rows)
+    for column, why in declined.items():
+        sw.declined[f"data/{who}[{column}]"] = why
+    if not columns:
+        sw.coverage.append(
+            f"{name} reads data/{who}, which contributes NO poisonable field: every "
+            f"column was declined ({sorted(declined.items())}), so this token is swept "
+            "against none of it")
+        return
+    # Poisoned a COLUMN at a time: a per-cell sweep over a 8,736-row series is
+    # 150k resolutions for one token and localises a failure this harness does
+    # not need localised -- the contract is on the rendered string, not on
+    # which row produced it. Cells that are BLANK stay blank: a consumer that
+    # skips them (_daily_production_series does) is then exercised on the same
+    # row shape it really sees, with only the values changed.
+    for column in columns:
+        original = [r[column] for r in rows]
+        field = f"data/{who}[{column}]"
+        for poison in _POISON_STRINGS:
+            for row in rows:
+                if row[column].strip():
+                    row[column] = poison
+            try:
+                got = _outcome(name, spec)
+            finally:
+                for row, was in zip(rows, original):
+                    row[column] = was
+            sw.probes[name] += 1
+            if got != clean:
+                _assert_poison_outcome(sw.failures, name, field, poison, got)
+
+
+def _sweep_household(sw, name, spec, who, clean):
+    """A household answer, poisoned at every NUMERIC LEAF of it.
+
+    Leaf-wise and not value-wise, because _hh_value answers with a list and
+    some of those answers are containers: cleaning_history is a list of dicts
+    whose cost_usd a token publishes behind a dollar sigil. Poisoning only
+    scalar answers left every number inside a structured answer unswept."""
+    values = rt._hh_value(who)
+    field = f"private/household.yaml:{who}"
+    leaves = list(_numeric_leaf_paths(values))
+    if not leaves:
+        sw.declined[field] = _DECLINE_NO_NUMBER
+        return
+    for leaf in leaves:
+        for poison in _POISON_NUMBERS:
+            with _poisoned_household_leaf(who, leaf, poison):
+                got = _outcome(name, spec)
+            sw.probes[name] += 1
+            if got != clean:
+                _assert_poison_outcome(sw.failures, name, field, poison, got)
+
+
+def _unresolvable_gaps(sw):
+    """The tokens that dropped out of a sweep for any reason OTHER than the
+    absent private archive -- {token: why}, empty when coverage shrank only
+    through the one door it is allowed to shrink through.
+
+    Two independent tests, so neither can be satisfied by accident: the
+    refusal must NAME household.yaml, and the token must have been OBSERVED
+    reading a household path on its way to it. Round 5 asserted this bucket
+    only under `if rt.hh.PATH.is_file()`, where it is always empty -- so on
+    the archive-less runner .github/workflows/tests.yml actually uses, the
+    bucket that holds every lost token was never asserted on at all, and
+    coverage could shrink to nothing while the case reported the same success
+    (issue #131 review round 6, finding 9)."""
+    return {name: why[:200] for name, (why, seen) in sw.unresolvable.items()
+            if "household.yaml" not in why
+            or not any(kind == "household" for kind, _who in seen)}
+
+
+def _run_poison_sweep(tokens=None):
+    """Drive every token through the sweep and return what it observed."""
+    tokens = rt.TOKENS if tokens is None else tokens
+    sw = _Sweep()
+    for name, spec in tokens.items():
+        if spec.get("kind") == "gap":
+            continue
+        seen = set()
+        with _recording_loaders(seen):
+            clean = _outcome(name, spec)
+        sw.reads[name] = seen
+        if clean[0] != "ok":
+            # A token this checkout cannot resolve at all has no clean answer
+            # to compare a poisoned one against. Recorded WITH its reason and
+            # its observed reads, both of which the case asserts on.
+            sw.unresolvable[name] = (clean[1], seen)
+            continue
+        sw.baseline[name] = clean[1]
+        sw.probes[name] = 0
+        for kind, who in sorted(seen):
+            if kind == "json":
+                _sweep_json(sw, name, spec, who, clean)
+            elif kind == "csv":
+                _sweep_csv(sw, name, spec, who, clean)
+            else:
+                _sweep_household(sw, name, spec, who, clean)
+    return sw
 
 
 @case
 def case_no_token_publishes_a_malformed_number_from_any_poisoned_artifact_field():
     """ROUND 5, PART B. The behavioural sweep described in the block comment
     above: every token, every numeric field it is observed to read, six poison
-    values each, and one contract on the outcome.
+    values each, and one contract on the outcome -- a refusal that names the
+    token, or a render carrying none of the malformed shapes.
 
-    It closes the class the four previous rounds each patched a corner of --
-    round 2's two verdict clauses, round 4's findings 8 and 10, round 5's
-    findings 1, 2, 5, 6, 7 and 8 -- and it closes it for tokens that do not
-    exist yet, because it discovers what a token reads instead of being told.
-    """
-    gaps = {n for n, s in rt.TOKENS.items() if s.get("kind") == "gap"}
-    failures, probes, covered, unresolvable = [], 0, [], []
-    baseline = {}
+    WHAT THIS CASE DOES AND DOES NOT CLOSE, stated exactly, because the
+    version of this docstring that claimed to close six named findings was
+    describing something else it does (issue #131 review round 6, finding 4).
+    Its contract is on the SHAPE OF THE RENDERED STRING, so the class it
+    closes is the malformed-number one: "$nan", "-$nan", "$inf", a minus
+    inside a sigil, a doubled sigil, a sigil with no number behind it, a blank
+    render, an unnamed refusal, and any other exception escaping resolve_token.
+    It closes that class for tokens that do not exist yet, because it
+    discovers what a token reads instead of being told.
 
-    for name, spec in rt.TOKENS.items():
-        if name in gaps:
-            continue
-        seen = set()
-        with _recording_loaders(seen):
-            clean = _outcome(name, spec)
-        if clean[0] != "ok":
-            # A token this checkout cannot resolve at all (no private archive)
-            # has no clean answer to compare a poisoned one against. Recorded,
-            # and asserted below to be only the household-sourced ones.
-            unresolvable.append(name)
-            continue
-        baseline[name] = clean[1]
-        covered.append(name)
+    It does NOT close, and never could:
+      * PAIRING defects -- two well-formed figures for one quantity (round 5's
+        finding 10), guarded by
+        case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario;
+      * refusals that are too BROAD -- a report withheld over a figure nothing
+        prints (round 5's finding 4), guarded by
+        case_an_unusable_package_cost_only_stops_the_figures_that_need_it;
+      * a well-formed number that is simply WRONG, or a confident sentence
+        selected by a degenerate-but-finite input (round 6's finding 6).
+    Each round-5 finding keeps its own named case below; this sweep is the
+    floor under all of them, not a replacement for any.
 
-        for kind, who in sorted(seen):
-            if kind == "json":
-                artifact = rt._json(who)
-                for path in list(_numeric_leaf_paths(artifact)):
-                    parent, key = _at_path(artifact, path)
-                    original = parent[key]
-                    field = f"data/{who}:{'.'.join(str(k) for k in path)}"
-                    for poison in _POISON_NUMBERS:
-                        parent[key] = poison
-                        try:
-                            got = _outcome(name, spec)
-                        finally:
-                            parent[key] = original
-                        probes += 1
-                        if got != clean:
-                            _assert_poison_outcome(failures, name, field, poison, got)
-            elif kind == "csv":
-                rows = rt._csv_rows(who)
-                if not rows:
-                    continue
-                # Poisoned a COLUMN at a time: a per-cell sweep over a 8,736-row
-                # series is 150k resolutions for one token and localises a
-                # failure this harness does not need localised -- the contract
-                # is on the rendered string, not on which row produced it.
-                for column in [c for c in rows[0] if all(_looks_numeric(r[c]) for r in rows)]:
-                    original = [r[column] for r in rows]
-                    field = f"data/{who}[{column}]"
-                    for poison in _POISON_STRINGS:
-                        for row in rows:
-                            row[column] = poison
-                        try:
-                            got = _outcome(name, spec)
-                        finally:
-                            for row, was in zip(rows, original):
-                                row[column] = was
-                        probes += 1
-                        if got != clean:
-                            _assert_poison_outcome(failures, name, field, poison, got)
-            else:
-                # household.yaml answers, poisoned only where the real answer is
-                # itself a number -- a plan name or a PTO date has no non-finite
-                # form to substitute.
-                real = rt.hh1(who)
-                if isinstance(real, bool) or not isinstance(real, (int, float)):
-                    continue
-                for poison in _POISON_NUMBERS:
-                    with _stub_one_household_value(who, poison):
-                        got = _outcome(name, spec)
-                    probes += 1
-                    if got != clean:
-                        _assert_poison_outcome(
-                            failures, name, f"private/household.yaml:{who}", poison, got)
+    The second half of the case asserts the sweep's own COVERAGE -- see the
+    block comment's parts (a) to (d). A harness that can report success while
+    sweeping nothing is worth less than no harness, because it also stops
+    anyone looking (review round 6, finding 1)."""
+    sw = _run_poison_sweep()
+    probes = sum(sw.probes.values())
+    covered = sorted(sw.probes)
 
-    assert not failures, (
-        f"{len(failures)} token/field/value combination(s) publish a malformed number "
-        "or fail without naming themselves:\n  " + "\n  ".join(sorted(failures)[:40]))
+    assert not sw.failures, (
+        f"{len(sw.failures)} token/field/value combination(s) publish a malformed number "
+        "or fail without naming themselves:\n  " + "\n  ".join(sorted(sw.failures)[:40]))
+
+    # (a) every artifact a token reads contributed at least one poisoned field.
+    assert not sw.coverage, (
+        f"{len(sw.coverage)} token/artifact pair(s) were swept against NOTHING, so this "
+        "harness would have reported success while covering them not at all:\n  " +
+        "\n  ".join(sorted(sw.coverage)[:40]))
+
+    # (b) every declined field is accounted for, by name and by reason.
+    mixed = {f: why for f, why in sw.declined.items() if why == _DECLINE_MIXED}
+    assert not mixed, (
+        f"{len(mixed)} column(s) are partly numeric, which is where a blind spot hides: "
+        f"{sorted(mixed)}")
+    csv_declined = {f: w for f, w in sw.declined.items() if f.startswith("data/")}
+    hh_declined = {f: w for f, w in sw.declined.items() if not f.startswith("data/")}
+    # Per FILE, and exactly, so the check has the same force on the runner
+    # with no private archive -- where a few CSVs are simply never reached,
+    # and a whole-set equality would have to be relaxed to a subset for all of
+    # them. Every file the sweep DID open is accounted for column by column.
+    for who in sorted({w for reads in sw.reads.values() for k, w in reads if k == "csv"}):
+        prefix = f"data/{who}["
+        observed = {f: w for f, w in csv_declined.items() if f.startswith(prefix)}
+        expected = {f: w for f, w in _DECLINED_CSV_COLUMNS.items() if f.startswith(prefix)}
+        assert observed == expected, (
+            f"the columns the sweep declines to poison in data/{who} have changed; "
+            "account for each new one in _DECLINED_CSV_COLUMNS rather than letting it "
+            f"fall out of the sweep\n  joined : {sorted(set(observed) - set(expected))}\n"
+            f"  left   : {sorted(set(expected) - set(observed))}")
+    assert set(csv_declined) <= set(_DECLINED_CSV_COLUMNS), (
+        f"undeclared CSV columns: {sorted(set(csv_declined) - set(_DECLINED_CSV_COLUMNS))}")
+    if rt.hh.PATH.is_file():
+        assert csv_declined == _DECLINED_CSV_COLUMNS, (
+            "a whole CSV dropped out of the sweep on the staged archive: "
+            f"{sorted(set(_DECLINED_CSV_COLUMNS) - set(csv_declined))}")
+    if rt.hh.PATH.is_file():
+        assert hh_declined == _DECLINED_HOUSEHOLD_PATHS, (
+            "the set of household answers the sweep declines to poison has changed\n"
+            f"  joined : {sorted(set(hh_declined) - set(_DECLINED_HOUSEHOLD_PATHS))}\n"
+            f"  left   : {sorted(set(_DECLINED_HOUSEHOLD_PATHS) - set(hh_declined))}")
+    else:
+        assert set(hh_declined) <= set(_DECLINED_HOUSEHOLD_PATHS), sorted(hh_declined)
+
+    # (c) a token that read an artifact got probes; the ones that could not are named.
+    silent = {n for n in covered if sw.probes[n] == 0 and sw.reads[n]}
+    unnamed = silent - _TOKENS_WITH_NO_POISONABLE_FIELD
+    assert not unnamed, (
+        f"token(s) read an artifact and got ZERO poison probes: {sorted(unnamed)} -- "
+        "either the discovery step stopped seeing their fields, or they belong in "
+        "_TOKENS_WITH_NO_POISONABLE_FIELD with the reason written down")
+    if rt.hh.PATH.is_file():
+        assert silent == _TOKENS_WITH_NO_POISONABLE_FIELD, (
+            "_TOKENS_WITH_NO_POISONABLE_FIELD no longer matches the tokens that "
+            f"actually end at zero probes: {sorted(silent)}")
+    readless = {n for n in covered
+                if not sw.reads[n] and rt.TOKENS[n]["kind"] != "cited_constant"}
+    assert readless <= _TOKENS_THAT_READ_NO_ARTIFACT, (
+        f"token(s) resolve without reading any artifact this sweep can poison: "
+        f"{sorted(readless - _TOKENS_THAT_READ_NO_ARTIFACT)} -- if that is right, name "
+        "them in _TOKENS_THAT_READ_NO_ARTIFACT; if it is not, they reach a data file "
+        "past _json / _csv_rows / _hh_value and the recorder cannot see it")
+
+    # (d) coverage may shrink ONLY through the missing-private-archive door,
+    #     and every token that went through it is made to prove it did.
+    wrong = _unresolvable_gaps(sw)
+    assert not wrong, (
+        f"{len(wrong)} token(s) dropped out of the sweep for a reason other than the "
+        f"absent private archive, so coverage shrank silently: {wrong}")
+    if rt.hh.PATH.is_file():
+        assert not sw.unresolvable, (
+            f"token(s) do not resolve on this staged archive: {sorted(sw.unresolvable)}")
 
     # The sweep has to have SWEPT something -- an empty run passes trivially.
     assert probes > 20000, f"only {probes} poison probes ran; the discovery step broke"
     assert len(covered) > 100, f"only {len(covered)} tokens were driven: {covered}"
-    if rt.hh.PATH.is_file():
-        assert not unresolvable, (
-            f"token(s) do not resolve on this staged archive: {unresolvable}")
 
     # And nothing leaked: every substitution was restored.
     after = {n: rt.resolve_token(n, rt.TOKENS[n]) for n in covered}
-    moved = {n: (baseline[n], after[n]) for n in covered if baseline[n] != after[n]}
+    moved = {n: (sw.baseline[n], after[n]) for n in covered if sw.baseline[n] != after[n]}
     assert not moved, f"the sweep left substituted values behind: {moved}"
     return (f"{probes:,} poison probes across {len(covered)} tokens and their observed "
-            "artifact fields: every outcome is either a refusal naming the token or a "
-            "clean render")
+            f"artifact fields: every outcome is either a refusal naming the token or a "
+            f"clean render, every artifact read contributed at least one probe, and all "
+            f"{len(sw.declined)} declined field(s) are accounted for by name"
+            + (f" ({len(sw.unresolvable)} token(s) held out: no private archive)"
+               if sw.unresolvable else ""))
+
+
+@case
+def case_the_sweep_fails_when_it_covers_an_artifact_with_nothing():
+    """ROUND 6, FINDING 1. The harness above reported 51,414 probes and PASS
+    while sweeping data/enphase_daily_production.csv with NOTHING.
+
+    Its column filter kept a column only where every cell passed bare
+    float(). That file's one numeric column ends in the Total footer
+    "16,501.77" -- the thousands separator float() rejects, and the very cell
+    report_tokens._annual_production_kwh reads after .replace(",", ""). So the
+    swept-column list was empty and the twelve tokens that read the file got
+    no probes at all, silently, while the run reported a five-figure probe
+    count and its own comment asserted it "has no blind spot available to it".
+
+    Two properties, and the second is the one that matters. FIRST, the parser
+    now normalises a cell the way the consumers do, so the three columns that
+    were silently skipped are swept. SECOND, and independently of any parser:
+    a token observed to read an artifact that contributes no poisonable field
+    is a COVERAGE FAILURE naming both, so the NEXT such gap cannot be silent
+    either. Driven by reintroducing the round-5 filter and by blinding a
+    column outright, and asserting the run FAILS on coverage rather than
+    narrowing itself."""
+    rows = rt._csv_rows("enphase_daily_production.csv")
+    columns, declined = _poisonable_columns(rows)
+    assert columns == ["Energy Delivered (kWh)"], (
+        f"the production column is no longer the swept one: {columns} / {declined}")
+    assert _csv_number("16,501.77") == 16501.77, "the Total footer must parse"
+    assert _csv_number("") is None and _csv_number("Total") is None
+
+    # The three columns round 5's filter dropped, each swept now.
+    for who, column in (("enphase_daily_production.csv", "Energy Delivered (kWh)"),
+                        ("gas_bill_summary.csv", "nonbaseline_rate"),
+                        ("threeway_production_validation.csv", "meter_derived")):
+        keep, _why = _poisonable_columns(rt._csv_rows(who))
+        assert column in keep, f"data/{who}[{column}] is still unswept: kept {keep}"
+
+    # A token that reads the file and ignores what it says: with the real
+    # parser it is covered, and it is the vehicle for blinding the column
+    # without also making the token unresolvable (an unresolvable token is a
+    # different bucket, asserted separately).
+    probe = "ZZZ_FABRICATED_READS_A_CSV_TOKEN"
+
+    def reads_it(ctx):
+        rt._csv_rows("enphase_daily_production.csv")
+        return "a constant"
+
+    fabricated = {probe: {"kind": "derived", "get": reads_it, "fmt": None},
+                  "ANNUAL_PRODUCTION_KWH": rt.TOKENS["ANNUAL_PRODUCTION_KWH"]}
+    good = _run_poison_sweep(fabricated)
+    assert not good.coverage, good.coverage
+    assert good.probes[probe] > 0 and good.probes["ANNUAL_PRODUCTION_KWH"] > 0, good.probes
+    real_probes = good.probes["ANNUAL_PRODUCTION_KWH"]
+
+    # 1. The round-5 filter, put back exactly: bare float() per cell.
+    def round_five_filter(cell):
+        try:
+            return float(cell)
+        except (TypeError, ValueError):
+            return None
+
+    with _patched(sys.modules[__name__], "_csv_number", round_five_filter):
+        regressed = _run_poison_sweep(fabricated)
+    assert regressed.probes[probe] == 0, (
+        "the round-5 filter did not reproduce the defect; this case is not testing it")
+    named = [f for f in regressed.coverage
+             if probe in f and "enphase_daily_production.csv" in f]
+    assert named, (
+        "the round-5 column filter left data/enphase_daily_production.csv swept with "
+        f"nothing and the harness did not say so: {regressed.coverage}")
+
+    # 2. Any other reason a column stops parsing, not just a comma.
+    real_csv_rows = rt._csv_rows
+    blinded = [dict(r, **{"Energy Delivered (kWh)": "n/a"}) for r in rows]
+    with _patched(rt, "_csv_rows",
+                  lambda n: blinded if n == "enphase_daily_production.csv"
+                  else real_csv_rows(n)):
+        outright = _run_poison_sweep({probe: fabricated[probe]})
+    assert outright.probes[probe] == 0, outright.probes
+    assert any(probe in f for f in outright.coverage), outright.coverage
+    return (f"the three columns round 5's filter silently dropped are swept again "
+            f"(ANNUAL_PRODUCTION_KWH: {real_probes} probes), and a token reading an "
+            f"artifact that contributes no poisonable field is a named coverage FAILURE "
+            f"-- reproduced twice, on the round-5 filter and on a blinded column")
 
 
 # --- the ten round-5 findings, one regression case each ---------------------
@@ -4218,6 +4737,432 @@ def case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario():
         seen.append(f"2328/-50 -> {token}")
     return ("BATTERY_MARGINAL_SAVINGS and section 7's battery clause quote the same "
             f"post-EV-fix scenario on every pair ({'; '.join(seen)})")
+
+
+# --- the round-6 findings, one regression case each -------------------------
+@contextlib.contextmanager
+def _csv_column_set(who, column, value, where=lambda row: True):
+    """One committed CSV column (or the cells of it a predicate picks) set to
+    `value` in report_tokens' in-memory cache, restored on the way out.
+    Nothing on disk is touched -- data/ is a committed artifact."""
+    rows = rt._csv_rows(who)
+    original = [r[column] for r in rows]
+    try:
+        for row in rows:
+            if where(row):
+                row[column] = value
+        yield rows
+    finally:
+        for row, was in zip(rows, original):
+            row[column] = was
+
+
+@case
+def case_section_two_checks_the_production_it_prints_not_only_the_nameplate():
+    """ROUND 6, FINDING 2. _s2_verdict validated solar.kw_dc through _figures
+    and read the production total beside it unchecked -- so BOTH interpolated
+    figures went past the finiteness gate, and a non-finite Total footer in
+    data/enphase_daily_production.csv published "produced nan kWh at nan
+    kWh/kW" while ANNUAL_PRODUCTION_KWH, the LEAF token over that same cell,
+    failed closed on it. Two tokens, one cell, opposite behaviour.
+
+    CAPACITY_FACTOR had the identical shape one file over -- kw_dc checked,
+    the production quotient interpolated into an f-string as "~nan%" -- and is
+    driven here too, because a defect found at one site is swept for rather
+    than patched (CLAUDE.md section 8).
+
+    Calibration, kept honest: a full generate_report run could not PUBLISH the
+    nan, because it resolves every token and blocks the write on any non-gap
+    failure. What was broken is the per-token contract -- one figure checked,
+    the one beside it not -- and that is what is asserted."""
+    stubs = _s2_household_inputs()
+    footer = (lambda r: r["Date/Time"] == "Total")
+    names = ("ANNUAL_PRODUCTION_KWH", "CAPACITY_FACTOR", "S2_VERDICT")
+    with _stub_household(stubs):
+        published = {n: rt.resolve_token(n) for n in names}
+    assert "kWh/kW" in published["S2_VERDICT"], published["S2_VERDICT"]
+
+    checked = []
+    for bad in ("nan", "inf", "-inf"):
+        with _csv_column_set("enphase_daily_production.csv",
+                             "Energy Delivered (kWh)", bad, footer):
+            for name in names:
+                with _stub_household(stubs):
+                    try:
+                        value = rt.resolve_token(name)
+                        raise AssertionError(
+                            f"{name} rendered {value!r} off a {bad} production total")
+                    except SystemExit as e:
+                        assert name in str(e), e
+                checked.append(f"{name}@{bad}")
+
+    # A household that simply produced a different amount still gets its
+    # sentence, so none of the three can pass by always refusing.
+    with _csv_column_set("enphase_daily_production.csv",
+                         "Energy Delivered (kWh)", "9000.00", footer), \
+            _stub_household(stubs):
+        moved = {n: rt.resolve_token(n) for n in names}
+    assert moved["ANNUAL_PRODUCTION_KWH"] == "9,000", moved["ANNUAL_PRODUCTION_KWH"]
+    assert "9,000 kWh" in moved["S2_VERDICT"], moved["S2_VERDICT"]
+    assert moved["CAPACITY_FACTOR"] != published["CAPACITY_FACTOR"]
+    with _stub_household(stubs):
+        assert {n: rt.resolve_token(n) for n in names} == published, (
+            "the substituted production total leaked out of this case")
+    return (f"section 2's verdict and CAPACITY_FACTOR check the production they print, "
+            f"not only the nameplate ({len(checked)} refusals, each naming its own "
+            f"token), and all three still render on a 9,000 kWh year")
+
+
+@case
+def case_a_plan_total_that_models_below_zero_still_gets_a_report():
+    """ROUND 6, FINDINGS 3 AND 5. Round 5 made _usd0 REFUSE a negative amount
+    -- right, because "$-500" puts the minus inside the sigil -- but did not
+    sweep the inline _usd0 calls that format an artifact-SIGNED annual bill.
+    Those sites stopped rendering and started aborting.
+
+    A plan total in data/plan_results.csv is a bill NET OF EXPORTS
+    (BEST_PLAN_ANNUAL_CCA is declared usd0_signed for exactly that reason),
+    and a solar-plus-battery house on the right tariff models below zero. Two
+    populations were hit: section 3's verdict, in all three of its branches,
+    and the DETAIL string of _best_plan's chrome gate -- which _claim builds
+    eagerly on every call, so it fired even when the claim was supported. The
+    result was a household losing the entire report to the formatting of a
+    message that was never going to be raised.
+
+    Same defect one artifact over, swept rather than reported: the same claim
+    detail inside _best_plan_matrix_cell formats battery_plan_matrix.json's
+    two modeled-bill columns, whose tokens are likewise declared signed."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    others = [r for r in priced if r["plan"] != cheapest]
+    assert others, "this case needs a second priced plan"
+    runner_up = others[0]["plan"]
+    totals = {r["plan"]: r["total"] for r in priced}
+
+    @contextlib.contextmanager
+    def _repriced(prices):
+        """plan_results.csv's total column, repriced for this household's own
+        generation provider. Every plan named goes below zero."""
+        rows = rt._csv_rows("plan_results.csv")
+        original = [r["total"] for r in rows]
+        try:
+            for row in rows:
+                if row["provider"] == provider and row["plan"] in prices:
+                    row["total"] = f"{prices[row['plan']]:.2f}"
+            yield
+        finally:
+            for row, was in zip(rows, original):
+                row["total"] = was
+
+    rendered = {}
+    with _stub_plan(cheapest, provider):
+        for label, prices, quoted in (
+                ("sole cheapest", {cheapest: -5000.0, runner_up: -1200.0}, -5000.0),
+                ("tied cheapest", {cheapest: -5000.0, runner_up: -5000.0}, -5000.0),
+                ("beaten", {cheapest: -1200.0, runner_up: -5000.0}, -1200.0)):
+            with _repriced(prices):
+                s3 = rt.resolve_token("S3_VERDICT")
+                # BEST_PLAN and its two annual cells go through _best_plan's
+                # chrome gate, whose DETAIL string _claim builds on every call
+                # -- the site that aborted the report while its own claim was
+                # supported. Only reachable while this plan still wins.
+                gated = ({n: rt.resolve_token(n)
+                          for n in ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA",
+                                    "BEST_PLAN_ANNUAL_BUNDLED")}
+                         if label != "beaten" else {})
+            assert f"{quoted:,.0f}".replace("-", "-$") + "/yr" in s3, (
+                f"section 3 does not state a modeled bill below zero on the {label} "
+                f"branch: {s3}")
+            assert "$-" not in s3, f"the minus went back inside the sigil: {s3}"
+            rendered[f"S3 {label}"] = _assert_within_density_cap("S3_VERDICT", s3, label)
+            if gated:
+                assert gated["BEST_PLAN"] == cheapest, gated
+                assert gated["BEST_PLAN_ANNUAL_CCA"].startswith("-$") or \
+                    gated["BEST_PLAN_ANNUAL_BUNDLED"].startswith("-$"), gated
+
+    # The matrix's two modeled-bill columns, same sweep.
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    plan = _matrix_winning_plan()
+    with _stub_plan(plan, provider), \
+            _swapped(plans[plan], "no_battery", -4100.0), \
+            _swapped(plans[plan], "with_battery", -6200.0):
+        matrix = {n: rt.resolve_token(n)
+                  for n in ("BEST_PLAN_NOBATT_MODELED", "BEST_PLAN_BATT_MODELED")}
+    assert matrix["BEST_PLAN_NOBATT_MODELED"] == "-$4,100", matrix
+    assert matrix["BEST_PLAN_BATT_MODELED"] == "-$6,200", matrix
+
+    # Nothing leaked, and the published sentence is unchanged.
+    with _stub_plan(cheapest, provider):
+        live = rt.resolve_token("S3_VERDICT")
+    assert f"{float(totals[cheapest]):,.0f}" in live.replace("$", ""), live
+    return ("a plan total that models below zero renders as -$5,000/yr in all three of "
+            f"section 3's branches ({', '.join(rendered)}) and in the battery-vs-plan "
+            "matrix's two modeled-bill cells, instead of aborting the whole report "
+            "inside a refusal message's own formatting")
+
+
+@case
+def case_a_battery_repaying_past_its_warranty_is_not_called_a_sound_buy():
+    """ROUND 6, FINDING 6. Section 0's "is a sound optional buy" was selected
+    by battery_alone_post_ev_fix_yr > 0 and nothing else, so a battery saving
+    $50/yr against a ~$14,500 purchase read as a sound buy in the report's
+    most prominent sentence, with a 290-year payback printed beside it.
+    Nothing weighed magnitude or payback against cost; a sign test answers
+    "does this repay at all", which is a different question from the one the
+    word "sound" answers.
+
+    The horizon is READ, not invented (CLAUDE.md section 0):
+    data/uncertainty_results.json:meta.warranty_yr is what
+    analysis/uncertainty_propagation.py's WARRANTY_YR writes, the term that
+    module already reports the battery's headline probability against and the
+    term data/battery_sizing_curve.json already stops sizing at.
+
+    Driven on both sides of the boundary and ON it, because a threshold with
+    only one side exercised is a threshold nobody has checked."""
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    mid = rt._json("package_results.json")["packages"]["MID"]
+    cost, warranty = mid["cost"], rt._battery_warranty_years("PROBE")
+    assert warranty == rt._json("uncertainty_results.json")["meta"]["warranty_yr"]
+    widths, seen = {}, {}
+    with _stub_plan(cheapest, provider):
+        published = rt.resolve_token("S0_VERDICT")
+        assert "sound optional buy" in published, published
+
+        # A saving that repays only long past the warranted life.
+        with _mid_battery_at(mid, 50.0, 50.0):
+            slow = rt.resolve_token("S0_VERDICT")
+        assert "sound optional buy" not in slow, (
+            f"S0_VERDICT calls a battery repaying in {cost / 50:.0f} years a sound "
+            f"optional buy: {slow}")
+        assert f"past its {warranty:g}-year warranty" in slow, slow
+        assert f"{cost / 50:.1f} years" in slow, slow
+        widths["past warranty"] = _assert_within_density_cap(
+            "S0_VERDICT", slow, "a battery repaying past its warranty")
+        seen["past warranty"] = slow
+
+        # The boundary itself: exactly at the warranty term is still sound,
+        # a tenth of a year past it is not.
+        for label, payback, sound in (("exactly at", warranty, True),
+                                      ("just past", warranty + 0.1, False)):
+            save = cost / payback
+            with _mid_battery_at(mid, save, save):
+                value = rt.resolve_token("S0_VERDICT")
+            assert ("sound optional buy" in value) is sound, (
+                f"a {payback}-year payback against a {warranty}-year warranty read "
+                f"{'un' if sound else ''}sound: {value}")
+            widths[label] = _assert_within_density_cap("S0_VERDICT", value, label)
+            seen[label] = value
+
+        # And it is the WHOLE printed range that has to clear the term, not
+        # the friendlier end of it.
+        fast, slow_save = cost / (warranty - 2), cost / (warranty + 5)
+        with _mid_battery_at(mid, fast, slow_save):
+            mixed = rt.resolve_token("S0_VERDICT")
+        assert "sound optional buy" not in mixed, (
+            f"S0_VERDICT calls the purchase sound while the top of the range it prints "
+            f"is past the warranty: {mixed}")
+        widths["range straddling"] = _assert_within_density_cap(
+            "S0_VERDICT", mixed, "a range straddling the warranty term")
+
+        # A warranty term the artifact cannot state is a refusal, not a
+        # silently-assumed number.
+        meta = rt._json("uncertainty_results.json")["meta"]
+        for bad in (float("nan"), 0, -10):
+            with _swapped(meta, "warranty_yr", bad):
+                try:
+                    value = rt.resolve_token("S0_VERDICT")
+                    raise AssertionError(
+                        f"S0_VERDICT judged the purchase against a {bad}-year warranty: "
+                        f"{value}")
+                except SystemExit as e:
+                    assert "S0_VERDICT" in str(e) and "warrant" in str(e), e
+        assert rt.resolve_token("S0_VERDICT") == published, (
+            "the substituted battery figures leaked out of this case")
+    return ("section 0 calls the battery a sound optional buy only where every payback "
+            f"it prints lands inside the {warranty:g}-year warranted life "
+            f"(at {warranty:g} yr: sound; at {warranty + 0.1:g} yr: not), and states the "
+            "payback plainly otherwise: "
+            + seen["past warranty"].split("and a ")[-1].rstrip("."))
+
+
+@case
+def case_the_expansion_tail_compares_two_paybacks_on_one_basis():
+    """ROUND 6, FINDING 7. Section 7's sentence prints the first unit's
+    payback rounded -- "(~6.5-yr payback)" -- and then compared an EXACT
+    quotient against that rounded figure to choose its tail. Near the boundary
+    the two sides were not the same quantity: an expansion repaying in 6.54 yr
+    beside a printed 6.5 read "saves too little to match that" while both
+    figures ON THE PAGE said 6.5, and 6.46 read "faster than that" on the same
+    evidence. The tie branch, written precisely so an expansion repaying at
+    the first unit's rate is not called faster, was reachable only on
+    exactly-equal floats.
+
+    Both sides now round to the tenth of a year the sentence publishes, so the
+    comparison is the one a reader can check against the two numbers printed
+    in front of them."""
+    pk = rt._json("package_results.json")["packages"]
+    exp_cost = pk["HIGH"]["cost"] - pk["MID"]["cost"]
+    mid_payback = pk["MID"]["battery_alone_payback_post_fix_yr"]
+    assert exp_cost > 0 and mid_payback > 0, (exp_cost, mid_payback)
+    printed = round(mid_payback, 1)
+    seen = {}
+    for label, payback, expected in (
+            ("0.04 yr slower — same printed figure", printed + 0.04,
+             "pays back at the same rate"),
+            ("0.04 yr faster — same printed figure", printed - 0.04,
+             "pays back at the same rate"),
+            ("exactly equal", printed, "pays back at the same rate"),
+            ("0.3 yr slower", printed + 0.3, "saves too little to match that"),
+            ("0.3 yr faster", printed - 0.3, "pays back faster than that")):
+        with _swapped(pk["HIGH"], "marginal_vs_mid_yr", exp_cost / payback):
+            value = rt.resolve_token("S7_VERDICT")
+        assert expected in value, (
+            f"an expansion repaying in {payback:.2f} yr against a printed "
+            f"{printed:.1f}-yr first unit reads {value!r}, not {expected!r}")
+        assert f"(~{printed:.1f}-yr payback)" in value, value
+        _assert_within_density_cap("S7_VERDICT", value, label)
+        seen[label] = expected
+    return ("section 7's comparative tail rounds both paybacks to the tenth of a year it "
+            f"prints, so an expansion within 0.04 yr of the first unit's {printed:.1f} "
+            "ties instead of being ranked on digits the reader is never shown "
+            f"({len(seen)} branches driven)")
+
+
+@case
+def case_a_verdict_published_in_the_wrong_section_fails_the_index_check():
+    """ROUND 6, FINDING 8. _assert_verdict_matches_index asserted the rendered
+    line appeared SOMEWHERE in index.html -- a membership test over the whole
+    report. A verdict moved under a neighbouring heading, or duplicated into
+    two sections, satisfied it exactly as well as one sitting where it
+    belongs, and "section 7's conclusion is on the page somewhere" is not the
+    claim the case exists to make.
+
+    Driven on the real published document, mutated three ways in memory: the
+    line moved out of its own section, deleted from it, and duplicated. Each
+    must fail, and the unmutated document must pass -- otherwise the check
+    would be rejecting everything rather than the right things."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    name = "S7_VERDICT"     # artifact-only, so this runs without the archive
+    assert not _needs_household(name), f"{name} is no longer archive-free"
+    value = _assert_verdict_matches_index(name, index_html)
+    line = f'<p class="verdict">{_htmllib.escape(value, quote=True)}</p>'
+    assert index_html.count(line) == 1, line
+
+    mutations = {
+        # Moved: deleted from section 7, published under section 6 instead.
+        "moved to another section": (
+            index_html.replace(line, "", 1)
+            .replace('<h2 id="s6">', line + '<h2 id="s6">', 1)),
+        "deleted from its section": index_html.replace(line, "", 1),
+        # Duplicated: still present where it belongs, and again elsewhere.
+        "duplicated into another section": index_html.replace(
+            '<h2 id="s6">', line + '<h2 id="s6">', 1),
+    }
+    caught = {}
+    for label, mutated in mutations.items():
+        assert mutated != index_html, f"the {label} mutation did not change anything"
+        # The "it should have failed" assertion is raised OUTSIDE the except
+        # clause on purpose: raising AssertionError inside a `try` whose
+        # handler catches AssertionError swallows it, and the case then passes
+        # on exactly the defect it was written to catch.
+        rejection = None
+        try:
+            _assert_verdict_matches_index(name, mutated)
+        except AssertionError as e:
+            rejection = str(e).splitlines()[0]
+            assert name in rejection, rejection
+        assert rejection is not None, (
+            f"{name} passed its index.html check with the published line {label}")
+        caught[label] = rejection
+    # The section slicer is what makes that possible, so pin its behaviour.
+    section = _index_section(index_html, "s7")
+    assert section.startswith('<h2 id="s7"'), section[:60]
+    assert '<h2 id="s15"' not in section, "section 7's slice runs into the next section"
+    assert line in section
+    return (f"a verdict line moved, deleted or duplicated is caught by name "
+            f"({len(caught)} mutations, each rejected), and _index_section slices "
+            "section 7 at its own heading and the next one")
+
+
+@case
+def case_the_sweep_asserts_the_tokens_it_could_not_drive():
+    """ROUND 6, FINDING 9. The poison harness's `unresolvable` bucket -- every
+    token this checkout cannot resolve, and therefore cannot sweep -- was
+    asserted on only inside `if rt.hh.PATH.is_file()`, where it is always
+    empty. On the runner .github/workflows/tests.yml actually uses, which has
+    no private archive and holds out 43 tokens, the bucket that holds every
+    lost token was never examined. Coverage could shrink to a handful of
+    tokens while the case reported the same success -- finding 1's shape,
+    one bucket over.
+
+    _unresolvable_gaps is now asserted on EVERY checkout, and a token may only
+    drop out through the one door: its refusal names household.yaml AND it was
+    observed reading a household path on the way to it."""
+    def refuses(ctx):
+        raise SystemExit("report_tokens: ZZZ_FABRICATED_SULKING_TOKEN is sulking")
+
+    def refuses_by_name_only(ctx):
+        raise SystemExit("report_tokens: ZZZ_FABRICATED_LIAR_TOKEN cannot read "
+                         "private/household.yaml, it says, having never opened it")
+
+    fabricated = {"ZZZ_FABRICATED_SULKING_TOKEN": {"kind": "derived", "get": refuses,
+                                                   "fmt": None},
+                  "ZZZ_FABRICATED_LIAR_TOKEN": {"kind": "derived",
+                                                "get": refuses_by_name_only, "fmt": None}}
+    sw = _run_poison_sweep(fabricated)
+    assert set(sw.unresolvable) == set(fabricated), sorted(sw.unresolvable)
+    gaps = _unresolvable_gaps(sw)
+    assert set(gaps) == set(fabricated), (
+        "a token that dropped out of the sweep for a reason other than the absent "
+        f"private archive was not reported as a coverage gap: {gaps}")
+
+    # And a genuinely household-blocked token IS allowed through the door --
+    # otherwise this check would just reject everything on the CI runner.
+    real = _run_poison_sweep()
+    assert not _unresolvable_gaps(real), _unresolvable_gaps(real)
+    if rt.hh.PATH.is_file():
+        assert not real.unresolvable, sorted(real.unresolvable)
+        note = "no token is held out on this staged archive"
+    else:
+        assert real.unresolvable, (
+            "no token is held out without a private archive; this checkout is not the "
+            "one the assertion is written for")
+        note = (f"{len(real.unresolvable)} token(s) held out, every one proved to be "
+                "household-blocked")
+    return ("a token that leaves the sweep for any reason other than the absent private "
+            f"archive is a named coverage gap on every checkout ({note})")
+
+
+@case
+def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
+    """ROUND 6, FINDING 4. The sweep's docstring claimed it closed round 5's
+    findings 1, 2, 5, 6, 7 and 8. Its contract is on the SHAPE of the rendered
+    string, so what it actually closes is the malformed-number class; findings
+    4 and 10 are a too-broad refusal and a mismatched pair, and neither is
+    visible to it -- both readings are well-formed strings.
+
+    A docstring is a claim about the code like any other, so it is checked
+    like one rather than trusted: the companion cases it now names must exist,
+    and the words that were doing the overclaiming must be gone."""
+    doc = case_no_token_publishes_a_malformed_number_from_any_poisoned_artifact_field.__doc__
+    listed = {fn.__name__ for fn in CASES}
+    named = re.findall(r"case_[a-z0-9_]+", doc)
+    assert named, "the docstring no longer points at the cases that carry the rest"
+    missing = [n for n in named if n not in listed]
+    assert not missing, (
+        f"the sweep's docstring names case(s) that do not exist: {missing}")
+    assert "does NOT close" in doc, (
+        "the docstring must state the classes this sweep cannot see, or it is back to "
+        "claiming the whole review round")
+    for overclaim in ("findings 1, 2, 5, 6, 7 and 8", "closes it for tokens"):
+        assert overclaim not in doc or "does NOT close" in doc, doc
+    # The three companion cases named are the ones that really carry those
+    # findings, so the claim is true rather than merely present.
+    for name in ("case_the_two_figures_for_the_batterys_own_saving_quote_one_scenario",
+                 "case_an_unusable_package_cost_only_stops_the_figures_that_need_it"):
+        assert name in named, f"the docstring no longer credits {name}"
+    return (f"the poison sweep's docstring names the class it closes and the "
+            f"{len(named)} case(s) that carry the classes it cannot see, all of which "
+            "exist")
 
 
 def main():

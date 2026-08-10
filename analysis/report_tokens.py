@@ -1095,10 +1095,23 @@ _tok("EXPORTED_SHARE", kind="derived",
      get=lambda ctx: (lambda p, e: round(e / p * 100))(
          _annual_production_kwh(ctx), _json("report_data.json")["totals"]["exp"]),
      sources=["data/report_data.json:totals", "data/enphase_daily_production.csv"], fmt="pct0")
-_tok("CAPACITY_FACTOR", kind="derived",
-     get=lambda ctx: (lambda kw_dc: f"~{_annual_production_kwh(ctx) / (kw_dc * 8760) * 100:.1f}%")(
-         *_figures("CAPACITY_FACTOR", "what fraction of nameplate the array delivers",
-                   **{"solar.kw_dc": hh1("solar.kw_dc")})),
+def _capacity_factor(ctx):
+    """The array's output as a share of running at nameplate all year.
+
+    BOTH figures through the gate, S2_VERDICT's reason (issue #131 review
+    round 6, finding 2): this f-string checked the nameplate and interpolated
+    the production quotient unchecked, so a non-finite Total footer in
+    data/enphase_daily_production.csv published "~nan%" -- while
+    ANNUAL_PRODUCTION_KWH, the leaf token over that same cell, refused it."""
+    production, kw_dc = _figures(
+        "CAPACITY_FACTOR", "what fraction of nameplate the array delivers",
+        **{"data/enphase_daily_production.csv's annual production":
+           _annual_production_kwh(ctx),
+           "solar.kw_dc": hh1("solar.kw_dc")})
+    return f"~{production / (kw_dc * 8760) * 100:.1f}%"
+
+
+_tok("CAPACITY_FACTOR", kind="derived", get=_capacity_factor,
      sources=["data/enphase_daily_production.csv", "private/household.yaml:solar.kw_dc"])
 _tok("SPECIFIC_YIELD", kind="derived",
      get=lambda ctx: round(_annual_production_kwh(ctx) / hh1("solar.kw_dc")),
@@ -1761,11 +1774,19 @@ def _best_plan(ctx, token):
     verdict says "ties ... as the cheapest plan" beside them.
     """
     plan, _provider, plan_total, cheapest, winners = _plan_ranking(ctx, token)
+    # _usd0_signed, for the reason BEST_PLAN_ANNUAL_* is declared with it a few
+    # lines below: a plan's annual total is a BILL NET OF EXPORTS, and nothing
+    # in data/plan_results.csv holds it above zero. Making _usd0 refuse a
+    # negative amount (issue #131 review round 5) turned every inline _usd0
+    # over one of these totals into a refusal where it used to render -- so a
+    # solar-plus-battery household modelling below zero lost the whole report
+    # to a REFUSAL MESSAGE's own formatting. The sign belongs outside the
+    # sigil here, not fatal (review round 6, finding 3).
     _claim(
         token, "that this household is on the best plan",
         SUPPORTED if plan in winners else NOT_DETERMINED,
-        f"data/plan_results.csv prices {plan} at {_usd0(plan_total)}/yr against "
-        f"{_join_plan_names(winners)} at {_usd0(cheapest)}/yr",
+        f"data/plan_results.csv prices {plan} at {_usd0_signed(plan_total)}/yr against "
+        f"{_join_plan_names(winners)} at {_usd0_signed(cheapest)}/yr",
         unsettled="report-template.html asserts the answer as fixed chrome this module "
                   "cannot reach (the section 0 card 'Best plan in every scenario', the "
                   'class="win" rows in sections 3 and 4, and the line "Why {{BEST_PLAN}} '
@@ -1865,9 +1886,14 @@ def _best_plan_matrix_cell(token, key):
         _claim(
             token, f"that this household is on the best plan {phrase}",
             SUPPORTED if plan in winners else NOT_DETERMINED,
+            # _usd0_signed, same sweep, same reason: both cells are modeled
+            # annual BILLS under a plan (the two tokens below are declared
+            # with the signed formatter for exactly that), so an inline _usd0
+            # here refuses precisely for the household whose battery models
+            # its bill below zero.
             f"data/battery_plan_matrix.json's {column} column prices {plan} at "
-            f"{_usd0(totals[plan])}/yr against {_join_plan_names(winners)} at "
-            f"{_usd0(cheapest)}/yr",
+            f"{_usd0_signed(totals[plan])}/yr against {_join_plan_names(winners)} at "
+            f"{_usd0_signed(cheapest)}/yr",
             unsettled='report-template.html renders this figure inside section 4\'s '
                       'class="win" row, which asserts the answer as fixed markup no '
                       "token can reach, so no value rendered into this slot makes the "
@@ -2503,6 +2529,27 @@ def _payback_span(paybacks):
     return lo if lo == hi else f"{lo}–{hi}"
 
 
+def _battery_warranty_years(token):
+    """How many years the battery is warranted for, off the artifact whose own
+    decision rule is already written in those terms.
+
+    data/uncertainty_results.json:meta.warranty_yr is what
+    analysis/uncertainty_propagation.py's WARRANTY_YR writes out, and the
+    figure the rest of this analysis already decides by: that module reports
+    prob_within_warranty_10yr as the battery's headline probability, and
+    data/battery_sizing_curve.json stops sizing at "the first grid point whose
+    own marginal kWh ... pays back ... in more than 10 years (the Powerwall 3
+    warranty term)". So the threshold below is READ, not invented -- which is
+    the only reason this module is allowed to have one at all (CLAUDE.md
+    section 0)."""
+    years = _json("uncertainty_results.json")["meta"]["warranty_yr"]
+    _claim(token, "how long the battery is warranted for",
+           SUPPORTED if _finite(years) and years > 0 else NOT_DETERMINED,
+           f"data/uncertainty_results.json:meta.warranty_yr is {years!r}, which is not "
+           "a positive, finite number of years")
+    return years
+
+
 def _s0_verdict(ctx):
     # "the rate plan is right" is section 3's claim, made here in the
     # report's most prominent sentence -- so it goes through section 3's own
@@ -2540,9 +2587,35 @@ def _s0_verdict(ctx):
     # the artifact-consistency refusals; the span below is over the paybacks
     # that exist, never over a cost divided by a loss.
     repays, _post, _pb_post, quotable = _battery_alone("S0_VERDICT")
+    # "SOUND OPTIONAL BUY" IS A MAGNITUDE CLAIM, NOT A SIGN CLAIM.
+    #
+    # It used to be selected by `repays` alone -- battery_alone_post_ev_fix_yr
+    # > 0 -- so a battery saving a few dollars a year against a ~$14,500
+    # purchase read as a sound buy in the report's most prominent sentence,
+    # with the payback beside it running to three figures. Nothing weighed the
+    # saving or the payback against the cost (issue #131 review round 6,
+    # finding 6). A sign test answers "does this repay at all"; the word
+    # "sound" answers "does it repay inside the life of the thing you are
+    # buying", and only the second is a purchase recommendation.
+    #
+    # The horizon is the battery's own warranted life, read off
+    # data/uncertainty_results.json -- the same term the Monte Carlo already
+    # reports its headline probability against and the sizing curve already
+    # stops at. So the branch turns on a committed figure, and a household
+    # whose battery repays only past that term gets the true sentence (its
+    # payback, and that it lands past the warranty) rather than either a
+    # confident "sound" or a withheld report. Every payback the range prints
+    # is tested, not just the friendliest one: the claim is made about the
+    # whole span the reader is shown.
     if repays:
-        battery_clause = (f"a {_battery_model_short()} is a sound optional buy at a "
-                          f"{_payback_span(quotable)}-year hardware-alone payback")
+        warranty = _battery_warranty_years("S0_VERDICT")
+        span = _payback_span(quotable)
+        if max(quotable) <= warranty:
+            battery_clause = (f"a {_battery_model_short()} is a sound optional buy at a "
+                              f"{span}-year hardware-alone payback")
+        else:
+            battery_clause = (f"a {_battery_model_short()} repays in {span} years, past "
+                              f"its {warranty:g}-year warranty")
     else:
         # Left at six words on purpose. Naming the post-fix basis in the
         # clause itself ("... once the charging fix is in") reads better and
@@ -2574,6 +2647,7 @@ _tok("S0_VERDICT", kind="derived", get=_s0_verdict,
               "data/package_results.json:packages.LOW.savings_yr (sign guard)",
               "data/package_results.json:packages.MID.battery_alone_payback_yr",
               "data/package_results.json:packages.MID.battery_alone_payback_post_fix_yr",
+              "data/uncertainty_results.json:meta.warranty_yr",
               "data/plan_results.csv (the household provider's total column)",
               "private/household.yaml:household.plan", "private/household.yaml:household.cca"])
 
@@ -2873,9 +2947,19 @@ def _overnight_ev_night_counts(ctx):
 
 
 def _s2_verdict(ctx):
-    production = _annual_production_kwh(ctx)
-    kw_dc, = _figures("S2_VERDICT", "how big the array is",
-                      **{"solar.kw_dc": hh1("solar.kw_dc")})
+    # BOTH interpolated figures go through the gate, not just the household
+    # one. This sentence prints the production total AND divides it by the
+    # nameplate for the specific yield, so a non-finite production published
+    # "produced nan kWh at nan kWh/kW" -- while ANNUAL_PRODUCTION_KWH, the
+    # LEAF token over the very same cell of the very same CSV, failed closed
+    # on it (issue #131 review round 6, finding 2). Which side of the report a
+    # figure arrives from is not a reason to check it or skip it: a formula
+    # that interpolates a number states it here first, wherever it came from.
+    production, kw_dc = _figures(
+        "S2_VERDICT", "how big the array is and what it produced",
+        **{"data/enphase_daily_production.csv's annual production":
+           _annual_production_kwh(ctx),
+           "solar.kw_dc": hh1("solar.kw_dc")})
     # The specific yield below divides by this. Same exposure as totals.exp in
     # _midday_export_share: ZeroDivisionError is not in resolve_token's caught
     # set, so a household.yaml with no array size (or a zero one) would crash
@@ -2974,18 +3058,33 @@ def _s3_verdict(ctx):
     # itself lives in _plan_ranking, shared with S0_VERDICT, which reports the
     # same three outcomes in the report's headline.
     plan, _provider, plan_total, cheapest, winners = _plan_ranking(ctx, "S3_VERDICT")
+    # EVERY plan TOTAL in this sentence formats through _usd0_signed, in all
+    # three branches. These are annual bills net of exports off
+    # data/plan_results.csv -- the same field BEST_PLAN_ANNUAL_CCA is declared
+    # signed for -- so a household whose modeled bill goes negative got a
+    # REFUSAL instead of section 3 once _usd0 started rejecting a negative
+    # amount (issue #131 review round 6, finding 5). Identical output at every
+    # non-negative total, so nothing published changes.
+    #
+    # The DIFFERENCE on the last line keeps plain _usd0, and that is the
+    # distinction the sweep is drawing rather than an oversight: this branch
+    # is reached only when `plan` is not among the cheapest, so plan_total is
+    # strictly above cheapest and the gap is positive by construction. A
+    # negative one would mean the ranking above contradicted itself, and
+    # _usd0's refusal is the right answer to that.
     if winners == [plan]:
         claim = (f"{plan} is still the cheapest plan for this house at a modeled "
-                 f"{_usd0(cheapest)}/yr, and every alternative priced costs more.")
+                 f"{_usd0_signed(cheapest)}/yr, and every alternative priced costs more.")
     elif plan in winners:
         others = [p for p in winners if p != plan]
         claim = (f"{plan} ties {_join_plan_names(others)} as the cheapest plan for this "
-                 f"house at a modeled {_usd0(cheapest)}/yr, and nothing priced costs less.")
+                 f"house at a modeled {_usd0_signed(cheapest)}/yr, and nothing priced "
+                 "costs less.")
     else:
         verb = "prices" if len(winners) == 1 else "each price"
         claim = (f"{plan} is not the cheapest plan for this house at a modeled "
-                 f"{_usd0(plan_total)}/yr, because {_join_plan_names(winners)} {verb} "
-                 f"{_usd0(plan_total - cheapest)}/yr lower.")
+                 f"{_usd0_signed(plan_total)}/yr, because {_join_plan_names(winners)} "
+                 f"{verb} {_usd0(plan_total - cheapest)}/yr lower.")
     return VERDICT_STEM + claim
 
 
@@ -3172,9 +3271,20 @@ def _s7_verdict(ctx):
         years = exp_cost / marginal
         tail = (f"while the expansion pack repays its extra cost in {years:.1f} "
                 f"{'year' if f'{years:.1f}' == '1.0' else 'years'}")
-    elif (ratio := exp_cost / marginal) > mid_payback:
+    # BOTH SIDES OF THE COMPARISON ON ONE BASIS. "that" refers to the payback
+    # this very sentence printed six words earlier -- "(~6.5-yr payback)", the
+    # artifact's own tenth-year figure -- and the tail used to compare an
+    # EXACT quotient against it. Near the boundary the two are not the same
+    # quantity: an expansion repaying in 6.54 yr beside a printed 6.5 read
+    # "saves too little to match that" while both figures on the page said
+    # 6.5, and the reverse mis-ordering is available at 6.46 (issue #131
+    # review round 6, finding 7). Rounding both to the tenth of a year the
+    # sentence publishes makes the comparison the one the reader can check,
+    # and makes the tie branch reachable on the pairs that actually tie ON THE
+    # PAGE rather than only on exactly-equal floats.
+    elif (ratio := round(exp_cost / marginal, 1)) > (printed := round(mid_payback, 1)):
         tail = "and the expansion pack saves too little to match that"
-    elif ratio == mid_payback:
+    elif ratio == printed:
         tail = "and the expansion pack pays back at the same rate"
     else:
         tail = "and the expansion pack pays back faster than that"
