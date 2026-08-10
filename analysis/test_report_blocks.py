@@ -8,6 +8,7 @@ test_report_tokens.py, test_llm_providers.py).
 Run from the repo root:  ./.venv/bin/python analysis/test_report_blocks.py
 """
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -461,7 +462,7 @@ _RECLASSIFIED_FIGURES = {
               "HPWH_PAYBACK", "HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_PAYBACK",
               "ELECTRIFICATION_COMBINED_PAYBACK", "ELECTRIFICATION_INCENTIVES",
               "HPWH_SHARE_CAVEAT", "HPWH_PAYBACK_SENSITIVITY", "HPWH_SAVINGS_BOUND",
-              "HEAT_PUMP_COST_BASIS"),
+              "HEAT_PUMP_COST_BASIS", "HPWH_COST_BASIS"),
     "s12#5": ("CLEANING_BEST_MONTH", "CLEANING_SINGLE_VALUE_RANGE",
               "CLEANING_SECOND_MARGINAL_RANGE", "CLEANING_PRICE",
               "MIDDAY_MARGINAL_VALUE_RANGE"),
@@ -505,6 +506,9 @@ _FIGURE_NEEDS_QUALIFIER = {
         ("ELECTRIFICATION_COMBINED_PAYBACK", "HPWH_SHARE_CAVEAT"),
         # install_cost.note prices an example system larger than this house's.
         ("HEAT_PUMP_INSTALL_COST", "HEAT_PUMP_COST_BASIS"),
+        # ... and its water-heater companion, which the artifact's own note
+        # exists to contrast with (issue #132, Codex pass 3).
+        ("HPWH_INSTALL_COST", "HPWH_COST_BASIS"),
     ],
     # The three maxima measure different things (an hourly mean, a lower bound,
     # a five-minute sample); corroboration_reading and
@@ -580,6 +584,255 @@ def case_the_cleaning_caveat_compares_against_a_range_not_a_summer_import_rate()
         "still supports")
     return (f"s12#5 compares against {rendered!r} -- a both-seasons, both-sides range "
             "from rates.py -- and keeps its upper-bound caveat")
+
+
+# ---------------------------------------------------------------------------
+# ISSUE #132, CODEX PASS 3. THE PAIR LIST CANNOT BE THE ONLY GUARD.
+#
+# case_no_figure_reaches_a_blocks_scope_without_its_qualifier below carries
+# hand-listed pairs, and it PASSED while HPWH_INSTALL_COST sat in s10#4's scope
+# with no qualifier -- because nobody added that pair. A hand-maintained list
+# of what needs guarding always lags the code it guards; that is the same shape
+# as the HUMAN_REASONS rot this whole issue exists to fix, one level up.
+#
+# So the CANDIDATES are derived, and the list becomes a ledger of exemptions.
+# The derivation, which needs no declaration to be right:
+#
+#   1. For every token in a block's scope, poison each numeric leaf of every
+#      artifact it opens and see whether its render moves. That yields the set
+#      of artifact OBJECTS the block actually reads numbers out of -- observed,
+#      not declared, for the reason report_tokens' `sources` prose is not
+#      trusted by the poison sweep either.
+#   2. In each such object, any long string under a qualifier-shaped key
+#      (note / caveat / basis / not_verified / not_determined / sensitivity /
+#      reading / why_not) is a CANDIDATE: the artifact put a condition for
+#      reading its own numbers right beside them.
+#   3. Blank that string. If no token in the block's scope changes its outcome,
+#      nothing in this block can tell the reader about it.
+#
+# WHAT DEFEATS FULL DERIVATION, stated plainly because it is the reason the
+# ledger still exists: a qualifier can be discharged two ways, and only one is
+# observable. A token can RENDER the artifact's string (blanking it moves the
+# render -- detected, and needs no entry), or it can COMPUTE the same content
+# from the artifact's own numbers (DEGRADATION_WEATHER_CAVEAT rebuilds
+# clearsky_note's argument out of clearsky_annual_spread_pct and
+# peak_to_trough_pct; NIGHT_FLOOR_SAMPLE rebuilds selection_caveat's exclusion
+# rate out of quiet_nights and nights_total). The second never touches the
+# string, so blanking it proves nothing. Both are legitimate. The derivation
+# therefore produces CANDIDATES, not verdicts.
+#
+# What that buys anyway, and it is the part that matters: the DEFAULT is now
+# "must be accounted for". A new artifact field, a new token or a new block
+# raises a new candidate, and the case fails until someone writes down which
+# bucket it is in. The ledger can no longer fall behind silently -- it can only
+# fall behind loudly.
+# ---------------------------------------------------------------------------
+_QUALIFIER_KEY = re.compile(
+    r"caveat|note|basis|not_verified|not_determined|sensitivity|reading|why_not", re.I)
+_QUALIFIER_MIN_CHARS = 40
+
+
+def _token_outcome(name):
+    try:
+        return ("ok", rt.resolve_token(name, rt.TOKENS[name]))
+    except SystemExit as e:
+        return ("exit", str(e))
+    except BaseException as e:                                   # noqa: BLE001
+        return ("raised", type(e).__name__)
+
+
+def _json_leaves(node, path=()):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _json_leaves(value, path + (key,))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _json_leaves(value, path + (i,))
+    else:
+        yield path, node
+
+
+def _parent_of(doc, path):
+    node = doc
+    for key in path[:-1]:
+        node = node[key]
+    return node, path[-1]
+
+
+class _record_json_reads:
+    def __init__(self, seen):
+        self.seen = seen
+
+    def __enter__(self):
+        self.real = rt._json
+
+        def json_(name):
+            self.seen.add(name)
+            return self.real(name)
+
+        rt._json = json_
+        return self
+
+    def __exit__(self, *exc):
+        rt._json = self.real
+
+
+def _derive_qualifier_candidates(html, blocks, block_ids):
+    """[(block, artifact, object path, qualifier key, covered)] -- see the
+    block comment above for what each step establishes."""
+    out = []
+    for bid in block_ids:
+        scope = sorted(t for t in rb.scope_tokens_for_block(html, blocks[bid])
+                       if t in rt.TOKENS)
+        baseline = {n: _token_outcome(n) for n in scope}
+        live = [n for n in scope if baseline[n][0] == "ok"]
+        touched = {}
+        for name in live:
+            seen = set()
+            with _record_json_reads(seen):
+                _token_outcome(name)
+            for who in sorted(seen):
+                doc = rt._json(who)
+                for path, value in _json_leaves(doc):
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        continue
+                    parent, key = _parent_of(doc, path)
+                    original = parent[key]
+                    parent[key] = float("nan")
+                    try:
+                        moved = _token_outcome(name) != baseline[name]
+                    finally:
+                        parent[key] = original
+                    if moved:
+                        touched.setdefault(who, set()).add(path[:-1])
+        for who, objects in sorted(touched.items()):
+            doc = rt._json(who)
+            for objpath in sorted(objects):
+                node = doc
+                for key in objpath:
+                    node = node[key]
+                if not isinstance(node, dict):
+                    continue
+                for key, value in sorted(node.items()):
+                    if not (isinstance(value, str) and _QUALIFIER_KEY.search(key)
+                            and len(value) >= _QUALIFIER_MIN_CHARS):
+                        continue
+                    original = node[key]
+                    node[key] = ""
+                    try:
+                        covered = any(_token_outcome(n) != baseline[n] for n in scope)
+                    finally:
+                        node[key] = original
+                    out.append((bid, who, ".".join(str(k) for k in objpath) or "(root)",
+                                key, covered))
+    return out
+
+
+# Every derived candidate the blanking test cannot discharge, and why. A
+# `todo_phrase` is checked against the block's own TODO text, so an entry
+# claiming the instruction carries the qualification is held to it.
+_QUALIFIER_ACCOUNTED = {
+    ("s2#4", "gross_import_decomposition.json", "degradation", "clearsky_note"):
+        ("the basic-tier line states the weather-corrected rate is not determined and "
+         "points at section 9, where the full caveat is rendered",
+         "not determined"),
+    ("s2#4", "gross_import_decomposition.json", "degradation", "single_event_soiling_basis"):
+        ("same: the soiling confounder is section 9's workup, named from here",
+         "not determined"),
+    ("s9#2", "gross_import_decomposition.json", "degradation", "clearsky_note"):
+        ("DEGRADATION_WEATHER_CAVEAT COMPUTES this note's argument from "
+         "clearsky_annual_spread_pct and peak_to_trough_pct_2021_2025 rather than "
+         "quoting it", None),
+    ("s9#2", "gross_import_decomposition.json", "degradation", "single_event_soiling_basis"):
+        ("DEGRADATION_WEATHER_CAVEAT computes the same event's size from "
+         "single_event_soiling_swing_pct", None),
+    ("s10#4", "all_electric_endgame.json",
+     "sequencing_and_paybacks.complete_transition_payback", "electric_interaction_note"):
+        ("documents a correction the generator has ALREADY applied inside the figure; "
+         "it is provenance for the arithmetic, not a condition for reading the result",
+         None),
+    ("s10#4", "all_electric_endgame.json",
+     "sequencing_and_paybacks.complete_transition_payback", "tier_interaction_note"):
+        ("same: an applied correction, not an unmet condition", None),
+    ("s10#4", "all_electric_endgame.json", "sequencing_and_paybacks.share_robustness",
+     "basis"): ("ELECTRIFICATION_SEQUENCE computes this check's own result from "
+                "robust_across_named_scenarios and crossover_water_heater_share", None),
+    ("s10#4", "all_electric_endgame.json", "sequencing_and_paybacks.share_robustness",
+     "crossover_note"): ("ELECTRIFICATION_SEQUENCE renders the crossover share itself",
+                         None),
+    ("s10#4", "all_electric_endgame.json", "water_heater_conversion", "gas_wh_uef_basis"):
+        ("the assumed gas water-heater efficiency; HPWH_SHARE_CAVEAT and "
+         "HPWH_SAVINGS_BOUND already carry the two conditions that decide whether the "
+         "payback is readable, and the UEF sits inside both", None),
+    ("s13#8", "tou_spread.json", "delivery_spread.summer", "ci_basis"):
+        ("names which of the two fits gates the verdict; SPREAD_TREND_SUMMER reads that "
+         "fit's own escalation_ci95_pct_yr, so the token obeys it rather than needing to "
+         "quote it", None),
+    ("s13#8", "tou_spread.json", "delivery_spread.winter", "ci_basis"):
+        ("same, for SPREAD_TREND_WINTER", None),
+    ("s13#11", "quiet_night_floor.json", "night_floor", "selection_caveat"):
+        ("NIGHT_FLOOR_SAMPLE computes this caveat's exclusion rate from quiet_nights and "
+         "nights_total, and the TODO requires it be kept in view", "exclusion rate"),
+    ("s13#11", "quiet_night_floor.json", "pricing", "floor_kw_basis"):
+        ("NIGHT_FLOOR_PRICING_BASIS states the constant-across-the-year method this "
+         "field describes, from confidence_labels.pricing", None),
+    ("s13#11", "quiet_night_floor.json", "pricing.floor_assumption_violations", "note"):
+        ("NIGHT_FLOOR_PRICING_BASIS computes this note's direction and magnitude from "
+         "usd_dropped_at_export_rate", None),
+}
+
+# Candidates whose FIGURE comes from a token this PR did not add. Out of scope
+# here by the same rule that left EV_FIX_SAVINGS_* alone (issue #147); listed
+# so they are visibly excluded rather than quietly absent.
+_QUALIFIER_PRE_EXISTING = {
+    ("deep_results.json", "phantom"): ("SEC9_TEASER",),
+    ("nem3_grandfathering.json", "grandfathering_value_range_usd_per_yr"):
+        ("NEM_GRANDFATHER_VALUE_RANGE", "SEC13_TEASER"),
+    ("cca_bundled_counterfactual.json", "direction_a_cca_repriced_at_bundled"):
+        ("S10_VERDICT",),
+}
+
+
+@case
+def case_every_derived_figure_qualifier_candidate_is_accounted_for():
+    _require_household()
+    html = rt.TEMPLATE.read_text()
+    blocks = {b.id: b for b in rb.parse_todo_blocks(html)}
+    candidates = _derive_qualifier_candidates(html, blocks, sorted(_RECLASSIFIED_FIGURES))
+    assert candidates, "the derivation found no candidates at all -- it has broken"
+
+    unaccounted, stale = [], set(_QUALIFIER_ACCOUNTED)
+    covered = pre_existing = 0
+    for bid, who, objpath, key, is_covered in candidates:
+        if is_covered:
+            covered += 1
+            continue
+        if (who, objpath) in _QUALIFIER_PRE_EXISTING:
+            pre_existing += 1
+            continue
+        entry = _QUALIFIER_ACCOUNTED.get((bid, who, objpath, key))
+        if entry is None:
+            unaccounted.append(f"{bid}: data/{who}:{objpath}.{key} qualifies a figure this "
+                               "block reads, and nothing in its scope can state it")
+            continue
+        stale.discard((bid, who, objpath, key))
+        reason, phrase = entry
+        assert reason.strip(), f"{bid}/{key}: an empty reason is not an account"
+        if phrase:
+            assert phrase in blocks[bid].text, (
+                f"{bid} claims its TODO carries the qualification for {key} via "
+                f"{phrase!r}, but the TODO no longer says it")
+    assert not unaccounted, (
+        f"{len(unaccounted)} derived qualifier candidate(s) are unaccounted for. Each is a "
+        "condition the artifact states beside a number this block reads, that no token in "
+        "the block's scope can tell the reader. Add the qualifier token, or record why it "
+        "is discharged in _QUALIFIER_ACCOUNTED:\n  " + "\n  ".join(unaccounted))
+    assert not stale, (
+        f"_QUALIFIER_ACCOUNTED has entries the derivation no longer raises: {sorted(stale)}")
+    return (f"{len(candidates)} qualifier candidates derived across "
+            f"{len(_RECLASSIFIED_FIGURES)} blocks: {covered} discharged by a token that "
+            f"reads them, {pre_existing} belong to pre-existing figures, "
+            f"{len(_QUALIFIER_ACCOUNTED)} accounted for by name")
 
 
 @case

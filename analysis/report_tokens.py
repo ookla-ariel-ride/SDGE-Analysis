@@ -4308,6 +4308,30 @@ def _hpwh_savings_bound(ctx):
             "heater's own gas saving, not a water-heater-only figure")
 
 
+def _hpwh_cost_basis(ctx):
+    """What the water-heater install cost IS -- the companion to
+    HEAT_PUMP_COST_BASIS, and the artifact wrote its note to draw exactly that
+    contrast.
+
+    all_electric_endgame's install_cost.note says the water-heater figure comes
+    from general contractor-pricing guides and is explicitly "not a CA-specific
+    engineering study the way heat_pump_conversion.py's furnace figure is". A
+    reader handed "$4,200 installed" with no note reads household-specific
+    pricing; the two costs in this block do not have the same standing, and
+    only the furnace one could be qualified (issue #132, Codex pass 3).
+
+    The note is RENDERED, not restated, for HEAT_PUMP_COST_BASIS's reason: the
+    comparison between the two sources is one the artifact makes and this
+    module cannot."""
+    note = str(_wh_conversion()["install_cost"].get("note", "")).strip()
+    if not note:
+        raise SystemExit(
+            "report_tokens: HPWH_COST_BASIS will not describe an install cost without "
+            "data/all_electric_endgame.json:water_heater_conversion.install_cost.note, "
+            "which is where that figure's source and its standing are stated")
+    return note
+
+
 def _hpwh_install_cost(ctx):
     cost = _wh_conversion()["install_cost"]
     central, low, high = _amounts(
@@ -4382,6 +4406,10 @@ _tok("HPWH_INSTALL_COST", kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_install_cost(None)),
      sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost"])
+_tok("HPWH_COST_BASIS", kind="derived",
+     get=_gas_or_not_applicable("all_electric_endgame.json",
+                                lambda _n: _hpwh_cost_basis(None)),
+     sources=["data/all_electric_endgame.json:water_heater_conversion.install_cost.note"])
 _tok("HPWH_SHARE_CAVEAT", kind="derived",
      get=_gas_or_not_applicable("all_electric_endgame.json",
                                 lambda _n: _hpwh_share_caveat(None)),
