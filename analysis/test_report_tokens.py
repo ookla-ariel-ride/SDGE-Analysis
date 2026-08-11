@@ -5941,6 +5941,48 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #     doubling across a tag, class 2 must not miss a lost unit because prose
 #     was wrapped in <b> -- but it means a class-2 hit can point at a word
 #     that never renders beside the number. READ THE RENDERED LINE, as above.
+#   * Class 2 HAS A SECOND TEST, evaluated FIRST, that does not read the
+#     seam's prose at all: THE TOKEN'S DECLARED DIMENSION. Every leaf token in
+#     report_tokens.py names a format spec -- usd0, pct1, cents1, num0, year --
+#     and the money, percent and cents specs are the ones whose OUTPUT carries
+#     a dimension sigil. A token declared with one of those, rendering a value
+#     with no "$" (or "%", or "¢") anywhere in it and none supplied
+#     immediately beside it by the template, has lost the dimension its own
+#     format declares, and is reported REGARDLESS of what follows it and
+#     regardless of the value's shape.
+#     THE PROSE TEST ALONE COULD NOT SEE THIS, and that is measured rather
+#     than argued. Most money figures in this template are printed
+#     "{{X}}/yr" or "~{{X}}/mo", and "/yr" and "/mo" are members of
+#     _SEAM_UNITS -- so a formatter regression from usd0 to num0, the exact
+#     shape of #129's pct0 -> num0, renders "<b>3,282/yr electric</b>" and the
+#     unit whitelist above answers "something beside it gives it a unit" and
+#     stays quiet. It does: the wrong one. A period is not a price. Simulating
+#     that regression at every occurrence of a dimension-declaring token in
+#     the shipped template caught 8 of 43 occurrences before this test existed
+#     and 43 of 43 after it -- the 35 it could not see included every $.../yr
+#     and $.../mo figure in the report. The sweep is not a note about the
+#     past: case_a_declared_money_or_percent_token_that_loses_its_sigil_is_
+#     reported re-runs it on every checkout and fails if the ratio slips.
+#     THE DIMENSION TABLE IS DERIVED, NOT DECLARED. _seam_fmt_dimensions()
+#     calls every numeric formatter in report_tokens.FORMATTERS on one probe
+#     number and reads the sigil out of what it prints, so a money format
+#     added tomorrow is checked tomorrow with no edit here and no list of
+#     token names exists to fall behind. What a derivation cannot see is a
+#     classification DISAPPEARING -- a formatter deleted, a probe that stops
+#     rendering, a table that quietly comes back empty -- which is the same
+#     hole _SEAM_VOCABULARY_FLOOR exists for, closed the same way by
+#     _SEAM_FMT_DIMENSION_FLOOR.
+#     ITS BLIND SPOT, stated and counted rather than supposed: a token that
+#     formats ITSELF -- kind="derived" or "cited_constant" with fmt=None,
+#     building its own string by calling _usd3 or _cents1 inside its own
+#     lambda -- declares no format for this test to read, so its dimension is
+#     invisible here however plainly a reader sees it. The live template
+#     carries such tokens whose whole value is one sigil-carrying figure
+#     (SUMMER_ONPEAK_IMPORT_RATE is the shape: kind="derived", fmt=None,
+#     get=lambda ctx: _usd3(...)), and a regression inside one of those
+#     lambdas is caught by nothing here. The count is reported by the case
+#     rather than written down, so it tracks the registry instead of going
+#     stale. The remedy for any one of them is to declare its fmt.
 #   * Class 3 requires the echo to contain a DIGIT, to be at least
 #     _SEAM_MIN_ECHO characters long, and to sit within _SEAM_ECHO_GAP
 #     characters of the value -- after trailing closing punctuation is
@@ -6047,6 +6089,97 @@ _SEAM_UNITS = ("cycles/day", "kWh/kW/yr", "kWh/yr", "per month", "per year",
                "/mo", "/yr", "yrs", "day", "kW", "yr", "%", "¢", "°", "h")
 
 _SEAM_BARE_NUMBER_RE = re.compile(r"\A\d[\d,]*(?:\.\d+)?\Z")
+
+# The sigils that are a DIMENSION rather than a decoration. A subset of
+# _SEAM_SIGILS on purpose: "~", "+" and "-" say how a figure was arrived at,
+# not what it measures, and a value that keeps its tilde while losing its
+# dollar sign has still lost its dimension. "¢" is here as well as "$"
+# because _cents1 is a currency formatter too and a rate that loses its cent
+# sign is the same defect one decimal place down.
+_SEAM_DIMENSION_SIGILS = ("$", "%", "¢")
+
+# The number every formatter is asked to render so its dimension can be read
+# off the output. Positive and finite, because the currency formatters that
+# carry no sign REFUSE a negative and every formatter refuses a non-number
+# (report_tokens' two formatter preconditions); the exact magnitude is
+# irrelevant -- only which sigils appear.
+_SEAM_FMT_PROBE = 1234.0
+
+# The format specs that MUST still classify as a dimension, and as which one.
+#
+# Committed separately from _seam_fmt_dimensions() for the reason
+# _SEAM_VOCABULARY_FLOOR is committed separately from the rules that read
+# _SEAM_UNITS: derivation is what keeps the table current, and it is exactly
+# what cannot notice the table getting shorter. A classification that vanishes
+# -- a formatter deleted, a probe call that starts raising and is skipped, a
+# sigil dropped from _SEAM_DIMENSION_SIGILS -- takes with it every check that
+# depended on it, and the suite goes green by having stopped asking.
+#
+# A SUPERSET needs no edit here, which is the whole point: a money format
+# added to report_tokens.FORMATTERS tomorrow is derived, checked and swept
+# tomorrow without this dict being touched. What fails is an entry below no
+# longer classifying the way it says, so narrowing the guard becomes a
+# deliberate two-place edit with a reviewer's name on it.
+_SEAM_FMT_DIMENSION_FLOOR = {
+    "usd0": "$", "usd0_tilde": "$", "usd0_signed": "$",
+    "usd0_tilde_signed": "$", "usd0_plus": "$", "usd2": "$", "usd3": "$",
+    "pct0": "%", "pct1": "%", "pct0_frac": "%",
+    "cents1": "¢",
+}
+
+
+def _seam_fmt_dimensions():
+    """{format-spec name: the dimension sigil its output carries}, DERIVED by
+    running every numeric formatter in report_tokens.FORMATTERS on one probe
+    number and reading the sigils out of what it prints.
+
+    Derived rather than written down so that a money or percent format
+    registered tomorrow is a dimension tomorrow, with no edit here and no list
+    of token names to fall behind -- the same principle the rules themselves
+    follow when they read _SEAM_UNITS instead of naming tokens. The floor
+    above is what a derivation cannot supply.
+
+    _NON_NUMERIC_FMTS (None and "raw") are skipped: they are str()
+    passthroughs for tokens that build their own string, so whatever sigil
+    comes out belongs to the value, not to the format.
+
+    A formatter that REFUSES the probe fails here by name instead of being
+    skipped. Skipping is how a table like this empties itself quietly: the
+    formatter still exists, still puts a "$" on every figure it renders, and
+    is no longer classified as currency by anything. Same for a formatter that
+    prints TWO different dimension sigils -- there is no honest single answer,
+    so the ambiguity is raised rather than resolved by tuple order."""
+    out = {}
+    for name, fn in rt.FORMATTERS.items():
+        if name in rt._NON_NUMERIC_FMTS:
+            continue
+        try:
+            rendered = fn(_SEAM_FMT_PROBE)
+        except BaseException as e:                     # noqa: BLE001 -- reported
+            raise AssertionError(
+                f"report_tokens.FORMATTERS[{name!r}] cannot render the probe "
+                f"{_SEAM_FMT_PROBE!r} ({type(e).__name__}: {e}); the seam guard reads "
+                "each format's dimension off exactly this call, and a formatter it "
+                "cannot call is a format whose money or percent sign nothing checks. "
+                "Either the probe is no longer a value every formatter accepts -- "
+                "change _SEAM_FMT_PROBE -- or the formatter's preconditions moved")
+        found = [s for s in _SEAM_DIMENSION_SIGILS if s in rendered]
+        assert len(found) <= 1, (
+            f"report_tokens.FORMATTERS[{name!r}] renders {rendered!r}, which carries "
+            f"the dimension sigils {found}; a format spec measures ONE dimension, and "
+            "this test cannot say which of them a value that lost one has lost")
+        if found:
+            out[name] = found[0]
+    return out
+
+
+# Derived ONCE, at import, for the reason _seam_excuse gives for validating
+# allowlist keys in a case rather than inside the scan: a table this rule
+# cannot build is a fact about report_tokens.FORMATTERS, and it should be
+# reported by name before any case runs rather than as an exception out of
+# whichever case happened to be first. The dedicated case below re-derives it
+# and holds the result to _SEAM_FMT_DIMENSION_FLOOR.
+_SEAM_FMT_DIMENSIONS = _seam_fmt_dimensions()
 
 # An HTML tag, with QUOTED ATTRIBUTES honored: a '>' inside "..." or '...' is
 # attribute text and does not end the tag. The naive `<[^>]*>` ends the tag at
@@ -6251,8 +6384,9 @@ def _seam_unit_prefix(text):
     return None
 
 
-def _seam_missing_unit(value, head, tail):
-    """Class 2: a bare number that nothing beside it gives a unit to -- or None.
+def _seam_missing_unit(value, head, tail, fmt=None):
+    """Class 2: a value that lost the dimension its format declares, or a bare
+    number that nothing beside it gives a unit to -- or None.
 
     A bare number followed by a WORD THAT IS NOT A UNIT is reported. The
     earlier form of this rule reported only a bare number followed by a
@@ -6260,7 +6394,37 @@ def _seam_missing_unit(value, head, tail):
     #129's own line it caught SOLAR_COVERAGE_PCT (followed by "of") and missed
     SELF_CONSUMED_SHARE (followed by "self-consumed") losing its percent sign
     the same way. See the block comment above for the whitelist, the
-    exemptions, and the false positives the widening costs."""
+    exemptions, and the false positives the widening costs.
+
+    `fmt` is the token's DECLARED format spec, as report_tokens.TOKENS records
+    it, and None for a token that declares none or that this scan cannot name
+    (a synthetic fixture's invented token). It is what the first test below
+    reads, and it is passed in rather than looked up so this rule stays a
+    function of its arguments and the module tables, like the other two.
+
+    THE FIRST TEST IS NOT ABOUT THE PROSE, and it comes first because the
+    prose test cannot answer it. A "usd0" value rendering "3,282" beside the
+    template's "/yr" satisfies the unit whitelist below and is still a bill
+    with no currency on it -- 23 of the report's 43 money and percent
+    occurrences were exactly that shape, "/yr" or "/mo" answering for a
+    missing "$". The declared dimension is the only thing on either side of
+    the seam that knows a price from a period, so it is asked first, and its
+    answer is not overridable by what follows.
+
+    It is deliberately NOT limited to the bare-number shape the rest of the
+    rule is scoped to. A formatter regression on a signed money token renders
+    "-500", which is not a bare number and never reaches the whitelist below,
+    and it has lost its dollar sign just as completely. A correctly formatted
+    value cannot trip this test -- its formatter puts the sigil there
+    unconditionally -- so widening past the shape guard costs no false
+    positives and catches the sign case for free."""
+    dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
+    if dimension is not None and dimension not in value \
+            and head[-1:] != dimension and tail[:1] != dimension:
+        return (f"a {fmt!r} value renders {value!r}, which carries no {dimension!r} and "
+                f"has none immediately beside it; that format DECLARES the figure is "
+                f"measured in {dimension!r}, so this one lost its dimension -- whatever "
+                "unit follows it belongs to something else")
     if not _SEAM_BARE_NUMBER_RE.match(value):
         return None
     # A sigil in front of a bare number IS its unit ("$14,500", "~2").
@@ -6347,8 +6511,11 @@ def _seam_scan(template_text, values):
     prove an excused occurrence still has the seam its entry excuses. It does
     read the rule tables and thresholds those rules are built from --
     _SEAM_CLASSES here, and _SEAM_SIGILS, _SEAM_UNITS, _SEAM_BARE_NUMBER_RE,
-    _SEAM_TAG_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and _SEAM_ECHO_GAP inside
-    the three rules -- so identical arguments answer differently once one of
+    _SEAM_FMT_DIMENSIONS, _SEAM_TAG_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
+    _SEAM_ECHO_GAP inside the three rules -- plus report_tokens.TOKENS, for
+    the one thing about a seam that is not visible in the rendered line: what
+    dimension the token's declared format says the figure is measured in
+    -- so identical arguments answer differently once one of
     those is mutated. Measured, not assumed: dropping "cycles/day" from
     _SEAM_UNITS turns a clean "{{CYCLES_PER_DAY}} cycles/day" fragment into
     one missing-unit hit. That is not a defect to fix; it is what the probe
@@ -6362,9 +6529,16 @@ def _seam_scan(template_text, values):
         rendered, spans = _seam_render(line, values)
         for name, start, end in spans:
             value, head, tail = rendered[start:end], rendered[:start], rendered[end:]
+            # The token's DECLARED format, which class 2 reads to learn what
+            # dimension the figure is supposed to carry. Looked up here rather
+            # than inside the rule so the rule stays a function of its
+            # arguments; .get twice because a synthetic fixture's invented
+            # token is not in the registry and declares nothing, which leaves
+            # that half of class 2 inert exactly as it should be.
+            fmt = rt.TOKENS.get(name, {}).get("fmt")
             for label, why in zip(_SEAM_CLASSES,
                                   (_seam_doubled(value, head, tail),
-                                   _seam_missing_unit(value, head, tail),
+                                   _seam_missing_unit(value, head, tail, fmt),
                                    _seam_echo(value, head, tail))):
                 if why:
                     found.append((name, label, why,
@@ -6683,9 +6857,10 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
         "more than one occurrence (the same token twice on one line) or an entry "
         "excuses nothing")
     # THE BARE-NUMBER DISPOSITION, derived rather than written down. A bare
-    # number is the shape class 2 exists for, and every one of them leaves
-    # _seam_missing_unit by exactly one of its exits: a sigil in front, nothing
-    # but markup behind it to the end of the line, a unit behind it, a
+    # number is the shape the prose half of class 2 exists for, and every one
+    # of them leaves _seam_missing_unit by exactly one of its exits: a
+    # declared dimension the value no longer carries, a sigil in front,
+    # nothing but markup behind it to the end of the line, a unit behind it, a
     # letterless next word, or a report -- which must then be allowlisted,
     # since the assertion at the top of this case says nothing is left
     # unexcused. The branch chain below is that function's
@@ -6696,9 +6871,18 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
     # bucket it landed in agrees with what _seam_missing_unit actually
     # returned, so a chain that drifts from the function fails here rather
     # than quietly reporting a wrong split.
+    #
+    # "lost its declared dimension" leads the chain because it leads the rule,
+    # and it is a REPORTING bucket rather than a quiet one: a money token
+    # rendering a bare number is a defect no matter what follows it, which is
+    # the hole "carrying a unit" used to swallow. It stays at zero on the
+    # shipped template -- every dimension-declaring token renders its sigil --
+    # and case_a_declared_money_or_percent_token_that_loses_its_sigil_is_
+    # reported is where it is driven off zero on purpose.
     quiet = ("carrying a unit", "sigil-fronted", "at end of line",
              "before a letterless word")
-    disposition = dict.fromkeys(quiet + ("allowlisted", "reported"), 0)
+    disposition = dict.fromkeys(("lost its declared dimension",) + quiet
+                                + ("allowlisted", "reported"), 0)
     bare = 0
     for line in template.splitlines():
         rendered, spans = _seam_render(line, values)
@@ -6707,8 +6891,13 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
             if not _SEAM_BARE_NUMBER_RE.match(value):
                 continue
             bare += 1
+            fmt = rt.TOKENS.get(name, {}).get("fmt")
+            dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
             text = _SEAM_TAG_RE.sub(" ", tail).lstrip()
-            if head[-1:] in _SEAM_SIGILS:
+            if dimension is not None and dimension not in value \
+                    and head[-1:] != dimension and tail[:1] != dimension:
+                bucket = "lost its declared dimension"
+            elif head[-1:] in _SEAM_SIGILS:
                 bucket = "sigil-fronted"
             elif not text:
                 bucket = "at end of line"
@@ -6721,7 +6910,7 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
             else:
                 bucket = "reported"
             disposition[bucket] += 1
-            why = _seam_missing_unit(value, head, tail)
+            why = _seam_missing_unit(value, head, tail, fmt)
             assert (why is None) == (bucket in quiet), (
                 f"the bare-number disposition puts {name} on template line "
                 f"{line.strip()[:60]!r} in the {bucket!r} bucket, but "
@@ -6734,6 +6923,10 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
     assert disposition["reported"] == 0, (
         f"{disposition['reported']} bare number(s) lost a unit and are not allowlisted, "
         "which the defect assertion at the top of this case should already have said")
+    assert disposition["lost its declared dimension"] == 0, (
+        f"{disposition['lost its declared dimension']} token(s) declared with a money "
+        "or percent format render a bare number with no sigil on it or beside it; the "
+        "defect assertion at the top of this case should already have said so")
     split = ", ".join(f"{n} {label}" for label, n in disposition.items())
     return (f"{occurrences} token occurrences across {len(seen)} tokens render clean at "
             f"their template seams ({in_live_markup} in live markup, "
@@ -6769,6 +6962,173 @@ def case_the_seam_guard_checks_the_same_tokens_without_the_private_archive():
         "CI would fail where the staged archive passes:\n  " + _seam_report(defects))
     return (f"the archive-less path resolves the same {len(stand_in)} non-gap tokens and "
             f"renders every seam clean ({len(gaps)} gaps skipped)")
+
+
+def _seam_plain_number_fmt():
+    """The name of a report_tokens format spec that renders the probe as a
+    BARE NUMBER -- no dimension sigil, no unit, nothing but digits.
+
+    This is the regression the sweep below simulates: issue #129's defect was
+    one word in a token declaration, pct0 -> num0, and the money half of the
+    same slip is usd0 -> num0. Chosen by probing FORMATTERS rather than named,
+    for the reason the dimension table is derived rather than named -- and
+    picked deterministically (sorted first) so the sweep's numbers are the
+    same on every run and in every checkout."""
+    plain = sorted(name for name, fn in rt.FORMATTERS.items()
+                   if name not in rt._NON_NUMERIC_FMTS
+                   and _SEAM_BARE_NUMBER_RE.match(fn(_SEAM_FMT_PROBE)))
+    assert plain, (
+        "no format spec in report_tokens.FORMATTERS renders a bare number any more, so "
+        "the sigil-dropping regression this case exists to simulate cannot be built. "
+        "That is a claim about report_tokens, not about this test: say which spec "
+        "replaced num0 and probe it here")
+    return plain[0]
+
+
+def _seam_regressed_values(plain):
+    """{token: its value re-rendered through `plain`} for every token whose
+    DECLARED format carries a dimension.
+
+    The mutation is applied where the defect really happens -- to the token's
+    format spec, re-resolved through report_tokens' own resolver -- rather
+    than by editing the rendered string here. A hand-edited string proves the
+    rule fires on a shape someone typed; this proves it fires on what
+    report_tokens actually publishes when a declaration slips.
+
+    Resolved through the same two paths as _seam_values, so the sweep covers
+    the same tokens on a runner with no private archive."""
+    def resolve():
+        return {name: rt.resolve_token(name, dict(spec, fmt=plain))
+                for name, spec in rt.TOKENS.items()
+                if spec.get("kind") != "gap" and spec.get("fmt") in _SEAM_FMT_DIMENSIONS}
+
+    if rt.hh.PATH.is_file():
+        return resolve()
+    with _seam_stand_in_household():
+        return resolve()
+
+
+@case
+def case_a_declared_money_or_percent_token_that_loses_its_sigil_is_reported():
+    """The hole class 2 shipped with, closed and measured: a money token whose
+    format regresses to a plain number renders "3,282/yr", and "/yr" is a
+    member of _SEAM_UNITS, so the prose whitelist answered "something beside
+    it gives it a unit" and the suite stayed green on a bill with no currency
+    on it. It is the same one-word slip as issue #129's pct0 -> num0, one
+    dimension over, and issue #133's own title names it.
+
+    THE SWEEP IS THE ASSERTION, not an anecdote. Every occurrence in
+    report-template.html of a token whose declared format carries a dimension
+    is re-resolved with that format swapped for a bare-number one, and the
+    guard must report it. The prose-only rule is run against the same
+    occurrences in the same loop, so the before and after numbers come from
+    one measurement rather than from two claims -- and the case fails if the
+    prose rule ever turns out to have caught them all along, which is what a
+    sweep that proves nothing would look like.
+
+    Two things it deliberately does NOT do. It does not name a token: the rule
+    reads report_tokens.TOKENS[...]["fmt"] and the dimension table is derived
+    from FORMATTERS, so a money token added tomorrow is swept tomorrow with no
+    edit here -- that is the property case_the_seam_rules_are_generic_not_a_
+    case_per_token asserts for the other rules. And it does not touch the
+    allowlist: an entry excusing one of these would fail the sweep, which is
+    correct. A count that is genuinely dimensionless does not get declared
+    usd0.
+
+    THE BLIND SPOT IS COUNTED HERE TOO, in the return line rather than as a
+    literal, because a token that formats itself (fmt=None, calling _usd3 or
+    _cents1 inside its own lambda) declares no dimension for any of this to
+    read. See the block comment above."""
+    values, _gaps = _seam_values()
+    template = rt.TEMPLATE.read_text()
+
+    # 1. The derivation still says what the floor says it says, and the floor
+    #    is what a derivation cannot check about itself.
+    assert _seam_fmt_dimensions() == _SEAM_FMT_DIMENSIONS, (
+        "report_tokens.FORMATTERS classifies differently now than it did at import; "
+        "the seam guard's dimension table is stale for this run")
+    for fmt, sigil in _SEAM_FMT_DIMENSION_FLOOR.items():
+        assert _SEAM_FMT_DIMENSIONS.get(fmt) == sigil, (
+            f"format spec {fmt!r} no longer classifies as {sigil!r} (it is now "
+            f"{_SEAM_FMT_DIMENSIONS.get(fmt)!r}), so every token declared with it can "
+            "drop its sigil unseen. Narrowing this guard is allowed and hiding it is "
+            f"not: drop {fmt!r} from _SEAM_FMT_DIMENSION_FLOOR in the same commit, "
+            "where a reviewer reads it")
+    # ...and the table discriminates: a plain-number format is not a dimension,
+    # or the rule would fire on every figure in the report.
+    plain = _seam_plain_number_fmt()
+    assert plain not in _SEAM_FMT_DIMENSIONS, (
+        f"the bare-number format {plain!r} classifies as the dimension "
+        f"{_SEAM_FMT_DIMENSIONS[plain]!r}; the derivation is reading a sigil that is "
+        "not there and every token in the report is about to be reported")
+
+    # 2. The sweep. One token is regressed at a time, against the real
+    #    template line it sits on, through _seam_defects -- so this exercises
+    #    the whole path, including _seam_scan's registry lookup, and not just
+    #    the rule in isolation.
+    regressed = _seam_regressed_values(plain)
+    assert regressed, (
+        "no token in report_tokens.TOKENS declares a money, percent or cents format, "
+        "so this sweep checks nothing. That would be a real change to the registry, "
+        "not a passing test")
+    swept = caught_before = 0
+    unit_fronted = []
+    for line in template.splitlines():
+        rendered, spans = _seam_render(line, values)
+        for name, start, end in spans:
+            if name not in regressed:
+                continue
+            swept += 1
+            value, head, tail = rendered[start:end], rendered[:start], rendered[end:]
+            fmt = rt.TOKENS[name]["fmt"]
+            # The value the report would really publish after the slip.
+            broken = regressed[name]
+            hits = _seam_defects(line, dict(values, **{name: broken}))
+            assert any(n == name and c == "missing-unit" for n, c, _w, _x in hits), (
+                f"{name} declares {fmt!r} and would publish {broken!r} on template line "
+                f"{line.strip()[:70]!r} if that format slipped to {plain!r}, and the "
+                f"seam guard reports {[(n, c) for n, c, _w, _x in hits] or 'nothing'}. "
+                "A figure with no currency or percent sign on it is the defect issue "
+                "#133 is named for")
+            # The prose-only rule, on the same occurrence, in the same loop:
+            # this is the "before" number, measured rather than remembered.
+            b_head, b_tail = rendered[:start], rendered[end:]
+            if _seam_missing_unit(broken, b_head, b_tail) is not None:
+                caught_before += 1
+            else:
+                text = _SEAM_TAG_RE.sub(" ", b_tail).lstrip()
+                if _seam_unit_prefix(text) is not None:
+                    unit_fronted.append((name, fmt, _seam_unit_prefix(text)))
+    assert caught_before < swept, (
+        f"the prose-only half of class 2 already caught all {swept} sigil-dropping "
+        "regressions, so the declared-dimension test is not what is catching them and "
+        "this case proves nothing about it")
+    assert unit_fronted, (
+        "not one of the regressions the prose rule missed was missed BECAUSE a unit "
+        "follows the figure, which is the specific hole this test closes "
+        "(\"{{X}}/yr\" answering for a missing \"$\"). Either report-template.html "
+        "stopped printing money figures with a period behind them, or _SEAM_UNITS "
+        "stopped containing '/yr' -- say which, here")
+
+    # 3. The stated blind spot, counted from the registry so it tracks it.
+    seen = {name for line in template.splitlines()
+            for name, _s, _e in _seam_render(line, values)[1]}
+    self_formatting = sorted(
+        name for name in seen
+        if rt.TOKENS.get(name, {}).get("fmt") not in _SEAM_FMT_DIMENSIONS
+        and any(s in values[name] for s in _SEAM_DIMENSION_SIGILS)
+        and _SEAM_BARE_NUMBER_RE.match(
+            "".join(c for c in values[name]
+                    if c not in _SEAM_DIMENSION_SIGILS and c not in "~+ ")))
+    return (f"all {swept} occurrence(s) of a token declaring a money, percent or cents "
+            f"format are caught when that format slips to {plain!r}; the prose-only rule "
+            f"caught {caught_before} of them, and {len(unit_fronted)} of the "
+            f"{swept - caught_before} it missed were missed because a unit "
+            f"({sorted({u for _n, _f, u in unit_fronted})}) sits where the sigil should "
+            f"be. {len(_SEAM_FMT_DIMENSIONS)} format spec(s) classify as a dimension, "
+            f"{len(_SEAM_FMT_DIMENSION_FLOOR)} of them held to the committed floor; "
+            f"{len(self_formatting)} single-figure token(s) in the template format "
+            "themselves and declare no dimension for this to read")
 
 
 def _seam_comment_mask(text):
