@@ -312,32 +312,53 @@ def case_an_empty_or_rootless_sandbox_is_refused_before_anything_runs():
 # AC: the sandbox itself is well formed and cannot leak.
 # ---------------------------------------------------------------------------
 @case
-def case_the_sandbox_is_outside_the_repo_and_private_is_symlinked_not_copied():
+def case_the_sandbox_is_outside_the_repo_and_holds_no_path_back_into_private():
+    """The sandbox must contain no filesystem route to the authoritative
+    archive -- not the private/ directory itself, and not a symlink hidden
+    inside the copy of it."""
+    before = DR.stat_manifest(ROOT / "private")
     sb = DR.Sandbox(ROOT).build()
     try:
         p = sb.path
         assert p.is_absolute() and ROOT not in p.parents and p != ROOT, p
         assert (p / "analysis" / "rates.py").is_file(), "analysis/ was not seeded"
         assert list((p / "data").glob("*.json")), "data/ was not seeded"
+        n_priv = 0
         if (ROOT / "private").is_dir():
-            link = p / "private"
-            assert link.is_symlink(), "private/ was copied instead of symlinked"
-            assert link.resolve() == (ROOT / "private").resolve(), link.resolve()
-            # 19 MB of raw PII must not have been duplicated into a temp dir
-            real = sum(f.stat().st_size for f in p.rglob("*")
-                       if f.is_file() and not f.is_symlink())
-            assert real < 40 * 1024 * 1024, f"sandbox holds {real} bytes; private/ copied?"
-        assert not (p / "private" / "README.md").is_file() or (p / "private").is_symlink(), \
-            "the tracked private/README.md displaced the private/ symlink"
+            priv = p / "private"
+            assert priv.is_dir(), "private/ was not staged into the sandbox"
+            assert not priv.is_symlink(), \
+                "private/ is a symlink -- a write in the sandbox reaches the real archive"
+            real_priv = (ROOT / "private").resolve()
+            escapes = []
+            for f in p.rglob("*"):
+                if not f.is_symlink():
+                    continue
+                t = f.resolve()
+                if t == real_priv or real_priv in t.parents:
+                    escapes.append(str(f.relative_to(p)))
+            assert not escapes, f"sandbox symlinks resolve into the real private/: {escapes}"
+            n_priv = sum(1 for f in priv.rglob("*") if f.is_file())
+            assert n_priv == sum(1 for f in (ROOT / "private").rglob("*") if f.is_file()), \
+                "the private/ copy does not hold the same number of files as the archive"
+            for name in DR.CWD_FIXTURES:
+                src = ROOT / "private" / "verify" / name
+                if src.is_file():
+                    staged = p / name
+                    assert staged.is_file() and not staged.is_symlink(), \
+                        f"cwd fixture {name} is not a plain copy in the sandbox"
+                    assert staged.stat().st_size == src.stat().st_size, name
         n = sb.n_seeded
     finally:
         sb.dispose()
     assert not p.exists(), "the sandbox was not removed"
-    assert (ROOT / "private").is_dir() or True   # disposal must not follow the link
+    assert (ROOT / "private").is_dir(), "the real private/ was removed"
+    assert DR.stat_manifest(ROOT / "private") == before, \
+        "building and disposing of a sandbox altered the real private/"
     return (f"the sandbox is built outside the checkout from {n} tracked files with "
-            "both analysis/ and data/ populated, private/ is a symlink to the real "
-            "archive rather than a copy, and disposal removes the sandbox without "
-            "following that link")
+            f"both analysis/ and data/ populated, private/ is a plain copy ({n_priv} "
+            "files) with no symlink in the whole tree resolving back into the real "
+            "archive, and disposal removes the sandbox leaving private/ untouched")
 
 
 @case
@@ -359,9 +380,14 @@ def case_disposal_refuses_any_path_that_is_not_its_own_temp_sandbox():
 
 
 @case
-def case_a_generator_that_writes_under_private_is_reported_as_a_failure():
-    """private/ is symlinked, so a write there would reach the real archive. The
-    manifest guard has to notice. Exercised against a SYNTHETIC private/."""
+def case_a_generator_that_writes_under_private_cannot_reach_the_real_archive():
+    """The archive is the one input in this repo that cannot be regenerated, so
+    the sandbox must not hand a generator a writable path to it. This case runs
+    a deliberately destructive generator -- it truncates a file, appends to a
+    second, deletes a third and creates a fourth, all under private/ -- against
+    a SYNTHETIC archive, and requires the synthetic archive to come out
+    byte-for-byte identical. A symlinked private/ fails every one of those
+    assertions."""
     body = ("import pathlib\n"
             "def _repo_root():\n"
             "    p = pathlib.Path.cwd()\n"
@@ -370,18 +396,72 @@ def case_a_generator_that_writes_under_private_is_reported_as_a_failure():
             "    return p\n"
             "R = _repo_root()\n"
             "(R / 'data' / 'out.json').write_text('{}\\n')\n"
+            "(R / 'private' / 'bill.pdf').write_bytes(b'')\n"
+            "with open(R / 'private' / '1-raw-data' / 'usage.csv', 'a') as fh:\n"
+            "    fh.write('appended garbage\\n')\n"
+            "(R / 'private' / 'household.yaml').unlink()\n"
             "(R / 'private' / 'scribble.txt').write_text('I should not be here\\n')\n")
     with tempfile.TemporaryDirectory() as td:
         repo = _synth_repo(td, {"g.py": body}, {"out.json": "{}\n"})
-        (repo / "private").mkdir()
-        (repo / "private" / "archive.txt").write_text("pretend PII\n")
+        priv = repo / "private"
+        (priv / "1-raw-data").mkdir(parents=True)
+        (priv / "bill.pdf").write_bytes(b"%PDF-1.4 pretend statement\n" * 64)
+        (priv / "1-raw-data" / "usage.csv").write_text("ts,kwh\n2026-01-01T00:00,0.4\n")
+        (priv / "household.yaml").write_text("address: irreplaceable\n")
+        before = _hash_dir(priv)
+        assert len(before) == 3, before
+
         rep = DR.dry_run(repo / "analysis" / "g.py")
-        assert rep.failure is not None, "a write into private/ went unreported"
-        assert "private/" in rep.failure and "scribble.txt" in rep.failure, rep.failure
-        assert rep.changes == [], "a tampering run must not also publish a diff"
-    return ("a generator that writes under the symlinked private/ is caught by the "
-            "before/after stat manifest and reported as a FAILURE naming the file, "
-            "instead of a diff nobody would look twice at")
+
+        after = _hash_dir(priv)
+        assert after == before, (
+            "the real private/ archive was modified by a dry run: "
+            + str(sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))))
+        assert not (priv / "scribble.txt").exists(), \
+            "the generator created a file inside the real private/"
+        assert rep.failure is None, rep.failure
+        # Contained, and visible: the writes landed on the sandbox's own copy and
+        # are reported as writes rather than disappearing behind a symlink.
+        wrote = set(rep.result.wrote)
+        assert "private/scribble.txt" in wrote and "private/bill.pdf" in wrote, sorted(wrote)
+        assert [c.path for c in rep.changes] == [], [c.path for c in rep.changes]
+    return ("a generator that truncates, appends to, deletes and creates files "
+            "under private/ leaves the archive byte-for-byte identical -- the "
+            "writes land on the sandbox's disposable copy and are reported there")
+
+
+@case
+def case_a_generator_that_overwrites_a_cwd_fixture_cannot_reach_the_real_one():
+    """usage.csv/samA.csv/samB.csv are staged into the sandbox's CWD from
+    private/verify/. usage.csv is the raw Green Button export; a generator that
+    opens it for writing must truncate a copy, not the export."""
+    body = ("import pathlib\n"
+            "open('usage.csv', 'w').write('destroyed\\n')\n"
+            "def _repo_root():\n"
+            "    p = pathlib.Path.cwd()\n"
+            "    while not ((p / 'analysis').is_dir() and (p / 'data').is_dir()):\n"
+            "        p = p.parent\n"
+            "    return p\n"
+            "(_repo_root() / 'data' / 'out.json').write_text('{}\\n')\n")
+    original = "ts,kwh\n" + "".join(f"2026-01-01T{h:02d}:00,0.4\n" for h in range(24))
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": body}, {"out.json": "{}\n"})
+        verify = repo / "private" / "verify"
+        verify.mkdir(parents=True)
+        (verify / "usage.csv").write_text(original)
+        before = _hash_dir(repo / "private")
+
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+
+        assert (verify / "usage.csv").read_text() == original, \
+            "the generator truncated the real usage.csv fixture through the sandbox"
+        assert _hash_dir(repo / "private") == before, "private/verify/ changed"
+        assert rep.failure is None, rep.failure
+        assert any("cwd fixtures copied" in n for n in rep.notes), rep.notes
+        assert "usage.csv" in rep.result.wrote, sorted(rep.result.wrote)
+    return ("a generator that opens usage.csv for writing in its CWD truncates the "
+            "sandbox's own copy: the fixture under private/verify/ is unchanged and "
+            "the overwrite is reported as a sandbox write")
 
 
 @case

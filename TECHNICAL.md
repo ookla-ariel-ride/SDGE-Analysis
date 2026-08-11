@@ -4262,6 +4262,73 @@ formula on the real archive, both showing the two bases genuinely diverge, not b
 each fix, confirming the relevant case fails, then re-applying it — plus real-archive cases
 (end-to-end `build()`, byte-identical regeneration) gated behind `SkipCase`.
 
+### 3.30 `analysis/dry_run.py` — what would this generator change? (tooling; owns no artifact)
+
+`./.venv/bin/python analysis/dry_run.py <generator.py> [--check] [-- args...]`. Tooling rather
+than analysis: it reports what a generator WOULD write into `data/` without letting it write
+anything, so the §9 regeneration gate's question can be answered without regenerating.
+Registered in `test_scripts_runnable.py`'s `MANIFEST` as `library` — it owns no artifact, and
+that role asserts it imports with no side effects.
+
+**How a sandbox can contain a generator.** Generators locate the repo two ways, and a sandbox
+has to satisfy both: `ROOT = Path(__file__).resolve().parent.parent`, which follows the SCRIPT
+and ignores the CWD, and `_repo_root()` (`carbon_fullyear.py` and ~33 siblings), the nearest
+ancestor holding both `analysis/` and `data/`, probed from `Path.cwd()` first. Both are
+satisfied only if the sandbox holds copies of `analysis/` and `data/` AND the generator is
+executed from the sandbox's own copy of the script with the sandbox as CWD: `parent.parent`
+then resolves to the sandbox, and `_repo_root()` resolves to it on its first probe. Neither
+idiom has any way to name the real repo, and `_repo_root()`'s own `SystemExit` on finding no
+ancestor with both directories is the backstop, so a malformed sandbox exits non-zero instead
+of quietly finding the real `data/`. `test_dry_run.py` exercises both idioms rather than
+resting on that argument.
+
+**The sandbox.** A `mkdtemp` tree under the system temp dir, refused outright if it is
+entangled with the checkout. Tracked files are copied out (`git ls-files`), the generator
+itself is copied even when untracked (the report notes it), and the whole `private/` archive
+is COPIED rather than symlinked: a symlink would be a writable path from the sandbox into the
+authoritative raw archive, where a stray write could truncate a bill PDF and a before/after
+manifest could only report the damage afterwards. `copytree(symlinks=False)` dereferences, so a
+checkout that stages bill PDFs as symlinks carries no route back out; the CWD fixtures
+(`usage.csv`, `samA.csv`, `samB.csv`) are copied from `private/verify/` for the same reason.
+`PYTHONPATH` is cleared so the real `analysis/` can never be imported, the run is bounded by
+`--timeout` (1800 s default), and disposal refuses any path that is not the prefixed temp
+sandbox this process created.
+
+**Why a "no changes" verdict can be believed.** Three things must hold before any diff is
+reported: the generator exited 0, the sandbox was populated (`analysis/` and `data/` both
+present and non-empty), and the run actually WROTE something — every seeded file is backdated
+a day, so any write at all lands newer. An empty write set is a failure. That is the same
+mtime-not-content rule `test_scripts_runnable.py` uses, for the same reason: several
+generators legitimately reproduce the committed bytes, so content equality cannot separate
+"reproduced it" from "never opened it". The real `data/` is hashed before and after the run
+and `private/` stat-manifested before and after; either one changing is reported as a failure,
+not as a diff.
+
+**The diff.** The sandbox's `data/` against the baseline — `data/` as it stands on disk
+(`--baseline worktree`, the default) or as of HEAD (`--baseline head`, materialised with
+`git archive`). JSON is described by top-level keys added, removed and changed; CSV by header
+change and by rows added or removed as a multiset; anything else by byte length. Added paths
+`.gitignore` would exclude are put to `git check-ignore` and dropped, so `parse_bills.py`'s
+publication lock is not reported as a new artifact. Generators that write their artifact into
+the CWD while the repo commits it under `data/` are compared the way the §9 gate's `cmp` does.
+
+**Exit codes.** 0 ran cleanly (with `--check`, nothing would change); 1 `--check` and at least
+one artifact would change; 2 the dry run itself failed, which is never reported as "no
+changes". `--check` is therefore the non-mutating counterpart of the §9 gate, which stays the
+authority when the regeneration is meant to be committed: the gate leaves the rebuilt artifact
+in the tree, and it diffs against the index where `--check` diffs against `data/` on disk
+(`--baseline head` matches the gate). Each generator also gets its own sandbox, seeded from the
+repo's own artifacts, so a chain where one generator consumes another's freshly rewritten
+output is not reproduced — run the gate for a chain.
+
+**Tests.** `test_dry_run.py` (17 cases), run by CI and counted by `check_coverage.sh`. Among
+them: the real `data/` is byte-identical after a dry run; both repo-root idioms land their
+writes in the sandbox; a generator that writes nothing, one that crashes, and an empty or
+rootless sandbox are each a failure rather than "no changes"; a generator writing under
+`private/` or over a CWD fixture cannot reach the real one; a sandbox escape is caught by the
+`data/` hash guard; disposal refuses any path that is not its own sandbox; and `--check` exits
+0 when a generator reproduces its artifact.
+
 ---
 
 ## 4. Battery simulation methodology
@@ -4760,7 +4827,7 @@ billing periods are read from the PDF text, never inferred from the filename.
 | `data/bill_tou_detail.csv` | long format: `statement_date, period, section (delivery/generation), season, tou_period, kwh, rate_per_kwh` — the rates as printed on each bill |
 | `data/bill_gas_detail.csv` | long format (issue #98): `statement_date, period, charge_type (gas_service/gas_energy/other_fees), segment, segment_days, segment_therms, baseline_rate, nonbaseline_rate, energy_rate, other_fees_rate` — one row per rate segment for EACH gas charge type. "Gas Service" (the tiered baseline/non-baseline rate) and "Gas Energy Charge" (a flat, untiered $/therm charge on every therm) split by DAY on a mid-period rate change; "other_fees" (Public Purpose Programs + State Regulatory Fee combined — Codex review, issue #98, pass 1) is also flat and untiered but splits by THERM COUNT instead. All three charge types have INDEPENDENT segment counts within one period, so `charge_type` is the discriminator and only the columns relevant to it are populated. This is what a true marginal-tier gas rebilling needs and `bill_periods_gas.csv`'s blended columns cannot provide — see `heat_pump_conversion.py`'s `gas_savings_by_period()` for the reference consumer |
 | `data/electric_bill_summary.csv`, `data/gas_bill_summary.csv` | regenerated in their original schemas |
-| `data/bill_corpus_boundary.json` | where the electric corpus stops and why: `rule`, the `export` that defines the boundary (path, statement count, span), `statements_parsed`/`statements_published`, the published statement and period spans, `excluded_statements` (each with its periods, billed days, calendar span, `reason` and `exclusion_ends_when`), and `window_coverage` (window read from `data/behavior_rebuild.json`, days covered, days missing, the missing date ranges, and how many of those days the excluded statements would supply). Written on every run — an empty `excluded_statements` list is the positive record that the export covered the whole corpus |
+| `data/bill_corpus_boundary.json` | where the electric corpus stops and why: `rule`, the `export` that defines the boundary (path, statement count, span), `statements_parsed`/`statements_published`, the published statement and period spans, `excluded_statements` (each with its periods, billed days, calendar span, `reason` and `exclusion_ends_when`), and `window_coverage` (window read from `data/behavior_rebuild.json`, days covered, days missing, the missing date ranges, and how many of those days the excluded statements would supply). Written on every run — an empty `excluded_statements` list is the positive record that the export covered the whole corpus, except on a run with no export staged, which adds a `boundary_not_derived` block: `export_looked_for` (the path searched), `reason` (the rule had nothing to derive the boundary from, so the empty list records that nothing WAS excluded, not that nothing needed to be), `consequence` (every parsed statement was published unchecked, so neither a statement the export does not cover nor an export row with no PDF here could be detected), and `boundary_is_derived_when` (the export is staged at that path and the parser re-run; no cutoff date is stored anywhere, so nothing has to be edited when it arrives). The key exists only on those runs, so a repository with an export staged serialises without it |
 
 **The corpus boundary.** A statement is inside the reconcilable corpus if and only if
 SDG&E's billing-history export (`private/1-raw-data/electric_billing_history_2024-2026.csv`)
@@ -4781,7 +4848,10 @@ what is published. An export row with NO PDF cannot: it is positive evidence of 
 parser has never read, i.e. a corpus missing a bill it would claim to reconcile, so it fails the
 run closed. So do an export hole in the middle of the corpus (excluding it would punch a gap into
 an otherwise contiguous series) and an export sharing no statement with the corpus at all. With no
-export staged the boundary is underivable, so nothing is excluded and the run says so.
+export staged the boundary is underivable, so nothing is excluded and both the run's own output
+and the artifact's `boundary_not_derived` block say so — a console notice does not survive into
+the committed evidence, and a reader of the artifact must not be able to mistake "not checked"
+for "checked, nothing excluded".
 `test_parse_bills.py` covers all six shapes, including the pair that proves the boundary is
 derived: the same corpus and the same statement, excluded under an export that omits it and
 published under one that covers it.

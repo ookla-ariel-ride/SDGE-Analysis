@@ -35,12 +35,18 @@ HOW A SANDBOX CAN CONTAIN A GENERATOR AT ALL
 
 WHAT IS NEVER TOUCHED
     The real data/ is only ever read (hashed before the run, hashed again after,
-    and any difference is a loud failure). private/ is symlinked in, never
-    copied -- it is 19 MB of raw PII and copying it per run would be both slow
-    and one more place for it to leak -- so a generator that WRITES under
-    private/ would reach the real archive. Generators are readers there, but
-    "should" is not a guarantee, so private/ is stat-manifested before and after
-    the run too and any change is reported as a failure.
+    and any difference is a loud failure). private/ is likewise only ever read:
+    the whole archive is COPIED into the sandbox (19 MB / ~800 files, about
+    0.2 s against a 1800 s timeout) and the generator sees only that disposable
+    copy, which lives under the 0700 temp dir and is removed by dispose(). The
+    copy dereferences symlinks, so nothing inside the sandbox is a path back out
+    to the real archive -- including the cwd fixtures (usage.csv, samA.csv,
+    samB.csv), which are copied in rather than linked for the same reason. A
+    generator that writes under private/ therefore truncates a throwaway file,
+    and the write is reported like any other sandbox write. private/ is still
+    stat-manifested before and after the run: that check is no longer the only
+    defence against a write reaching the archive, it is the proof that none
+    did.
 
 SILENT NO-OPS ARE FAILURES, NOT "NO CHANGES"
     A dry-run tool that reports "nothing would change" because the generator
@@ -178,9 +184,9 @@ def _git(root, *args):
 
 def tracked_files(root):
     """Tracked paths, as posix strings. Paths under private/ are excluded here
-    and the whole directory is symlinked instead (private/README.md is tracked,
-    and materialising it would turn sandbox/private into a real directory that
-    the symlink could no longer occupy)."""
+    because the whole directory is copied in wholesale afterwards (private/
+    README.md is tracked, and seeding it first would leave sandbox/private
+    already existing when copytree wants to create it)."""
     raw = _git(root, "ls-files", "-z").split("\0")
     out = []
     for rel in raw:
@@ -209,8 +215,9 @@ def _backdate(root, when):
 class Sandbox:
     """A throwaway repo-shaped tree outside the checkout.
 
-    Owns nothing inside the real repo: it copies tracked files OUT and symlinks
-    private/ IN, and every write the generator makes lands here.
+    Owns nothing inside the real repo: it copies tracked files OUT and copies
+    private/ OUT as well, and every write the generator makes lands here. No
+    path inside the sandbox leads back to the checkout.
     """
 
     def __init__(self, root, notes=None):
@@ -260,44 +267,72 @@ class Sandbox:
                     f"sandbox {required}/ is missing or empty -- the generator's "
                     "root walk-up would escape. Refusing to run.")
 
-        self._link_private()
-        self._link_cwd_fixtures()
+        self._copy_private()
+        self._copy_cwd_fixtures()
         self.private_before = stat_manifest(self.root / "private")
 
         # Backdate everything so any write at all is visibly newer. Done last so
-        # the symlinks above are already in place (and skipped).
+        # the copies above are already in place.
         self.sentinel = time.time() - _MTIME_SENTINEL_AGE
         _backdate(tmp, self.sentinel)
         return self
 
-    def _link_private(self):
+    def _copy_private(self):
+        """Copy the whole private/ archive into the sandbox.
+
+        A symlink here would be a writable path from the sandbox straight into
+        the authoritative raw archive: a generator with a stray write under
+        private/ could truncate a bill PDF or the Green Button export, and a
+        before/after manifest can only report that afterwards, never undo it. So
+        the generator gets a disposable copy instead. symlinks=False matters --
+        it dereferences, so a checkout that stages bill PDFs as symlinks does not
+        smuggle a route back out into the sandbox.
+        """
         real = self.root / "private"
         if not real.is_dir():
             self.notes.append(
-                "private/ does not exist in this checkout -- nothing was linked. "
+                "private/ does not exist in this checkout -- nothing was copied. "
                 "Generators needing the raw archive (bill PDFs, Green Button "
                 "export, household.yaml) will fail; that is reported as a "
                 "failure, not as 'no changes'.")
             return
-        os.symlink(real, self.path / "private", target_is_directory=True)
-        self.notes.append(f"private/ symlinked (not copied) -> {real}")
+        dst = self.path / "private"
+        t0 = time.time()
+        try:
+            shutil.copytree(real, dst, symlinks=False,
+                            ignore_dangling_symlinks=True)
+        except (OSError, shutil.Error) as e:
+            # Fail closed. Falling back to a symlink would silently restore the
+            # very write path this copy exists to remove.
+            raise DryRunError(f"could not copy private/ into the sandbox: {e}")
+        self.notes.append(f"private/ copied (not symlinked) from {real} -- the "
+                          f"generator sees a disposable copy ({time.time() - t0:.1f}s)")
 
-    def _link_cwd_fixtures(self):
+    def _copy_cwd_fixtures(self):
+        """Stage the CWD inputs the same way, and for the same reason: a
+        generator that opens usage.csv for writing in its CWD must not be able
+        to truncate the real fixture in private/verify/."""
         staged = []
         for name in CWD_FIXTURES:
             src = self.root / "private" / "verify" / name
             if src.is_file():
-                os.symlink(src, self.path / name)
+                try:
+                    shutil.copy2(src, self.path / name)
+                except OSError as e:
+                    raise DryRunError(f"could not copy cwd fixture {name}: {e}")
                 staged.append(name)
         if staged:
-            self.notes.append("cwd fixtures symlinked from private/verify/: "
+            self.notes.append("cwd fixtures copied from private/verify/: "
                               + ", ".join(staged))
 
     # -- teardown ---------------------------------------------------------
     def dispose(self):
         """Remove the sandbox. Guarded so this can only ever delete a directory
-        this process created under the system temp dir -- never the checkout,
-        and never through the private/ symlink."""
+        this process created under the system temp dir -- never the checkout.
+
+        Everything inside is now a copy, so there is no link out of the sandbox
+        for a delete to travel along; rmtree unlinks any symlink seeded from a
+        tracked one without following it."""
         if self.path is None:
             return
         p = self.path
@@ -308,13 +343,6 @@ class Sandbox:
               and p not in self.root.parents)
         if not ok:
             raise DryRunError(f"refusing to dispose of an unexpected path: {p}")
-        link = p / "private"
-        if link.is_symlink():
-            os.unlink(link)          # unlink the link itself, never its target
-        for name in CWD_FIXTURES:
-            f = p / name
-            if f.is_symlink():
-                os.unlink(f)
         shutil.rmtree(p, ignore_errors=False)
         self.path = None
 
@@ -333,8 +361,11 @@ class RunResult:
 
 def _written_since(sandbox_path, sentinel):
     """Sandbox-relative paths whose mtime is newer than the backdate stamp, plus
-    anything created after it. The private/ symlink and the cwd fixtures are
-    skipped -- following them would walk the real archive."""
+    anything created after it. Everything in the sandbox is a copy, so the walk
+    covers the sandbox's private/ and its cwd fixtures too: a generator that
+    overwrites usage.csv or scribbles under private/ shows up here rather than
+    being invisible behind a symlink. Symlinks seeded from tracked ones are
+    still skipped -- following those would leave the sandbox."""
     cutoff = sentinel + 1.0
     out = []
     for dirpath, dirnames, filenames in os.walk(sandbox_path, followlinks=False):
@@ -609,8 +640,9 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         if priv_after != sb.private_before:
             moved = sorted(k for k in set(priv_after) | set(sb.private_before)
                            if priv_after.get(k) != sb.private_before.get(k))
-            rep.failure = ("the real private/ archive changed during a dry run "
-                           f"(it is symlinked, not copied). Affected: {_join(moved)}")
+            rep.failure = ("the real private/ archive changed during a dry run -- "
+                           "the sandbox holds only a copy, so nothing it ran should "
+                           f"have been able to reach it. Affected: {_join(moved)}")
             return rep
         if rep.result.returncode != 0:
             tail = (rep.result.stderr.strip() or rep.result.stdout.strip()

@@ -82,7 +82,11 @@ OUTPUTS (committed, de-identified)
                                     it describes exactly the corpus they contain;
                                     written on every run, with an empty
                                     excluded_statements list when the export covers
-                                    the whole corpus. See THE CORPUS BOUNDARY.
+                                    the whole corpus — or, when no export was staged
+                                    to derive the boundary from at all, an extra
+                                    boundary_not_derived block saying so, so that the
+                                    empty list is never read as an all-clear. See THE
+                                    CORPUS BOUNDARY.
     When household.has_gas is false the three gas artifacts (bill_periods_gas.csv,
     bill_gas_detail.csv, gas_bill_summary.csv) are still published — as HEADER-ONLY
     CSVs (same headers, zero rows), in the same atomic set as the electric ones, so a
@@ -129,9 +133,19 @@ THE CORPUS BOUNDARY — which statements get published, and why it is derived
     covers none of the parsed statements at all.
 
     NO EXPORT STAGED. The boundary is then underivable, so nothing is excluded:
-    every parsed statement is published and the run says so. Mirrors
-    bill_decomposition.py, which also treats a missing export as "cannot check"
-    rather than "nothing to check".
+    every parsed statement is published, the run says so, and
+    data/bill_corpus_boundary.json records under boundary_not_derived that the
+    published corpus was never tested against the export, plus what would end that.
+    An empty excluded_statements list therefore never has to be read as "all fine".
+    Mirrors bill_decomposition.py, which also treats a missing export as "cannot
+    check" rather than "nothing to check".
+
+    AN UNREADABLE EXPORT IS NOT A MISSING ONE. A file that is present but yields no
+    statement_date value (truncated download, renamed column, layout drift) is an
+    error, not a configuration: reading it as "no boundary is derivable" would let a
+    broken export widen the published corpus to precisely the statements it cannot
+    corroborate. That raises SystemExit and publishes nothing
+    (export_statement_dates()).
 
 APPLICABILITY ENVELOPE — what this parser assumes. Read this before pointing it at
 any other account's bills; every assumption below is load-bearing in a regex.
@@ -861,19 +875,41 @@ def parse_gas(path):
 def export_statement_dates(path=None):
     """The statement dates SDG&E's billing-history export covers.
 
-    None means "no boundary is derivable here": either the export is not staged, or
-    it carries no statement_date values. Both are the same situation for this
-    parser — there is nothing to test the corpus against — and both must be
-    distinguishable from an export that legitimately covers nothing, which cannot
-    happen (an export with rows has dates). bill_decomposition.py reads the same
-    file with the same "if it exists and has dates" precondition."""
+    None means "no boundary is derivable here", and is reserved for ONE situation:
+    no export is staged at that path. That is a legitimate configuration — a fork
+    with bill PDFs and no export must still be able to publish (see NO EXPORT
+    STAGED in the module docstring) — and it is recorded as such, not silently.
+
+    An export that EXISTS but yields no statement_date value is a different thing
+    entirely: a truncated download, a renamed or reordered column, SDG&E layout
+    drift. It cannot mean "this export legitimately covers nothing" (an export with
+    rows has dates), so collapsing it into the None case would take a BROKEN export
+    and publish every parsed statement as though nothing needed checking — widening
+    the corpus to exactly the statements that cannot be corroborated. It raises
+    instead, before anything is written. bill_decomposition.py draws the same split
+    on the same file."""
     path = path or HISTORY_CSV
     if not path.exists():
         return None
     with open(path, newline="") as fh:
-        seen = {(r.get("statement_date") or "").strip() for r in csv.DictReader(fh)}
+        rdr = csv.DictReader(fh)
+        rows = list(rdr)
+        columns = rdr.fieldnames or []
+    seen = {(r.get("statement_date") or "").strip() for r in rows}
     seen.discard("")
-    return seen or None
+    if not seen:
+        raise SystemExit(
+            f"{path.name} is staged but carries no statement_date value: "
+            f"{len(rows)} data row(s), columns [{', '.join(columns) or 'none'}]. An "
+            f"export that exists but cannot be read is not the same as no export at "
+            f"all: treating it as 'the boundary is not derivable' would publish every "
+            f"parsed statement as if SDG&E's own books had corroborated it, which is "
+            f"the one claim this file exists to support. Re-pull the billing-history "
+            f"export (DATA-SOURCES-CHEATSHEET.md §D) so it carries a statement_date "
+            f"column with dates in it — or, if there genuinely is no export for this "
+            f"account, remove {path.name} entirely: a missing export is a documented "
+            f"configuration, an unreadable one is not.")
+    return seen
 
 
 def _elec_period_bounds(period):
@@ -1048,10 +1084,19 @@ def _boundary_record(elec, export_info, excluded):
     Written on EVERY run, including the runs that exclude nothing: it is the corpus
     boundary, not an exception log. An empty excluded_statements list is the positive
     evidence that the export covered everything on that run — which is also what makes
-    re-pulling the export self-healing and visible in one diff."""
+    re-pulling the export self-healing and visible in one diff.
+
+    UNLESS THERE WAS NO EXPORT TO DERIVE IT FROM, in which case an empty
+    excluded_statements list is evidence of nothing at all: no statement was tested.
+    That run adds a boundary_not_derived block saying so — where the export was looked
+    for, what the consequence is for the published corpus, and what ends it — because
+    a reader of this artifact must never be able to mistake "not checked" for
+    "checked, nothing excluded". A console notice does not survive into the committed
+    evidence; this does. The key exists ONLY on those runs, so a repository with an
+    export staged serialises exactly as it did before."""
     published = sorted(set(elec.statement_date))
     bounds = [_elec_period_bounds(p) for p in elec.period]
-    return {
+    record = {
         "generated_by": "analysis/parse_bills.py",
         "rule": (
             "A statement is inside the reconcilable electric bill corpus if and only "
@@ -1070,15 +1115,44 @@ def _boundary_record(elec, export_info, excluded):
         "excluded_statements": excluded,
         "window_coverage": _window_coverage(elec, excluded),
     }
+    if export_info is None:
+        record["boundary_not_derived"] = {
+            "export_looked_for": str(HISTORY_CSV.relative_to(ROOT)),
+            "reason": (
+                "no billing-history export is staged at that path, so the rule above "
+                "had nothing to derive the corpus boundary from on this run; the "
+                "empty excluded_statements list records that nothing WAS excluded, "
+                "not that nothing needed to be"),
+            "consequence": (
+                f"every one of the {len(published)} parsed statement(s) was published "
+                f"unchecked: the published corpus is NOT corroborated by SDG&E's "
+                f"billing-history export, and neither a statement it does not cover "
+                f"nor one it covers with no PDF here could be detected"),
+            "boundary_is_derived_when": (
+                "the billing-history export is staged at that path and parse_bills.py "
+                "is re-run (DATA-SOURCES-CHEATSHEET.md §D). The boundary is derived "
+                "from the export on every run — no cutoff date is stored anywhere, so "
+                "nothing has to be edited or remembered when the export arrives"),
+        }
+    return record
 
 
 def _announce_boundary(record):
     """Say out loud what was left out. A silent restriction is the failure CLAUDE.md
     §1 is written about, so the run reports the statements, the reason, the remedy and
-    the day-coverage shortfall whether or not anyone reads the artifact."""
+    the day-coverage shortfall whether or not anyone reads the artifact.
+
+    A run with no export staged excluded nothing, but it also CHECKED nothing, so it
+    gets its own announcement rather than silence — the same facts the artifact's
+    boundary_not_derived block carries."""
     excluded = record["excluded_statements"]
     exp = record["export"]
     if exp is None:
+        nd = record["boundary_not_derived"]
+        print(f"corpus boundary: NOT DERIVED — {nd['reason']}.")
+        print(f"  consequence: {nd['consequence']}.")
+        print(f"  ends when:   {nd['boundary_is_derived_when']}.")
+        print(f"  recorded in data/bill_corpus_boundary.json")
         return
     print(f"corpus boundary: {record['statements_published']} of "
           f"{record['statements_parsed']} parsed statement(s) published; the "

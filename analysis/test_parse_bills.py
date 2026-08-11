@@ -1039,6 +1039,18 @@ def _stage_export(tmp, dates):
     return path
 
 
+def _stage_raw_export(tmp, text):
+    """Write the billing-history export VERBATIM, header and all.
+
+    _stage_export() can only produce a well-formed export. The cases below need the
+    shapes a real re-pull actually produces when it goes wrong — a download that
+    stopped after the header, a renamed column, a column present but empty — and only
+    raw text can express those."""
+    path = tmp / "private" / "1-raw-data" / EXPORT_NAME
+    path.write_text(text)
+    return path
+
+
 def _stage_window(tmp, start, end):
     """The analysis window parse_bills.py reads for its day-coverage figures. A
     synthetic behavior_rebuild.json, so the coverage arithmetic is exercised against
@@ -1127,6 +1139,11 @@ def case_export_covering_every_statement_publishes_every_statement(tmp):
     b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
     assert b["excluded_statements"] == [], b
     assert b["statements_published"] == b["statements_parsed"] == len(dates), b
+    # The underivable-boundary block belongs ONLY to runs with no export: a run that
+    # derived the boundary and excluded nothing must serialise exactly as it always
+    # has, or every committed bill_corpus_boundary.json in the wild changes bytes.
+    assert "boundary_not_derived" not in b, \
+        f"a derived boundary carries the not-derived block: {b}"
     assert "EXCLUDED" not in r.stdout, f"nothing was excluded but stdout says so:\n{r.stdout}"
     return (f"the same corpus with an export that covers {victim} publishes it and "
             f"records no exclusion — the boundary follows the export, not a date")
@@ -1250,6 +1267,99 @@ def case_no_export_publishes_the_whole_corpus(tmp):
     return "no export staged -> whole corpus published, boundary recorded as underived"
 
 
+def case_no_export_records_the_underivable_boundary_in_the_artifact(tmp):
+    """A run that could not derive the boundary has to say so in the COMMITTED
+    artifact, not only on a console nobody keeps.
+
+    `export: null` beside `excluded_statements: []` reads as "nothing was excluded,
+    all fine" — the exact misreading that matters, because on that run nothing was
+    CHECKED either. So the record must state where the export was looked for, that no
+    boundary was derived, what that costs the published corpus, and what ends it."""
+    dates = _corpus_dates(tmp)
+    assert not (tmp / "private" / "1-raw-data" / EXPORT_NAME).exists()
+    r = _run(tmp)
+    assert r.returncode == 0, f"a corpus with no export failed:\n{r.stderr}"
+
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert b["export"] is None, b
+    nd = b.get("boundary_not_derived")
+    assert nd is not None, (
+        "the boundary was not derivable, but the committed artifact records only "
+        f"export=null with excluded_statements={b['excluded_statements']} — a reader "
+        f"cannot tell 'nothing excluded' from 'nothing checked': {b}")
+    assert EXPORT_NAME in nd["export_looked_for"], nd
+    assert "no billing-history export is staged" in nd["reason"], nd
+    assert "NOT corroborated" in nd["consequence"], nd
+    assert f"{len(dates)} parsed statement(s) was published" in nd["consequence"], nd
+    assert "re-run" in nd["boundary_is_derived_when"], nd
+
+    # ...and announced, so the run itself is not silent about it either.
+    assert "NOT DERIVED" in r.stdout, \
+        f"the underivable boundary is not announced:\n{r.stdout}"
+    assert nd["consequence"] in r.stdout, \
+        f"the consequence recorded in the artifact is not printed:\n{r.stdout}"
+    return ("no export staged -> the artifact records boundary_not_derived with its "
+            "reason, its consequence and what ends it, and the run announces it")
+
+
+def case_export_present_but_header_only_fails_closed(tmp):
+    """A download that stopped after the header line. The file EXISTS, so "no export
+    is staged" is the wrong reading of it: taking a broken export as "the boundary is
+    not derivable" would publish every parsed statement as though SDG&E's own books
+    had corroborated it — broadening the corpus to exactly the statements that cannot
+    be reconciled. Present-but-unusable is an error, and errors publish nothing."""
+    _stage_raw_export(
+        tmp, "statement_date,billing_days,current_charges,amount_due,status\n")
+    r = _run(tmp)
+    assert r.returncode != 0, "a header-only export was accepted as 'no export staged'"
+    assert "carries no statement_date value" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert "0 data row(s)" in r.stderr, \
+        f"the refusal does not say what was found:\n{r.stderr}"
+    assert "statement_date, billing_days" in r.stderr, \
+        f"the refusal does not name the columns it read:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "header-only export -> exits, artifacts untouched"
+
+
+def case_export_without_a_statement_date_column_fails_closed(tmp):
+    """SDG&E layout drift, or a re-pull that renamed the column: the rows are all
+    there, the dates are all there, and not one of them is reachable. Silently
+    equivalent to a header-only file, and equally not a missing export."""
+    dates = _corpus_dates(tmp)
+    rows = "\n".join(f"{d},30,0.00,0.00,Paid" for d in dates)
+    _stage_raw_export(
+        tmp, "bill_date,billing_days,current_charges,amount_due,status\n" + rows + "\n")
+    r = _run(tmp)
+    assert r.returncode != 0, "an export with no statement_date column was accepted"
+    assert "carries no statement_date value" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert f"{len(dates)} data row(s)" in r.stderr, \
+        f"the refusal does not say how many rows it read:\n{r.stderr}"
+    assert "bill_date" in r.stderr, \
+        f"the refusal does not name the column it actually found:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "export with the statement_date column renamed -> exits, artifacts untouched"
+
+
+def case_export_with_only_blank_statement_dates_fails_closed(tmp):
+    """The column is there and every value in it is empty — a partial export, or one
+    written from a query that returned no dates. The blanks are already discarded as
+    unusable, which is precisely why the empty result must not then be read as "no
+    export": whitespace-only values collapse the same way."""
+    dates = _corpus_dates(tmp)
+    rows = "\n".join(f"{'   ' if i % 2 else ''},30,0.00,0.00,Paid"
+                     for i, _ in enumerate(dates))
+    _stage_raw_export(
+        tmp,
+        "statement_date,billing_days,current_charges,amount_due,status\n" + rows + "\n")
+    r = _run(tmp)
+    assert r.returncode != 0, "an export whose statement_date values are all blank was accepted"
+    assert "carries no statement_date value" in r.stderr, f"unexpected error:\n{r.stderr}"
+    assert f"{len(dates)} data row(s)" in r.stderr, \
+        f"the refusal does not say how many rows it read:\n{r.stderr}"
+    assert _artifacts_untouched(tmp), "artifacts were modified despite the failure"
+    return "export with every statement_date blank -> exits, artifacts untouched"
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
@@ -1276,7 +1386,11 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_export_row_with_no_pdf_fails_closed,
                 case_export_hole_in_the_middle_fails_closed,
                 case_export_sharing_no_statement_fails_closed,
-                case_no_export_publishes_the_whole_corpus]
+                case_no_export_publishes_the_whole_corpus,
+                case_no_export_records_the_underivable_boundary_in_the_artifact,
+                case_export_present_but_header_only_fails_closed,
+                case_export_without_a_statement_date_column_fails_closed,
+                case_export_with_only_blank_statement_dates_fails_closed]
 
 # Cases that run anywhere: they use temp files, or the COMMITTED data/ artifacts. The
 # publication, rollback and concurrency guards live here, so they must run in a clean

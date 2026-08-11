@@ -395,14 +395,33 @@ def statement_text(stmt):
 
 def export_statement_dates():
     """The statement dates the billing-history export covers, or None when no export
-    is staged (or it carries none). Same file, same rule, as parse_bills.py's own
+    is staged. Same file, same rule, same split, as parse_bills.py's own
     export_statement_dates() -- both derive the corpus boundary from this one file
-    rather than each declaring where the corpus stops."""
+    rather than each declaring where the corpus stops.
+
+    None is reserved for "the file is not there", which is a legitimate configuration
+    (a checkout with bill PDFs and no export still runs, with the boundary simply
+    unchecked). An export that EXISTS but yields no statement_date value is corruption,
+    a renamed column or SDG&E layout drift, and raises: statement_dates()'s `outside`
+    and `gap` tests both go quiet on None, so collapsing the two would silently drop
+    the boundary check on exactly the corpus that could not be corroborated."""
     if not HISTORY_CSV.exists():
         return None
-    seen = {r["statement_date"] for r in _read_csv(HISTORY_CSV)
-            if r.get("statement_date")}
-    return seen or None
+    rows = _read_csv(HISTORY_CSV)
+    seen = {r["statement_date"] for r in rows if r.get("statement_date")}
+    if not seen:
+        columns = list(rows[0].keys()) if rows else []
+        raise SystemExit(
+            f"{HISTORY_CSV.name} is staged but carries no statement_date value: "
+            f"{len(rows)} data row(s), columns [{', '.join(columns) or 'none read'}]. "
+            f"An export that exists but cannot be read is not the same as no export "
+            f"at all: treating it as 'nothing to check against' would drop the corpus "
+            f"boundary check silently and report this scan as a complete "
+            f"reconciliation. Re-pull the billing-history export "
+            f"(DATA-SOURCES-CHEATSHEET.md §D) so it carries a statement_date column "
+            f"with dates in it -- or, if there genuinely is no export for this "
+            f"account, remove {HISTORY_CSV.name} entirely.")
+    return seen
 
 
 def statement_dates():
