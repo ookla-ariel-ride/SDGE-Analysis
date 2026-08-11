@@ -1359,6 +1359,66 @@ def case_the_artifact_labels_its_confidence_and_its_limits():
             "price change exists before the corpus starts")
 
 
+def _with_history_csv(text, fn):
+    """Run fn() with B.HISTORY_CSV pointing at a throwaway export carrying `text`
+    (text=None means no file at all), restoring the real path afterward whatever
+    happens. The real private/ archive is never read or written by these cases."""
+    saved = B.HISTORY_CSV
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / saved.name
+        if text is not None:
+            p.write_text(text)
+        B.HISTORY_CSV = p
+        try:
+            return fn()
+        finally:
+            B.HISTORY_CSV = saved
+
+
+def case_an_export_that_exists_but_yields_no_statement_date_fails_closed():
+    """An export file that is PRESENT but unreadable is not the same thing as no
+    export, and must not collapse into it.
+
+    None from export_statement_dates() switches off the corpus boundary entirely --
+    statement_dates()'s `outside` and `gap` checks both go quiet on it. So a
+    truncated download, a renamed column or a blank column would take the one file
+    that could contradict this scan, fail to read it, and let the scan report itself
+    as a complete reconciliation. All three shapes raise instead."""
+    header = "statement_date,billing_days,current_charges,amount_due,status"
+    shapes = {
+        "a download that stopped after the header": header + "\n",
+        "the statement_date column renamed": (
+            "bill_date,billing_days,current_charges,amount_due,status\n"
+            "2024-06-27,30,0.00,0.00,Paid\n2024-07-29,32,0.00,0.00,Paid\n"),
+        "every statement_date value blank": (
+            header + "\n,30,0.00,0.00,Paid\n,32,0.00,0.00,Paid\n"),
+    }
+    for label, text in shapes.items():
+        msg = _with_history_csv(text, lambda: _raises(
+            B.export_statement_dates,
+            "carries no statement_date value", "Re-pull the billing-history export"))
+        assert "data row(s)" in msg, (label, msg)
+    return (f"an export that exists but yields no statement_date is refused, not read "
+            f"as 'no export staged' ({len(shapes)} shapes: "
+            f"{'; '.join(shapes)})")
+
+
+def case_no_export_staged_is_still_the_documented_unchecked_case():
+    """The other half of the split, and the reason it is a split rather than a blanket
+    refusal: with NO export file at all the derivation is simply unavailable, which is
+    a supported configuration (bill PDFs, no export). That still returns None, and a
+    well-formed export still returns its dates -- neither is touched by the refusal
+    above."""
+    got = _with_history_csv(None, B.export_statement_dates)
+    assert got is None, f"a missing export must stay None (documented), got {got!r}"
+    got = _with_history_csv(
+        "statement_date,billing_days\n2024-06-27,30\n2024-07-29,32\n",
+        B.export_statement_dates)
+    assert got == {"2024-06-27", "2024-07-29"}, got
+    return ("no export staged -> None (unchecked, supported); a readable export -> its "
+            "statement dates")
+
+
 def case_the_generator_reproduces_the_committed_artifact():
     if not B.ELEC_DIR.exists() or not B.HISTORY_CSV.exists():
         raise SkipCase("regeneration needs the private archive (the bill PDF corpus and "
@@ -1410,6 +1470,8 @@ CASES = [
     case_the_like_for_like_index_is_fixed_weight,
     case_the_artifact_agrees_with_the_committed_bill_artifacts,
     case_the_artifact_labels_its_confidence_and_its_limits,
+    case_an_export_that_exists_but_yields_no_statement_date_fails_closed,
+    case_no_export_staged_is_still_the_documented_unchecked_case,
     case_the_generator_reproduces_the_committed_artifact,
 ]
 

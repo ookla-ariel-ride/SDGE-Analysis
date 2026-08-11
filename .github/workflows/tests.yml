@@ -116,6 +116,8 @@ jobs:
         run: python analysis/test_report_blocks.py
       - name: report-token resolution guard tests
         run: python analysis/test_report_tokens.py
+      - name: dry-run sandbox guard tests
+        run: python analysis/test_dry_run.py
       - name: stage-private-data.sh guard tests
         run: python analysis/test_stage_private_data.py
 
