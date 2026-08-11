@@ -2214,7 +2214,11 @@ def _cleaning_entries():
 
 
 def _cleaning_sanity_check():
-    return _json("soiling_results.json")[_MEASURED_CLEANING_BLOCK]
+    # _dig, not a bare subscript: _cleaning_entry() reaches this, so seven §12
+    # tokens that used to need only household.yaml and cleaning_study_daily.csv
+    # now fail if the block is absent. A named refusal says which artifact and
+    # which key, instead of a KeyError from inside a token getter.
+    return _dig(_json("soiling_results.json"), (_MEASURED_CLEANING_BLOCK,))
 
 
 def _measured_cleaning():
@@ -2280,12 +2284,10 @@ def _measured_cleaning():
     if len(matched) == 1:
         return matched[0], None
     if not matched:
-        return None, (f"private/household.yaml:cleaning_history records no cleaning on "
-                      f"{target}, the date data/soiling_results.json measured that gain "
-                      "for")
-    return None, (f"private/household.yaml:cleaning_history records {len(matched)} "
-                  f"cleanings on {target}, so which one data/soiling_results.json "
-                  "measured is ambiguous")
+        return None, (f"no recorded cleaning on {target}, the date the measured gain "
+                      "belongs to")
+    return None, (f"{len(matched)} cleanings are recorded on {target}, so which one "
+                  "the measured gain belongs to is ambiguous")
 
 
 def _cleaning_entry():
@@ -2302,18 +2304,22 @@ def _cleaning_entry():
 
 _tok("CLEANING_PRICE", kind="derived",
      get=lambda ctx: _usd0(_cleaning_entry()["cost_usd"]),
-     sources=["private/household.yaml:cleaning_history"])
+     sources=["private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"])
 _tok("CLEANING_YEAR", kind="derived",
      get=lambda ctx: _as_date(_cleaning_entry()["date"]).year,
-     sources=["private/household.yaml:cleaning_history"], fmt="year")
+     sources=["private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"], fmt="year")
 _tok("CLEANING_DATE", kind="derived",
      get=lambda ctx: (lambda d: f"{_MONTH_FULL[d.month]} {d.day}, {d.year}")(
          _as_date(_cleaning_entry()["date"])),
-     sources=["private/household.yaml:cleaning_history"])
+     sources=["private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"])
 _tok("CLEANING_DATE_SHORT", kind="derived",
      get=lambda ctx: (lambda d: f"{_MONTH_ABBR[d.month]} {d.day}")(
          _as_date(_cleaning_entry()["date"])),
-     sources=["private/household.yaml:cleaning_history"])
+     sources=["private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"])
 
 
 def _cleaning_window_medians(ctx):
@@ -2339,15 +2345,18 @@ def _cleaning_window_medians(ctx):
 
 _tok("CLEANED_PRE_MEDIAN", kind="derived",
      get=lambda ctx: _cleaning_window_medians(ctx)[0],
-     sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history"],
+     sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"],
      fmt="num1")
 _tok("CLEANED_POST_MEDIAN", kind="derived",
      get=lambda ctx: _cleaning_window_medians(ctx)[1],
-     sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history"],
+     sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"],
      fmt="num1")
 _tok("CLEANED_RATIO", kind="derived",
      get=lambda ctx: (lambda pre, post: round(post / pre, 3))(*_cleaning_window_medians(ctx)),
-     sources=["data/cleaning_study_daily.csv"], fmt="num2")
+     sources=["data/cleaning_study_daily.csv", "private/household.yaml:cleaning_history",
+              "data/soiling_results.json:sanity_check_2024_cleaning"], fmt="num2")
 def _cleaning_effect_pct(ctx):
     """The cleaning's measured production gain: the DIFFERENCE-IN-DIFFERENCES
     estimate, read off the soiling study's own artifact.
@@ -2380,10 +2389,19 @@ def _cleaning_effect_pct(ctx):
     requires, but _claim() is deliberately not the exit taken with it, because
     _claim's NOT_DETERMINED is a SystemExit and a household whose cleanings
     simply differ from ours would then generate no report at all. It is
-    rendered the way the other tokens whose artifact does not settle their
-    question render it -- SPREAD_TREND_SUMMER/WINTER and
-    BATTERY_ON_MEASURED_SPREAD -- as the words "not determined" followed by the
-    reason, which CLAUDE.md section 0 makes a legitimate published answer."""
+    rendered as the words "not determined" followed by the reason, which
+    CLAUDE.md section 0 makes a legitimate published answer.
+
+    SPREAD_TREND_SUMMER/WINTER and BATTERY_ON_MEASURED_SPREAD render an
+    undetermined answer the same way, but they are NOT a precedent for this
+    slot and should not be read as one: each of those sits inside a TODO block,
+    where a writer phrases the sentence around whatever the value turns out to
+    be. This one is static fill, so the reason lands mid-sentence between the
+    template's own words and the heading keeps an evidence pill that the value
+    no longer earns. The reason text is therefore kept short and names no file
+    path, since it is published prose here rather than a note to a writer.
+    Making the wording and the pill follow the state needs conditional regions
+    the template does not have; that is issue #168, not this token's to fix."""
     sc = _cleaning_sanity_check()
     entry, why = _measured_cleaning()
     state = SUPPORTED if entry is not None else NOT_DETERMINED
@@ -2402,7 +2420,8 @@ def _cleaning_effect_pct(ctx):
 
 _tok("CLEANING_EFFECT_PCT", kind="derived", get=_cleaning_effect_pct,
      sources=["data/soiling_results.json:sanity_check_2024_cleaning"
-              ".known_cleaning_gain_pct"])
+              ".known_cleaning_gain_pct",
+              "private/household.yaml:cleaning_history"])
 _tok("SOILING_RATE_RANGE", kind="derived",
      get=lambda ctx: (lambda a, b: f"{min(a, b):.1f}–{max(a, b):.1f}%/month")(
          *_figures("SOILING_RATE_RANGE", "how fast the array soils",
