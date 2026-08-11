@@ -23,10 +23,20 @@ reason. So the cases below are built in matched pairs:
   * a generator that exits 0 having written nothing, and one that crashes, must
     both be reported as FAILURES -- never as "nothing would change".
 
+  * a tracked symlink is seeded by copying its target's content, so no path
+    inside the sandbox leads out of it (the checkout has none today, so the
+    case builds one) -- AND
+  * tearing the sandbox down is part of the result: a sandbox that cannot be
+    removed is a FAILURE naming the path, because it holds the copied private/
+    archive, while a leftover -baseline copy of committed data/ is only a
+    warning and must not stop the sandbox from being disposed of.
+
 Run from the repo root:  ./.venv/bin/python analysis/test_dry_run.py
 """
 import ast
+import contextlib
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -485,6 +495,176 @@ def case_a_generator_that_escapes_the_sandbox_is_caught_by_the_data_hash_guard()
     return ("a generator that reaches its checkout's data/ through an absolute "
             "path -- past both root idioms -- is caught by the before/after hash "
             "of the real data/ and reported as a FAILURE naming the file")
+
+
+@case
+def case_a_tracked_symlink_pointing_outside_the_repo_is_dereferenced():
+    """A tracked symlink recreated verbatim inside the sandbox is a writable path
+    to whatever it names -- and if that target is absolute, it names a file
+    OUTSIDE the sandbox. Neither guard would see the write: hash_tree() skips
+    symlinks and stat_manifest() records the link rather than following it. There
+    are no tracked symlinks in this checkout today, so build one synthetically
+    and aim a write-happy generator at it."""
+    with tempfile.TemporaryDirectory() as td:
+        td = pathlib.Path(td)
+        outside = td / "outside"
+        outside.mkdir()
+        secret = outside / "irreplaceable.txt"
+        original = "the real file, outside the sandbox\n"
+        secret.write_text(original)
+
+        repo = td / "repo"
+        (repo / "analysis").mkdir(parents=True)
+        os.symlink(str(secret), repo / "analysis" / "escape.txt")   # ABSOLUTE target
+        body = ("import pathlib\n"
+                "def _repo_root():\n"
+                "    p = pathlib.Path.cwd()\n"
+                "    while not ((p / 'analysis').is_dir() and (p / 'data').is_dir()):\n"
+                "        p = p.parent\n"
+                "    return p\n"
+                "R = _repo_root()\n"
+                "(R / 'analysis' / 'escape.txt').write_text('CLOBBERED\\n')\n"
+                "(R / 'data' / 'out.json').write_text('{}\\n')\n")
+        _synth_repo(repo, {"g.py": body}, {"out.json": "{}\n"})
+        mode = subprocess.run(["git", "-C", str(repo), "ls-files", "-s",
+                               "analysis/escape.txt"],
+                              capture_output=True, text=True).stdout
+        assert mode.startswith("120000"), (
+            f"the symlink is not tracked as a symlink, so this case proves nothing: {mode!r}")
+
+        seen = {}
+
+        def inspect(sb):
+            seen["links"] = sorted(str(f.relative_to(sb.path))
+                                   for f in sb.path.rglob("*") if f.is_symlink())
+            staged = sb.path / "analysis" / "escape.txt"
+            seen["is_symlink"] = staged.is_symlink()
+            seen["text"] = staged.read_text()
+
+        rep = DR.dry_run(repo / "analysis" / "g.py", on_built=inspect)
+
+        assert seen["links"] == [], f"the sandbox holds symlinks: {seen['links']}"
+        assert seen["is_symlink"] is False, \
+            "analysis/escape.txt was seeded as a symlink -- a write path out of the sandbox"
+        assert seen["text"] == original, seen["text"]
+        assert secret.read_text() == original, \
+            "the generator wrote through a seeded symlink and clobbered the file outside"
+        assert rep.failure is None, rep.failure
+        assert "analysis/escape.txt" in rep.result.wrote, sorted(rep.result.wrote)
+    return ("a tracked symlink whose target is an absolute path outside the repo "
+            "is seeded by copying its CONTENT: the sandbox contains no symlink at "
+            "all, and a generator that writes through that path truncates the copy "
+            "while the file outside stays byte-identical")
+
+
+@case
+def case_a_tracked_symlink_that_cannot_be_dereferenced_fails_closed():
+    """Dereferencing has two cases a copy cannot serve -- a dangling link and a
+    link to a directory. Both must raise DryRunError rather than being skipped
+    silently or quietly recreated as a link."""
+    gen = GEN_WALKUP % {"out": "out.json", "payload": '{"a": 1}'}
+    for label, target in (("dangling", "no-such-file.txt"), ("directory", "adir")):
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            repo = td / "repo"
+            (repo / "analysis").mkdir(parents=True)
+            if label == "directory":
+                (repo / "adir").mkdir()
+                (repo / "adir" / "keep.txt").write_text("x\n")
+            os.symlink(str(repo / target), repo / "analysis" / "link.txt")
+            _synth_repo(repo, {"g.py": gen}, {"out.json": '{\n "a": 1\n}\n'})
+            try:
+                DR.dry_run(repo / "analysis" / "g.py")
+                raise AssertionError(
+                    f"a {label} tracked symlink was seeded without complaint")
+            except DR.DryRunError as e:
+                assert "analysis/link.txt" in str(e), (label, str(e))
+                assert label in str(e), (label, str(e))
+            code, out = _cli(repo / "analysis" / "g.py")
+            assert code == 2 and "FAILED" in out, (label, code, out)
+    return ("a tracked symlink that is dangling, and one that points at a "
+            "directory, are both refused with a DryRunError naming the path and "
+            "the reason (exit 2) -- neither is skipped nor recreated as a link")
+
+
+@case
+def case_a_sandbox_that_cannot_be_removed_is_reported_as_a_failure():
+    """The sandbox holds the whole copied private/ archive, so a disposal that
+    fails and is merely printed leaves raw PII in the temp dir behind an exit 0.
+    The wrapper below disposes for real and THEN raises, so the failure is
+    simulated without stranding anything."""
+    gen = GEN_WALKUP % {"out": "out.json", "payload": '{"a": 1}'}
+    real_dispose = DR.Sandbox.dispose
+
+    def boom(self):
+        real_dispose(self)          # actually remove it; leave no litter behind
+        raise DR.DryRunError("simulated: [Errno 16] Device or resource busy")
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": gen}, {"out.json": '{\n "a": 1\n}\n'})
+        DR.Sandbox.dispose = boom
+        try:
+            rep = DR.dry_run(repo / "analysis" / "g.py")
+            # Swallow main()'s rendered report. It legitimately prints a line
+            # beginning "FAILED:", and letting that reach this suite's own stdout
+            # would make `grep '^FAIL'` over the run misread a passing suite.
+            with contextlib.redirect_stdout(io.StringIO()) as rendered:
+                code = DR.main([str(repo / "analysis" / "g.py"), "--check"])
+            assert "FAILED:" in rendered.getvalue(), rendered.getvalue()
+        finally:
+            DR.Sandbox.dispose = real_dispose
+        assert rep.failure is not None, \
+            "a failed disposal was reported as a clean dry run"
+        assert str(rep.sandbox_path) in rep.failure, (rep.sandbox_path, rep.failure)
+        assert "private/" in rep.failure, rep.failure
+        assert "Device or resource busy" in rep.failure, rep.failure
+        text = DR.render(rep, "g.py")
+        assert "FAILED:" in text and "nothing would change" not in text.lower(), text
+        assert code == 2, code
+        assert not pathlib.Path(rep.sandbox_path).exists(), "the test left a sandbox behind"
+    return ("a sandbox that cannot be removed is a FAILURE on the report -- the CLI "
+            "exits 2 and the message names the path still on disk and says it holds "
+            "a full copy of private/ -- never a clean 'nothing would change'")
+
+
+@case
+def case_a_failed_baseline_cleanup_still_disposes_of_the_sandbox():
+    """The two cleanups must be independent. Sharing one try means a baseline
+    rmtree that raises skips dispose() and strands the copied archive."""
+    gen = GEN_WALKUP % {"out": "out.json", "payload": '{"a": 1}'}
+    real_rmtree = DR.shutil.rmtree
+    stranded = []
+
+    def rmtree(path, *a, **kw):
+        if str(path).endswith("-baseline"):
+            stranded.append(str(path))
+            raise OSError("simulated: [Errno 39] Directory not empty")
+        return real_rmtree(path, *a, **kw)
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": gen}, {"out.json": '{\n "a": 1\n}\n'})
+        DR.shutil.rmtree = rmtree
+        try:
+            rep = DR.dry_run(repo / "analysis" / "g.py")
+        finally:
+            DR.shutil.rmtree = real_rmtree
+            # This test's own litter: the baseline copy dry_run() was prevented
+            # from removing. It holds copies of committed data/ only.
+            for p in stranded:
+                q = pathlib.Path(p)
+                if q.is_dir() and q.name.startswith(DR.SANDBOX_PREFIX) \
+                        and pathlib.Path(tempfile.gettempdir()).resolve() in q.parents:
+                    real_rmtree(q, ignore_errors=True)
+        assert stranded, "the baseline cleanup never ran, so this case proved nothing"
+        assert not pathlib.Path(rep.sandbox_path).exists(), (
+            "a failed baseline cleanup skipped dispose() -- the sandbox, holding the "
+            f"copied private/ archive, is still on disk at {rep.sandbox_path}")
+        assert rep.failure is None, (
+            "a leftover baseline copy (committed data/ only, no PII) must stay a "
+            f"warning, not a dry-run failure: {rep.failure}")
+    return ("when removing the -baseline copy raises, the sandbox is still disposed "
+            "of -- the leftover baseline holds committed data/ only and stays a "
+            "stderr warning, while the sandbox's copy of private/ is removed")
 
 
 @case

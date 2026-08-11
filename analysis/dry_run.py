@@ -41,7 +41,14 @@ WHAT IS NEVER TOUCHED
     copy, which lives under the 0700 temp dir and is removed by dispose(). The
     copy dereferences symlinks, so nothing inside the sandbox is a path back out
     to the real archive -- including the cwd fixtures (usage.csv, samA.csv,
-    samB.csv), which are copied in rather than linked for the same reason. A
+    samB.csv), which are copied in rather than linked for the same reason, and
+    including tracked symlinks, which are seeded by copying their target's
+    CONTENT rather than by recreating the link (a tracked symlink with an
+    absolute or escaping target would otherwise be a writable path out of the
+    sandbox that neither guard sees: hash_tree() skips symlinks and
+    stat_manifest() records the link instead of following it). A tracked symlink
+    that cannot be dereferenced -- dangling, or pointing at a directory -- is a
+    DryRunError, not a skip. A
     generator that writes under private/ therefore truncates a throwaway file,
     and the write is reported like any other sandbox write. private/ is still
     stat-manifested before and after the run: that check is no longer the only
@@ -59,6 +66,11 @@ SILENT NO-OPS ARE FAILURES, NOT "NO CHANGES"
     the same reason: several generators legitimately reproduce the committed
     bytes, so content equality cannot distinguish "reproduced it" from "never
     opened it".
+
+    A sandbox that could not be removed afterwards is a FAILURE too, for the
+    same reason: it holds the whole copied private/ archive, so exiting 0 over
+    a stranded copy of the raw PII would be exactly the silent success this
+    file exists to refuse (CLAUDE.md section 4).
 
 EXIT CODES
     0   ran cleanly (with --check, and nothing would change)
@@ -247,10 +259,24 @@ class Sandbox:
             dst = tmp / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             if src.is_symlink():
-                os.symlink(os.readlink(src), dst)
-            else:
-                shutil.copy2(src, dst)
-                self.n_seeded += 1
+                # Dereference rather than recreate the link -- the same decision
+                # _copy_private() and _copy_cwd_fixtures() already make. A tracked
+                # symlink whose target is absolute (or relative but escaping)
+                # would, recreated verbatim, give the generator a writable path to
+                # a file OUTSIDE the sandbox, and neither guard would notice:
+                # hash_tree() skips symlinks and stat_manifest() records the link
+                # without following it. Copying the content leaves no link at all.
+                if not src.exists():        # follows: False for a dangling link
+                    raise DryRunError(
+                        f"tracked symlink {rel} is dangling (-> {os.readlink(src)}); "
+                        "refusing to seed a sandbox that cannot dereference it.")
+                if src.is_dir():
+                    raise DryRunError(
+                        f"tracked symlink {rel} points at a directory "
+                        f"(-> {os.readlink(src)}); refusing to seed it -- recreating "
+                        "the link would open a write path out of the sandbox.")
+            shutil.copy2(src, dst)          # follows symlinks: content, never a link
+            self.n_seeded += 1
         for rel in extra_files:
             src = self.root / rel
             dst = tmp / rel
@@ -330,9 +356,13 @@ class Sandbox:
         """Remove the sandbox. Guarded so this can only ever delete a directory
         this process created under the system temp dir -- never the checkout.
 
-        Everything inside is now a copy, so there is no link out of the sandbox
-        for a delete to travel along; rmtree unlinks any symlink seeded from a
-        tracked one without following it."""
+        Everything inside is now a copy -- tracked symlinks are dereferenced at
+        seeding time -- so there is no link out of the sandbox for a delete to
+        travel along.
+
+        Raises DryRunError if the path fails that guard; an OSError from rmtree
+        propagates. Either way dry_run() reports the leftover as a failure
+        rather than exiting 0 over a stranded copy of private/."""
         if self.path is None:
             return
         p = self.path
@@ -364,8 +394,9 @@ def _written_since(sandbox_path, sentinel):
     anything created after it. Everything in the sandbox is a copy, so the walk
     covers the sandbox's private/ and its cwd fixtures too: a generator that
     overwrites usage.csv or scribbles under private/ shows up here rather than
-    being invisible behind a symlink. Symlinks seeded from tracked ones are
-    still skipped -- following those would leave the sandbox."""
+    being invisible behind a symlink. Nothing seeded into the sandbox is a
+    symlink, but any the generator creates itself are skipped -- following those
+    would leave the sandbox."""
     cutoff = sentinel + 1.0
     out = []
     for dirpath, dirnames, filenames in os.walk(sandbox_path, followlinks=False):
@@ -594,6 +625,11 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
     `on_built(sandbox)` is a hook the test suite uses to perturb sandbox inputs
     after the sandbox is seeded but before the generator runs; production callers
     leave it None.
+
+    Teardown is part of the result: failing to remove the sandbox sets
+    rep.failure (it holds the copied private/ archive), while failing to remove
+    the -baseline/-head copy of data/ is only a warning on stderr. With
+    keep_sandbox the sandbox is left on purpose and neither applies.
     """
     rep = DryRunReport()
     gen_path = pathlib.Path(generator).resolve()
@@ -667,13 +703,33 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
         if keep_sandbox:
             print(f"[sandbox kept] {sb.path}", file=sys.stderr)
         else:
-            try:
-                for extra in (str(sb.path) + "-baseline", str(sb.path) + "-head"):
+            # Two INDEPENDENT cleanups, deliberately asymmetric. The
+            # -baseline/-head copies hold nothing but committed data/ artifacts,
+            # so a leftover is untidy and gets a warning. The sandbox itself
+            # holds the whole copied private/ archive -- raw bills, the Green
+            # Button export, household.yaml -- so a leftover is a dry-run
+            # FAILURE (CLAUDE.md section 4): reported on `rep` like every other
+            # failure, which is what makes the CLI exit 2 instead of printing a
+            # clean verdict over a stranded copy of the PII. They cannot share a
+            # try: a baseline rmtree that raised would then skip dispose() and
+            # strand exactly that copy.
+            sandbox_path = sb.path
+            for extra in (str(sandbox_path) + "-baseline", str(sandbox_path) + "-head"):
+                try:
                     if pathlib.Path(extra).is_dir():
                         shutil.rmtree(extra)
+                except OSError as e:
+                    print(f"[baseline copy not removed: {extra}: {e}]", file=sys.stderr)
+            try:
                 sb.dispose()
             except (DryRunError, OSError) as e:
-                print(f"[sandbox not removed: {e}]", file=sys.stderr)
+                msg = (f"the sandbox could not be removed: {sandbox_path} -- it holds "
+                       "a full copy of private/ (raw bill PDFs, the Green Button "
+                       "export, household.yaml). Delete it by hand. Cause: " + str(e))
+                print(f"[sandbox not removed: {msg}]", file=sys.stderr)
+                # rep is the object already being returned, so mutating it here
+                # is what surfaces this on the report.
+                rep.failure = msg if rep.failure is None else rep.failure + "\n      " + msg
 
 
 def _cwd_output_diffs(sb, base_dir):
