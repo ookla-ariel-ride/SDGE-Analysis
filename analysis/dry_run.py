@@ -96,6 +96,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import traceback
 
 SANDBOX_PREFIX = "sdge-dryrun-"
 # Inputs the documented private/verify sandbox stages next to the scripts; the
@@ -890,6 +891,16 @@ def main(argv=None):
                       keep_sandbox=ns.keep_sandbox, timeout=ns.timeout)
     except DryRunError as e:
         print(f"dry run FAILED: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:                       # noqa: BLE001 -- see below
+        # Anything else is still the dry run failing, and it must exit 2 like
+        # every other failure. Letting it propagate would exit 1, which is
+        # --check's "an artifact would change" -- so a tool that ran out of disk
+        # copying the sandbox would be read by a gate as a stale artifact. The
+        # copies this makes (the tracked tree, 19 MB of private/, a second data/)
+        # make OSError a realistic way to get here, not a theoretical one.
+        traceback.print_exc()
+        print(f"dry run FAILED: {e.__class__.__name__}: {e}", file=sys.stderr)
         return 2
     print(render(rep, ns.generator, verbose=ns.verbose))
     if rep.failure:

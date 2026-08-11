@@ -408,7 +408,13 @@ def export_statement_dates():
     if not HISTORY_CSV.exists():
         return None
     rows = _read_csv(HISTORY_CSV)
-    seen = {r["statement_date"] for r in rows if r.get("statement_date")}
+    # Strip and drop the blanks exactly as parse_bills.py does. Without it a
+    # whitespace-only column yields a truthy {" "}, which walks straight past the
+    # check below and then makes `outside` swallow every PDF -- disabling the
+    # `extra` guard rather than tripping it. "Same rule" has to mean the same
+    # normalisation, or the two modules' boundaries diverge on padded values.
+    seen = {(r.get("statement_date") or "").strip() for r in rows}
+    seen.discard("")
     if not seen:
         columns = list(rows[0].keys()) if rows else []
         raise SystemExit(

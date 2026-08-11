@@ -4321,7 +4321,7 @@ in the tree, and it diffs against the index where `--check` diffs against `data/
 repo's own artifacts, so a chain where one generator consumes another's freshly rewritten
 output is not reproduced — run the gate for a chain.
 
-**Tests.** `test_dry_run.py` (17 cases), run by CI and counted by `check_coverage.sh`. Among
+**Tests.** `test_dry_run.py` (25 cases), run by CI and counted by `check_coverage.sh`. Among
 them: the real `data/` is byte-identical after a dry run; both repo-root idioms land their
 writes in the sandbox; a generator that writes nothing, one that crashes, and an empty or
 rootless sandbox are each a failure rather than "no changes"; a generator writing under

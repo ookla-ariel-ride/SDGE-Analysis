@@ -49,11 +49,13 @@ git diff --exit-code ../../data/battery_plan_matrix.json
 #  section, and writes the artifact atomically — a partial/failed run changes nothing.)
 
 # Dry run — ask "what would this generator change?" without changing it. It copies the
-# tracked tree into a temp sandbox outside the repo, symlinks private/ in, runs the
-# generator's REAL write path there (no --dry-run flag inside any script: a flag that
-# branches around the write exercises a different path and can lie), then diffs the
-# sandbox's data/ against the repo's — JSON by changed top-level key, CSV by changed rows.
-# It writes nothing into the repo, and a crash, a no-op or a rootless sandbox is reported
+# tracked tree into a temp sandbox outside the repo and COPIES private/ in (never a
+# symlink — a link would be a writable path from the sandbox back into the raw archive,
+# and a stray write there is unrecoverable), runs the generator's REAL write path
+# (no --dry-run flag inside any script: a flag that branches around the write exercises a
+# different path and can lie), then diffs the sandbox's data/ against the repo's — JSON by
+# changed top-level key, CSV by changed rows. It writes nothing into the repo, and a crash,
+# a no-op, a rootless sandbox or a sandbox that cannot be deleted afterwards is reported
 # as a FAILURE (exit 2), never as "no changes". Run from anywhere:
 ./.venv/bin/python analysis/dry_run.py analysis/parse_bills.py            # report only
 ./.venv/bin/python analysis/dry_run.py analysis/parse_bills.py --check    # exit 1 if stale
