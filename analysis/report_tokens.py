@@ -2196,7 +2196,10 @@ _tok("SOLAR_ANNUAL_VALUE", kind="derived", get=_solar_annual_value,
 
 
 # ---- cleaning / soiling -------------------------------------------------
-def _cleaning_entry():
+_MEASURED_CLEANING_BLOCK = "sanity_check_2024_cleaning"
+
+
+def _cleaning_entries():
     # cleaning_history resolves (via privacy_tiers.resolve, no trailing "[]" in
     # its contract path) to [the whole list] -- one found node holding the
     # entire list, since the tier belongs to the container as a whole.
@@ -2207,7 +2210,94 @@ def _cleaning_entry():
     entries = lists[0]
     if not entries:
         raise SystemExit("report_tokens: private/household.yaml:cleaning_history is empty")
-    return entries[0]
+    return entries
+
+
+def _cleaning_sanity_check():
+    return _json("soiling_results.json")[_MEASURED_CLEANING_BLOCK]
+
+
+def _measured_cleaning():
+    """The cleaning_history record the published gain was measured ON, as
+    (entry, None) -- or (None, reason) when the artifact and the history do not
+    between them name one event.
+
+    THE FIGURE AND THE EVENT BESIDE IT ARE ONE CLAIM. §12's h3 reads "The
+    {{CLEANING_DATE}} cleaning ({{CLEANING_PRICE}}): {{CLEANING_EFFECT_PCT}}
+    production gain", and the gain is soiling_analysis.py's
+    difference-in-differences estimate for ONE dated event -- that module says
+    so in its own words ("they must never be attributed to any other event")
+    and pins its block to that exact record. Nothing tied the token half to the
+    same record: the date, price and year came off cleaning_history's FIRST
+    entry, which the intake file guarantees nothing about -- not its order, not
+    its length, not that it contains the measured cleaning at all. A household
+    that records its cleanings newest-first, or adds a second one, or is the
+    committed household.example.yaml (2023-01-01), renders a heading naming one
+    cleaning and stating another's measurement.
+
+    So the match is made HERE, once, and every §12 token that names or measures
+    the cleaning reads through it. THE DATE IS THE ARTIFACT'S OWN
+    (sanity_check_2024_cleaning.cleaning_date), never a literal repeated on this
+    side: soiling_analysis.py owns which event it measured, and a second copy of
+    that date in this module is a second thing to keep in step.
+
+    A history that does not contain that date is an ORDINARY HOUSEHOLD, not a
+    broken one -- soiling_analysis.py writes its own "not determined" block for
+    exactly that case -- so this returns a reason rather than raising, and the
+    report still generates. Two entries sharing the date is the third answer:
+    they are two records with two prices and nothing in either file says which
+    one the study measured, so the gain is refused rather than settled by
+    taking whichever was listed first."""
+    sc = _cleaning_sanity_check()
+    when = sc.get("cleaning_date")
+    if when is None or sc.get("known_cleaning_gain_pct") is None:
+        # soiling_analysis.py's own not-determined shape: a `status` string and
+        # no gain. Its reason is better than one written here, so it is passed
+        # through when present -- with its own "not determined" prefix taken
+        # off, exactly as _spread_trend takes it off tou_spread's verdicts,
+        # because the caller writes that prefix and a status carrying one too
+        # renders it twice.
+        status = str(sc.get("status") or "").strip()
+        if status.lower().startswith(_NOT_DETERMINED_VERDICT):
+            status = status[len(_NOT_DETERMINED_VERDICT):].lstrip(" -–—:").strip()
+        return None, (status or
+                      f"data/soiling_results.json:{_MEASURED_CLEANING_BLOCK} states no "
+                      "measured cleaning gain")
+    try:
+        target = _as_date(when)
+    except (TypeError, ValueError):
+        return None, (f"data/soiling_results.json:{_MEASURED_CLEANING_BLOCK}"
+                      f".cleaning_date is {when!r}, which is not a date")
+    matched = []
+    for entry in _cleaning_entries():
+        if not isinstance(entry, dict) or "date" not in entry:
+            continue
+        try:
+            if _as_date(entry["date"]) == target:
+                matched.append(entry)
+        except (TypeError, ValueError):
+            continue
+    if len(matched) == 1:
+        return matched[0], None
+    if not matched:
+        return None, (f"private/household.yaml:cleaning_history records no cleaning on "
+                      f"{target}, the date data/soiling_results.json measured that gain "
+                      "for")
+    return None, (f"private/household.yaml:cleaning_history records {len(matched)} "
+                  f"cleanings on {target}, so which one data/soiling_results.json "
+                  "measured is ambiguous")
+
+
+def _cleaning_entry():
+    """The cleaning §12 describes: the measured one whenever the artifact and
+    the history agree on which that is.
+
+    The fallback to the first recorded cleaning is what keeps a household
+    WITHOUT the measured event reporting its cleaning history at all -- and it
+    cannot misattribute, because the only path that reaches it is the one on
+    which CLEANING_EFFECT_PCT states no figure to misattribute."""
+    entry, _reason = _measured_cleaning()
+    return entry if entry is not None else _cleaning_entries()[0]
 
 
 _tok("CLEANING_PRICE", kind="derived",
@@ -2279,15 +2369,34 @@ def _cleaning_effect_pct(ctx):
     The SIGN is carried by this token. The heading reads "+11.8% production
     gain" and report-template.html supplies no sigil in front of the slot, so
     a household whose cleaning measured a LOSS renders its own minus rather
-    than having a "+" glued on beside it."""
-    sc = _json("soiling_results.json")["sanity_check_2024_cleaning"]
+    than having a "+" glued on beside it.
+
+    STATED ONLY FOR THE EVENT IT WAS MEASURED ON. The figure belongs to one
+    dated cleaning and the heading around it names a date and a price, so the
+    two are bound together in _measured_cleaning() -- see its docstring for the
+    misattribution this prevents. When that binding cannot be made the answer
+    is NOT_DETERMINED, and it is rendered rather than raised: the state is
+    named at the call site the way this module's three-state discipline
+    requires, but _claim() is deliberately not the exit taken with it, because
+    _claim's NOT_DETERMINED is a SystemExit and a household whose cleanings
+    simply differ from ours would then generate no report at all. It is
+    rendered the way the other tokens whose artifact does not settle their
+    question render it -- SPREAD_TREND_SUMMER/WINTER and
+    BATTERY_ON_MEASURED_SPREAD -- as the words "not determined" followed by the
+    reason, which CLAUDE.md section 0 makes a legitimate published answer."""
+    sc = _cleaning_sanity_check()
+    entry, why = _measured_cleaning()
+    state = SUPPORTED if entry is not None else NOT_DETERMINED
+    if state is NOT_DETERMINED:
+        return f"{_NOT_DETERMINED_VERDICT} — {why}"
     gain, = _figures("CLEANING_EFFECT_PCT", "what the cleaning recovered",
                      known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
-    _claim("CLEANING_EFFECT_PCT", "what the cleaning recovered", SUPPORTED,
-           f"data/soiling_results.json:sanity_check_2024_cleaning."
+    _claim("CLEANING_EFFECT_PCT", "what the cleaning recovered", state,
+           f"data/soiling_results.json:{_MEASURED_CLEANING_BLOCK}."
            f"known_cleaning_gain_pct is {gain!r}%, the difference-in-differences "
            f"gain analysis/soiling_analysis.py measured for the "
-           f"{sc['cleaning_date']} cleaning")
+           f"{sc['cleaning_date']} cleaning private/household.yaml:cleaning_history "
+           f"records at cost_usd {entry.get('cost_usd')!r}")
     return f"{gain:+.1f}%"
 
 
