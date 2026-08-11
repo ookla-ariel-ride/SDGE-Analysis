@@ -20,8 +20,12 @@ reason. So the cases below are built in matched pairs:
     confirm the SystemExit fail-closed behaviour dry_run.py's docstring leans
     on, rather than taking the docstring's word for it.
 
-  * a generator that exits 0 having written nothing, and one that crashes, must
-    both be reported as FAILURES -- never as "nothing would change".
+  * a generator that exits 0 having neither written nor deleted anything, and one
+    that crashes, must both be reported as FAILURES -- never as "nothing would
+    change" -- AND
+  * a generator that exits 0 having only DELETED an artifact must be reported as
+    a REMOVAL, since a deletion is a real change that leaves the same empty write
+    set as a run that never happened.
 
   * a tracked symlink is seeded by copying its target's content, so no path
     inside the sandbox leads out of it (the checkout has none today, so the
@@ -283,6 +287,66 @@ def case_a_generator_that_writes_nothing_is_a_failure_not_no_changes():
         assert "FAILED" in out, out
     return ("a generator that exits 0 having written nothing is reported as a "
             "FAILURE (exit 2) and the words 'nothing would change' never appear")
+
+
+@case
+def case_a_generator_that_only_deletes_an_artifact_is_reported_as_a_removal():
+    """Deleting an artifact is a real change -- diff_dirs() classifies it as
+    Change("removed", ...) -- but _written_since() cannot see it, because a
+    deleted file has no mtime left to be newer than the sentinel. A deletion-only
+    run must therefore be reported as a REMOVAL, not rejected by the empty-write
+    guard as a silent no-op."""
+    body = ("import pathlib\n"
+            "def _repo_root():\n"
+            "    p = pathlib.Path.cwd()\n"
+            "    while not ((p / 'analysis').is_dir() and (p / 'data').is_dir()):\n"
+            "        p = p.parent\n"
+            "    return p\n"
+            "(_repo_root() / 'data' / 'retired.json').unlink()\n")
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": body},
+                           {"retired.json": '{"gas": 1}\n', "kept.json": "{}\n"})
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is None, rep.failure
+        assert rep.result.wrote == [], (
+            "the generator wrote something, so this case no longer isolates the "
+            f"deletion-only path: {rep.result.wrote}")
+        assert [(c.kind, c.path) for c in rep.changes] == [("removed", "data/retired.json")], \
+            [(c.kind, c.path) for c in rep.changes]
+        assert rep.would_change is True
+        assert (repo / "data" / "retired.json").is_file(), \
+            "the dry run deleted the real artifact it was only supposed to describe"
+        code, out = _cli(repo / "analysis" / "g.py", "--check")
+        assert code == 1, (code, out)
+        assert "- data/retired.json" in out, out
+        assert "nothing would change" not in out.lower(), out
+    return ("a generator that exits 0 having only DELETED an artifact -- an empty "
+            "write set -- is reported as `removed data/retired.json` with --check "
+            "exiting 1, not rejected as a silent no-op")
+
+
+@case
+def case_a_run_with_neither_a_write_nor_a_removal_is_still_a_failure():
+    """The acceptance criterion for the deletion fix above: allowing a removal to
+    stand in for a write must not let a generator that never really ran through.
+    Same shape as the writes-nothing case, asserted after the diff has been
+    computed -- the diff is empty, so the guard must still fire."""
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": "print('I touched nothing')\n"},
+                           {"a.json": "{}\n", "b.json": "{}\n"})
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is not None, "a silent no-op was accepted as a clean run"
+        assert "wrote nothing" in rep.failure, rep.failure
+        assert rep.changes == [], (
+            "a failed run published a diff: " + str([c.path for c in rep.changes]))
+        assert rep.cwd_outputs == [], rep.cwd_outputs
+        text = DR.render(rep, "g.py")
+        assert "nothing would change" not in text.lower(), text
+        code, out = _cli(repo / "analysis" / "g.py", "--check")
+        assert code == 2, (code, out)
+    return ("a generator that neither writes nor deletes anything is still a "
+            "FAILURE (exit 2 under --check) carrying no diff at all -- the "
+            "empty-write guard survives the deletion case being allowed through")
 
 
 @case
@@ -730,6 +794,77 @@ def case_check_exits_zero_when_a_generator_reproduces_its_artifact():
         assert "nothing would change" in out.lower(), out
     return ("--check exits 0 when the generator reproduces its committed artifact "
             "byte for byte, so the section 9 gate can call it directly")
+
+
+@case
+def case_a_new_cwd_artifact_is_reported_as_an_addition_not_a_clean_run():
+    """Several generators write their artifact into the CWD while the repo
+    commits it under data/. One that writes a BRAND-NEW cwd artifact -- nothing
+    under data/ to compare it with -- must be reported as an addition; dropping
+    it for lack of a counterpart would print 'nothing would change' over a new
+    artifact appearing."""
+    body = ("import json, pathlib\n"
+            "pathlib.Path('fresh_cwd_artifact.json').write_text("
+            "json.dumps({'brand': 'new'}, indent=1) + '\\n')\n")
+    with tempfile.TemporaryDirectory() as td:
+        repo = _synth_repo(td, {"g.py": body}, {"out.json": "{}\n"})
+        rep = DR.dry_run(repo / "analysis" / "g.py")
+        assert rep.failure is None, rep.failure
+        assert rep.changes == [], [c.path for c in rep.changes]   # data/ itself is untouched
+        added = [(n, c) for n, c in rep.cwd_outputs if c is not True and c.kind == "added"]
+        assert [n for n, _ in added] == ["fresh_cwd_artifact.json"], rep.cwd_outputs
+        assert "new file" in " ".join(added[0][1].detail), added[0][1].detail
+        assert rep.would_change is True
+        text = DR.render(rep, "g.py")
+        assert "nothing would change" not in text.lower(), text
+        code, out = _cli(repo / "analysis" / "g.py", "--check")
+        assert code == 1, (code, out)
+        assert "+ fresh_cwd_artifact.json" in out, out
+        assert "1 artifact(s) would change" in out, out
+    return ("a generator writing a NEW artifact into its CWD, with no data/ "
+            "counterpart to compare against, is reported as an addition naming the "
+            "file -- --check exits 1 and the verdict never says 'nothing would "
+            "change'")
+
+
+@case
+def case_the_seeded_root_files_are_not_reported_as_cwd_additions():
+    """The counterpart-less half of _cwd_output_diffs() walks the sandbox ROOT,
+    which holds every tracked root-level file (README.md, index.html, CLAUDE.md,
+    ...) plus the seeded cwd fixtures (usage.csv, samA.csv, samB.csv). Almost
+    none of them have a data/ counterpart, so a fix that reported every
+    counterpart-less root file would flood a clean run with false additions.
+    Assert on a REAL generator that a clean run stays clean."""
+    gen = ROOT / "analysis" / "package_results.py"
+    if not gen.is_file():
+        raise SkipCase("analysis/package_results.py is missing from this checkout")
+    trap = {}
+
+    def look(sb):
+        trap["counterpartless"] = sorted(
+            f.name for f in sb.path.iterdir()
+            if f.is_file() and not f.is_symlink()
+            and not (sb.baseline_dir / f.name).is_file())
+
+    rep = DR.dry_run(gen, on_built=look)
+    if rep.failure is not None:
+        raise SkipCase(f"package_results.py does not dry-run in this checkout: {rep.failure}")
+    # The trap is real, not hypothetical: the sandbox root holds these files and
+    # data/ has no counterpart for any of them, so a walk that reported every
+    # counterpart-less root file would report all of them as new artifacts.
+    assert len(trap["counterpartless"]) >= 5, trap["counterpartless"]
+    assert "README.md" in trap["counterpartless"], trap["counterpartless"]
+    assert rep.result.wrote, "the generator wrote nothing -- this case proved nothing"
+    assert [c.path for c in rep.changes] == [], [c.path for c in rep.changes]
+    noise = [n for n, c in rep.cwd_outputs if c is not True]
+    assert noise == [], f"a clean run reported cwd artifacts as changing: {noise}"
+    code, out = _cli(gen, "--check")
+    assert code == 0, (code, out)
+    assert "WOULD CHANGE data/  (nothing)" in out, out
+    assert "nothing would change" in out.lower(), out
+    return ("a real, reproducible generator (package_results.py) dry-runs to an "
+            "empty change list under --check: none of the tracked root files or "
+            "seeded cwd fixtures are mistaken for new cwd artifacts")
 
 
 @case

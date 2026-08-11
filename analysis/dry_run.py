@@ -59,13 +59,18 @@ SILENT NO-OPS ARE FAILURES, NOT "NO CHANGES"
     A dry-run tool that reports "nothing would change" because the generator
     never ran is worse than no tool. Three separate things must hold before this
     file will report a diff at all: the generator exited 0, the sandbox was
-    populated (analysis/ and data/ both present and non-empty), and the run
-    WROTE something -- every seeded file is stamped with an old mtime up front,
-    so any write at all lands newer. An empty write set is a failure. This is the
-    same mtime-not-content rule test_scripts_runnable.py already uses, and for
-    the same reason: several generators legitimately reproduce the committed
-    bytes, so content equality cannot distinguish "reproduced it" from "never
-    opened it".
+    populated (analysis/ and data/ both present and non-empty), and the run left
+    a TRACE -- it either WROTE something (every seeded file is stamped with an
+    old mtime up front, so any write at all lands newer) or DELETED something
+    (visible only in the diff, since _written_since() can inspect only files that
+    still exist). Deleting an artifact is a real change -- diff_dirs() classifies
+    it as Change("removed", ...) -- so a deletion-only run is reported as that
+    removal, not rejected as a no-op. A run with neither a write nor a removal is
+    a failure. The write half is the same
+    mtime-not-content rule test_scripts_runnable.py already uses, and for the
+    same reason: several generators legitimately reproduce the committed bytes,
+    so content equality cannot distinguish "reproduced it" from "never opened
+    it".
 
     A sandbox that could not be removed afterwards is a FAILURE too, for the
     same reason: it holds the whole copied private/ archive, so exiting 0 over
@@ -608,7 +613,10 @@ class DryRunReport:
         self.notes = []
         self.result = None
         self.changes = []
-        self.cwd_outputs = []       # (name, True | Change) for cwd files also in data/
+        self.cwd_outputs = []       # (name, True | Change) per cwd artifact: True when
+                                    # identical to data/<name>, a "modified" Change when it
+                                    # differs, an "added" Change when this run wrote a cwd
+                                    # file data/ has no counterpart for
         self.dirty_baseline = []
         self.ignored = []           # sandbox scratch .gitignore would exclude
         self.failure = None
@@ -686,18 +694,28 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
             rep.failure = (f"{rel} exited {rep.result.returncode}; NOT reporting "
                            "'no changes'.\n      " + "\n      ".join(tail))
             return rep
-        if not rep.result.wrote:
-            rep.failure = (f"{rel} exited 0 but wrote nothing in the sandbox. A "
-                           "generator that produces no output is a silent no-op, "
-                           "not a clean dry run.")
-            return rep
 
         # --- what would change ---------------------------------------------
+        # The diff is computed BEFORE the did-it-actually-run guard, on purpose.
+        # _written_since() can only see files that still exist, so a generator
+        # that exits 0 having only DELETED an artifact leaves an empty write set
+        # -- and a deletion is a real change the diff engine already classifies
+        # (Change("removed", ...)), so it must be reported, not refused.
+        # The diff is the only evidence that separates that from a generator
+        # that never ran, so it has to exist before the guard can judge. The
+        # guard is not weakened by the reordering: it still fires whenever there
+        # is NEITHER a write NOR a removal, and it still returns before
+        # rep.changes is populated, so a failed run never publishes a diff.
         changes = diff_dirs(base_dir, sb.path / "data")
+        if not rep.result.wrote and not any(c.kind == "removed" for c in changes):
+            rep.failure = (f"{rel} exited 0 but wrote nothing and deleted nothing "
+                           "in the sandbox. A generator that produces no output is "
+                           "a silent no-op, not a clean dry run.")
+            return rep
         ignored = gitignored(root, [c.path for c in changes if c.kind == "added"])
         rep.changes = [c for c in changes if c.path not in ignored]
         rep.ignored = sorted(ignored)
-        rep.cwd_outputs = _cwd_output_diffs(sb, base_dir)
+        rep.cwd_outputs = _cwd_output_diffs(sb, base_dir, rep.result.wrote)
         return rep
     finally:
         if keep_sandbox:
@@ -732,16 +750,31 @@ def dry_run(generator, args=(), baseline="worktree", keep_sandbox=False,
                 rep.failure = msg if rep.failure is None else rep.failure + "\n      " + msg
 
 
-def _cwd_output_diffs(sb, base_dir):
+def _cwd_output_diffs(sb, base_dir, wrote=()):
     """Several generators write their artifact into the CWD and the repo commits
     it under data/ (behavior_rebuild.json, deep_results.json, ...). CLAUDE.md's
-    section 9 gate compares exactly those with `cmp`; do the same here."""
+    section 9 gate compares exactly those with `cmp`; do the same here.
+
+    A CWD output with no counterpart under data/ is an ADDITION -- a new artifact
+    would appear -- and dropping it would let the CLI print "nothing would
+    change" over one. But the sandbox root is the whole repo root: it also holds
+    every tracked root-level file (README.md, index.html, ...) and the seeded cwd
+    fixtures (usage.csv, samA.csv, samB.csv), almost none of which have a data/
+    counterpart. So the discriminator is `wrote` -- the run's own sandbox-root
+    writes (entries with no "/" in them), which is exactly the set this run
+    produced, because every seeded file is backdated before the generator
+    starts."""
+    written_here = {p for p in wrote if "/" not in p}
     out = []
     for rel in sb.path.iterdir():
         if not rel.is_file() or rel.is_symlink():
             continue
         counterpart = base_dir / rel.name
         if not counterpart.is_file():
+            if rel.name in written_here:
+                out.append((rel.name, Change("added", f"data/{rel.name}",
+                                             [f"new file, {rel.stat().st_size} bytes; "
+                                              "no counterpart in the baseline data/"])))
             continue
         if filecmp.cmp(rel, counterpart, shallow=False):
             out.append((rel.name, True))
@@ -806,14 +839,17 @@ def render(rep, generator, verbose=False):
     cwd_changed = [(n, c) for n, c in rep.cwd_outputs if c is not True]
     if rep.cwd_outputs:
         add("")
-        add("CWD artifacts also committed under data/  (the section 9 `cmp` gate)")
+        add("CWD artifacts compared with data/  (the section 9 `cmp` gate)")
         for name, c in rep.cwd_outputs:
             if c is True:
                 add(f"  = {name}  (identical to data/{name})")
+                continue
+            if c.kind == "added":
+                add(f"  + {name}  (new; there is no data/{name} to compare with)")
             else:
                 add(f"  ~ {name}  (differs from data/{name})")
-                for line in c.detail:
-                    add(f"      {line}")
+            for line in c.detail:
+                add(f"      {line}")
     add("")
     total = len(rep.changes) + len(cwd_changed)
     add("VERDICT: nothing would change." if total == 0
