@@ -5807,6 +5807,2248 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
             "exist")
 
 
+# ---------------------------------------------------------------------------
+# ISSUE #133: THE RENDER-TIME SEAM GUARD.
+#
+# Every case above this one asks whether a token RESOLVES. None of them asks
+# what the resolved value looks like once it is substituted into the template
+# text that surrounds it -- and that is exactly where issue #129's defects
+# lived. `~{{BATTERY_COST}}` resolves perfectly; it RENDERS "~~$14,500". The
+# committed index.html never showed any of them because it was hand-authored
+# rather than mechanically filled, so nothing in this repo caught them. Any
+# external reproducer following the documented pipeline shipped all three.
+#
+# This guard substitutes every {{TOKEN}} occurrence into its own template line
+# and inspects the RESULT for three defect classes:
+#
+#   1 DOUBLED SIGIL / DOUBLED UNIT -- the template supplies a sigil or a unit
+#     the value already carries at that end:
+#       "~{{BATTERY_COST}}"          -> "~~$14,500"
+#       "{{SOILING_RATE_RANGE}}/month" -> "0.4-2.4%/month/month"
+#   2 MISSING UNIT -- a bare-number value lands where neither it nor the prose
+#     around it supplies a unit:
+#       "covers {{SOLAR_COVERAGE_PCT}} of" -> "covers 55 of the home's ..."
+#   3 ECHOED PHRASE -- the text immediately after a value repeats the value's
+#     own tail, so one figure is printed twice:
+#       "{{INVERTER_DESCRIPTION}} (= {{AC_CEILING_KW}} kW AC max)"
+#       -> "... ~315 VA each = 9.45 kW AC max) (= 9.45 kW AC max)"
+#
+# GENERIC BY CONSTRUCTION, not a case per token. The occurrence list is parsed
+# out of report-template.html, the values come from report_tokens' own
+# resolver, and all three rules are properties of the (value, surrounding
+# text) pair. A token added to the template tomorrow is checked tomorrow with
+# no edit here. _SEAM_ALLOWLIST carries five entries today, all of them class
+# 2's dimensionless counts and years, each naming ONE occurrence; the case
+# below asserts that every entry STILL HAS the seam it excuses and that no
+# entry pardons more than the one occurrence it names -- so an exception whose
+# seam has since been fixed cannot linger as a silent loophole, and one that
+# was written for a different line cannot cover a real defect.
+#
+# WHAT THESE RULES DELIBERATELY DO NOT FLAG. Each of the three is heuristic,
+# and the brief for this work is explicit that a conservative rule with a
+# stated blind spot beats a clever one that cries wolf. Stated, therefore:
+#
+#   * Class 1 requires the template's sigil to be IMMEDIATELY adjacent (no
+#     space) to the token. "~ {{X}}" with a value of "~$14,500" is not
+#     flagged. Units are allowed one optional space ("{{X}} kWh/yr" against a
+#     value ending "kWh/yr" IS flagged), because that spacing is normal
+#     typography for a unit and never for a sigil.
+#   * Class 1 matches units case-INsensitively ("{{X}} kWh" against a value
+#     ending "KWH" is the same defect), but only on a WORD BOUNDARY at both
+#     ends: the unit may not be the tail of a longer word in the value
+#     ("1,234 kWh" does not end in the unit "h") nor the head of a longer word
+#     in the template ("{{X}} hours later" does not supply the unit "h").
+#     Without that boundary the short units cry wolf on ordinary prose.
+#   * That boundary is a BLIND SPOT as well as a guard, and so is class 1's
+#     strict adjacency for sigils. These misses are measured, not supposed: a
+#     template that spells the unit out, inflects it, joins it with a hyphen or
+#     writes the sigil as a word prints the same dimension twice and is NOT
+#     flagged.
+#         "{{X}} percent"        value "55%"        -> "55% percent"
+#         "{{X}} dollars"        value "$14,500"    -> "$14,500 dollars"
+#         "{{X}} kilowatt-hours" value "8,935 kWh"  -> "8,935 kWh kilowatt-hours"
+#         "{{X}} yrs"            value "10.2 yr"    -> "10.2 yr yrs"
+#         "{{X}}-year payback"   value "10.2 years" -> "10.2 years-year payback"
+#         "{{X}}kWh"             value "9.45 kW"    -> "9.45 kWkWh"
+#         "about {{X}}"          value "≈ 9.45 kW"  -> "about ≈ 9.45 kW"
+#     Catching the first five needs a unit VOCABULARY -- plurals, hyphen joins,
+#     spelled-out names, word forms of the sigils -- rather than a list of unit
+#     spellings; the last two are the word boundary and the sigil adjacency
+#     doing exactly what the bullets above describe. Widening either is what
+#     makes the short units cry wolf, so these stay stated rather than caught.
+#     The guards themselves are pinned by
+#     case_the_false_positive_guards_inside_the_seam_rules_are_load_bearing.
+#   * Class 1 compares like for like: the template's sigil against the SAME
+#     character at the same end of the value. "%{{X}}" where X ends in "%" is
+#     not a doubling and is not flagged.
+#   * Class 1 reads the rendered line as text, markup included, so an HTML tag
+#     between the sigil and the token ("~<b>{{X}}</b>") separates them and is
+#     not flagged. Every seam this template actually has puts the sigil and
+#     the token in the same text run, which is what the rule is written for.
+#   * Class 2 fires when the value is a BARE NUMBER (digits, thousands
+#     separators, optional decimals -- no sigil, no unit, no letters) and
+#     NOTHING BESIDE IT SUPPLIES A UNIT. "Supplies a unit" is the whitelist,
+#     and it is deliberately narrow: the text after the value has to BEGIN
+#     with a member of _SEAM_UNITS at a word boundary (one optional leading
+#     space and one optional leading hyphen, so "{{ANALYSIS_DAYS}}-day" and
+#     "{{SYSTEM_SIZE_KW_DC}} kW" both read as unit-carrying). Anything else --
+#     "self-consumed", "statements", "of the load" -- is not a unit, and the
+#     figure is reported.
+#     THE FUNCTION-WORD NARROWING THIS REPLACED WAS TOO TIGHT TO CATCH ITS OWN
+#     DEFECT CLASS, measured rather than argued. #129's original defect line
+#     renders "covers 55% of the home's ... load -- 40% self-consumed, 60%
+#     exported". SOLAR_COVERAGE_PCT losing its "%" was caught, because "of" is
+#     a function word. Its SIBLING on the same line, SELF_CONSUMED_SHARE,
+#     losing its "%" the same way (a one-word fmt regression, "pct0" ->
+#     "num0") was NOT, because "self-consumed" is a hyphenated participle that
+#     no plausible function-word list contains. A guard that catches one half
+#     of one line's defect is not a guard.
+#     IT HAS FALSE POSITIVES, AND THEY ARE ORDINARY ENGLISH -- more of them
+#     than the function-word form had. The rule cannot tell a figure that LOST
+#     its unit from a number that legitimately has none: a year, a count, a
+#     ratio. Every one of these is correct prose and every one is flagged:
+#         "12 statements"                 a count, followed by a counted noun
+#         "13 billing periods"            a count, followed by an adjective
+#         "2 independent sources"         a count, followed by an adjective
+#         "the 2024 cleaning"             a year, followed by a noun
+#         "563 sessions were overnight"   a count, followed by a counted noun
+#     Five bare-number occurrences in the live template are exactly this
+#     shape, and each carries a _SEAM_ALLOWLIST entry below naming the
+#     occurrence and why its number is dimensionless. Class 2 is therefore a
+#     TRIPWIRE, not a proof: when it fires, READ THE RENDERED LINE. If the
+#     number is genuinely dimensionless, the remedy is an allowlist entry --
+#     not a quiet edit to the rule, and not a unit invented to silence it.
+#     That the allowlist is keyed by (token, class, marker) is what keeps such
+#     an entry from also blinding classes 1 and 3 for the same token, or the
+#     SAME class at a different occurrence of it.
+#   * Class 2 does NOT flag a bare number followed by text with no letters in
+#     its next word -- punctuation, a symbol, or another figure ("{{X}} ×
+#     335 W", "<td>{{X}}</td><td>17,373</td>", "{{X}} — cleaned Aug 12") --
+#     nor one at end of line, nor one sitting alone in a table cell whose
+#     column header carries the unit, nor one with a sigil immediately in
+#     front of it, since the sigil is the unit. Those are the shapes where a
+#     reader takes the unit from the column, the clause or the sigil rather
+#     than from the next word, and flagging them is what would make this rule
+#     unrunnable. It is a stated blind spot in the same breath: a figure that
+#     lost its unit and happens to be followed by a bracket is missed.
+#   * Class 2 READS THROUGH MARKUP, which is the opposite of class 1 above and
+#     is deliberate: it strips tags out of the text after the value to find
+#     "the next word", so it reaches into the next table cell. "<td>{{X}}</td>
+#     <td>of the load</td>" with X="42" IS flagged missing-unit even though a
+#     reader sees two separate cells. Class 1 treats the same markup as a
+#     separator; class 2 treats it as whitespace. The asymmetry is the
+#     conservative direction for each rule -- class 1 must not invent a
+#     doubling across a tag, class 2 must not miss a lost unit because prose
+#     was wrapped in <b> -- but it means a class-2 hit can point at a word
+#     that never renders beside the number. READ THE RENDERED LINE, as above.
+#   * Class 2 HAS A SECOND TEST, evaluated FIRST, that does not read the
+#     seam's prose at all: THE TOKEN'S DECLARED DIMENSION. Every leaf token in
+#     report_tokens.py names a format spec -- usd0, pct1, cents1, num0, year --
+#     and the money, percent and cents specs are the ones whose OUTPUT carries
+#     a dimension sigil. A token declared with one of those, rendering a value
+#     with no "$" (or "%", or "¢") anywhere in it and none supplied
+#     immediately beside it by the template, has lost the dimension its own
+#     format declares, and is reported REGARDLESS of what follows it and
+#     regardless of the value's shape.
+#     THE PROSE TEST ALONE COULD NOT SEE THIS, and that is measured rather
+#     than argued. Most money figures in this template are printed
+#     "{{X}}/yr" or "~{{X}}/mo", and "/yr" and "/mo" are members of
+#     _SEAM_UNITS -- so a formatter regression from usd0 to num0, the exact
+#     shape of #129's pct0 -> num0, renders "<b>3,282/yr electric</b>" and the
+#     unit whitelist above answers "something beside it gives it a unit" and
+#     stays quiet. It does: the wrong one. A period is not a price. Simulating
+#     that regression at every occurrence of a dimension-declaring token in
+#     the shipped template caught 8 of 43 occurrences before this test existed
+#     and 43 of 43 after it -- the 35 it could not see included every $.../yr
+#     and $.../mo figure in the report. The sweep is not a note about the
+#     past: case_a_declared_money_or_percent_token_that_loses_its_sigil_is_
+#     reported re-runs it on every checkout and fails if the ratio slips.
+#     THE DIMENSION TABLE IS DERIVED, NOT DECLARED. _seam_fmt_dimensions()
+#     calls every numeric formatter in report_tokens.FORMATTERS on one probe
+#     number and reads the sigil out of what it prints, so a money format
+#     added tomorrow is checked tomorrow with no edit here and no list of
+#     token names exists to fall behind. What a derivation cannot see is a
+#     classification DISAPPEARING -- a formatter deleted, a probe that stops
+#     rendering, a table that quietly comes back empty -- which is the same
+#     hole _SEAM_VOCABULARY_FLOOR exists for, closed the same way by
+#     _SEAM_FMT_DIMENSION_FLOOR.
+#     ITS BLIND SPOT, stated and counted rather than supposed: a token that
+#     formats ITSELF -- kind="derived" or "cited_constant" with fmt=None,
+#     building its own string by calling _usd3 or _cents1 inside its own
+#     lambda -- declares no format for this test to read, so its dimension is
+#     invisible here however plainly a reader sees it. The live template
+#     carries such tokens whose whole value is one sigil-carrying figure
+#     (SUMMER_ONPEAK_IMPORT_RATE is the shape: kind="derived", fmt=None,
+#     get=lambda ctx: _usd3(...)), and a regression inside one of those
+#     lambdas is caught by nothing here. The count is reported by the case
+#     rather than written down, so it tracks the registry instead of going
+#     stale. The remedy for any one of them is to declare its fmt.
+#   * Class 3 requires the echo to contain a DIGIT, to be at least
+#     _SEAM_MIN_ECHO characters long, and to sit within _SEAM_ECHO_GAP
+#     characters of the value -- after trailing closing punctuation is
+#     stripped off the value, because the echoed figure is routinely followed
+#     by the bracket that closes the clause carrying it (the pre-#134
+#     INVERTER_DESCRIPTION ended "... ≈ 9.45 kW AC max)", and the shipped
+#     template repeats everything but that final paren).
+#     It reads BOTH SIDES of the seam. The template's copy of the figure can
+#     sit after the token or in front of it, and after c79cc06 moved the AC
+#     ceiling off INVERTER_DESCRIPTION and onto the template, in front is the
+#     likelier direction: a future edit that restores the ceiling token-side
+#     while the template's copy leads the line prints it twice with the sides
+#     swapped. "A token whose value already contains the figure the template
+#     prints beside it" is direction-agnostic, so the rule is too.
+#     A short repeated number is not flagged, and neither is a figure repeated
+#     further down the same line. The live example of the latter is the
+#     lifetime table, which prints the first year's value in both the annual
+#     and the cumulative column (report-template.html:538) -- but be precise
+#     about WHICH rule spares it: today's FIRST_YEAR_VALUE is 7 characters, so
+#     _SEAM_MIN_ECHO excludes it before the gap rule is ever consulted. The
+#     gap between the two cells is len("</td><td>") == 9 against a threshold
+#     of 6, a margin of three characters. Omit the optional </td> closers --
+#     valid HTML5 -- and the gap falls to len("<td>") == 4, and a cumulative
+#     column repeating a value >= _SEAM_MIN_ECHO long WOULD false-positive.
+#     That is a tripwire, not a proof, on the same terms as class 2.
+#   * Class 3 BLIND SPOT, the accepted cost of the trim above: trailing
+#     punctuation is stripped BEFORE the length floor is applied, so a value
+#     that clears _SEAM_MIN_ECHO only with its punctuation attached falls
+#     under the floor once trimmed and its echo is missed. "1.23 kW.," echoed
+#     immediately (gap 0) is 9 characters and is NOT flagged, because the core
+#     the rule compares is the 7-character "1.23 kW". The band is narrow --
+#     values whose core is 8 or more characters are unaffected -- and no live
+#     token's value lands in it today, but a shorter figure carrying two
+#     closers would. Widening the floor to catch it costs false positives on
+#     every short repeated number, which is the trade the floor exists to
+#     make.
+#   * Class 3 searches a WINDOW of 120 characters on each side of the value:
+#     the 120 after it and the 120 before. Nothing further out is looked for,
+#     and no repeated run longer than 120 characters can be matched at all.
+#     That costs nothing a defect needs -- _SEAM_ECHO_GAP already requires the
+#     repeat to sit within 6 characters of the value -- and it keeps the search
+#     off the rest of a long table row. It does mean the value's OWN LENGTH
+#     stops mattering past the window, which is why the rule tries both ends of
+#     the value against each side: a long value's tail is all the suffix half
+#     can ever look for, so a template that repeats the OPENING of a long value
+#     is caught only by the head half of the run pair (core[:length]). Values
+#     longer than the window are ordinary in this report --
+#     case_the_echo_rule_reads_both_ends_of_the_value counts them on the run.
+#   * Class 3 reads its two windows with every HTML TAG MASKED TO SPACES of
+#     the same length, so attribute text -- which a reader never sees -- is
+#     not mistaken for a printed figure. '<td data-sort="12,345.6 kWh">{{X}}'
+#     with X = "12,345.6 kWh" prints the figure ONCE and is not flagged; the
+#     sort key is markup. Masking to EQUAL-LENGTH spaces rather than deleting
+#     is what keeps _SEAM_ECHO_GAP measuring the distance a reader sees: the
+#     lifetime table's "</td><td>" is still 9 characters against a threshold
+#     of 6, exactly as the paragraph above computes it.
+#   * All three rules are scoped to ONE TEMPLATE LINE. This template puts one
+#     element per line, so a seam always has both of its sides on the same
+#     line; a value echoed across a line break is not looked for.
+#   * Values are compared ESCAPED, the way the generator writes them.
+#     generate_report.render() substitutes html.escape(value, quote=True), so
+#     that is what _seam_render substitutes too. Escaping is neutral for class
+#     1 -- it never changes a leading or trailing sigil -- but NOT for class 3,
+#     which compares INTERNAL text: a template printing "PG&amp;E 2025" beside
+#     a token whose value is "PG&E 2025" renders the figure twice, and an
+#     unescaped comparison sees two different strings and reports nothing.
+#     Thirteen live token values change under escaping (ampersands and
+#     apostrophes), so this is the shipped path, not a hypothetical one.
+#
+# CI. This runs with NO private archive. Where private/household.yaml is
+# absent, the household-sourced tokens are resolved against the committed
+# household.example.yaml instead (see _seam_values), so all 206 non-gap tokens
+# are checked on the merge-guarding runner rather than the 162 that read only
+# data/. The five KNOWN_GAPS tokens are the only ones skipped, and the case
+# asserts that set by name. The two paths are not identical and this guard
+# does not claim they are: see _seam_stand_in_household for the one shape
+# difference measured between them.
+# ---------------------------------------------------------------------------
+_SEAM_TOKEN_RE = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+
+# Sigils a template can supply on either side of a value. Strict adjacency.
+_SEAM_SIGILS = ("~", "$", "%", "≈", "+", "−", "-")
+
+# Unit suffixes a template can supply behind a value; one optional space
+# allowed, matched case-insensitively and only on a word boundary at both ends
+# (see _seam_doubled). Matched longest-first so "kWh/yr" wins over "kWh".
+#
+# The TIME units are here because this report is full of duration figures --
+# paybacks, endurance, cleaning intervals, lifetimes -- and "{{PAYBACK_YEARS}}
+# years" against a value already ending "years" is the most plausible seam a
+# prose pass can introduce, ahead of anything the energy units cover. The word
+# boundary is what makes the one-letter "h" safe to list: without it, any value
+# ending "kWh" followed by the word "hours" would be flagged.
+#
+# "cycles/day" is here for the same reason the time units are: it is a unit
+# this template really does supply behind a bare figure
+# ("{{CYCLES_PER_DAY}} cycles/day"), spelled as a noun phrase rather than an
+# abbreviation. Listing it is what keeps that occurrence out of
+# _SEAM_ALLOWLIST -- an allowlist entry would have had to claim the number is
+# dimensionless, which it is not; it is a rate whose unit is written out.
+_SEAM_UNITS = ("cycles/day", "kWh/kW/yr", "kWh/yr", "per month", "per year",
+               "annually", "/month", "months", "/year", "years", "hours",
+               "month", "hour", "days", "year", "kWh", "/kWh", "MWh", "/day",
+               "/mo", "/yr", "yrs", "day", "kW", "yr", "%", "¢", "°", "h")
+
+_SEAM_BARE_NUMBER_RE = re.compile(r"\A\d[\d,]*(?:\.\d+)?\Z")
+
+# The sigils that are a DIMENSION rather than a decoration. A subset of
+# _SEAM_SIGILS on purpose: "~", "+" and "-" say how a figure was arrived at,
+# not what it measures, and a value that keeps its tilde while losing its
+# dollar sign has still lost its dimension. "¢" is here as well as "$"
+# because _cents1 is a currency formatter too and a rate that loses its cent
+# sign is the same defect one decimal place down.
+_SEAM_DIMENSION_SIGILS = ("$", "%", "¢")
+
+# The number every formatter is asked to render so its dimension can be read
+# off the output. Positive and finite, because the currency formatters that
+# carry no sign REFUSE a negative and every formatter refuses a non-number
+# (report_tokens' two formatter preconditions); the exact magnitude is
+# irrelevant -- only which sigils appear.
+_SEAM_FMT_PROBE = 1234.0
+
+# The format specs that MUST still classify as a dimension, and as which one.
+#
+# Committed separately from _seam_fmt_dimensions() for the reason
+# _SEAM_VOCABULARY_FLOOR is committed separately from the rules that read
+# _SEAM_UNITS: derivation is what keeps the table current, and it is exactly
+# what cannot notice the table getting shorter. A classification that vanishes
+# -- a formatter deleted, a probe call that starts raising and is skipped, a
+# sigil dropped from _SEAM_DIMENSION_SIGILS -- takes with it every check that
+# depended on it, and the suite goes green by having stopped asking.
+#
+# A SUPERSET needs no edit here, which is the whole point: a money format
+# added to report_tokens.FORMATTERS tomorrow is derived, checked and swept
+# tomorrow without this dict being touched. What fails is an entry below no
+# longer classifying the way it says, so narrowing the guard becomes a
+# deliberate two-place edit with a reviewer's name on it.
+_SEAM_FMT_DIMENSION_FLOOR = {
+    "usd0": "$", "usd0_tilde": "$", "usd0_signed": "$",
+    "usd0_tilde_signed": "$", "usd0_plus": "$", "usd2": "$", "usd3": "$",
+    "pct0": "%", "pct1": "%", "pct0_frac": "%",
+    "cents1": "¢",
+}
+
+
+def _seam_fmt_dimensions():
+    """{format-spec name: the dimension sigil its output carries}, DERIVED by
+    running every numeric formatter in report_tokens.FORMATTERS on one probe
+    number and reading the sigils out of what it prints.
+
+    Derived rather than written down so that a money or percent format
+    registered tomorrow is a dimension tomorrow, with no edit here and no list
+    of token names to fall behind -- the same principle the rules themselves
+    follow when they read _SEAM_UNITS instead of naming tokens. The floor
+    above is what a derivation cannot supply.
+
+    _NON_NUMERIC_FMTS (None and "raw") are skipped: they are str()
+    passthroughs for tokens that build their own string, so whatever sigil
+    comes out belongs to the value, not to the format.
+
+    A formatter that REFUSES the probe fails here by name instead of being
+    skipped. Skipping is how a table like this empties itself quietly: the
+    formatter still exists, still puts a "$" on every figure it renders, and
+    is no longer classified as currency by anything. Same for a formatter that
+    prints TWO different dimension sigils -- there is no honest single answer,
+    so the ambiguity is raised rather than resolved by tuple order."""
+    out = {}
+    for name, fn in rt.FORMATTERS.items():
+        if name in rt._NON_NUMERIC_FMTS:
+            continue
+        try:
+            rendered = fn(_SEAM_FMT_PROBE)
+        except BaseException as e:                     # noqa: BLE001 -- reported
+            raise AssertionError(
+                f"report_tokens.FORMATTERS[{name!r}] cannot render the probe "
+                f"{_SEAM_FMT_PROBE!r} ({type(e).__name__}: {e}); the seam guard reads "
+                "each format's dimension off exactly this call, and a formatter it "
+                "cannot call is a format whose money or percent sign nothing checks. "
+                "Either the probe is no longer a value every formatter accepts -- "
+                "change _SEAM_FMT_PROBE -- or the formatter's preconditions moved")
+        found = [s for s in _SEAM_DIMENSION_SIGILS if s in rendered]
+        assert len(found) <= 1, (
+            f"report_tokens.FORMATTERS[{name!r}] renders {rendered!r}, which carries "
+            f"the dimension sigils {found}; a format spec measures ONE dimension, and "
+            "this test cannot say which of them a value that lost one has lost")
+        if found:
+            out[name] = found[0]
+    return out
+
+
+# Derived ONCE, at import, for the reason _seam_excuse gives for validating
+# allowlist keys in a case rather than inside the scan: a table this rule
+# cannot build is a fact about report_tokens.FORMATTERS, and it should be
+# reported by name before any case runs rather than as an exception out of
+# whichever case happened to be first. The dedicated case below re-derives it
+# and holds the result to _SEAM_FMT_DIMENSION_FLOOR.
+_SEAM_FMT_DIMENSIONS = _seam_fmt_dimensions()
+
+# An HTML tag, with QUOTED ATTRIBUTES honored: a '>' inside "..." or '...' is
+# attribute text and does not end the tag. The naive `<[^>]*>` ends the tag at
+# the first '>' it sees, which leaves the rest of the attribute -- and the
+# closing quote and bracket -- in the "visible" text ahead of the real next
+# word, so a missing unit behind such an attribute is invisible to class 2 and
+# attribute text is readable as printed by class 3.
+# `<span title="comparison > baseline"> of the load</span>` is the shape.
+# No live tag in report-template.html has a '>' inside a quoted attribute
+# today (measured: the naive and the honoring regex agree on every tag in the
+# live markup), so this is a blind spot closed before it was reached rather
+# than a bug fixed after it bit.
+_SEAM_TAG_RE = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>""")
+
+# Characters trimmed off the ends of the "next word" before it is quoted back
+# in a class-2 message. Not a rule input: the word is TESTED for letters
+# before it is trimmed.
+_SEAM_WORD_TRIM = ".,;:!?)(\"'"
+
+_SEAM_MIN_ECHO = 8      # chars; shorter repeats are coincidence, not an echo
+_SEAM_ECHO_GAP = 6      # chars allowed between a value's end and its echo
+
+# Closing punctuation stripped off a value's end before class 3 looks for the
+# value's tail in the text after it. A value that closes a bracket or a
+# sentence ("... ≈ 9.45 kW AC max)") echoes everything EXCEPT that last
+# character, so a suffix match anchored on the value's true final character
+# finds nothing -- which is how the pre-#134 INVERTER_DESCRIPTION slipped past
+# this rule when it was rendered into the template as it ships today.
+_SEAM_ECHO_TRIM = ")]}.,;:"
+
+# The three defect classes, in the order _seam_defects evaluates them. Named
+# once so the allowlist's key check and the reports below cannot drift from the
+# labels the rules actually emit.
+_SEAM_CLASSES = ("doubled-sigil", "missing-unit", "echoed-phrase")
+
+# (token, defect class, template-line marker) -> reason.
+#
+# ONE ENTRY EXCUSES ONE OCCURRENCE. Keyed by the token alone, an entry
+# suppresses every class for that token forever, so an excuse for a
+# legitimately dimensionless number would also blind it to a doubled sigil and
+# to an echoed figure -- two defects issue #129 actually shipped. Keyed by
+# (token, class), it still suppresses that class at EVERY occurrence of the
+# token: this template prints {{BILL_COUNT}} on two different lines, and one
+# entry for the count that is genuinely dimensionless would silently pardon a
+# real lost unit on the other line, with the stale check below still green
+# because the first occurrence keeps matching. Measured on exactly that pair,
+# not supposed.
+#
+# The MARKER closes it. It is a literal substring of the report-template.html
+# LINE carrying the occurrence -- the raw template line, never the rendered
+# one, so no household figure is ever committed to this file (CLAUDE.md
+# section 4) and the marker does not drift with the archive. An occurrence is
+# excused only if its own line contains the marker, and the stale check
+# refuses a marker that matches MORE THAN ONE line (an over-broad or empty
+# marker is a token-wide pardon wearing a disguise) and reports an entry whose
+# marker matches NO seam as stale.
+#
+# ONE STATED LIMIT: a marker cannot separate two occurrences of the SAME token
+# on the SAME line. Five template lines print a token twice (line 234, 325,
+# 529, 538, 655); none of them is allowlisted, and an entry for one would
+# excuse both. Line numbers are the next granularity down and they do not
+# help here either.
+#
+# Every entry below is a bare number that is legitimately DIMENSIONLESS -- a
+# count or a year -- reported by class 2 because the word after it is an
+# ordinary English noun or adjective rather than a unit. Each names the token,
+# the line it excuses and why that number has no unit to lose.
+_SEAM_ALLOWLIST = {
+    ("BILL_COUNT", "missing-unit", "-day audit of {{BILL_COUNT}} statements"):
+        "a COUNT of statements, not a measurement: '12 statements' is the "
+        "number of PDFs the audit read. There is no unit a statement count "
+        "could have lost.",
+    ("PRODUCTION_SOURCE_COUNT", "missing-unit",
+     "{{PRODUCTION_SOURCE_COUNT}} independent sources"):
+        "a COUNT of monitoring feeds ('2 independent sources'). Dimensionless "
+        "by construction -- the figure it qualifies, the agreement percentage, "
+        "carries its own sign two tokens later.",
+    ("BILL_COUNT", "missing-unit", "All {{BILL_COUNT}} detailed electric statements"):
+        "the same statement COUNT at its second occurrence, on the bills "
+        "section's opening line. A separate entry on purpose: the two "
+        "occurrences are excused one at a time, so a lost unit at either one "
+        "is still reported at the other.",
+    ("BILLING_PERIOD_COUNT", "missing-unit",
+     "({{BILLING_PERIOD_COUNT}} billing periods)"):
+        "a COUNT of billing periods. One statement PDF can carry two periods, "
+        "which is why this count differs from BILL_COUNT and why neither is a "
+        "quantity with a unit.",
+    ("CLEANING_YEAR", "missing-unit", "did the {{CLEANING_YEAR}} cleaning actually work"):
+        "a calendar YEAR used as an adjective ('the 2024 cleaning'). A year "
+        "has no unit; the token is a date part, not a measurement.",
+}
+
+# The committed entries, frozen at import. The allowlist case below MUTATES
+# _SEAM_ALLOWLIST to drive the contract its live entries do not reach, and a
+# case that leaves an entry behind hands every later case a silent pardon.
+_SEAM_ALLOWLIST_SHIPPED = tuple(_SEAM_ALLOWLIST)
+
+
+@contextlib.contextmanager
+def _seam_allowlist_cleared():
+    """_SEAM_ALLOWLIST emptied for the duration, then restored exactly.
+
+    The allowlist case drives synthetic templates whose `values` dict knows
+    nothing of the live tokens, and _seam_stale_allowlist rightly refuses a
+    key naming a token the run cannot resolve. Emptying the dict is what lets
+    that guard stay strict while the synthetic fixtures still exercise it; the
+    case asserts the restore against _SEAM_ALLOWLIST_SHIPPED afterwards."""
+    shipped = dict(_SEAM_ALLOWLIST)
+    _SEAM_ALLOWLIST.clear()
+    try:
+        yield
+    finally:
+        _SEAM_ALLOWLIST.clear()
+        _SEAM_ALLOWLIST.update(shipped)
+
+
+def _seam_render(line, values):
+    """(rendered_line, [(token, start, end), ...]) -- the line with every
+    resolvable token replaced by its value AS THE GENERATOR WRITES IT, and
+    where each value landed.
+
+    The substituted text is html.escape(value, quote=True), which is what
+    generate_report.render() puts in the document (its `_sub`). Escaping
+    rewrites a value's INTERNAL text -- "PG&E 2025" becomes "PG&amp;E 2025" --
+    so comparing the raw value against an escaped template hides an echoed
+    figure. case_the_seam_guard_compares_the_values_the_generator_writes pins
+    the two against each other rather than trusting this comment.
+
+    A token with no value (the KNOWN_GAPS five) is left as its literal
+    {{NAME}}, which no rule below can mistake for a figure or a unit."""
+    out, spans, pos = [], [], 0
+    for m in _SEAM_TOKEN_RE.finditer(line):
+        value = values.get(m.group(1))
+        if value is None:
+            continue
+        # Every rule below reads the value as text. A non-str here is a
+        # resolver returning a raw number, and it used to surface as a bare
+        # TypeError from inside this helper, naming neither the token nor the
+        # rule that wanted a string.
+        assert isinstance(value, str), (
+            f"token {m.group(1)} resolved to a {type(value).__name__} "
+            f"({value!r}), not the rendered string the seam rules read; a "
+            "token's value reaches the template as text, so format it here")
+        written = _htmllib.escape(value, quote=True)
+        out.append(line[pos:m.start()])
+        start = sum(len(chunk) for chunk in out)
+        out.append(written)
+        spans.append((m.group(1), start, start + len(written)))
+        pos = m.end()
+    out.append(line[pos:])
+    return "".join(out), spans
+
+
+def _seam_doubled(value, head, tail):
+    """Class 1: the sigil or unit on one side of the seam that the value
+    already carries at that end -- or None."""
+    if head and head[-1] in _SEAM_SIGILS and value.startswith(head[-1]):
+        return f"template sigil {head[-1]!r} before a value already starting with it"
+    for sigil in _SEAM_SIGILS:
+        if tail.startswith(sigil) and value.endswith(sigil):
+            return f"template sigil {sigil!r} after a value already ending with it"
+    after = tail[1:] if tail[:1] == " " else tail
+    low_after, low_value = after.lower(), value.lower()
+    for unit in sorted(_SEAM_UNITS, key=len, reverse=True):
+        low_unit = unit.lower()
+        if not (low_after.startswith(low_unit) and low_value.endswith(low_unit)):
+            continue
+        # Word boundary at both ends, or the short units fire on ordinary
+        # prose: "1,234 kWh" does not END in the unit "h" (a letter precedes
+        # it) and "hours later" does not SUPPLY the unit "h" (a letter follows
+        # it). Digits and punctuation are not boundaries to defend against --
+        # "2.4%" legitimately ends in "%" with a digit in front of it.
+        if after[len(unit):len(unit) + 1].isalpha():
+            continue
+        if value[:len(value) - len(unit)][-1:].isalpha():
+            continue
+        return f"template unit {unit!r} after a value already ending with it"
+    return None
+
+
+def _seam_unit_prefix(text):
+    """The member of _SEAM_UNITS that `text` BEGINS with, at a word boundary --
+    or None.
+
+    One optional leading hyphen is allowed, because a unit joined to its figure
+    with a hyphen is still that figure's unit: "{{ANALYSIS_DAYS}}-day audit"
+    renders "365-day audit", and the day is what the 365 counts. `text` is
+    expected already left-stripped.
+
+    The word boundary is the same guard _seam_doubled applies at its template
+    end, and for the same reason: without it the one-letter "h" would read
+    "hours later" as supplying a unit -- which here would be a MISS rather than
+    a false alarm, since this rule uses the unit list to stay QUIET. The two
+    are deliberately separate functions: _seam_doubled must not allow the
+    hyphen (a hyphen between a value and a unit is not a doubling), and this
+    one must."""
+    body = text[1:] if text[:1] == "-" else text
+    low = body.lower()
+    for unit in sorted(_SEAM_UNITS, key=len, reverse=True):
+        if low.startswith(unit.lower()) and not body[len(unit):len(unit) + 1].isalpha():
+            return unit
+    return None
+
+
+def _seam_missing_unit(value, head, tail, fmt=None):
+    """Class 2: a value that lost the dimension its format declares, or a bare
+    number that nothing beside it gives a unit to -- or None.
+
+    A bare number followed by a WORD THAT IS NOT A UNIT is reported. The
+    earlier form of this rule reported only a bare number followed by a
+    function word, which is too tight to catch its own defect class: on issue
+    #129's own line it caught SOLAR_COVERAGE_PCT (followed by "of") and missed
+    SELF_CONSUMED_SHARE (followed by "self-consumed") losing its percent sign
+    the same way. See the block comment above for the whitelist, the
+    exemptions, and the false positives the widening costs.
+
+    `fmt` is the token's DECLARED format spec, as report_tokens.TOKENS records
+    it, and None for a token that declares none or that this scan cannot name
+    (a synthetic fixture's invented token). It is what the first test below
+    reads, and it is passed in rather than looked up so this rule stays a
+    function of its arguments and the module tables, like the other two.
+
+    THE FIRST TEST IS NOT ABOUT THE PROSE, and it comes first because the
+    prose test cannot answer it. A "usd0" value rendering "3,282" beside the
+    template's "/yr" satisfies the unit whitelist below and is still a bill
+    with no currency on it -- 23 of the report's 43 money and percent
+    occurrences were exactly that shape, "/yr" or "/mo" answering for a
+    missing "$". The declared dimension is the only thing on either side of
+    the seam that knows a price from a period, so it is asked first, and its
+    answer is not overridable by what follows.
+
+    It is deliberately NOT limited to the bare-number shape the rest of the
+    rule is scoped to. A formatter regression on a signed money token renders
+    "-500", which is not a bare number and never reaches the whitelist below,
+    and it has lost its dollar sign just as completely. A correctly formatted
+    value cannot trip this test -- its formatter puts the sigil there
+    unconditionally -- so widening past the shape guard costs no false
+    positives and catches the sign case for free."""
+    dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
+    if dimension is not None and dimension not in value \
+            and head[-1:] != dimension and tail[:1] != dimension:
+        return (f"a {fmt!r} value renders {value!r}, which carries no {dimension!r} and "
+                f"has none immediately beside it; that format DECLARES the figure is "
+                f"measured in {dimension!r}, so this one lost its dimension -- whatever "
+                "unit follows it belongs to something else")
+    if not _SEAM_BARE_NUMBER_RE.match(value):
+        return None
+    # A sigil in front of a bare number IS its unit ("$14,500", "~2").
+    if head[-1:] in _SEAM_SIGILS:
+        return None
+    # Read THROUGH markup, as the block comment describes: tags become
+    # whitespace so the next word can be in the next table cell.
+    text = _SEAM_TAG_RE.sub(" ", tail).lstrip()
+    if not text:
+        return None
+    if _seam_unit_prefix(text) is not None:
+        return None
+    nxt = text.split()[0]
+    # No letters in the next word means punctuation, a symbol or another
+    # figure -- a column header, a clause or a sigil is carrying the unit, and
+    # flagging those is what would make this rule unrunnable.
+    if not any(c.isalpha() for c in nxt):
+        return None
+    return (f"bare number followed by {nxt.strip(_SEAM_WORD_TRIM)!r}, which is not a "
+            "unit, so nothing beside the figure gives it one")
+
+
+def _seam_mask_tags(text):
+    """`text` with every HTML tag blanked to spaces OF THE SAME LENGTH.
+
+    Same trick as _seam_comment_mask, and for the same reason: every column
+    position in the masked copy is the position it had in the real text, so a
+    distance measured on the mask is a distance in the document."""
+    return _SEAM_TAG_RE.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _seam_echo(value, head, tail):
+    """Class 3: a run of the value's own text repeated by the template
+    immediately BESIDE it, on either side -- or None.
+
+    Trailing closing punctuation is stripped off the value first
+    (_SEAM_ECHO_TRIM). The echoed text is the FIGURE, not the bracket that
+    closes the clause around it, so requiring the repeat to reach the value's
+    literal last character misses exactly the shape issue #129 shipped:
+    INVERTER_DESCRIPTION ended '... ≈ 9.45 kW AC max)' and the template line
+    repeated '≈ 9.45 kW AC max' without the paren.
+
+    BOTH SIDES, and both ends of the value against each. #129's defect was the
+    template's copy sitting AFTER the token, but c79cc06 moved the AC ceiling
+    onto the template ahead of nothing -- restore it token-side tomorrow while
+    the template's copy leads the line and the same figure prints twice with
+    the sides swapped, which a tail-only rule cannot see. The gap is measured
+    from the near edge of the value in both directions.
+
+    Both windows have their HTML TAGS MASKED TO EQUAL-LENGTH SPACES first.
+    Attribute text is markup, not print: `<td data-sort="12,345.6 kWh">{{X}}`
+    with X = "12,345.6 kWh" shows the figure once, and reading the sort key as
+    a second printing is a false positive on a common table idiom. Masking to
+    the SAME LENGTH rather than deleting is what leaves _SEAM_ECHO_GAP
+    measuring the distance a reader sees -- the lifetime table's "</td><td>"
+    is 9 characters masked or not."""
+    core = value.rstrip(_SEAM_ECHO_TRIM)
+    seen_head, seen_tail = _seam_mask_tags(head), _seam_mask_tags(tail)
+    for side, window in (("later", seen_tail[:120]), ("earlier", seen_head[-120:])):
+        for length in range(len(core), _SEAM_MIN_ECHO - 1, -1):
+            # Either end of the value: the template can repeat the figure the
+            # value opens with as readily as the one it closes with.
+            for run in (core[-length:], core[:length]):
+                if not any(c.isdigit() for c in run):
+                    continue
+                if side == "later":
+                    at = window.find(run)
+                    gap = at
+                else:
+                    at = window.rfind(run)
+                    gap = len(window) - (at + len(run))
+                if at >= 0 and 0 <= gap <= _SEAM_ECHO_GAP:
+                    return (f"the value's own text {run!r} is printed again "
+                            f"{gap} char(s) {side}")
+    return None
+
+
+def _seam_scan(template_text, values):
+    """Every seam in a filled template, allowlist NOT applied, as
+    [(token, class, why, rendered_context, template_line), ...].
+
+    The ONE piece of module state it does not read is _SEAM_ALLOWLIST: no
+    entry can suppress a hit here, which is what lets _seam_stale_allowlist
+    prove an excused occurrence still has the seam its entry excuses. It does
+    read the rule tables and thresholds those rules are built from --
+    _SEAM_CLASSES here, and _SEAM_SIGILS, _SEAM_UNITS, _SEAM_BARE_NUMBER_RE,
+    _SEAM_FMT_DIMENSIONS, _SEAM_TAG_RE, _SEAM_ECHO_TRIM, _SEAM_MIN_ECHO and
+    _SEAM_ECHO_GAP inside the three rules -- plus report_tokens.TOKENS, for
+    the one thing about a seam that is not visible in the rendered line: what
+    dimension the token's declared format says the figure is measured in
+    -- so identical arguments answer differently once one of
+    those is mutated. Measured, not assumed: dropping "cycles/day" from
+    _SEAM_UNITS turns a clean "{{CYCLES_PER_DAY}} cycles/day" fragment into
+    one missing-unit hit. That is not a defect to fix; it is what the probe
+    cases below rely on when they drive the rules off those same tables.
+
+    The TEMPLATE LINE is carried alongside each hit because that is what an
+    allowlist entry's marker is matched against -- the raw line, not the
+    rendered one, so an excuse never depends on a household figure."""
+    found = []
+    for line in template_text.splitlines():
+        rendered, spans = _seam_render(line, values)
+        for name, start, end in spans:
+            value, head, tail = rendered[start:end], rendered[:start], rendered[end:]
+            # The token's DECLARED format, which class 2 reads to learn what
+            # dimension the figure is supposed to carry. Looked up here rather
+            # than inside the rule so the rule stays a function of its
+            # arguments; .get twice because a synthetic fixture's invented
+            # token is not in the registry and declares nothing, which leaves
+            # that half of class 2 inert exactly as it should be.
+            fmt = rt.TOKENS.get(name, {}).get("fmt")
+            for label, why in zip(_SEAM_CLASSES,
+                                  (_seam_doubled(value, head, tail),
+                                   _seam_missing_unit(value, head, tail, fmt),
+                                   _seam_echo(value, head, tail))):
+                if why:
+                    found.append((name, label, why,
+                                  rendered[max(0, start - 40):end + 40], line))
+    return found
+
+
+def _seam_excuse(name, label, line):
+    """The _SEAM_ALLOWLIST key excusing a (token, class) seam on `line`, or
+    None.
+
+    A malformed key matches NOTHING here rather than raising: key shapes are
+    validated in _seam_stale_allowlist, which fails by name and explains what
+    the entry does not do. A malformed key that raised from inside the scan
+    would surface as an exception in whatever case happened to run first."""
+    for key in _SEAM_ALLOWLIST:
+        if not (isinstance(key, tuple) and len(key) == 3):
+            continue
+        token, cls, marker = key
+        if (token, cls) == (name, label) and isinstance(marker, str) and marker \
+                and marker in line:
+            return key
+    return None
+
+
+def _seam_defects(template_text, values, apply_allowlist=True):
+    """Every seam defect in a filled template, as
+    [(token, class, why, rendered_context), ...].
+
+    NOT pure: with apply_allowlist=True (the default) it also reads the
+    module-level _SEAM_ALLOWLIST, so the same arguments answer differently
+    once an entry is added -- which is exactly what the allowlist case below
+    exercises by mutating that dict around a call. The rest of what it reads
+    is its arguments plus the rule tables listed on _seam_scan above -- never
+    a file and never a household figure, which is what lets the negative case
+    drive it with the pre-issue-129 text.
+
+    apply_allowlist=False reports the excused seams too -- that is how
+    _seam_stale_allowlist proves an entry still has the seam it excuses."""
+    return [(name, label, why, context)
+            for name, label, why, context, line in _seam_scan(template_text, values)
+            if not (apply_allowlist and _seam_excuse(name, label, line))]
+
+
+def _seam_stale_allowlist(template_text, values):
+    """The _SEAM_ALLOWLIST entries that excuse NO seam in this filled template,
+    as [((token, class, marker), reason), ...].
+
+    One helper, driven by the live case against report-template.html and by
+    the allowlist case against a synthetic fragment, so the comparison that
+    decides staleness is exercised in both directions on every run rather than
+    only claimed to be.
+
+    A MALFORMED key fails here by name instead of being reported as stale. A
+    bare string, a tuple of the wrong length, a class name that is not one of
+    _SEAM_CLASSES, a token this run does not resolve, or an empty marker can
+    never excuse an occurrence, so the plain difference would call every one of
+    them "an excuse whose seam has since been fixed -- delete the entry",
+    sending the reader to look for a fix that was never made when the truth is
+    that the entry never suppressed anything in the first place.
+
+    A marker matching MORE THAN ONE template line fails here too, and that one
+    is not a typo check: an over-broad marker is a token-wide pardon wearing
+    the disguise of an occurrence-level one, which is the loophole the marker
+    exists to close."""
+    lines = template_text.splitlines()
+    for key in _SEAM_ALLOWLIST:
+        assert isinstance(key, tuple) and len(key) == 3, (
+            f"_SEAM_ALLOWLIST key {key!r} is not a (token, class, marker) triple; the "
+            "allowlist is keyed by the TRIPLE so that one excuse cannot blind a token "
+            "to every defect class, nor the same class at every occurrence of it, and "
+            "a key of another shape suppresses nothing at all")
+        name, label, marker = key
+        assert label in _SEAM_CLASSES, (
+            f"_SEAM_ALLOWLIST key {key!r} names the defect class {label!r}, which is "
+            f"not one of {list(_SEAM_CLASSES)}; it can never match a reported seam")
+        assert name in values, (
+            f"_SEAM_ALLOWLIST key {key!r} names the token {name!r}, which this run "
+            "does not resolve (a typo, a renamed token, or a KNOWN_GAPS token that is "
+            "never rendered); it can never match a reported seam")
+        assert isinstance(marker, str) and marker, (
+            f"_SEAM_ALLOWLIST key {key!r} carries an empty or non-string marker; the "
+            "marker is the template line the entry excuses, and an empty one excuses "
+            "every line, which is the token-wide pardon this key shape exists to stop")
+        carrying = [line for line in lines if marker in line]
+        assert len(carrying) <= 1, (
+            f"_SEAM_ALLOWLIST key {key!r} has a marker matching {len(carrying)} template "
+            "lines; an entry excuses ONE occurrence, so the marker has to name one line. "
+            "Lengthen it until it does -- a marker matching several lines pardons the "
+            "same class at every one of them, which is what keying by (token, class) "
+            "alone already did")
+    hits = _seam_scan(template_text, values)
+    return [(key, why) for key, why in _SEAM_ALLOWLIST.items()
+            if not any(_seam_excuse(name, label, line) == key
+                       for name, label, _w, _c, line in hits)]
+
+
+class _seam_stand_in_household:
+    """private/household.yaml stood in for by the COMMITTED
+    household.example.yaml, so the seam guard checks all 206 non-gap tokens on
+    a runner that has no private archive instead of the 162 that read only
+    data/.
+
+    Three of the example file's placeholder answers have to agree with
+    committed artifacts or the token they feed refuses to render (correctly --
+    a plan the plan table never priced, a cleaning date the cleaning study
+    never covered). Each is taken FROM the artifact rather than written here:
+    the rate plan and the generation provider off data/plan_results.csv, the
+    cleaning date off data/cleaning_study_daily.csv. Nothing else is touched,
+    nothing is written to disk, and the household's own answers are never read
+    on this path -- CLAUDE.md section 4 keeps them out of this committed file.
+
+    WHAT THIS PATH DOES AND DOES NOT REPRODUCE. Most of a rendered value's
+    shape -- its sigils, its unit, its bare-numberness, its thousands
+    separators -- comes from the token's formatter and formula, which are the
+    same code on both paths, so a seam that depends only on those is caught
+    here exactly as it is against the real archive. THE SIGN IS NOT SUCH A
+    SHAPE, and that was measured rather than supposed: CLEANING_EFFECT_PCT was
+    observed rendering with OPPOSITE SIGNS on the two paths, because the effect
+    is computed around whatever cleaning date it is given and this class hands
+    it the MEDIAN day of the cleaning study rather than a real one. Neither
+    rendering is quoted here: both are household figures that move with the
+    archive and with data/cleaning_study_daily.csv, and a figure written into
+    this file as a literal goes stale silently while still reading like a
+    fact. "-" is a member of _SEAM_SIGILS. A template that put a minus sign in
+    front of such a token would therefore be flagged on one path and not the
+    other. Residual risk, stated: CI and a staged checkout can disagree about
+    a sign-adjacent seam, in either direction. The class-1 rule is what would
+    disagree; classes 2 and 3 read digits, not signs.
+
+    Coherence between tokens is enforced rather than assumed -- see the
+    provider patch in __enter__."""
+
+    def __enter__(self):
+        import yaml
+        node = yaml.safe_load((rt.ROOT / "household.example.yaml").read_text())
+        rows = rt._csv_rows("plan_results.csv")
+        assert rows, "data/plan_results.csv is empty; the stand-in has no plan to use"
+        self.provider = rows[0]["provider"]
+        priced = [r["plan"] for r in rows if r["provider"] == self.provider]
+        assert priced, f"data/plan_results.csv prices no plan for {self.provider!r}"
+        node["household"]["plan"] = priced[0]
+        days = sorted(dt.datetime.strptime(r["date"], "%Y%m%d").date()
+                      for r in rt._csv_rows("cleaning_study_daily.csv"))
+        assert (days[-1] - days[0]).days >= 60, (
+            "data/cleaning_study_daily.csv spans fewer than 60 days, so no stand-in "
+            "cleaning date has a 30-day window on both sides of it")
+        node["cleaning_history"] = [{"date": days[len(days) // 2], "cost_usd": 150}]
+        self.old_cache, self.old_path = rt.hh._cache, rt.hh.PATH
+        self.old_provider = rt._generation_provider_short
+        rt.hh._cache = node
+        rt.hh.PATH = rt.ROOT / "household.example.yaml"
+
+        # The plan ranking looks the household's plan up by PROVIDER in
+        # data/plan_results.csv, so the stand-in has to answer with the
+        # provider that artifact actually prices; the example file's
+        # placeholder CCA name yields a different acronym.
+        #
+        # Patching the module global alone is NOT enough, and the two-token
+        # contradiction it produced is the reason this is spelled out: a spec
+        # registered as get=_generation_provider_short captured the ORIGINAL
+        # function object at import, so GENERATION_PROVIDER_SHORT kept
+        # answering "ECE" (from the example file) while GENERATION_PROVIDER,
+        # which reaches the global through a lambda, answered "... (CEA)"
+        # (from the artifact). Two tokens that print the same provider printed
+        # two different ones. So every spec still holding the original
+        # function is repointed too -- found by identity, so a token
+        # registered against it tomorrow is patched tomorrow with no edit
+        # here. The long name stays the example file's placeholder, because
+        # data/plan_results.csv commits the acronym and nothing else: the
+        # stand-in reads "Example Community Energy (CEA)", which is a
+        # placeholder company wearing the artifact's acronym rather than a
+        # real provider's name. That is as coherent as a committed stand-in
+        # can be, and it is the relation the report depends on -- the two
+        # tokens print ONE acronym. _assert_provider_coherent fails the
+        # context manager rather than letting them print two.
+        stand_in = lambda ctx: self.provider          # noqa: E731
+        self.old_specs = [(spec, spec["get"]) for spec in rt.TOKENS.values()
+                          if spec.get("get") is self.old_provider]
+        rt._generation_provider_short = stand_in
+        for spec, _old in self.old_specs:
+            spec["get"] = stand_in
+        try:
+            self._assert_provider_coherent()
+        except BaseException:
+            # __exit__ never runs for a context manager whose __enter__ raised,
+            # so an incoherent stand-in must not leave the module patched. It
+            # FAILS here rather than letting the guard render a report in which
+            # two provider tokens disagree.
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def _assert_provider_coherent(self):
+        short = rt.resolve_token("GENERATION_PROVIDER_SHORT",
+                                 rt.TOKENS["GENERATION_PROVIDER_SHORT"])
+        long = rt.resolve_token("GENERATION_PROVIDER", rt.TOKENS["GENERATION_PROVIDER"])
+        assert short == self.provider, (
+            f"the stand-in household renders GENERATION_PROVIDER_SHORT as {short!r} "
+            f"but ranks plans as {self.provider!r}; the patch no longer reaches every "
+            "consumer of the provider acronym")
+        assert long.endswith(f"({short})"), (
+            f"the stand-in household renders GENERATION_PROVIDER as {long!r}, which "
+            f"does not carry the acronym {short!r} that GENERATION_PROVIDER_SHORT "
+            "prints; the two would contradict each other in the report")
+
+    def __exit__(self, *exc):
+        rt.hh._cache, rt.hh.PATH = self.old_cache, self.old_path
+        rt._generation_provider_short = self.old_provider
+        for spec, old in self.old_specs:
+            spec["get"] = old
+
+
+def _seam_values():
+    """{token: rendered value} for every non-gap token, plus the names skipped.
+
+    Resolved against the real archive where it is staged and against the
+    committed stand-in otherwise, so the same 206 tokens are checked in both
+    places."""
+    def resolve():
+        out = {}
+        for name, spec in rt.TOKENS.items():
+            if spec.get("kind") == "gap":
+                continue
+            out[name] = rt.resolve_token(name, spec)
+        return out
+
+    if rt.hh.PATH.is_file():
+        values = resolve()
+    else:
+        with _seam_stand_in_household():
+            values = resolve()
+    return values, set(rt.KNOWN_GAPS)
+
+
+def _seam_report(defects):
+    return "\n  ".join(
+        f"{name} [{label}]: {why}\n      rendered: ...{context}..."
+        for name, label, why, context in defects)
+
+
+@case
+def case_no_token_renders_a_broken_seam_in_its_own_template_context():
+    """ISSUE #133. Every {{TOKEN}} in report-template.html, substituted into
+    the line it really sits on, with the rendered result checked for a doubled
+    sigil or unit, a bare number that lost its unit, and a figure echoed twice
+    across the seam. See the block comment above for the three rules and for
+    what they deliberately do not flag.
+
+    Runs without the private archive: see _seam_stand_in_household."""
+    values, gaps = _seam_values()
+    template = rt.TEMPLATE.read_text()
+    defects = _seam_defects(template, values)
+    assert not defects, (
+        f"{len(defects)} token/template seam(s) render wrong once the token resolves:\n  "
+        + _seam_report(defects))
+
+    # The guard has to have LOOKED at something. Coverage is asserted against
+    # the template's own token inventory, so a parser that silently stopped
+    # finding occurrences fails here rather than reporting a clean sweep.
+    live, comment_only = rt.template_tokens()
+    seen = {name for line in template.splitlines()
+            for name, _s, _e in _seam_render(line, values)[1]}
+    expected = (live | comment_only) - gaps
+    assert seen == expected, (
+        "the seam guard did not render every token the template carries -- "
+        f"missed {sorted(expected - seen)}, invented {sorted(seen - expected)}")
+    assert gaps == {n for n, s in rt.TOKENS.items() if s.get("kind") == "gap"}, (
+        "the skipped set is no longer exactly KNOWN_GAPS")
+    # The floor is DERIVED from the token inventory, not written down: every
+    # token the guard is meant to cover contributes at least one occurrence,
+    # so a parser that lost occurrences lands below it. A hard number here --
+    # the count of occurrences, or the share of them inside <!-- TODO -->
+    # blocks -- would fail on an ordinary prose pass and blame the parser, so
+    # both are computed here and reported rather than committed as literals.
+    occurrences = sum(len(_seam_render(line, values)[1]) for line in template.splitlines())
+    assert occurrences >= len(expected), (
+        f"only {occurrences} token occurrences were rendered for {len(expected)} "
+        "tokens, so some token was rendered fewer than once; the occurrence parser broke")
+    in_live_markup = sum(len(_seam_render(line, values)[1])
+                         for line in _seam_comment_mask(template).splitlines())
+    # STRICTLY fewer, and the strictness is the whole assertion: masking only
+    # ever replaces '[^\n]' with a space, so the masked token set is provably a
+    # SUBSET and "<=" is a tautology that an identity mask passes. What can be
+    # observed is that the mask actually removed something, i.e. that this
+    # template still puts at least one token inside a comment span.
+    assert in_live_markup < occurrences, (
+        f"all {occurrences} token occurrences survive the comment mask, so none of "
+        "them is inside a comment span. Either report-template.html no longer "
+        "carries a {{TOKEN}} inside a <!-- TODO --> block -- in which case say so "
+        "here and in case_the_shipped_line_fixture_decides_liveness_by_comment_span, "
+        "which asserts the same thing from the other end -- or _seam_comment_mask "
+        "stopped masking, which is exactly where an identity mask lands")
+
+    stale = _seam_stale_allowlist(template, values)
+    assert not stale, (
+        f"_SEAM_ALLOWLIST excuses occurrence(s) that no longer have that seam: "
+        f"{stale} -- delete the entry rather than leaving a loophole behind")
+
+    # THE ALLOWLIST'S OWN ACCOUNTING, one entry to one occurrence. The stale
+    # check proves every entry excuses at least one seam and the assertion
+    # above proves every seam is excused by something; neither proves the
+    # mapping is ONE TO ONE, and the gap between them is the marker's stated
+    # limit -- a marker cannot separate two occurrences of the same token on
+    # the same line, so one entry could quietly pardon two. Counted here, so
+    # if the template ever grows that shape it fails rather than passing with
+    # a hidden second pardon.
+    excused = [_seam_excuse(name, label, line)
+               for name, label, _w, _c, line in _seam_scan(template, values)]
+    assert all(excused), (
+        f"the seam scan reports {excused.count(None)} unexcused seam(s) the defect "
+        "list did not; _seam_defects and _seam_scan disagree")
+    assert len(excused) == len(set(excused)) == len(_SEAM_ALLOWLIST), (
+        f"{len(excused)} excused occurrence(s) share {len(set(excused))} allowlist "
+        f"entr(ies) out of {len(_SEAM_ALLOWLIST)} committed; one entry is pardoning "
+        "more than one occurrence (the same token twice on one line) or an entry "
+        "excuses nothing")
+    # THE BARE-NUMBER DISPOSITION, derived rather than written down. A bare
+    # number is the shape the prose half of class 2 exists for, and every one
+    # of them leaves _seam_missing_unit by exactly one of its exits: a
+    # declared dimension the value no longer carries, a sigil in front,
+    # nothing but markup behind it to the end of the line, a unit behind it, a
+    # letterless next word, or a report -- which must then be allowlisted,
+    # since the assertion at the top of this case says nothing is left
+    # unexcused. The branch chain below is that function's
+    # exits IN ITS OWN ORDER, and each occurrence increments exactly one
+    # bucket, so the buckets are a partition by construction and the totals
+    # cannot be mis-stated the way a hand-counted split can be. The chain is
+    # not trusted to mirror the rule either: every occurrence asserts that the
+    # bucket it landed in agrees with what _seam_missing_unit actually
+    # returned, so a chain that drifts from the function fails here rather
+    # than quietly reporting a wrong split.
+    #
+    # "lost its declared dimension" leads the chain because it leads the rule,
+    # and it is a REPORTING bucket rather than a quiet one: a money token
+    # rendering a bare number is a defect no matter what follows it, which is
+    # the hole "carrying a unit" used to swallow. It stays at zero on the
+    # shipped template -- every dimension-declaring token renders its sigil --
+    # and case_a_declared_money_or_percent_token_that_loses_its_sigil_is_
+    # reported is where it is driven off zero on purpose.
+    quiet = ("carrying a unit", "sigil-fronted", "at end of line",
+             "before a letterless word")
+    disposition = dict.fromkeys(("lost its declared dimension",) + quiet
+                                + ("allowlisted", "reported"), 0)
+    bare = 0
+    for line in template.splitlines():
+        rendered, spans = _seam_render(line, values)
+        for name, start, end in spans:
+            value, head, tail = rendered[start:end], rendered[:start], rendered[end:]
+            if not _SEAM_BARE_NUMBER_RE.match(value):
+                continue
+            bare += 1
+            fmt = rt.TOKENS.get(name, {}).get("fmt")
+            dimension = _SEAM_FMT_DIMENSIONS.get(fmt)
+            text = _SEAM_TAG_RE.sub(" ", tail).lstrip()
+            if dimension is not None and dimension not in value \
+                    and head[-1:] != dimension and tail[:1] != dimension:
+                bucket = "lost its declared dimension"
+            elif head[-1:] in _SEAM_SIGILS:
+                bucket = "sigil-fronted"
+            elif not text:
+                bucket = "at end of line"
+            elif _seam_unit_prefix(text) is not None:
+                bucket = "carrying a unit"
+            elif not any(c.isalpha() for c in text.split()[0]):
+                bucket = "before a letterless word"
+            elif _seam_excuse(name, "missing-unit", line):
+                bucket = "allowlisted"
+            else:
+                bucket = "reported"
+            disposition[bucket] += 1
+            why = _seam_missing_unit(value, head, tail, fmt)
+            assert (why is None) == (bucket in quiet), (
+                f"the bare-number disposition puts {name} on template line "
+                f"{line.strip()[:60]!r} in the {bucket!r} bucket, but "
+                f"_seam_missing_unit said {why!r}; the branch chain here no longer "
+                "mirrors that rule's exits")
+    assert sum(disposition.values()) == bare, (
+        f"the disposition buckets {disposition} sum to {sum(disposition.values())}, not "
+        f"the {bare} bare-number occurrence(s) counted; a bare number fell into more "
+        "than one bucket or into none")
+    assert disposition["reported"] == 0, (
+        f"{disposition['reported']} bare number(s) lost a unit and are not allowlisted, "
+        "which the defect assertion at the top of this case should already have said")
+    assert disposition["lost its declared dimension"] == 0, (
+        f"{disposition['lost its declared dimension']} token(s) declared with a money "
+        "or percent format render a bare number with no sigil on it or beside it; the "
+        "defect assertion at the top of this case should already have said so")
+    split = ", ".join(f"{n} {label}" for label, n in disposition.items())
+    return (f"{occurrences} token occurrences across {len(seen)} tokens render clean at "
+            f"their template seams ({in_live_markup} in live markup, "
+            f"{occurrences - in_live_markup} inside comment spans; {bare} of them bare "
+            f"numbers -- {split}; {len(gaps)} KNOWN_GAPS tokens skipped, "
+            f"{len(_SEAM_ALLOWLIST)} occurrence(s) allowlisted"
+            + (" -- resolved against the real archive)" if rt.hh.PATH.is_file()
+               else " -- resolved against the committed stand-in household)"))
+
+
+@case
+def case_the_seam_guard_checks_the_same_tokens_without_the_private_archive():
+    """The case above resolves against private/household.yaml where it is
+    staged, and .github/workflows/tests.yml runs this suite where it is not.
+    A guard that quietly checks 162 of 206 tokens on the runner that actually
+    guards merges is the failure mode this file has already recorded twice
+    (the SEC9 and verdict round-trip cases), so the archive-less path is
+    driven HERE, on every checkout, and asserted to cover the same set.
+
+    Skipped only where the archive is absent, because then the case above IS
+    this case."""
+    _require_household()
+    with _seam_stand_in_household():
+        stand_in = {name: rt.resolve_token(name, spec)
+                    for name, spec in rt.TOKENS.items() if spec.get("kind") != "gap"}
+    real, gaps = _seam_values()
+    assert set(stand_in) == set(real), (
+        "the stand-in household resolves a different token set than the real archive: "
+        f"missing {sorted(set(real) - set(stand_in))}, extra {sorted(set(stand_in) - set(real))}")
+    defects = _seam_defects(rt.TEMPLATE.read_text(), stand_in)
+    assert not defects, (
+        f"{len(defects)} seam(s) render wrong under the committed stand-in household, so "
+        "CI would fail where the staged archive passes:\n  " + _seam_report(defects))
+    return (f"the archive-less path resolves the same {len(stand_in)} non-gap tokens and "
+            f"renders every seam clean ({len(gaps)} gaps skipped)")
+
+
+def _seam_plain_number_fmt():
+    """The name of a report_tokens format spec that renders the probe as a
+    BARE NUMBER -- no dimension sigil, no unit, nothing but digits.
+
+    This is the regression the sweep below simulates: issue #129's defect was
+    one word in a token declaration, pct0 -> num0, and the money half of the
+    same slip is usd0 -> num0. Chosen by probing FORMATTERS rather than named,
+    for the reason the dimension table is derived rather than named -- and
+    picked deterministically (sorted first) so the sweep's numbers are the
+    same on every run and in every checkout."""
+    plain = sorted(name for name, fn in rt.FORMATTERS.items()
+                   if name not in rt._NON_NUMERIC_FMTS
+                   and _SEAM_BARE_NUMBER_RE.match(fn(_SEAM_FMT_PROBE)))
+    assert plain, (
+        "no format spec in report_tokens.FORMATTERS renders a bare number any more, so "
+        "the sigil-dropping regression this case exists to simulate cannot be built. "
+        "That is a claim about report_tokens, not about this test: say which spec "
+        "replaced num0 and probe it here")
+    return plain[0]
+
+
+def _seam_regressed_values(plain):
+    """{token: its value re-rendered through `plain`} for every token whose
+    DECLARED format carries a dimension.
+
+    The mutation is applied where the defect really happens -- to the token's
+    format spec, re-resolved through report_tokens' own resolver -- rather
+    than by editing the rendered string here. A hand-edited string proves the
+    rule fires on a shape someone typed; this proves it fires on what
+    report_tokens actually publishes when a declaration slips.
+
+    Resolved through the same two paths as _seam_values, so the sweep covers
+    the same tokens on a runner with no private archive."""
+    def resolve():
+        return {name: rt.resolve_token(name, dict(spec, fmt=plain))
+                for name, spec in rt.TOKENS.items()
+                if spec.get("kind") != "gap" and spec.get("fmt") in _SEAM_FMT_DIMENSIONS}
+
+    if rt.hh.PATH.is_file():
+        return resolve()
+    with _seam_stand_in_household():
+        return resolve()
+
+
+@case
+def case_a_declared_money_or_percent_token_that_loses_its_sigil_is_reported():
+    """The hole class 2 shipped with, closed and measured: a money token whose
+    format regresses to a plain number renders "3,282/yr", and "/yr" is a
+    member of _SEAM_UNITS, so the prose whitelist answered "something beside
+    it gives it a unit" and the suite stayed green on a bill with no currency
+    on it. It is the same one-word slip as issue #129's pct0 -> num0, one
+    dimension over, and issue #133's own title names it.
+
+    THE SWEEP IS THE ASSERTION, not an anecdote. Every occurrence in
+    report-template.html of a token whose declared format carries a dimension
+    is re-resolved with that format swapped for a bare-number one, and the
+    guard must report it. The prose-only rule is run against the same
+    occurrences in the same loop, so the before and after numbers come from
+    one measurement rather than from two claims -- and the case fails if the
+    prose rule ever turns out to have caught them all along, which is what a
+    sweep that proves nothing would look like.
+
+    Two things it deliberately does NOT do. It does not name a token: the rule
+    reads report_tokens.TOKENS[...]["fmt"] and the dimension table is derived
+    from FORMATTERS, so a money token added tomorrow is swept tomorrow with no
+    edit here -- that is the property case_the_seam_rules_are_generic_not_a_
+    case_per_token asserts for the other rules. And it does not touch the
+    allowlist: an entry excusing one of these would fail the sweep, which is
+    correct. A count that is genuinely dimensionless does not get declared
+    usd0.
+
+    THE BLIND SPOT IS COUNTED HERE TOO, in the return line rather than as a
+    literal, because a token that formats itself (fmt=None, calling _usd3 or
+    _cents1 inside its own lambda) declares no dimension for any of this to
+    read. See the block comment above."""
+    values, _gaps = _seam_values()
+    template = rt.TEMPLATE.read_text()
+
+    # 1. The derivation still says what the floor says it says, and the floor
+    #    is what a derivation cannot check about itself.
+    assert _seam_fmt_dimensions() == _SEAM_FMT_DIMENSIONS, (
+        "report_tokens.FORMATTERS classifies differently now than it did at import; "
+        "the seam guard's dimension table is stale for this run")
+    for fmt, sigil in _SEAM_FMT_DIMENSION_FLOOR.items():
+        assert _SEAM_FMT_DIMENSIONS.get(fmt) == sigil, (
+            f"format spec {fmt!r} no longer classifies as {sigil!r} (it is now "
+            f"{_SEAM_FMT_DIMENSIONS.get(fmt)!r}), so every token declared with it can "
+            "drop its sigil unseen. Narrowing this guard is allowed and hiding it is "
+            f"not: drop {fmt!r} from _SEAM_FMT_DIMENSION_FLOOR in the same commit, "
+            "where a reviewer reads it")
+    # ...and the table discriminates: a plain-number format is not a dimension,
+    # or the rule would fire on every figure in the report.
+    plain = _seam_plain_number_fmt()
+    assert plain not in _SEAM_FMT_DIMENSIONS, (
+        f"the bare-number format {plain!r} classifies as the dimension "
+        f"{_SEAM_FMT_DIMENSIONS[plain]!r}; the derivation is reading a sigil that is "
+        "not there and every token in the report is about to be reported")
+
+    # 2. The sweep. One token is regressed at a time, against the real
+    #    template line it sits on, through _seam_defects -- so this exercises
+    #    the whole path, including _seam_scan's registry lookup, and not just
+    #    the rule in isolation.
+    regressed = _seam_regressed_values(plain)
+    assert regressed, (
+        "no token in report_tokens.TOKENS declares a money, percent or cents format, "
+        "so this sweep checks nothing. That would be a real change to the registry, "
+        "not a passing test")
+    swept = caught_before = 0
+    unit_fronted = []
+    for line in template.splitlines():
+        rendered, spans = _seam_render(line, values)
+        for name, start, end in spans:
+            if name not in regressed:
+                continue
+            swept += 1
+            value, head, tail = rendered[start:end], rendered[:start], rendered[end:]
+            fmt = rt.TOKENS[name]["fmt"]
+            # The value the report would really publish after the slip.
+            broken = regressed[name]
+            hits = _seam_defects(line, dict(values, **{name: broken}))
+            assert any(n == name and c == "missing-unit" for n, c, _w, _x in hits), (
+                f"{name} declares {fmt!r} and would publish {broken!r} on template line "
+                f"{line.strip()[:70]!r} if that format slipped to {plain!r}, and the "
+                f"seam guard reports {[(n, c) for n, c, _w, _x in hits] or 'nothing'}. "
+                "A figure with no currency or percent sign on it is the defect issue "
+                "#133 is named for")
+            # The prose-only rule, on the same occurrence, in the same loop:
+            # this is the "before" number, measured rather than remembered.
+            b_head, b_tail = rendered[:start], rendered[end:]
+            if _seam_missing_unit(broken, b_head, b_tail) is not None:
+                caught_before += 1
+            else:
+                text = _SEAM_TAG_RE.sub(" ", b_tail).lstrip()
+                if _seam_unit_prefix(text) is not None:
+                    unit_fronted.append((name, fmt, _seam_unit_prefix(text)))
+    assert caught_before < swept, (
+        f"the prose-only half of class 2 already caught all {swept} sigil-dropping "
+        "regressions, so the declared-dimension test is not what is catching them and "
+        "this case proves nothing about it")
+    assert unit_fronted, (
+        "not one of the regressions the prose rule missed was missed BECAUSE a unit "
+        "follows the figure, which is the specific hole this test closes "
+        "(\"{{X}}/yr\" answering for a missing \"$\"). Either report-template.html "
+        "stopped printing money figures with a period behind them, or _SEAM_UNITS "
+        "stopped containing '/yr' -- say which, here")
+
+    # 3. The stated blind spot, counted from the registry so it tracks it.
+    seen = {name for line in template.splitlines()
+            for name, _s, _e in _seam_render(line, values)[1]}
+    self_formatting = sorted(
+        name for name in seen
+        if rt.TOKENS.get(name, {}).get("fmt") not in _SEAM_FMT_DIMENSIONS
+        and any(s in values[name] for s in _SEAM_DIMENSION_SIGILS)
+        and _SEAM_BARE_NUMBER_RE.match(
+            "".join(c for c in values[name]
+                    if c not in _SEAM_DIMENSION_SIGILS and c not in "~+ ")))
+    return (f"all {swept} occurrence(s) of a token declaring a money, percent or cents "
+            f"format are caught when that format slips to {plain!r}; the prose-only rule "
+            f"caught {caught_before} of them, and {len(unit_fronted)} of the "
+            f"{swept - caught_before} it missed were missed because a unit "
+            f"({sorted({u for _n, _f, u in unit_fronted})}) sits where the sigil should "
+            f"be. {len(_SEAM_FMT_DIMENSIONS)} format spec(s) classify as a dimension, "
+            f"{len(_SEAM_FMT_DIMENSION_FLOOR)} of them held to the committed floor; "
+            f"{len(self_formatting)} single-figure token(s) in the template format "
+            "themselves and declare no dimension for this to read")
+
+
+def _seam_comment_mask(text):
+    """`text` with every <!-- ... --> span blanked to spaces, newlines kept.
+
+    Liveness is a property of the SPAN, not of the line. This template is full
+    of multi-line <!-- TODO --> blocks whose interior lines carry no '<!--' of
+    their own, and of live lines that CARRY an inline '<!--' opener -- whether
+    it runs to the end of the line or opens and closes mid-line with live
+    tokens still to come after it -- so the obvious per-line test ('<!--' not
+    in line) is wrong in both directions: it reads a comment's interior as live
+    markup and a live line as commented. Masking to spaces rather than deleting
+    keeps every line's length and column positions, so a masked line can be
+    zipped against the real one.
+
+    An unterminated '<!--' is masked to the end of the text, which is how a
+    browser reads it.
+
+    TWO WAYS THIS DIFFERS FROM A BROWSER, both stated rather than fixed. (1) A
+    '<!--' inside a quoted attribute or a JS string is an opener to this regex
+    and is not one to a parser, so the mask would run on to the next '-->' or
+    to EOF and blank live markup with it. That direction is the safe one: it
+    OVER-masks, so _seam_template_line finds no live line for a token and
+    refuses by assertion rather than quietly driving a fixture against the
+    wrong line. No such string exists in this template today. (2) Only '\\n' is
+    preserved, but str.splitlines() also splits on '\\r', '\\v' and '\\f', so
+    one of those inside a comment span would blank a line break and leave the
+    masked copy with fewer lines than the real one -- desynchronising the zip
+    in _seam_template_line. This template contains none, and
+    case_the_shipped_line_fixture_decides_liveness_by_comment_span compares the
+    two line counts on every run, so the desynchronisation fails there rather
+    than mislabelling a line."""
+    return re.sub(r"<!--.*?(?:-->|\Z)",
+                  lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.S)
+
+
+def _seam_template_line(token, text=None):
+    """The one report-template.html line carrying {{token}} in LIVE markup --
+    outside every comment SPAN, per _seam_comment_mask -- so a fixture can be
+    driven against the template as it ships.
+
+    The line is returned exactly as it ships, comment text included: liveness
+    is decided on the masked copy, but the fixture wants the real line. `text`
+    is the template by default and is a parameter only so the shapes this
+    filter has to get right can be driven directly."""
+    text = rt.TEMPLATE.read_text() if text is None else text
+    needle = "{{%s}}" % token
+    lines = [line for line, masked in zip(text.splitlines(),
+                                          _seam_comment_mask(text).splitlines())
+             if needle in masked]
+    assert len(lines) == 1, (
+        f"report-template.html carries {{{{{token}}}}} on {len(lines)} live "
+        "line(s); this fixture needs exactly one")
+    return lines[0]
+
+
+def _pre_129_seams(values):
+    """The seams issue #129 names, each rebuilt as (label, template fragment,
+    value overrides, expected token, expected class).
+
+    Fragment 4 is the template text VERBATIM as it stood BEFORE commit c79cc06
+    (PR #134) fixed it (report-template.html:299). Fragments 1-3 are ABRIDGED
+    from the pre-c79cc06 text of the lines their comments cite (366 and 411,
+    then 312): each keeps the seam it names and shortens the markup around it
+    to the element that carries it. All four are historical constants either
+    way -- unlike the live template, they cannot drift out from under this
+    case. The
+    two token-side reverts are rebuilt from the CURRENT resolved values rather
+    than written as literals, so no household figure is committed here and the
+    fixture follows the archive it runs against.
+
+    Fragment 5 is deliberately the OTHER combination, and quoting the historic
+    fragment is not a substitute for it: #129's third defect was fixed on the
+    TOKEN side, so reverting the token alone -- against report-template.html
+    exactly as it ships -- reproduces the shipped defect through the one path
+    an external reproducer can still take (a stale or hand-edited
+    report_tokens.py against the current template). It is not a variant of
+    fragment 4: the pre-#134 fragment closed the echoed clause with ')' and
+    the shipped line does not, which is the difference between an echo the
+    rule can find anchored at the value's last character and one it can only
+    find after trimming that character off.
+
+    This is the "verified to FAIL against the pre-#129 template" acceptance
+    criterion, kept as a permanent case rather than a one-time manual revert:
+    a rule deleted or weakened later stops failing here."""
+    ac = values["AC_CEILING_KW"]
+    inverter = values["INVERTER_DESCRIPTION"]
+    coverage = values["SOLAR_COVERAGE_PCT"]
+    assert coverage.endswith("%"), (
+        f"SOLAR_COVERAGE_PCT no longer renders a percent sign ({coverage!r}); this "
+        "fixture reverts that sign to rebuild issue #129's missing-unit seam")
+    # c79cc06's token-side half, reverted: the clause the token used to close
+    # with, rebuilt from the value it renders today rather than quoted, so no
+    # household figure lands in this file. Pre-#134 the token read
+    # "N × MODEL (~V VA each ≈ K kW AC max)"; today it reads
+    # "N × MODEL, ~V VA each" and the template supplies the ceiling.
+    assert ", ~" in inverter, (
+        f"INVERTER_DESCRIPTION no longer reads '..., ~V VA each' ({inverter!r}), so "
+        "this fixture cannot rebuild the pre-#134 value it reverts to")
+    pre_134_inverter = inverter.replace(", ~", " (~", 1) + f" ≈ {ac} kW AC max)"
+    return [
+        # report-template.html:366 and :411 -- the template's own tilde in
+        # front of a value that already carries one.
+        ("~{{BATTERY_COST}} (template line 366)",
+         "<tr class=\"win\"><td>{{BATTERY_MODEL}}</td><td>~{{BATTERY_COST}}</td></tr>",
+         {}, "BATTERY_COST", "doubled-sigil"),
+        # The suffix half of the same class, found by Codex's adversarial pass
+        # on #129: the token owns the unit and the template repeated it.
+        ("{{SOILING_RATE_RANGE}}/month",
+         "<p><!-- TODO: bracket the soiling rate honestly "
+         "({{SOILING_RATE_RANGE}}/month); cite {{SOILING_SCRIPT}}. --></p>",
+         {}, "SOILING_RATE_RANGE", "doubled-sigil"),
+        # report-template.html:312 -- a percentage rendered as a bare count.
+        # Pre-fix SOLAR_COVERAGE_PCT was fmt="num0", i.e. today's value
+        # without its sign.
+        ("covers {{SOLAR_COVERAGE_PCT}} of",
+         "<li><b>Where it goes:</b> covers {{SOLAR_COVERAGE_PCT}} of the home's "
+         "{{ANNUAL_LOAD_KWH}} kWh/yr load</li>",
+         {"SOLAR_COVERAGE_PCT": coverage.rstrip("%")},
+         "SOLAR_COVERAGE_PCT", "missing-unit"),
+        # report-template.html:299 -- the AC ceiling printed twice, because
+        # INVERTER_DESCRIPTION used to close with the same clause.
+        ("{{INVERTER_DESCRIPTION}} (= {{AC_CEILING_KW}} kW AC max)",
+         "<li><b>Inverters:</b> {{INVERTER_DESCRIPTION}} "
+         "(≈ {{AC_CEILING_KW}} kW AC max)</li>",
+         {"INVERTER_DESCRIPTION": f"{inverter} ≈ {ac} kW AC max)"},
+         "INVERTER_DESCRIPTION", "echoed-phrase"),
+        # The same defect reached the other way: report-template.html EXACTLY
+        # as it ships, with only the token reverted to its pre-#134 value. The
+        # shipped line prints "≈ {{AC_CEILING_KW}} kW AC max" with no closing
+        # paren, so the echo stops one character short of the value's end --
+        # the case the suffix match missed until _SEAM_ECHO_TRIM.
+        ("shipped template line + pre-#134 INVERTER_DESCRIPTION",
+         _seam_template_line("INVERTER_DESCRIPTION"),
+         {"INVERTER_DESCRIPTION": pre_134_inverter},
+         "INVERTER_DESCRIPTION", "echoed-phrase"),
+    ]
+
+
+@case
+def case_the_seam_guard_fires_on_every_defect_issue_129_named():
+    """ISSUE #133's second acceptance criterion, as a permanent case: the
+    guard is driven against the pre-#129 template text (and the pre-#129 token
+    values, for the two that were fixed token-side) and must report EACH seam,
+    by token and by class. A rule that is quietly weakened later stops failing
+    here and the case fails instead.
+
+    WHAT THIS CASE DOES NOT PIN, because measuring it is the only way to know:
+    these five fixtures reach exactly the constant members they happen to use
+    -- "~" of _SEAM_SIGILS, "/month" of _SEAM_UNITS, ")" of _SEAM_ECHO_TRIM --
+    and every OTHER member could be deleted with this case still green. Those
+    are pinned one at a time by
+    case_every_member_of_the_seam_constants_is_load_bearing below, which probes
+    each member of each constant and holds the constants to a committed
+    vocabulary floor. Both cases are needed and
+    neither substitutes for the other: this one pins the DEFECTS issue #129
+    actually shipped, that one pins the CONSTANTS the rules are made of.
+
+    The last fixture reverts the TOKEN against the template as it ships, which
+    is the combination a historic template fragment cannot exercise: see
+    _pre_129_seams.
+
+    Each fixture is also checked to be clean once the fix is put back, so the
+    case cannot pass by flagging everything -- and for the shipped-line
+    fixture that check IS the live template rendering clean with the real
+    token value."""
+    values, _gaps = _seam_values()
+    fixtures = _pre_129_seams(values)
+    classes = {cls for _l, _f, _o, _t, cls in fixtures}
+    assert classes == {"doubled-sigil", "missing-unit", "echoed-phrase"}, (
+        f"the pre-#129 fixtures no longer exercise all three defect classes: {classes}")
+
+    caught = []
+    for label, fragment, overrides, token, cls in fixtures:
+        broken = dict(values, **overrides)
+        hits = _seam_defects(fragment, broken)
+        assert any(name == token and got == cls for name, got, _w, _c in hits), (
+            f"the seam guard did NOT report the pre-#129 defect {label}: expected "
+            f"{token} [{cls}], got {[(n, c) for n, c, _w, _x in hits] or 'nothing'}\n"
+            f"  rendered: {_seam_render(fragment, broken)[0]!r}")
+        caught.append(f"{token} [{cls}] via {label}")
+
+        # And the fixed shape is clean, so the rule discriminates rather than
+        # firing on everything it is handed.
+        fixed_fragment = fragment.replace("~{{BATTERY_COST}}", "{{BATTERY_COST}}") \
+                                 .replace("{{SOILING_RATE_RANGE}}/month",
+                                          "{{SOILING_RATE_RANGE}}") \
+                                 .replace(" (≈ {{AC_CEILING_KW}} kW AC max)",
+                                          " ≈ {{AC_CEILING_KW}} kW AC max")
+        assert not _seam_defects(fixed_fragment, values), (
+            f"the guard still flags {label} after the shipped fix is applied, so it is "
+            f"not discriminating: {_seam_defects(fixed_fragment, values)}")
+    return ("the guard reports every pre-issue-129 seam and none of the fixed ones: "
+            + ", ".join(caught))
+
+
+@case
+def case_the_seam_rules_are_generic_not_a_case_per_token():
+    """ISSUE #133's third acceptance criterion, checked mechanically rather
+    than asserted: a token nobody has heard of, dropped into a template
+    fragment with a broken seam, is caught with no edit to this file. If the
+    rules were ever rewritten as a table of known token names this fails."""
+    invented = {"A_TOKEN_THAT_DOES_NOT_EXIST_YET": "~$9,999",
+                "ANOTHER_INVENTED_TOKEN": "42",
+                "A_THIRD_INVENTED_TOKEN": "1.5%/month"}
+    probes = [
+        ("<p>costs ~{{A_TOKEN_THAT_DOES_NOT_EXIST_YET}} installed</p>",
+         "A_TOKEN_THAT_DOES_NOT_EXIST_YET", "doubled-sigil"),
+        ("<p>covers {{ANOTHER_INVENTED_TOKEN}} of the load</p>",
+         "ANOTHER_INVENTED_TOKEN", "missing-unit"),
+        # The half of class 2 the function-word form could not see: the word
+        # after the figure is a hyphenated participle, exactly as it is on
+        # issue #129's own line ("... -- 40% self-consumed, 60% exported").
+        ("<p>{{ANOTHER_INVENTED_TOKEN}} self-consumed, the rest exported</p>",
+         "ANOTHER_INVENTED_TOKEN", "missing-unit"),
+        ("<p>soiling {{A_THIRD_INVENTED_TOKEN}}/month</p>",
+         "A_THIRD_INVENTED_TOKEN", "doubled-sigil"),
+    ]
+    for fragment, token, cls in probes:
+        hits = _seam_defects(fragment, invented)
+        assert any(n == token and c == cls for n, c, _w, _x in hits), (
+            f"an unknown token's {cls} seam went unreported: {fragment!r} -> {hits}")
+    for name in invented:
+        assert name not in rt.TOKENS, f"{name} is a real token; pick a name that is not"
+    # And the same values in a well-formed context are clean.
+    clean = ("<p>costs {{A_TOKEN_THAT_DOES_NOT_EXIST_YET}} installed, "
+             "{{ANOTHER_INVENTED_TOKEN}} kWh served, soiling {{A_THIRD_INVENTED_TOKEN}}</p>")
+    assert not _seam_defects(clean, invented), _seam_defects(clean, invented)
+    return (f"{len(probes)} invented token(s) with broken seams are caught by name, and "
+            "the same values in a correct context are not -- the rules read the render, "
+            "not a token list")
+
+
+_SEAM_PROBE_TOKEN = "A_TOKEN_THAT_DOES_NOT_EXIST_YET"
+
+# The vocabulary the three seam constants MUST still carry.
+#
+# Committed separately from the constants themselves, because deletion is the
+# ONE weakening a generated probe cannot see: a probe built off _SEAM_UNITS
+# loses its subject at the same instant the unit does, so the case goes green
+# by having stopped asking. Measured, not assumed -- dropping any of $ % ≈ + −
+# - from _SEAM_SIGILS, or any unit but "/month", or any _SEAM_ECHO_TRIM
+# character but ")", left all of this suite green before this floor existed.
+#
+# A SUPERSET is fine and needs no edit here: a unit added tomorrow is probed
+# tomorrow by _seam_member_probes and this floor never mentions it. What fails
+# is a member DISAPPEARING, which is the edit that quietly narrows what the
+# guard can see. That is not forbidden -- a unit may turn out to cry wolf --
+# but it becomes a deliberate two-place edit with a reviewer's name on it
+# instead of one character deleted from a tuple.
+_SEAM_VOCABULARY_FLOOR = {
+    "_SEAM_SIGILS": ("~", "$", "%", "≈", "+", "−", "-"),
+    "_SEAM_UNITS": ("cycles/day", "kWh/kW/yr", "kWh/yr", "per month", "per year",
+                    "annually", "/month", "months", "/year", "years", "hours",
+                    "month", "hour", "days", "year", "kWh", "/kWh", "MWh", "/day",
+                    "/mo", "/yr", "yrs", "day", "kW", "yr", "%", "¢", "°", "h"),
+    "_SEAM_ECHO_TRIM": tuple(")]}.,;:"),
+}
+
+
+def _seam_member_probes():
+    """One synthetic probe per member of _SEAM_SIGILS, _SEAM_UNITS and
+    _SEAM_ECHO_TRIM, as
+    [(constant, member, label, broken, clean, value, class), ...].
+
+    The CONSTANT is carried alongside the member because the two lists
+    overlap: "%" is a member of both _SEAM_SIGILS and _SEAM_UNITS, and it
+    reaches the rule down two different paths ("%{{X}}" is answered by the
+    sigil branch's strict adjacency, "{{X}} %" only by the unit branch). Keyed
+    by the member alone, the %-as-unit probe could be deleted with the
+    coverage check still satisfied by the %-as-sigil probes -- measured, not
+    supposed. Keyed by the pair, every member of every constant has to be
+    probed as that constant's member.
+
+    Built OFF THE CONSTANTS, in the same spirit as the rules themselves, so a
+    sigil or a unit added tomorrow is probed tomorrow with no edit here. That
+    is also this builder's one blind spot: a member DELETED from a constant
+    takes its own probe with it, which is why _SEAM_VOCABULARY_FLOOR exists
+    alongside these probes rather than instead of them."""
+    tok = _SEAM_PROBE_TOKEN
+    probes = []
+    for sigil in _SEAM_SIGILS:
+        # Both directions, because the head and the tail of a doubled sigil are
+        # two separate branches of _seam_doubled and deleting either one has to
+        # fail somewhere.
+        probes.append(("_SEAM_SIGILS", sigil,
+                       f"sigil {sigil!r} in front of a value that starts with it",
+                       "<p>cost %s{{%s}} today</p>" % (sigil, tok),
+                       "<p>cost {{%s}} today</p>" % tok,
+                       sigil + "1,234", "doubled-sigil"))
+        probes.append(("_SEAM_SIGILS", sigil,
+                       f"sigil {sigil!r} behind a value that ends with it",
+                       "<p>cost {{%s}}%s today</p>" % (tok, sigil),
+                       "<p>cost {{%s}} today</p>" % tok,
+                       "1,234" + sigil, "doubled-sigil"))
+    for unit in _SEAM_UNITS:
+        # A "/..." unit is written flush against the figure, everything else
+        # behind a space -- and that space is load-bearing for this probe, not
+        # cosmetic: "%" is on BOTH constant lists, and the sigil rule demands
+        # strict adjacency, so only the space keeps the sigil rule from
+        # answering a probe that is asking about the unit rule.
+        sep = "" if unit.startswith("/") else " "
+        probes.append(("_SEAM_UNITS", unit,
+                       f"unit {unit!r} behind a value that ends with it",
+                       "<p>uses {{%s}}%s%s today</p>" % (tok, sep, unit),
+                       "<p>uses {{%s}} today</p>" % tok,
+                       "1,234" + sep + unit, "doubled-sigil"))
+    for closer in _SEAM_ECHO_TRIM:
+        # The value closes its clause with `closer` and the template prints the
+        # same figure immediately after. Only the trim can find that echo:
+        # every suffix of the UNtrimmed value ends in `closer`, and the
+        # template's copy does not carry it.
+        probes.append(("_SEAM_ECHO_TRIM", closer,
+                       f"echo findable only once {closer!r} is trimmed",
+                       "<p>{{%s}} 1,234.56 kW</p>" % tok,
+                       "<p>{{%s}} and nothing else</p>" % tok,
+                       "the ceiling is 1,234.56 kW" + closer, "echoed-phrase"))
+    return probes
+
+
+@case
+def case_every_member_of_the_seam_constants_is_load_bearing():
+    """Every member of _SEAM_SIGILS, _SEAM_UNITS and _SEAM_ECHO_TRIM carries
+    weight: it is still in the constant, and the rule that reads the constant
+    still acts on it.
+
+    The case above claims a weakened rule "stops failing here". Measured, that
+    was true of exactly the three members its five historical fixtures happen
+    to use -- every other member could be deleted, one at a time, with this
+    whole suite green. A guard whose vocabulary can be shortened without
+    argument is a guard that reports clean because it stopped looking.
+
+    TWO MECHANISMS, because one cannot do both jobs:
+      * A member DELETED from a constant is caught by _SEAM_VOCABULARY_FLOOR,
+        which is the committed record of what the constants must carry. Probes
+        generated off the constants cannot catch a deletion -- they lose their
+        subject in the same edit -- and pretending otherwise is how a
+        generative test ends up asserting nothing.
+      * A member NEUTERED -- left in the constant while the rule quietly stops
+        honoring it, which is what a "small tidy-up" inside _seam_doubled or
+        _seam_echo looks like -- is caught by the probes, one per member,
+        generated FROM the constants so a member added tomorrow is probed
+        tomorrow with no edit here.
+
+    Each probe is paired with the same value in a context that does NOT supply
+    the member, which must be clean -- otherwise a rule that fired on
+    everything would pass this case."""
+    probes = _seam_member_probes()
+    assert _SEAM_PROBE_TOKEN not in rt.TOKENS, (
+        f"{_SEAM_PROBE_TOKEN} is a real token now; pick a name that is not")
+    # Keyed by (constant, member), never by the member alone: "%" is on BOTH
+    # _SEAM_SIGILS and _SEAM_UNITS, and a union would let its unit probe be
+    # deleted while its sigil probes kept the coverage check happy -- two
+    # different branches of _seam_doubled, one of them then unprobed. See
+    # _seam_member_probes.
+    covered = {(constant, member)
+               for constant, member, _l, _b, _c, _v, _cls in probes}
+    for constant, name in ((_SEAM_SIGILS, "_SEAM_SIGILS"),
+                           (_SEAM_UNITS, "_SEAM_UNITS"),
+                           (_SEAM_ECHO_TRIM, "_SEAM_ECHO_TRIM")):
+        missing = [m for m in constant if (name, m) not in covered]
+        assert not missing, (
+            f"{name} member(s) {missing} have no probe OF THEIR OWN CONSTANT, so the "
+            "rule could stop honoring them with this suite green; the probe builder no "
+            "longer reads the constants")
+        gone = [m for m in _SEAM_VOCABULARY_FLOOR[name] if m not in constant]
+        assert not gone, (
+            f"{name} no longer carries {gone}, so every seam that needs {gone} to be "
+            "seen is now invisible to this guard. Narrowing the vocabulary is allowed "
+            f"and hiding it is not: say why in _SEAM_VOCABULARY_FLOOR[{name!r}] and "
+            "drop it there too, in the same commit, where a reviewer reads it")
+
+    for _constant, member, label, broken, clean, value, cls in probes:
+        values = {_SEAM_PROBE_TOKEN: value}
+        hits = _seam_defects(broken, values)
+        assert any(n == _SEAM_PROBE_TOKEN and c == cls for n, c, _w, _x in hits), (
+            f"nothing catches {label}, so {member!r} carries no weight: "
+            f"{broken!r} with value {value!r} reported "
+            f"{[(n, c) for n, c, _w, _x in hits] or 'nothing'}")
+        assert not _seam_defects(clean, values), (
+            f"the same value {value!r} is flagged in a context that does not repeat "
+            f"{member!r} ({clean!r}), so the probe proves nothing: "
+            f"{_seam_defects(clean, values)}")
+    floor = sum(len(v) for v in _SEAM_VOCABULARY_FLOOR.values())
+    pairs = len(_SEAM_SIGILS) + len(_SEAM_UNITS) + len(_SEAM_ECHO_TRIM)
+    return (f"{len(probes)} probes cover all {pairs} (constant, member) pairs across "
+            f"_SEAM_SIGILS ({len(_SEAM_SIGILS)}), _SEAM_UNITS ({len(_SEAM_UNITS)}) and "
+            f"_SEAM_ECHO_TRIM ({len(_SEAM_ECHO_TRIM)}); each fires on the member's own "
+            f"seam and stays quiet on the same value without it, and all {floor} "
+            "committed vocabulary members are still there to be read")
+
+
+@case
+def case_the_false_positive_guards_inside_the_seam_rules_are_load_bearing():
+    """The guards that keep the rules QUIET carry weight too, and they were as
+    unpinned as the constants above were: _seam_doubled's two word-boundary
+    checks and _seam_missing_unit's preceding-sigil exemption could each be
+    deleted, one at a time, with this whole suite green. Nothing in the live
+    template or in the historical fixtures asks a rule to stay SILENT for those
+    reasons, so nothing noticed.
+
+    That is the same argument
+    case_every_member_of_the_seam_constants_is_load_bearing makes about the
+    vocabulary, carried through to the rules: an unpinned guard is a guard a
+    tidy-up deletes, and deleting one of these does not break anything a
+    reviewer would see. It makes a conservative rule fire on ordinary prose --
+    which is how a tripwire gets switched off for good, because the fix that
+    follows a wolf-crying guard is to stop running it.
+
+    Each guard is driven in ISOLATION: for every assertion below, only one of
+    the three can be the reason the rule answers None, so deleting either word
+    boundary alone fails here. The corresponding blind spots -- these same
+    guards refusing a real doubling -- are listed in the block comment above
+    and are not re-argued here."""
+    # Template side. "kW" is only the HEAD of the longer unit the template
+    # really supplies, and "9.45 kW" beside "kWh/yr" is two different units
+    # rather than one printed twice. The VALUE's own boundary is clean here (a
+    # space precedes "kW"), so only the template-side check can keep this
+    # quiet.
+    assert _seam_doubled("9.45 kW", "", " kWh/yr of output") is None, (
+        "the template-side word boundary is gone: a template word that merely BEGINS "
+        "with a unit's letters is now read as supplying that unit, so every value "
+        "ending in a short unit cries wolf on the next ordinary word")
+    # Value side. "3,500 kWh" does not END in the unit "h" -- its unit is kWh
+    # -- so a template that really does supply "h" is not repeating anything.
+    # The TEMPLATE's boundary is clean here ("/" follows the "h"), so only the
+    # value-side check can keep this quiet.
+    assert _seam_doubled("3,500 kWh", "", " h/day") is None, (
+        "the value-side word boundary is gone: a value whose unit merely ENDS with a "
+        "shorter unit's letters is now read as ending in that shorter unit, and "
+        "every kWh figure in the report becomes an 'h' waiting to be doubled")
+    # Both at once -- the shape the block comment argues from.
+    assert _seam_doubled("3,500 kWh", "", " hours today") is None, (
+        "'3,500 kWh' followed by the ordinary word 'hours' is reported as a doubled "
+        "unit; one of the two word boundaries in _seam_doubled is gone")
+    # ...and the rule still reports the doubling the boundaries are NOT about,
+    # so this case cannot be satisfied by a rule that answers None to
+    # everything.
+    real = _seam_doubled("3,500 kWh", "", " kWh/yr")
+    assert real and "'kWh'" in real, (
+        f"a template unit the value really does end with went unreported: {real!r}")
+
+    # Class 2: a sigil immediately in front of a bare number IS its unit, so
+    # the function word after it is not evidence of anything.
+    for head, sigil in (("<li>the pack costs $", "$"), ("<li>about ~", "~")):
+        assert _seam_missing_unit("14,500", head, " of the total") is None, (
+            f"a bare number carrying the sigil {sigil!r} in front of it is reported as "
+            "having lost its unit; _seam_missing_unit's preceding-sigil exemption is "
+            "gone and every '$14,500 of the total' in the report is now a defect")
+    # The control: the same number and the same following words, with nothing
+    # supplying a unit, is still reported.
+    bare = _seam_missing_unit("14,500", "<li>the pack costs ", " of the total")
+    assert bare and "'of'" in bare, (
+        f"the missing-unit rule stopped reporting a genuinely bare number: {bare!r}")
+    return ("the two word boundaries in _seam_doubled and the preceding-sigil "
+            "exemption in _seam_missing_unit are each pinned in isolation, and the "
+            "real doubling and the real missing unit are still reported")
+
+
+@case
+def case_the_unit_match_folds_case_on_all_three_of_its_strings():
+    """_seam_doubled folds case on THREE strings -- the template's text after
+    the token, the value, and the unit spelling itself -- and every one of the
+    three was unpinned: any single .lower() could be deleted with this whole
+    suite green, while "{{X}} kWh" against a value already ending "KWH" went
+    invisible. Same class of hole as the constants and the false-positive
+    guards pinned above, and it is real rather than theoretical: unit case is
+    not consistent across this report's sources ("kWh", "KWH", "kwh" all
+    appear in utility and monitoring exports), so a value carrying a
+    differently-cased unit is an ordinary thing for a formatter to produce.
+
+    Driven so that each assertion has exactly ONE fold that can save it: the
+    first writes the template's unit in lower case (so only the value's fold
+    and the unit's own can bring the two together), the second writes the
+    VALUE's unit in lower case (so only the template's fold and the unit's own
+    can). Deleting any one of the three fails at least one of them."""
+    value_side = _seam_doubled("3,500 KWH", "", " kwh/yr")
+    assert value_side and "'kWh'" in value_side, (
+        "a value ending in an upper-case unit is no longer read as ending in that "
+        f"unit: {value_side!r} -- value.lower() or unit.lower() is gone from "
+        "_seam_doubled, and every differently-cased unit in the report is now a "
+        "doubling nobody can see")
+    template_side = _seam_doubled("3,500 kwh", "", " KWH/yr")
+    assert template_side and "'kWh'" in template_side, (
+        "a template supplying an upper-case unit no longer counts as supplying it: "
+        f"{template_side!r} -- after.lower() or unit.lower() is gone from _seam_doubled")
+    # Controls: the same case-folding must not make the rule fire on prose that
+    # supplies no unit at all, or the assertions above would pass on a rule
+    # that reports everything.
+    assert _seam_doubled("3,500 KWH", "", " today</p>") is None, (
+        "an upper-case value followed by an ordinary word is reported as a doubled unit")
+    assert _seam_doubled("3,500 kwh", "", " of the load") is None, (
+        "a lower-case value followed by an ordinary word is reported as a doubled unit")
+    return ("all three case folds in _seam_doubled are pinned in isolation -- the "
+            "template's text, the value, and the unit spelling -- and none of them "
+            "makes the rule fire on prose that supplies no unit")
+
+
+@case
+def case_the_seam_rules_read_markup_the_way_a_reader_does():
+    """Two markup blind spots, closed and pinned.
+
+    ONE, a '>' inside a QUOTED ATTRIBUTE does not end a tag. The naive
+    `<[^>]*>` stops there and leaves the rest of the attribute -- plus its
+    closing quote and bracket -- sitting in the text where the next visible
+    word should be, so class 2 reads 'baseline">' as the word after the figure:
+    a real missing unit is hidden behind a title attribute, and a line that
+    DOES supply its unit is reported because the attribute's tail got there
+    first. Both directions are driven below.
+
+    TWO, attribute text is not PRINTED. A value repeated in a sort key --
+    `<td data-sort="12,345.6 kWh">{{X}}</td>` -- appears once to a reader, and
+    class 3 read it as twice. The windows are now masked, and masked to
+    EQUAL-LENGTH spaces rather than deleted, which the third assertion pins
+    from the other side: deleting tags instead would collapse the lifetime
+    table's "</td><td>" from 9 characters to nothing and false-positive on
+    every cumulative column that repeats the year's own figure.
+
+    Neither shape exists in report-template.html today -- no live tag has a
+    '>' inside a quoted attribute, and the template carries no data-*
+    attribute at all -- so these are blind spots closed before they were
+    reached, and this case is what keeps them closed."""
+    attr = '<span title="comparison > baseline"> of the load</span></p>'
+    hit = _seam_missing_unit("42", "<p>covers ", attr)
+    assert hit and "'of'" in hit, (
+        f"the word after the figure was read out of a title attribute: {hit!r} -- "
+        "_SEAM_TAG_RE stopped honoring quoted attributes, so the visible next word is "
+        "whatever the attribute happens to end with")
+    quiet = '<span title="a > b"> kWh</span> imported</p>'
+    assert _seam_missing_unit("3,500", "<p>", quiet) is None, (
+        "a figure whose unit the template really does supply is reported missing one, "
+        "because a quoted '>' left attribute text standing between the two")
+
+    assert _seam_echo("12,345.6 kWh", '<td data-sort="12,345.6 kWh">', "</td>") is None, (
+        "a value repeated in a sort ATTRIBUTE is reported as printed twice; attribute "
+        "text is markup, and a reader sees the figure once")
+    assert _seam_echo("12,345.6 kWh", "", "</td><td>12,345.6 kWh</td>") is None, (
+        "the next table cell's copy of a figure is reported as an echo: the tag mask "
+        "is deleting tags instead of blanking them to the same length, so "
+        "_SEAM_ECHO_GAP now measures a distance no reader sees")
+    # ...and the visible repeat, on both sides, is still reported -- so the
+    # masking narrowed the rule to markup rather than switching it off.
+    after = _seam_echo("12,345.6 kWh", "<td>", " — 12,345.6 kWh</td>")
+    assert after and "later" in after, f"a visible repeat after the value was lost: {after!r}"
+    before = _seam_echo("12,345.6 kWh", "<td>12,345.6 kWh — ", "</td>")
+    assert before and "earlier" in before, (
+        f"a visible repeat ahead of the value was lost: {before!r}")
+    return ("a '>' inside a quoted attribute no longer ends a tag for either rule, "
+            "attribute text is no longer read as printed by the echo rule, the tag mask "
+            "preserves the distances _SEAM_ECHO_GAP measures, and a visible repeat on "
+            "either side is still reported")
+
+
+@case
+def case_the_seam_guard_compares_the_values_the_generator_writes():
+    """The guard renders what generate_report.render() renders: the value
+    html.escape()d with quote=True.
+
+    Escaping is neutral for class 1 -- it never touches a leading or trailing
+    sigil -- and the block comment used to generalise that into "escaping
+    cannot hide a seam", which is FALSE for class 3, the one rule that compares
+    a value's INTERNAL text. A template printing "PG&amp;E 2025" beside a
+    token whose value is "PG&E 2025" prints the figure twice in the published
+    page, and an unescaped comparison sees two unequal strings and reports
+    nothing. Thirteen live token values change under escaping, so this is the
+    shipped path.
+
+    The escaping is checked AGAINST THE GENERATOR rather than restated here:
+    generate_report.render() is driven over the real template with one probe
+    value carrying every character html.escape(quote=True) touches, and
+    _seam_render is required to produce the same substitution."""
+    import generate_report as gr
+
+    probe_token = "UTILITY_NAME"
+    probe = """PG&E "2025" <x> it's"""
+    assert probe_token in rt.TOKENS, f"{probe_token} is no longer a token"
+    generated, _missing = gr.render(rt.TEMPLATE.read_text(), {}, {probe_token: probe})
+    written = _htmllib.escape(probe, quote=True)
+    assert written in generated and probe not in generated, (
+        "generate_report.render() no longer writes html.escape(value, quote=True) into "
+        "the document; the seam guard is now comparing text the published page does not "
+        "contain. Re-read its _sub and follow it here")
+    rendered, spans = _seam_render("<p>{{%s}}</p>" % probe_token, {probe_token: probe})
+    assert rendered == "<p>%s</p>" % written, (
+        f"_seam_render substitutes {rendered!r}, not what the generator writes "
+        f"({written!r})")
+    name, start, end = spans[0]
+    assert (name, rendered[start:end]) == (probe_token, written), (
+        f"the span the rules read is {rendered[start:end]!r}, not the written value")
+
+    # The echo the unescaped comparison could not see, both halves.
+    echoed = {"A_TOKEN_THAT_DOES_NOT_EXIST_YET": "PG&E 2025"}
+    fragment = "<p>{{A_TOKEN_THAT_DOES_NOT_EXIST_YET}} PG&amp;E 2025</p>"
+    hits = _seam_defects(fragment, echoed)
+    assert any(n == "A_TOKEN_THAT_DOES_NOT_EXIST_YET" and c == "echoed-phrase"
+               for n, c, _w, _x in hits), (
+        "a figure the template prints beside a token whose value renders to the same "
+        f"escaped text went unreported: {hits} -- rendered "
+        f"{_seam_render(fragment, echoed)[0]!r}")
+    assert _seam_echo("PG&E 2025", "", " PG&amp;E 2025</p>") is None, (
+        "the unescaped value already matches the escaped template text, so this case "
+        "is no longer measuring what the escaping buys; pick a probe whose escaping "
+        "actually changes it")
+    return ("the guard substitutes html.escape(value, quote=True), checked against "
+            "generate_report.render() on the real template rather than restated, and "
+            "the echoed figure that only the escaped comparison can see is reported")
+
+
+@case
+def case_the_echo_rule_reads_both_ends_of_the_value():
+    """Class 3 tries the value's OPENING as well as its tail against each side
+    of the seam, and the opening half was unpinned: `core[:length]` could be
+    deleted with this whole suite green, because every echo fixture in this
+    file repeats a value's TAIL.
+
+    It is real capability and not symmetry for its own sake. A template that
+    prints a figure the value LEADS with -- "{{X}} (12,345.6 kWh)" where X is
+    "12,345.6 kWh recovered over ..." -- repeats it just as visibly as one that
+    trails it, and the suffix half cannot see that at any length.
+
+    It also decides what is findable at all in a long value. The echo search
+    reads a 120-character window on each side of the seam (see the block
+    comment), so the runs the suffix half can look for are the value's last 120
+    characters and nothing else. Values longer than the window are ordinary in
+    this report -- the return line below counts them on the run rather than
+    committing a number here -- and for every one of them, an echo of the
+    value's opening is reachable ONLY through the head half."""
+    # The plain shape, both sides of the seam. The repeated run is the value's
+    # opening; no suffix of the value appears anywhere in either line.
+    value = "12,345.6 kWh recovered over the study window"
+    after = _seam_echo(value, "", " (12,345.6 kWh)")
+    assert after and after.startswith("the value's own text '12,345.6 kWh"), (
+        f"the template's copy of a figure the value OPENS with went unreported when it "
+        f"sat after the token: {after!r}")
+    before = _seam_echo(value, "<li>12,345.6 kWh — ", "")
+    assert before and "earlier" in before, (
+        f"the same copy went unreported when it sat ahead of the token: {before!r}")
+    # Neither fires without the repeat, so the assertions above are about the
+    # echo and not about the value.
+    assert _seam_echo(value, "<li>the array ", " and nothing else</li>") is None, (
+        "the same value is reported as echoed in a line that prints it once")
+
+    # A value longer than the 120-character window, with its OPENING repeated
+    # beside it: the suffix half is looking at the value's tail, which appears
+    # nowhere, so this is the head half or nothing.
+    opening = "9.45 kW AC across 30 modules,"
+    long_value = opening + " metered at the inverters and reconciled against the " \
+                           "billing export month by month for the whole study year"
+    assert len(long_value) > 120, (
+        f"the long-value fixture is only {len(long_value)} characters; it has to "
+        "exceed the 120-character echo window to test what that window excludes")
+    long_hit = _seam_echo(long_value, "", f" ({opening})")
+    assert long_hit and long_hit.startswith(f"the value's own text {opening!r}"), (
+        "a long value whose OPENING the template reprints beside it went unreported: "
+        f"{long_hit!r} -- past the 120-character window the suffix half can only ever "
+        "look for the value's tail, so the head half is the only one that can see this")
+
+    values, _gaps = _seam_values()
+    over = sum(1 for v in values.values() if len(v) > 120)
+    longest = max(len(v) for v in values.values())
+    return ("the echo rule reads the value's opening as well as its tail, on both "
+            f"sides of the seam and past the 120-character window: {over} of "
+            f"{len(values)} rendered token values are longer than that window "
+            f"(longest {longest} characters)")
+
+
+@case
+def case_the_echo_rule_reads_the_side_of_the_seam_the_template_prints_first():
+    """The template's copy of a figure can sit in FRONT of the token, and after
+    commit c79cc06 that is the likelier direction: the AC ceiling now lives in
+    the template rather than in INVERTER_DESCRIPTION, so an edit restoring it
+    token-side prints it twice with the sides swapped. A tail-only class 3
+    reports nothing on that line.
+
+    Driven against the shipped template line with the two halves reordered --
+    derived from the line rather than quoted, so it cannot drift out from under
+    the case -- and against the same line with the token's CURRENT value, which
+    must stay clean."""
+    values, _gaps = _seam_values()
+    ac, inverter = values["AC_CEILING_KW"], values["INVERTER_DESCRIPTION"]
+    assert ", ~" in inverter, (
+        f"INVERTER_DESCRIPTION no longer reads '..., ~V VA each' ({inverter!r}), so "
+        "this case cannot rebuild the pre-#134 value it reverts to")
+    pre_134 = inverter.replace(", ~", " (~", 1) + f" ≈ {ac} kW AC max)"
+
+    shipped = _seam_template_line("INVERTER_DESCRIPTION")
+    m = re.search(r"\{\{INVERTER_DESCRIPTION\}\}(\s*≈\s*\{\{AC_CEILING_KW\}\}[^<]*)", shipped)
+    assert m, (
+        "report-template.html no longer prints the AC ceiling right after "
+        f"{{{{INVERTER_DESCRIPTION}}}} ({shipped!r}); this case reorders that clause")
+    mirrored = shipped.replace(m.group(0), f"{m.group(1).strip()} — {{{{INVERTER_DESCRIPTION}}}}")
+    assert "{{INVERTER_DESCRIPTION}}" in mirrored and "{{AC_CEILING_KW}}" in mirrored, (
+        f"the reordered line lost a token: {mirrored!r}")
+
+    broken = dict(values, INVERTER_DESCRIPTION=pre_134)
+    hits = _seam_defects(mirrored, broken)
+    assert any(n == "INVERTER_DESCRIPTION" and c == "echoed-phrase"
+               for n, c, _w, _x in hits), (
+        "the guard did not report the AC ceiling printed AHEAD of a token whose value "
+        f"already ends with it: got {[(n, c) for n, c, _w, _x in hits] or 'nothing'}\n"
+        f"  rendered: {_seam_render(mirrored, broken)[0]!r}")
+    # The same reordering with today's value is correct prose and must be clean,
+    # and the shipped order with the reverted value fires as well -- the rule is
+    # about the repeat, not about which side it lands on.
+    assert not _seam_defects(mirrored, values), (
+        "the reordered line is flagged with the token's current value, which prints the "
+        f"ceiling once: {_seam_defects(mirrored, values)}")
+    assert any(n == "INVERTER_DESCRIPTION" and c == "echoed-phrase"
+               for n, c, _w, _x in _seam_defects(shipped, broken)), (
+        "the shipped order stopped reporting the reverted token, so the two-sided rule "
+        "traded one direction for the other")
+    return ("the echo rule reports the figure printed ahead of the token as well as "
+            "behind it, and neither direction fires on the line as it ships")
+
+
+@case
+def case_the_shipped_line_fixture_decides_liveness_by_comment_span():
+    """_seam_template_line decides LIVENESS from comment spans, not from
+    whether the line happens to contain the characters '<!--'.
+
+    Both failure directions are real in this template, and both are asserted to
+    still be real here rather than assumed: it carries multi-line <!-- TODO -->
+    blocks whose interior token lines contain no '<!--' of their own (a
+    per-line test reads them as live markup) and live lines that CARRY an
+    inline '<!--' opener (a per-line test throws them away) -- the filter below
+    counts both the openers that run to end of line and the comments that open
+    and close mid-line with live tokens after them. Today the one
+    fixture that calls this helper wants a token that appears exactly once in
+    the whole file, so neither mistake changes the answer -- which is precisely
+    how a fixture ends up silently driven against a TODO comment while claiming
+    to use the template as it ships."""
+    tpl = rt.TEMPLATE.read_text()
+    pairs = list(zip(tpl.splitlines(), _seam_comment_mask(tpl).splitlines()))
+    assert len(pairs) == len(tpl.splitlines()), "the mask dropped or added a line"
+    interior = [line for line, masked in pairs
+                if _SEAM_TOKEN_RE.search(line) and "<!--" not in line
+                and not _SEAM_TOKEN_RE.search(masked)]
+    inline = [line for line, masked in pairs
+              if _SEAM_TOKEN_RE.search(masked) and "<!--" in line]
+    assert interior, (
+        "no comment-interior token line in report-template.html, so half of what this "
+        "case guards is no longer reachable; re-read the helper before deleting it")
+    assert inline, (
+        "no live token line carrying an inline '<!--' in report-template.html, so the "
+        "other half is no longer reachable")
+
+    tok = _SEAM_PROBE_TOKEN
+    live = "<li>ships {{%s}} here</li>" % tok
+    todo = ("<!-- TODO: fill this in\n"
+            "     using {{%s}} and friends\n"
+            "     -->" % tok)
+    inline_live = "<li>ships {{%s}} here</li><!-- TODO: and the rest" % tok
+
+    def refuses(text, why):
+        try:
+            got = _seam_template_line(tok, text)
+        except AssertionError:
+            return
+        raise AssertionError(f"{why}: _seam_template_line returned {got!r}")
+
+    # A token that exists ONLY inside a multi-line comment is not a live line.
+    refuses(todo, "a token that lives only inside a <!-- TODO --> block was "
+                  "accepted as the shipped line")
+    # The comment copy comes FIRST: "the first line that matches" answers with it.
+    assert _seam_template_line(tok, todo + "\n" + live) == live, (
+        "the commented occurrence won over the live one, so the fixture would be "
+        "driven against a TODO block")
+    # A live line may carry an inline opener; the token before it is still live.
+    assert _seam_template_line(tok, inline_live + "\n     more prose -->") == inline_live, (
+        "a live line was thrown away because it ends with a comment opener")
+    # And the "exactly one" contract still holds for two genuinely live lines.
+    refuses(live + "\n" + live, "two live lines were reported as one")
+
+    shipped = _seam_template_line("INVERTER_DESCRIPTION")
+    assert shipped in tpl.splitlines() and "<!--" not in shipped, (
+        f"the shipped INVERTER_DESCRIPTION line is not a plain live line: {shipped!r}")
+    return (f"liveness is read off comment spans: {len(interior)} comment-interior token "
+            f"line(s) and {len(inline)} live line(s) with an inline opener are classified "
+            "the way a browser reads them, and the first-match shortcut is rejected")
+
+
+@case
+def case_the_seam_allowlist_excuses_a_seam_and_cannot_go_stale():
+    """ISSUE #133's fourth acceptance criterion. The live entries below are all
+    one class on one shape (a dimensionless count or year), so the rest of the
+    escape hatch's contract is driven here on synthetic templates -- and an
+    unexercised escape hatch is exactly the loophole that manufactures false
+    confidence. Four halves: an entry suppresses the seam it names, an entry
+    does NOT suppress the same token's OTHER defect classes, an entry does NOT
+    suppress the SAME class at another OCCURRENCE of the same token, and an
+    entry whose seam has since been fixed is reported stale by
+    _seam_stale_allowlist -- the same call, not a re-derived copy of it, that
+    the live case above makes against report-template.html. Inverting that
+    comparison fails this case.
+
+    THE THIRD HALF IS WHY THE KEY CARRIES A MARKER. Keyed by (token, class)
+    alone, an entry excusing one occurrence pardons every other occurrence of
+    that token in the same class, and the stale check stays green because the
+    first occurrence keeps matching -- so a real lost unit ships behind an
+    excuse written for a different line. That is not hypothetical: this
+    template prints {{BILL_COUNT}} on two lines, both bare counts, and the
+    fixture below is that shape."""
+    with _seam_allowlist_cleared():
+        token = "A_TOKEN_THAT_DOES_NOT_EXIST_YET"
+        fragment = "<p>costs ~{{%s}} installed</p>" % token
+        values = {token: "~$9,999"}
+        assert _seam_defects(fragment, values), "the fixture no longer has a seam to excuse"
+
+        key = (token, "doubled-sigil", "costs ~{{%s}} installed" % token)
+        _SEAM_ALLOWLIST[key] = "synthetic fixture, this case only"
+        try:
+            assert not _seam_defects(fragment, values), (
+                "an allowlisted seam was still reported, so the allowlist does nothing")
+            assert _seam_defects(fragment, values, apply_allowlist=False), (
+                "apply_allowlist=False must still see the excused seam, or the stale-entry "
+                "check in the live case can never find anything")
+            # Not a blanket pardon: the same token's other classes still report.
+            other = "<p>covers {{%s}} of the load</p>" % token
+            assert any(n == token and c == "missing-unit"
+                       for n, c, _w, _x in _seam_defects(other, {token: "42"})), (
+                "an entry excusing one class also suppressed another class for the same "
+                "token, so one excuse blinds the token to every defect #129 shipped")
+            # Live: the entry is NOT stale while its own seam is present...
+            assert not _seam_stale_allowlist(fragment, values), (
+                "an entry whose seam is present was reported stale")
+            # ...and IS stale against a template where that seam has been fixed.
+            fixed = "<p>costs {{%s}} installed</p>" % token
+            stale = _seam_stale_allowlist(fixed, values)
+            assert [k for k, _why in stale] == [key], (
+                f"a fixed seam left its excuse un-flagged: {stale}")
+        finally:
+            del _SEAM_ALLOWLIST[key]
+
+        # THE OCCURRENCE HALF, on the shape the live allowlist actually has: one
+        # token, one class, two lines. The excused line goes quiet; the OTHER line
+        # keeps reporting, and the excuse is not stale because its own line still
+        # has the seam.
+        two_lines = ("<p>{{%s}} of 13 periods</p>\n"
+                     "<p>covers {{%s}} of the load</p>" % (token, token))
+        counts = {token: "12"}
+        both = _seam_defects(two_lines, counts)
+        assert len(both) == 2 and {c for _n, c, _w, _x in both} == {"missing-unit"}, (
+            f"the two-occurrence fixture no longer has two missing-unit seams: {both}")
+        occurrence = (token, "missing-unit", "of 13 periods")
+        _SEAM_ALLOWLIST[occurrence] = "synthetic fixture, this case only"
+        try:
+            left = _seam_defects(two_lines, counts)
+            assert [(n, c) for n, c, _w, _x in left] == [(token, "missing-unit")], (
+                "an entry naming ONE occurrence suppressed the same token's seam at the "
+                f"OTHER occurrence too, so it is a token-wide pardon: {left}")
+            assert "of the load" in left[0][3], (
+                f"the surviving report is not the un-excused occurrence: {left}")
+            assert not _seam_stale_allowlist(two_lines, counts), (
+                "an occurrence-level entry whose own line still has the seam was reported "
+                "stale")
+            # ...and once ITS line is fixed, it is stale even though the other
+            # occurrence still has the same (token, class) seam. This is the check
+            # a (token, class) key cannot make: the other occurrence would keep it
+            # green forever.
+            one_fixed = ("<p>{{%s}} periods of 13</p>\n"
+                         "<p>covers {{%s}} of the load</p>" % (token, token))
+            stale = _seam_stale_allowlist(one_fixed, counts)
+            assert [k for k, _why in stale] == [occurrence], (
+                "an entry whose own occurrence was fixed stayed green because ANOTHER "
+                f"occurrence of the same token still has the seam: {stale}")
+        finally:
+            del _SEAM_ALLOWLIST[occurrence]
+
+        # A MALFORMED key is a fifth half, and it is the one that misdirects: a
+        # key that is not a (token, class, marker) triple, or that names a class or
+        # a token nothing can report, or whose marker names no single line, never
+        # excuses an occurrence -- so a plain difference calls it stale and the
+        # live case tells the reader to "delete the entry -- it excuses a seam that
+        # has since been fixed". The entry never excused anything. Each shape fails
+        # by name instead. The last two are the marker's own loopholes: an empty
+        # marker matches every line and an over-broad one matches several, and both
+        # are the token-wide pardon this key shape exists to stop.
+        two_line_fragment = fragment + "\n" + fragment.replace("costs", "prices")
+        malformed = [
+            (token, "not a (token, class, marker) triple"),
+            ((token,), "not a (token, class, marker) triple"),
+            ((token, "doubled-sigil"), "not a (token, class, marker) triple"),
+            ((token, "doubled-sigil", "m", "and one more"),
+             "not a (token, class, marker) triple"),
+            ((token, "doubled_sigil", "costs"), "not one of"),
+            ((token, "wrong-class", "costs"), "not one of"),
+            (("A_TOKEN_NOBODY_RESOLVES", "doubled-sigil", "costs"), "does not resolve"),
+            ((token, "doubled-sigil", ""), "empty or non-string marker"),
+            ((token, "doubled-sigil", None), "empty or non-string marker"),
+            ((token, "doubled-sigil", "installed"), "matching 2 template lines"),
+        ]
+        for bad, expected in malformed:
+            _SEAM_ALLOWLIST[bad] = "malformed, this case only"
+            try:
+                try:
+                    _seam_stale_allowlist(two_line_fragment, values)
+                except AssertionError as exc:
+                    assert expected in str(exc), (
+                        f"a malformed allowlist key {bad!r} failed with a message that does "
+                        f"not say why ({expected!r} missing): {exc}")
+                else:
+                    raise AssertionError(
+                        f"the malformed allowlist key {bad!r} was accepted; it suppresses "
+                        "nothing and would be reported as a seam that has since been fixed")
+            finally:
+                del _SEAM_ALLOWLIST[bad]
+
+    assert set(_SEAM_ALLOWLIST) == set(_SEAM_ALLOWLIST_SHIPPED), (
+        "this case left _SEAM_ALLOWLIST different from the committed one: added "
+        f"{sorted(set(_SEAM_ALLOWLIST) - set(_SEAM_ALLOWLIST_SHIPPED))}, removed "
+        f"{sorted(set(_SEAM_ALLOWLIST_SHIPPED) - set(_SEAM_ALLOWLIST))}")
+    return ("the seam allowlist suppresses only the (token, class, marker) occurrence it "
+            "names, leaves that token's other classes AND its other occurrences "
+            "reporting, is flagged stale by the live check once its own line is fixed "
+            f"even while another occurrence still has the seam, and rejects "
+            f"{len(malformed)} malformed key shapes by name rather than calling them "
+            f"stale ({len(_SEAM_ALLOWLIST_SHIPPED)} committed entries on the live "
+            "template)")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (
