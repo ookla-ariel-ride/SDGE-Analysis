@@ -1600,6 +1600,89 @@ def case_soiling_annual_economics_matches_the_artifact():
     return "the §12 soiling-range paragraph's $/yr loss bracket matches soiling_results.json"
 
 
+# The §12 cleaning heading, and the two figures it can be filled from.
+_CLEANING_HEADING_RE = re.compile(
+    r"<h3>The [^<]*?cleaning \([^)]*\): ([-+]?[\d.]+%) production gain")
+# The section's own conclusion, three lines below that heading.
+_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"Difference-in-differences: <b>([-+]?[\d.]+%)</b>")
+# The cleaned year's row in the per-year windows table -- the OTHER statistic,
+# each year's own raw post ÷ pre ratio.
+_CLEANING_RAW_RATIO_RE = re.compile(
+    r'<tr class="win"><td>\d{4} — cleaned [^<]*</td>(?:<td>[^<]*</td>){2}'
+    r"<td><b>([\d.]+)</b></td>")
+
+
+def case_cleaning_effect_heading_matches_the_sections_own_conclusion():
+    """issue #138: §12's h3 states the cleaning's effect and the paragraph
+    below the windows table concludes with the difference-in-differences
+    estimate against the control years. They are the same claim, so they must
+    be the same figure -- and CLEANING_EFFECT_PCT, the token that fills that
+    heading, must BE it.
+
+    It was not. The token computed the cleaned year's naive post/pre window
+    ratio (+5.1%), the statistic the windows table publishes per year as
+    CLEANED_RATIO, so a mechanical fill printed one figure directly above a
+    paragraph stating the other. Both statistics are legitimate and both are
+    kept; what is pinned here is which one heads the section.
+
+    The token half resolves through report_tokens (defined below, called at
+    run time), and the ONLY survivable failure is a checkout without the
+    private archive -- exactly as in the heading-verdict agreement case."""
+    sr_path = ROOT / "data" / "soiling_results.json"
+    assert sr_path.exists(), f"{sr_path} is committed public data and must exist"
+    sc = json.loads(sr_path.read_text())["sanity_check_2024_cleaning"]
+    expected = f"{sc['known_cleaning_gain_pct']:+.1f}%"
+
+    m = _CLEANING_HEADING_RE.search(HTML)
+    assert m, "§12's cleaning h3 not found in index.html"
+    heading = m.group(1)
+    assert heading == expected, (
+        f"§12's cleaning heading states {heading!r}, but soiling_results.json's "
+        f"sanity_check_2024_cleaning.known_cleaning_gain_pct is {expected!r}")
+
+    m = _CLEANING_DIFF_IN_DIFF_RE.search(HTML)
+    assert m, "§12's difference-in-differences conclusion not found in index.html"
+    assert m.group(1) == expected, (
+        f"§12 concludes with a difference-in-differences of {m.group(1)!r} while its "
+        f"own heading states {heading!r} -- the heading and the conclusion it heads "
+        "state one figure")
+
+    # The statistic the heading must NOT be: the cleaned year's own raw
+    # post ÷ pre ratio, published one table up. It counts the seasonal decline
+    # every control year also shows, so it reads several points lower.
+    m = _CLEANING_RAW_RATIO_RE.search(HTML)
+    assert m, "the cleaned year's row in §12's windows table not found in index.html"
+    raw = f"{(float(m.group(1)) - 1) * 100:+.1f}%"
+    assert heading != raw, (
+        f"§12's heading states {heading!r}, which is the windows table's raw post ÷ pre "
+        "ratio for the cleaned year, not the difference-in-differences estimate the "
+        "section concludes with")
+
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    try:
+        import report_tokens as rt
+        resolved = rt.resolve_token("CLEANING_EFFECT_PCT")
+    except SystemExit as e:                       # pragma: no cover - archive-dependent
+        assert _missing_archive_exit(e, archive, loader), (
+            f"CLEANING_EFFECT_PCT could not be resolved, and NOT because this checkout "
+            f"lacks the private archive (present: {archive}): {e}")
+        return ("§12's cleaning heading and its difference-in-differences conclusion "
+                f"both state {expected}, the artifact's own gain, and neither is the "
+                f"raw window ratio {raw}; CLEANING_EFFECT_PCT not compared ({e})")
+    assert resolved == expected, (
+        f"CLEANING_EFFECT_PCT resolves to {resolved!r}, but the §12 heading it fills "
+        f"states {heading!r} and the section concludes with the same figure -- the "
+        f"token must state the artifact's difference-in-differences gain {expected!r}"
+        + (f", not the raw window ratio {raw!r}" if resolved == raw else ""))
+    return ("§12's cleaning heading, its difference-in-differences conclusion and "
+            f"CLEANING_EFFECT_PCT all state {expected} (soiling_results.json's "
+            f"known_cleaning_gain_pct), distinct from the windows table's raw "
+            f"post ÷ pre ratio {raw}")
+
+
 def case_weather_regression_paragraph_matches_the_artifact():
     """issue #112: the §9 weather-regression paragraph is hand-written, not
     templated -- lock its base load, cooling-degree-day coefficient, annual
@@ -2351,6 +2434,7 @@ CASES = [
     case_nem3_grandfathering_section_matches_the_artifact,
     case_reprice_by_vintage_note_matches_the_artifact,
     case_soiling_annual_economics_matches_the_artifact,
+    case_cleaning_effect_heading_matches_the_sections_own_conclusion,
     case_weather_regression_paragraph_matches_the_artifact,
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,

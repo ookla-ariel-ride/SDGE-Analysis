@@ -2259,25 +2259,41 @@ _tok("CLEANED_RATIO", kind="derived",
      get=lambda ctx: (lambda pre, post: round(post / pre, 3))(*_cleaning_window_medians(ctx)),
      sources=["data/cleaning_study_daily.csv"], fmt="num2")
 def _cleaning_effect_pct(ctx):
-    """The cleaning's measured production gain, as a percentage.
+    """The cleaning's measured production gain: the DIFFERENCE-IN-DIFFERENCES
+    estimate, read off the soiling study's own artifact.
 
-    Both medians checked, and the PRE median checked for being a real
-    denominator: a zero pre-window median makes the quotient a
-    ZeroDivisionError and a nan in either window renders "nan%" as a measured
-    effect (issue #131 review round 5, part B's sweep)."""
-    pre, post = _figures("CLEANING_EFFECT_PCT", "what the cleaning recovered",
-                         **dict(zip(("pre_window_median_kwh", "post_window_median_kwh"),
-                                    _cleaning_window_medians(ctx))))
-    _claim("CLEANING_EFFECT_PCT", "what the cleaning recovered",
-           SUPPORTED if pre > 0 else NOT_DETERMINED,
-           f"data/cleaning_study_daily.csv's 30-day pre-cleaning window has a median "
-           f"of {pre!r} kWh/day, which is not a production level a gain can be "
-           "measured against")
-    return f"{(post / pre - 1) * 100:.1f}%"
+    NOT the cleaned year's naive post/pre window ratio, which is what this
+    token used to compute and which CLEANED_RATIO already publishes one row
+    down, in the per-year windows table (issue #138). The two are different
+    statistics, not two roundings of one: the raw ratio counts the seasonal
+    decline that every control year shows as if the cleaning had caused it,
+    so it lands near +5% while the estimate the section concludes with -- the
+    cleaned year's ratio measured AGAINST the control years' -- is +11.8%.
+    Filling the heading from the raw ratio printed one figure above a
+    paragraph stating the other. Both statistics stay; each is now named
+    where it appears.
+
+    Same artifact and field as SEC12_TEASER, which states this figure in the
+    section's own <summary>.
+
+    The SIGN is carried by this token. The heading reads "+11.8% production
+    gain" and report-template.html supplies no sigil in front of the slot, so
+    a household whose cleaning measured a LOSS renders its own minus rather
+    than having a "+" glued on beside it."""
+    sc = _json("soiling_results.json")["sanity_check_2024_cleaning"]
+    gain, = _figures("CLEANING_EFFECT_PCT", "what the cleaning recovered",
+                     known_cleaning_gain_pct=sc["known_cleaning_gain_pct"])
+    _claim("CLEANING_EFFECT_PCT", "what the cleaning recovered", SUPPORTED,
+           f"data/soiling_results.json:sanity_check_2024_cleaning."
+           f"known_cleaning_gain_pct is {gain!r}%, the difference-in-differences "
+           f"gain analysis/soiling_analysis.py measured for the "
+           f"{sc['cleaning_date']} cleaning")
+    return f"{gain:+.1f}%"
 
 
 _tok("CLEANING_EFFECT_PCT", kind="derived", get=_cleaning_effect_pct,
-     sources=["data/cleaning_study_daily.csv"])
+     sources=["data/soiling_results.json:sanity_check_2024_cleaning"
+              ".known_cleaning_gain_pct"])
 _tok("SOILING_RATE_RANGE", kind="derived",
      get=lambda ctx: (lambda a, b: f"{min(a, b):.1f}–{max(a, b):.1f}%/month")(
          *_figures("SOILING_RATE_RANGE", "how fast the array soils",
