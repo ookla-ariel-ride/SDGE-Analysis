@@ -798,9 +798,18 @@ def render(rep, generator, verbose=False):
         add(f"  note      : {n}")
     if rep.dirty_baseline:
         add("  baseline  : the working tree's data/ (NOT HEAD) -- these paths are "
-            "uncommitted, so the diff below is against them:")
+            "uncommitted:")
         for ln in rep.dirty_baseline[:10]:
             add(f"              {ln}")
+        if any(ln.startswith("??") for ln in rep.dirty_baseline):
+            # The baseline is a copy of the sandbox's data/, and the sandbox is
+            # seeded from `git ls-files`. A MODIFIED tracked file is therefore in
+            # the baseline with its working-tree content, but an UNTRACKED one is
+            # not in it at all -- so a generator that reproduces such a file shows
+            # up as an addition. Say which, rather than claiming the diff covers
+            # both. (github.com/ookla-ariel-ride/SDGE-Analysis/issues/152)
+            add("              (?? paths are untracked and are NOT in the baseline: "
+                "a generator that writes one is reported as an addition)")
     if rep.result is not None:
         add(f"  exit code : {rep.result.returncode}   ({rep.result.seconds:.1f}s, "
             f"wrote {len(rep.result.wrote)} file(s) in the sandbox)")
