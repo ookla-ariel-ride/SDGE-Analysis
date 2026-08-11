@@ -12,6 +12,7 @@ These cases fail instead. They need no private data, only the two committed file
 Run from the repo root:  ./.venv/bin/python analysis/test_report_consistency.py
 """
 import calendar
+import csv
 import datetime as dt
 import html as htmlmod
 import json
@@ -1600,6 +1601,372 @@ def case_soiling_annual_economics_matches_the_artifact():
     return "the §12 soiling-range paragraph's $/yr loss bracket matches soiling_results.json"
 
 
+# The §12 cleaning heading, and the two figures it can be filled from.
+_CLEANING_HEADING_RE = re.compile(
+    r"<h3>The [^<]*?cleaning \([^)]*\): ([-+]?[\d.]+%) production gain")
+# The section's own conclusion, three lines below that heading.
+_CLEANING_DIFF_IN_DIFF_RE = re.compile(r"Difference-in-differences: <b>([-+]?[\d.]+%)</b>")
+# The cleaned year's row in the per-year windows table -- the OTHER statistic,
+# each year's own raw post ÷ pre ratio.
+_CLEANING_RAW_RATIO_RE = re.compile(
+    r'<tr class="win"><td>\d{4} — cleaned [^<]*</td>(?:<td>[^<]*</td>){2}'
+    r"<td><b>([\d.]+)</b></td>")
+
+
+def case_cleaning_effect_heading_matches_the_sections_own_conclusion():
+    """issue #138: §12's h3 states the cleaning's effect and the paragraph
+    below the windows table concludes with the difference-in-differences
+    estimate against the control years. They are the same claim, so they must
+    be the same figure -- and CLEANING_EFFECT_PCT, the token that fills that
+    heading, must BE it.
+
+    It was not. The token computed the cleaned year's naive post/pre window
+    ratio (+5.1%), the statistic the windows table publishes per year as
+    CLEANED_RATIO, so a mechanical fill printed one figure directly above a
+    paragraph stating the other. Both statistics are legitimate and both are
+    kept; what is pinned here is which one heads the section.
+
+    The token half resolves through report_tokens (defined below, called at
+    run time), and the ONLY survivable failure is a checkout without the
+    private archive -- exactly as in the heading-verdict agreement case."""
+    sr_path = ROOT / "data" / "soiling_results.json"
+    assert sr_path.exists(), f"{sr_path} is committed public data and must exist"
+    sc = json.loads(sr_path.read_text())["sanity_check_2024_cleaning"]
+    expected = f"{sc['known_cleaning_gain_pct']:+.1f}%"
+
+    m = _CLEANING_HEADING_RE.search(HTML)
+    assert m, "§12's cleaning h3 not found in index.html"
+    heading = m.group(1)
+    assert heading == expected, (
+        f"§12's cleaning heading states {heading!r}, but soiling_results.json's "
+        f"sanity_check_2024_cleaning.known_cleaning_gain_pct is {expected!r}")
+
+    m = _CLEANING_DIFF_IN_DIFF_RE.search(HTML)
+    assert m, "§12's difference-in-differences conclusion not found in index.html"
+    assert m.group(1) == expected, (
+        f"§12 concludes with a difference-in-differences of {m.group(1)!r} while its "
+        f"own heading states {heading!r} -- the heading and the conclusion it heads "
+        "state one figure")
+
+    # The statistic the heading must NOT be: the cleaned year's own raw
+    # post ÷ pre ratio, published one table up. It counts the seasonal decline
+    # every control year also shows, so it reads several points lower.
+    m = _CLEANING_RAW_RATIO_RE.search(HTML)
+    assert m, "the cleaned year's row in §12's windows table not found in index.html"
+    raw = f"{(float(m.group(1)) - 1) * 100:+.1f}%"
+    assert heading != raw, (
+        f"§12's heading states {heading!r}, which is the windows table's raw post ÷ pre "
+        "ratio for the cleaned year, not the difference-in-differences estimate the "
+        "section concludes with")
+
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import household
+    archive, loader = household.PATH.is_file(), household.__file__
+    try:
+        import report_tokens as rt
+        resolved = rt.resolve_token("CLEANING_EFFECT_PCT")
+    except SystemExit as e:                       # pragma: no cover - archive-dependent
+        assert _missing_archive_exit(e, archive, loader), (
+            f"CLEANING_EFFECT_PCT could not be resolved, and NOT because this checkout "
+            f"lacks the private archive (present: {archive}): {e}")
+        return ("§12's cleaning heading and its difference-in-differences conclusion "
+                f"both state {expected}, the artifact's own gain, and neither is the "
+                f"raw window ratio {raw}; CLEANING_EFFECT_PCT not compared ({e})")
+    assert resolved == expected, (
+        f"CLEANING_EFFECT_PCT resolves to {resolved!r}, but the §12 heading it fills "
+        f"states {heading!r} and the section concludes with the same figure -- the "
+        f"token must state the artifact's difference-in-differences gain {expected!r}"
+        + (f", not the raw window ratio {raw!r}" if resolved == raw else ""))
+    return ("§12's cleaning heading, its difference-in-differences conclusion and "
+            f"CLEANING_EFFECT_PCT all state {expected} (soiling_results.json's "
+            f"known_cleaning_gain_pct), distinct from the windows table's raw "
+            f"post ÷ pre ratio {raw}")
+
+
+_EXAMPLE_HOUSEHOLD = ROOT / "household.example.yaml"
+
+
+def _report_tokens():
+    """report_tokens, importable with no private archive.
+
+    The cases below never read private/household.yaml -- they stand a synthetic
+    cleaning history in for it (see _cleaning_history) -- so unlike the
+    agreement cases above there is no archive-absent outcome to pardon here."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import report_tokens as rt
+    return rt
+
+
+class _cleaning_history:
+    """The committed household.example.yaml standing in for private/
+    household.yaml, with ONE cleaning_history written into it.
+
+    §12's cleaning claim spans two files -- the dated event comes from
+    cleaning_history, the measured gain from data/soiling_results.json -- and
+    the defect these cases pin lives in how the two are matched. Driving it
+    from the REAL history proves nothing: this household happens to record the
+    measured cleaning first, so first-entry and measured-entry are the same
+    record and every wrong rule passes. So the history is synthetic, the
+    artifact is the committed one, and nothing is written to disk.
+
+    Restores report_tokens' view of the household on the way out, including
+    when the body raises -- the cases after these read the real archive."""
+
+    def __init__(self, rt, entries):
+        self.rt, self.entries = rt, entries
+
+    def __enter__(self):
+        import yaml
+        node = yaml.safe_load(_EXAMPLE_HOUSEHOLD.read_text())
+        node["cleaning_history"] = [dict(e) for e in self.entries]
+        self.old_cache, self.old_path = self.rt.hh._cache, self.rt.hh.PATH
+        self.rt.hh._cache, self.rt.hh.PATH = node, _EXAMPLE_HOUSEHOLD
+        return node
+
+    def __exit__(self, *exc):
+        self.rt.hh._cache, self.rt.hh.PATH = self.old_cache, self.old_path
+        return False
+
+
+def _measured_cleaning_date():
+    """The date soiling_analysis.py says it measured the gain for -- read off
+    the artifact, never written here as a literal."""
+    sc = json.loads((ROOT / "data" / "soiling_results.json").read_text())[
+        "sanity_check_2024_cleaning"]
+    return dt.date.fromisoformat(sc["cleaning_date"]), sc["known_cleaning_gain_pct"]
+
+
+def _study_days():
+    with open(ROOT / "data" / "cleaning_study_daily.csv", newline="") as f:
+        return sorted((dt.datetime.strptime(r["date"], "%Y%m%d").date(),
+                       float(r["generated_kwh"])) for r in csv.DictReader(f))
+
+
+def _other_cleaning_date():
+    """A date that is NOT the measured one but still has a 30-day window on
+    both sides inside the cleaning study -- so a household whose history holds
+    only this one still renders the windows table, and the only thing the
+    mismatch can take away is the gain."""
+    days = [d for d, _kwh in _study_days()]
+    other = days[len(days) // 2]
+    measured, _gain = _measured_cleaning_date()
+    assert other != measured, (
+        "the cleaning study's median day IS the measured cleaning date; pick another "
+        "stand-in date for the non-matching cases")
+    return other
+
+
+def _window_ratio(clean_date):
+    """The raw post ÷ pre median ratio around one date, recomputed here rather
+    than through report_tokens' own helper."""
+    parsed = _study_days()
+    pre = sorted(kwh for d, kwh in parsed
+                 if clean_date - dt.timedelta(days=30) <= d < clean_date)
+    post = sorted(kwh for d, kwh in parsed
+                  if clean_date < d <= clean_date + dt.timedelta(days=30))
+    assert pre and post, f"the cleaning study does not bracket {clean_date}"
+
+    def median(xs):
+        n = len(xs)
+        return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+    return median(pre), median(post)
+
+
+def _resolution_failures(rt):
+    """{token: what went wrong} for every non-gap token that will not render.
+
+    Catches BaseException, not SystemExit: the point of the no-match case is
+    that NOTHING escapes, and a token family that started raising KeyError or
+    ValueError past resolve_token's own conversion would satisfy a
+    SystemExit-only check while still taking the report down."""
+    out = {}
+    for name, spec in rt.TOKENS.items():
+        if spec.get("kind") == "gap":
+            continue
+        try:
+            rt.resolve_token(name, spec)
+        except BaseException as e:                # noqa: BLE001 - that is the assertion
+            out[name] = f"{type(e).__name__}: {e}"
+    return out
+
+
+def case_cleaning_heading_and_gain_describe_the_same_event():
+    """issue #138: the §12 h3 names a cleaning ({{CLEANING_DATE}},
+    {{CLEANING_PRICE}}) and states a measured gain ({{CLEANING_EFFECT_PCT}}) in
+    one sentence, so both halves must come off the SAME record.
+
+    The gain is soiling_analysis.py's difference-in-differences estimate for
+    one dated event -- that module pins its own block to that record and says
+    the figure "must never be attributed to any other event". The heading's
+    date and price used to come off cleaning_history's FIRST entry instead,
+    which the intake file guarantees nothing about. A household that records
+    its cleanings newest-first, or has more than one, published a heading
+    naming one cleaning and measuring another.
+
+    Driven with the measured cleaning SECOND in the list, where a first-entry
+    rule and a matched-entry rule disagree."""
+    rt = _report_tokens()
+    measured, gain = _measured_cleaning_date()
+    other = _other_cleaning_date()
+    entries = [{"date": other, "cost_usd": 90},
+               {"date": measured, "cost_usd": 250},
+               {"date": measured + dt.timedelta(days=400), "cost_usd": 310}]
+    with _cleaning_history(rt, entries):
+        rendered = {t: rt.resolve_token(t) for t in
+                    ("CLEANING_EFFECT_PCT", "CLEANING_DATE", "CLEANING_DATE_SHORT",
+                     "CLEANING_YEAR", "CLEANING_PRICE", "CLEANED_PRE_MEDIAN",
+                     "CLEANED_POST_MEDIAN", "CLEANED_RATIO")}
+
+    assert rendered["CLEANING_EFFECT_PCT"] == f"{gain:+.1f}%", (
+        f"CLEANING_EFFECT_PCT rendered {rendered['CLEANING_EFFECT_PCT']!r}, not the "
+        f"artifact's measured gain {gain:+.1f}%")
+    expected = {
+        "CLEANING_DATE": f"{calendar.month_name[measured.month]} {measured.day}, "
+                         f"{measured.year}",
+        "CLEANING_DATE_SHORT": f"{_MONTH_ABBR[measured.month]} {measured.day}",
+        "CLEANING_YEAR": str(measured.year),
+        "CLEANING_PRICE": "$250",
+    }
+    for token, want in expected.items():
+        assert rendered[token] == want, (
+            f"§12's heading states {rendered['CLEANING_EFFECT_PCT']}, the gain measured "
+            f"for the {measured} cleaning, but {token} rendered {rendered[token]!r} "
+            f"instead of {want!r} -- the heading names one cleaning and states another "
+            "one's figure")
+
+    # The windows table under that heading is the same event's evidence, so it
+    # moves with it: its medians must bracket the measured date, not entry #1's.
+    pre, post = _window_ratio(measured)
+    assert (rendered["CLEANED_PRE_MEDIAN"], rendered["CLEANED_POST_MEDIAN"]) == \
+        (f"{pre:,.1f}", f"{post:,.1f}"), (
+            f"§12's windows row rendered {rendered['CLEANED_PRE_MEDIAN']}/"
+            f"{rendered['CLEANED_POST_MEDIAN']} kWh/day, but the 30-day medians around "
+            f"the {measured} cleaning are {pre:,.1f}/{post:,.1f}")
+    assert rendered["CLEANED_RATIO"] == f"{round(post / pre, 3):,.2f}", (
+        f"CLEANED_RATIO rendered {rendered['CLEANED_RATIO']!r} against a hand-computed "
+        f"{round(post / pre, 3)} around the measured cleaning")
+    return (f"with the measured cleaning second in cleaning_history, §12's heading names "
+            f"{rendered['CLEANING_DATE']} ({rendered['CLEANING_PRICE']}) and states "
+            f"{rendered['CLEANING_EFFECT_PCT']} -- one event")
+
+
+def case_cleaning_gain_is_not_determined_when_no_entry_matches():
+    """issue #138: a household whose cleaning_history does not contain the
+    measured event gets NO gain -- and still gets a report.
+
+    Both halves matter. Stating the figure beside a cleaning it was not
+    measured on is the misattribution above; refusing the whole run is the
+    failure mode CLAUDE.md and this repo's own history warn about twice over --
+    an ordinary household, whose cleanings simply differ from this one's,
+    losing every other section over one clause. So this asserts the token says
+    "not determined" with its reason, and that NOTHING ELSE stops resolving:
+    the set of tokens that fail is compared against the same set with the
+    measured cleaning present, so an unrelated placeholder in
+    household.example.yaml cannot pass the case either."""
+    rt = _report_tokens()
+    measured, gain = _measured_cleaning_date()
+    other = _other_cleaning_date()
+    with _cleaning_history(rt, [{"date": measured, "cost_usd": 250}]):
+        baseline = _resolution_failures(rt)
+        matched = rt.resolve_token("CLEANING_EFFECT_PCT")
+    with _cleaning_history(rt, [{"date": other, "cost_usd": 90}]):
+        variant = _resolution_failures(rt)
+        try:
+            unmatched = rt.resolve_token("CLEANING_EFFECT_PCT")
+        except BaseException as e:                # noqa: BLE001 - that is the assertion
+            raise AssertionError(
+                f"a cleaning_history without the measured {measured} cleaning made "
+                f"CLEANING_EFFECT_PCT raise {type(e).__name__}: {e} -- a household whose "
+                "cleanings differ from this one's must still be able to generate a "
+                "report")
+
+    assert matched == f"{gain:+.1f}%", (
+        f"the control run (measured cleaning present) rendered {matched!r}, so this case "
+        "is not comparing what it claims to")
+    assert unmatched.lower().startswith("not determined"), (
+        f"CLEANING_EFFECT_PCT rendered {unmatched!r} for a household that never had the "
+        f"{measured} cleaning -- that figure was measured for that event alone")
+    assert str(measured) in unmatched, (
+        f"CLEANING_EFFECT_PCT's refusal {unmatched!r} does not name the date the artifact "
+        "measured, so a reader cannot tell what is missing")
+    assert f"{gain:+.1f}" not in unmatched and f"{gain}" not in unmatched, (
+        f"CLEANING_EFFECT_PCT's refusal {unmatched!r} still carries the {gain}% figure")
+    assert variant == baseline, (
+        "swapping cleaning_history to a household without the measured cleaning changed "
+        "which tokens resolve at all: "
+        + "; ".join(f"{t}: {variant.get(t, 'now resolves')}"
+                    for t in sorted(set(variant) ^ set(baseline))))
+    return (f"a history without the {measured} cleaning renders "
+            f"{unmatched.split(' — ')[0]!r} for the gain and leaves the other "
+            f"{len(rt.TOKENS) - len(variant)} resolvable tokens untouched")
+
+
+def case_cleaning_gain_follows_the_artifacts_own_not_determined_status():
+    """issue #138: soiling_analysis.py writes a `status` block INSTEAD of a
+    gain for a household it could not measure one for, and the token reports
+    that block's own reason rather than reaching past it for a figure that is
+    not there.
+
+    This is the shape every household that has never had a measured cleaning
+    gets, so it is the one that decides whether they can publish a report at
+    all -- and the reason belongs to the generator that made the call, not to a
+    paraphrase written on this side."""
+    rt = _report_tokens()
+    measured, _gain = _measured_cleaning_date()
+    status = ("not determined — cleaning_history has no entry for 2024-08-12, the only "
+              "event with a measured diff-in-diff effect")
+    real = rt._json("soiling_results.json")
+    stubbed = dict(real, sanity_check_2024_cleaning={"status": status})
+    rt._json_cache["soiling_results.json"] = stubbed
+    try:
+        with _cleaning_history(rt, [{"date": measured, "cost_usd": 250}]):
+            try:
+                rendered = rt.resolve_token("CLEANING_EFFECT_PCT")
+            except BaseException as e:            # noqa: BLE001 - that is the assertion
+                raise AssertionError(
+                    f"an artifact carrying soiling_analysis.py's own not-determined "
+                    f"status made CLEANING_EFFECT_PCT raise {type(e).__name__}: {e} -- "
+                    "that block is the ordinary outcome for a household with no measured "
+                    "cleaning, not a broken artifact")
+    finally:
+        rt._json_cache["soiling_results.json"] = real
+    assert rendered == status, (
+        f"CLEANING_EFFECT_PCT rendered {rendered!r} instead of the artifact's own "
+        f"{status!r} -- soiling_analysis.py owns the reason it measured nothing")
+    return ("an artifact carrying soiling_analysis.py's not-determined status renders "
+            "that status through CLEANING_EFFECT_PCT, unparaphrased")
+
+
+def case_cleaning_gain_is_not_determined_when_two_entries_share_the_date():
+    """issue #138: two cleanings recorded on the measured date is an ambiguity,
+    and picking one of them silently would republish the same misattribution
+    with a coin toss behind it -- the prices differ, and nothing in either file
+    says which record the study measured."""
+    rt = _report_tokens()
+    measured, gain = _measured_cleaning_date()
+    entries = [{"date": measured, "cost_usd": 90}, {"date": measured, "cost_usd": 250}]
+    with _cleaning_history(rt, entries):
+        try:
+            rendered = rt.resolve_token("CLEANING_EFFECT_PCT")
+        except BaseException as e:                # noqa: BLE001 - that is the assertion
+            raise AssertionError(
+                f"two cleanings on {measured} made CLEANING_EFFECT_PCT raise "
+                f"{type(e).__name__}: {e} -- a duplicated intake entry must not cost the "
+                "household its report")
+    assert rendered.lower().startswith("not determined"), (
+        f"CLEANING_EFFECT_PCT rendered {rendered!r} with two cleaning_history entries on "
+        f"{measured} -- it cannot know which of them the study measured")
+    assert f"{gain:+.1f}" not in rendered and f"{gain}" not in rendered, (
+        f"CLEANING_EFFECT_PCT's refusal {rendered!r} still carries the {gain}% figure")
+    assert "2 cleanings" in rendered and str(measured) in rendered, (
+        f"CLEANING_EFFECT_PCT's refusal {rendered!r} does not say what is ambiguous")
+    return (f"two cleaning_history entries on {measured} render "
+            f"{rendered.split(',')[0]!r} rather than one of the two at random")
+
+
 def case_weather_regression_paragraph_matches_the_artifact():
     """issue #112: the §9 weather-regression paragraph is hand-written, not
     templated -- lock its base load, cooling-degree-day coefficient, annual
@@ -2351,6 +2718,11 @@ CASES = [
     case_nem3_grandfathering_section_matches_the_artifact,
     case_reprice_by_vintage_note_matches_the_artifact,
     case_soiling_annual_economics_matches_the_artifact,
+    case_cleaning_effect_heading_matches_the_sections_own_conclusion,
+    case_cleaning_heading_and_gain_describe_the_same_event,
+    case_cleaning_gain_is_not_determined_when_no_entry_matches,
+    case_cleaning_gain_follows_the_artifacts_own_not_determined_status,
+    case_cleaning_gain_is_not_determined_when_two_entries_share_the_date,
     case_weather_regression_paragraph_matches_the_artifact,
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,
