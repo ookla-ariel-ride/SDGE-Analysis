@@ -2483,6 +2483,7 @@ def case_the_runner_up_is_taken_per_column_not_reused_from_the_no_battery_one():
     cheapest rival changed, because that is the fact -- and the widens /
     narrows / leaves verbs are dropped, since each of them asserts something
     about a single comparison priced twice and this is not one."""
+    _require_household()   # _resolve_every_token() below needs the archive
     plans, best, near, far, rest = _matrix_trio()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     with _stub_plan(best, provider):
@@ -2550,6 +2551,7 @@ def case_a_changed_runner_up_that_leaves_a_near_tie_does_not_read_as_reassuring(
     The near-tie also has to be hedged rather than quoted: "$1/yr" is a
     precision two rounded cells do not carry, so the clause bounds it at
     _BPM_TIE_USD instead."""
+    _require_household()   # _resolve_every_token() below needs the archive
     plans, best, near, far, rest = _matrix_trio()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     with _stub_plan(best, provider):
@@ -2603,6 +2605,7 @@ def case_one_runner_up_across_both_columns_still_reads_as_a_single_comparison():
     min() reaches first decides: B without a battery, C with one, and the
     sentence announces a change of rival that the artifact does not contain.
     The decision is taken on the SETS, which intersect, so it does not."""
+    _require_household()   # _resolve_every_token() below needs the archive
     plans, best, near, far, rest = _matrix_trio()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     seen = {}
