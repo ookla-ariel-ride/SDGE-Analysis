@@ -1260,14 +1260,28 @@ def _sec9_teaser(ctx):
     # So the floor figures here are that artifact's, resolved through the SAME
     # token formulas sections 0 and 13 render, which is what stops one load
     # from carrying three numbers across three sections again.
+    #
+    # AND THE COST WEARS THE SAME COVERAGE GATE AS THE ENERGY (issue #140,
+    # adversarial pass 2, finding 2). The price-map total is a sum over the
+    # interval series the run was given, so its "/yr" is earned through
+    # _night_floor_coverage exactly as NIGHT_FLOOR_ANNUAL_KWH's and
+    # NIGHT_FLOOR_ANNUAL_COST's are. Half a coverage-aware sentence is worse
+    # than none: the first version appended "/yr" unconditionally, so a
+    # regenerated partial corpus rendered "4,944 kWh across the 200 nights
+    # measured, less than a full year, about $1,730/yr" -- a window-qualified
+    # energy figure and a falsely annualized dollar figure in one clause. The
+    # window itself is not restated here because the kWh half already states
+    # it, immediately before, for the same nights.
     br = _json("behavior_rebuild.json")
+    covers, _nights, _why = _night_floor_coverage()
     sessions, = _figures(
         "SEC9_TEASER", "how many charging sessions section 9 found",
         ev_sessions=br["detection"]["sessions"])
     cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
                      price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
     return (f"{sessions} EV charging sessions logged; an always-on overnight floor of "
-            f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}/yr")
+            f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}"
+            f"{'/yr' if covers else ''}")
 
 
 _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
@@ -5105,6 +5119,35 @@ _FULL_YEAR_NIGHTS = (365, 366)
 # last retained decimal is the whole slack that derivation introduces.
 _FOUR_DECIMAL_ROUNDING = 0.00005 + 1e-12
 
+# THE SIZE THE ASSURANCE CLAUSE IS SOLD ON (issue #140, adversarial pass 2,
+# finding 1). "Close enough to say the monthly-netting treatment is not where
+# a material error would be hiding" is a claim about MAGNITUDE, so it needs a
+# magnitude to be checked against -- stated here, once, rather than implied by
+# an f-string that renders the assurance whatever the two totals turn out to
+# be. Below the threshold the sentence is earned; at or above it the same
+# formula prints the divergence and says the report does not settle it.
+#
+# 2% of the re-bill total, because the artifact already quantifies the one
+# limitation this sentence implicitly ranks itself below:
+# pricing.floor_assumption_violations.usd_dropped_at_export_rate is the energy
+# the constant-floor split cannot account for and DROPS ($85.52 against a
+# $3,196/yr re-bill on this household -- 2.7%). Netting is "not where a
+# material error would be hiding" exactly while the netting gap stays under
+# the limitation the artifact does own up to; past that, netting would be the
+# LARGER of the two and the sentence would be false. 2 is the round figure
+# below 2.7. Today's gap is 1.2%.
+_NETTING_MATERIALITY_PCT = 2.0
+
+# quiet_night_floor.py writes gap_usd as round(a - b, 2) and gap_pct as
+# round(100 * gap_usd / b, 2). Half of the last retained place is the slack in
+# each. gap_pct carries a second term as well -- it is built on the ALREADY
+# ROUNDED gap_usd, so a recomputation straight from the two totals can differ
+# by what half a cent is worth as a percentage of b (about 0.0002 points on
+# this household, and smaller as b grows). The caller adds that term rather
+# than padding this one, so neither tolerance hides the other's arithmetic.
+_CENT_ROUNDING = 0.005 + 1e-9
+_PERCENTAGE_POINT_ROUNDING = 0.005 + 1e-9
+
 
 def _night_floor_coverage():
     """(covers_a_year, nights, why) for the quiet-night corpus.
@@ -5278,10 +5321,39 @@ def _phantom_method_discrepancy(ctx):
     an agreement claim at all if that statement is ever dropped, rather than
     publishing a bare percentage a reader would over-read.
 
-    Nothing here gates on the two agreeing: the artifact has already
-    decomposed the gap to its cause (PCIA priced differently inside buckets
-    whose net sign does not change), and a reconciliation that refused on a
-    reconciled difference would withhold the section over its own subject."""
+    THE GAP IS RECOMPUTED FROM THE TWO TOTALS, NOT READ (issue #140,
+    adversarial pass 2, finding 1). The first version of this formula read
+    method (a)'s total, method (b)'s total and the artifact's precomputed
+    gap_usd/gap_pct as three INDEPENDENT facts, and then rendered assurance
+    about their closeness unconditionally. A stale or half-regenerated
+    artifact would therefore print two materially divergent totals beside an
+    obsolete "1.2% apart" and an explicit promise to the reader that no
+    material netting error exists -- the published assurance and the published
+    figures disagreeing inside one sentence. So the gap this token prints is
+    the difference between the two totals it also prints, and the artifact's
+    own fields are demoted to a CHECK on that arithmetic: they are compared to
+    the recomputation within the rounding quiet_night_floor.py applies to
+    each, and an artifact whose stated gap does not match its own totals is
+    refused by name rather than resolved in either field's favour.
+
+    THE ASSURANCE IS CONDITIONAL, THE FIGURES ARE NOT. The "not where a
+    material error would be hiding" clause renders only while the recomputed
+    gap is inside _NETTING_MATERIALITY_PCT, which states the threshold and why
+    that number. Past it, the same formula publishes both totals and the
+    distance between them and says the report does not settle which is right.
+    A refusal would be wrong here: a household regenerating this artifact can
+    legitimately land on a wider gap, and it must still get a report -- what
+    it must not get is a sentence promising the gap is small while printing
+    one that is not. Nothing gates on the two agreeing for the reason the
+    artifact gives: it has already decomposed the gap to its cause (PCIA
+    priced differently inside buckets whose net sign does not change).
+
+    THE ANNUAL UNIT IS THE COVERAGE GATE'S, NOT THIS FORMULA'S (finding 2 of
+    the same pass). Both totals are sums over the interval series the run was
+    given, exactly as in NIGHT_FLOOR_ANNUAL_COST, so "/yr" is earned through
+    _night_floor_coverage or it is not written at all -- otherwise a
+    regenerated partial corpus published a correctly window-qualified kWh
+    figure beside falsely annualized dollars in the same sentence."""
     pricing = _night_floor_pricing()
     rec = pricing.get("reconciliation") or {}
     scope = str(rec.get("scope_of_agreement", "")).strip()
@@ -5291,19 +5363,44 @@ def _phantom_method_discrepancy(ctx):
             "methods agree without data/quiet_night_floor.json:pricing.reconciliation."
             "scope_of_agreement, the artifact's own statement of what their agreement "
             "does and does not validate")
+    covers, nights, why = _night_floor_coverage()
     a, b = _amounts("PHANTOM_METHOD_DISCREPANCY", "what each method prices the floor at",
                     price_map_usd=pricing["method_a_price_map"]["total_usd"],
                     rebill_usd=pricing["method_b_rebill"]["total_usd"])
-    gap_usd, gap_pct = _figures("PHANTOM_METHOD_DISCREPANCY",
-                                "how far apart the two pricings land",
-                                gap_usd=rec["gap_usd"], gap_pct=rec["gap_pct"])
     _claim("PHANTOM_METHOD_DISCREPANCY", "how far apart the two methods are",
-           SUPPORTED if a > 0 else NOT_DETERMINED,
-           f"the price-map total is ${a!r}, which cannot be a base for a percentage")
-    return (f"the price map makes it ${a:,.0f}/yr and a full NEM re-bill ${b:,.0f}/yr, "
-            f"${abs(gap_usd):,.0f}/yr or {abs(gap_pct):.1f}% apart — close enough to "
-            "say the monthly-netting treatment is not where a material error would be "
-            "hiding, and no more than that: both methods split the floor out of the meter "
+           SUPPORTED if b > 0 else NOT_DETERMINED,
+           f"the re-bill total is ${b!r}, which cannot be a base for a percentage")
+    gap_usd = a - b
+    gap_pct = 100.0 * gap_usd / b
+    stated_usd, stated_pct = _figures(
+        "PHANTOM_METHOD_DISCREPANCY", "how far apart the two pricings land",
+        gap_usd=rec.get("gap_usd"), gap_pct=rec.get("gap_pct"))
+    _require_derived(
+        "PHANTOM_METHOD_DISCREPANCY", "how far apart the two pricings land",
+        gap_usd, stated_usd, _CENT_ROUNDING,
+        f"data/quiet_night_floor.json:pricing.reconciliation.gap_usd states "
+        f"{stated_usd!r} while the same artifact's two totals (${a!r} and ${b!r}) are "
+        f"{gap_usd:,.2f} apart -- the reconciliation does not describe the figures "
+        "beside it, so neither reading of the gap can be published")
+    _require_derived(
+        "PHANTOM_METHOD_DISCREPANCY", "how far apart the two pricings land",
+        gap_pct, stated_pct, _PERCENTAGE_POINT_ROUNDING + 100.0 * _CENT_ROUNDING / b,
+        f"data/quiet_night_floor.json:pricing.reconciliation.gap_pct states "
+        f"{stated_pct!r}% while the same artifact's two totals (${a!r} and ${b!r}) are "
+        f"{gap_pct:.2f}% apart -- the reconciliation does not describe the figures "
+        "beside it, so neither reading of the gap can be published")
+    per_year = "/yr" if covers else ""
+    totals = (f"the price map makes it ${a:,.0f}/yr and a full NEM re-bill ${b:,.0f}/yr"
+              if covers else
+              f"across the {nights:,.0f} nights measured, {why}, the price map makes it "
+              f"${a:,.0f} and a full NEM re-bill ${b:,.0f}")
+    verdict = (" — close enough to say the monthly-netting treatment is not where a "
+               "material error would be hiding, and no more than that: "
+               if abs(gap_pct) < _NETTING_MATERIALITY_PCT else
+               f" — past the {_NETTING_MATERIALITY_PCT:.0f}% this reconciliation treats "
+               "as small, so this report does not settle which of the two is right: ")
+    return (f"{totals}, ${abs(gap_usd):,.0f}{per_year} or {abs(gap_pct):.1f}% apart"
+            f"{verdict}both methods split the floor out of the meter "
             "the same way and take every rate from the same module, so neither one checks "
             "the other's rates or its constant-floor model")
 

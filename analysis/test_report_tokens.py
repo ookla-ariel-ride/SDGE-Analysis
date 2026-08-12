@@ -519,6 +519,178 @@ def case_phantom_method_discrepancy_reconciles_the_two_live_pricings():
             "without the artifact's own scope_of_agreement")
 
 
+# The assurance clause, quoted once. Both halves are asserted separately: a
+# rewrite that keeps one and drops the other is still a sentence promising the
+# reader something, and a test that matched the whole string would pass on it.
+_NETTING_ASSURANCE = ("close enough to",
+                      "not where a material error would be hiding")
+
+
+@case
+def case_the_netting_reconciliation_never_assures_what_it_has_not_checked():
+    """ISSUE #140, ADVERSARIAL PASS 2, FINDING 1. PHANTOM_METHOD_DISCREPANCY
+    read three things out of the artifact independently -- method (a)'s total,
+    method (b)'s total, and the precomputed gap_usd/gap_pct -- never checked
+    that the third described the first two, and then rendered the same
+    assurance ("close enough to say the monthly-netting treatment is not where
+    a material error would be hiding") whatever they said.
+
+    That is a promise about a number the sentence never inspected. A stale or
+    half-regenerated artifact -- two totals rewritten, the reconciliation block
+    left behind -- published materially divergent figures beside an obsolete
+    "1.2% apart" AND an explicit assurance to the reader that no material
+    netting error exists. The token this one replaced claimed nothing of the
+    kind; the hazard arrived with the rewrite, which is why it is pinned here
+    by behaviour rather than left to the artifact staying fresh.
+
+    Four properties, driven rather than described:
+
+      1. THE GAP IS THE ARITHMETIC. On the committed artifact the published
+         gap equals method (a) minus method (b), so the figure is derived from
+         the two figures beside it and not read from a field that could
+         disagree with them.
+      2. AN INCONSISTENT ARTIFACT IS REFUSED BY NAME, in either field. Neither
+         reading is preferred over the other -- publishing the recomputation
+         would silently overwrite the artifact's own claim, publishing the
+         field would restore the defect -- so the refusal names the field and
+         stops.
+      3. A WIDE GAP RENDERS WITHOUT ASSURANCE. It is not a refusal: a
+         household regenerating this artifact can land on a wider gap and must
+         still get a report. It states both totals and the distance between
+         them, says the report does not settle which is right, and -- the
+         assertion the defect is actually about -- does NOT contain the
+         assurance sentence. The bug here is a sentence that should not
+         appear, so its ABSENCE is what gets asserted.
+      4. THE THRESHOLD IS THE GATE, not the artifact's mood: pinned on both
+         sides of _NETTING_MATERIALITY_PCT, in both directions of sign (the
+         committed gap is negative -- method (b) prices the floor higher)."""
+    pricing = rt._json("quiet_night_floor.json")["pricing"]
+    a = pricing["method_a_price_map"]["total_usd"]
+    b = pricing["method_b_rebill"]["total_usd"]
+    rec = pricing["reconciliation"]
+
+    # (1) The committed artifact: assurance present, and earned.
+    live = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    for phrase in _NETTING_ASSURANCE:
+        assert phrase in live, (
+            f"the committed artifact's {abs(rec['gap_pct'])}% gap is inside the "
+            f"{rt._NETTING_MATERIALITY_PCT}% threshold, so the reconciliation must still "
+            f"say {phrase!r} -- got: {live}")
+    assert abs(rec["gap_pct"]) < rt._NETTING_MATERIALITY_PCT, (
+        f"the committed gap ({rec['gap_pct']}%) is no longer inside "
+        f"_NETTING_MATERIALITY_PCT ({rt._NETTING_MATERIALITY_PCT}%), so this case is "
+        "asserting the wrong branch -- the artifact moved, not the token")
+    assert f"${abs(round(a - b, 2)):,.0f}/yr" in live, (
+        f"the published gap must be method (a) minus method (b) (${a} - ${b}), the two "
+        f"figures printed beside it -- got: {live}")
+
+    # The threshold's OWN justification, checked rather than left in a comment.
+    # _NETTING_MATERIALITY_PCT is set below the one limitation this artifact
+    # already quantifies and this sentence implicitly ranks itself under:
+    # floor_assumption_violations.usd_dropped_at_export_rate, the energy the
+    # constant-floor split cannot account for and drops. Netting is "not where
+    # a material error would be hiding" only while the netting gap stays under
+    # the limitation the artifact does own up to -- a threshold above it would
+    # licence the assurance at gaps where netting is the LARGER of the two.
+    dropped_pct = 100.0 * (pricing["floor_assumption_violations"]
+                           ["usd_dropped_at_export_rate"]) / b
+    assert rt._NETTING_MATERIALITY_PCT < dropped_pct, (
+        f"_NETTING_MATERIALITY_PCT is {rt._NETTING_MATERIALITY_PCT}%, at or above the "
+        f"{dropped_pct:.1f}% this artifact's own floor_assumption_violations already "
+        "drops -- so the assurance clause could render while the netting gap is the "
+        "LARGER of the two known limitations, which is the claim it denies. Re-justify "
+        "the constant against this artifact or lower it")
+
+    def priced(a_usd, b_usd, gap_usd=None, gap_pct=None):
+        """An artifact whose two totals are `a_usd` and `b_usd`. Its own
+        reconciliation fields are DERIVED from those totals the way
+        quiet_night_floor.py derives them, unless the caller names one -- which
+        is how a half-regenerated artifact is built: new totals, the previous
+        run's gap left in place."""
+        def edit(doc):
+            p = doc["pricing"]
+            p["method_a_price_map"]["total_usd"] = a_usd
+            p["method_b_rebill"]["total_usd"] = b_usd
+            p["reconciliation"]["gap_usd"] = (
+                round(a_usd - b_usd, 2) if gap_usd is None else gap_usd)
+            p["reconciliation"]["gap_pct"] = (
+                round(100.0 * round(a_usd - b_usd, 2) / b_usd, 2)
+                if gap_pct is None else gap_pct)
+        return edit
+
+    # (2) The half-regenerated artifact, both ways round.
+    refused = {}
+    for field, stub in (
+            # totals rewritten, the whole reconciliation block left behind
+            ("gap_usd", priced(round(a * 1.4, 2), b,
+                               gap_usd=rec["gap_usd"], gap_pct=rec["gap_pct"])),
+            # gap_usd kept coherent, only the percentage stale
+            ("gap_pct", priced(a, b, gap_pct=round(rec["gap_pct"] * 4, 2)))):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", stub)):
+            try:
+                text = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+            except SystemExit as e:
+                refused[field] = str(e)
+                assert field in refused[field], (
+                    f"the refusal must name the field that disagrees ({field}): {e}")
+                assert "PHANTOM_METHOD_DISCREPANCY" in refused[field], e
+            else:
+                raise AssertionError(
+                    f"an artifact whose reconciliation.{field} does not describe its own "
+                    f"two totals was published anyway: {text}")
+
+    # (3) Materially divergent totals: the divergence renders, the assurance
+    #     does not. Signed the way the committed gap is signed.
+    wide_b = round(a * 1.4, 2)
+    wide_pct = 100.0 * (a - wide_b) / wide_b
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                         priced(a, wide_b))):
+        wide = _renders("PHANTOM_METHOD_DISCREPANCY")
+    for phrase in _NETTING_ASSURANCE:
+        assert phrase not in wide, (
+            f"two totals {abs(wide_pct):.1f}% apart -- past the "
+            f"{rt._NETTING_MATERIALITY_PCT}% threshold -- were published with the "
+            f"assurance {phrase!r} still attached: {wide}")
+    for what, value in (("the price map total", f"${a:,.0f}/yr"),
+                        ("the re-bill total", f"${wide_b:,.0f}/yr"),
+                        ("how far apart they are", f"{abs(wide_pct):.1f}%")):
+        assert value in wide, (
+            f"a divergence must still state {what} ({value}) -- got: {wide}")
+    assert "does not settle" in wide, (
+        f"a gap past the threshold must say the report does not settle which pricing is "
+        f"right: {wide}")
+    for label, pattern in _MALFORMED_RENDER:
+        assert not pattern.search(wide), f"the divergence rendered {label}: {wide}"
+
+    # (4) Both sides of the threshold, both signs. b = 100a / (pct + 100).
+    #     The edges are derived FROM _NETTING_MATERIALITY_PCT rather than
+    #     written as 1.9/2.1, so this stays a test of the gate at whatever the
+    #     threshold is set to; the committed value is pinned separately, by the
+    #     assertion above that today's gap sits inside it.
+    edges = {}
+    margin = 0.1
+    for pct in (rt._NETTING_MATERIALITY_PCT - margin, -(rt._NETTING_MATERIALITY_PCT - margin),
+                rt._NETTING_MATERIALITY_PCT + margin, -(rt._NETTING_MATERIALITY_PCT + margin)):
+        edge_b = round(100.0 * a / (pct + 100.0), 2)
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                             priced(a, edge_b))):
+            edges[pct] = _renders("PHANTOM_METHOD_DISCREPANCY")
+        inside = abs(pct) < rt._NETTING_MATERIALITY_PCT
+        for phrase in _NETTING_ASSURANCE:
+            assert (phrase in edges[pct]) is inside, (
+                f"a {pct}% gap against a {rt._NETTING_MATERIALITY_PCT}% threshold "
+                f"{'must' if inside else 'must not'} render {phrase!r}: {edges[pct]}")
+
+    after = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"the published gap is method (a) minus method (b) (${abs(round(a - b, 2)):,.0f}"
+            f"/yr, {abs(rec['gap_pct'])}%), a reconciliation that does not describe its own "
+            f"totals refuses by name in both fields ({', '.join(sorted(refused))}), and the "
+            f"assurance clause renders on both sides of the {rt._NETTING_MATERIALITY_PCT}% "
+            f"threshold only where it is earned (4 edges checked; at "
+            f"{abs(wide_pct):.1f}% apart the divergence is published without it)")
+
+
 @case
 def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     """Issue #130. SEC9_TEASER introduces section 9, so every figure in it
@@ -4732,11 +4904,24 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
                   and a bare count cannot tell the difference, which is why
                   coverage is read from daily_series' own first and last date.
 
+    ISSUE #140, ADVERSARIAL PASS 2, FINDING 2 ADDS THE OTHER TWO TOKENS THAT
+    PRICE THIS LOAD. Half the rendering was coverage-aware and half was not:
+    SEC9_TEASER read the price-map total and appended "/yr" unconditionally,
+    and PHANTOM_METHOD_DISCREPANCY labelled both totals and their gap the same
+    way -- so on a regenerated partial corpus the report published a correctly
+    window-qualified kWh figure beside falsely annualized dollars IN THE SAME
+    SENTENCE. All four tokens go through the same cases here rather than a
+    parallel set, because the defect was precisely that the four did not share
+    a mechanism.
+
     And the complete case must still render exactly what it renders today."""
     complete = {n: rt.resolve_token(n) for n in
-                ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST")}
+                ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
+                 "SEC9_TEASER", "PHANTOM_METHOD_DISCREPANCY")}
     assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
-    assert "/yr" in complete["NIGHT_FLOOR_ANNUAL_COST"], complete
+    for annual in ("NIGHT_FLOOR_ANNUAL_COST", "SEC9_TEASER",
+                   "PHANTOM_METHOD_DISCREPANCY"):
+        assert "/yr" in complete[annual], complete
 
     def corpus(nights, step=1, hole_to=None):
         """A coherent stub: `nights` dates every `step` days, with nights_total
@@ -4770,7 +4955,8 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
             ("gappy", dict(nights=300, hole_to=364), "gaps")):
         with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
                                              corpus(**kwargs))):
-            for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST"):
+            for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
+                          "SEC9_TEASER", "PHANTOM_METHOD_DISCREPANCY"):
                 text = _renders(token)
                 checked[f"{token}@{label}:{kwargs}"] = text
                 assert "/yr" not in text, (
