@@ -1288,30 +1288,182 @@ def case_extra_results_trueup_ledger_matches_the_artifact():
     return "the §13 true-up ledger cross-check sentence matches extra_results.json's trueup"
 
 
-def case_extra_results_phantom_baseload_matches_the_artifact():
-    """issue #112: the §13 phantom-baseload paragraph is hand-written, not
-    templated -- lock its quiet-night count and baseload kW percentiles
-    against the live artifact."""
-    xr_path = ROOT / "data" / "extra_results.json"
-    assert xr_path.exists(), f"{xr_path} is committed public data and must exist"
-    xr = json.loads(xr_path.read_text())
-    ph = xr["phantom"]
+# ---------------------------------------------------------------------------
+# THE ALWAYS-ON FLOOR, ONE ARTIFACT, THREE SECTIONS (issue #140).
+#
+# This report prices the household's overnight always-on load in three places
+# -- the §0 bottom-line item, the §9 honesty note and the §13 decomposition --
+# and the archive holds THREE artifacts that each carry a figure for it. Only
+# data/quiet_night_floor.json can back a published one: extra_results.json's
+# phantom key has no generator anywhere in this repo's history, and
+# deep_results.json's is generated but prices the energy at a hardcoded flat
+# $0.20/kWh against an hour-weighted all-in import rate of about $0.375/kWh
+# (issue #172). Both are labelled superseded workpapers in TECHNICAL.md
+# §3.5/§3.11.
+#
+# The pair of cases below is what stops that split from reopening. The first
+# pins §13's own figures to the artifact; the second pins the three sections to
+# EACH OTHER through it, which is the property that actually failed before --
+# every individual figure was traceable to some artifact, and the report still
+# published two different costs for one load two sections apart.
+#
+# EVERY EXPECTED STRING IS BUILT FROM THE ARTIFACT. The version of this case
+# that issue #140 replaced carried "44" inside its own locating regex, so the
+# night count it claimed to check was the one thing it could not fail on.
+# Nothing here is a literal from the data.
+# ---------------------------------------------------------------------------
+def _night_floor_artifact():
+    path = ROOT / "data" / "quiet_night_floor.json"
+    assert path.exists(), f"{path} is committed public data and must exist"
+    return json.loads(path.read_text())
 
-    m = re.search(r"<p>On the 44 nights with zero EV charging.*?</p>", HTML, re.S)
-    assert m, "§13 phantom-baseload paragraph not found in index.html"
-    para = m.group(0)
+
+def _night_floor_published_figures():
+    """The figures every section that prices this load must agree on, exactly
+    as report_tokens.py's NIGHT_FLOOR_* formulas render them.
+
+    The energy is floor_kw_priced x hours, not median_kw x hours: the priced
+    floor is what both dollar figures were computed from (it is round(median,
+    4) in the generator), so building the kWh off the other field would let
+    the energy and the cost drift apart on a re-run."""
+    doc = _night_floor_artifact()
+    nf, pr = doc["night_floor"], doc["pricing"]
+    return {
+        "floor": f"{nf['median_kw']:,.2f} kW",
+        "energy": f"{pr['floor_kw_priced'] * nf['nights_total'] * 24:,.0f} kWh/yr",
+        "price map cost": f"${pr['method_a_price_map']['total_usd']:,.0f}",
+        "re-bill cost": f"${pr['method_b_rebill']['total_usd']:,.0f}",
+    }
+
+
+def _report_span(what, start, end):
+    """The document text from `start` up to `end`, or a named failure.
+
+    Locating on the report's own headings means a renamed heading fails here
+    rather than silently matching nothing -- a guard that cannot find its
+    subject must say so, not pass."""
+    m = re.search(start + r".*?(?=" + end + r")", HTML, re.S)
+    assert m, f"{what} not found in index.html (looked for {start!r})"
+    return m.group(0)
+
+
+def case_night_floor_section_matches_the_artifact():
+    """issue #112, re-based by issue #140: the §13 always-on-floor subsection
+    is hand-written, not templated -- lock its sample, percentiles, cycling,
+    seasonality and both pricings against data/quiet_night_floor.json."""
+    doc = _night_floor_artifact()
+    nf, pr = doc["night_floor"], doc["pricing"]
+    section = _report_span("the §13 always-on-floor subsection",
+                           r"<h3>Phantom baseload", r"<h3")
+    monthly = {int(m): v for m, v in nf["monthly_median_kw"].items()}
+    lo_m = min(monthly, key=lambda m: (monthly[m], m))
+    hi_m = max(monthly, key=lambda m: (monthly[m], -m))
     checks = [
-        f"the {ph['quiet_nights']} nights",
-        # issue #112 /review: a bare "{median} kW" check would still pass
-        # if the median got swapped with the paragraph's own seasonal
-        # figures (also bare "N kW", e.g. "Sep-Oct nights run 1.37 kW") --
-        # joined with its own "median" label and its own p10/p90 pair.
-        f"median <b>{ph['baseload_kw_median']} kW</b> (p10 {ph['baseload_kw_p10']}, p90 {ph['baseload_kw_p90']})",
-        f"Sep–Oct nights run {ph['monthly_kw']['9']} kW vs {ph['monthly_kw']['5']} kW in May",
+        # The sample AND the share it excludes: the floor is measured on the
+        # quiet minority of nights, and the artifact's own selection_caveat
+        # says to report the exclusion rate beside the figure rather than
+        # treating the kept nights as the whole story.
+        f"<b>{nf['quiet_nights']} of {nf['nights_total']} nights</b>",
+        f"<b>{(1 - nf['quiet_nights'] / nf['nights_total']) * 100:.1f}%</b>",
+        # A bare "{median} kW" check would still pass if the median were
+        # swapped with one of the paragraph's own seasonal figures (also bare
+        # "N kW"), so the median is joined to its own label and its own
+        # percentile pair (issue #112 /review).
+        f"median <b>{nf['median_kw']:,.2f} kW</b> ({nf['p10_kw']:,.2f} kW p10 to "
+        f"{nf['p90_kw']:,.2f} kW p90)",
+        f"within-night std {nf['cycling_within_night_std_kw_median']:,.2f} kW",
+        f"{monthly[lo_m]:,.2f} kW in {calendar.month_name[lo_m]} against "
+        f"{monthly[hi_m]:,.2f} kW in {calendar.month_name[hi_m]}",
+        # Both pricings, and the gap between them: two live methods on one
+        # load must be reconciled where they are published (CLAUDE.md §0).
+        f"<b>${pr['method_a_price_map']['total_usd']:,.0f}/yr</b>",
+        f"<b>${pr['method_b_rebill']['total_usd']:,.0f}/yr</b>",
+        f"{abs(pr['reconciliation']['gap_pct']):.1f}% apart",
+        # The qualifier the annual figures may not appear without, and the
+        # direction of the error it introduces.
+        "modeled, not measured",
+        f"conservative by about ${pr['floor_assumption_violations']['usd_dropped_at_export_rate']:,.0f}",
+        # What a household could act on, at the rate the sensitivity re-bill
+        # measured rather than an opinion about how much is removable.
+        f"about ${doc['sensitivity_per_100w']['usd_per_100w_at_current_floor']['value_usd']:,.0f}/yr "
+        "for every 100 W removed",
     ]
     for value in checks:
-        assert value in para, f"§13 phantom-baseload paragraph: {value!r} not found in it"
-    return "the §13 phantom-baseload paragraph's nights/kW figures match extra_results.json's phantom"
+        assert value in section, (
+            f"§13 always-on-floor subsection: {value!r} not found in it")
+    return ("the §13 always-on-floor subsection's sample, percentiles, cycling, "
+            "seasonality, both pricings and their reconciliation match "
+            "quiet_night_floor.json")
+
+
+def case_all_three_sections_price_the_always_on_load_the_same_way():
+    """issue #140, AC6. §0, §9 and §13 each state what the overnight always-on
+    load is and what it costs. They must state the SAME figures, out of the
+    same artifact -- the defect this replaces was not a wrong number in one
+    place, it was three artifacts' worth of figures for one load spread across
+    three sections, each individually traceable and collectively incoherent.
+
+    Two halves, because either alone can pass while the split is open: every
+    section carries the live figures, AND neither superseded workpaper's value
+    survives anywhere in the document."""
+    figures = _night_floor_published_figures()
+    spans = {
+        "§0": _report_span("the §0 always-on baseload item",
+                           r"<li><b>Always-on baseload", r"</li>"),
+        "§9": _report_span("the §9 always-on-load note",
+                           r"<h3>Phantom / always-on load", r"</div>"),
+        "§13": _report_span("the §13 always-on-floor subsection",
+                            r"<h3>Phantom baseload", r"<h3"),
+    }
+    # The floor, its energy and its price-map cost are the three figures all
+    # three sections state. The full re-bill is a §0/§13 reconciliation, so it
+    # is required only where the two methods are set against each other.
+    shared = ("floor", "energy", "price map cost")
+    for sid, span in sorted(spans.items()):
+        for name in shared:
+            assert figures[name] in span, (
+                f"{sid} does not state the {name} the artifact gives "
+                f"({figures[name]!r}); one load may not carry different figures in "
+                "different sections")
+    for sid in ("§0", "§13"):
+        assert figures["re-bill cost"] in spans[sid], (
+            f"{sid} states one pricing of the load without the other "
+            f"({figures['re-bill cost']!r}); two live methods are reconciled where they "
+            "are published, not left to the reader (CLAUDE.md §0)")
+
+    # The superseded workpapers, checked absent BY VALUE and read out of the
+    # artifacts themselves, so the check tracks them rather than a literal.
+    # A value that happens to equal a live one is skipped and named in the
+    # summary: it cannot discriminate, and asserting it absent would fail on
+    # the correct report.
+    retired, indistinct = [], []
+    xr = json.loads((ROOT / "data" / "extra_results.json").read_text())["phantom"]
+    dp = json.loads((ROOT / "data" / "deep_results.json").read_text())["phantom"]
+    for who, value in (("extra_results.json:phantom.annual_kwh_at_median",
+                        f"{xr['annual_kwh_at_median']:,} kWh"),
+                       ("extra_results.json:phantom.baseload_kw_median",
+                        f"{xr['baseload_kw_median']:,} kW"),
+                       ("deep_results.json:phantom.annual_kwh",
+                        f"{dp['annual_kwh']:,} kWh"),
+                       ("deep_results.json:phantom.baseload_kw",
+                        f"{dp['baseload_kw']:,} kW"),
+                       ("deep_results.json:phantom.annual_cost_at_blend",
+                        f"${dp['annual_cost_at_blend']:,}")):
+        if any(value in f for f in figures.values()) or any(
+                f.startswith(value) for f in figures.values()):
+            indistinct.append(who)
+            continue
+        retired.append((who, value))
+    assert len(retired) >= 3, (
+        "fewer than three superseded workpaper values are distinguishable from the live "
+        f"ones, so this check can no longer tell them apart: {indistinct}")
+    for who, value in retired:
+        assert value not in HTML, (
+            f"the report states {value!r}, which is {who} -- a superseded workpaper "
+            "(TECHNICAL.md §3.5/§3.11), not the published figure for this load")
+    return (f"§0, §9 and §13 all state the same {len(shared)} floor figures from "
+            f"quiet_night_floor.json, §0 and §13 both reconcile the two pricings, and "
+            f"{len(retired)} superseded workpaper values are absent from the report")
 
 
 def case_away_days_finding_matches_the_artifact():
@@ -2710,7 +2862,8 @@ CASES = [
     case_nbt_flat_credit_sensitivity_matches_the_artifacts,
     case_extra_results_cleaning_cadence_matches_the_artifact,
     case_extra_results_trueup_ledger_matches_the_artifact,
-    case_extra_results_phantom_baseload_matches_the_artifact,
+    case_night_floor_section_matches_the_artifact,
+    case_all_three_sections_price_the_always_on_load_the_same_way,
     case_away_days_finding_matches_the_artifact,
     case_gross_import_decomposition_section_matches_the_artifact,
     case_irreducible_bill_figures_match_the_artifact,

@@ -463,6 +463,235 @@ def case_crossover_season_year_returns_a_three_tuple_with_a_numeric_month():
 
 
 @case
+def case_phantom_method_discrepancy_reconciles_the_two_live_pricings():
+    """Issue #140. This token used to set section 9's figure against section
+    13's, because the two sections priced one load out of two artifacts. They
+    no longer do, so what it reconciles now is the two PRICING METHODS inside
+    the one artifact that has a generator: a per-interval price map and a full
+    monthly NEM re-bill.
+
+    Three properties, and the third is the one that matters. It states BOTH
+    totals (a reconciliation that prints one figure is not one) and how far
+    apart they are; it cites neither superseded workpaper; and it REFUSES to
+    render at all if the artifact ever stops saying what the agreement covers.
+    That last one is the difference between reconciling two methods and
+    implying they check each other: both start from the same floor allocation
+    and the same rates.py, so their closeness tests the netting treatment and
+    nothing else. Without scope_of_agreement in the artifact, a bare "1.2%
+    apart" is a claim the report cannot support (CLAUDE.md section 0)."""
+    pricing = rt._json("quiet_night_floor.json")["pricing"]
+    a = pricing["method_a_price_map"]["total_usd"]
+    b = pricing["method_b_rebill"]["total_usd"]
+    rendered = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    for what, value in (("the price map total", f"${a:,.0f}/yr"),
+                        ("the re-bill total", f"${b:,.0f}/yr"),
+                        ("the gap between them",
+                         f"{abs(pricing['reconciliation']['gap_pct']):.1f}%")):
+        assert value in rendered, (
+            f"the reconciliation must state {what} ({value}) -- got: {rendered}")
+    dp = rt._json("deep_results.json")["phantom"]
+    assert f"${dp['annual_cost_at_blend']:,}" not in rendered, (
+        f"the reconciliation cites deep_results' superseded flat-blend cost: {rendered}")
+    assert "does not settle" not in rendered, (
+        "the reconciliation still says the report does not settle which pricing is right, "
+        f"which was true of the retired cross-section comparison, not of this one: {rendered}")
+
+    # The refusal, driven rather than described.
+    real = rt._json
+
+    def drop_scope(doc):
+        doc["pricing"]["reconciliation"]["scope_of_agreement"] = "   "
+
+    rt._json = _stub_for("quiet_night_floor.json", drop_scope)
+    try:
+        rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    except SystemExit as e:
+        assert "scope_of_agreement" in str(e), (
+            f"the refusal must name the missing field: {e}")
+    else:
+        raise AssertionError(
+            "PHANTOM_METHOD_DISCREPANCY rendered an agreement claim with no statement of "
+            "what that agreement covers -- a bare percentage a reader would over-read")
+    finally:
+        rt._json = real
+    return (f"the reconciliation states both pricings (${a:,.0f}/yr and ${b:,.0f}/yr) and "
+            "their gap, cites no superseded workpaper, and refuses to render at all "
+            "without the artifact's own scope_of_agreement")
+
+
+# The assurance clause, quoted once. Both halves are asserted separately: a
+# rewrite that keeps one and drops the other is still a sentence promising the
+# reader something, and a test that matched the whole string would pass on it.
+_NETTING_ASSURANCE = ("close enough to",
+                      "not where a material error would be hiding")
+
+
+@case
+def case_the_netting_reconciliation_never_assures_what_it_has_not_checked():
+    """ISSUE #140, ADVERSARIAL PASS 2, FINDING 1. PHANTOM_METHOD_DISCREPANCY
+    read three things out of the artifact independently -- method (a)'s total,
+    method (b)'s total, and the precomputed gap_usd/gap_pct -- never checked
+    that the third described the first two, and then rendered the same
+    assurance ("close enough to say the monthly-netting treatment is not where
+    a material error would be hiding") whatever they said.
+
+    That is a promise about a number the sentence never inspected. A stale or
+    half-regenerated artifact -- two totals rewritten, the reconciliation block
+    left behind -- published materially divergent figures beside an obsolete
+    "1.2% apart" AND an explicit assurance to the reader that no material
+    netting error exists. The token this one replaced claimed nothing of the
+    kind; the hazard arrived with the rewrite, which is why it is pinned here
+    by behaviour rather than left to the artifact staying fresh.
+
+    Four properties, driven rather than described:
+
+      1. THE GAP IS THE ARITHMETIC. On the committed artifact the published
+         gap equals method (a) minus method (b), so the figure is derived from
+         the two figures beside it and not read from a field that could
+         disagree with them.
+      2. AN INCONSISTENT ARTIFACT IS REFUSED BY NAME, in either field. Neither
+         reading is preferred over the other -- publishing the recomputation
+         would silently overwrite the artifact's own claim, publishing the
+         field would restore the defect -- so the refusal names the field and
+         stops.
+      3. A WIDE GAP RENDERS WITHOUT ASSURANCE. It is not a refusal: a
+         household regenerating this artifact can land on a wider gap and must
+         still get a report. It states both totals and the distance between
+         them, says the report does not settle which is right, and -- the
+         assertion the defect is actually about -- does NOT contain the
+         assurance sentence. The bug here is a sentence that should not
+         appear, so its ABSENCE is what gets asserted.
+      4. THE THRESHOLD IS THE GATE, not the artifact's mood: pinned on both
+         sides of _NETTING_MATERIALITY_PCT, in both directions of sign (the
+         committed gap is negative -- method (b) prices the floor higher)."""
+    pricing = rt._json("quiet_night_floor.json")["pricing"]
+    a = pricing["method_a_price_map"]["total_usd"]
+    b = pricing["method_b_rebill"]["total_usd"]
+    rec = pricing["reconciliation"]
+
+    # (1) The committed artifact: assurance present, and earned.
+    live = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    for phrase in _NETTING_ASSURANCE:
+        assert phrase in live, (
+            f"the committed artifact's {abs(rec['gap_pct'])}% gap is inside the "
+            f"{rt._NETTING_MATERIALITY_PCT}% threshold, so the reconciliation must still "
+            f"say {phrase!r} -- got: {live}")
+    assert abs(rec["gap_pct"]) < rt._NETTING_MATERIALITY_PCT, (
+        f"the committed gap ({rec['gap_pct']}%) is no longer inside "
+        f"_NETTING_MATERIALITY_PCT ({rt._NETTING_MATERIALITY_PCT}%), so this case is "
+        "asserting the wrong branch -- the artifact moved, not the token")
+    assert f"${abs(round(a - b, 2)):,.0f}/yr" in live, (
+        f"the published gap must be method (a) minus method (b) (${a} - ${b}), the two "
+        f"figures printed beside it -- got: {live}")
+
+    # The threshold's OWN justification, checked rather than left in a comment.
+    # _NETTING_MATERIALITY_PCT is set below the one limitation this artifact
+    # already quantifies and this sentence implicitly ranks itself under:
+    # floor_assumption_violations.usd_dropped_at_export_rate, the energy the
+    # constant-floor split cannot account for and drops. Netting is "not where
+    # a material error would be hiding" only while the netting gap stays under
+    # the limitation the artifact does own up to -- a threshold above it would
+    # licence the assurance at gaps where netting is the LARGER of the two.
+    dropped_pct = 100.0 * (pricing["floor_assumption_violations"]
+                           ["usd_dropped_at_export_rate"]) / b
+    assert rt._NETTING_MATERIALITY_PCT < dropped_pct, (
+        f"_NETTING_MATERIALITY_PCT is {rt._NETTING_MATERIALITY_PCT}%, at or above the "
+        f"{dropped_pct:.1f}% this artifact's own floor_assumption_violations already "
+        "drops -- so the assurance clause could render while the netting gap is the "
+        "LARGER of the two known limitations, which is the claim it denies. Re-justify "
+        "the constant against this artifact or lower it")
+
+    def priced(a_usd, b_usd, gap_usd=None, gap_pct=None):
+        """An artifact whose two totals are `a_usd` and `b_usd`. Its own
+        reconciliation fields are DERIVED from those totals the way
+        quiet_night_floor.py derives them, unless the caller names one -- which
+        is how a half-regenerated artifact is built: new totals, the previous
+        run's gap left in place."""
+        def edit(doc):
+            p = doc["pricing"]
+            p["method_a_price_map"]["total_usd"] = a_usd
+            p["method_b_rebill"]["total_usd"] = b_usd
+            p["reconciliation"]["gap_usd"] = (
+                round(a_usd - b_usd, 2) if gap_usd is None else gap_usd)
+            p["reconciliation"]["gap_pct"] = (
+                round(100.0 * round(a_usd - b_usd, 2) / b_usd, 2)
+                if gap_pct is None else gap_pct)
+        return edit
+
+    # (2) The half-regenerated artifact, both ways round.
+    refused = {}
+    for field, stub in (
+            # totals rewritten, the whole reconciliation block left behind
+            ("gap_usd", priced(round(a * 1.4, 2), b,
+                               gap_usd=rec["gap_usd"], gap_pct=rec["gap_pct"])),
+            # gap_usd kept coherent, only the percentage stale
+            ("gap_pct", priced(a, b, gap_pct=round(rec["gap_pct"] * 4, 2)))):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", stub)):
+            try:
+                text = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+            except SystemExit as e:
+                refused[field] = str(e)
+                assert field in refused[field], (
+                    f"the refusal must name the field that disagrees ({field}): {e}")
+                assert "PHANTOM_METHOD_DISCREPANCY" in refused[field], e
+            else:
+                raise AssertionError(
+                    f"an artifact whose reconciliation.{field} does not describe its own "
+                    f"two totals was published anyway: {text}")
+
+    # (3) Materially divergent totals: the divergence renders, the assurance
+    #     does not. Signed the way the committed gap is signed.
+    wide_b = round(a * 1.4, 2)
+    wide_pct = 100.0 * (a - wide_b) / wide_b
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                         priced(a, wide_b))):
+        wide = _renders("PHANTOM_METHOD_DISCREPANCY")
+    for phrase in _NETTING_ASSURANCE:
+        assert phrase not in wide, (
+            f"two totals {abs(wide_pct):.1f}% apart -- past the "
+            f"{rt._NETTING_MATERIALITY_PCT}% threshold -- were published with the "
+            f"assurance {phrase!r} still attached: {wide}")
+    for what, value in (("the price map total", f"${a:,.0f}/yr"),
+                        ("the re-bill total", f"${wide_b:,.0f}/yr"),
+                        ("how far apart they are", f"{abs(wide_pct):.1f}%")):
+        assert value in wide, (
+            f"a divergence must still state {what} ({value}) -- got: {wide}")
+    assert "does not settle" in wide, (
+        f"a gap past the threshold must say the report does not settle which pricing is "
+        f"right: {wide}")
+    for label, pattern in _MALFORMED_RENDER:
+        assert not pattern.search(wide), f"the divergence rendered {label}: {wide}"
+
+    # (4) Both sides of the threshold, both signs. b = 100a / (pct + 100).
+    #     The edges are derived FROM _NETTING_MATERIALITY_PCT rather than
+    #     written as 1.9/2.1, so this stays a test of the gate at whatever the
+    #     threshold is set to; the committed value is pinned separately, by the
+    #     assertion above that today's gap sits inside it.
+    edges = {}
+    margin = 0.1
+    for pct in (rt._NETTING_MATERIALITY_PCT - margin, -(rt._NETTING_MATERIALITY_PCT - margin),
+                rt._NETTING_MATERIALITY_PCT + margin, -(rt._NETTING_MATERIALITY_PCT + margin)):
+        edge_b = round(100.0 * a / (pct + 100.0), 2)
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                             priced(a, edge_b))):
+            edges[pct] = _renders("PHANTOM_METHOD_DISCREPANCY")
+        inside = abs(pct) < rt._NETTING_MATERIALITY_PCT
+        for phrase in _NETTING_ASSURANCE:
+            assert (phrase in edges[pct]) is inside, (
+                f"a {pct}% gap against a {rt._NETTING_MATERIALITY_PCT}% threshold "
+                f"{'must' if inside else 'must not'} render {phrase!r}: {edges[pct]}")
+
+    after = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"the published gap is method (a) minus method (b) (${abs(round(a - b, 2)):,.0f}"
+            f"/yr, {abs(rec['gap_pct'])}%), a reconciliation that does not describe its own "
+            f"totals refuses by name in both fields ({', '.join(sorted(refused))}), and the "
+            f"assurance clause renders on both sides of the {rt._NETTING_MATERIALITY_PCT}% "
+            f"threshold only where it is earned (4 edges checked; at "
+            f"{abs(wide_pct):.1f}% apart the divergence is published without it)")
+
+
+@case
 def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     """Issue #130. SEC9_TEASER introduces section 9, so every figure in it
     must come from the same artifact section 9's own body uses -- otherwise
@@ -476,12 +705,20 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
 
     Pins BOTH halves against their real artifacts, so neither can drift:
     sessions must track behavior_rebuild (the detector every downstream
-    dollar figure uses), and the phantom figures must track deep_results,
-    whose 3-5am method matches section 9's own framing. Section 9's phantom
-    sentence cites no artifact, and the body's phantom NUMBERS come from a
-    third artifact (extra_results.json) -- that unresolved three-way split
-    is issue #140, deliberately not settled here. A future change that
-    re-points either half at a different artifact fails here.
+    dollar figure uses), and the always-on floor must track
+    quiet_night_floor.json.
+
+    THE FLOOR HALF WAS RE-BASED BY ISSUE #140. It used to pin
+    deep_results.json's phantom figures, on the reasoning that its 3-5am
+    method matched section 9's own framing, while sections 0 and 13 carried a
+    third artifact's figures -- one load with three numbers across three
+    sections. Only quiet_night_floor.json can carry a published figure:
+    extra_results.json's phantom has no generator anywhere in this repo's
+    history, and deep_results.json's is generated but priced at a hardcoded
+    flat $0.20/kWh against an hour-weighted all-in import rate of about
+    $0.375/kWh (issue #172). So both halves are pinned to the artifact AND to
+    the values the section's own NIGHT_FLOOR_* tokens render, which is what
+    stops the split from reopening one section at a time.
 
     Deliberately NOT gated on _require_household(): SEC9_TEASER reads only
     committed public artifacts, so this case must run in CI too -- gating it
@@ -489,6 +726,7 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     teaser = rt.resolve_token("SEC9_TEASER")
     br = rt._json("behavior_rebuild.json")["detection"]
     dr = rt._json("deep_results.json")
+    qnf = rt._json("quiet_night_floor.json")
 
     sessions = br["sessions"]
     assert f"{sessions} EV charging sessions" in teaser, (
@@ -507,14 +745,38 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     declared = " ".join(rt.TOKENS["SEC9_TEASER"]["sources"])
     assert "behavior_rebuild.json" in declared, (
         f"SEC9_TEASER must declare behavior_rebuild.json as its session source -- got: {declared}")
+    assert "quiet_night_floor.json" in declared, (
+        "SEC9_TEASER must declare quiet_night_floor.json as its floor source -- got: "
+        f"{declared}")
 
-    assert f"{dr['phantom']['annual_kwh']:,} kWh/yr" in teaser, (
-        f"phantom kWh must track deep_results, which section 9's body cites -- got: {teaser}")
-    assert f"${dr['phantom']['annual_cost_at_blend']:,}/yr" in teaser, (
-        f"phantom cost must track deep_results, which section 9's body cites -- got: {teaser}")
+    cost = qnf["pricing"]["method_a_price_map"]["total_usd"]
+    assert f"${cost:,.0f}/yr" in teaser, (
+        f"floor cost must track quiet_night_floor's price map (${cost:,.0f}/yr), the only "
+        f"pricing of this load with a committed generator -- got: {teaser}")
+    # The energy figure is not re-derived here: it is asserted to be the SAME
+    # STRING the section's own token renders, so the teaser cannot drift from
+    # the body by taking its own reading of the same artifact.
+    kwh = rt.resolve_token("NIGHT_FLOOR_ANNUAL_KWH")
+    assert kwh in teaser, (
+        f"floor energy must be NIGHT_FLOOR_ANNUAL_KWH's own value ({kwh!r}), which sections "
+        f"0 and 13 also render -- got: {teaser}")
+
+    # The two retired workpapers, checked absent by VALUE. Both describe the
+    # same load, so a teaser that quietly went back to either one would still
+    # read plausibly; only the number tells them apart.
+    for who, doc in (("deep_results.json", dr["phantom"]),
+                     ("extra_results.json", rt._json("extra_results.json")["phantom"])):
+        for key in ("annual_kwh", "annual_kwh_at_median"):
+            if key in doc and f"{doc[key]:,}" != kwh.split()[0]:
+                assert f"{doc[key]:,}" not in teaser, (
+                    f"teaser cites {who}'s {key} ({doc[key]:,}), a superseded workpaper "
+                    f"(TECHNICAL.md 3.5/3.11) -- got: {teaser}")
+    assert f"${dr['phantom']['annual_cost_at_blend']:,}" not in teaser, (
+        "teaser cites deep_results' flat-$0.20/kWh cost, which issue #172 shows is about "
+        f"half the real price of that energy -- got: {teaser}")
     return (f"SEC9_TEASER cites behavior_rebuild's {sessions} sessions (not "
-            f"deep_results' {stale}) and deep_results' phantom figures; the "
-            "phantom three-way split is tracked in issue #140")
+            f"deep_results' {stale}) and quiet_night_floor's own floor figures "
+            f"({kwh} at ${cost:,.0f}/yr), with both superseded workpapers' values absent")
 
 
 # ---------------------------------------------------------------------------
@@ -4624,6 +4886,45 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
             "their own answer instead of aborting the report")
 
 
+def _night_floor_readers():
+    """Every non-gap token whose resolution ACTUALLY READS
+    data/quiet_night_floor.json, discovered by the loader's own record.
+
+    Not read off TOKENS' `sources`, for the reason the poison sweep gives one
+    section up: that list is prose, nothing consumes it, and a token that
+    forgets to name an artifact is exactly the omission the case below exists
+    to catch. rt._reads is populated inside rt._json, and _stub_for delegates
+    to the real loader, so a stubbed resolution records the same way.
+
+    A token this checkout cannot resolve (no private archive on CI) simply
+    does not enter the enumeration; the case asserts a floor set separately so
+    the sweep cannot silently collapse to nothing."""
+    found = []
+    for name, spec in rt.TOKENS.items():
+        if spec.get("kind") == "gap":
+            continue
+        try:
+            rt.resolve_token(name)
+        except SystemExit:
+            continue
+        if rt._NIGHT_FLOOR_ARTIFACT in rt._reads:
+            found.append(name)
+    return sorted(found)
+
+
+# THE FLOOR, NOT THE LIST. The case below enumerates its own tokens, so a
+# token added later is swept without editing this file; these six are asserted
+# to still be IN that enumeration so a refactor that stops discovering them
+# fails loudly instead of passing on an empty sweep (the "a guard reporting
+# success while covering nothing" failure this suite already names once).
+# Removing a name here is only correct if that token genuinely stopped
+# claiming a year off this artifact.
+_ANNUAL_NIGHT_FLOOR_FLOOR_SET = frozenset((
+    "NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST", "SEC9_TEASER",
+    "PHANTOM_METHOD_DISCREPANCY", "NIGHT_FLOOR_SENSITIVITY_PER_100W",
+    "NIGHT_FLOOR_PRICING_BASIS"))
+
+
 @case
 def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_unit():
     """ISSUE #132, PASS 3 AND CODEX PASS 1 FINDING 1. NIGHT_FLOOR_ANNUAL_KWH
@@ -4642,11 +4943,49 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
                   and a bare count cannot tell the difference, which is why
                   coverage is read from daily_series' own first and last date.
 
+    ISSUE #140, ADVERSARIAL PASS 2, FINDING 2 ADDS THE OTHER TWO TOKENS THAT
+    PRICE THIS LOAD. Half the rendering was coverage-aware and half was not:
+    SEC9_TEASER read the price-map total and appended "/yr" unconditionally,
+    and PHANTOM_METHOD_DISCREPANCY labelled both totals and their gap the same
+    way -- so on a regenerated partial corpus the report published a correctly
+    window-qualified kWh figure beside falsely annualized dollars IN THE SAME
+    SENTENCE. All four tokens go through the same cases here rather than a
+    parallel set, because the defect was precisely that the four did not share
+    a mechanism.
+
+    ISSUE #140, ADVERSARIAL PASS 3 STOPS NAMING TOKENS AT ALL. Fixing the
+    four by name is how the fifth was missed: NIGHT_FLOOR_SENSITIVITY_PER_100W
+    appended "/yr" to a savings RATE re-billed over the same interval series,
+    and a sixth, NIGHT_FLOOR_PRICING_BASIS, claimed the year in a WORD rather
+    than a unit ("leaving the annual figures conservative by about $86")
+    beside two figures that had correctly stopped claiming it. Both were
+    invisible to this case because it looped a hardcoded four.
+
+    So the population is now DISCOVERED, twice over: _night_floor_readers()
+    asks the loader which tokens actually read the artifact, and the annual
+    ones are the subset whose complete render trips rt._ANNUAL_CLAIM -- the
+    same expression the module's own structural guard uses. A token added
+    later is swept without editing this file. The tokens that read the
+    artifact and legitimately claim NO year (a kW median, a spread, a night
+    count) are asserted too, in the other direction: they must never quietly
+    acquire an annual unit.
+
+    AND THE STRUCTURAL GUARD IS TESTED AS A GUARD, on a token deliberately
+    written the wrong way and deliberately declaring no sources at all --
+    which is what "a token added later cannot reintroduce this by omission"
+    has to mean if it means anything.
+
     And the complete case must still render exactly what it renders today."""
-    complete = {n: rt.resolve_token(n) for n in
-                ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST")}
+    readers = _night_floor_readers()
+    complete = {n: rt.resolve_token(n) for n in readers}
+    annual = sorted(n for n in readers if rt._ANNUAL_CLAIM.search(complete[n]))
+    quiet = [n for n in readers if n not in set(annual)]
+    missing = _ANNUAL_NIGHT_FLOOR_FLOOR_SET - set(annual)
+    assert not missing, (
+        f"the enumeration no longer covers {sorted(missing)} -- either the sweep stopped "
+        f"discovering them or they stopped claiming a year; it found {annual}")
+    assert quiet, f"every night-floor reader claims a year, which cannot be right: {readers}"
     assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
-    assert "/yr" in complete["NIGHT_FLOOR_ANNUAL_COST"], complete
 
     def corpus(nights, step=1, hole_to=None):
         """A coherent stub: `nights` dates every `step` days, with nights_total
@@ -4680,13 +5019,23 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
             ("gappy", dict(nights=300, hole_to=364), "gaps")):
         with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
                                              corpus(**kwargs))):
-            for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST"):
+            for token in annual:
                 text = _renders(token)
                 checked[f"{token}@{label}:{kwargs}"] = text
-                assert "/yr" not in text, (
+                assert not rt._ANNUAL_CLAIM.search(text), (
                     f"{token} publishes an ANNUAL figure from a {label} corpus "
                     f"({kwargs}), which is not a year: {text}")
                 assert expect in text, f"{token} did not say why ({expect!r}): {text}"
+                for pat_label, pattern in _MALFORMED_RENDER:
+                    assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
+            # The other direction, on the tokens that read this artifact and
+            # claim no year: they must still render, and must not pick one up.
+            for token in quiet:
+                text = _renders(token)
+                checked[f"{token}@{label}:{kwargs}"] = text
+                assert not rt._ANNUAL_CLAIM.search(text), (
+                    f"{token} acquired an annual claim on a {label} corpus "
+                    f"({kwargs}): {text}")
                 for pat_label, pattern in _MALFORMED_RENDER:
                     assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
 
@@ -4708,11 +5057,40 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
         except SystemExit as e:
             assert "NIGHT_FLOOR_ANNUAL_KWH" in str(e), e
 
+    # THE GUARD, AS A GUARD. A token written the way all six of the ones above
+    # were originally written -- price map total, "/yr" appended, no coverage
+    # call -- and declaring NO sources at all, so that nothing about this
+    # depends on a declaration being remembered. On a real year it renders; on
+    # a corpus that is not one it is refused, by name, pointing at the gate.
+    probe = "NIGHT_FLOOR_UNGATED_ANNUAL_PROBE"
+    assert probe not in rt.TOKENS, probe
+    rt.TOKENS[probe] = dict(
+        kind="derived", sources=[],
+        get=lambda ctx: "${:,.0f}/yr".format(
+            rt._night_floor_pricing()["method_a_price_map"]["total_usd"]))
+    try:
+        assert rt.resolve_token(probe).endswith("/yr"), rt.resolve_token(probe)
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                             corpus(nights=200))):
+            try:
+                rt.resolve_token(probe)
+                raise AssertionError(
+                    "the structural guard let an undeclared, ungated '/yr' through")
+            except SystemExit as e:
+                assert probe in str(e), e
+                assert "less than a full year" in str(e), e
+                assert "_night_floor_coverage" in str(e), e
+    finally:
+        del rt.TOKENS[probe]
+
     after = {n: rt.resolve_token(n) for n in complete}
     assert after == complete, f"the stubs leaked: {after} != {complete}"
-    return (f"{len(checked)} renders across short / long / gappy corpora report their own "
-            f"window instead of an annual claim, a real year still reads "
-            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, and a drifted priced floor refuses")
+    return (f"{len(checked)} renders across short / long / scattered / gappy corpora, over "
+            f"the {len(annual)} discovered token(s) that claim a year off this artifact and "
+            f"the {len(quiet)} that read it without claiming one, report their own window "
+            f"instead of an annual claim; a real year still reads "
+            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, a drifted priced floor refuses, and "
+            f"an undeclared ungated '/yr' is refused by the loader-observed guard")
 
 
 @case
@@ -8047,6 +8425,423 @@ def case_the_seam_allowlist_excuses_a_seam_and_cannot_go_stale():
             f"{len(malformed)} malformed key shapes by name rather than calling them "
             f"stale ({len(_SEAM_ALLOWLIST_SHIPPED)} committed entries on the live "
             "template)")
+
+
+# ===========================================================================
+# ISSUE #140, /review: the always-on floor's sensitivity ladder, its scope
+# claim, and the two public documents that publish its figures.
+# ===========================================================================
+def _ladder_rungs():
+    """The reductions data/quiet_night_floor.json's sensitivity ladder was
+    actually re-billed at, smallest first."""
+    steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
+    return sorted(s["reduction_w"] for s in steps)
+
+
+def _floor_at(median_kw, floor_w_used=None):
+    """A stub edit putting this household's measured floor at `median_kw`,
+    with the rest of the artifact made SELF-CONSISTENT the way
+    quiet_night_floor.py itself makes it: the step is the floor rounded onto
+    the ladder and then CLAMPED into [smallest rung, largest rung], and the
+    published rate is that step's own marginal.
+
+    The clamp is re-implemented here rather than imported because
+    quiet_night_floor.py needs the private archive to run -- and because the
+    defect under test is precisely that report_tokens.py never read it.
+    `floor_w_used` overrides the clamp, which is how an artifact that
+    contradicts its own ladder is built."""
+    def edit(doc):
+        sens = doc["sensitivity_per_100w"]
+        rungs = sorted(s["reduction_w"] for s in sens["steps"])
+        step = rungs[0] if len(rungs) < 2 else rungs[1] - rungs[0]
+        w = int(round(median_kw * 1000 / step)) * step
+        w = min(max(w, rungs[0]), rungs[-1]) if floor_w_used is None else floor_w_used
+        doc["night_floor"]["median_kw"] = median_kw
+        doc["pricing"]["floor_kw_priced"] = round(median_kw, 4)
+        sens["usd_per_100w_at_current_floor"]["floor_w_used"] = w
+        marginal = next((s["marginal_usd_per_100w"] for s in sens["steps"]
+                         if s["reduction_w"] == w), None)
+        if marginal is not None:
+            sens["usd_per_100w_at_current_floor"]["value_usd"] = marginal
+    return edit
+
+
+def _resolve_every_token():
+    """{token: rendered} for every non-gap token, or an AssertionError naming
+    the ones that could not be resolved.
+
+    THE WHOLE SET, and BaseException, both deliberately. resolve_token signals
+    refusal with SystemExit, and generate_report.resolve_tokens_with_gaps()
+    folds any refusal into `failures` -- which stops the run. So "this token
+    still renders" is not the claim that matters for a household whose floor
+    sits outside the ladder; "this household still gets a report" is, and only
+    a sweep of the whole set can make it."""
+    rendered, refused = {}, {}
+    for name, spec in rt.TOKENS.items():
+        if spec.get("kind") == "gap":
+            continue
+        try:
+            rendered[name] = rt.resolve_token(name)
+        except BaseException as exc:            # noqa: BLE001 - SystemExit is the refusal
+            refused[name] = f"{type(exc).__name__}: {exc}"
+    assert not refused, (
+        f"{len(refused)} token(s) refused, so this household gets no report at all: "
+        + "; ".join(f"{n} -- {why}" for n, why in sorted(refused.items())))
+    return rendered
+
+
+@case
+def case_a_floor_outside_the_sensitivity_ladder_still_gets_a_whole_report():
+    """ISSUE #140, /review FINDING 1. NIGHT_FLOOR_SENSITIVITY_PER_100W checked
+    the published step against the measured floor with a bare 50 W tolerance
+    and REFUSED past it -- and generate_report.resolve_tokens_with_gaps folds
+    a refusal into `failures`, which stops the whole run.
+
+    But quiet_night_floor.sensitivity_per_100w() never computes a step for an
+    arbitrary floor: it rounds the floor onto its ladder and then CLAMPS the
+    result into [STEP_W, MAX_REDUCTION_W], bounds whose own comment says they
+    bracket THIS household's ~1.0-1.1 kW floor. So a 1.40 kW floor pinned to
+    the 1,200 W end missed by 200 W, a 0.03 kW floor pinned to the 100 W end
+    missed by 70, and every household outside roughly 50-1,250 W got no
+    report. Third time this project has shipped a guard that compares two
+    artifact fields without reading the generator that writes both, which is
+    what report_tokens.py's own _require_derived preamble is about.
+
+    Three floors, and the sweep is over EVERY token rather than this one:
+      1.40 kW -- above the ladder, renders the rate at its top end;
+      0.03 kW -- below it, renders the rate at its bottom end;
+      1.03 kW -- inside it, renders exactly what it renders today.
+    The bounds in the assertions are read off the artifact's own ladder, so
+    nothing here restates the generator's constants either."""
+    _require_household()
+    rungs = _ladder_rungs()
+    lowest, highest = rungs[0], rungs[-1]
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    got = {}
+    for median, end_w, side, where in (
+            ((highest + 200) / 1000.0, highest, "top", "above"),
+            (lowest / 1000.0 - 0.07, lowest, "bottom", "below")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(median))):
+            rendered = _resolve_every_token()
+            text = rendered["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
+            got[median] = text
+        for phrase in (f"{end_w:,.0f} W step at the {side} of the re-billed ladder",
+                       f"({median * 1000:,.0f} W) sits {where} the "
+                       f"{lowest:,.0f}–{highest:,.0f} W range",
+                       "a rate at that end of the ladder"):
+            assert phrase in text, (
+                f"a {median} kW floor is {where} the ladder, so the sentence must say so "
+                f"({phrase!r}) rather than claim a step nearest it -- got: {text}")
+        assert "nearest the measured floor" not in text, (
+            f"a clamped step was published as the step 'nearest the measured floor': {text}")
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"the clamped rendering is {label}: {text}"
+
+    # The household inside the ladder is untouched: same sentence as today.
+    inside = rt._json("quiet_night_floor.json")["night_floor"]["median_kw"]
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(inside))):
+        same = _resolve_every_token()["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
+    assert same == live, f"the in-range rendering moved:\n  was {live!r}\n  now {same!r}"
+    assert "nearest the measured floor" in same, same
+
+    # What is STILL refused: an artifact that contradicts its own ladder -- a
+    # floor outside the range whose step is not the end the clamp produces.
+    with _patched(rt, "_json", _stub_for(
+            "quiet_night_floor.json",
+            _floor_at((highest + 200) / 1000.0, floor_w_used=lowest))):
+        try:
+            text = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+        except SystemExit as exc:
+            assert "NIGHT_FLOOR_SENSITIVITY_PER_100W" in str(exc), exc
+            assert f"{lowest:,.0f} W step" in str(exc), exc
+        else:
+            raise AssertionError(
+                "a floor above the ladder whose rate was read off the ladder's BOTTOM "
+                f"rung was published anyway: {text}")
+
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"a floor above the {lowest}-{highest} W ladder and one below it both resolve "
+            f"the ENTIRE token set ({len(rt.TOKENS)} entries) and say the rate is the one "
+            f"at the ladder's end; a floor inside it still renders {live[:38]!r}...; and an "
+            "artifact whose step is not the clamp's own endpoint is still refused by name")
+
+
+@case
+def case_the_sensitivity_ladder_refuses_a_shape_it_cannot_be_read_off():
+    """ISSUE #140, /review FINDING 4. Two degenerate ladders reached prose
+    through arithmetic instead of through a refusal.
+
+    An EMPTY steps list raised ValueError out of min()/max(), which
+    resolve_token's catch-all reports as a generic "failed to resolve token
+    ... ValueError" -- not the named refusal every other guard in this module
+    produces, and not something a maintainer can route.
+
+    A DUPLICATE reduction_w was worse, because it did not fail at all: the
+    marginals are collected into a dict keyed f"step_{reduction_w}_w", so two
+    rungs at one reduction collapse to one key and the LAST one wins. The
+    published spread narrows silently -- and the spread is the whole point of
+    that clause, which exists to stop a reader multiplying one rate by any
+    amount removed.
+
+    The duplicate here is built to narrow the spread measurably: the rung
+    carrying the ladder's HIGHEST marginal is relabelled onto its neighbour,
+    so the collapse would drop the top of the published range."""
+    _require_household()
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+
+    def empty(doc):
+        doc["sensitivity_per_100w"]["steps"] = []
+
+    def collide(doc):
+        steps = doc["sensitivity_per_100w"]["steps"]
+        top = max(steps, key=lambda s: s["marginal_usd_per_100w"])
+        neighbour = min((s for s in steps if s is not top),
+                        key=lambda s: abs(s["reduction_w"] - top["reduction_w"]))
+        top["reduction_w"] = neighbour["reduction_w"]
+
+    steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
+    widest = max(s["marginal_usd_per_100w"] for s in steps)
+    assert f"${widest:,.0f}" in live, (
+        f"the live sentence does not publish the ladder's highest marginal (${widest:,.0f}), "
+        f"so collapsing it would not be observable and this case cannot test it: {live}")
+
+    refusals = {}
+    for label, edit, must_say in (
+            ("empty", empty, "steps is empty"),
+            ("duplicate", collide, "repeats reduction_w")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", edit)):
+            try:
+                text = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+            except SystemExit as exc:
+                refusals[label] = str(exc)
+            else:
+                raise AssertionError(
+                    f"a {label} sensitivity ladder was published anyway: {text}")
+        assert "NIGHT_FLOOR_SENSITIVITY_PER_100W" in refusals[label], refusals[label]
+        assert must_say in refusals[label], (
+            f"the {label} refusal does not say what is wrong ({must_say!r}): "
+            f"{refusals[label]}")
+        for generic in ("ValueError", "IndexError", "KeyError", "Traceback"):
+            assert generic not in refusals[label], (
+                f"the {label} ladder reached a generic {generic} instead of this module's "
+                f"own named refusal: {refusals[label]}")
+
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return ("an empty sensitivity ladder and two rungs sharing one reduction_w are both "
+            "refused by name rather than raising a bare ValueError or silently narrowing "
+            f"the published ${widest:,.0f} top of the spread")
+
+
+@case
+def case_the_sensitivity_spread_carries_the_window_at_its_own_endpoints():
+    """ISSUE #140, /review FINDING 5. On a partial corpus this sentence read
+    "about $289 across the 200 nights measured, less than a full year, for
+    every 100 W taken off it, read off the 1,000 W step ... the same ladder's
+    marginal runs from $249 to $323 per 100 W across the range it was
+    re-billed over".
+
+    Both endpoints are sums over exactly the same window as the rate, and the
+    docstring justified leaving them bare by saying the window is stated
+    "immediately before them". It is not: on that render the window clause
+    sits about forty words and a complete clause earlier. Nor can
+    _ANNUAL_CLAIM catch it -- those figures carry no "/yr" -- so this is the
+    defect the structural guard exists for, at the one exit its regex cannot
+    see.
+
+    Asserted STRUCTURALLY, not by matching the whole sentence: the window has
+    to appear within a short distance AFTER the endpoint pair, which is what
+    "qualified where they appear" means and what a re-word that drops the
+    qualifier again would fail."""
+    _require_household()
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    nights = 200
+
+    def short_corpus(doc):
+        first = dt.date(2025, 7, 24)
+        doc["night_floor"]["daily_series"] = [
+            {"date": (first + dt.timedelta(days=i)).isoformat(),
+             "median_kw": 1.0, "excluded_high_demand": False}
+            for i in range(nights)]
+        doc["night_floor"]["nights_total"] = nights
+
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", short_corpus)):
+        text = _renders("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert not rt._ANNUAL_CLAIM.search(text), text
+    steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
+    marginals = [s["marginal_usd_per_100w"] for s in steps]
+    pair = f"${min(marginals):,.0f} to ${max(marginals):,.0f}"
+    at = text.find(pair)
+    assert at >= 0, f"the sentence no longer publishes the ladder's two ends ({pair}): {text}"
+    tail = text[at + len(pair):]
+    m = re.search(rf"those same {nights:,.0f} nights", tail)
+    assert m, (
+        f"the ladder's endpoints ({pair}) are published with no window attached to them, "
+        f"on a corpus of {nights} nights that is not a year: {text}")
+    assert m.start() <= 40, (
+        f"the window sits {m.start()} characters after the endpoints it qualifies, far "
+        f"enough for a reader to take {pair} as a per-year rate: {text}")
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stub leaked: {after!r} != {live!r}"
+    return (f"on a {nights}-night corpus the ladder's two ends ({pair}) carry the window "
+            f"{m.start()} characters later, in the clause that publishes them")
+
+
+@case
+def case_the_published_scope_claim_tracks_the_statement_it_compresses():
+    """ISSUE #140, /review FINDING 3. PHANTOM_METHOD_DISCREPANCY required
+    pricing.reconciliation.scope_of_agreement to be present and non-blank, and
+    then published its OWN hardcoded scope sentence. Nothing compared the two.
+
+    So DELETION was guarded and DRIFT was not -- and drift is the likelier
+    failure. If the two methods stop drawing their rates from the same module,
+    or stop starting from the identical allocation, or the agreement stops
+    being limited to the netting treatment, the presence check still passes
+    and the report keeps publishing a scope claim the artifact no longer
+    makes. The docstring's promise that it "refuses to render an agreement
+    claim at all if that statement is ever dropped" was true of deletion and
+    read as covering both.
+
+    Each published clause is now pinned to the term in the artifact's own
+    statement that carries it, and each is knocked out in turn -- a check that
+    only ever fires on all three at once is one check wearing three names."""
+    _require_household()
+    live = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    scope = (rt._json("quiet_night_floor.json")["pricing"]["reconciliation"]
+             ["scope_of_agreement"])
+    assert rt._SCOPE_CLAUSES, "the clause table is empty, so this case checks nothing"
+
+    drifted = {}
+    for clause, term in rt._SCOPE_CLAUSES:
+        assert clause in live, (
+            f"the clause table names {clause!r}, which the published sentence does not "
+            f"contain -- the table has drifted from the prose it guards: {live}")
+        assert term.lower() in scope.lower(), (
+            f"the committed artifact's scope statement no longer contains {term!r}, so "
+            "this case is asserting against a statement that has already drifted")
+
+        def lose(doc, term=term):
+            rec = doc["pricing"]["reconciliation"]
+            rec["scope_of_agreement"] = re.sub(
+                re.escape(term), "[the same thing, said another way]",
+                rec["scope_of_agreement"], flags=re.I)
+
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", lose)):
+            try:
+                text = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+            except SystemExit as exc:
+                drifted[term] = str(exc)
+            else:
+                raise AssertionError(
+                    f"the artifact's scope statement stopped saying {term!r} and the "
+                    f"report published the clause resting on it anyway: {text}")
+        assert "PHANTOM_METHOD_DISCREPANCY" in drifted[term], drifted[term]
+        assert clause in drifted[term], (
+            f"the refusal must name the clause that lost its support ({clause!r}): "
+            f"{drifted[term]}")
+        assert "scope_of_agreement" in drifted[term], drifted[term]
+
+    after = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"each of the {len(rt._SCOPE_CLAUSES)} published scope clauses refuses by name "
+            f"when the artifact's own statement stops carrying the term it rests on "
+            f"({', '.join(sorted(drifted))})")
+
+
+@case
+def case_the_glossary_states_the_floor_figures_these_tokens_publish():
+    """ISSUE #140, /review FINDING 2. GLOSSARY.md is linked BY NAME from
+    index.html's reader's-guide block, so it is part of the published report
+    for a reader who follows the link -- and its phantom-load entry still
+    carried a floor cost from deep_results.json:phantom (rounded to
+    "~$1,800/yr gross"), plus a "only part of that is realistically
+    recoverable" framing nothing in this archive meters. CLAUDE.md section 3
+    requires a changed figure to be replaced in EVERY instance.
+
+    Checked as a sweep rather than as a literal: every dollar figure in the
+    entry must be one of the two the live artifact prices this load at, so a
+    stale figure of any shape fails here rather than only the one that was
+    found."""
+    entry = [line for line in (rt.ROOT / "GLOSSARY.md").read_text().splitlines()
+             if line.startswith("**Phantom load")]
+    assert len(entry) == 1, f"expected exactly one phantom-load glossary entry, got {entry}"
+    entry = entry[0]
+    doc = rt._json("quiet_night_floor.json")
+    nf, pr = doc["night_floor"], doc["pricing"]
+    live = {f"${pr['method_a_price_map']['total_usd']:,.0f}",
+            f"${pr['method_b_rebill']['total_usd']:,.0f}"}
+    for value in live | {f"{nf['median_kw']:,.2f} kW"}:
+        assert value in entry, (
+            f"the glossary's phantom-load entry does not state {value!r}, which is what "
+            f"data/quiet_night_floor.json prices this load at: {entry}")
+    published = set(re.findall(r"\$[\d,]+", entry))
+    stale = published - live
+    assert not stale, (
+        f"the glossary's phantom-load entry states {sorted(stale)}, which is not one of "
+        f"the live pricings {sorted(live)}: {entry}")
+    text = (rt.ROOT / "GLOSSARY.md").read_text()
+    assert "realistically recoverable" not in text, (
+        "GLOSSARY.md still says part of the floor is 'realistically recoverable' -- "
+        "nothing in this archive meters which appliance behind the floor could be "
+        "switched off (CLAUDE.md section 0)")
+    return (f"the glossary's phantom-load entry states the live floor ({nf['median_kw']:,.2f} "
+            f"kW) and both live pricings {sorted(live)}, carries no other dollar figure, "
+            "and no longer claims a recoverable share")
+
+
+@case
+def case_section_0_states_the_exclusion_rate_beside_the_floor():
+    """ISSUE #140, /review FINDING 6. Section 0 published the floor and its
+    annual cost off a bare night count ("43 quiet nights"), which reads the
+    way the retired "44 EV-free nights" did. The artifact asks for the other
+    half in as many words -- night_floor.selection_caveat says to "report the
+    exclusion rate alongside the floor figure rather than treating the kept
+    ~11.8% as the whole story" -- and NIGHT_FLOOR_SAMPLE already computes it,
+    so section 13 states it and section 0 did not.
+
+    Both halves of the token's own value are asserted, and the section 0
+    density cap with them: the exclusion rate goes in as its own short
+    sentence rather than as more clauses on a lead that would then blow the
+    35-word / one-aside cap CLAUDE.md section 10 puts on the basic tier."""
+    _require_household()
+    html = (rt.ROOT / "index.html").read_text()
+    m = re.search(r"<li><b>Always-on baseload.*?</li>", html, re.S)
+    assert m, "index.html has no section 0 always-on-baseload item"
+    item = m.group(0)
+    nf = rt._json("quiet_night_floor.json")["night_floor"]
+    sample = rt.resolve_token("NIGHT_FLOOR_SAMPLE")
+    count = f"{nf['quiet_nights']:,.0f} of {nf['nights_total']:,.0f} nights"
+    excluded = f"{(nf['nights_total'] - nf['quiet_nights']) / nf['nights_total'] * 100:.1f}%"
+    assert count in sample and excluded in sample, (
+        f"NIGHT_FLOOR_SAMPLE no longer carries the count and the exclusion rate this case "
+        f"requires section 0 to publish: {sample!r}")
+    assert count in item, (
+        f"section 0 does not state the sample the floor is measured on ({count!r}): {item}")
+    assert excluded in item, (
+        f"section 0 publishes the floor and its cost without the exclusion rate "
+        f"({excluded!r}) the artifact's own selection_caveat asks for beside them: {item}")
+
+    # The density cap, on the sentences this item leads with.
+    plain = re.sub(r"<[^>]+>", "", item)
+    lead, rest, sentences = None, plain, []
+    while rest.strip() and len(sentences) < 3:
+        end = re.search(r"\.(?=\s|\Z)", rest)
+        sentence = rest[:end.end()] if end else rest
+        sentences.append(sentence.strip())
+        if not end:
+            break
+        rest = rest[end.end():]
+    over = [(s, len(s.split()), s.count("(") + s.count("—"))
+            for s in sentences if len(s.split()) > 35 or s.count("(") + s.count("—") > 1]
+    assert not over, (
+        "section 0's always-on item leads with a sentence past the basic-tier density cap "
+        f"(35 words, 1 aside): {over}")
+    lead = sentences[0]
+    return (f"section 0 states {count!r} AND the {excluded} exclusion rate "
+            f"NIGHT_FLOOR_SAMPLE computes, and its first {len(sentences)} sentences stay "
+            f"inside the density cap (lead: {len(lead.split())} words, "
+            f"{lead.count('(') + lead.count(chr(8212))} asides)")
 
 
 def main():

@@ -150,7 +150,7 @@ Plain-English definitions of every term of art used in this home-energy analysis
 
 **HPWH (heat-pump water heater)** — A water heater that moves heat from the surrounding air into the tank rather than making heat directly, using roughly a third the energy of a standard electric unit. On a super-off-peak timer it can run largely on cheap overnight power, plus a genuine midday solar-coincident window (10am–2pm weekdays) — mostly not a midday-solar play, since super-off-peak on this tariff is 00:00–06:00 daily plus that midday slice. [DOE: heat pump water heaters](https://www.energy.gov/energysaver/heat-pump-water-heaters)
 
-**Phantom load / always-on baseload** — Power the house draws around the clock even when "nothing" is on: refrigeration, pool pumps, chargers, standby electronics. This home's overnight floor is ~1 kW (~$1,800/yr gross), though only part of that is realistically recoverable.
+**Phantom load / always-on baseload** — Power the house draws around the clock even when "nothing" is on: refrigeration, pool pumps, chargers, standby electronics. This home's overnight floor is a median 1.03 kW, which held across the year costs about $3,157/yr priced against the hourly price map and $3,196/yr through a full NEM re-bill. How much of a floor can actually be switched off is not something a meter can tell you; what the report measures instead is the rate — what each 100 W removed returns.
 
 **Pre-cooling** — Running the A/C hard during cheap midday hours (often on your own solar) so the house coasts through the expensive 4–9pm window with the thermostat eased up.
 

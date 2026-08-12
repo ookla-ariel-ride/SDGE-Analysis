@@ -123,8 +123,24 @@ def template_tokens(html=None):
 # ---------------------------------------------------------------------------
 _json_cache = {}
 
+# WHICH ARTIFACTS THE TOKEN CURRENTLY RESOLVING HAS ACTUALLY READ.
+#
+# Recorded at the loader, never declared. TOKENS' `sources` list is prose:
+# nothing consumes it and nothing checks it, which is why the poison sweep in
+# test_report_tokens.py discovers a token's artifacts by wrapping this loader
+# instead of reading that list. A guard that trusted the declaration would be
+# defeated by the same omission it exists to catch -- a new token that reads
+# an artifact and forgets to name it.
+#
+# resolve_token() opens and closes the window (one clear per resolution), and
+# _forbid_unearned_annual_unit() reads it. The set is recorded BEFORE the
+# cache test on purpose: a second reader of an already-loaded artifact is
+# still a reader of it.
+_reads = set()
+
 
 def _json(name):
+    _reads.add(name)
     if name not in _json_cache:
         path = DATA / name
         if not path.is_file():
@@ -1241,34 +1257,53 @@ def _sec9_teaser(ctx):
     # downstream of it, use behavior_rebuild's 563, so a teaser sourced from
     # deep_results contradicted the section it introduces.
     #
-    # The phantom figures below stay on deep_results because its own method
-    # note ("25th-pct 3-5am non-EV draw") is the one that matches section 9's
-    # own 3-5am framing. (Not because it uniquely carries a $/yr figure --
-    # quiet_night_floor.json carries one too.) They do NOT match the
-    # report body's own phantom numbers, which come from extra_results.json
-    # (44 nights, 1.025 kW, 8,979 kWh/yr) and appear in sections 0 and 13 --
-    # section 9's own phantom sentence cites no artifact at all. A third
-    # artifact, quiet_night_floor.json, prices the same load 77-79% higher
-    # ($3,156.89/$3,196.27, two agreeing methods) and is cited nowhere in the
-    # report (README/TECHNICAL.md do document it). That
-    # three-way split is real and unresolved; it is tracked in issue #140
-    # rather than papered over here, since settling it means changing
-    # published figures in sections 0/9/13.
+    # THE ALWAYS-ON FLOOR COMES FROM quiet_night_floor.json, and from nothing
+    # else (issue #140). Three artifacts have carried a figure for this one
+    # load, and only one of them can back a published number:
+    #   - data/extra_results.json:phantom has NO generator, in this repo or in
+    #     its history -- extra_results.py lists it in FROZEN_KEYS and copies it
+    #     through, saying in its own comment that the methodology has no
+    #     record here. A figure that cannot be reproduced cannot be published
+    #     (CLAUDE.md section 0).
+    #   - data/deep_results.json:phantom does have a live generator, but
+    #     deep_analyses.py prices it with a hardcoded flat $0.20/kWh with the
+    #     rates module computed and unused on the line above; the hour-weighted
+    #     all-in import rate across the analysis year is $0.375/kWh, so that
+    #     blend is roughly half the real price of the energy. Tracked as its
+    #     own issue (#172) against that script; see TECHNICAL.md section 3.5.
+    #   - data/quiet_night_floor.json takes every rate from rates.py and
+    #     prices the same load two independent ways that agree to 1.2%.
+    # So the floor figures here are that artifact's, resolved through the SAME
+    # token formulas sections 0 and 13 render, which is what stops one load
+    # from carrying three numbers across three sections again.
+    #
+    # AND THE COST WEARS THE SAME COVERAGE GATE AS THE ENERGY (issue #140,
+    # adversarial pass 2, finding 2). The price-map total is a sum over the
+    # interval series the run was given, so its "/yr" is earned through
+    # _night_floor_coverage exactly as NIGHT_FLOOR_ANNUAL_KWH's and
+    # NIGHT_FLOOR_ANNUAL_COST's are. Half a coverage-aware sentence is worse
+    # than none: the first version appended "/yr" unconditionally, so a
+    # regenerated partial corpus rendered "4,944 kWh across the 200 nights
+    # measured, less than a full year, about $1,730/yr" -- a window-qualified
+    # energy figure and a falsely annualized dollar figure in one clause. The
+    # window itself is not restated here because the kWh half already states
+    # it, immediately before, for the same nights.
     br = _json("behavior_rebuild.json")
-    dr = _json("deep_results.json")
-    sessions, kwh = _figures(
-        "SEC9_TEASER", "how much overnight load section 9 found",
-        ev_sessions=br["detection"]["sessions"], phantom_annual_kwh=dr["phantom"]["annual_kwh"])
-    cost, = _amounts("SEC9_TEASER", "what the overnight phantom baseload costs",
-                     phantom_annual_cost_at_blend=dr["phantom"]["annual_cost_at_blend"])
-    return (f"{sessions} EV charging sessions logged; overnight "
-            f"phantom baseload {kwh:,} kWh/yr "
-            f"(~${cost:,}/yr)")
+    covers, _nights, _why = _night_floor_coverage()
+    sessions, = _figures(
+        "SEC9_TEASER", "how many charging sessions section 9 found",
+        ev_sessions=br["detection"]["sessions"])
+    cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
+                     price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
+    return (f"{sessions} EV charging sessions logged; an always-on overnight floor of "
+            f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}"
+            f"{'/yr' if covers else ''}")
 
 
 _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
      sources=["data/behavior_rebuild.json:detection.sessions",
-              "data/deep_results.json:phantom"])
+              "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
+              "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
 
 
 def _sec12_teaser(ctx):
@@ -5100,6 +5135,35 @@ _FULL_YEAR_NIGHTS = (365, 366)
 # last retained decimal is the whole slack that derivation introduces.
 _FOUR_DECIMAL_ROUNDING = 0.00005 + 1e-12
 
+# THE SIZE THE ASSURANCE CLAUSE IS SOLD ON (issue #140, adversarial pass 2,
+# finding 1). "Close enough to say the monthly-netting treatment is not where
+# a material error would be hiding" is a claim about MAGNITUDE, so it needs a
+# magnitude to be checked against -- stated here, once, rather than implied by
+# an f-string that renders the assurance whatever the two totals turn out to
+# be. Below the threshold the sentence is earned; at or above it the same
+# formula prints the divergence and says the report does not settle it.
+#
+# 2% of the re-bill total, because the artifact already quantifies the one
+# limitation this sentence implicitly ranks itself below:
+# pricing.floor_assumption_violations.usd_dropped_at_export_rate is the energy
+# the constant-floor split cannot account for and DROPS ($85.52 against a
+# $3,196/yr re-bill on this household -- 2.7%). Netting is "not where a
+# material error would be hiding" exactly while the netting gap stays under
+# the limitation the artifact does own up to; past that, netting would be the
+# LARGER of the two and the sentence would be false. 2 is the round figure
+# below 2.7. Today's gap is 1.2%.
+_NETTING_MATERIALITY_PCT = 2.0
+
+# quiet_night_floor.py writes gap_usd as round(a - b, 2) and gap_pct as
+# round(100 * gap_usd / b, 2). Half of the last retained place is the slack in
+# each. gap_pct carries a second term as well -- it is built on the ALREADY
+# ROUNDED gap_usd, so a recomputation straight from the two totals can differ
+# by what half a cent is worth as a percentage of b (about 0.0002 points on
+# this household, and smaller as b grows). The caller adds that term rather
+# than padding this one, so neither tolerance hides the other's arithmetic.
+_CENT_ROUNDING = 0.005 + 1e-9
+_PERCENTAGE_POINT_ROUNDING = 0.005 + 1e-9
+
 
 def _night_floor_coverage():
     """(covers_a_year, nights, why) for the quiet-night corpus.
@@ -5144,8 +5208,79 @@ def _night_floor_coverage():
     return True, nights, ""
 
 
+_NIGHT_FLOOR_ARTIFACT = "quiet_night_floor.json"
+
+# THE UNIT AND THE ADJECTIVE, NOT THE NOUN. "/yr", "/year", "per year" and
+# every word starting "annual" are how a figure claims a year. The bare word
+# "year" is not on this list and must not be: _night_floor_coverage's own
+# `why` strings say "less than a full year" and "more than a full year", and
+# a sentence that reports the window it actually measured is the CORRECT
+# rendering -- the thing this guard exists to leave alone.
+_ANNUAL_CLAIM = re.compile(r"/yr\b|/year\b|\bper year\b|\bannual", re.IGNORECASE)
+
+
+def _forbid_unearned_annual_unit(name, rendered):
+    """No token may publish an annual claim off quiet_night_floor.json without
+    passing _night_floor_coverage. Structural, not per-call.
+
+    WHY THIS EXISTS AT ALL (issue #140, adversarial pass 3). Four tokens were
+    taught the coverage gate one review finding at a time -- NIGHT_FLOOR_
+    ANNUAL_KWH, then NIGHT_FLOOR_ANNUAL_COST, then SEC9_TEASER and PHANTOM_
+    METHOD_DISCREPANCY -- and each round's sweep missed the next one, because
+    every one of them is an INDEPENDENT f-string that happens to type "/yr".
+    A fifth (NIGHT_FLOOR_SENSITIVITY_PER_100W) and a sixth (NIGHT_FLOOR_
+    PRICING_BASIS, which claims the year in a word rather than a unit) were
+    still bypassing it when this was written. The pattern is not "these
+    tokens were careless"; it is that nothing in the module could tell a
+    correct annual unit from an unearned one, so correctness had to be
+    retyped at every exit and could only ever be checked by eye.
+    So the check moved to the one place every token leaves through.
+
+    IT GATES ON THE READ, NOT THE DECLARATION -- see _reads. A token added
+    later that reads this artifact and writes "/yr" is caught whether or not
+    it names the artifact in `sources` and whether or not anyone remembers
+    this gate exists, which is the whole point.
+
+    AND IT REFUSES, where the six tokens above render their own window. That
+    difference is deliberate. A token whose author wrote the window branch
+    has an honest sentence to fall back on and must never be withheld over a
+    label (the correction issue #132 made). A token that has NOT been written
+    for a partial corpus has no honest rendering available at all: the only
+    two options are a false annual figure or a named stop, and the stop names
+    the token, the corpus and the gate to route it through. It cannot fire on
+    a household whose corpus really is a year, which is every household this
+    check is not about.
+
+    THE COST OF ITS BREADTH, STATED. It tests the whole rendered string, so a
+    future token that reads this artifact for one fact and prints an annual
+    figure from a DIFFERENT artifact would be refused on a partial night-floor
+    corpus even though its own figure was sound. That is the trade taken
+    knowingly: the false positive costs one named refusal and one line of
+    routing, and the false negative it prevents is a published number that is
+    wrong by however far the corpus falls short of a year."""
+    if _NIGHT_FLOOR_ARTIFACT not in _reads:
+        return
+    if not isinstance(rendered, str) or not _ANNUAL_CLAIM.search(rendered):
+        return
+    covers, nights, why = _night_floor_coverage()
+    if covers:
+        return
+    raise SystemExit(
+        f"report_tokens: {name} renders an annual claim from "
+        f"data/{_NIGHT_FLOOR_ARTIFACT}, whose corpus holds {nights:,.0f} nights, "
+        f"{why} -- every figure this module takes off that artifact is summed or "
+        f"scaled over the interval series the run was given, so its annual unit has "
+        f"to be earned through _night_floor_coverage() the way NIGHT_FLOOR_ANNUAL_KWH "
+        f"and NIGHT_FLOOR_ANNUAL_COST earn theirs, and this sentence has not earned "
+        f"it: {rendered}")
+
+
 def _night_floor():
-    return _json("quiet_night_floor.json")["night_floor"]
+    return _json(_NIGHT_FLOOR_ARTIFACT)["night_floor"]
+
+
+def _night_floor_pricing():
+    return _json("quiet_night_floor.json")["pricing"]
 
 
 def _night_floor_sample(ctx):
@@ -5215,15 +5350,15 @@ def _night_floor_annual_cost(ctx):
     contradiction, and refusing on their difference would withhold the section
     over the very disagreement the generator documents.
 
-    A THIRD figure for the same load lives in data/extra_results.json:phantom
-    (a 25th-percentile 3-5am draw over 44 nights, 8,979 kWh/yr) and is what
-    sections 0 and 9 currently quote. It is a DIFFERENT MEASUREMENT -- a
-    different window, a different statistic, a different night-selection gate
-    -- not a competing value for this one, so nothing here compares the two.
-    That the report carries both is a real, unresolved split, tracked in issue
-    #140 because settling it means changing published figures; SEC9_TEASER's
-    own comment traces it. This token names its own artifact so a reader can
-    see which of the three it is.
+    EVERY SECTION THAT PRICES THIS LOAD NOW RESOLVES THROUGH HERE (issue
+    #140). Two older figures for the same load exist in the archive --
+    extra_results.json:phantom, which has no generator at all, and
+    deep_results.json:phantom, whose generator prices the energy at a
+    hardcoded flat $0.20/kWh -- and neither backs a published number any
+    more; SEC9_TEASER's own comment states the evidence for that. They are
+    labelled as superseded workpapers in TECHNICAL.md sections 3.5 and 3.11,
+    which is where CLAUDE.md puts method lineage, so a reader who finds one in
+    the archive can see it is not the live figure.
 
     THE SAME COVERAGE GATE AS THE kWh FIGURE, for the same reason: both
     pricing methods sum over the interval series the run was given, so on a
@@ -5240,58 +5375,173 @@ def _night_floor_annual_cost(ctx):
             f"{nights:,.0f} nights measured, {why}")
 
 
+# ---------------------------------------------------------------------------
+# EACH CLAUSE OF THE PUBLISHED SCOPE SENTENCE, BESIDE THE TERM IN THE
+# ARTIFACT'S OWN STATEMENT THAT CARRIES IT (issue #140, /review finding 3).
+#
+# PHANTOM_METHOD_DISCREPANCY publishes a compression of
+# pricing.reconciliation.scope_of_agreement, and the check in front of it
+# asked only whether that field was non-blank. Deletion was therefore guarded
+# and DRIFT was not -- and drift is the likelier failure: if the two methods
+# stop sharing rates.py, or stop starting from the identical _split_floor
+# allocation, or the agreement stops being limited to the netting treatment,
+# the presence check still passes and the report keeps publishing a scope
+# claim the artifact no longer makes.
+#
+# The relationship, in the terms _require_derived's preamble requires before
+# any two artifact facts are set against each other, is SAME QUANTITY,
+# INDEPENDENTLY WRITTEN -- one statement about scope, rendered twice: once by
+# quiet_night_floor.py into the artifact, once by the f-string below into the
+# report. A disagreement IS a contradiction, so it refuses.
+#
+# TRACED TO THE GENERATOR, per that same preamble, and this is what keeps
+# finding 1's failure from repeating here: quiet_night_floor.py writes
+# scope_of_agreement as a FIXED LITERAL in its reconciliation block, not as
+# anything computed from a household's meter. No household can fail this
+# check by having different data; only an edit to the generator can, which is
+# exactly the drift it exists to catch.
+#
+# WHAT IT DOES NOT COVER, stated rather than implied. It tests the terms each
+# published clause rests on, not the whole statement, so a rewrite that keeps
+# all three terms while adding a fourth limitation around them passes. The
+# docstring claims no more than that.
+_SCOPE_CLAUSES = (
+    ("both methods split the floor out of the meter the same way", "_split_floor"),
+    ("take every rate from the same module", "rates.py"),
+    ("neither one checks the other's rates or its constant-floor model", "netting"),
+)
+
+
 def _phantom_method_discrepancy(ctx):
-    """The OTHER live figure for this same always-on load, and the size of the
-    disagreement.
+    """The two live pricings of this one load, and how far apart they land.
 
-    Section 9 publishes deep_results.json's phantom (a 25th-percentile 3-5am
-    non-EV draw) and section 13 now publishes quiet_night_floor.json's (a
-    1-5am quiet-night median, priced two ways). They are two live methods on
-    one load, two sections apart, and CLAUDE.md section 0 requires that a
-    disagreement between two live methods be reconciled explicitly rather than
-    both being published and left to the reader.
+    WHAT THIS TOKEN NOW COMPARES, AND WHY THAT CHANGED (issue #140). It used
+    to set section 9's figure against section 13's, because the two sections
+    priced the same overnight load out of two different artifacts. They no
+    longer do: every section resolves the floor through the NIGHT_FLOOR_*
+    formulas above, all of them reading quiet_night_floor.json. The name still
+    describes what is measured here -- the discrepancy between the two METHODS
+    that price the phantom floor -- but the two methods are now method (a),
+    per-interval multiplication against the price map, and method (b), a full
+    monthly NEM re-bill of the counterfactual year.
 
-    Reclassifying s13#11 to prose is what created the exposure: the retired
-    HUMAN_REASONS entry's own invariant was that these figures existed only
-    inside SEC9_TEASER's fixed sentence. So the reconciliation is this token's
-    to supply.
+    CLAUDE.md section 0 requires exactly this and nothing less: two live
+    methods run on the same data, reconciled explicitly and quantified, which
+    is also the one thing section 9 forbids being read as process narrative
+    (both figures are current; neither supersedes the other).
 
-    It does NOT decide which is right -- issue #140 tracks that, and settling
-    it means changing published figures in three sections. It states both,
-    computes how far apart each half is, and says the report does not settle
-    it. DIFFERENT METHODS on the same load: nothing here gates on agreement."""
-    dr = _json("deep_results.json")["phantom"]
-    nf = _night_floor()
-    pricing = _json("quiet_night_floor.json")["pricing"]
-    s9_kwh, = _quantities("PHANTOM_METHOD_DISCREPANCY",
-                          "how much energy section 9 attributes to the always-on load",
-                          annual_kwh=dr["annual_kwh"])
-    s9_usd, = _amounts("PHANTOM_METHOD_DISCREPANCY",
-                       "what section 9 says the always-on load costs",
-                       annual_cost_at_blend=dr["annual_cost_at_blend"])
-    kw, nights = _quantities("PHANTOM_METHOD_DISCREPANCY",
-                             "what this section measures the same load at",
-                             median_kw=nf["median_kw"], nights_total=nf["nights_total"])
-    s13_usd, = _amounts("PHANTOM_METHOD_DISCREPANCY",
-                        "what this section says the same load costs",
-                        price_map_usd=pricing["method_a_price_map"]["total_usd"])
-    s13_kwh = kw * nights * 24
+    IT REPORTS THE SCOPE OF THE AGREEMENT, NOT JUST ITS SIZE. Both methods
+    start from the identical _split_floor allocation and take every rate
+    constant from the same rates.py, so their closeness says the netting and
+    aggregation treatment is not where a material error lives -- and says
+    nothing about the rate constants (an error there is inherited by both) or
+    about the constant-floor allocation itself, whose own limitation
+    quiet_night_floor.py quantifies separately. The artifact states that scope
+    in pricing.reconciliation.scope_of_agreement, and this token refuses to
+    render an agreement claim at all if that statement is dropped OR if it
+    stops making the claims the sentence below compresses -- see
+    _SCOPE_CLAUSES, which pins each published clause to the term in the
+    artifact's own statement that carries it, and which states exactly what
+    that check does and does not cover.
+
+    THE GAP IS RECOMPUTED FROM THE TWO TOTALS, NOT READ (issue #140,
+    adversarial pass 2, finding 1). The first version of this formula read
+    method (a)'s total, method (b)'s total and the artifact's precomputed
+    gap_usd/gap_pct as three INDEPENDENT facts, and then rendered assurance
+    about their closeness unconditionally. A stale or half-regenerated
+    artifact would therefore print two materially divergent totals beside an
+    obsolete "1.2% apart" and an explicit promise to the reader that no
+    material netting error exists -- the published assurance and the published
+    figures disagreeing inside one sentence. So the gap this token prints is
+    the difference between the two totals it also prints, and the artifact's
+    own fields are demoted to a CHECK on that arithmetic: they are compared to
+    the recomputation within the rounding quiet_night_floor.py applies to
+    each, and an artifact whose stated gap does not match its own totals is
+    refused by name rather than resolved in either field's favour.
+
+    THE ASSURANCE IS CONDITIONAL, THE FIGURES ARE NOT. The "not where a
+    material error would be hiding" clause renders only while the recomputed
+    gap is inside _NETTING_MATERIALITY_PCT, which states the threshold and why
+    that number. Past it, the same formula publishes both totals and the
+    distance between them and says the report does not settle which is right.
+    A refusal would be wrong here: a household regenerating this artifact can
+    legitimately land on a wider gap, and it must still get a report -- what
+    it must not get is a sentence promising the gap is small while printing
+    one that is not. Nothing gates on the two agreeing for the reason the
+    artifact gives: it has already decomposed the gap to its cause (PCIA
+    priced differently inside buckets whose net sign does not change).
+
+    THE ANNUAL UNIT IS THE COVERAGE GATE'S, NOT THIS FORMULA'S (finding 2 of
+    the same pass). Both totals are sums over the interval series the run was
+    given, exactly as in NIGHT_FLOOR_ANNUAL_COST, so "/yr" is earned through
+    _night_floor_coverage or it is not written at all -- otherwise a
+    regenerated partial corpus published a correctly window-qualified kWh
+    figure beside falsely annualized dollars in the same sentence."""
+    pricing = _night_floor_pricing()
+    rec = pricing.get("reconciliation") or {}
+    scope = str(rec.get("scope_of_agreement", "")).strip()
+    if not scope:
+        raise SystemExit(
+            "report_tokens: PHANTOM_METHOD_DISCREPANCY will not state that two pricing "
+            "methods agree without data/quiet_night_floor.json:pricing.reconciliation."
+            "scope_of_agreement, the artifact's own statement of what their agreement "
+            "does and does not validate")
+    unsupported = [(clause, term) for clause, term in _SCOPE_CLAUSES
+                   if term.lower() not in scope.lower()]
+    if unsupported:
+        raise SystemExit(
+            "report_tokens: PHANTOM_METHOD_DISCREPANCY will not publish a scope claim "
+            "data/quiet_night_floor.json:pricing.reconciliation.scope_of_agreement no "
+            "longer makes -- this sentence's clause(s) "
+            + "; ".join(f"{clause!r} (rests on {term!r})" for clause, term in unsupported)
+            + f" have lost their support in that statement: {scope}")
+    covers, nights, why = _night_floor_coverage()
+    a, b = _amounts("PHANTOM_METHOD_DISCREPANCY", "what each method prices the floor at",
+                    price_map_usd=pricing["method_a_price_map"]["total_usd"],
+                    rebill_usd=pricing["method_b_rebill"]["total_usd"])
     _claim("PHANTOM_METHOD_DISCREPANCY", "how far apart the two methods are",
-           SUPPORTED if s9_kwh > 0 and s9_usd > 0 else NOT_DETERMINED,
-           f"section 9's figures are {s9_kwh!r} kWh and ${s9_usd!r}, which cannot be a "
-           "base for the difference")
-    return (f"section 9 prices this same always-on load at {s9_kwh:,.0f} kWh/yr and "
-            f"${s9_usd:,.0f}/yr from a 25th-percentile 3–5am draw, against "
-            f"{s13_kwh:,.0f} kWh/yr and ${s13_usd:,.0f}/yr here — the energy differs by "
-            f"{abs(s13_kwh - s9_kwh) / s9_kwh * 100:.0f}% and the cost by "
-            f"{abs(s13_usd - s9_usd) / s9_usd * 100:.0f}%, and this report does not settle "
-            "which pricing is right")
+           SUPPORTED if b > 0 else NOT_DETERMINED,
+           f"the re-bill total is ${b!r}, which cannot be a base for a percentage")
+    gap_usd = a - b
+    gap_pct = 100.0 * gap_usd / b
+    stated_usd, stated_pct = _figures(
+        "PHANTOM_METHOD_DISCREPANCY", "how far apart the two pricings land",
+        gap_usd=rec.get("gap_usd"), gap_pct=rec.get("gap_pct"))
+    _require_derived(
+        "PHANTOM_METHOD_DISCREPANCY", "how far apart the two pricings land",
+        gap_usd, stated_usd, _CENT_ROUNDING,
+        f"data/quiet_night_floor.json:pricing.reconciliation.gap_usd states "
+        f"{stated_usd!r} while the same artifact's two totals (${a!r} and ${b!r}) are "
+        f"{gap_usd:,.2f} apart -- the reconciliation does not describe the figures "
+        "beside it, so neither reading of the gap can be published")
+    _require_derived(
+        "PHANTOM_METHOD_DISCREPANCY", "how far apart the two pricings land",
+        gap_pct, stated_pct, _PERCENTAGE_POINT_ROUNDING + 100.0 * _CENT_ROUNDING / b,
+        f"data/quiet_night_floor.json:pricing.reconciliation.gap_pct states "
+        f"{stated_pct!r}% while the same artifact's two totals (${a!r} and ${b!r}) are "
+        f"{gap_pct:.2f}% apart -- the reconciliation does not describe the figures "
+        "beside it, so neither reading of the gap can be published")
+    per_year = "/yr" if covers else ""
+    totals = (f"the price map makes it ${a:,.0f}/yr and a full NEM re-bill ${b:,.0f}/yr"
+              if covers else
+              f"across the {nights:,.0f} nights measured, {why}, the price map makes it "
+              f"${a:,.0f} and a full NEM re-bill ${b:,.0f}")
+    verdict = (" — close enough to say the monthly-netting treatment is not where a "
+               "material error would be hiding, and no more than that: "
+               if abs(gap_pct) < _NETTING_MATERIALITY_PCT else
+               f" — past the {_NETTING_MATERIALITY_PCT:.0f}% this reconciliation treats "
+               "as small, so this report does not settle which of the two is right: ")
+    return (f"{totals}, ${abs(gap_usd):,.0f}{per_year} or {abs(gap_pct):.1f}% apart"
+            f"{verdict}both methods split the floor out of the meter "
+            "the same way and take every rate from the same module, so neither one checks "
+            "the other's rates or its constant-floor model")
 
 
 _tok("PHANTOM_METHOD_DISCREPANCY", kind="derived", get=_phantom_method_discrepancy,
-     sources=["data/deep_results.json:phantom (annual_kwh, annual_cost_at_blend)",
-              "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
-              "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
+     sources=["data/quiet_night_floor.json:pricing.method_a_price_map.total_usd",
+              "data/quiet_night_floor.json:pricing.method_b_rebill.total_usd",
+              "data/quiet_night_floor.json:pricing.reconciliation "
+              "(gap_usd, gap_pct, scope_of_agreement)"])
 
 
 def _night_floor_seasonality(ctx):
@@ -5321,7 +5571,20 @@ def _night_floor_pricing_basis(ctx):
     year built from it. Its floor_assumption_violations block adds the
     direction of the resulting error, which is the part a reader needs: the
     shortfall is DROPPED rather than credited, so the annual figures are
-    conservative by roughly that amount rather than inflated by it."""
+    conservative by roughly that amount rather than inflated by it.
+
+    AND THE WORD "ANNUAL" IS A FIGURE HERE, NOT A FRAME (issue #140,
+    adversarial pass 3). usd_dropped_at_export_rate is summed over the
+    interval series the run was given, exactly as both pricing methods are,
+    so on a partial corpus it is a window total -- and this sentence's job is
+    to say what the figures BESIDE it rest on, which on that corpus is no
+    longer a year. There is no "/yr" to drop, so the unqualified claim was
+    the word itself: "leaving the annual figures conservative by about $86"
+    beside two window-qualified figures describes a report that does not
+    exist. The gate is _night_floor_coverage, the same one those figures
+    pass through; the method clause moves with it, because "applied as a
+    constant across every hour of the year" is what the pricing did only
+    where the run really held a year of hours."""
     doc = _json("quiet_night_floor.json")
     label = str(doc.get("confidence_labels", {}).get("pricing", "")).strip()
     if not label:
@@ -5334,11 +5597,18 @@ def _night_floor_pricing_basis(ctx):
                         "how much the constant-floor assumption drops rather than credits",
                         usd_dropped_at_export_rate=violations["usd_dropped_at_export_rate"])
     kind = label.split("--")[0].strip().rstrip(":").strip() or "modeled"
+    covers, nights, why = _night_floor_coverage()
+    if covers:
+        return (f"{kind}, not measured: the floor is measured in a four-hour overnight window "
+                "and then applied as a constant across every hour of the year — where that "
+                f"assumption exceeds what the meter can account for, the shortfall is dropped "
+                f"rather than credited, leaving the annual figures conservative by about "
+                f"${dropped:,.0f}")
     return (f"{kind}, not measured: the floor is measured in a four-hour overnight window "
-            "and then applied as a constant across every hour of the year — where that "
+            "and then applied as a constant across every hour the run priced — where that "
             f"assumption exceeds what the meter can account for, the shortfall is dropped "
-            f"rather than credited, leaving the annual figures conservative by about "
-            f"${dropped:,.0f}")
+            f"rather than credited, leaving those figures conservative by about "
+            f"${dropped:,.0f} across the {nights:,.0f} nights measured, {why}")
 
 
 _tok("NIGHT_FLOOR_PRICING_BASIS", kind="derived", get=_night_floor_pricing_basis,
@@ -5373,6 +5643,177 @@ _tok("NIGHT_FLOOR_SEASONALITY", kind="derived", get=_night_floor_seasonality,
      sources=["data/quiet_night_floor.json:night_floor.monthly_median_kw"])
 
 
+def _night_floor_sensitivity(ctx):
+    """What a watt off the floor is worth -- the one recoverable figure this
+    repo can actually measure.
+
+    HOW MUCH OF A FLOOR IS REMOVABLE IS NOT A METERED QUANTITY. Nothing in
+    this archive can say which appliance behind the floor could be switched
+    off, so a "realistic recoverable $/yr" is an opinion wearing a figure's
+    clothes (CLAUDE.md section 0). What IS computed, by re-billing the whole
+    year at 100 W steps, is the RATE: what each 100 W removed returns. A
+    reader can multiply that by whatever they find on a plug meter; the report
+    does not do the multiplication for them.
+
+    THE STEP IS A GRID, AND THE FIGURE IS READ OFF IT. usd_per_100w_at_current
+    _floor is the marginal at the sensitivity step NEAREST the measured floor,
+    not the exact marginal at this household's own wattage -- the artifact's
+    own note says so.
+
+    BUT "NEAREST" HAS ENDS, AND A HOUSEHOLD OUTSIDE THEM IS NOT A DEFECT
+    (issue #140, /review finding 1). The step was checked against the measured
+    floor with a bare half-step tolerance, and a miss was a REFUSAL that
+    generate_report folds into its failures -- so an ordinary household got no
+    report at all. quiet_night_floor.sensitivity_per_100w() does not compute a
+    step for any floor: it rounds the floor onto the ladder and then CLAMPS
+    the result into [STEP_W, MAX_REDUCTION_W], bounds whose own comment says
+    they bracket THIS household's measured floor. A 1.40 kW floor therefore
+    lands on the 1,200 W end and misses by 200 W; a 0.03 kW floor lands on the
+    100 W end and misses by 70; only a floor already inside the ladder passed.
+    That is the same shape as the two comparisons _require_derived's preamble
+    was written for, a third time: a guard asserting a relationship between
+    two artifact fields without reading the generator that writes both.
+
+    SO THE CLAMP IS DETECTED, NOT REFUSED. The bounds are read off the ladder
+    rather than restated here -- sensitivity_per_100w() builds its steps as
+    range(STEP_W, MAX_REDUCTION_W + STEP_W, STEP_W) and clamps into that same
+    range, so the ladder's smallest and largest rungs ARE those two constants
+    and neither number has to appear in this module to be honoured (the
+    ladder's own rung spacing supplies the half-step tolerance the same way).
+    A floor inside the ladder renders exactly as before, on the half-step
+    nearness test. A floor outside it still has a real rate -- the ladder was
+    genuinely re-billed at that end -- but it is the rate at the ladder's END,
+    not at this household's floor, so the WORDING degrades to say precisely
+    that instead of the report failing to generate. What is still refused is
+    an artifact that contradicts itself: a floor outside the range whose
+    floor_w_used is not the end the clamp would have produced.
+
+    AND THE LADDER IS NOT A STRAIGHT LINE, which is the difference between a
+    rate and a multiplier. The artifact says so in linearity_note; this token
+    does not quote that note, it recomputes the same argument from the ladder's
+    own marginal_usd_per_100w column and prints the spread, so a reader can see
+    how far the rate moves across the tested range instead of multiplying one
+    figure by any amount removed. Same shape as DEGRADATION_WEATHER_CAVEAT
+    rebuilding clearsky_note's argument out of the numbers beside it.
+
+    AND THE LADDER HAS TO BE A LADDER (issue #140, /review findings 4). Two
+    degenerate shapes reached prose through arithmetic rather than through a
+    refusal: an empty steps list raised ValueError out of min()/max(), which
+    resolve_token's catch-all turns into a generic "failed to resolve", and
+    two steps sharing a reduction_w collapsed to ONE key in the comprehension
+    below, so the published spread silently narrowed instead of reporting the
+    collision. Both are named refusals now, in this module's own style, for
+    _forbid_unearned_annual_unit's reason one level up: a guard that reports
+    a generic exception is a guard a maintainer cannot route.
+
+    AND THE RATE IS A RATE PER YEAR ONLY WHERE THERE IS A YEAR (issue #140,
+    adversarial pass 3). Every figure in this sentence -- the rate at the
+    floor and both ends of the ladder it is read off -- comes from
+    sensitivity_per_100w.steps, and quiet_night_floor.sensitivity_per_100w()
+    builds each step by re-billing the interval series THE RUN WAS GIVEN
+    (br.bill(f0) - br.bill(f2)) and writing the difference as
+    annual_savings_usd. On a corpus that is not a year that difference is a
+    window saving, and the field's own name is the trap: this formula used to
+    append "/yr" unconditionally, so a partial corpus published a
+    part-year saving as a per-year rate in sections 9 and 13 -- the same
+    defect the same pass fixed in SEC9_TEASER, PHANTOM_METHOD_DISCREPANCY,
+    NIGHT_FLOOR_ANNUAL_KWH and NIGHT_FLOOR_ANNUAL_COST, at the one exit that
+    sweep missed. So the unit comes from _night_floor_coverage, like theirs.
+
+    AND THE LADDER'S TWO ENDS CARRY THE WINDOW THEMSELVES (issue #140,
+    /review finding 5). They used to be left bare on the argument that the
+    window was stated "immediately before them" -- it was not: on a partial
+    corpus the window clause sits about forty words and a full clause earlier,
+    with the step, the nearness qualifier and the multiplier caveat between,
+    and $249-$323 carries no "/yr" for _ANNUAL_CLAIM to catch. That is exactly
+    the defect class the structural guard exists for, at the one exit the
+    regex cannot see, so the endpoints are qualified where they appear rather
+    than justified from a distance."""
+    sens = _json("quiet_night_floor.json")["sensitivity_per_100w"]
+    steps = sens.get("steps") or []
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "how far the rate moves along the ladder",
+           SUPPORTED if steps else NOT_DETERMINED,
+           "data/quiet_night_floor.json:sensitivity_per_100w.steps is empty -- there is no "
+           "re-billed ladder to read a rate off, no range for that rate to move across, and "
+           "no bounds to tell a clamped reading from a near one")
+    rungs = [s["reduction_w"] for s in steps]
+    repeated = sorted({w for w in rungs if rungs.count(w) > 1})
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "how far the rate moves along the ladder",
+           SUPPORTED if not repeated else NOT_DETERMINED,
+           f"data/quiet_night_floor.json:sensitivity_per_100w.steps repeats reduction_w "
+           f"{repeated} -- two marginals at one reduction cannot both be the marginal there, "
+           "and collapsing them would narrow the published spread instead of saying so")
+    ladder = sorted(rungs)
+    gaps = [b - a for a, b in zip(ladder, ladder[1:])]
+    spacing = min(gaps) if gaps else ladder[0]
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "how far apart the ladder's rungs sit",
+           SUPPORTED if spacing > 0 else NOT_DETERMINED,
+           f"data/quiet_night_floor.json:sensitivity_per_100w.steps gives a rung spacing of "
+           f"{spacing!r} W, which is no ladder at all -- there is no half-step for a "
+           "'nearest' to be measured against")
+    lowest, highest = float(ladder[0]), float(ladder[-1])
+    at_floor = sens["usd_per_100w_at_current_floor"]
+    per_100w, = _amounts("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+                         "what removing 100 W of the floor returns",
+                         value_usd=at_floor["value_usd"])
+    step_w, floor_kw = _quantities(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which step the rate was read off",
+        floor_w_used=at_floor["floor_w_used"], median_kw=_night_floor()["median_kw"])
+    floor_w = floor_kw * 1000.0
+    half_step = spacing / 2.0
+    below = floor_w < lowest - half_step
+    above = floor_w > highest + half_step
+    if below or above:
+        end_w = lowest if below else highest
+        _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+               "which end of the ladder the rate was read off",
+               SUPPORTED if step_w == end_w else NOT_DETERMINED,
+               f"the measured floor is {floor_w:,.0f} W, outside the {lowest:,.0f}-"
+               f"{highest:,.0f} W range this ladder was re-billed over, so the only rate "
+               f"available is the one at its {end_w:,.0f} W end -- but the artifact read it "
+               f"off the {step_w:,.0f} W step")
+        read_off = (
+            f"read off the {step_w:,.0f} W step at the {'bottom' if below else 'top'} of "
+            f"the re-billed ladder, since this household's floor ({floor_w:,.0f} W) sits "
+            f"{'below' if below else 'above'} the {lowest:,.0f}–{highest:,.0f} W range that "
+            "ladder covers")
+        near = "a rate at that end of the ladder"
+    else:
+        _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+               "what a household at THIS floor gets back per 100 W",
+               SUPPORTED if abs(step_w - floor_w) <= half_step else NOT_DETERMINED,
+               f"the rate was read off the {step_w:,.0f} W step while the measured floor is "
+               f"{floor_w:,.0f} W, more than half a {spacing:,.0f} W step away, so it is not "
+               "the step nearest this floor")
+        read_off = (f"read off the {step_w:,.0f} W step nearest the measured floor rather "
+                    "than computed at this household's own exact wattage")
+        near = "a rate near this floor"
+    marginals = _quantities(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "how far the rate moves along the ladder",
+        **{f"step_{s['reduction_w']}_w": s["marginal_usd_per_100w"] for s in steps})
+    lo, hi = min(marginals), max(marginals)
+    covers, nights, why = _night_floor_coverage()
+    rate = (f"about ${per_100w:,.0f}/yr" if covers else
+            f"about ${per_100w:,.0f} across the {nights:,.0f} nights measured, {why},")
+    spread = (f"the same ladder's marginal runs from ${lo:,.0f} to ${hi:,.0f} per 100 W "
+              "across the range it was re-billed over" if covers else
+              f"the same ladder's marginal runs from ${lo:,.0f} to ${hi:,.0f} per 100 W "
+              f"over those same {nights:,.0f} nights, across the range it was re-billed over")
+    return (f"{rate} for every 100 W taken off it, {read_off} — and it is {near} rather "
+            f"than a multiplier for any amount removed, since {spread}")
+
+
+_tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", kind="derived", get=_night_floor_sensitivity,
+     sources=["data/quiet_night_floor.json:sensitivity_per_100w."
+              "usd_per_100w_at_current_floor",
+              "data/quiet_night_floor.json:sensitivity_per_100w.steps "
+              "(the re-billed ladder: its spread, its rung spacing and its two ends)",
+              "data/quiet_night_floor.json:night_floor.median_kw"])
+
+
 # ---------------------------------------------------------------------------
 # 3. The resolver.
 # ---------------------------------------------------------------------------
@@ -5393,6 +5834,8 @@ def resolve_token(name, spec=None):
             raise SystemExit(f"report_tokens: unknown token {name!r} -- not in TOKENS")
         spec = TOKENS[name]
     kind = spec["kind"]
+    # One read-window per resolution; _forbid_unearned_annual_unit closes it.
+    _reads.clear()
     try:
         if kind == "gap":
             raise SystemExit(f"report_tokens: token {name} has no committed source "
@@ -5449,7 +5892,11 @@ def resolve_token(name, spec=None):
                 f"report_tokens: token {name} resolved to {raw!r}, which is not a "
                 f"finite number -- its format spec {fmt!r} has nothing honest to "
                 "render for it")
-        return FORMATTERS.get(fmt, _raw)(raw)
+        # The last gate every token passes through, and the only one that can
+        # see the finished sentence. See _forbid_unearned_annual_unit.
+        rendered = FORMATTERS.get(fmt, _raw)(raw)
+        _forbid_unearned_annual_unit(name, rendered)
+        return rendered
     except SystemExit as e:
         msg = str(e)
         if name in msg or kind == "gap":
