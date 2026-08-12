@@ -2151,6 +2151,288 @@ def case_plan_lead_tokens_report_a_gap_the_matrix_does_not_call_a_lead():
             + ", ".join(f"{k} {v}w" for k, v in widths.items()) + ")")
 
 
+# ---------------------------------------------------------------------------
+# THE WHOLE-DOLLAR ROUNDING BAND (issue #141 adversarial review).
+#
+# analysis/battery_plan_matrix.py writes every cell it publishes as round(x):
+#
+#     plans[plan] = {"no_battery": round(no_b), "with_battery": round(with_b),
+#                    "battery_value": round(no_b - with_b)}
+#
+# Section 4's heading asks whether a battery changes which plan is best, and
+# report_tokens answered it by comparing the two columns' cheapest-plan sets.
+# Those sets were built with `==` on values that had already lost their cents:
+#
+#     A $100.49 / B $100.51   stores 100 / 101  ->  {A}
+#     A  $90.40 / B  $90.49   stores  90 /  90  ->  {A, B}
+#
+# A is cheaper at both battery states and the heading published "Yes -- the
+# battery changes which plan is best". The mirror image is worse and quieter:
+# a real sub-dollar flip collapses into two identical tie sets and publishes
+# "No". A rounding artifact was deciding a published plan recommendation.
+#
+# The four cases below drive the four shapes with synthetic matrices, and the
+# last of them sweeps EVERY token rather than this one -- the same comparison
+# also gates section 4's class="win" row, and a gate that refuses there stops
+# the whole report rather than one sentence.
+# ---------------------------------------------------------------------------
+@contextlib.contextmanager
+def _matrix_priced(plans, cells):
+    """Substitute a whole synthetic matrix -- {plan: (no_battery, with_battery)}
+    -- into the cached artifact, restoring every cell on the way out.
+
+    battery_value is DERIVED here rather than passed, for _mid_battery_swaps'
+    reason: battery_plan_matrix.py writes it as round(no_b - with_b) off the
+    same two bills, so a case that moves a column and leaves battery_value
+    behind is not describing a household, it is describing an artifact no run
+    of the generator could produce."""
+    with contextlib.ExitStack() as stack:
+        for plan, (no_b, with_b) in cells.items():
+            stack.enter_context(_swapped(plans[plan], "no_battery", no_b))
+            stack.enter_context(_swapped(plans[plan], "with_battery", with_b))
+            stack.enter_context(_swapped(plans[plan], "battery_value", no_b - with_b))
+        yield
+
+
+def _matrix_pair():
+    """(plans, household plan, its nearest rival, everyone else) for the band
+    cases, read off the committed matrix rather than named as literals."""
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    ordered = sorted(plans, key=lambda k: plans[k]["no_battery"])
+    assert len(ordered) > 1, (
+        "data/battery_plan_matrix.json prices one plan; these cases need a rival")
+    return plans, ordered[0], ordered[1], ordered[2:]
+
+
+def _s4_at(plans, cells):
+    """S4_VERDICT_SHORT (and the two cheapest-plan sets it decides on) rendered
+    against a synthetic matrix."""
+    with _matrix_priced(plans, cells):
+        value = rt.resolve_token("S4_VERDICT_SHORT")
+        sets = tuple(rt._bpm_cheapest("S4_VERDICT_SHORT", c)
+                     for c in ("no_battery", "with_battery"))
+    return value, sets
+
+
+@case
+def case_the_matrix_tie_band_is_the_rounding_the_generator_applies():
+    """The band is DERIVED, not picked, and both halves of the derivation are
+    checkable here rather than only in a comment.
+
+    Per cell: battery_plan_matrix.py stores round(x), so |stored - modeled|
+    <= $0.50. Per comparison of two cells: <= $0.50 + $0.50 = $1.00, which is
+    _BPM_TIE_USD. Per comparison of two GAPS -- the widens/narrows verb, which
+    is (rival - us) without a battery against the same difference with one --
+    four cells, so 4 x $0.50 = $2.00, which is _BPM_GAP_TIE_USD.
+
+    The premise is asserted against the artifact itself: every published cell
+    is a whole number of dollars. If a future generator keeps the cents, this
+    case fails and the band has to be re-derived rather than silently applied
+    to values that no longer need it."""
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    fractional = [f"{p}.{k} = {v!r}" for p, row in sorted(plans.items())
+                  for k, v in sorted(row.items()) if float(v) != int(v)]
+    assert not fractional, (
+        "data/battery_plan_matrix.json no longer rounds every cell to whole dollars ("
+        + ", ".join(fractional) + "), so report_tokens._BPM_TIE_USD is derived from a "
+        "rounding the generator has stopped applying")
+    assert rt._BPM_TIE_USD == 0.5 + 0.5, (
+        f"_BPM_TIE_USD is {rt._BPM_TIE_USD}, not the $0.50 + $0.50 the two rounded "
+        "cells of one comparison can each be out by")
+    assert rt._BPM_GAP_TIE_USD == 4 * 0.5 == 2 * rt._BPM_TIE_USD, (
+        f"_BPM_GAP_TIE_USD is {rt._BPM_GAP_TIE_USD}, not the four cells a comparison "
+        "of two gaps rounds")
+    return (f"the section 4 tie band is the generator's own rounding: ${rt._BPM_TIE_USD:.2f} "
+            f"for two cells, ${rt._BPM_GAP_TIE_USD:.2f} for two gaps, and all "
+            f"{sum(len(r) for r in plans.values())} published cells are whole dollars")
+
+
+@case
+def case_a_winner_set_change_made_entirely_of_rounding_is_not_a_ranking_change():
+    """THE REPRODUCTION. The reviewer's own figures: A $100.49 / B $100.51
+    without a battery, A $90.40 / B $90.49 with one. A is cheaper at both
+    states by pennies; the artifact stores 100/101 and 90/90, so an `==`
+    comparison of the cheapest sets sees {A} become {A, B} and section 4's
+    heading published "Yes -- a battery changes which plan is best".
+
+    With the band, both columns read as the tie they are, and the answer is
+    neither "Yes" nor a "No" that would claim the rounding settled it."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = rt.resolve_token("S4_VERDICT_SHORT")
+        cells = {best: (100, 90), rival: (101, 90)}
+        cells.update({p: (9_000, 9_000) for p in rest})
+        value, (no_batt, with_batt) = _s4_at(plans, cells)
+        assert no_batt == with_batt == {best, rival}, (
+            f"the cheapest sets still read the rounding as a ranking: without a battery "
+            f"{sorted(no_batt)}, with one {sorted(with_batt)}")
+        assert not value.startswith("Yes"), (
+            f"S4_VERDICT_SHORT answers section 4's heading 'Yes' off a winner-set change "
+            f"made entirely of whole-dollar rounding ({best} $100.49/$90.40 against "
+            f"{rival} $100.51/$90.49, stored 100/90 against 101/90): {value}")
+        assert rival in value and f"within {rt._usd0(rt._BPM_TIE_USD)}/yr" in value, (
+            f"S4_VERDICT_SHORT does not say the two plans price inside the band: {value}")
+        words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "a rounding-only tie")
+        assert rt.resolve_token("S4_VERDICT_SHORT") == published, (
+            "the synthetic matrix leaked out of this case")
+    return (f"a cheapest-set change made only of whole-dollar rounding no longer answers "
+            f"section 4's heading 'Yes' ({value!r}, {words}w)")
+
+
+@case
+def case_a_winner_flip_wider_than_the_band_is_still_reported():
+    """The band's other edge: it must not swallow a flip the artifact really
+    does resolve. {best} is $100 cheaper without a battery and $200 dearer
+    with one -- both sides of the flip outside $1.00 -- so the cheapest sets
+    share no plan at all and the heading says so."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = rt.resolve_token("S4_VERDICT_SHORT")
+        cells = {best: (5_000, 5_000), rival: (5_100, 4_800)}
+        cells.update({p: (9_000, 9_000) for p in rest})
+        value, (no_batt, with_batt) = _s4_at(plans, cells)
+        assert (no_batt, with_batt) == ({best}, {rival}), (
+            f"the band swallowed a $100/$200 winner flip: without a battery "
+            f"{sorted(no_batt)}, with one {sorted(with_batt)}")
+        assert value.startswith("Yes"), (
+            f"S4_VERDICT_SHORT does not report a winner flip the artifact resolves "
+            f"({best} $100/yr ahead without a battery, $200/yr behind with one): {value}")
+        assert f"trails {rival} by" not in value and "trails by $200/yr with one" in value, (
+            f"S4_VERDICT_SHORT does not say where {best} stands with the battery: {value}")
+        words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "a real winner flip")
+        assert rt.resolve_token("S4_VERDICT_SHORT") == published, (
+            "the synthetic matrix leaked out of this case")
+    return (f"a winner flip wider than the ${rt._BPM_TIE_USD:.2f} band is still reported as "
+            f"one ({value!r}, {words}w)")
+
+
+@case
+def case_the_widens_verb_needs_a_gap_change_the_rounding_can_resolve():
+    """The same defect one level up, swept rather than patched. The heading's
+    verb compares (rival - us) without a battery against the same difference
+    with one -- FOUR rounded cells, so the change it asserts is worth nothing
+    below $2.00. A lead of $100/yr becoming $101/yr published "the battery
+    widens EV-TOU-5's lead", a direction that is entirely an artifact of where
+    four roundings happened to fall.
+
+    Both sides are driven: a $1 change says the rounding cannot resolve it, a
+    $3 change is over the bound and keeps the verb."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    seen = {}
+    with _stub_plan(best, provider):
+        published = rt.resolve_token("S4_VERDICT_SHORT")
+        for label, with_battery_rival, verb in (
+                ("inside the bound", 5_101, None), ("outside it", 5_103, "widens")):
+            cells = {best: (5_000, 5_000), rival: (5_100, with_battery_rival)}
+            cells.update({p: (9_000, 9_000) for p in rest})
+            value, _sets = _s4_at(plans, cells)
+            gap_change = with_battery_rival - 5_100
+            if verb is None:
+                for wrong in ("widens", "narrows"):
+                    assert wrong not in value, (
+                        f"S4_VERDICT_SHORT still says the battery {wrong} the lead on a "
+                        f"${gap_change} change in it, under the "
+                        f"${rt._BPM_GAP_TIE_USD:.2f} four rounded cells can hide: {value}")
+                assert "$100/yr" in value and "$101/yr" in value, (
+                    f"S4_VERDICT_SHORT dropped one of the two gaps it is comparing: {value}")
+            else:
+                assert verb in value, (
+                    f"S4_VERDICT_SHORT dropped the verb for a ${gap_change} change in the "
+                    f"lead, which is outside the ${rt._BPM_GAP_TIE_USD:.2f} bound: {value}")
+            seen[label] = _assert_within_density_cap("S4_VERDICT_SHORT", value, label)
+        assert rt.resolve_token("S4_VERDICT_SHORT") == published, (
+            "the synthetic matrix leaked out of this case")
+    return ("the widens/narrows verb needs a gap change bigger than the "
+            f"${rt._BPM_GAP_TIE_USD:.2f} four rounded cells can invent ("
+            + ", ".join(f"{k} {v}w" for k, v in seen.items()) + ")")
+
+
+@case
+def case_an_exact_tie_in_both_columns_is_rendered_as_a_tie():
+    """Two plans priced identically in both columns. There is no ranking
+    change, so the heading may not say "Yes" -- and there is no ranking
+    either, so it may not say "No" and hand the reader a plan choice the
+    artifact never made. Both readings are claims the cells do not support;
+    what the sentence has to do is render, and say the plans tie."""
+    plans, best, rival, rest = _matrix_pair()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = {t: rt.resolve_token(t) for t in ("S4_VERDICT_SHORT",) + _MATRIX_PLAN_TOKENS}
+        cells = {best: (5_000, 4_000), rival: (5_000, 4_000)}
+        cells.update({p: (9_000, 9_000) for p in rest})
+        value, (no_batt, with_batt) = _s4_at(plans, cells)
+        assert no_batt == with_batt == {best, rival}, (
+            f"an exact tie in both columns did not read as one: without a battery "
+            f"{sorted(no_batt)}, with one {sorted(with_batt)}")
+        for wrong in ("Yes", "No"):
+            assert not value.startswith(wrong), (
+                f"S4_VERDICT_SHORT answers {wrong!r} while {best} and {rival} price "
+                f"identically in both of the matrix's columns: {value}")
+        assert value.count("ties") == 2, (
+            f"S4_VERDICT_SHORT does not report both battery states as ties: {value}")
+        # The tie renders the rest of section 4 too: joint-cheapest is cheapest,
+        # and the win row's own gate must not read a tie as a household on the
+        # wrong plan.
+        with _matrix_priced(plans, cells):
+            for token in _MATRIX_PLAN_TOKENS:
+                assert rt.resolve_token(token).strip(), (
+                    f"{token} refused a matrix that ties {best} with {rival}")
+        words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "an exact tie")
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return (f"an exact tie in both columns renders as a tie rather than as a Yes or a No "
+            f"({value!r}, {words}w)")
+
+
+@case
+def case_two_plans_inside_the_rounding_band_still_get_a_whole_report():
+    """THE CONSTRAINT THIS PROJECT HAS BROKEN THREE TIMES. The same
+    cheapest-plan comparison also gates section 4's class="win" row, through
+    _best_plan_matrix_cell -- and generate_report folds any token refusal into
+    `failures`, which stops the run. So a household the matrix prices ONE
+    DOLLAR off the winner, inside the band the rounding cannot resolve, got no
+    report at all: `winners` was built with `==`, the household's plan was not
+    in it, and three tokens refused.
+
+    Driven in both columns and on both sides of the household's own cell, and
+    the sweep is over EVERY token rather than the one this finding named,
+    because "this sentence still renders" is not the claim that matters --
+    "this household still gets a report" is."""
+    _require_household()
+    plans, _best, _rival, _rest = _matrix_pair()
+    provider, cheapest, _priced = _plan_ranking_inputs()
+    assert cheapest in plans, (
+        f"the CSV's cheapest plan {cheapest!r} is not priced in "
+        f"battery_plan_matrix.json ({sorted(plans)}); this case cannot drive the gate")
+    rivals = [p for p in plans if p != cheapest]
+    rival = min(rivals, key=lambda p: plans[p]["no_battery"])
+    seen = {}
+    with _stub_plan(cheapest, provider):
+        published = _resolve_every_token()
+        for column in ("no_battery", "with_battery"):
+            for label, offset in (("a dollar below", -1), ("a dollar above", 1)):
+                moved = dict(zip(("no_battery", "with_battery"),
+                                 (plans[rival]["no_battery"], plans[rival]["with_battery"])))
+                moved[column] = plans[cheapest][column] + offset
+                with _matrix_priced(plans, {rival: (moved["no_battery"],
+                                                    moved["with_battery"])}):
+                    rendered = _resolve_every_token()
+                    value = rendered["S4_VERDICT_SHORT"]
+                assert not value.startswith("Yes"), (
+                    f"S4_VERDICT_SHORT calls a ${abs(offset)} difference in the {column} "
+                    f"column a change of plan: {value}")
+                seen[f"{column} {label}"] = value
+        assert _resolve_every_token() == published, (
+            "the substituted matrix cell leaked out of this case")
+    return (f"a household whose two best plans price within ${rt._BPM_TIE_USD:.2f} of each "
+            f"other still resolves all {len(published)} tokens, in both matrix columns and "
+            f"on both sides of its own cell ({len(seen)} drives)")
+
+
 @case
 def case_free_fix_verdicts_invert_rather_than_refusing_when_there_is_no_free_saving():
     """Three sentences sell the same free move: section 0 ("saves a modeled
