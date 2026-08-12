@@ -61,13 +61,41 @@ def _expected_month_labels():
 # Figures retired by artifact corrections; checked absent in
 # case_headline_figures_present_and_stale_ones_absent alongside the presence
 # of each figure's current artifact-derived form.
+#
+# TWO KINDS OF ENTRY LIVE HERE, and they are not equally permanent (issue #141
+# review round 3, finding 5). Read the group comments before adding one, and
+# say which kind the new entry is.
+#
+#   RETIRED BY METHOD. The first group below. A model changed -- a session
+#   detector, a payback framing -- so the old figure is not something the
+#   current pipeline can produce from any data. It cannot recur, and the
+#   entry is permanent.
+#
+#   RETIRED BY REGENERATION. The second group. The method is unchanged; the
+#   INPUTS were re-based, and every one of these figures is a value the
+#   current script would print again given data that rounds there. So they
+#   CAN recur, and this list is the one place in the suite where a correct
+#   report can fail: `battery_alone_payback_evening_only_yr` has already
+#   published 8.4, then 8.8, then 8.5, then 8.4 again (3ca0903, 298ad02,
+#   58fb13c, 28daa97), so "8.5 yr" is one regeneration away from being both
+#   the current figure and a banned string.
+#
+# WHAT TO DO IF THAT HAPPENS: the report is right and the list is wrong.
+# Delete the entry -- it has stopped describing a stale figure -- rather than
+# re-basing the prose to dodge it. What keeps the check honest in the
+# meantime is not this list but the PRESENCE half of the same case, which
+# derives each current figure from the artifact and requires it in the
+# document; the absence half only catches the specific superseded string a
+# sweep is known to have missed.
 RETIRED_FIGURES = [
+    # RETIRED BY METHOD (cannot recur).
     "560 charging sessions",   # pre-correction EV session count
     "$2,325",                  # pre-correction PW3 price-aware annual save
     "$3,438",                  # pre-correction MID package savings
     "$4,884",                  # pre-correction baseline bill at current rates
     "9.4-yr median",           # pre-correction Monte Carlo payback (now 6.0)
     "median 9.4 yr",           # same retired figure, its other prose form
+    # RETIRED BY REGENERATION (can recur -- see the note above).
     # The §3 "vs. current" column and the §4 conclusion sentence, on the
     # plan_results.csv / battery_plan_matrix.json generation that preceded
     # 28daa97 ("regenerate on the corrected interval data and the confirmed
@@ -85,6 +113,32 @@ RETIRED_FIGURES = [
     "$2,782",                  # TOU-ELEC margin, with battery (now $2,785)
     "8.5 yr",                  # evening-only battery payback (now 8.4 yr)
 ]
+
+# THIS LIST IS SCOPED TO index.html ON PURPOSE, and the reason is measured
+# rather than assumed (issue #141 review round 3, finding 3). TECHNICAL.md
+# quotes the same three artifacts and was missed by an index.html-only sweep
+# twice, so extending the absence check to it was tried against the file:
+#
+#   FALSE POSITIVES, 5 hits over 2 strings. "$2,329" appears four times in
+#   sections 3.13/3.14 as the THEN-CURRENT greedy annual save -- a different
+#   quantity from the retired TOU-DR2 plan margin that put the string on this
+#   list -- inside sentences whose subject is the lineage itself ("moved to
+#   $2,328/yr (from $2,329/yr)"), which cannot be edited away without
+#   deleting the history TECHNICAL.md exists to hold. "8.5 yr" appears once
+#   more as a rate-decline sensitivity endpoint. Naming superseded figures is
+#   that document's job; index.html is forbidden it (CLAUDE.md section 9).
+#
+#   TRUE POSITIVES, 0, and 6 SILENT MISSES. Section 3.4 transcribes the
+#   artifact's schema in BARE numbers -- 4884, 3438, 2325 -- so the "$4,884"
+#   forms on this list test absent while the line is stale. Every stale
+#   TECHNICAL.md figure this review found was either bare or a rounded
+#   restatement ("~$4,880/yr"), which no exact-string blocklist reaches.
+#
+# So the gate is deliberately NOT extended: it would fire only falsely there.
+# What that file needs is the POSITIVE check instead -- each current artifact
+# value asserted present in the passage that claims to quote it -- which is
+# what the presence half of case_headline_figures_present_and_stale_ones_absent
+# does for index.html, and is a separate piece of work.
 
 # The retired holiday-convention explanation; checked absent in
 # case_no_retired_holiday_discrepancy_note. Both pipelines now share the
@@ -1071,6 +1125,7 @@ def case_plan_and_battery_margins_match_their_artifacts():
     concl_start = HTML.index("<p><b>Conclusion:</b>", s4)
     conclusion = HTML[concl_start:HTML.index("</p>", concl_start)]
     quoted = []
+    s4_printed = {}
     for plan in bpm:
         if plan == base_plan:
             continue
@@ -1080,6 +1135,45 @@ def case_plan_and_battery_margins_match_their_artifacts():
                 f"§4's conclusion does not quote {plan}'s {column} margin over "
                 f"{base_plan}, {_fmt_usd(margin)}: {conclusion}")
             quoted.append(_fmt_usd(margin))
+        # The FIGURE §4 actually prints for this plan's no-battery margin --
+        # the first dollar amount after the plan's name, which is the "from
+        # ~$X/yr" of "over TOU-ELEC from ~$1,474 to ~$2,785". Read separately
+        # from the presence checks above because those ask whether the
+        # artifact's number is somewhere in the sentence; the comparison below
+        # asks what the READER is shown.
+        m = re.search(re.escape(plan) + r"[^$]*\$([\d,]+)", conclusion)
+        assert m, (f"§4's conclusion names {plan} with no dollar figure after it, so its "
+                   f"no-battery margin cannot be compared with §3's: {conclusion}")
+        s4_printed[plan] = float(m.group(1).replace(",", ""))
+
+    # THE TWO PUBLISHED MARGINS AGAINST EACH OTHER (issue #141 review round 3,
+    # finding 4). Everything above pins each section to its OWN artifact --
+    # §3 to plan_results.csv within $1.00, §4 to battery_plan_matrix.json by
+    # exact string -- and separately allows the two artifacts to sit $3.00
+    # apart. Those three tolerances compose: §3 could print +$961 and §4
+    # ~$963 for the same EV-TOU-2 no-battery margin, in adjacent sections,
+    # and every assertion above would pass. What the reader compares is the
+    # two PRINTED figures, so they are compared here directly.
+    #
+    # $1.00, not $3.00: the generators' own tie-out allowance is a licence for
+    # the two ARTIFACTS to differ, never a licence to print two different
+    # numbers at one reader for one quantity (CLAUDE.md section 3). All that
+    # is allowed between the two published figures is the dollar their two
+    # roundings can each be out by. If a regeneration ever pushes the
+    # artifacts far enough apart to break this, the remedy is to source both
+    # sections from one artifact, not to widen the bound.
+    s3_printed = {plan: float(cells[3].lstrip("+$").replace(",", ""))
+                  for plan, cells in _s3_plan_table_rows() if cells[3] != "—"}
+    agreed = []
+    for plan, printed4 in sorted(s4_printed.items()):
+        assert plan in s3_printed, (
+            f"§4's conclusion quotes a margin for {plan}, which §3's table does not price "
+            f"-- the two sections' margins cannot be reconciled")
+        assert abs(s3_printed[plan] - printed4) <= 1.0, (
+            f"§3 prints {plan}'s margin over {base_plan} as ${s3_printed[plan]:,.0f} and "
+            f"§4 prints the same margin as ${printed4:,.0f}: two adjacent sections showing "
+            f"one reader two different figures for one quantity")
+        agreed.append(f"{plan} ${printed4:,.0f}")
 
     # §0's runner-up line, the same no-battery margin one section earlier.
     runner_up = min((p for p in bpm if p != base_plan),
@@ -1091,7 +1185,8 @@ def case_plan_and_battery_margins_match_their_artifacts():
 
     return (f"§3's {checked} 'vs. current' cells, §4's conclusion ({', '.join(quoted)}) "
             f"and §0's {margin0} runner-up margin are all the margins their artifacts "
-            f"price over {base_plan}, and the two artifacts agree on the no-battery ones")
+            f"price over {base_plan}, the two artifacts agree on the no-battery ones, and "
+            f"§3 and §4 print the reader the same figure for each ({', '.join(agreed)})")
 
 
 def case_battery_hardware_sizing_table_matches_battery_sim_artifact():

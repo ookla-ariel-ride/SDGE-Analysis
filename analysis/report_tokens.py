@@ -2090,7 +2090,7 @@ _tok("BATTERY_VALUE_BEST_PLAN", kind="derived",
      sources=["data/battery_plan_matrix.json:plans"], fmt="usd0_signed")
 
 
-def _bpm_rivals(column):
+def _bpm_rivals(token, column):
     """The SET of OTHER plans battery_plan_matrix.json prices cheapest in
     `column` -- the runner-up, or all of them where the column ties.
 
@@ -2115,29 +2115,51 @@ def _bpm_rivals(column):
     (battery_plan_matrix.py ties the two out in-script), because these columns
     are what the sentences downstream quote.
 
-    NON-FINITE CELLS are deliberately not guarded here. Both callers guard
-    them, by name and immediately: S4_VERDICT_SHORT runs _bpm_cheapest over
-    every cell of BOTH columns (which is a full-column _require_finite) and
-    then _require_finite on the two gaps; PLAN_MARGIN_VS_RUNNER_UP
-    _require_finite's its margin. A nan cell therefore still refuses with a
-    message naming the token and the column, and this helper does not need a
-    third copy of that check -- but it must not silently return an EMPTY set
-    to a caller either, which is why the tie filter below falls back to the
-    min-selected plan rather than to nothing (nan == nan is False).
+    NON-FINITE CELLS ARE REFUSED HERE, before the ranking runs, and `token`
+    exists so that refusal can name the caller (issue #141 review round 3).
+    This function's whole output is an ordering -- min() over the rival cells,
+    then an `==` filter for ties -- and every comparison a nan takes part in
+    is False, so a nan does not lose the min(), it makes the WINNER depend on
+    dict order. The old note here said the callers guarded it; they did not.
+    PLAN_MARGIN_VS_RUNNER_UP _require_finite's its MARGIN, which stays finite
+    when a nan cell hands the runner-up slot to some other plan, so it
+    published a real margin against a plan that is not the runner-up. A
+    guarantee has to live where the ordering is taken.
+
+    THE CELLS CHECKED ARE THE CELLS RANKED: `others` in `column`, which is
+    exactly what min() and the `==` filter read. The household's OWN cell is
+    not ranked here at all -- it is subtracted from the return value by both
+    callers, each of which _require_finite's that difference immediately and
+    by name (S4_VERDICT_SHORT its two gaps, PLAN_MARGIN_VS_RUNNER_UP its
+    margin), so a nan there still refuses naming the gap it broke rather than
+    a column it never entered.
+
+    With the column finite, the `==` filter cannot come back empty (a real
+    number equals itself), so the fallback below is unreachable defence rather
+    than the load-bearing line it used to be.
     """
     plan, _best = _bpm_best()
     others = {k: v for k, v in _bpm_plans().items() if k != plan}
     if not others:
         raise SystemExit(f"report_tokens: battery_plan_matrix.json prices only {plan!r}, "
                           "so there is no runner-up plan to measure a margin against")
+    _require_finite(token,
+                    f"which other plan the matrix prices cheapest in its {column} column",
+                    **{f"{p}_{column}": v[column] for p, v in others.items()})
     name, row = min(others.items(), key=lambda kv: kv[1][column])
     tied = {k for k, v in others.items() if v[column] == row[column]}
+    # `or {name}` is now belt-and-braces: with the column finite, min()'s own
+    # row is always in `tied`. It stays because an empty set is the one return
+    # value the callers cannot read at all.
     return tied or {name}
 
 
-def _runner_up(column="no_battery"):
+def _runner_up(token, column="no_battery"):
     """ONE cheapest other plan in `column`, whether or not the household's own
     plan leads it.
+
+    `token` is the caller's own name, passed straight through to _bpm_rivals
+    so its finiteness refusal says which token was being resolved.
 
     Both callers -- S4_VERDICT_SHORT and PLAN_MARGIN_VS_RUNNER_UP -- describe
     the difference as this plan's "lead" / "margin", words that are false if
@@ -2164,7 +2186,7 @@ def _runner_up(column="no_battery"):
     in both columns", is not taken on this function's return value at all: it
     is taken on _bpm_rivals' sets.
     """
-    name = sorted(_bpm_rivals(column))[0]
+    name = sorted(_bpm_rivals(token, column))[0]
     return name, _bpm_plans()[name]
 
 
@@ -2278,7 +2300,8 @@ def _s4_verdict_short(ctx):
     # identity between the columns. Taking this off _runner_up()'s names
     # instead would let a tie between two rivals in one column invent an
     # identity change out of whichever name sorted first.
-    rivals_no, rivals_with = _bpm_rivals("no_battery"), _bpm_rivals("with_battery")
+    rivals_no = _bpm_rivals("S4_VERDICT_SHORT", "no_battery")
+    rivals_with = _bpm_rivals("S4_VERDICT_SHORT", "with_battery")
     shared = rivals_no & rivals_with
     if shared:
         name_no = name_with = sorted(shared)[0]
@@ -2295,27 +2318,48 @@ def _s4_verdict_short(ctx):
     # Three answers, because the sets admit three shapes and only two of them
     # are a Yes/No:
     #
-    #   no plan in both sets  -> "Yes". Nothing cheapest without a battery is
-    #      cheapest with one. The winner really does change, and the cells
-    #      settle that they do.
-    #   one plan, both sets   -> "No". One plan, alone, is cheapest at both
-    #      battery states -- this household's case, EV-TOU-5 by $961 and
-    #      $1,612.
-    #   anything else         -> the sets share a plan but at least one of
-    #      them names more than one, i.e. some column prices two plans
-    #      IDENTICALLY. A TIE IS NOT A RANKING CHANGE, so this is not "Yes";
-    #      and no single plan is the answer at both states, so it is not a
-    #      "No" that hands the reader a plan choice the artifact never made.
-    #      It renders: a household whose two best plans price the same in one
-    #      column gets a report saying so, and the clause after the dash
-    #      states where the plans actually stand. That third state is a real
-    #      tie in the artifact, not a rounding hedge -- which is why it
-    #      survives the identity comparison going back to `==`.
+    # THE ANSWER IS TAKEN ON THE INTERSECTION, and on nothing else (issue
+    # #141 review round 3). The question is whether ONE plan survives the
+    # battery, so the quantity that answers it is the set of plans that are
+    # cheapest-or-joint-cheapest in BOTH columns -- joint-cheapest being
+    # cheapest, exactly as the win row's own gate reads it in
+    # _best_plan_matrix_cell. Three answers, by the SIZE of that intersection:
+    #
+    #   empty      -> "Yes". Nothing cheapest without a battery is cheapest
+    #      with one. The winner really does change, and the cells settle that
+    #      they do.
+    #   one plan   -> "No". Exactly one plan is cheapest-or-joint-cheapest at
+    #      both battery states, so staying on it is the answer whatever the
+    #      battery does -- this household's case, EV-TOU-5 by $961 and $1,612.
+    #      It is STILL "No" when that plan only TIES for cheapest in one of
+    #      the columns: a plan the artifact cannot separate from a rival in
+    #      one column and prices strictly below every rival in the other is
+    #      the single plan that is never beaten, which is the whole of what
+    #      the heading asks.
+    #   two or more-> "Too close to call". Every plan in the intersection is
+    #      the minimum of both columns, so two of them means two plans priced
+    #      IDENTICALLY in BOTH columns: there is no ranking change, so this is
+    #      not "Yes", and there is no single plan to name either, so it is not
+    #      a "No" that hands the reader a plan choice the artifact never made.
+    #      That is a real tie in the artifact, not a rounding hedge -- which is
+    #      why it survives the identity comparison going back to `==`.
+    #
+    # THE PREMISE THIS REPLACES, and why it was false: the third state used to
+    # be "either set names more than one plan", justified as "no single plan is
+    # the answer at both states". A tie in ONE column does not make that true.
+    # us 100/100, B 100/200, C 300/300 ties B without a battery and beats it
+    # outright with one, so the household's plan IS the answer at both states
+    # -- and section 4 renders its cells inside a fixed class="win" row (which
+    # resolves, because joint-cheapest passes that gate), so the old branch put
+    # a heading saying the question could not be settled directly above markup
+    # settling it. The mirror, us 100/100 against B 200/100, is the same shape.
+    # A heading and the row beneath it are read together or not at all.
     no_batt = _bpm_cheapest("S4_VERDICT_SHORT", "no_battery")
     with_batt = _bpm_cheapest("S4_VERDICT_SHORT", "with_battery")
-    if not (no_batt & with_batt):
+    best_at_both = no_batt & with_batt
+    if not best_at_both:
         answer = "Yes"
-    elif no_batt == with_batt and len(no_batt) == 1:
+    elif len(best_at_both) == 1:
         answer = "No"
     else:
         answer = "Too close to call"
@@ -2421,7 +2465,8 @@ def _plan_margin_vs_runner_up(ctx):
     fmt="usd0", so the negative reads "-$500" and not "$-500" -- shared,
     because building that string inline here is exactly what left the
     identical defect standing next door in _s4_verdict_short."""
-    gap = _runner_up()[1]["no_battery"] - _bpm_best()[1]["no_battery"]
+    gap = (_runner_up("PLAN_MARGIN_VS_RUNNER_UP")[1]["no_battery"]
+           - _bpm_best()[1]["no_battery"])
     _require_finite("PLAN_MARGIN_VS_RUNNER_UP", "what this plan's margin is", margin=gap)
     return _usd0_signed(gap)
 

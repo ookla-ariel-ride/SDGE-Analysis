@@ -392,12 +392,12 @@ carrying a retired package-payback framing. Its schema:
 
 - `basis` — provenance string (also records the actual 365-day billed baseline $3,282 on
   2025-vintage tariffs);
-- `model_baseline_current_rates`: **4884** (= §3.6 output);
-- `packages.LOW`: `cost` 0, `savings_yr` 1193, `savings_range` [1012, 1672], `note`,
-  `projected_bill_current_rates_yr` **3691**;
-- `packages.MID`: `cost` 14500, `savings_yr` **3438**, `battery_alone_yr` **2325**
-  (price-aware; `battery_alone_post_ev_fix_yr` **2245**), `battery_alone_payback_yr` **6.2**
-  (`battery_alone_payback_evening_only_yr` 8.5),
+- `model_baseline_current_rates`: **4904** (= §3.6 output);
+- `packages.LOW`: `cost` 0, `savings_yr` 1221, `savings_range` [1009, 1700], `note`,
+  `projected_bill_current_rates_yr` **3683**;
+- `packages.MID`: `cost` 14500, `savings_yr` **3459**, `battery_alone_yr` **2328**
+  (price-aware; `battery_alone_post_ev_fix_yr` **2238**), `battery_alone_payback_yr` **6.2**
+  (`battery_alone_payback_evening_only_yr` 8.4),
   `projected_bill_current_rates_yr` **1445**, `note` (single integrated shift-then-battery run);
 - `packages.HIGH`: `cost` 20400, `marginal_vs_mid_yr` **216** post-behavior (~27-yr marginal payback on the
   $5,900 expansion — buys outage endurance, not savings);
@@ -1019,7 +1019,7 @@ and billing replicates `analyze_norelief.py` exactly (interval netting, export c
 max(rate − NBC, 0), BSC × 365, holiday-as-weekend TOU assignment) so the no-battery column
 **ties out to the committed `data/plan_results.csv`** — asserted in-script. All three plans
 share the same 2026 three-period TOU windows, so a single dispatch trace is billed under
-each plan. Results: EV-TOU-5 $4,849 → $2,564 (battery value **$2,318/yr**), EV-TOU-2
+each plan. Results: EV-TOU-5 $4,882 → $2,564 (battery value **$2,318/yr**), EV-TOU-2
 $5,843 → $4,176 ($1,667), TOU-ELEC $6,356 → $5,349 ($1,007) — the battery is worth the most
 on EV-TOU-5, so it strengthens (not changes) the plan answer. The artifact also records a
 `canonical_crosscheck_ev_tou_5` block ($4,904 no-battery / $2,328 battery value from
@@ -4427,8 +4427,8 @@ the prose numbers, then grep the HTML for the superseded figures (`CLAUDE.md` §
 **Report structure conventions (preserve on regeneration; specs in `CLAUDE.md` §§9–11).**
 
 - **One rate vintage per projection:** the §7 package cards state projected bills **at
-  constant 6/1/2026 rates** — LOW ~$3,700/yr (~$309/mo), MID ~$1,445/yr (~$120/mo) vs the
-  ~$4,880/yr no-change model baseline — never against the $3,282 actual (billed largely on
+  constant 6/1/2026 rates** — LOW ~$3,700/yr (~$307/mo), MID ~$1,445/yr (~$120/mo) vs the
+  ~$4,904/yr no-change model baseline — never against the $3,282 actual (billed largely on
   2025 tariffs), which is noted as non-comparable.
 - **Confidence labels:** inline pills tag claims as `measured` (meters/bills/multi-source),
   `modeled` (validated model at current rates), or `estimated` (rate index, single cleaning
@@ -4534,7 +4534,7 @@ guard against a private copy reappearing. Kept as a heading because other sectio
 **6.6 Other limitations** (from report §14): rate tables go stale on SDG&E (Jan/Jun) and CEA
 (Feb/Jun) revision cycles; TOU-DR-P event surcharges are only modeled in the §3.5 wildcard;
 battery installed prices are estimates; the simple 6.2-yr price-aware battery-alone payback in
-`package_results.json` (8.5 yr evening-only) uses no discounting or escalation (the Monte
+`package_results.json` (8.4 yr evening-only) uses no discounting or escalation (the Monte
 Carlo in §3.5 and the published escalation ladder in `battery_dispatch_policies.json` §3.13
 handle both); the endurance sims' full-SOC
 and 14-day-cap assumptions (§4); `deep_analyses.py` reads `base_save` from
