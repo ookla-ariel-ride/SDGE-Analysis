@@ -2410,6 +2410,223 @@ def case_the_widens_verb_needs_a_gap_change_the_rounding_can_resolve():
             + ", ".join(f"{k} {v}w" for k, v in seen.items()) + ")")
 
 
+# ---------------------------------------------------------------------------
+# THE RUNNER-UP IS A PER-COLUMN FACT (issue #141 adversarial review).
+#
+# S4_VERDICT_SHORT quotes two figures, one per column of
+# battery_plan_matrix.json, and both used to be measured against ONE rival --
+# whichever plan the NO-BATTERY column ranked second. Nothing makes that plan
+# the with-battery runner-up: a battery is worth a different amount under each
+# tariff, which is the entire reason the matrix has three plans in it.
+#
+# The reviewer's worked example, all three plans valid:
+#
+#     plan   no_battery  with_battery
+#     us            100           100
+#     B             200           200
+#     C             300           150
+#
+# The household is cheapest in BOTH columns, so the Yes/No prefix was never
+# wrong. What was wrong is the clause after it: measured against B in both
+# columns it reads "leaves us's lead over B at $100/yr against $100/yr", while
+# the margin that actually survives the battery is $50 -- against C, the plan
+# the with-battery column really ranks second. Push C down and the published
+# sentence keeps reporting a $100 lead over a near-tie.
+#
+# The cases below hold three things. The rival is picked inside each column.
+# When the two columns disagree about who it is, the sentence says the rival
+# changed and names both, rather than quoting a gap change that is partly a
+# change of opponent. And a TIE between two rivals in one column may not
+# invent that identity change out of key order -- which is why the decision is
+# taken on _bpm_rivals' SETS.
+#
+# Every scenario here leaves the household cheapest in both columns on
+# purpose. A household the matrix ranks second is refused by the win-row
+# tokens (issue #178, case_a_household_the_matrix_ranks_second_is_refused_by_name),
+# and these cases sweep the WHOLE token set expecting it to resolve, so mixing
+# the two would assert against that refusal instead of alongside it.
+# ---------------------------------------------------------------------------
+def _matrix_trio():
+    """(plans, household plan, its no-battery rival, a third plan, everyone
+    else). The per-column cases need three plans: two rivals, so the columns
+    can rank them differently."""
+    plans, best, near, rest = _matrix_pair()
+    assert rest, ("data/battery_plan_matrix.json prices two plans; the per-column "
+                  "runner-up cases need a third to move between the columns")
+    return plans, best, near, rest[0], rest[1:]
+
+
+@case
+def case_the_runner_up_is_taken_per_column_not_reused_from_the_no_battery_one():
+    """THE REVIEWER'S CASE, verbatim: us 100/100, B 200/200, C 300/150.
+
+    B is the no-battery runner-up and C is the with-battery one, and the true
+    margin therefore HALVES, from $100/yr to $50/yr. Reusing B for both
+    columns published "the battery leaves ...'s lead over B at $100/yr against
+    $100/yr" -- a reassuring sentence about a margin that had contracted, sat
+    directly above a matrix rendering all six of these cells.
+
+    The fix is not to quote C's number under B's name; that would still be one
+    named opponent and two figures, which reads as a margin moving against a
+    fixed rival. Both rivals are named and the sentence states that the
+    cheapest rival changed, because that is the fact -- and the widens /
+    narrows / leaves verbs are dropped, since each of them asserts something
+    about a single comparison priced twice and this is not one."""
+    plans, best, near, far, rest = _matrix_trio()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = _resolve_every_token()
+        cells = {best: (100, 100), near: (200, 200), far: (300, 150)}
+        cells.update({p: (9_000, 9_000) for p in rest})
+        value, (no_batt, with_batt) = _s4_at(plans, cells)
+        # The prefix was never the defect and must not become one: this
+        # household is cheapest in both columns, so the answer is still "No".
+        assert no_batt == with_batt == {best}, (
+            f"this case no longer has {best} cheapest in both columns (without a battery "
+            f"{sorted(no_batt)}, with one {sorted(with_batt)}), so it is testing the "
+            f"prefix rather than the clause after it")
+        assert value.startswith("No —"), (
+            f"S4_VERDICT_SHORT stopped answering 'No' for a household the matrix prices "
+            f"cheapest in both columns: {value}")
+        # THE DEFECT, by its exact published signature.
+        assert "$100/yr against $100/yr" not in value, (
+            f"S4_VERDICT_SHORT still measures both columns against {near}: {far} is the "
+            f"with-battery runner-up at 150 against this household's 100, so the margin "
+            f"that survives the battery is $50/yr, not $100/yr: {value}")
+        assert f"lead over {near}" not in value and f"lead over {far}" not in value, (
+            f"S4_VERDICT_SHORT still frames one named opponent across both columns while "
+            f"the runner-up changes from {near} to {far}: {value}")
+        for verb in ("widens", "narrows", "leaves"):
+            assert verb not in value, (
+                f"S4_VERDICT_SHORT says the battery {verb!r} a gap it measured against "
+                f"{near} without one and {far} with one -- a change of opponent is not a "
+                f"change in a lead: {value}")
+        assert "the cheapest rival changes with the battery" in value, (
+            f"S4_VERDICT_SHORT does not tell the reader the comparison changed identity: "
+            f"{value}")
+        assert f"{best} leads {near} by $100/yr without one" in value, (
+            f"S4_VERDICT_SHORT does not state the no-battery standing against the "
+            f"no-battery runner-up {near}: {value}")
+        assert f"leads {far} by $50/yr with one" in value, (
+            f"S4_VERDICT_SHORT does not state the with-battery standing against the "
+            f"with-battery runner-up {far}, whose 150 leaves a $50/yr margin: {value}")
+        words = _assert_within_density_cap(
+            "S4_VERDICT_SHORT", value, "a runner-up that changes between the columns")
+        # "this sentence renders" is not the claim that matters; "this
+        # household still gets a report" is.
+        with _matrix_priced(plans, cells):
+            _resolve_every_token()
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return (f"the runner-up is taken in each column ({near} without a battery, {far} with "
+            f"one), so a margin that halves is published as $100/yr then $50/yr against "
+            f"two named rivals rather than as $100/yr twice ({value!r}, {words}w)")
+
+
+@case
+def case_a_changed_runner_up_that_leaves_a_near_tie_does_not_read_as_reassuring():
+    """The same shape pushed to where the old sentence did the most damage:
+    us 100/100, B 200/200, C 300/101.
+
+    The household still wins both columns, and against B the battery still
+    "leaves the lead at $100/yr against $100/yr". Against C -- the plan the
+    with-battery column actually ranks second -- the margin is ONE STORED
+    DOLLAR, which two roundings cannot even separate from a cent. The old
+    sentence reported a comfortable, unchanged $100 lead over a household that
+    is very nearly tied on the plan it is being told to keep.
+
+    The near-tie also has to be hedged rather than quoted: "$1/yr" is a
+    precision two rounded cells do not carry, so the clause bounds it at
+    _BPM_TIE_USD instead."""
+    plans, best, near, far, rest = _matrix_trio()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    with _stub_plan(best, provider):
+        published = _resolve_every_token()
+        cells = {best: (100, 100), near: (200, 200), far: (300, 101)}
+        cells.update({p: (9_000, 9_000) for p in rest})
+        value, (no_batt, with_batt) = _s4_at(plans, cells)
+        assert no_batt == with_batt == {best}, (
+            f"this case no longer has {best} cheapest in both columns: "
+            f"{sorted(no_batt)} / {sorted(with_batt)}")
+        assert "$100/yr against $100/yr" not in value and "$100/yr to $100/yr" not in value, (
+            f"S4_VERDICT_SHORT reports an unchanged $100/yr lead while {far} prices "
+            f"within a dollar of this household with a battery: {value}")
+        for verb in ("widens", "narrows", "leaves"):
+            assert verb not in value, (
+                f"S4_VERDICT_SHORT attributes to the battery a gap change measured "
+                f"against two different rivals: {value}")
+        assert f"leads {far} by under {rt._usd0(1 + rt._BPM_TIE_USD)}/yr with one" in value, (
+            f"S4_VERDICT_SHORT does not report the near-tie against {far}, or quotes a "
+            f"$1/yr size two rounded cells cannot carry: {value}")
+        assert "$1/yr" not in value, (
+            f"S4_VERDICT_SHORT quotes a $1/yr margin off two cells that could be a cent "
+            f"apart: {value}")
+        words = _assert_within_density_cap(
+            "S4_VERDICT_SHORT", value, "a changed runner-up leaving a near-tie")
+        with _matrix_priced(plans, cells):
+            _resolve_every_token()
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return (f"a runner-up change that leaves a near-tie is published as one ({value!r}, "
+            f"{words}w) rather than as an unchanged $100/yr lead over {near}")
+
+
+@case
+def case_one_runner_up_across_both_columns_still_reads_as_a_single_comparison():
+    """THE OTHER EDGE. Per-column selection must not start announcing a
+    changed rival where the rival did not change, and a TIE must not be able
+    to announce one either.
+
+    ONE RIVAL, BOTH COLUMNS. us 5000/5000, B 5100/5300: B is the runner-up
+    twice, so there is a single comparison priced at two battery states and
+    the widens verb is exactly the right claim. Nothing about this branch
+    moves.
+
+    A TIE IN ONE COLUMN, which is where a name-based check breaks. us
+    100/100, B 200/200, C 200/150: B and C price IDENTICALLY without a
+    battery, so both are runner-up there, and C is the runner-up with one.
+    C is therefore a cheapest rival in BOTH columns -- one comparison, no
+    identity change. Pick a single name per column instead and whichever key
+    min() reaches first decides: B without a battery, C with one, and the
+    sentence announces a change of rival that the artifact does not contain.
+    The decision is taken on the SETS, which intersect, so it does not."""
+    plans, best, near, far, rest = _matrix_trio()
+    provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
+    seen = {}
+    with _stub_plan(best, provider):
+        published = _resolve_every_token()
+        for label, cells, expected in (
+                ("one rival, both columns",
+                 {best: (5_000, 5_000), near: (5_100, 5_300)},
+                 f"the battery widens {best}'s lead over {near} from $100/yr to $300/yr"),
+                ("a tie in the no-battery column",
+                 {best: (100, 100), near: (200, 200), far: (200, 150)},
+                 f"the battery narrows {best}'s lead over {far} from $100/yr to $50/yr")):
+            cells = dict(cells)
+            cells.update({p: (9_000, 9_000) for p in rest if p not in cells})
+            value, (no_batt, with_batt) = _s4_at(plans, cells)
+            assert no_batt == with_batt == {best}, (
+                f"{label}: {best} is no longer cheapest in both columns "
+                f"({sorted(no_batt)} / {sorted(with_batt)})")
+            assert value == f"No — {expected}", (
+                f"{label}: S4_VERDICT_SHORT no longer renders the single-rival wording. "
+                f"Expected 'No — {expected}', got {value!r}")
+            assert "the cheapest rival changes" not in value, (
+                f"{label}: S4_VERDICT_SHORT announces a change of rival that the matrix "
+                f"does not contain: {value}")
+            seen[label] = _assert_within_density_cap("S4_VERDICT_SHORT", value, label)
+            with _matrix_priced(plans, cells):
+                _resolve_every_token()
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return ("one rival across both columns keeps the single-comparison wording, and a tie "
+            "between two rivals in one column does not invent a change of rival ("
+            + ", ".join(f"{k} {v}w" for k, v in seen.items()) + ")")
+
+
 @case
 def case_an_exact_tie_in_both_columns_is_rendered_as_a_tie():
     """Two plans priced identically in both columns. There is no ranking
