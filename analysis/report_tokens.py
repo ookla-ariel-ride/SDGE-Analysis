@@ -1241,34 +1241,39 @@ def _sec9_teaser(ctx):
     # downstream of it, use behavior_rebuild's 563, so a teaser sourced from
     # deep_results contradicted the section it introduces.
     #
-    # The phantom figures below stay on deep_results because its own method
-    # note ("25th-pct 3-5am non-EV draw") is the one that matches section 9's
-    # own 3-5am framing. (Not because it uniquely carries a $/yr figure --
-    # quiet_night_floor.json carries one too.) They do NOT match the
-    # report body's own phantom numbers, which come from extra_results.json
-    # (44 nights, 1.025 kW, 8,979 kWh/yr) and appear in sections 0 and 13 --
-    # section 9's own phantom sentence cites no artifact at all. A third
-    # artifact, quiet_night_floor.json, prices the same load 77-79% higher
-    # ($3,156.89/$3,196.27, two agreeing methods) and is cited nowhere in the
-    # report (README/TECHNICAL.md do document it). That
-    # three-way split is real and unresolved; it is tracked in issue #140
-    # rather than papered over here, since settling it means changing
-    # published figures in sections 0/9/13.
+    # THE ALWAYS-ON FLOOR COMES FROM quiet_night_floor.json, and from nothing
+    # else (issue #140). Three artifacts have carried a figure for this one
+    # load, and only one of them can back a published number:
+    #   - data/extra_results.json:phantom has NO generator, in this repo or in
+    #     its history -- extra_results.py lists it in FROZEN_KEYS and copies it
+    #     through, saying in its own comment that the methodology has no
+    #     record here. A figure that cannot be reproduced cannot be published
+    #     (CLAUDE.md section 0).
+    #   - data/deep_results.json:phantom does have a live generator, but
+    #     deep_analyses.py prices it with a hardcoded flat $0.20/kWh with the
+    #     rates module computed and unused on the line above; the hour-weighted
+    #     all-in import rate across the analysis year is $0.375/kWh, so that
+    #     blend is roughly half the real price of the energy. Tracked as its
+    #     own issue (#172) against that script; see TECHNICAL.md section 3.5.
+    #   - data/quiet_night_floor.json takes every rate from rates.py and
+    #     prices the same load two independent ways that agree to 1.2%.
+    # So the floor figures here are that artifact's, resolved through the SAME
+    # token formulas sections 0 and 13 render, which is what stops one load
+    # from carrying three numbers across three sections again.
     br = _json("behavior_rebuild.json")
-    dr = _json("deep_results.json")
-    sessions, kwh = _figures(
-        "SEC9_TEASER", "how much overnight load section 9 found",
-        ev_sessions=br["detection"]["sessions"], phantom_annual_kwh=dr["phantom"]["annual_kwh"])
-    cost, = _amounts("SEC9_TEASER", "what the overnight phantom baseload costs",
-                     phantom_annual_cost_at_blend=dr["phantom"]["annual_cost_at_blend"])
-    return (f"{sessions} EV charging sessions logged; overnight "
-            f"phantom baseload {kwh:,} kWh/yr "
-            f"(~${cost:,}/yr)")
+    sessions, = _figures(
+        "SEC9_TEASER", "how many charging sessions section 9 found",
+        ev_sessions=br["detection"]["sessions"])
+    cost, = _amounts("SEC9_TEASER", "what the always-on overnight floor costs",
+                     price_map_usd=_night_floor_pricing()["method_a_price_map"]["total_usd"])
+    return (f"{sessions} EV charging sessions logged; an always-on overnight floor of "
+            f"{_night_floor_annual_kwh(ctx)}, about ${cost:,.0f}/yr")
 
 
 _tok("SEC9_TEASER", kind="derived", get=_sec9_teaser,
      sources=["data/behavior_rebuild.json:detection.sessions",
-              "data/deep_results.json:phantom"])
+              "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
+              "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
 
 
 def _sec12_teaser(ctx):
@@ -5148,6 +5153,10 @@ def _night_floor():
     return _json("quiet_night_floor.json")["night_floor"]
 
 
+def _night_floor_pricing():
+    return _json("quiet_night_floor.json")["pricing"]
+
+
 def _night_floor_sample(ctx):
     nf = _night_floor()
     quiet, total = _quantities(
@@ -5215,15 +5224,15 @@ def _night_floor_annual_cost(ctx):
     contradiction, and refusing on their difference would withhold the section
     over the very disagreement the generator documents.
 
-    A THIRD figure for the same load lives in data/extra_results.json:phantom
-    (a 25th-percentile 3-5am draw over 44 nights, 8,979 kWh/yr) and is what
-    sections 0 and 9 currently quote. It is a DIFFERENT MEASUREMENT -- a
-    different window, a different statistic, a different night-selection gate
-    -- not a competing value for this one, so nothing here compares the two.
-    That the report carries both is a real, unresolved split, tracked in issue
-    #140 because settling it means changing published figures; SEC9_TEASER's
-    own comment traces it. This token names its own artifact so a reader can
-    see which of the three it is.
+    EVERY SECTION THAT PRICES THIS LOAD NOW RESOLVES THROUGH HERE (issue
+    #140). Two older figures for the same load exist in the archive --
+    extra_results.json:phantom, which has no generator at all, and
+    deep_results.json:phantom, whose generator prices the energy at a
+    hardcoded flat $0.20/kWh -- and neither backs a published number any
+    more; SEC9_TEASER's own comment states the evidence for that. They are
+    labelled as superseded workpapers in TECHNICAL.md sections 3.5 and 3.11,
+    which is where CLAUDE.md puts method lineage, so a reader who finds one in
+    the archive can see it is not the live figure.
 
     THE SAME COVERAGE GATE AS THE kWh FIGURE, for the same reason: both
     pricing methods sum over the interval series the run was given, so on a
@@ -5241,57 +5250,69 @@ def _night_floor_annual_cost(ctx):
 
 
 def _phantom_method_discrepancy(ctx):
-    """The OTHER live figure for this same always-on load, and the size of the
-    disagreement.
+    """The two live pricings of this one load, and how far apart they land.
 
-    Section 9 publishes deep_results.json's phantom (a 25th-percentile 3-5am
-    non-EV draw) and section 13 now publishes quiet_night_floor.json's (a
-    1-5am quiet-night median, priced two ways). They are two live methods on
-    one load, two sections apart, and CLAUDE.md section 0 requires that a
-    disagreement between two live methods be reconciled explicitly rather than
-    both being published and left to the reader.
+    WHAT THIS TOKEN NOW COMPARES, AND WHY THAT CHANGED (issue #140). It used
+    to set section 9's figure against section 13's, because the two sections
+    priced the same overnight load out of two different artifacts. They no
+    longer do: every section resolves the floor through the NIGHT_FLOOR_*
+    formulas above, all of them reading quiet_night_floor.json. The name still
+    describes what is measured here -- the discrepancy between the two METHODS
+    that price the phantom floor -- but the two methods are now method (a),
+    per-interval multiplication against the price map, and method (b), a full
+    monthly NEM re-bill of the counterfactual year.
 
-    Reclassifying s13#11 to prose is what created the exposure: the retired
-    HUMAN_REASONS entry's own invariant was that these figures existed only
-    inside SEC9_TEASER's fixed sentence. So the reconciliation is this token's
-    to supply.
+    CLAUDE.md section 0 requires exactly this and nothing less: two live
+    methods run on the same data, reconciled explicitly and quantified, which
+    is also the one thing section 9 forbids being read as process narrative
+    (both figures are current; neither supersedes the other).
 
-    It does NOT decide which is right -- issue #140 tracks that, and settling
-    it means changing published figures in three sections. It states both,
-    computes how far apart each half is, and says the report does not settle
-    it. DIFFERENT METHODS on the same load: nothing here gates on agreement."""
-    dr = _json("deep_results.json")["phantom"]
-    nf = _night_floor()
-    pricing = _json("quiet_night_floor.json")["pricing"]
-    s9_kwh, = _quantities("PHANTOM_METHOD_DISCREPANCY",
-                          "how much energy section 9 attributes to the always-on load",
-                          annual_kwh=dr["annual_kwh"])
-    s9_usd, = _amounts("PHANTOM_METHOD_DISCREPANCY",
-                       "what section 9 says the always-on load costs",
-                       annual_cost_at_blend=dr["annual_cost_at_blend"])
-    kw, nights = _quantities("PHANTOM_METHOD_DISCREPANCY",
-                             "what this section measures the same load at",
-                             median_kw=nf["median_kw"], nights_total=nf["nights_total"])
-    s13_usd, = _amounts("PHANTOM_METHOD_DISCREPANCY",
-                        "what this section says the same load costs",
-                        price_map_usd=pricing["method_a_price_map"]["total_usd"])
-    s13_kwh = kw * nights * 24
+    IT REPORTS THE SCOPE OF THE AGREEMENT, NOT JUST ITS SIZE. Both methods
+    start from the identical _split_floor allocation and take every rate
+    constant from the same rates.py, so their closeness says the netting and
+    aggregation treatment is not where a material error lives -- and says
+    nothing about the rate constants (an error there is inherited by both) or
+    about the constant-floor allocation itself, whose own limitation
+    quiet_night_floor.py quantifies separately. The artifact states that scope
+    in pricing.reconciliation.scope_of_agreement; this token refuses to render
+    an agreement claim at all if that statement is ever dropped, rather than
+    publishing a bare percentage a reader would over-read.
+
+    Nothing here gates on the two agreeing: the artifact has already
+    decomposed the gap to its cause (PCIA priced differently inside buckets
+    whose net sign does not change), and a reconciliation that refused on a
+    reconciled difference would withhold the section over its own subject."""
+    pricing = _night_floor_pricing()
+    rec = pricing.get("reconciliation") or {}
+    scope = str(rec.get("scope_of_agreement", "")).strip()
+    if not scope:
+        raise SystemExit(
+            "report_tokens: PHANTOM_METHOD_DISCREPANCY will not state that two pricing "
+            "methods agree without data/quiet_night_floor.json:pricing.reconciliation."
+            "scope_of_agreement, the artifact's own statement of what their agreement "
+            "does and does not validate")
+    a, b = _amounts("PHANTOM_METHOD_DISCREPANCY", "what each method prices the floor at",
+                    price_map_usd=pricing["method_a_price_map"]["total_usd"],
+                    rebill_usd=pricing["method_b_rebill"]["total_usd"])
+    gap_usd, gap_pct = _figures("PHANTOM_METHOD_DISCREPANCY",
+                                "how far apart the two pricings land",
+                                gap_usd=rec["gap_usd"], gap_pct=rec["gap_pct"])
     _claim("PHANTOM_METHOD_DISCREPANCY", "how far apart the two methods are",
-           SUPPORTED if s9_kwh > 0 and s9_usd > 0 else NOT_DETERMINED,
-           f"section 9's figures are {s9_kwh!r} kWh and ${s9_usd!r}, which cannot be a "
-           "base for the difference")
-    return (f"section 9 prices this same always-on load at {s9_kwh:,.0f} kWh/yr and "
-            f"${s9_usd:,.0f}/yr from a 25th-percentile 3–5am draw, against "
-            f"{s13_kwh:,.0f} kWh/yr and ${s13_usd:,.0f}/yr here — the energy differs by "
-            f"{abs(s13_kwh - s9_kwh) / s9_kwh * 100:.0f}% and the cost by "
-            f"{abs(s13_usd - s9_usd) / s9_usd * 100:.0f}%, and this report does not settle "
-            "which pricing is right")
+           SUPPORTED if a > 0 else NOT_DETERMINED,
+           f"the price-map total is ${a!r}, which cannot be a base for a percentage")
+    return (f"the price map makes it ${a:,.0f}/yr and a full NEM re-bill ${b:,.0f}/yr, "
+            f"${abs(gap_usd):,.0f}/yr or {abs(gap_pct):.1f}% apart — close enough to "
+            "say the monthly-netting treatment is not where a material error would be "
+            "hiding, and no more than that: both methods split the floor out of the meter "
+            "the same way and take every rate from the same module, so neither one checks "
+            "the other's rates or its constant-floor model")
 
 
 _tok("PHANTOM_METHOD_DISCREPANCY", kind="derived", get=_phantom_method_discrepancy,
-     sources=["data/deep_results.json:phantom (annual_kwh, annual_cost_at_blend)",
-              "data/quiet_night_floor.json:night_floor (median_kw, nights_total)",
-              "data/quiet_night_floor.json:pricing.method_a_price_map.total_usd"])
+     sources=["data/quiet_night_floor.json:pricing.method_a_price_map.total_usd",
+              "data/quiet_night_floor.json:pricing.method_b_rebill.total_usd",
+              "data/quiet_night_floor.json:pricing.reconciliation "
+              "(gap_usd, gap_pct, scope_of_agreement)"])
 
 
 def _night_floor_seasonality(ctx):
@@ -5371,6 +5392,65 @@ _tok("NIGHT_FLOOR_CYCLING", kind="derived",
               "cycling_within_night_std_kw_median"])
 _tok("NIGHT_FLOOR_SEASONALITY", kind="derived", get=_night_floor_seasonality,
      sources=["data/quiet_night_floor.json:night_floor.monthly_median_kw"])
+
+
+def _night_floor_sensitivity(ctx):
+    """What a watt off the floor is worth -- the one recoverable figure this
+    repo can actually measure.
+
+    HOW MUCH OF A FLOOR IS REMOVABLE IS NOT A METERED QUANTITY. Nothing in
+    this archive can say which appliance behind the floor could be switched
+    off, so a "realistic recoverable $/yr" is an opinion wearing a figure's
+    clothes (CLAUDE.md section 0). What IS computed, by re-billing the whole
+    year at 100 W steps, is the RATE: what each 100 W removed returns. A
+    reader can multiply that by whatever they find on a plug meter; the report
+    does not do the multiplication for them.
+
+    THE STEP IS A GRID, AND THE FIGURE IS READ OFF IT. usd_per_100w_at_current
+    _floor is the marginal at the sensitivity step NEAREST the measured floor,
+    not the exact marginal at this household's own wattage -- the artifact's
+    own note says so. The step is checked against the measured floor here: a
+    grid that has drifted more than half a step away from the floor it claims
+    to describe is refused rather than rendered with a "nearest" it no longer
+    is.
+
+    AND THE LADDER IS NOT A STRAIGHT LINE, which is the difference between a
+    rate and a multiplier. The artifact says so in linearity_note; this token
+    does not quote that note, it recomputes the same argument from the ladder's
+    own marginal_usd_per_100w column and prints the spread, so a reader can see
+    how far the rate moves across the tested range instead of multiplying one
+    figure by any amount removed. Same shape as DEGRADATION_WEATHER_CAVEAT
+    rebuilding clearsky_note's argument out of the numbers beside it."""
+    sens = _json("quiet_night_floor.json")["sensitivity_per_100w"]
+    at_floor = sens["usd_per_100w_at_current_floor"]
+    per_100w, = _amounts("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+                         "what removing 100 W of the floor returns",
+                         value_usd=at_floor["value_usd"])
+    step_w, floor_kw = _quantities(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which step the rate was read off",
+        floor_w_used=at_floor["floor_w_used"], median_kw=_night_floor()["median_kw"])
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "what a household at THIS floor gets back per 100 W",
+           SUPPORTED if abs(step_w - floor_kw * 1000) <= 50 else NOT_DETERMINED,
+           f"the rate was read off the {step_w:,.0f} W step while the measured floor is "
+           f"{floor_kw * 1000:,.0f} W, more than half a 100 W step away, so it is not the "
+           "step nearest this floor")
+    marginals = _quantities(
+        "NIGHT_FLOOR_SENSITIVITY_PER_100W", "how far the rate moves along the ladder",
+        **{f"step_{s['reduction_w']}_w": s["marginal_usd_per_100w"]
+           for s in sens["steps"]})
+    lo, hi = min(marginals), max(marginals)
+    return (f"about ${per_100w:,.0f}/yr for every 100 W taken off it, read off the "
+            f"{step_w:,.0f} W step nearest the measured floor rather than computed at this "
+            f"household's own exact wattage — and it is a rate near this floor rather than a "
+            f"multiplier for any amount removed, since the same ladder's marginal runs from "
+            f"${lo:,.0f} to ${hi:,.0f} per 100 W across the range it was re-billed over")
+
+
+_tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", kind="derived", get=_night_floor_sensitivity,
+     sources=["data/quiet_night_floor.json:sensitivity_per_100w."
+              "usd_per_100w_at_current_floor",
+              "data/quiet_night_floor.json:night_floor.median_kw"])
 
 
 # ---------------------------------------------------------------------------

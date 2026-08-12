@@ -833,9 +833,56 @@ _QUALIFIER_ACCOUNTED = {
     ("s9#3", "behavior_rebuild.json", "(root)", "note"): ("same", None),
     ("s9#4", "behavior_rebuild.json", "(root)", "note"): ("same", None),
     ("s9#5", "behavior_rebuild.json", "(root)", "note"): ("same", None),
-    ("s13#11", "deep_results.json", "phantom", "note"):
-        ("PHANTOM_METHOD_DISCREPANCY names section 9's method inline -- 'from a "
-         "25th-percentile 3-5am draw' -- which is what this note states", None),
+    # --- issue #140: the always-on floor, now read from ONE artifact ---------
+    # SEC9_TEASER used to open data/deep_results.json for its phantom figures
+    # and now opens data/quiet_night_floor.json instead, because that is the
+    # only pricing of this load with a committed generator (extra_results'
+    # phantom has none; deep_results' prices the energy at a hardcoded flat
+    # $0.20/kWh against an hour-weighted all-in import rate of about
+    # $0.375/kWh -- issue #172). The teaser is LIVE in section 9's <summary>,
+    # so its reads land in the scope of every s9 block, and these four blocks
+    # -- degradation, clipping, cooling, the EV report card -- inherit two
+    # qualifiers belonging to a figure none of them publishes.
+    #
+    # ACCOUNTED, not pre-existing, and the difference is the point: this
+    # change is what re-pointed the teaser, so the debt is this change's own
+    # and is written down where a reason is required rather than parked in the
+    # exemption dict below. What discharges it is that the floor's own block
+    # (s9#7, the honesty note) carries BOTH qualifiers in its scope -- its
+    # TODO names NIGHT_FLOOR_SAMPLE, which rebuilds selection_caveat's
+    # exclusion rate, and NIGHT_FLOOR_PRICING_BASIS, which states
+    # floor_kw_basis' constant-across-the-year method -- so the section does
+    # state them where it develops the figure. What these four blocks see is a
+    # one-line summary of a subsection they do not write.
+    ("s9#2", "quiet_night_floor.json", "night_floor", "selection_caveat"):
+        ("SEC9_TEASER's floor figure, not this block's: the section states the exclusion "
+         "rate in s9#7, whose scope carries NIGHT_FLOOR_SAMPLE", None),
+    ("s9#2", "quiet_night_floor.json", "pricing", "floor_kw_basis"):
+        ("same figure, same block: s9#7's scope carries NIGHT_FLOOR_PRICING_BASIS, which "
+         "states the constant-across-the-year method this field describes", None),
+    ("s9#3", "quiet_night_floor.json", "night_floor", "selection_caveat"): ("same", None),
+    ("s9#3", "quiet_night_floor.json", "pricing", "floor_kw_basis"): ("same", None),
+    ("s9#4", "quiet_night_floor.json", "night_floor", "selection_caveat"): ("same", None),
+    ("s9#4", "quiet_night_floor.json", "pricing", "floor_kw_basis"): ("same", None),
+    ("s9#5", "quiet_night_floor.json", "night_floor", "selection_caveat"): ("same", None),
+    ("s9#5", "quiet_night_floor.json", "pricing", "floor_kw_basis"): ("same", None),
+    # --- issue #140: the sensitivity ladder NIGHT_FLOOR_SENSITIVITY_PER_100W
+    # publishes. All three are this change's own debt, so all three are here.
+    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w", "basis"):
+        ("names the engine and step size the ladder was re-billed with (method b, 100 W "
+         "steps) -- provenance for the arithmetic, not a condition on reading the rate; "
+         "NIGHT_FLOOR_ANNUAL_COST and PHANTOM_METHOD_DISCREPANCY already publish what "
+         "method b is and what it agrees with", None),
+    ("s13#11", "quiet_night_floor.json", "sensitivity_per_100w",
+     "linearity_note"):
+        ("NIGHT_FLOOR_SENSITIVITY_PER_100W recomputes this note's argument from the "
+         "ladder's own marginal_usd_per_100w column and prints the spread, so the "
+         "curvature is stated as a range rather than quoted as a note", None),
+    ("s13#11", "quiet_night_floor.json",
+     "sensitivity_per_100w.usd_per_100w_at_current_floor", "note"):
+        ("NIGHT_FLOOR_SENSITIVITY_PER_100W states this note's own conclusion -- the rate "
+         "is read off the step nearest the measured floor, not computed at the "
+         "household's exact wattage -- and computes which step that was", None),
 }
 
 # Candidates whose FIGURE comes from a token this PR did not add. Out of scope
@@ -847,10 +894,12 @@ _QUALIFIER_ACCOUNTED = {
 # pre-existing S2_VERDICT, section 13 reads it through the NIGHT_FLOOR_* tokens
 # this PR added, and an artifact-keyed entry silently exempted both.
 _QUALIFIER_PRE_EXISTING = {
-    ("s9#2", "deep_results.json", "phantom"): ("SEC9_TEASER",),
-    ("s9#3", "deep_results.json", "phantom"): ("SEC9_TEASER",),
-    ("s9#4", "deep_results.json", "phantom"): ("SEC9_TEASER",),
-    ("s9#5", "deep_results.json", "phantom"): ("SEC9_TEASER",),
+    # The four ("s9#N", "deep_results.json", "phantom") entries that sat here
+    # are GONE, not moved (issue #140). SEC9_TEASER no longer opens that
+    # artifact, so the derivation stops raising them; and the candidates that
+    # replaced them belong to a token this change itself re-pointed, which
+    # makes them this change's debt rather than inherited debt. They are
+    # written down with a reason in _QUALIFIER_ACCOUNTED above instead.
     ("s2#3", "quiet_night_floor.json", "night_floor"): ("S2_VERDICT",),
     ("s2#4", "quiet_night_floor.json", "night_floor"): ("S2_VERDICT",),
     ("s13#8", "battery_dispatch_policies.json", "(root)"):

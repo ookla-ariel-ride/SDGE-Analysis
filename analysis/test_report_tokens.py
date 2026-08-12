@@ -463,6 +463,63 @@ def case_crossover_season_year_returns_a_three_tuple_with_a_numeric_month():
 
 
 @case
+def case_phantom_method_discrepancy_reconciles_the_two_live_pricings():
+    """Issue #140. This token used to set section 9's figure against section
+    13's, because the two sections priced one load out of two artifacts. They
+    no longer do, so what it reconciles now is the two PRICING METHODS inside
+    the one artifact that has a generator: a per-interval price map and a full
+    monthly NEM re-bill.
+
+    Three properties, and the third is the one that matters. It states BOTH
+    totals (a reconciliation that prints one figure is not one) and how far
+    apart they are; it cites neither superseded workpaper; and it REFUSES to
+    render at all if the artifact ever stops saying what the agreement covers.
+    That last one is the difference between reconciling two methods and
+    implying they check each other: both start from the same floor allocation
+    and the same rates.py, so their closeness tests the netting treatment and
+    nothing else. Without scope_of_agreement in the artifact, a bare "1.2%
+    apart" is a claim the report cannot support (CLAUDE.md section 0)."""
+    pricing = rt._json("quiet_night_floor.json")["pricing"]
+    a = pricing["method_a_price_map"]["total_usd"]
+    b = pricing["method_b_rebill"]["total_usd"]
+    rendered = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    for what, value in (("the price map total", f"${a:,.0f}/yr"),
+                        ("the re-bill total", f"${b:,.0f}/yr"),
+                        ("the gap between them",
+                         f"{abs(pricing['reconciliation']['gap_pct']):.1f}%")):
+        assert value in rendered, (
+            f"the reconciliation must state {what} ({value}) -- got: {rendered}")
+    dp = rt._json("deep_results.json")["phantom"]
+    assert f"${dp['annual_cost_at_blend']:,}" not in rendered, (
+        f"the reconciliation cites deep_results' superseded flat-blend cost: {rendered}")
+    assert "does not settle" not in rendered, (
+        "the reconciliation still says the report does not settle which pricing is right, "
+        f"which was true of the retired cross-section comparison, not of this one: {rendered}")
+
+    # The refusal, driven rather than described.
+    real = rt._json
+
+    def drop_scope(doc):
+        doc["pricing"]["reconciliation"]["scope_of_agreement"] = "   "
+
+    rt._json = _stub_for("quiet_night_floor.json", drop_scope)
+    try:
+        rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    except SystemExit as e:
+        assert "scope_of_agreement" in str(e), (
+            f"the refusal must name the missing field: {e}")
+    else:
+        raise AssertionError(
+            "PHANTOM_METHOD_DISCREPANCY rendered an agreement claim with no statement of "
+            "what that agreement covers -- a bare percentage a reader would over-read")
+    finally:
+        rt._json = real
+    return (f"the reconciliation states both pricings (${a:,.0f}/yr and ${b:,.0f}/yr) and "
+            "their gap, cites no superseded workpaper, and refuses to render at all "
+            "without the artifact's own scope_of_agreement")
+
+
+@case
 def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     """Issue #130. SEC9_TEASER introduces section 9, so every figure in it
     must come from the same artifact section 9's own body uses -- otherwise
@@ -476,12 +533,20 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
 
     Pins BOTH halves against their real artifacts, so neither can drift:
     sessions must track behavior_rebuild (the detector every downstream
-    dollar figure uses), and the phantom figures must track deep_results,
-    whose 3-5am method matches section 9's own framing. Section 9's phantom
-    sentence cites no artifact, and the body's phantom NUMBERS come from a
-    third artifact (extra_results.json) -- that unresolved three-way split
-    is issue #140, deliberately not settled here. A future change that
-    re-points either half at a different artifact fails here.
+    dollar figure uses), and the always-on floor must track
+    quiet_night_floor.json.
+
+    THE FLOOR HALF WAS RE-BASED BY ISSUE #140. It used to pin
+    deep_results.json's phantom figures, on the reasoning that its 3-5am
+    method matched section 9's own framing, while sections 0 and 13 carried a
+    third artifact's figures -- one load with three numbers across three
+    sections. Only quiet_night_floor.json can carry a published figure:
+    extra_results.json's phantom has no generator anywhere in this repo's
+    history, and deep_results.json's is generated but priced at a hardcoded
+    flat $0.20/kWh against an hour-weighted all-in import rate of about
+    $0.375/kWh (issue #172). So both halves are pinned to the artifact AND to
+    the values the section's own NIGHT_FLOOR_* tokens render, which is what
+    stops the split from reopening one section at a time.
 
     Deliberately NOT gated on _require_household(): SEC9_TEASER reads only
     committed public artifacts, so this case must run in CI too -- gating it
@@ -489,6 +554,7 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     teaser = rt.resolve_token("SEC9_TEASER")
     br = rt._json("behavior_rebuild.json")["detection"]
     dr = rt._json("deep_results.json")
+    qnf = rt._json("quiet_night_floor.json")
 
     sessions = br["sessions"]
     assert f"{sessions} EV charging sessions" in teaser, (
@@ -507,14 +573,38 @@ def case_sec9_teaser_agrees_with_the_artifacts_section_9_itself_cites():
     declared = " ".join(rt.TOKENS["SEC9_TEASER"]["sources"])
     assert "behavior_rebuild.json" in declared, (
         f"SEC9_TEASER must declare behavior_rebuild.json as its session source -- got: {declared}")
+    assert "quiet_night_floor.json" in declared, (
+        "SEC9_TEASER must declare quiet_night_floor.json as its floor source -- got: "
+        f"{declared}")
 
-    assert f"{dr['phantom']['annual_kwh']:,} kWh/yr" in teaser, (
-        f"phantom kWh must track deep_results, which section 9's body cites -- got: {teaser}")
-    assert f"${dr['phantom']['annual_cost_at_blend']:,}/yr" in teaser, (
-        f"phantom cost must track deep_results, which section 9's body cites -- got: {teaser}")
+    cost = qnf["pricing"]["method_a_price_map"]["total_usd"]
+    assert f"${cost:,.0f}/yr" in teaser, (
+        f"floor cost must track quiet_night_floor's price map (${cost:,.0f}/yr), the only "
+        f"pricing of this load with a committed generator -- got: {teaser}")
+    # The energy figure is not re-derived here: it is asserted to be the SAME
+    # STRING the section's own token renders, so the teaser cannot drift from
+    # the body by taking its own reading of the same artifact.
+    kwh = rt.resolve_token("NIGHT_FLOOR_ANNUAL_KWH")
+    assert kwh in teaser, (
+        f"floor energy must be NIGHT_FLOOR_ANNUAL_KWH's own value ({kwh!r}), which sections "
+        f"0 and 13 also render -- got: {teaser}")
+
+    # The two retired workpapers, checked absent by VALUE. Both describe the
+    # same load, so a teaser that quietly went back to either one would still
+    # read plausibly; only the number tells them apart.
+    for who, doc in (("deep_results.json", dr["phantom"]),
+                     ("extra_results.json", rt._json("extra_results.json")["phantom"])):
+        for key in ("annual_kwh", "annual_kwh_at_median"):
+            if key in doc and f"{doc[key]:,}" != kwh.split()[0]:
+                assert f"{doc[key]:,}" not in teaser, (
+                    f"teaser cites {who}'s {key} ({doc[key]:,}), a superseded workpaper "
+                    f"(TECHNICAL.md 3.5/3.11) -- got: {teaser}")
+    assert f"${dr['phantom']['annual_cost_at_blend']:,}" not in teaser, (
+        "teaser cites deep_results' flat-$0.20/kWh cost, which issue #172 shows is about "
+        f"half the real price of that energy -- got: {teaser}")
     return (f"SEC9_TEASER cites behavior_rebuild's {sessions} sessions (not "
-            f"deep_results' {stale}) and deep_results' phantom figures; the "
-            "phantom three-way split is tracked in issue #140")
+            f"deep_results' {stale}) and quiet_night_floor's own floor figures "
+            f"({kwh} at ${cost:,.0f}/yr), with both superseded workpapers' values absent")
 
 
 # ---------------------------------------------------------------------------

@@ -417,9 +417,20 @@ land in `deep_results.json`.
    days (the 15 summer days with the highest on-peak imports), 4–9 pm. Three scenarios: TOU-DR-P
    with a PW3 that dodges every event ($6,719), EV-TOU-5 with the same PW3 ($3,192), TOU-DR-P
    with no battery and all events hit ($7,483).
-2. **Phantom/baseload.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
+2. **Phantom/baseload — SUPERSEDED WORKPAPER (issue #140). Not published anywhere in the
+   report; do not cite it.** Take 3–5 am intervals with `Consumption ≤ 0.5` kWh (excludes EV
    charging); baseload kW = 25th percentile × 4 → 1.02 kW; annualized at a blended $0.20/kWh →
-   $1,787/yr (flagged in the report as an upper bound, not recoverable waste).
+   $1,787/yr. The live figure for this load is §3.28's, from
+   `analysis/quiet_night_floor.py` → `data/quiet_night_floor.json`. What retires this one is
+   the price, not the floor: the `0.20` is a hardcoded literal on the annualization line, with
+   `rates(UDC5, CEA5)` computed on the line above and then not used, while the
+   hour-weighted all-in import rate across the analysis year is **$0.375/kWh**
+   (`rates.allin` over the same 8,760 hours, weighted by how many of them fall in each
+   season x period). So $1,787/yr is roughly half the price of that energy, and the "upper
+   bound" this document used to call it was backwards in exactly the direction that matters
+   — the same 8,935 kWh/yr at that blend is about **$3,350/yr**. The hardcoded rate
+   is filed as issue #172 against `deep_analyses.py`; it is left in place here rather than
+   fixed in passing, since changing it changes a committed artifact.
 3. **EV charging sessions.** Interval kW = `Consumption × 4`; intervals with kW > 6.5 are
    charger-on; contiguous runs form sessions; session kWh = Σ imports − 0.4 kW house base ×
    duration; sessions < 3 kWh discarded. Results: 576 sessions, 14,158 kWh, $3,081/yr at actual
@@ -690,7 +701,15 @@ rather than a documented historical comparison; `analysis/extra_results.py` now
 reproduces it from the same dated constant described below, byte-identical to what
 was already committed, and copies the other six keys through unchanged):
 
-- `phantom` — baseload decomposed from **44 EV-free quiet nights**: median **1.025 kW**
+- `phantom` — **SUPERSEDED WORKPAPER (issue #140). Not published anywhere in the report; do
+  not cite it.** It has no committed generator and never had one (see the `git log` evidence
+  in §3.28), so nothing in this repo can reproduce it, which is what disqualifies it from
+  backing a published figure (CLAUDE.md §0) — not any demonstrated error in its values, which
+  §3.28's independent re-measurement lands close to. The live figure for this load is
+  §3.28's, from `analysis/quiet_night_floor.py` → `data/quiet_night_floor.json`. The key
+  stays frozen in the artifact per the issue #34 / PR #103 decision, and its contents are
+  recorded here so a future reader who finds it knows which it is: baseload decomposed from
+  **44 EV-free quiet nights**: median **1.025 kW**
   (p10 0.785, p90 1.36); `monthly_kw` seasonal profile peaking Sep–Oct (1.37 kW) with a May
   low (0.845); `cycling_std_kw` 0.142 (compressor-like duty cycling present);
   `annual_kwh_at_median` 8,979; `lowest5_daily_import_kwh` — the lowest occupied-day import
@@ -3613,6 +3632,17 @@ index.html §13 — not independently recorded in any structured data file or in
 document), so the floor is never costed. This script re-measures the floor directly from
 interval data (not by reading `phantom`'s hand-recorded numbers), prices it two independent
 ways, and reconciles them.
+
+**This artifact is the report's only source for this load (issue #140).** Report §0, §9 and
+§13 all resolve the floor's magnitude, energy, cost and sensitivity through the
+`NIGHT_FLOOR_*` and `PHANTOM_METHOD_DISCREPANCY` tokens in `analysis/report_tokens.py`, every
+one of which reads this file — so the three sections cannot state different figures for one
+load. The two older `phantom` workpapers are labelled superseded where they are documented
+(§3.5 item 2 and §3.11) and are cited nowhere in the report. Which of the three could back a
+published figure was decided on reproducibility, not preference: `extra_results.json:phantom`
+has no generator at all, `deep_results.json:phantom` has one but prices the energy with a
+hardcoded flat `0.20` $/kWh against a $0.375/kWh hour-weighted all-in import rate (issue
+#172), and this script draws every rate from `rates.py` and prices the load twice.
 
 **Measurement (issue AC1).** `night_floor_series()` computes a NEW, independently-designed
 per-night rule — for each calendar night, the median 1-5am import power, EXCLUDING any
