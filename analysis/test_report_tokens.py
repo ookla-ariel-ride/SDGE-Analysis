@@ -2152,7 +2152,8 @@ def case_plan_lead_tokens_report_a_gap_the_matrix_does_not_call_a_lead():
 
 
 # ---------------------------------------------------------------------------
-# THE WHOLE-DOLLAR ROUNDING BAND (issue #141 adversarial review).
+# THE WHOLE-DOLLAR ROUNDING: ORDER SURVIVES IT, SIZE DOES NOT
+# (issue #141 adversarial review).
 #
 # analysis/battery_plan_matrix.py writes every cell it publishes as round(x):
 #
@@ -2160,21 +2161,25 @@ def case_plan_lead_tokens_report_a_gap_the_matrix_does_not_call_a_lead():
 #                    "battery_value": round(no_b - with_b)}
 #
 # Section 4's heading asks whether a battery changes which plan is best, and
-# report_tokens answered it by comparing the two columns' cheapest-plan sets.
-# Those sets were built with `==` on values that had already lost their cents:
+# report_tokens answers it by comparing the two columns' cheapest-plan sets.
+# The tempting reading of that rounding -- "the cents are gone, so a $1 gap
+# settles nothing" -- is half right, and the half that is wrong was briefly
+# shipped as a $1.00 band on the word "cheapest".
 #
-#     A $100.49 / B $100.51   stores 100 / 101  ->  {A}
-#     A  $90.40 / B  $90.49   stores  90 /  90  ->  {A, B}
+#   ORDER survives. round() is non-decreasing, so a cell storing 101 came
+#   from a strictly dearer bill than a cell storing 100. Which plan a column
+#   prices cheapest is settled; equal cells are a real tie.
 #
-# A is cheaper at both battery states and the heading published "Yes -- the
-# battery changes which plan is best". The mirror image is worse and quieter:
-# a real sub-dollar flip collapses into two identical tie sets and publishes
-# "No". A rounding artifact was deciding a published plan recommendation.
+#   SIZE does not. A stored $1 gap is a real gap of a cent to just under $2,
+#   and a stored $1 CHANGE in a gap is four roundings deep, so it may be a
+#   narrowing.
 #
-# The four cases below drive the four shapes with synthetic matrices, and the
-# last of them sweeps EVERY token rather than this one -- the same comparison
-# also gates section 4's class="win" row, and a gate that refuses there stops
-# the whole report rather than one sentence.
+# Reading the band into "cheapest" put a plan the matrix ranks SECOND into
+# `winners`, and the three tokens that gate on it render inside section 4's
+# fixed class="win" row -- so the runner-up would have been published as the
+# winner. The cases below hold both halves: identity is exact, sizes are
+# hedged, and the household the matrix ranks second is refused by name rather
+# than promoted.
 # ---------------------------------------------------------------------------
 @contextlib.contextmanager
 def _matrix_priced(plans, cells):
@@ -2215,20 +2220,29 @@ def _s4_at(plans, cells):
 
 
 @case
-def case_the_matrix_tie_band_is_the_rounding_the_generator_applies():
-    """The band is DERIVED, not picked, and both halves of the derivation are
-    checkable here rather than only in a comment.
+def case_the_matrix_rounding_settles_the_order_and_only_blurs_the_size():
+    """THE PREMISE UNDER EVERY CASE BELOW, asserted rather than commented.
 
-    Per cell: battery_plan_matrix.py stores round(x), so |stored - modeled|
-    <= $0.50. Per comparison of two cells: <= $0.50 + $0.50 = $1.00, which is
-    _BPM_TIE_USD. Per comparison of two GAPS -- the widens/narrows verb, which
-    is (rival - us) without a battery against the same difference with one --
-    four cells, so 4 x $0.50 = $2.00, which is _BPM_GAP_TIE_USD.
+    MONOTONICITY. round() is non-decreasing, so round(x) > round(y) implies
+    x > y -- there is no pair of bills whose rounded cells rank one way and
+    whose real values rank the other. Driven here on the half-dollar
+    boundaries, where Python rounds to even and where a counter-example would
+    have to live if there were one, and then over a fine sweep. This is why
+    "cheapest" is an equality on the stored cells: a stored $1 gap IS an
+    ordering.
 
-    The premise is asserted against the artifact itself: every published cell
-    is a whole number of dollars. If a future generator keeps the cents, this
-    case fails and the band has to be re-derived rather than silently applied
-    to values that no longer need it."""
+    THE SIZE BOUND, which is all the band is for. Per cell,
+    |stored - modeled| <= $0.50. Per difference of two cells, twice that:
+    $1.00, which is _BPM_TIE_USD. Per difference of two GAPS -- the
+    widens/narrows verb, (rival - us) without a battery against the same with
+    one -- four cells: 4 x $0.50 = $2.00, which is _BPM_GAP_TIE_USD. A stored
+    gap of $1 therefore covers real gaps from about a cent to just under $2,
+    which the sweep below exhibits at both ends.
+
+    The rounding itself is asserted against the artifact: every published
+    cell is a whole number of dollars. If a future generator keeps the cents,
+    this case fails and both constants have to be re-derived rather than
+    silently applied to values that no longer need them."""
     plans = rt._json("battery_plan_matrix.json")["plans"]
     fractional = [f"{p}.{k} = {v!r}" for p, row in sorted(plans.items())
                   for k, v in sorted(row.items()) if float(v) != int(v)]
@@ -2236,48 +2250,94 @@ def case_the_matrix_tie_band_is_the_rounding_the_generator_applies():
         "data/battery_plan_matrix.json no longer rounds every cell to whole dollars ("
         + ", ".join(fractional) + "), so report_tokens._BPM_TIE_USD is derived from a "
         "rounding the generator has stopped applying")
+    # ORDER. Every half-dollar boundary in a $200 window, plus a 1-cent sweep
+    # across a narrower one: round(a) > round(b) must never hold for a <= b.
+    probes = [n / 2 for n in range(-100, 301)]
+    probes += [5_000 + n / 100 for n in range(-200, 201)]
+    inverted = [(a, b) for a in probes for b in probes
+                if round(a) > round(b) and a <= b]
+    assert not inverted, (
+        f"round() inverted an ordering on {len(inverted)} pair(s), e.g. {inverted[:3]} "
+        "-- report_tokens decides which plan is cheapest on the stored cells because "
+        "rounding cannot do that")
+    # SIZE. The same monotone rounding leaves a stored $1 gap unsized: these
+    # two pairs both store 101 against 100.
+    tight, wide = (100.501, 100.5), (101.499, 99.5)
+    for hi, lo in (tight, wide):
+        assert (round(hi), round(lo)) == (101, 100), (
+            f"{hi}/{lo} no longer stores as 101/100, so this case is not exhibiting "
+            "the spread a $1 stored gap can hide")
+    assert (tight[0] - tight[1]) < 0.01 < 1.9 < (wide[0] - wide[1]) < 2 * rt._BPM_TIE_USD, (
+        "the two pairs above no longer bracket the range a $1 stored gap covers")
     assert rt._BPM_TIE_USD == 0.5 + 0.5, (
         f"_BPM_TIE_USD is {rt._BPM_TIE_USD}, not the $0.50 + $0.50 the two rounded "
         "cells of one comparison can each be out by")
     assert rt._BPM_GAP_TIE_USD == 4 * 0.5 == 2 * rt._BPM_TIE_USD, (
         f"_BPM_GAP_TIE_USD is {rt._BPM_GAP_TIE_USD}, not the four cells a comparison "
         "of two gaps rounds")
-    return (f"the section 4 tie band is the generator's own rounding: ${rt._BPM_TIE_USD:.2f} "
-            f"for two cells, ${rt._BPM_GAP_TIE_USD:.2f} for two gaps, and all "
-            f"{sum(len(r) for r in plans.values())} published cells are whole dollars")
+    return (f"the matrix's whole-dollar rounding is monotone over {len(probes)} probes, so "
+            f"it settles which plan is cheapest and only blurs by how much: a stored $1 gap "
+            f"is a real ${tight[0] - tight[1]:.3f} to ${wide[0] - wide[1]:.3f}, inside "
+            f"_BPM_TIE_USD ${rt._BPM_TIE_USD:.2f} per comparison and "
+            f"${rt._BPM_GAP_TIE_USD:.2f} per gap change, across all "
+            f"{sum(len(r) for r in plans.values())} published cells")
 
 
 @case
-def case_a_winner_set_change_made_entirely_of_rounding_is_not_a_ranking_change():
-    """THE REPRODUCTION. The reviewer's own figures: A $100.49 / B $100.51
-    without a battery, A $90.40 / B $90.49 with one. A is cheaper at both
-    states by pennies; the artifact stores 100/101 and 90/90, so an `==`
-    comparison of the cheapest sets sees {A} become {A, B} and section 4's
-    heading published "Yes -- a battery changes which plan is best".
+def case_a_dollar_of_stored_difference_ranks_and_a_stored_tie_does_not():
+    """THE TWO HALVES IN ONE MATRIX. A stores 100 / 90, B stores 101 / 90.
 
-    With the band, both columns read as the tie they are, and the answer is
-    neither "Yes" nor a "No" that would claim the rounding settled it."""
+    Without a battery the cells differ by a dollar, so A's bill was strictly
+    the cheaper: the cheapest set is {A} ALONE, and a band that put B in it
+    would be claiming B might be cheapest when the artifact says it is not.
+    With a battery the cells are equal, which is a genuine tie -- two bills
+    within a dollar of each other that nothing published can separate.
+
+    So the heading may not say "Yes": A is cheapest in both columns and the
+    only thing that changed is that B caught up to a tie, which is not a
+    ranking change. It may not say "No" either, because with a battery there
+    is no single cheapest plan to hand the reader. And the size clause has to
+    hedge the $1 lead it cannot size -- "leads by $1/yr" is a precision two
+    rounded cells do not carry."""
     plans, best, rival, rest = _matrix_pair()
     provider = (rt._generation_provider_short(rt.CTX) if rt.hh.PATH.is_file() else "CEA")
     with _stub_plan(best, provider):
-        published = rt.resolve_token("S4_VERDICT_SHORT")
+        published = {t: rt.resolve_token(t)
+                     for t in ("S4_VERDICT_SHORT",) + _MATRIX_PLAN_TOKENS}
         cells = {best: (100, 90), rival: (101, 90)}
         cells.update({p: (9_000, 9_000) for p in rest})
         value, (no_batt, with_batt) = _s4_at(plans, cells)
-        assert no_batt == with_batt == {best, rival}, (
-            f"the cheapest sets still read the rounding as a ranking: without a battery "
-            f"{sorted(no_batt)}, with one {sorted(with_batt)}")
-        assert not value.startswith("Yes"), (
-            f"S4_VERDICT_SHORT answers section 4's heading 'Yes' off a winner-set change "
-            f"made entirely of whole-dollar rounding ({best} $100.49/$90.40 against "
-            f"{rival} $100.51/$90.49, stored 100/90 against 101/90): {value}")
-        assert rival in value and f"within {rt._usd0(rt._BPM_TIE_USD)}/yr" in value, (
-            f"S4_VERDICT_SHORT does not say the two plans price inside the band: {value}")
-        words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "a rounding-only tie")
-        assert rt.resolve_token("S4_VERDICT_SHORT") == published, (
-            "the synthetic matrix leaked out of this case")
-    return (f"a cheapest-set change made only of whole-dollar rounding no longer answers "
-            f"section 4's heading 'Yes' ({value!r}, {words}w)")
+        assert no_batt == {best}, (
+            f"a $1 stored gap did not rank: the no-battery column prices {best} at 100 "
+            f"and {rival} at 101, so {best} alone is cheapest, not {sorted(no_batt)}")
+        assert with_batt == {best, rival}, (
+            f"identical cells (90/90) did not read as a tie with the battery: "
+            f"{sorted(with_batt)}")
+        for wrong in ("Yes", "No"):
+            assert not value.startswith(wrong), (
+                f"S4_VERDICT_SHORT answers {wrong!r} where {best} is cheapest without a "
+                f"battery and TIES {rival} with one -- a tie is not a ranking change, and "
+                f"it is not a plan recommendation either: {value}")
+        assert f"leads {rival} by under {rt._usd0(1 + rt._BPM_TIE_USD)}/yr" in value, (
+            f"S4_VERDICT_SHORT does not name the holder of the $1 lead while bounding a "
+            f"size two rounded cells cannot carry: {value}")
+        assert "$1/yr" not in value, (
+            f"S4_VERDICT_SHORT quotes a $1/yr lead off two cells that could be a cent "
+            f"apart: {value}")
+        # The tie renders the rest of section 4: joint-cheapest is cheapest, so
+        # the win row's gate must let a tied household through.
+        with _matrix_priced(plans, cells):
+            for token in _MATRIX_PLAN_TOKENS:
+                assert rt.resolve_token(token).strip(), (
+                    f"{token} refused a matrix in which {best} is cheapest without a "
+                    f"battery and tied with one")
+        words = _assert_within_density_cap("S4_VERDICT_SHORT", value, "a lead into a tie")
+        for token, was in published.items():
+            assert rt.resolve_token(token) == was, (
+                f"the synthetic matrix leaked out of this case ({token})")
+    return (f"a $1 stored gap ranks ({sorted(no_batt)} alone cheapest) and equal cells tie "
+            f"({sorted(with_batt)}), so the heading calls neither a change of plan "
+            f"({value!r}, {words}w)")
 
 
 @case
@@ -2389,19 +2449,31 @@ def case_an_exact_tie_in_both_columns_is_rendered_as_a_tie():
 
 
 @case
-def case_two_plans_inside_the_rounding_band_still_get_a_whole_report():
-    """THE CONSTRAINT THIS PROJECT HAS BROKEN THREE TIMES. The same
-    cheapest-plan comparison also gates section 4's class="win" row, through
-    _best_plan_matrix_cell -- and generate_report folds any token refusal into
-    `failures`, which stops the run. So a household the matrix prices ONE
-    DOLLAR off the winner, inside the band the rounding cannot resolve, got no
-    report at all: `winners` was built with `==`, the household's plan was not
-    in it, and three tokens refused.
+def case_a_household_the_matrix_ranks_second_is_refused_by_name():
+    """THE REVIEWER'S REGRESSION CASE, and the cost of getting it right.
 
-    Driven in both columns and on both sides of the household's own cell, and
-    the sweep is over EVERY token rather than the one this finding named,
-    because "this sentence still renders" is not the claim that matters --
-    "this household still gets a report" is."""
+    A household whose plan stores $101 against a rival's $100 is on the
+    second-cheapest plan -- the rounding is monotone, so the rival's bill was
+    strictly lower. It is not in `winners`, and section 4's three win-row
+    tokens refuse, which stops the whole report. A $1.00 band on "cheapest"
+    made that household render, and what it rendered was a `class="win"` row
+    holding a plan the artifact ranks second: the report would have called
+    the runner-up the winner. Dodging a refusal by publishing a false one is
+    the trade this case exists to refuse, so it asserts the refusal instead.
+
+    What the refusal has to be is HONEST AND WELL-NAMED. It says the
+    household is not on the plan that column prices cheapest, quotes both
+    cells so the reader can see the ranking, and names the template markup
+    that cannot express "second" -- which is where the real fix belongs, and
+    it is not in this module.
+
+    Both directions are driven, in both columns. A dollar the OTHER way is
+    the same rounding and the same $1, and it must resolve every token: the
+    refusal has to be about the ranking, not about closeness.
+
+    The sweep also shows the blast radius is exactly the win-row family --
+    every other token still renders -- so whoever makes the template
+    conditional knows precisely what it has to cover."""
     _require_household()
     plans, _best, _rival, _rest = _matrix_pair()
     provider, cheapest, _priced = _plan_ranking_inputs()
@@ -2413,24 +2485,67 @@ def case_two_plans_inside_the_rounding_band_still_get_a_whole_report():
     seen = {}
     with _stub_plan(cheapest, provider):
         published = _resolve_every_token()
-        for column in ("no_battery", "with_battery"):
+        for column, phrase in rt._BPM_COLUMNS:
             for label, offset in (("a dollar below", -1), ("a dollar above", 1)):
                 moved = dict(zip(("no_battery", "with_battery"),
                                  (plans[rival]["no_battery"], plans[rival]["with_battery"])))
+                # offset -1 puts the RIVAL a dollar under this household, which
+                # makes the household second; +1 leaves the household ahead.
                 moved[column] = plans[cheapest][column] + offset
                 with _matrix_priced(plans, {rival: (moved["no_battery"],
                                                     moved["with_battery"])}):
-                    rendered = _resolve_every_token()
-                    value = rendered["S4_VERDICT_SHORT"]
-                assert not value.startswith("Yes"), (
-                    f"S4_VERDICT_SHORT calls a ${abs(offset)} difference in the {column} "
-                    f"column a change of plan: {value}")
-                seen[f"{column} {label}"] = value
+                    refused, rendered = {}, {}
+                    for name, spec in rt.TOKENS.items():
+                        if spec.get("kind") == "gap":
+                            continue
+                        try:
+                            rendered[name] = rt.resolve_token(name)
+                        except BaseException as exc:   # noqa: BLE001 - refusal is SystemExit
+                            refused[name] = str(exc)
+                    cheapest_set = rt._bpm_cheapest("S4_VERDICT_SHORT", column)
+                if offset > 0:
+                    assert cheapest_set == {cheapest}, (
+                        f"a rival priced $1 ABOVE this household did not leave it alone "
+                        f"cheapest in the {column} column: {sorted(cheapest_set)}")
+                    assert not refused, (
+                        f"{len(refused)} token(s) refused for a household the matrix "
+                        f"still ranks first {phrase}: "
+                        + "; ".join(f"{n} -- {w}" for n, w in sorted(refused.items())))
+                    seen[f"{column} {label}"] = "whole report"
+                    continue
+                assert cheapest_set == {rival}, (
+                    f"a rival priced $1 BELOW this household is the cheaper bill -- "
+                    f"round() is monotone -- but the {column} column's cheapest set is "
+                    f"{sorted(cheapest_set)}")
+                assert set(refused) == set(_MATRIX_PLAN_TOKENS), (
+                    f"the win-row family is not what refuses for a household the matrix "
+                    f"ranks second {phrase}: refused {sorted(refused)}, expected "
+                    f"{sorted(_MATRIX_PLAN_TOKENS)}")
+                for name, why in refused.items():
+                    for fragment in (
+                            "not on the plan that column prices cheapest",
+                            f"prices {cheapest} at",
+                            f"against {rival} at",
+                            'class="win" row'):
+                        assert fragment in why, (
+                            f"{name}'s refusal does not name the situation ({fragment!r} "
+                            f"missing), so a reader cannot tell that this household is on "
+                            f"the plan the matrix ranks second: {why}")
+                    assert f"{rt._usd0(rt._BPM_TIE_USD)}/yr of" not in why, (
+                        f"{name}'s refusal sizes the gap it cannot size: {why}")
+                # This module's OWN sentence about the same cells keeps
+                # rendering: it can say a plan trails, which is exactly what
+                # the template's win row cannot.
+                assert "trails" in rendered["S4_VERDICT_SHORT"], (
+                    f"S4_VERDICT_SHORT does not say {cheapest} trails while the matrix "
+                    f"prices {rival} below it {phrase}: {rendered['S4_VERDICT_SHORT']}")
+                seen[f"{column} {label}"] = f"{len(refused)} refused"
         assert _resolve_every_token() == published, (
             "the substituted matrix cell leaked out of this case")
-    return (f"a household whose two best plans price within ${rt._BPM_TIE_USD:.2f} of each "
-            f"other still resolves all {len(published)} tokens, in both matrix columns and "
-            f"on both sides of its own cell ({len(seen)} drives)")
+    return ("a household the matrix ranks second is refused by name -- "
+            f"{sorted(_MATRIX_PLAN_TOKENS)} only, out of {len(published)} tokens, in both "
+            "columns, and a household a dollar the other way still gets a whole report ("
+            + ", ".join(f"{k}: {v}" for k, v in seen.items()) + ")")
 
 
 @case
