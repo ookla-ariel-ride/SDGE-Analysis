@@ -1895,6 +1895,84 @@ _BPM_COLUMNS = (("no_battery", "without a battery"),
                 ("with_battery", "with one battery"))
 
 
+# ---------------------------------------------------------------------------
+# THE WHOLE-DOLLAR ROUNDING: WHAT IT SETTLES, AND WHAT IT ONLY BLURS
+# (issue #141 adversarial review).
+#
+# THE GENERATOR FIRST, per the rule this module keeps re-learning: never
+# compare two artifact fields without opening the script that writes both and
+# recording WHICH relationship they are in. analysis/battery_plan_matrix.py
+# bills one year, from one 15-minute trace, through one function (`bill_plan`)
+# for every plan it prices. Two cells of the same column differ only in the
+# plan's rate table; the two columns differ only in whether the dispatched
+# battery trace or the raw one was billed.
+#
+#   RELATIONSHIP: the SAME QUANTITY, INDEPENDENTLY COMPUTED per plan. Neither
+#   cell is derived from the other, neither is clamped, tuned or fitted to
+#   this household, and no cell is a scenario the others are measured against.
+#   So a difference between two cells in one column is a real difference of
+#   two modeled bills -- with exactly one shared distortion, the last line of
+#   the generator's loop:
+#
+#       plans[plan] = {"no_battery": round(no_b), "with_battery": round(with_b),
+#                      "battery_value": round(no_b - with_b)}
+#
+# Every cell in data/battery_plan_matrix.json is therefore a modeled bill
+# ROUNDED TO WHOLE DOLLARS. That rounding costs the cells their cents, and it
+# is tempting to read that as costing them their ranking too. It does not, and
+# the difference between the two is what the constants below are for.
+#
+# ORDER IS DETERMINED, exactly. round() is NON-DECREASING, so
+# round(x) > round(y) implies x > y -- with no exception at the half-dollar,
+# where Python rounds to even. If one cell stores 101 and another 100, the
+# first bill lay in (100.5, 101.5) and the second in [99.5, 100.5], so the
+# first was STRICTLY the dearer. Whichever plan a column stores lowest really
+# is that column's cheapest plan, and two cells storing the same number are a
+# real tie -- two bills the published artifact cannot separate.
+#
+# MAGNITUDE IS NOT. |stored - modeled| <= $0.50 per cell, so a DIFFERENCE of
+# two cells carries twice that:
+#
+#       |(c_b - c_a) - (t_b - t_a)|  <=  $0.50 + $0.50  =  $1.00
+#
+# A stored $1 gap is a real gap of anywhere from about a cent to just under
+# $2 (the $2 end needs both cells exactly on a half-dollar rounded the same
+# way, which two cells a dollar apart cannot be). So "B is cheaper than A" is
+# exact and "B is $1/yr cheaper than A" is not, and a sentence that SIZES a
+# lead has to hedge where a sentence that merely names its holder does not.
+#
+# Hence, and this is the ONLY thing these constants are for: identity -- who
+# is cheapest, which plans tie for it, whether that set changes with a
+# battery -- is decided on the stored values themselves, with `==` and
+# `min()`. The band applies where a sentence quotes or compares a SIZE.
+#
+# The band was briefly applied to identity as well ("cheapest" = every plan
+# within $1.00 of the minimum). That is the error this comment exists to stop
+# being repeated: it admitted a plan the artifact ranks SECOND into `winners`
+# below, and section 4 renders those cells inside a fixed class="win" row, so
+# a household would have been shown a runner-up as its winner. Rounding never
+# licensed that. It licenses only the hedged wording of a size.
+#
+# PER COLUMN, never across columns. The bound above is for two cells rounded
+# the same way inside one column; the no-battery and with-battery columns are
+# different bills and nothing here compares one against the other.
+
+# The most a stored DIFFERENCE of two cells in one column can be out by:
+# $0.50 + $0.50. A SIZE bound, never a tie-break -- which cell is smaller is
+# settled by the stored values themselves (monotonicity, above), so nothing
+# that decides WHO leads may test against this.
+_BPM_TIE_USD = 1.0
+
+# The same arithmetic one level up, for a claim about a GAP BETWEEN GAPS: the
+# widens/narrows verb compares (runner-up - this plan) without a battery
+# against the same difference with one, so four rounded cells, four times the
+# per-cell error. Monotonicity buys nothing here -- a difference of two
+# differences is not one rounded value against another -- so unlike a lead,
+# a gap CHANGE has neither its size nor its direction settled below $2.00,
+# and this bound gates the verb itself.
+_BPM_GAP_TIE_USD = 4 * 0.5   # == 2 * _BPM_TIE_USD
+
+
 def _best_plan_matrix_cell(token, key):
     """A BEST_PLAN_*_MODELED / BATTERY_VALUE_BEST_PLAN figure, behind a chrome
     gate on THE ARTIFACT THESE CELLS ARE RENDERED FROM.
@@ -1948,6 +2026,16 @@ def _best_plan_matrix_cell(token, key):
                "data/battery_plan_matrix.json's " + column + " column prices " +
                ", ".join(f"{p} at {t!r}" for p, t in sorted((bad or totals).items())))
         cheapest = min(totals.values())
+        # `== cheapest`, on the stored values, because that is what the
+        # artifact genuinely determines: round() is non-decreasing, so a cell
+        # storing a dollar above the minimum was a dearer bill, full stop
+        # (see the derivation above). The band belongs to sentences that SIZE
+        # a gap, and applying it here admitted a plan this column ranks
+        # second into `winners` -- which would have rendered that plan's
+        # figures inside section 4's class="win" row and called it the
+        # winner. A household that really is second gets the refusal below
+        # instead, which is honest about a template that cannot say
+        # "second".
         winners = sorted(p for p, t in totals.items() if t == cheapest)
         _claim(
             token, f"that this household is on the best plan {phrase}",
@@ -1957,13 +2045,19 @@ def _best_plan_matrix_cell(token, key):
             # with the signed formatter for exactly that), so an inline _usd0
             # here refuses precisely for the household whose battery models
             # its bill below zero.
+            #
+            # The two figures, and no arithmetic on them: the cells settle
+            # that this plan is the dearer, not by how much, so the message
+            # states the ranking and lets the reader read the difference.
             f"data/battery_plan_matrix.json's {column} column prices {plan} at "
             f"{_usd0_signed(totals[plan])}/yr against {_join_plan_names(winners)} at "
             f"{_usd0_signed(cheapest)}/yr",
-            unsettled='report-template.html renders this figure inside section 4\'s '
-                      'class="win" row, which asserts the answer as fixed markup no '
-                      "token can reach, so no value rendered into this slot makes the "
-                      "page true")
+            unsettled=(
+                "this household is not on the plan that column prices cheapest, and "
+                "report-template.html renders this figure inside section 4's "
+                'class="win" row, which asserts the opposite as fixed markup no token '
+                "can reach -- the template has no runner-up or near-tie state to "
+                "render instead, so no value in this slot makes the page true"))
     # THE CELL THIS TOKEN ACTUALLY PRINTS, checked last and by name.
     #
     # The loop above ranks the two COLUMNS, and two of the three tokens read a
@@ -1996,9 +2090,76 @@ _tok("BATTERY_VALUE_BEST_PLAN", kind="derived",
      sources=["data/battery_plan_matrix.json:plans"], fmt="usd0_signed")
 
 
-def _runner_up():
-    """The cheapest OTHER plan in battery_plan_matrix.json, whether or not the
-    household's own plan leads it.
+def _bpm_rivals(token, column):
+    """The SET of OTHER plans battery_plan_matrix.json prices cheapest in
+    `column` -- the runner-up, or all of them where the column ties.
+
+    A SET, for _bpm_cheapest's reason one rank down: at a tie there is more
+    than one cheapest rival, and collapsing that to a single name lets the
+    caller's choice of name -- not the artifact -- decide things. Since issue
+    #141's per-column fix that matters twice over, because S4_VERDICT_SHORT
+    now asks whether the runner-up is THE SAME PLAN in both columns, and two
+    rivals storing the same cell must not be able to answer that by which key
+    happened to sort or hash first.
+
+    "Cheapest" is `==` on the stored cells, exactly as in _bpm_cheapest and
+    for the same derivation: battery_plan_matrix.py rounds every cell to whole
+    dollars, round() is non-decreasing, so a rival storing more than the
+    minimum came from a strictly dearer bill. Order survives the rounding;
+    only SIZE is blurred, and the callers hedge sizes separately.
+
+    The one refusal is a matrix with no other plan in it at all: there is then
+    no runner-up to name and no gap to take.
+
+    Ranked on the matrix's OWN columns, not plan_results.csv's
+    (battery_plan_matrix.py ties the two out in-script), because these columns
+    are what the sentences downstream quote.
+
+    NON-FINITE CELLS ARE REFUSED HERE, before the ranking runs, and `token`
+    exists so that refusal can name the caller (issue #141 review round 3).
+    This function's whole output is an ordering -- min() over the rival cells,
+    then an `==` filter for ties -- and every comparison a nan takes part in
+    is False, so a nan does not lose the min(), it makes the WINNER depend on
+    dict order. The old note here said the callers guarded it; they did not.
+    PLAN_MARGIN_VS_RUNNER_UP _require_finite's its MARGIN, which stays finite
+    when a nan cell hands the runner-up slot to some other plan, so it
+    published a real margin against a plan that is not the runner-up. A
+    guarantee has to live where the ordering is taken.
+
+    THE CELLS CHECKED ARE THE CELLS RANKED: `others` in `column`, which is
+    exactly what min() and the `==` filter read. The household's OWN cell is
+    not ranked here at all -- it is subtracted from the return value by both
+    callers, each of which _require_finite's that difference immediately and
+    by name (S4_VERDICT_SHORT its two gaps, PLAN_MARGIN_VS_RUNNER_UP its
+    margin), so a nan there still refuses naming the gap it broke rather than
+    a column it never entered.
+
+    With the column finite, the `==` filter cannot come back empty (a real
+    number equals itself), so the fallback below is unreachable defence rather
+    than the load-bearing line it used to be.
+    """
+    plan, _best = _bpm_best()
+    others = {k: v for k, v in _bpm_plans().items() if k != plan}
+    if not others:
+        raise SystemExit(f"report_tokens: battery_plan_matrix.json prices only {plan!r}, "
+                          "so there is no runner-up plan to measure a margin against")
+    _require_finite(token,
+                    f"which other plan the matrix prices cheapest in its {column} column",
+                    **{f"{p}_{column}": v[column] for p, v in others.items()})
+    name, row = min(others.items(), key=lambda kv: kv[1][column])
+    tied = {k for k, v in others.items() if v[column] == row[column]}
+    # `or {name}` is now belt-and-braces: with the column finite, min()'s own
+    # row is always in `tied`. It stays because an empty set is the one return
+    # value the callers cannot read at all.
+    return tied or {name}
+
+
+def _runner_up(token, column="no_battery"):
+    """ONE cheapest other plan in `column`, whether or not the household's own
+    plan leads it.
+
+    `token` is the caller's own name, passed straight through to _bpm_rivals
+    so its finiteness refusal says which token was being resolved.
 
     Both callers -- S4_VERDICT_SHORT and PLAN_MARGIN_VS_RUNNER_UP -- describe
     the difference as this plan's "lead" / "margin", words that are false if
@@ -2007,33 +2168,98 @@ def _runner_up():
     put first. The gap is a real, quotable figure at every sign, so both
     callers now word themselves off its sign instead (issue #131 review).
 
-    The one refusal left is a matrix with no other plan in it at all: there is
-    then no runner-up to name and no gap to take.
+    PER COLUMN, and the default is no_battery only because
+    PLAN_MARGIN_VS_RUNNER_UP is declared as a no-battery margin. It used to be
+    hardcoded to that column and S4_VERDICT_SHORT reused the answer for BOTH
+    of its clauses, which is the defect issue #141's review found: with
+    rivals at 200/200 and 300/150 against a household at 100/100, the runner-up
+    is the first plan without a battery and the SECOND with one, and quoting
+    the first for both published "leaves the lead at $100/yr against $100/yr"
+    while the real margin against the with-battery runner-up had halved to $50.
 
-    Ranked on the matrix's own no-battery column, not plan_results.csv's
-    (battery_plan_matrix.py ties the two out in-script), because that column is
-    the one these two sentences quote.
+    WHICH of several tied rivals gets named is settled by sorted() rather than
+    by dict insertion order. That is a real, if small, improvement -- insertion
+    order is the JSON's key order, which is not a fact about the household --
+    and it is all that is needed here, because the tied cells are equal, so
+    every FIGURE this returns is identical whichever tied name is picked. The
+    decision that a tie could actually corrupt, "is the runner-up the same plan
+    in both columns", is not taken on this function's return value at all: it
+    is taken on _bpm_rivals' sets.
     """
-    plan, best = _bpm_best()
-    others = {k: v for k, v in _bpm_plans().items() if k != plan}
-    if not others:
-        raise SystemExit(f"report_tokens: battery_plan_matrix.json prices only {plan!r}, "
-                          "so there is no runner-up plan to measure a margin against")
-    name, row = min(others.items(), key=lambda kv: kv[1]["no_battery"])
-    return name, row
+    name = sorted(_bpm_rivals(token, column))[0]
+    return name, _bpm_plans()[name]
+
+
+def _bpm_cheapest(token, column):
+    """The SET of plans battery_plan_matrix.json prices cheapest in `column`.
+
+    A set and not a name: at a tie there is more than one cheapest plan, and
+    collapsing that to whichever key sorted first would invent a ranking
+    change out of a tie (or hide one behind it). Callers compare the sets.
+
+    `token` names the caller in the refusal rather than being hardcoded here:
+    a nan in the column is a real fail-closed condition, and the message has
+    to name the token that was being resolved, not the first one that ever
+    used this helper.
+
+    "Cheapest" is an EQUALITY on the stored cells, and the whole-dollar
+    rounding is why it can be: round() is non-decreasing, so a cell storing
+    more than the minimum was a dearer bill and a cell storing the minimum
+    was not (the derivation above). Widening this to a band -- every plan
+    within $1.00 of the minimum -- was tried and is wrong: it puts a plan the
+    column ranks second into a set the callers read as "the cheapest plans",
+    which is a claim about ORDER, and order is the one thing the rounding
+    leaves intact. What the rounding does blur is the SIZE of the gap between
+    two plans, and the callers hedge that separately (issue #141 adversarial
+    review).
+    """
+    totals = {p: v[column] for p, v in _bpm_plans().items()}
+    _require_finite(token,
+                    f"which plan the matrix prices cheapest in its {column} column",
+                    **{f"{p}_{column}": t for p, t in totals.items()})
+    cheapest = min(totals.values())
+    return {p for p, t in totals.items() if t == cheapest}
 
 
 def _s4_verdict_short(ctx):
     """Section 4's in-heading verdict.
 
-    The Yes/No prefix and the widens/narrows verb are ONE decision on the same
-    test (does the battery grow the gap), left exactly as they were: issue #141
-    holds that this prefix answers section 4's heading question backwards, and
-    fixing that is #141's job, not this one.
+    THE PREFIX ANSWERS THE HEADING'S OWN QUESTION (issue #141). The template
+    reads "Does a battery change which plan is best? {{S4_VERDICT_SHORT}}", so
+    Yes/No has to answer THAT -- whether the plan the matrix prices cheapest
+    differs between its two columns. It used to be spelled `widened`, the same
+    test as the widens/narrows verb below, which answers a different question
+    (does the battery grow the gap): with this household's artifact both gaps
+    grow, so the heading published "Yes" directly above a section concluding
+    that the plan choice does not change. The two decisions are now taken
+    separately, off _bpm_cheapest (a ranking, at both battery states) and off
+    the gaps respectively.
 
-    What is fixed here is the noun AND the sigil. "lead" and "widens ... lead"
-    are false unless this plan leads at BOTH battery states, and the previous
-    version tested only the no-battery gap -- so a plan leading by $200 without
+    EACH DECISION IS TAKEN ON WHAT THE ROUNDING LEAVES INTACT (issue #141
+    adversarial review). battery_plan_matrix.py rounds every cell to whole
+    dollars, and the two questions this sentence answers are affected
+    differently by that. WHICH plan is cheapest survives it exactly, because
+    round() is non-decreasing, so the Yes/No is taken on the stored cells with
+    `==`. HOW BIG a lead is, and whether a lead grew, do not survive it: a
+    stored $1 lead is a real lead of a cent to just under $2, and a stored $1
+    change in a lead is four roundings deep and may not have happened at all.
+    So the sizes are hedged against _BPM_TIE_USD (two cells) and the
+    widens/narrows verb against _BPM_GAP_TIE_USD (four).
+
+    THE RUNNER-UP IS PER COLUMN (issue #141 adversarial review). The rival
+    this sentence measures against is selected inside each column separately,
+    and the plan is compared against the rival that column actually ranks
+    second. One rival ranked on no_battery used to be reused for both clauses,
+    which quoted a with-battery figure against a plan that was not the
+    with-battery runner-up; see the worked example in the body. When the two
+    columns disagree about who the runner-up is, the sentence says so and
+    names both, and it drops the widens/narrows/leaves verbs entirely --
+    those are claims about ONE comparison priced twice, and a number that
+    moved because the opponent changed is not that claim.
+
+    THE NOUN AND THE SIGIL are a separate, earlier fix. "lead" and "widens
+    ... lead" are false unless this plan leads at BOTH battery states, and the
+    previous version tested only the no-battery gap -- so a plan leading by $200 without
     a battery and TRAILING by $500 with one still published "narrows EV-TOU-5's
     lead over EV-TOU-2 from $200/yr to $-500/yr": a lead that is not one, and a
     minus sign inside the dollar sigil (issue #131 review round 2, finding 5;
@@ -2044,27 +2270,171 @@ def _s4_verdict_short(ctx):
     f"${...}".
     """
     plan, best = _bpm_best()
-    name, row = _runner_up()
-    gap_no = row["no_battery"] - best["no_battery"]
-    gap_with = row["with_battery"] - best["with_battery"]
+    # THE RUNNER-UP IS TAKEN PER COLUMN (issue #141 adversarial review). One
+    # _runner_up() call, ranked on no_battery, used to supply the rival for
+    # BOTH clauses. But the cheapest rival can differ between the columns --
+    # that is the whole point of a matrix that prices a battery under three
+    # plans -- and when it does, quoting the no-battery rival with the
+    # with-battery gap compares this plan against a plan that is not the one
+    # the second figure was taken from. Worked example, all three plans valid:
+    # us 100/100, B 200/200, C 300/150. The old code published "leaves
+    # EV-TOU-5's lead over B at $100/yr against $100/yr" while the real
+    # with-battery margin -- against C, the with-battery runner-up -- was $50,
+    # half of it, and a lower C hides a near-tie entirely. The matrix rendered
+    # directly below the heading shows all six cells, so the sentence was also
+    # contradicting the table under it.
+    #
+    # GUARD DISCIPLINE, which case is this: DIFFERENT SCENARIOS. The two
+    # columns are two different bills of the same year (battery / no battery)
+    # under the same plan set, written by one run of battery_plan_matrix.py.
+    # Neither column is derived from the other, neither is clamped, and no
+    # cross-column arithmetic happens below -- each gap is a difference of two
+    # cells INSIDE one column, and the only cross-column comparison left is
+    # the widens/narrows verb, which is gated separately and only ever fires
+    # when both columns measure against the SAME rival.
+    #
+    # SAME RIVAL OR NOT is decided on the two SETS, never on the two names.
+    # A shared plan means one rival is a cheapest rival in both columns, so
+    # there is a single comparison to talk about and the pre-existing wording
+    # holds. Disjoint sets mean no plan is: the comparison genuinely changes
+    # identity between the columns. Taking this off _runner_up()'s names
+    # instead would let a tie between two rivals in one column invent an
+    # identity change out of whichever name sorted first.
+    rivals_no = _bpm_rivals("S4_VERDICT_SHORT", "no_battery")
+    rivals_with = _bpm_rivals("S4_VERDICT_SHORT", "with_battery")
+    shared = rivals_no & rivals_with
+    if shared:
+        name_no = name_with = sorted(shared)[0]
+    else:
+        name_no, name_with = sorted(rivals_no)[0], sorted(rivals_with)[0]
+    plans = _bpm_plans()
+    gap_no = plans[name_no]["no_battery"] - best["no_battery"]
+    gap_with = plans[name_with]["with_battery"] - best["with_battery"]
     _require_finite("S4_VERDICT_SHORT", "how this plan stands against the runner-up",
                     no_battery_gap=gap_no, with_battery_gap=gap_with)
-    widened = gap_with > gap_no
-    if gap_no > 0 and gap_with > 0:
-        return (f"{'Yes' if widened else 'No'} — the battery "
-                f"{'widens' if widened else 'narrows'} {plan}'s lead over {name} from "
-                f"{_usd0(gap_no)}/yr to {_usd0(gap_with)}/yr")
+    # DOES THE BATTERY CHANGE WHICH PLAN IS BEST? Asked of SETS, built on the
+    # stored cells exactly (_bpm_cheapest): each set is the plans that column
+    # prices lowest, and a plan is in it only if no other plan stores lower.
+    # Three answers, because the sets admit three shapes and only two of them
+    # are a Yes/No:
+    #
+    # THE ANSWER IS TAKEN ON THE INTERSECTION, and on nothing else (issue
+    # #141 review round 3). The question is whether ONE plan survives the
+    # battery, so the quantity that answers it is the set of plans that are
+    # cheapest-or-joint-cheapest in BOTH columns -- joint-cheapest being
+    # cheapest, exactly as the win row's own gate reads it in
+    # _best_plan_matrix_cell. Three answers, by the SIZE of that intersection:
+    #
+    #   empty      -> "Yes". Nothing cheapest without a battery is cheapest
+    #      with one. The winner really does change, and the cells settle that
+    #      they do.
+    #   one plan   -> "No". Exactly one plan is cheapest-or-joint-cheapest at
+    #      both battery states, so staying on it is the answer whatever the
+    #      battery does -- this household's case, EV-TOU-5 by $961 and $1,612.
+    #      It is STILL "No" when that plan only TIES for cheapest in one of
+    #      the columns: a plan the artifact cannot separate from a rival in
+    #      one column and prices strictly below every rival in the other is
+    #      the single plan that is never beaten, which is the whole of what
+    #      the heading asks.
+    #   two or more-> "Too close to call". Every plan in the intersection is
+    #      the minimum of both columns, so two of them means two plans priced
+    #      IDENTICALLY in BOTH columns: there is no ranking change, so this is
+    #      not "Yes", and there is no single plan to name either, so it is not
+    #      a "No" that hands the reader a plan choice the artifact never made.
+    #      That is a real tie in the artifact, not a rounding hedge -- which is
+    #      why it survives the identity comparison going back to `==`.
+    #
+    # THE PREMISE THIS REPLACES, and why it was false: the third state used to
+    # be "either set names more than one plan", justified as "no single plan is
+    # the answer at both states". A tie in ONE column does not make that true.
+    # us 100/100, B 100/200, C 300/300 ties B without a battery and beats it
+    # outright with one, so the household's plan IS the answer at both states
+    # -- and section 4 renders its cells inside a fixed class="win" row (which
+    # resolves, because joint-cheapest passes that gate), so the old branch put
+    # a heading saying the question could not be settled directly above markup
+    # settling it. The mirror, us 100/100 against B 200/100, is the same shape.
+    # A heading and the row beneath it are read together or not at all.
+    no_batt = _bpm_cheapest("S4_VERDICT_SHORT", "no_battery")
+    with_batt = _bpm_cheapest("S4_VERDICT_SHORT", "with_battery")
+    best_at_both = no_batt & with_batt
+    if not best_at_both:
+        answer = "Yes"
+    elif len(best_at_both) == 1:
+        answer = "No"
+    else:
+        answer = "Too close to call"
 
-    def stands(gap, named):
-        who = f" {name}" if named else ""
-        if gap > 0:
+    def stands(gap, who_name):
+        """Where this plan stands against `who_name` in one column, naming it
+        when who_name is given.
+
+        THE VERB OFF THE SIGN, THE FIGURE OFF THE BAND. A non-zero stored gap
+        is a real ordering (round() is non-decreasing), so "leads"/"trails"
+        is exact at every size, down to a stored dollar. What a stored dollar
+        does not support is the figure "$1/yr", which could be a cent: inside
+        the band the clause states the direction and BOUNDS the size at
+        gap + $1.00 instead of quoting it. A stored gap of zero is the one
+        case with no direction to state -- two identical cells, a real tie.
+
+        _BPM_TIE_USD and not _BPM_GAP_TIE_USD, deliberately: a clause built
+        here compares TWO cells of ONE column, which is the two roundings that
+        constant is derived from. Four-cell error belongs to the verb below,
+        which compares two of these gaps against each other.
+        """
+        who = f" {who_name}" if who_name else ""
+        if gap > _BPM_TIE_USD:
             return f"leads{who} by {_usd0(gap)}/yr"
-        if gap < 0:
+        if gap > 0:
+            return f"leads{who} by under {_usd0(gap + _BPM_TIE_USD)}/yr"
+        if gap == 0:
+            return f"ties{who}"
+        if gap < -_BPM_TIE_USD:
             return f"trails{who} by {_usd0(-gap)}/yr"
-        return f"ties{who}"
+        return f"trails{who} by under {_usd0(-gap + _BPM_TIE_USD)}/yr"
 
-    return (f"{'Yes' if widened else 'No'} — {plan} {stands(gap_no, True)} without a "
-            f"battery, and {stands(gap_with, False)} with one")
+    # A RIVAL CHANGE IS NOT A GAP CHANGE (issue #141 adversarial review).
+    # "widens" / "narrows" / "leaves ... at" all assert something about ONE
+    # comparison at two battery states: the same two plans, priced twice. When
+    # the columns' runner-ups are different plans the sentence has four plans
+    # in it, and a figure that moved from $100 to $50 may have moved because
+    # the battery changed the bills, because the rival changed identity, or
+    # any mixture -- so none of those three verbs is a claim the cells
+    # support, and the size band cannot rescue them either (_BPM_GAP_TIE_USD
+    # bounds the ERROR in a gap change, not the attribution of one).
+    #
+    # So this branch makes no cross-column claim at all. It says the rival
+    # changed, which is the fact the reader needs and the one thing four cells
+    # settle exactly -- the sets are disjoint on `==`, and round() is
+    # non-decreasing -- and then states each column's standing against its own
+    # runner-up, each clause hedged against its own two cells by stands().
+    # Both rivals are NAMED, because a reader shown two figures and one name
+    # would read a moving margin against a fixed opponent, which is the false
+    # reading this whole fix exists to stop.
+    if name_no != name_with:
+        return (f"{answer} — the cheapest rival changes with the battery: "
+                f"{plan} {stands(gap_no, name_no)} without one, and "
+                f"{stands(gap_with, name_with)} with one")
+
+    # ONE rival, both columns, so the two gaps are the same comparison priced
+    # twice and the verbs above become available. The clauses below QUOTE the
+    # two gaps as figures and compare them, which is the part of this sentence
+    # the rounding does reach. Both gaps have to be large enough for the
+    # quoted size to mean something ($1.00, two cells) before this branch
+    # prints them; a smaller lead is still a real lead and falls through to
+    # stands(), which names its holder and bounds its size instead of quoting
+    # one. "widens"/"narrows" is a claim about the gap BETWEEN the two gaps,
+    # four cells deep and not helped by monotonicity, hence _BPM_GAP_TIE_USD.
+    if gap_no > _BPM_TIE_USD and gap_with > _BPM_TIE_USD:
+        if abs(gap_with - gap_no) <= _BPM_GAP_TIE_USD:
+            return (f"{answer} — the battery leaves {plan}'s lead over {name_no} at "
+                    f"{_usd0(gap_no)}/yr against {_usd0(gap_with)}/yr, a change "
+                    f"smaller than the rounding can resolve")
+        return (f"{answer} — the battery "
+                f"{'widens' if gap_with > gap_no else 'narrows'} {plan}'s lead over "
+                f"{name_no} from {_usd0(gap_no)}/yr to {_usd0(gap_with)}/yr")
+
+    return (f"{answer} — {plan} {stands(gap_no, name_no)} without a "
+            f"battery, and {stands(gap_with, None)} with one")
 
 
 _tok("S4_VERDICT_SHORT", kind="derived", get=_s4_verdict_short,
@@ -2095,7 +2465,8 @@ def _plan_margin_vs_runner_up(ctx):
     fmt="usd0", so the negative reads "-$500" and not "$-500" -- shared,
     because building that string inline here is exactly what left the
     identical defect standing next door in _s4_verdict_short."""
-    gap = _runner_up()[1]["no_battery"] - _bpm_best()[1]["no_battery"]
+    gap = (_runner_up("PLAN_MARGIN_VS_RUNNER_UP")[1]["no_battery"]
+           - _bpm_best()[1]["no_battery"])
     _require_finite("PLAN_MARGIN_VS_RUNNER_UP", "what this plan's margin is", margin=gap)
     return _usd0_signed(gap)
 

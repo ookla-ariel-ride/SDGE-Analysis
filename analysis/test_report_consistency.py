@@ -61,14 +61,84 @@ def _expected_month_labels():
 # Figures retired by artifact corrections; checked absent in
 # case_headline_figures_present_and_stale_ones_absent alongside the presence
 # of each figure's current artifact-derived form.
+#
+# TWO KINDS OF ENTRY LIVE HERE, and they are not equally permanent (issue #141
+# review round 3, finding 5). Read the group comments before adding one, and
+# say which kind the new entry is.
+#
+#   RETIRED BY METHOD. The first group below. A model changed -- a session
+#   detector, a payback framing -- so the old figure is not something the
+#   current pipeline can produce from any data. It cannot recur, and the
+#   entry is permanent.
+#
+#   RETIRED BY REGENERATION. The second group. The method is unchanged; the
+#   INPUTS were re-based, and every one of these figures is a value the
+#   current script would print again given data that rounds there. So they
+#   CAN recur, and this list is the one place in the suite where a correct
+#   report can fail: `battery_alone_payback_evening_only_yr` has already
+#   published 8.4, then 8.8, then 8.5, then 8.4 again (3ca0903, 298ad02,
+#   58fb13c, 28daa97), so "8.5 yr" is one regeneration away from being both
+#   the current figure and a banned string.
+#
+# WHAT TO DO IF THAT HAPPENS: the report is right and the list is wrong.
+# Delete the entry -- it has stopped describing a stale figure -- rather than
+# re-basing the prose to dodge it. What keeps the check honest in the
+# meantime is not this list but the PRESENCE half of the same case, which
+# derives each current figure from the artifact and requires it in the
+# document; the absence half only catches the specific superseded string a
+# sweep is known to have missed.
 RETIRED_FIGURES = [
+    # RETIRED BY METHOD (cannot recur).
     "560 charging sessions",   # pre-correction EV session count
     "$2,325",                  # pre-correction PW3 price-aware annual save
     "$3,438",                  # pre-correction MID package savings
     "$4,884",                  # pre-correction baseline bill at current rates
     "9.4-yr median",           # pre-correction Monte Carlo payback (now 6.0)
     "median 9.4 yr",           # same retired figure, its other prose form
+    # RETIRED BY REGENERATION (can recur -- see the note above).
+    # The §3 "vs. current" column and the §4 conclusion sentence, on the
+    # plan_results.csv / battery_plan_matrix.json generation that preceded
+    # 28daa97 ("regenerate on the corrected interval data and the confirmed
+    # holiday rule"). Both files' LEVEL cells were re-based there; these
+    # DIFFERENCES between them were not, so every one of them reconciled
+    # perfectly against the superseded artifact and looked arbitrary against
+    # the committed one. Listed as bare figures because that is the only form
+    # they ever took, and none of these amounts is cited anywhere else.
+    "$959",                    # EV-TOU-2 margin, no battery (now $961)
+    "$1,472",                  # TOU-ELEC margin, no battery (now $1,474)
+    "$1,516",                  # TOU-DR-P margin (now $1,518)
+    "$1,982",                  # TOU-DR1 margin (now $1,990)
+    "$2,329",                  # TOU-DR2 margin (now $2,338)
+    "$1,609",                  # EV-TOU-2 margin, with battery (now $1,612)
+    "$2,782",                  # TOU-ELEC margin, with battery (now $2,785)
+    "8.5 yr",                  # evening-only battery payback (now 8.4 yr)
 ]
+
+# THIS LIST IS SCOPED TO index.html ON PURPOSE, and the reason is measured
+# rather than assumed (issue #141 review round 3, finding 3). TECHNICAL.md
+# quotes the same three artifacts and was missed by an index.html-only sweep
+# twice, so extending the absence check to it was tried against the file:
+#
+#   FALSE POSITIVES, 5 hits over 2 strings. "$2,329" appears four times in
+#   sections 3.13/3.14 as the THEN-CURRENT greedy annual save -- a different
+#   quantity from the retired TOU-DR2 plan margin that put the string on this
+#   list -- inside sentences whose subject is the lineage itself ("moved to
+#   $2,328/yr (from $2,329/yr)"), which cannot be edited away without
+#   deleting the history TECHNICAL.md exists to hold. "8.5 yr" appears once
+#   more as a rate-decline sensitivity endpoint. Naming superseded figures is
+#   that document's job; index.html is forbidden it (CLAUDE.md section 9).
+#
+#   TRUE POSITIVES, 0, and 6 SILENT MISSES. Section 3.4 transcribes the
+#   artifact's schema in BARE numbers -- 4884, 3438, 2325 -- so the "$4,884"
+#   forms on this list test absent while the line is stale. Every stale
+#   TECHNICAL.md figure this review found was either bare or a rounded
+#   restatement ("~$4,880/yr"), which no exact-string blocklist reaches.
+#
+# So the gate is deliberately NOT extended: it would fire only falsely there.
+# What that file needs is the POSITIVE check instead -- each current artifact
+# value asserted present in the passage that claims to quote it -- which is
+# what the presence half of case_headline_figures_present_and_stale_ones_absent
+# does for index.html, and is a separate piece of work.
 
 # The retired holiday-convention explanation; checked absent in
 # case_no_retired_holiday_discrepancy_note. Both pipelines now share the
@@ -953,6 +1023,170 @@ def case_battery_plan_matrix_table_matches_the_artifact():
     assert f"${cc['battery_value']:,}/yr" in crosscheck_html, (
         f"cross-check battery_value {cc['battery_value']} not cited in the §4 crosscheck paragraph")
     return "the §4 battery×plan matrix table and its canonical cross-check figures match battery_plan_matrix.json"
+
+
+def _s3_plan_table_rows():
+    """[(plan, [cell texts])] for §3's rate-plan table, header row dropped.
+
+    The plan name is the leading run of tariff characters, so the first cell's
+    reader-facing decoration comes off: "EV-TOU-5 ✓ current" and the footnoted
+    "TOU-DR-P*" both name a plan the artifacts price."""
+    start = HTML.index('<h2 id="s3">')
+    table_end = HTML.index("</table>", start) + len("</table>")
+    table_html = HTML[start:table_end]
+    tag_re = re.compile(r"<[^>]+>")
+    rows = []
+    for m in re.finditer(r"<tr[^>]*>(.*?)</tr>", table_html, re.S):
+        cells = [htmlmod.unescape(tag_re.sub("", c)).strip()
+                 for c in re.findall(r"<td[^>]*>(.*?)</td>", m.group(1), re.S)]
+        if cells:
+            rows.append((re.match(r"[A-Za-z0-9-]+", cells[0]).group(0), cells))
+    return rows
+
+
+def case_plan_and_battery_margins_match_their_artifacts():
+    """The report's plan MARGINS -- §3's "vs. current" column, §0's
+    runner-up line and §4's conclusion sentence -- against the two artifacts
+    that price them (issue #141).
+
+    Every one of these is a DIFFERENCE the prose computes by hand between two
+    artifact levels, and nothing checked them. The sibling cases above pin the
+    LEVELS in both tables, so when 28daa97 re-based both artifacts the levels
+    were updated and all seven differences were not: each still reconciled to
+    the cent against the superseded generation, which is exactly why they read
+    as deliberate rather than stale. Differences are what CLAUDE.md prefers to
+    quote, so they are what this pins.
+
+    Nothing here is hardcoded: the margins are computed from the artifacts and
+    the base plan is read off the row the report itself marks class="win", so
+    a household on another plan is measured against its own base.
+    """
+    plan_rows = list(csv.DictReader(
+        (ROOT / "data" / "plan_results.csv").read_text().splitlines()))
+    cea = {r["plan"]: float(r["total"]) for r in plan_rows if r["provider"] == "CEA"}
+    bpm = json.loads((ROOT / "data" / "battery_plan_matrix.json").read_text())["plans"]
+
+    # THE TWO ARTIFACTS' no-battery columns, cross-checked before either is
+    # used to judge the prose. Case: SAME QUANTITY, INDEPENDENTLY COMPUTED --
+    # not one derived from the other, and not two scenarios. Evidence:
+    # analysis/battery_plan_matrix.py re-bills the year itself (bill_plan(),
+    # its own published-rate-table engine) and then asserts its own result
+    # against plan_results.csv at `abs(no_b - ref[plan]) < 1.0` (line ~215),
+    # reading ref from the provider == "CEA" rows; it stores round(no_b).
+    # So each column may sit up to $1.00 (the generator's own tie-out
+    # tolerance) plus $0.50 (its rounding) from the CSV, and a DIFFERENCE of
+    # two such cells up to $3.00. Anything past that is the two generators
+    # actually disagreeing, not float noise, so it fails here rather than
+    # being averaged over.
+    base_plan = None
+    for plan, cells in _s3_plan_table_rows():
+        assert plan in cea, f"§3 prices {plan!r}, which is not in plan_results.csv"
+        assert cells[1] == _fmt_usd(cea[plan]), (
+            f"§3's {plan} level cell {cells[1]} is not plan_results.csv's "
+            f"{_fmt_usd(cea[plan])}")
+        if cells[3] == "—":
+            assert base_plan is None, "§3 marks more than one plan as the current one"
+            base_plan = plan
+    assert base_plan, '§3 has no "—" row naming the household\'s current plan'
+
+    for plan in bpm:
+        assert plan in cea, f"battery_plan_matrix.json prices {plan!r}, absent from the CSV"
+        if plan == base_plan:
+            continue
+        csv_margin = cea[plan] - cea[base_plan]
+        bpm_margin = bpm[plan]["no_battery"] - bpm[base_plan]["no_battery"]
+        assert abs(csv_margin - bpm_margin) <= 3.0, (
+            f"plan_results.csv and battery_plan_matrix.json disagree about {plan}'s "
+            f"no-battery margin over {base_plan}: ${csv_margin:,.2f} vs ${bpm_margin:,} "
+            "-- past the $3.00 the generator's own $1.00 tie-out and two roundings allow")
+
+    # §3's "vs. current" column, every row. Tolerance $1.00 and not exact
+    # equality because the column may legitimately be written either as
+    # round(a - b) or as the difference of the two rounded cells beside it,
+    # which differ by at most a dollar; every stale value this case exists to
+    # catch was $2-$9 out, well clear of that.
+    checked = 0
+    for plan, cells in _s3_plan_table_rows():
+        if plan == base_plan:
+            continue
+        printed = float(cells[3].lstrip("+$").replace(",", ""))
+        exact = cea[plan] - cea[base_plan]
+        assert abs(printed - exact) <= 1.0, (
+            f"§3's 'vs. current' cell for {plan} prints +${printed:,.0f} against "
+            f"plan_results.csv's ${exact:,.2f}")
+        checked += 1
+    assert checked >= 5, f"only {checked} margin cells found in §3's table"
+
+    # §4's conclusion sentence, which quotes the same margin at BOTH battery
+    # states for every rival in the matrix. Bounded to that paragraph: these
+    # are bare dollar figures, and searching the whole document would let the
+    # sentence be deleted outright and still pass.
+    s4 = HTML.index('<h2 id="s4">')
+    concl_start = HTML.index("<p><b>Conclusion:</b>", s4)
+    conclusion = HTML[concl_start:HTML.index("</p>", concl_start)]
+    quoted = []
+    s4_printed = {}
+    for plan in bpm:
+        if plan == base_plan:
+            continue
+        for column in ("no_battery", "with_battery"):
+            margin = bpm[plan][column] - bpm[base_plan][column]
+            assert _fmt_usd(margin) in conclusion, (
+                f"§4's conclusion does not quote {plan}'s {column} margin over "
+                f"{base_plan}, {_fmt_usd(margin)}: {conclusion}")
+            quoted.append(_fmt_usd(margin))
+        # The FIGURE §4 actually prints for this plan's no-battery margin --
+        # the first dollar amount after the plan's name, which is the "from
+        # ~$X/yr" of "over TOU-ELEC from ~$1,474 to ~$2,785". Read separately
+        # from the presence checks above because those ask whether the
+        # artifact's number is somewhere in the sentence; the comparison below
+        # asks what the READER is shown.
+        m = re.search(re.escape(plan) + r"[^$]*\$([\d,]+)", conclusion)
+        assert m, (f"§4's conclusion names {plan} with no dollar figure after it, so its "
+                   f"no-battery margin cannot be compared with §3's: {conclusion}")
+        s4_printed[plan] = float(m.group(1).replace(",", ""))
+
+    # THE TWO PUBLISHED MARGINS AGAINST EACH OTHER (issue #141 review round 3,
+    # finding 4). Everything above pins each section to its OWN artifact --
+    # §3 to plan_results.csv within $1.00, §4 to battery_plan_matrix.json by
+    # exact string -- and separately allows the two artifacts to sit $3.00
+    # apart. Those three tolerances compose: §3 could print +$961 and §4
+    # ~$963 for the same EV-TOU-2 no-battery margin, in adjacent sections,
+    # and every assertion above would pass. What the reader compares is the
+    # two PRINTED figures, so they are compared here directly.
+    #
+    # $1.00, not $3.00: the generators' own tie-out allowance is a licence for
+    # the two ARTIFACTS to differ, never a licence to print two different
+    # numbers at one reader for one quantity (CLAUDE.md section 3). All that
+    # is allowed between the two published figures is the dollar their two
+    # roundings can each be out by. If a regeneration ever pushes the
+    # artifacts far enough apart to break this, the remedy is to source both
+    # sections from one artifact, not to widen the bound.
+    s3_printed = {plan: float(cells[3].lstrip("+$").replace(",", ""))
+                  for plan, cells in _s3_plan_table_rows() if cells[3] != "—"}
+    agreed = []
+    for plan, printed4 in sorted(s4_printed.items()):
+        assert plan in s3_printed, (
+            f"§4's conclusion quotes a margin for {plan}, which §3's table does not price "
+            f"-- the two sections' margins cannot be reconciled")
+        assert abs(s3_printed[plan] - printed4) <= 1.0, (
+            f"§3 prints {plan}'s margin over {base_plan} as ${s3_printed[plan]:,.0f} and "
+            f"§4 prints the same margin as ${printed4:,.0f}: two adjacent sections showing "
+            f"one reader two different figures for one quantity")
+        agreed.append(f"{plan} ${printed4:,.0f}")
+
+    # §0's runner-up line, the same no-battery margin one section earlier.
+    runner_up = min((p for p in bpm if p != base_plan),
+                    key=lambda p: bpm[p]["no_battery"])
+    s0 = HTML[HTML.index('<h2 id="s0">'):HTML.index('<h2 id="s1">')]
+    margin0 = _fmt_usd(bpm[runner_up]["no_battery"] - bpm[base_plan]["no_battery"])
+    assert margin0 in s0, (
+        f"§0 does not quote the {margin0}/yr margin over the runner-up {runner_up}")
+
+    return (f"§3's {checked} 'vs. current' cells, §4's conclusion ({', '.join(quoted)}) "
+            f"and §0's {margin0} runner-up margin are all the margins their artifacts "
+            f"price over {base_plan}, the two artifacts agree on the no-battery ones, and "
+            f"§3 and §4 print the reader the same figure for each ({', '.join(agreed)})")
 
 
 def case_battery_hardware_sizing_table_matches_battery_sim_artifact():
@@ -2360,22 +2594,15 @@ def _conclusion_lines_outside_sections(doc):
     return sum(len(rx.findall(head)) for rx in _CONCLUSION_ELEMENT_RES.values())
 
 
-# Sections whose rendered <h2> verdict does NOT say what its own token says.
-# This is a PRE-EXISTING divergence in the report, tracked in issue #141 and
-# out of scope for the case below, which only has to stop it spreading:
+# Sections allowed to render an <h2> verdict that does NOT say what their own
+# token says. EMPTY, and it stays empty: every in-heading verdict in the report
+# now carries its token's text.
 #
-#   s4  renders "No — it strengthens it." while S4_VERDICT_SHORT resolves to
-#       "Yes — the battery widens EV-TOU-5's lead ... $961/yr to $1,612/yr"
-#       (the token is also inverted against its own heading question -- #141).
-#   s8  renders "No, no, and not yet." while S8_VERDICT_SHORT resolves to the
-#       same verdict continued into its figures.
-#
-# WHEN ISSUE #141 LANDS THIS SET MUST BECOME EMPTY. It is not a permanent
-# allowance: the case asserts in BOTH directions, so the moment a listed
-# section starts agreeing with its token, this case FAILS with a message
-# telling whoever fixed #141 to delete the id from here. A third divergence,
-# or any new section drifting from its token, fails the other direction.
-_HEADING_VERDICT_TOKEN_DIVERGENCE = {"s4", "s8"}
+# It held s4 and s8 while issue #141 was open. The case asserts in BOTH
+# directions, so an id parked here after its section starts agreeing fails just
+# as loudly as a section drifting from its token -- which is how this set got
+# emptied rather than forgotten.
+_HEADING_VERDICT_TOKEN_DIVERGENCE = set()
 
 
 def _normalized_verdict(text):
@@ -2548,7 +2775,7 @@ def case_every_h2_section_opens_with_exactly_one_conclusion_line():
     # silently); a token that fails for any other reason fails the case.
     scaffold = _in_heading_verdict_scaffold()
     assert _HEADING_VERDICT_TOKEN_DIVERGENCE <= set(scaffold), (
-        "the issue #141 divergence allowance names sections that no longer use the "
+        "the divergence allowance names sections that no longer use the "
         f"in-heading mechanism: {sorted(_HEADING_VERDICT_TOKEN_DIVERGENCE - set(scaffold))}")
     rendered_headings = {sid: _rendered_heading_verdict(inner, *scaffold[sid][:2])
                          for sid, inner in _SECTION_H2_RE.findall(HTML) if sid in scaffold}
@@ -2563,9 +2790,9 @@ def case_every_h2_section_opens_with_exactly_one_conclusion_line():
         + " -- the heading and its token must state the same conclusion")
     healed = sorted(_HEADING_VERDICT_TOKEN_DIVERGENCE & agreeing)
     assert not healed, (
-        f"§{', §'.join(healed)} now AGREES with its token -- issue #141 is fixed for it, so "
-        "delete the id from _HEADING_VERDICT_TOKEN_DIVERGENCE (the set exists only to hold "
-        "that known divergence and must end up empty)")
+        f"§{', §'.join(healed)} AGREES with its token, so delete the id from "
+        "_HEADING_VERDICT_TOKEN_DIVERGENCE (the set holds only sections that do NOT, "
+        "and is empty)")
 
     counts = {}
     for mech in index_mech.values():
@@ -2573,7 +2800,7 @@ def case_every_h2_section_opens_with_exactly_one_conclusion_line():
     return (f"all {len(index_mech)} h2 sections in both files OPEN with a conclusion line "
             f"and carry exactly one conclusion-line element anywhere in the section, by "
             f"the same mechanism ({counts}); {len(agreeing)} in-heading verdict(s) "
-            f"match their token, {len(diverged)} carry the known issue #141 divergence, "
+            f"match their token, {len(diverged)} diverge from it, "
             f"{len(unresolved)} not compared -- {note}")
 
 
@@ -2853,6 +3080,7 @@ CASES = [
     case_monte_carlo_paragraph_matches_uncertainty_results,
     case_backup_endurance_table_matches_the_artifact,
     case_battery_plan_matrix_table_matches_the_artifact,
+    case_plan_and_battery_margins_match_their_artifacts,
     case_battery_hardware_sizing_table_matches_battery_sim_artifact,
     case_bill_decomposition_finding_matches_the_artifact,
     case_carbon_dispatch_tradeoff_paragraph_matches_the_artifact,
