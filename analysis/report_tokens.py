@@ -2023,17 +2023,43 @@ def _runner_up():
     return name, row
 
 
+def _bpm_cheapest(token, column):
+    """The SET of plans battery_plan_matrix.json prices cheapest in `column`.
+
+    A set and not a name: at a tie there is more than one cheapest plan, and
+    collapsing that to whichever key sorted first would invent a ranking
+    change out of a tie (or hide one behind it). Callers compare the sets.
+
+    `token` names the caller in the refusal rather than being hardcoded here:
+    a nan in the column is a real fail-closed condition, and the message has
+    to name the token that was being resolved, not the first one that ever
+    used this helper.
+    """
+    totals = {p: v[column] for p, v in _bpm_plans().items()}
+    _require_finite(token,
+                    f"which plan the matrix prices cheapest in its {column} column",
+                    **{f"{p}_{column}": t for p, t in totals.items()})
+    cheapest = min(totals.values())
+    return {p for p, t in totals.items() if t == cheapest}
+
+
 def _s4_verdict_short(ctx):
     """Section 4's in-heading verdict.
 
-    The Yes/No prefix and the widens/narrows verb are ONE decision on the same
-    test (does the battery grow the gap), left exactly as they were: issue #141
-    holds that this prefix answers section 4's heading question backwards, and
-    fixing that is #141's job, not this one.
+    THE PREFIX ANSWERS THE HEADING'S OWN QUESTION (issue #141). The template
+    reads "Does a battery change which plan is best? {{S4_VERDICT_SHORT}}", so
+    Yes/No has to answer THAT -- whether the plan the matrix prices cheapest
+    differs between its two columns. It used to be spelled `widened`, the same
+    test as the widens/narrows verb below, which answers a different question
+    (does the battery grow the gap): with this household's artifact both gaps
+    grow, so the heading published "Yes" directly above a section concluding
+    that the plan choice does not change. The two decisions are now taken
+    separately, off _bpm_cheapest (a ranking, at both battery states) and off
+    the gaps respectively.
 
-    What is fixed here is the noun AND the sigil. "lead" and "widens ... lead"
-    are false unless this plan leads at BOTH battery states, and the previous
-    version tested only the no-battery gap -- so a plan leading by $200 without
+    THE NOUN AND THE SIGIL are a separate, earlier fix. "lead" and "widens
+    ... lead" are false unless this plan leads at BOTH battery states, and the
+    previous version tested only the no-battery gap -- so a plan leading by $200 without
     a battery and TRAILING by $500 with one still published "narrows EV-TOU-5's
     lead over EV-TOU-2 from $200/yr to $-500/yr": a lead that is not one, and a
     minus sign inside the dollar sigil (issue #131 review round 2, finding 5;
@@ -2050,8 +2076,13 @@ def _s4_verdict_short(ctx):
     _require_finite("S4_VERDICT_SHORT", "how this plan stands against the runner-up",
                     no_battery_gap=gap_no, with_battery_gap=gap_with)
     widened = gap_with > gap_no
+    # "Yes, the battery changes which plan is best" iff the cheapest plan is
+    # not the same one at both battery states. Independent of `widened`.
+    changes = (_bpm_cheapest("S4_VERDICT_SHORT", "no_battery")
+               != _bpm_cheapest("S4_VERDICT_SHORT", "with_battery"))
+    answer = "Yes" if changes else "No"
     if gap_no > 0 and gap_with > 0:
-        return (f"{'Yes' if widened else 'No'} — the battery "
+        return (f"{answer} — the battery "
                 f"{'widens' if widened else 'narrows'} {plan}'s lead over {name} from "
                 f"{_usd0(gap_no)}/yr to {_usd0(gap_with)}/yr")
 
@@ -2063,7 +2094,7 @@ def _s4_verdict_short(ctx):
             return f"trails{who} by {_usd0(-gap)}/yr"
         return f"ties{who}"
 
-    return (f"{'Yes' if widened else 'No'} — {plan} {stands(gap_no, True)} without a "
+    return (f"{answer} — {plan} {stands(gap_no, True)} without a "
             f"battery, and {stands(gap_with, False)} with one")
 
 
