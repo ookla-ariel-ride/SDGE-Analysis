@@ -4886,6 +4886,45 @@ def case_a_legitimate_null_or_not_applicable_emission_renders_rather_than_aborts
             "their own answer instead of aborting the report")
 
 
+def _night_floor_readers():
+    """Every non-gap token whose resolution ACTUALLY READS
+    data/quiet_night_floor.json, discovered by the loader's own record.
+
+    Not read off TOKENS' `sources`, for the reason the poison sweep gives one
+    section up: that list is prose, nothing consumes it, and a token that
+    forgets to name an artifact is exactly the omission the case below exists
+    to catch. rt._reads is populated inside rt._json, and _stub_for delegates
+    to the real loader, so a stubbed resolution records the same way.
+
+    A token this checkout cannot resolve (no private archive on CI) simply
+    does not enter the enumeration; the case asserts a floor set separately so
+    the sweep cannot silently collapse to nothing."""
+    found = []
+    for name, spec in rt.TOKENS.items():
+        if spec.get("kind") == "gap":
+            continue
+        try:
+            rt.resolve_token(name)
+        except SystemExit:
+            continue
+        if rt._NIGHT_FLOOR_ARTIFACT in rt._reads:
+            found.append(name)
+    return sorted(found)
+
+
+# THE FLOOR, NOT THE LIST. The case below enumerates its own tokens, so a
+# token added later is swept without editing this file; these six are asserted
+# to still be IN that enumeration so a refactor that stops discovering them
+# fails loudly instead of passing on an empty sweep (the "a guard reporting
+# success while covering nothing" failure this suite already names once).
+# Removing a name here is only correct if that token genuinely stopped
+# claiming a year off this artifact.
+_ANNUAL_NIGHT_FLOOR_FLOOR_SET = frozenset((
+    "NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST", "SEC9_TEASER",
+    "PHANTOM_METHOD_DISCREPANCY", "NIGHT_FLOOR_SENSITIVITY_PER_100W",
+    "NIGHT_FLOOR_PRICING_BASIS"))
+
+
 @case
 def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_unit():
     """ISSUE #132, PASS 3 AND CODEX PASS 1 FINDING 1. NIGHT_FLOOR_ANNUAL_KWH
@@ -4914,14 +4953,39 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
     parallel set, because the defect was precisely that the four did not share
     a mechanism.
 
+    ISSUE #140, ADVERSARIAL PASS 3 STOPS NAMING TOKENS AT ALL. Fixing the
+    four by name is how the fifth was missed: NIGHT_FLOOR_SENSITIVITY_PER_100W
+    appended "/yr" to a savings RATE re-billed over the same interval series,
+    and a sixth, NIGHT_FLOOR_PRICING_BASIS, claimed the year in a WORD rather
+    than a unit ("leaving the annual figures conservative by about $86")
+    beside two figures that had correctly stopped claiming it. Both were
+    invisible to this case because it looped a hardcoded four.
+
+    So the population is now DISCOVERED, twice over: _night_floor_readers()
+    asks the loader which tokens actually read the artifact, and the annual
+    ones are the subset whose complete render trips rt._ANNUAL_CLAIM -- the
+    same expression the module's own structural guard uses. A token added
+    later is swept without editing this file. The tokens that read the
+    artifact and legitimately claim NO year (a kW median, a spread, a night
+    count) are asserted too, in the other direction: they must never quietly
+    acquire an annual unit.
+
+    AND THE STRUCTURAL GUARD IS TESTED AS A GUARD, on a token deliberately
+    written the wrong way and deliberately declaring no sources at all --
+    which is what "a token added later cannot reintroduce this by omission"
+    has to mean if it means anything.
+
     And the complete case must still render exactly what it renders today."""
-    complete = {n: rt.resolve_token(n) for n in
-                ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
-                 "SEC9_TEASER", "PHANTOM_METHOD_DISCREPANCY")}
+    readers = _night_floor_readers()
+    complete = {n: rt.resolve_token(n) for n in readers}
+    annual = sorted(n for n in readers if rt._ANNUAL_CLAIM.search(complete[n]))
+    quiet = [n for n in readers if n not in set(annual)]
+    missing = _ANNUAL_NIGHT_FLOOR_FLOOR_SET - set(annual)
+    assert not missing, (
+        f"the enumeration no longer covers {sorted(missing)} -- either the sweep stopped "
+        f"discovering them or they stopped claiming a year; it found {annual}")
+    assert quiet, f"every night-floor reader claims a year, which cannot be right: {readers}"
     assert complete["NIGHT_FLOOR_ANNUAL_KWH"].endswith("kWh/yr"), complete
-    for annual in ("NIGHT_FLOOR_ANNUAL_COST", "SEC9_TEASER",
-                   "PHANTOM_METHOD_DISCREPANCY"):
-        assert "/yr" in complete[annual], complete
 
     def corpus(nights, step=1, hole_to=None):
         """A coherent stub: `nights` dates every `step` days, with nights_total
@@ -4955,14 +5019,23 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
             ("gappy", dict(nights=300, hole_to=364), "gaps")):
         with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
                                              corpus(**kwargs))):
-            for token in ("NIGHT_FLOOR_ANNUAL_KWH", "NIGHT_FLOOR_ANNUAL_COST",
-                          "SEC9_TEASER", "PHANTOM_METHOD_DISCREPANCY"):
+            for token in annual:
                 text = _renders(token)
                 checked[f"{token}@{label}:{kwargs}"] = text
-                assert "/yr" not in text, (
+                assert not rt._ANNUAL_CLAIM.search(text), (
                     f"{token} publishes an ANNUAL figure from a {label} corpus "
                     f"({kwargs}), which is not a year: {text}")
                 assert expect in text, f"{token} did not say why ({expect!r}): {text}"
+                for pat_label, pattern in _MALFORMED_RENDER:
+                    assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
+            # The other direction, on the tokens that read this artifact and
+            # claim no year: they must still render, and must not pick one up.
+            for token in quiet:
+                text = _renders(token)
+                checked[f"{token}@{label}:{kwargs}"] = text
+                assert not rt._ANNUAL_CLAIM.search(text), (
+                    f"{token} acquired an annual claim on a {label} corpus "
+                    f"({kwargs}): {text}")
                 for pat_label, pattern in _MALFORMED_RENDER:
                     assert not pattern.search(text), f"{token} rendered {pat_label}: {text}"
 
@@ -4984,11 +5057,40 @@ def case_a_corpus_that_is_not_a_year_never_publishes_a_figure_wearing_an_annual_
         except SystemExit as e:
             assert "NIGHT_FLOOR_ANNUAL_KWH" in str(e), e
 
+    # THE GUARD, AS A GUARD. A token written the way all six of the ones above
+    # were originally written -- price map total, "/yr" appended, no coverage
+    # call -- and declaring NO sources at all, so that nothing about this
+    # depends on a declaration being remembered. On a real year it renders; on
+    # a corpus that is not one it is refused, by name, pointing at the gate.
+    probe = "NIGHT_FLOOR_UNGATED_ANNUAL_PROBE"
+    assert probe not in rt.TOKENS, probe
+    rt.TOKENS[probe] = dict(
+        kind="derived", sources=[],
+        get=lambda ctx: "${:,.0f}/yr".format(
+            rt._night_floor_pricing()["method_a_price_map"]["total_usd"]))
+    try:
+        assert rt.resolve_token(probe).endswith("/yr"), rt.resolve_token(probe)
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json",
+                                             corpus(nights=200))):
+            try:
+                rt.resolve_token(probe)
+                raise AssertionError(
+                    "the structural guard let an undeclared, ungated '/yr' through")
+            except SystemExit as e:
+                assert probe in str(e), e
+                assert "less than a full year" in str(e), e
+                assert "_night_floor_coverage" in str(e), e
+    finally:
+        del rt.TOKENS[probe]
+
     after = {n: rt.resolve_token(n) for n in complete}
     assert after == complete, f"the stubs leaked: {after} != {complete}"
-    return (f"{len(checked)} renders across short / long / gappy corpora report their own "
-            f"window instead of an annual claim, a real year still reads "
-            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, and a drifted priced floor refuses")
+    return (f"{len(checked)} renders across short / long / scattered / gappy corpora, over "
+            f"the {len(annual)} discovered token(s) that claim a year off this artifact and "
+            f"the {len(quiet)} that read it without claiming one, report their own window "
+            f"instead of an annual claim; a real year still reads "
+            f"{complete['NIGHT_FLOOR_ANNUAL_KWH']!r}, a drifted priced floor refuses, and "
+            f"an undeclared ungated '/yr' is refused by the loader-observed guard")
 
 
 @case

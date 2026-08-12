@@ -123,8 +123,24 @@ def template_tokens(html=None):
 # ---------------------------------------------------------------------------
 _json_cache = {}
 
+# WHICH ARTIFACTS THE TOKEN CURRENTLY RESOLVING HAS ACTUALLY READ.
+#
+# Recorded at the loader, never declared. TOKENS' `sources` list is prose:
+# nothing consumes it and nothing checks it, which is why the poison sweep in
+# test_report_tokens.py discovers a token's artifacts by wrapping this loader
+# instead of reading that list. A guard that trusted the declaration would be
+# defeated by the same omission it exists to catch -- a new token that reads
+# an artifact and forgets to name it.
+#
+# resolve_token() opens and closes the window (one clear per resolution), and
+# _forbid_unearned_annual_unit() reads it. The set is recorded BEFORE the
+# cache test on purpose: a second reader of an already-loaded artifact is
+# still a reader of it.
+_reads = set()
+
 
 def _json(name):
+    _reads.add(name)
     if name not in _json_cache:
         path = DATA / name
         if not path.is_file():
@@ -5192,8 +5208,75 @@ def _night_floor_coverage():
     return True, nights, ""
 
 
+_NIGHT_FLOOR_ARTIFACT = "quiet_night_floor.json"
+
+# THE UNIT AND THE ADJECTIVE, NOT THE NOUN. "/yr", "/year", "per year" and
+# every word starting "annual" are how a figure claims a year. The bare word
+# "year" is not on this list and must not be: _night_floor_coverage's own
+# `why` strings say "less than a full year" and "more than a full year", and
+# a sentence that reports the window it actually measured is the CORRECT
+# rendering -- the thing this guard exists to leave alone.
+_ANNUAL_CLAIM = re.compile(r"/yr\b|/year\b|\bper year\b|\bannual", re.IGNORECASE)
+
+
+def _forbid_unearned_annual_unit(name, rendered):
+    """No token may publish an annual claim off quiet_night_floor.json without
+    passing _night_floor_coverage. Structural, not per-call.
+
+    WHY THIS EXISTS AT ALL (issue #140, adversarial pass 3). Four tokens were
+    taught the coverage gate one review finding at a time -- NIGHT_FLOOR_
+    ANNUAL_KWH, then NIGHT_FLOOR_ANNUAL_COST, then SEC9_TEASER and PHANTOM_
+    METHOD_DISCREPANCY -- and each round's sweep missed the next one, because
+    every one of them is an INDEPENDENT f-string that happens to type "/yr".
+    A fifth (NIGHT_FLOOR_SENSITIVITY_PER_100W) and a sixth (NIGHT_FLOOR_
+    PRICING_BASIS, which claims the year in a word rather than a unit) were
+    still bypassing it when this was written. The pattern is not "these
+    tokens were careless"; it is that nothing in the module could tell a
+    correct annual unit from an unearned one, so correctness had to be
+    retyped at every exit and could only ever be checked by eye.
+    So the check moved to the one place every token leaves through.
+
+    IT GATES ON THE READ, NOT THE DECLARATION -- see _reads. A token added
+    later that reads this artifact and writes "/yr" is caught whether or not
+    it names the artifact in `sources` and whether or not anyone remembers
+    this gate exists, which is the whole point.
+
+    AND IT REFUSES, where the six tokens above render their own window. That
+    difference is deliberate. A token whose author wrote the window branch
+    has an honest sentence to fall back on and must never be withheld over a
+    label (the correction issue #132 made). A token that has NOT been written
+    for a partial corpus has no honest rendering available at all: the only
+    two options are a false annual figure or a named stop, and the stop names
+    the token, the corpus and the gate to route it through. It cannot fire on
+    a household whose corpus really is a year, which is every household this
+    check is not about.
+
+    THE COST OF ITS BREADTH, STATED. It tests the whole rendered string, so a
+    future token that reads this artifact for one fact and prints an annual
+    figure from a DIFFERENT artifact would be refused on a partial night-floor
+    corpus even though its own figure was sound. That is the trade taken
+    knowingly: the false positive costs one named refusal and one line of
+    routing, and the false negative it prevents is a published number that is
+    wrong by however far the corpus falls short of a year."""
+    if _NIGHT_FLOOR_ARTIFACT not in _reads:
+        return
+    if not isinstance(rendered, str) or not _ANNUAL_CLAIM.search(rendered):
+        return
+    covers, nights, why = _night_floor_coverage()
+    if covers:
+        return
+    raise SystemExit(
+        f"report_tokens: {name} renders an annual claim from "
+        f"data/{_NIGHT_FLOOR_ARTIFACT}, whose corpus holds {nights:,.0f} nights, "
+        f"{why} -- every figure this module takes off that artifact is summed or "
+        f"scaled over the interval series the run was given, so its annual unit has "
+        f"to be earned through _night_floor_coverage() the way NIGHT_FLOOR_ANNUAL_KWH "
+        f"and NIGHT_FLOOR_ANNUAL_COST earn theirs, and this sentence has not earned "
+        f"it: {rendered}")
+
+
 def _night_floor():
-    return _json("quiet_night_floor.json")["night_floor"]
+    return _json(_NIGHT_FLOOR_ARTIFACT)["night_floor"]
 
 
 def _night_floor_pricing():
@@ -5439,7 +5522,20 @@ def _night_floor_pricing_basis(ctx):
     year built from it. Its floor_assumption_violations block adds the
     direction of the resulting error, which is the part a reader needs: the
     shortfall is DROPPED rather than credited, so the annual figures are
-    conservative by roughly that amount rather than inflated by it."""
+    conservative by roughly that amount rather than inflated by it.
+
+    AND THE WORD "ANNUAL" IS A FIGURE HERE, NOT A FRAME (issue #140,
+    adversarial pass 3). usd_dropped_at_export_rate is summed over the
+    interval series the run was given, exactly as both pricing methods are,
+    so on a partial corpus it is a window total -- and this sentence's job is
+    to say what the figures BESIDE it rest on, which on that corpus is no
+    longer a year. There is no "/yr" to drop, so the unqualified claim was
+    the word itself: "leaving the annual figures conservative by about $86"
+    beside two window-qualified figures describes a report that does not
+    exist. The gate is _night_floor_coverage, the same one those figures
+    pass through; the method clause moves with it, because "applied as a
+    constant across every hour of the year" is what the pricing did only
+    where the run really held a year of hours."""
     doc = _json("quiet_night_floor.json")
     label = str(doc.get("confidence_labels", {}).get("pricing", "")).strip()
     if not label:
@@ -5452,11 +5548,18 @@ def _night_floor_pricing_basis(ctx):
                         "how much the constant-floor assumption drops rather than credits",
                         usd_dropped_at_export_rate=violations["usd_dropped_at_export_rate"])
     kind = label.split("--")[0].strip().rstrip(":").strip() or "modeled"
+    covers, nights, why = _night_floor_coverage()
+    if covers:
+        return (f"{kind}, not measured: the floor is measured in a four-hour overnight window "
+                "and then applied as a constant across every hour of the year — where that "
+                f"assumption exceeds what the meter can account for, the shortfall is dropped "
+                f"rather than credited, leaving the annual figures conservative by about "
+                f"${dropped:,.0f}")
     return (f"{kind}, not measured: the floor is measured in a four-hour overnight window "
-            "and then applied as a constant across every hour of the year — where that "
+            "and then applied as a constant across every hour the run priced — where that "
             f"assumption exceeds what the meter can account for, the shortfall is dropped "
-            f"rather than credited, leaving the annual figures conservative by about "
-            f"${dropped:,.0f}")
+            f"rather than credited, leaving those figures conservative by about "
+            f"${dropped:,.0f} across the {nights:,.0f} nights measured, {why}")
 
 
 _tok("NIGHT_FLOOR_PRICING_BASIS", kind="derived", get=_night_floor_pricing_basis,
@@ -5517,7 +5620,24 @@ def _night_floor_sensitivity(ctx):
     own marginal_usd_per_100w column and prints the spread, so a reader can see
     how far the rate moves across the tested range instead of multiplying one
     figure by any amount removed. Same shape as DEGRADATION_WEATHER_CAVEAT
-    rebuilding clearsky_note's argument out of the numbers beside it."""
+    rebuilding clearsky_note's argument out of the numbers beside it.
+
+    AND THE RATE IS A RATE PER YEAR ONLY WHERE THERE IS A YEAR (issue #140,
+    adversarial pass 3). Every figure in this sentence -- the rate at the
+    floor and both ends of the ladder it is read off -- comes from
+    sensitivity_per_100w.steps, and quiet_night_floor.sensitivity_per_100w()
+    builds each step by re-billing the interval series THE RUN WAS GIVEN
+    (br.bill(f0) - br.bill(f2)) and writing the difference as
+    annual_savings_usd. On a corpus that is not a year that difference is a
+    window saving, and the field's own name is the trap: this formula used to
+    append "/yr" unconditionally, so a partial corpus published a
+    part-year saving as a per-year rate in sections 9 and 13 -- the same
+    defect the same pass fixed in SEC9_TEASER, PHANTOM_METHOD_DISCREPANCY,
+    NIGHT_FLOOR_ANNUAL_KWH and NIGHT_FLOOR_ANNUAL_COST, at the one exit that
+    sweep missed. So the unit comes from _night_floor_coverage, like theirs.
+    The ladder's two ends are not separately qualified for SEC9_TEASER's
+    reason: the window is stated once, in the same sentence, immediately
+    before them, and both are sums over exactly those nights."""
     sens = _json("quiet_night_floor.json")["sensitivity_per_100w"]
     at_floor = sens["usd_per_100w_at_current_floor"]
     per_100w, = _amounts("NIGHT_FLOOR_SENSITIVITY_PER_100W",
@@ -5537,7 +5657,10 @@ def _night_floor_sensitivity(ctx):
         **{f"step_{s['reduction_w']}_w": s["marginal_usd_per_100w"]
            for s in sens["steps"]})
     lo, hi = min(marginals), max(marginals)
-    return (f"about ${per_100w:,.0f}/yr for every 100 W taken off it, read off the "
+    covers, nights, why = _night_floor_coverage()
+    rate = (f"about ${per_100w:,.0f}/yr" if covers else
+            f"about ${per_100w:,.0f} across the {nights:,.0f} nights measured, {why},")
+    return (f"{rate} for every 100 W taken off it, read off the "
             f"{step_w:,.0f} W step nearest the measured floor rather than computed at this "
             f"household's own exact wattage — and it is a rate near this floor rather than a "
             f"multiplier for any amount removed, since the same ladder's marginal runs from "
@@ -5570,6 +5693,8 @@ def resolve_token(name, spec=None):
             raise SystemExit(f"report_tokens: unknown token {name!r} -- not in TOKENS")
         spec = TOKENS[name]
     kind = spec["kind"]
+    # One read-window per resolution; _forbid_unearned_annual_unit closes it.
+    _reads.clear()
     try:
         if kind == "gap":
             raise SystemExit(f"report_tokens: token {name} has no committed source "
@@ -5626,7 +5751,11 @@ def resolve_token(name, spec=None):
                 f"report_tokens: token {name} resolved to {raw!r}, which is not a "
                 f"finite number -- its format spec {fmt!r} has nothing honest to "
                 "render for it")
-        return FORMATTERS.get(fmt, _raw)(raw)
+        # The last gate every token passes through, and the only one that can
+        # see the finished sentence. See _forbid_unearned_annual_unit.
+        rendered = FORMATTERS.get(fmt, _raw)(raw)
+        _forbid_unearned_annual_unit(name, rendered)
+        return rendered
     except SystemExit as e:
         msg = str(e)
         if name in msg or kind == "gap":
