@@ -8427,6 +8427,423 @@ def case_the_seam_allowlist_excuses_a_seam_and_cannot_go_stale():
             "template)")
 
 
+# ===========================================================================
+# ISSUE #140, /review: the always-on floor's sensitivity ladder, its scope
+# claim, and the two public documents that publish its figures.
+# ===========================================================================
+def _ladder_rungs():
+    """The reductions data/quiet_night_floor.json's sensitivity ladder was
+    actually re-billed at, smallest first."""
+    steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
+    return sorted(s["reduction_w"] for s in steps)
+
+
+def _floor_at(median_kw, floor_w_used=None):
+    """A stub edit putting this household's measured floor at `median_kw`,
+    with the rest of the artifact made SELF-CONSISTENT the way
+    quiet_night_floor.py itself makes it: the step is the floor rounded onto
+    the ladder and then CLAMPED into [smallest rung, largest rung], and the
+    published rate is that step's own marginal.
+
+    The clamp is re-implemented here rather than imported because
+    quiet_night_floor.py needs the private archive to run -- and because the
+    defect under test is precisely that report_tokens.py never read it.
+    `floor_w_used` overrides the clamp, which is how an artifact that
+    contradicts its own ladder is built."""
+    def edit(doc):
+        sens = doc["sensitivity_per_100w"]
+        rungs = sorted(s["reduction_w"] for s in sens["steps"])
+        step = rungs[0] if len(rungs) < 2 else rungs[1] - rungs[0]
+        w = int(round(median_kw * 1000 / step)) * step
+        w = min(max(w, rungs[0]), rungs[-1]) if floor_w_used is None else floor_w_used
+        doc["night_floor"]["median_kw"] = median_kw
+        doc["pricing"]["floor_kw_priced"] = round(median_kw, 4)
+        sens["usd_per_100w_at_current_floor"]["floor_w_used"] = w
+        marginal = next((s["marginal_usd_per_100w"] for s in sens["steps"]
+                         if s["reduction_w"] == w), None)
+        if marginal is not None:
+            sens["usd_per_100w_at_current_floor"]["value_usd"] = marginal
+    return edit
+
+
+def _resolve_every_token():
+    """{token: rendered} for every non-gap token, or an AssertionError naming
+    the ones that could not be resolved.
+
+    THE WHOLE SET, and BaseException, both deliberately. resolve_token signals
+    refusal with SystemExit, and generate_report.resolve_tokens_with_gaps()
+    folds any refusal into `failures` -- which stops the run. So "this token
+    still renders" is not the claim that matters for a household whose floor
+    sits outside the ladder; "this household still gets a report" is, and only
+    a sweep of the whole set can make it."""
+    rendered, refused = {}, {}
+    for name, spec in rt.TOKENS.items():
+        if spec.get("kind") == "gap":
+            continue
+        try:
+            rendered[name] = rt.resolve_token(name)
+        except BaseException as exc:            # noqa: BLE001 - SystemExit is the refusal
+            refused[name] = f"{type(exc).__name__}: {exc}"
+    assert not refused, (
+        f"{len(refused)} token(s) refused, so this household gets no report at all: "
+        + "; ".join(f"{n} -- {why}" for n, why in sorted(refused.items())))
+    return rendered
+
+
+@case
+def case_a_floor_outside_the_sensitivity_ladder_still_gets_a_whole_report():
+    """ISSUE #140, /review FINDING 1. NIGHT_FLOOR_SENSITIVITY_PER_100W checked
+    the published step against the measured floor with a bare 50 W tolerance
+    and REFUSED past it -- and generate_report.resolve_tokens_with_gaps folds
+    a refusal into `failures`, which stops the whole run.
+
+    But quiet_night_floor.sensitivity_per_100w() never computes a step for an
+    arbitrary floor: it rounds the floor onto its ladder and then CLAMPS the
+    result into [STEP_W, MAX_REDUCTION_W], bounds whose own comment says they
+    bracket THIS household's ~1.0-1.1 kW floor. So a 1.40 kW floor pinned to
+    the 1,200 W end missed by 200 W, a 0.03 kW floor pinned to the 100 W end
+    missed by 70, and every household outside roughly 50-1,250 W got no
+    report. Third time this project has shipped a guard that compares two
+    artifact fields without reading the generator that writes both, which is
+    what report_tokens.py's own _require_derived preamble is about.
+
+    Three floors, and the sweep is over EVERY token rather than this one:
+      1.40 kW -- above the ladder, renders the rate at its top end;
+      0.03 kW -- below it, renders the rate at its bottom end;
+      1.03 kW -- inside it, renders exactly what it renders today.
+    The bounds in the assertions are read off the artifact's own ladder, so
+    nothing here restates the generator's constants either."""
+    _require_household()
+    rungs = _ladder_rungs()
+    lowest, highest = rungs[0], rungs[-1]
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    got = {}
+    for median, end_w, side, where in (
+            ((highest + 200) / 1000.0, highest, "top", "above"),
+            (lowest / 1000.0 - 0.07, lowest, "bottom", "below")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(median))):
+            rendered = _resolve_every_token()
+            text = rendered["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
+            got[median] = text
+        for phrase in (f"{end_w:,.0f} W step at the {side} of the re-billed ladder",
+                       f"({median * 1000:,.0f} W) sits {where} the "
+                       f"{lowest:,.0f}–{highest:,.0f} W range",
+                       "a rate at that end of the ladder"):
+            assert phrase in text, (
+                f"a {median} kW floor is {where} the ladder, so the sentence must say so "
+                f"({phrase!r}) rather than claim a step nearest it -- got: {text}")
+        assert "nearest the measured floor" not in text, (
+            f"a clamped step was published as the step 'nearest the measured floor': {text}")
+        for label, pattern in _MALFORMED_RENDER:
+            assert not pattern.search(text), f"the clamped rendering is {label}: {text}"
+
+    # The household inside the ladder is untouched: same sentence as today.
+    inside = rt._json("quiet_night_floor.json")["night_floor"]["median_kw"]
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", _floor_at(inside))):
+        same = _resolve_every_token()["NIGHT_FLOOR_SENSITIVITY_PER_100W"]
+    assert same == live, f"the in-range rendering moved:\n  was {live!r}\n  now {same!r}"
+    assert "nearest the measured floor" in same, same
+
+    # What is STILL refused: an artifact that contradicts its own ladder -- a
+    # floor outside the range whose step is not the end the clamp produces.
+    with _patched(rt, "_json", _stub_for(
+            "quiet_night_floor.json",
+            _floor_at((highest + 200) / 1000.0, floor_w_used=lowest))):
+        try:
+            text = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+        except SystemExit as exc:
+            assert "NIGHT_FLOOR_SENSITIVITY_PER_100W" in str(exc), exc
+            assert f"{lowest:,.0f} W step" in str(exc), exc
+        else:
+            raise AssertionError(
+                "a floor above the ladder whose rate was read off the ladder's BOTTOM "
+                f"rung was published anyway: {text}")
+
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"a floor above the {lowest}-{highest} W ladder and one below it both resolve "
+            f"the ENTIRE token set ({len(rt.TOKENS)} entries) and say the rate is the one "
+            f"at the ladder's end; a floor inside it still renders {live[:38]!r}...; and an "
+            "artifact whose step is not the clamp's own endpoint is still refused by name")
+
+
+@case
+def case_the_sensitivity_ladder_refuses_a_shape_it_cannot_be_read_off():
+    """ISSUE #140, /review FINDING 4. Two degenerate ladders reached prose
+    through arithmetic instead of through a refusal.
+
+    An EMPTY steps list raised ValueError out of min()/max(), which
+    resolve_token's catch-all reports as a generic "failed to resolve token
+    ... ValueError" -- not the named refusal every other guard in this module
+    produces, and not something a maintainer can route.
+
+    A DUPLICATE reduction_w was worse, because it did not fail at all: the
+    marginals are collected into a dict keyed f"step_{reduction_w}_w", so two
+    rungs at one reduction collapse to one key and the LAST one wins. The
+    published spread narrows silently -- and the spread is the whole point of
+    that clause, which exists to stop a reader multiplying one rate by any
+    amount removed.
+
+    The duplicate here is built to narrow the spread measurably: the rung
+    carrying the ladder's HIGHEST marginal is relabelled onto its neighbour,
+    so the collapse would drop the top of the published range."""
+    _require_household()
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+
+    def empty(doc):
+        doc["sensitivity_per_100w"]["steps"] = []
+
+    def collide(doc):
+        steps = doc["sensitivity_per_100w"]["steps"]
+        top = max(steps, key=lambda s: s["marginal_usd_per_100w"])
+        neighbour = min((s for s in steps if s is not top),
+                        key=lambda s: abs(s["reduction_w"] - top["reduction_w"]))
+        top["reduction_w"] = neighbour["reduction_w"]
+
+    steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
+    widest = max(s["marginal_usd_per_100w"] for s in steps)
+    assert f"${widest:,.0f}" in live, (
+        f"the live sentence does not publish the ladder's highest marginal (${widest:,.0f}), "
+        f"so collapsing it would not be observable and this case cannot test it: {live}")
+
+    refusals = {}
+    for label, edit, must_say in (
+            ("empty", empty, "steps is empty"),
+            ("duplicate", collide, "repeats reduction_w")):
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", edit)):
+            try:
+                text = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+            except SystemExit as exc:
+                refusals[label] = str(exc)
+            else:
+                raise AssertionError(
+                    f"a {label} sensitivity ladder was published anyway: {text}")
+        assert "NIGHT_FLOOR_SENSITIVITY_PER_100W" in refusals[label], refusals[label]
+        assert must_say in refusals[label], (
+            f"the {label} refusal does not say what is wrong ({must_say!r}): "
+            f"{refusals[label]}")
+        for generic in ("ValueError", "IndexError", "KeyError", "Traceback"):
+            assert generic not in refusals[label], (
+                f"the {label} ladder reached a generic {generic} instead of this module's "
+                f"own named refusal: {refusals[label]}")
+
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return ("an empty sensitivity ladder and two rungs sharing one reduction_w are both "
+            "refused by name rather than raising a bare ValueError or silently narrowing "
+            f"the published ${widest:,.0f} top of the spread")
+
+
+@case
+def case_the_sensitivity_spread_carries_the_window_at_its_own_endpoints():
+    """ISSUE #140, /review FINDING 5. On a partial corpus this sentence read
+    "about $289 across the 200 nights measured, less than a full year, for
+    every 100 W taken off it, read off the 1,000 W step ... the same ladder's
+    marginal runs from $249 to $323 per 100 W across the range it was
+    re-billed over".
+
+    Both endpoints are sums over exactly the same window as the rate, and the
+    docstring justified leaving them bare by saying the window is stated
+    "immediately before them". It is not: on that render the window clause
+    sits about forty words and a complete clause earlier. Nor can
+    _ANNUAL_CLAIM catch it -- those figures carry no "/yr" -- so this is the
+    defect the structural guard exists for, at the one exit its regex cannot
+    see.
+
+    Asserted STRUCTURALLY, not by matching the whole sentence: the window has
+    to appear within a short distance AFTER the endpoint pair, which is what
+    "qualified where they appear" means and what a re-word that drops the
+    qualifier again would fail."""
+    _require_household()
+    live = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    nights = 200
+
+    def short_corpus(doc):
+        first = dt.date(2025, 7, 24)
+        doc["night_floor"]["daily_series"] = [
+            {"date": (first + dt.timedelta(days=i)).isoformat(),
+             "median_kw": 1.0, "excluded_high_demand": False}
+            for i in range(nights)]
+        doc["night_floor"]["nights_total"] = nights
+
+    with _patched(rt, "_json", _stub_for("quiet_night_floor.json", short_corpus)):
+        text = _renders("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert not rt._ANNUAL_CLAIM.search(text), text
+    steps = rt._json("quiet_night_floor.json")["sensitivity_per_100w"]["steps"]
+    marginals = [s["marginal_usd_per_100w"] for s in steps]
+    pair = f"${min(marginals):,.0f} to ${max(marginals):,.0f}"
+    at = text.find(pair)
+    assert at >= 0, f"the sentence no longer publishes the ladder's two ends ({pair}): {text}"
+    tail = text[at + len(pair):]
+    m = re.search(rf"those same {nights:,.0f} nights", tail)
+    assert m, (
+        f"the ladder's endpoints ({pair}) are published with no window attached to them, "
+        f"on a corpus of {nights} nights that is not a year: {text}")
+    assert m.start() <= 40, (
+        f"the window sits {m.start()} characters after the endpoints it qualifies, far "
+        f"enough for a reader to take {pair} as a per-year rate: {text}")
+    after = rt.resolve_token("NIGHT_FLOOR_SENSITIVITY_PER_100W")
+    assert after == live, f"the stub leaked: {after!r} != {live!r}"
+    return (f"on a {nights}-night corpus the ladder's two ends ({pair}) carry the window "
+            f"{m.start()} characters later, in the clause that publishes them")
+
+
+@case
+def case_the_published_scope_claim_tracks_the_statement_it_compresses():
+    """ISSUE #140, /review FINDING 3. PHANTOM_METHOD_DISCREPANCY required
+    pricing.reconciliation.scope_of_agreement to be present and non-blank, and
+    then published its OWN hardcoded scope sentence. Nothing compared the two.
+
+    So DELETION was guarded and DRIFT was not -- and drift is the likelier
+    failure. If the two methods stop drawing their rates from the same module,
+    or stop starting from the identical allocation, or the agreement stops
+    being limited to the netting treatment, the presence check still passes
+    and the report keeps publishing a scope claim the artifact no longer
+    makes. The docstring's promise that it "refuses to render an agreement
+    claim at all if that statement is ever dropped" was true of deletion and
+    read as covering both.
+
+    Each published clause is now pinned to the term in the artifact's own
+    statement that carries it, and each is knocked out in turn -- a check that
+    only ever fires on all three at once is one check wearing three names."""
+    _require_household()
+    live = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    scope = (rt._json("quiet_night_floor.json")["pricing"]["reconciliation"]
+             ["scope_of_agreement"])
+    assert rt._SCOPE_CLAUSES, "the clause table is empty, so this case checks nothing"
+
+    drifted = {}
+    for clause, term in rt._SCOPE_CLAUSES:
+        assert clause in live, (
+            f"the clause table names {clause!r}, which the published sentence does not "
+            f"contain -- the table has drifted from the prose it guards: {live}")
+        assert term.lower() in scope.lower(), (
+            f"the committed artifact's scope statement no longer contains {term!r}, so "
+            "this case is asserting against a statement that has already drifted")
+
+        def lose(doc, term=term):
+            rec = doc["pricing"]["reconciliation"]
+            rec["scope_of_agreement"] = re.sub(
+                re.escape(term), "[the same thing, said another way]",
+                rec["scope_of_agreement"], flags=re.I)
+
+        with _patched(rt, "_json", _stub_for("quiet_night_floor.json", lose)):
+            try:
+                text = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+            except SystemExit as exc:
+                drifted[term] = str(exc)
+            else:
+                raise AssertionError(
+                    f"the artifact's scope statement stopped saying {term!r} and the "
+                    f"report published the clause resting on it anyway: {text}")
+        assert "PHANTOM_METHOD_DISCREPANCY" in drifted[term], drifted[term]
+        assert clause in drifted[term], (
+            f"the refusal must name the clause that lost its support ({clause!r}): "
+            f"{drifted[term]}")
+        assert "scope_of_agreement" in drifted[term], drifted[term]
+
+    after = rt.resolve_token("PHANTOM_METHOD_DISCREPANCY")
+    assert after == live, f"the stubs leaked: {after!r} != {live!r}"
+    return (f"each of the {len(rt._SCOPE_CLAUSES)} published scope clauses refuses by name "
+            f"when the artifact's own statement stops carrying the term it rests on "
+            f"({', '.join(sorted(drifted))})")
+
+
+@case
+def case_the_glossary_states_the_floor_figures_these_tokens_publish():
+    """ISSUE #140, /review FINDING 2. GLOSSARY.md is linked BY NAME from
+    index.html's reader's-guide block, so it is part of the published report
+    for a reader who follows the link -- and its phantom-load entry still
+    carried a floor cost from deep_results.json:phantom (rounded to
+    "~$1,800/yr gross"), plus a "only part of that is realistically
+    recoverable" framing nothing in this archive meters. CLAUDE.md section 3
+    requires a changed figure to be replaced in EVERY instance.
+
+    Checked as a sweep rather than as a literal: every dollar figure in the
+    entry must be one of the two the live artifact prices this load at, so a
+    stale figure of any shape fails here rather than only the one that was
+    found."""
+    entry = [line for line in (rt.ROOT / "GLOSSARY.md").read_text().splitlines()
+             if line.startswith("**Phantom load")]
+    assert len(entry) == 1, f"expected exactly one phantom-load glossary entry, got {entry}"
+    entry = entry[0]
+    doc = rt._json("quiet_night_floor.json")
+    nf, pr = doc["night_floor"], doc["pricing"]
+    live = {f"${pr['method_a_price_map']['total_usd']:,.0f}",
+            f"${pr['method_b_rebill']['total_usd']:,.0f}"}
+    for value in live | {f"{nf['median_kw']:,.2f} kW"}:
+        assert value in entry, (
+            f"the glossary's phantom-load entry does not state {value!r}, which is what "
+            f"data/quiet_night_floor.json prices this load at: {entry}")
+    published = set(re.findall(r"\$[\d,]+", entry))
+    stale = published - live
+    assert not stale, (
+        f"the glossary's phantom-load entry states {sorted(stale)}, which is not one of "
+        f"the live pricings {sorted(live)}: {entry}")
+    text = (rt.ROOT / "GLOSSARY.md").read_text()
+    assert "realistically recoverable" not in text, (
+        "GLOSSARY.md still says part of the floor is 'realistically recoverable' -- "
+        "nothing in this archive meters which appliance behind the floor could be "
+        "switched off (CLAUDE.md section 0)")
+    return (f"the glossary's phantom-load entry states the live floor ({nf['median_kw']:,.2f} "
+            f"kW) and both live pricings {sorted(live)}, carries no other dollar figure, "
+            "and no longer claims a recoverable share")
+
+
+@case
+def case_section_0_states_the_exclusion_rate_beside_the_floor():
+    """ISSUE #140, /review FINDING 6. Section 0 published the floor and its
+    annual cost off a bare night count ("43 quiet nights"), which reads the
+    way the retired "44 EV-free nights" did. The artifact asks for the other
+    half in as many words -- night_floor.selection_caveat says to "report the
+    exclusion rate alongside the floor figure rather than treating the kept
+    ~11.8% as the whole story" -- and NIGHT_FLOOR_SAMPLE already computes it,
+    so section 13 states it and section 0 did not.
+
+    Both halves of the token's own value are asserted, and the section 0
+    density cap with them: the exclusion rate goes in as its own short
+    sentence rather than as more clauses on a lead that would then blow the
+    35-word / one-aside cap CLAUDE.md section 10 puts on the basic tier."""
+    _require_household()
+    html = (rt.ROOT / "index.html").read_text()
+    m = re.search(r"<li><b>Always-on baseload.*?</li>", html, re.S)
+    assert m, "index.html has no section 0 always-on-baseload item"
+    item = m.group(0)
+    nf = rt._json("quiet_night_floor.json")["night_floor"]
+    sample = rt.resolve_token("NIGHT_FLOOR_SAMPLE")
+    count = f"{nf['quiet_nights']:,.0f} of {nf['nights_total']:,.0f} nights"
+    excluded = f"{(nf['nights_total'] - nf['quiet_nights']) / nf['nights_total'] * 100:.1f}%"
+    assert count in sample and excluded in sample, (
+        f"NIGHT_FLOOR_SAMPLE no longer carries the count and the exclusion rate this case "
+        f"requires section 0 to publish: {sample!r}")
+    assert count in item, (
+        f"section 0 does not state the sample the floor is measured on ({count!r}): {item}")
+    assert excluded in item, (
+        f"section 0 publishes the floor and its cost without the exclusion rate "
+        f"({excluded!r}) the artifact's own selection_caveat asks for beside them: {item}")
+
+    # The density cap, on the sentences this item leads with.
+    plain = re.sub(r"<[^>]+>", "", item)
+    lead, rest, sentences = None, plain, []
+    while rest.strip() and len(sentences) < 3:
+        end = re.search(r"\.(?=\s|\Z)", rest)
+        sentence = rest[:end.end()] if end else rest
+        sentences.append(sentence.strip())
+        if not end:
+            break
+        rest = rest[end.end():]
+    over = [(s, len(s.split()), s.count("(") + s.count("—"))
+            for s in sentences if len(s.split()) > 35 or s.count("(") + s.count("—") > 1]
+    assert not over, (
+        "section 0's always-on item leads with a sentence past the basic-tier density cap "
+        f"(35 words, 1 aside): {over}")
+    lead = sentences[0]
+    return (f"section 0 states {count!r} AND the {excluded} exclusion rate "
+            f"NIGHT_FLOOR_SAMPLE computes, and its first {len(sentences)} sentences stay "
+            f"inside the density cap (lead: {len(lead.split())} words, "
+            f"{lead.count('(') + lead.count(chr(8212))} asides)")
+
+
 def main():
     listed = [fn.__name__ for fn in CASES]
     assert len(listed) == len(set(listed)), (

@@ -5375,6 +5375,43 @@ def _night_floor_annual_cost(ctx):
             f"{nights:,.0f} nights measured, {why}")
 
 
+# ---------------------------------------------------------------------------
+# EACH CLAUSE OF THE PUBLISHED SCOPE SENTENCE, BESIDE THE TERM IN THE
+# ARTIFACT'S OWN STATEMENT THAT CARRIES IT (issue #140, /review finding 3).
+#
+# PHANTOM_METHOD_DISCREPANCY publishes a compression of
+# pricing.reconciliation.scope_of_agreement, and the check in front of it
+# asked only whether that field was non-blank. Deletion was therefore guarded
+# and DRIFT was not -- and drift is the likelier failure: if the two methods
+# stop sharing rates.py, or stop starting from the identical _split_floor
+# allocation, or the agreement stops being limited to the netting treatment,
+# the presence check still passes and the report keeps publishing a scope
+# claim the artifact no longer makes.
+#
+# The relationship, in the terms _require_derived's preamble requires before
+# any two artifact facts are set against each other, is SAME QUANTITY,
+# INDEPENDENTLY WRITTEN -- one statement about scope, rendered twice: once by
+# quiet_night_floor.py into the artifact, once by the f-string below into the
+# report. A disagreement IS a contradiction, so it refuses.
+#
+# TRACED TO THE GENERATOR, per that same preamble, and this is what keeps
+# finding 1's failure from repeating here: quiet_night_floor.py writes
+# scope_of_agreement as a FIXED LITERAL in its reconciliation block, not as
+# anything computed from a household's meter. No household can fail this
+# check by having different data; only an edit to the generator can, which is
+# exactly the drift it exists to catch.
+#
+# WHAT IT DOES NOT COVER, stated rather than implied. It tests the terms each
+# published clause rests on, not the whole statement, so a rewrite that keeps
+# all three terms while adding a fourth limitation around them passes. The
+# docstring claims no more than that.
+_SCOPE_CLAUSES = (
+    ("both methods split the floor out of the meter the same way", "_split_floor"),
+    ("take every rate from the same module", "rates.py"),
+    ("neither one checks the other's rates or its constant-floor model", "netting"),
+)
+
+
 def _phantom_method_discrepancy(ctx):
     """The two live pricings of this one load, and how far apart they land.
 
@@ -5400,9 +5437,12 @@ def _phantom_method_discrepancy(ctx):
     nothing about the rate constants (an error there is inherited by both) or
     about the constant-floor allocation itself, whose own limitation
     quiet_night_floor.py quantifies separately. The artifact states that scope
-    in pricing.reconciliation.scope_of_agreement; this token refuses to render
-    an agreement claim at all if that statement is ever dropped, rather than
-    publishing a bare percentage a reader would over-read.
+    in pricing.reconciliation.scope_of_agreement, and this token refuses to
+    render an agreement claim at all if that statement is dropped OR if it
+    stops making the claims the sentence below compresses -- see
+    _SCOPE_CLAUSES, which pins each published clause to the term in the
+    artifact's own statement that carries it, and which states exactly what
+    that check does and does not cover.
 
     THE GAP IS RECOMPUTED FROM THE TWO TOTALS, NOT READ (issue #140,
     adversarial pass 2, finding 1). The first version of this formula read
@@ -5446,6 +5486,15 @@ def _phantom_method_discrepancy(ctx):
             "methods agree without data/quiet_night_floor.json:pricing.reconciliation."
             "scope_of_agreement, the artifact's own statement of what their agreement "
             "does and does not validate")
+    unsupported = [(clause, term) for clause, term in _SCOPE_CLAUSES
+                   if term.lower() not in scope.lower()]
+    if unsupported:
+        raise SystemExit(
+            "report_tokens: PHANTOM_METHOD_DISCREPANCY will not publish a scope claim "
+            "data/quiet_night_floor.json:pricing.reconciliation.scope_of_agreement no "
+            "longer makes -- this sentence's clause(s) "
+            + "; ".join(f"{clause!r} (rests on {term!r})" for clause, term in unsupported)
+            + f" have lost their support in that statement: {scope}")
     covers, nights, why = _night_floor_coverage()
     a, b = _amounts("PHANTOM_METHOD_DISCREPANCY", "what each method prices the floor at",
                     price_map_usd=pricing["method_a_price_map"]["total_usd"],
@@ -5609,10 +5658,35 @@ def _night_floor_sensitivity(ctx):
     THE STEP IS A GRID, AND THE FIGURE IS READ OFF IT. usd_per_100w_at_current
     _floor is the marginal at the sensitivity step NEAREST the measured floor,
     not the exact marginal at this household's own wattage -- the artifact's
-    own note says so. The step is checked against the measured floor here: a
-    grid that has drifted more than half a step away from the floor it claims
-    to describe is refused rather than rendered with a "nearest" it no longer
-    is.
+    own note says so.
+
+    BUT "NEAREST" HAS ENDS, AND A HOUSEHOLD OUTSIDE THEM IS NOT A DEFECT
+    (issue #140, /review finding 1). The step was checked against the measured
+    floor with a bare half-step tolerance, and a miss was a REFUSAL that
+    generate_report folds into its failures -- so an ordinary household got no
+    report at all. quiet_night_floor.sensitivity_per_100w() does not compute a
+    step for any floor: it rounds the floor onto the ladder and then CLAMPS
+    the result into [STEP_W, MAX_REDUCTION_W], bounds whose own comment says
+    they bracket THIS household's measured floor. A 1.40 kW floor therefore
+    lands on the 1,200 W end and misses by 200 W; a 0.03 kW floor lands on the
+    100 W end and misses by 70; only a floor already inside the ladder passed.
+    That is the same shape as the two comparisons _require_derived's preamble
+    was written for, a third time: a guard asserting a relationship between
+    two artifact fields without reading the generator that writes both.
+
+    SO THE CLAMP IS DETECTED, NOT REFUSED. The bounds are read off the ladder
+    rather than restated here -- sensitivity_per_100w() builds its steps as
+    range(STEP_W, MAX_REDUCTION_W + STEP_W, STEP_W) and clamps into that same
+    range, so the ladder's smallest and largest rungs ARE those two constants
+    and neither number has to appear in this module to be honoured (the
+    ladder's own rung spacing supplies the half-step tolerance the same way).
+    A floor inside the ladder renders exactly as before, on the half-step
+    nearness test. A floor outside it still has a real rate -- the ladder was
+    genuinely re-billed at that end -- but it is the rate at the ladder's END,
+    not at this household's floor, so the WORDING degrades to say precisely
+    that instead of the report failing to generate. What is still refused is
+    an artifact that contradicts itself: a floor outside the range whose
+    floor_w_used is not the end the clamp would have produced.
 
     AND THE LADDER IS NOT A STRAIGHT LINE, which is the difference between a
     rate and a multiplier. The artifact says so in linearity_note; this token
@@ -5621,6 +5695,16 @@ def _night_floor_sensitivity(ctx):
     how far the rate moves across the tested range instead of multiplying one
     figure by any amount removed. Same shape as DEGRADATION_WEATHER_CAVEAT
     rebuilding clearsky_note's argument out of the numbers beside it.
+
+    AND THE LADDER HAS TO BE A LADDER (issue #140, /review findings 4). Two
+    degenerate shapes reached prose through arithmetic rather than through a
+    refusal: an empty steps list raised ValueError out of min()/max(), which
+    resolve_token's catch-all turns into a generic "failed to resolve", and
+    two steps sharing a reduction_w collapsed to ONE key in the comprehension
+    below, so the published spread silently narrowed instead of reporting the
+    collision. Both are named refusals now, in this module's own style, for
+    _forbid_unearned_annual_unit's reason one level up: a guard that reports
+    a generic exception is a guard a maintainer cannot route.
 
     AND THE RATE IS A RATE PER YEAR ONLY WHERE THERE IS A YEAR (issue #140,
     adversarial pass 3). Every figure in this sentence -- the rate at the
@@ -5635,10 +5719,42 @@ def _night_floor_sensitivity(ctx):
     defect the same pass fixed in SEC9_TEASER, PHANTOM_METHOD_DISCREPANCY,
     NIGHT_FLOOR_ANNUAL_KWH and NIGHT_FLOOR_ANNUAL_COST, at the one exit that
     sweep missed. So the unit comes from _night_floor_coverage, like theirs.
-    The ladder's two ends are not separately qualified for SEC9_TEASER's
-    reason: the window is stated once, in the same sentence, immediately
-    before them, and both are sums over exactly those nights."""
+
+    AND THE LADDER'S TWO ENDS CARRY THE WINDOW THEMSELVES (issue #140,
+    /review finding 5). They used to be left bare on the argument that the
+    window was stated "immediately before them" -- it was not: on a partial
+    corpus the window clause sits about forty words and a full clause earlier,
+    with the step, the nearness qualifier and the multiplier caveat between,
+    and $249-$323 carries no "/yr" for _ANNUAL_CLAIM to catch. That is exactly
+    the defect class the structural guard exists for, at the one exit the
+    regex cannot see, so the endpoints are qualified where they appear rather
+    than justified from a distance."""
     sens = _json("quiet_night_floor.json")["sensitivity_per_100w"]
+    steps = sens.get("steps") or []
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "how far the rate moves along the ladder",
+           SUPPORTED if steps else NOT_DETERMINED,
+           "data/quiet_night_floor.json:sensitivity_per_100w.steps is empty -- there is no "
+           "re-billed ladder to read a rate off, no range for that rate to move across, and "
+           "no bounds to tell a clamped reading from a near one")
+    rungs = [s["reduction_w"] for s in steps]
+    repeated = sorted({w for w in rungs if rungs.count(w) > 1})
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "how far the rate moves along the ladder",
+           SUPPORTED if not repeated else NOT_DETERMINED,
+           f"data/quiet_night_floor.json:sensitivity_per_100w.steps repeats reduction_w "
+           f"{repeated} -- two marginals at one reduction cannot both be the marginal there, "
+           "and collapsing them would narrow the published spread instead of saying so")
+    ladder = sorted(rungs)
+    gaps = [b - a for a, b in zip(ladder, ladder[1:])]
+    spacing = min(gaps) if gaps else ladder[0]
+    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+           "how far apart the ladder's rungs sit",
+           SUPPORTED if spacing > 0 else NOT_DETERMINED,
+           f"data/quiet_night_floor.json:sensitivity_per_100w.steps gives a rung spacing of "
+           f"{spacing!r} W, which is no ladder at all -- there is no half-step for a "
+           "'nearest' to be measured against")
+    lowest, highest = float(ladder[0]), float(ladder[-1])
     at_floor = sens["usd_per_100w_at_current_floor"]
     per_100w, = _amounts("NIGHT_FLOOR_SENSITIVITY_PER_100W",
                          "what removing 100 W of the floor returns",
@@ -5646,30 +5762,55 @@ def _night_floor_sensitivity(ctx):
     step_w, floor_kw = _quantities(
         "NIGHT_FLOOR_SENSITIVITY_PER_100W", "which step the rate was read off",
         floor_w_used=at_floor["floor_w_used"], median_kw=_night_floor()["median_kw"])
-    _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
-           "what a household at THIS floor gets back per 100 W",
-           SUPPORTED if abs(step_w - floor_kw * 1000) <= 50 else NOT_DETERMINED,
-           f"the rate was read off the {step_w:,.0f} W step while the measured floor is "
-           f"{floor_kw * 1000:,.0f} W, more than half a 100 W step away, so it is not the "
-           "step nearest this floor")
+    floor_w = floor_kw * 1000.0
+    half_step = spacing / 2.0
+    below = floor_w < lowest - half_step
+    above = floor_w > highest + half_step
+    if below or above:
+        end_w = lowest if below else highest
+        _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+               "which end of the ladder the rate was read off",
+               SUPPORTED if step_w == end_w else NOT_DETERMINED,
+               f"the measured floor is {floor_w:,.0f} W, outside the {lowest:,.0f}-"
+               f"{highest:,.0f} W range this ladder was re-billed over, so the only rate "
+               f"available is the one at its {end_w:,.0f} W end -- but the artifact read it "
+               f"off the {step_w:,.0f} W step")
+        read_off = (
+            f"read off the {step_w:,.0f} W step at the {'bottom' if below else 'top'} of "
+            f"the re-billed ladder, since this household's floor ({floor_w:,.0f} W) sits "
+            f"{'below' if below else 'above'} the {lowest:,.0f}–{highest:,.0f} W range that "
+            "ladder covers")
+        near = "a rate at that end of the ladder"
+    else:
+        _claim("NIGHT_FLOOR_SENSITIVITY_PER_100W",
+               "what a household at THIS floor gets back per 100 W",
+               SUPPORTED if abs(step_w - floor_w) <= half_step else NOT_DETERMINED,
+               f"the rate was read off the {step_w:,.0f} W step while the measured floor is "
+               f"{floor_w:,.0f} W, more than half a {spacing:,.0f} W step away, so it is not "
+               "the step nearest this floor")
+        read_off = (f"read off the {step_w:,.0f} W step nearest the measured floor rather "
+                    "than computed at this household's own exact wattage")
+        near = "a rate near this floor"
     marginals = _quantities(
         "NIGHT_FLOOR_SENSITIVITY_PER_100W", "how far the rate moves along the ladder",
-        **{f"step_{s['reduction_w']}_w": s["marginal_usd_per_100w"]
-           for s in sens["steps"]})
+        **{f"step_{s['reduction_w']}_w": s["marginal_usd_per_100w"] for s in steps})
     lo, hi = min(marginals), max(marginals)
     covers, nights, why = _night_floor_coverage()
     rate = (f"about ${per_100w:,.0f}/yr" if covers else
             f"about ${per_100w:,.0f} across the {nights:,.0f} nights measured, {why},")
-    return (f"{rate} for every 100 W taken off it, read off the "
-            f"{step_w:,.0f} W step nearest the measured floor rather than computed at this "
-            f"household's own exact wattage — and it is a rate near this floor rather than a "
-            f"multiplier for any amount removed, since the same ladder's marginal runs from "
-            f"${lo:,.0f} to ${hi:,.0f} per 100 W across the range it was re-billed over")
+    spread = (f"the same ladder's marginal runs from ${lo:,.0f} to ${hi:,.0f} per 100 W "
+              "across the range it was re-billed over" if covers else
+              f"the same ladder's marginal runs from ${lo:,.0f} to ${hi:,.0f} per 100 W "
+              f"over those same {nights:,.0f} nights, across the range it was re-billed over")
+    return (f"{rate} for every 100 W taken off it, {read_off} — and it is {near} rather "
+            f"than a multiplier for any amount removed, since {spread}")
 
 
 _tok("NIGHT_FLOOR_SENSITIVITY_PER_100W", kind="derived", get=_night_floor_sensitivity,
      sources=["data/quiet_night_floor.json:sensitivity_per_100w."
               "usd_per_100w_at_current_floor",
+              "data/quiet_night_floor.json:sensitivity_per_100w.steps "
+              "(the re-billed ladder: its spread, its rung spacing and its two ends)",
               "data/quiet_night_floor.json:night_floor.median_kw"])
 
 
