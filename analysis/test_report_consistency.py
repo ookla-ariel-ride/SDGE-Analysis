@@ -2618,20 +2618,66 @@ def _time_of_day_words_in(clause):
     return [w for w in _TIME_OF_DAY_WORDS if w.casefold() in lowered]
 
 
+# Where a clause ENDS, read outward from the percentage in either direction:
+# at the neighbouring percentage -- so a claim belonging to another figure is
+# never read as describing this one -- or at the end of the sentence. A period
+# glued to a digit ($2.50, ~10.4¢) is not a sentence end, which is why the
+# sentence pattern demands whitespace or a tag after the period rather than
+# matching a bare one.
+#
+# The two directions carry the same two rules on purpose: a phrase must be
+# caught at the same distance BEFORE a percentage as after it. Reading only
+# forward was the hole -- "At midday, 60% of what the array makes leaves as
+# exports" states the retired defect with the timing moved one clause to the
+# left, and a tail-only cutter sees an innocent clause. The forward pattern
+# alone may end at the string's end ($); backwards, that position is a period
+# sitting flush against the percentage's own digits (".60%"), which is the
+# glued-to-a-digit case and not a sentence end.
+#
+# Neither direction stops at a TAG boundary, so a clause can run out of the
+# element the figure sits in -- the leading side now does that as the trailing
+# side always did. Left that way on purpose: cutting at markup would narrow the
+# clause and hand back a hiding place ("<b>At midday,</b> 60% of what the array
+# makes ..."). It costs nothing here -- sweeping index.html, GLOSSARY.md,
+# TECHNICAL.md, README.md and report-template.html for every occurrence of the
+# export share turns up no clause carrying a time-of-day word, on the tail-only
+# cutter and on this one alike.
+_CLAUSE_END_AFTER = (r"\d+(?:\.\d+)?%", r"\.(?:\s|<|$)")
+_CLAUSE_END_BEFORE = (r"\d+(?:\.\d+)?%", r"\.(?:\s|<)")
+
+
+def _clause_head(before):
+    """The tail of `before` that still belongs to the percentage following it:
+    everything after the LAST clause boundary in it, or all of it if the
+    percentage opens its sentence."""
+    start = 0
+    for pattern in _CLAUSE_END_BEFORE:
+        for m in re.finditer(pattern, before):
+            start = max(start, m.end())
+    return before[start:]
+
+
+def _clause_tail(rest):
+    """The head of `rest` that still belongs to the percentage preceding it:
+    everything up to the FIRST clause boundary in it."""
+    cut = len(rest)
+    for pattern in _CLAUSE_END_AFTER:
+        nxt = re.search(pattern, rest)
+        if nxt:
+            cut = min(cut, nxt.start())
+    return rest[:cut]
+
+
 def _clauses_about(para, pct):
-    """Everything the paragraph says about one percentage: from each occurrence
-    of that figure to the next percentage or the end of its sentence, whichever
-    comes first -- so a claim belonging to a LATER figure is never read as
-    describing this one. A period glued to a digit ($2.50, ~10.4¢) is not a
-    sentence end and does not cut the clause short."""
+    """Everything the paragraph says about one percentage: for each occurrence
+    of that figure, the whole segment it sits in -- the text BEFORE it back to
+    the previous clause boundary, the figure itself, and the text after it up
+    to the next one. Both sides are cut by the same rules (see
+    _CLAUSE_END_AFTER), so a phrase reordered around the figure is read the
+    same way wherever the writer put it."""
     for m in re.finditer(rf"\b{pct}%", para):
-        rest = para[m.end():]
-        cut = len(rest)
-        for pattern in (r"\d+(?:\.\d+)?%", r"\.(?:\s|<|$)"):
-            nxt = re.search(pattern, rest)
-            if nxt:
-                cut = min(cut, nxt.start())
-        yield rest[:cut]
+        yield (_clause_head(para[:m.start()]) + m.group(0)
+               + _clause_tail(para[m.end():]))
 
 
 def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
@@ -2640,7 +2686,14 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
 
     They are different quantities -- exports at ANY hour over production, and
     the 10am-2pm slice of those exports -- so the paragraph must state both,
-    and only the time-of-day figure may carry the time-of-day words."""
+    and only the time-of-day figure may carry the time-of-day words.
+
+    Both halves read the whole segment a figure sits in, so either half can be
+    satisfied -- or tripped -- by words on either side of the percentage. That
+    cuts the way it should: "The exports concentrate in the 10am-2pm window:
+    63% ..." names the measured window as squarely as the same words trailing
+    the figure, and a time of day written ahead of the export share is the
+    referent error written backwards."""
     assert export_pct != midday_pct, (
         f"{where}: the export share and the 10am-2pm share of exports both round "
         f"to {export_pct}%, so this guard cannot tell which figure a percentage "
@@ -2726,25 +2779,46 @@ _REFERENT_PROBE_EXPORT_PCT = 60      # exports over production, at ANY hour
 _REFERENT_PROBE_MIDDAY_PCT = 63      # the 10am-2pm slice of those exports
 
 
-def _referent_probe_paragraph(timing, attached):
+# The two sides of a percentage a phrase can be written on. Every probe below
+# runs on both, because a guard that reads one side is exactly the guard this
+# case shipped with: the defect survives being reordered around the figure.
+_PROBE_POSITIONS = ("before", "after")
+
+
+def _referent_probe_paragraph(timing, attached, position):
     """§2's paragraph with `timing` either ATTACHED to the export share (the
     defect: a time of day predicated of exports-over-production) or sitting in
     the sentence that introduces the measured window (how the report states
-    it, and what must stay clean).
+    it, and what must stay clean) -- and, either way, written on the side of
+    the figure `position` names.
 
     Written as prose the report could plausibly carry, not as a minimal
     string, so a probe that passes is evidence about the real shape. Some
-    members read awkwardly in the slot ("it leaves noon") -- detection is what
-    is being probed, not grammar."""
+    members read awkwardly in the slot ("it leaves noon", "In the noon,") --
+    detection is what is being probed, not grammar."""
+    assert position in _PROBE_POSITIONS, position
     export, midday = _REFERENT_PROBE_EXPORT_PCT, _REFERENT_PROBE_MIDDAY_PCT
-    lead = (f'<p class="small">That last split is the key architectural fact of this '
-            f"house: {export}% of what the array makes leaves as exports")
-    lead += f", and it leaves in the {timing}." if attached else "."
-    concentration = ("The exports concentrate"
-                     + ("" if attached else f" in the {timing}") + ":")
-    return (f"{lead} {concentration} {midday}% of those exported kWh go out in the "
-            f"10am–2pm window, while the EV charged between midnight and 6am on 323 "
-            f"of the year's 365 nights.</p>")
+    opening = '<p class="small">That last split is the key architectural fact of this '
+    if attached:
+        # The defect, on each side of the export share: the reordering the
+        # tail-only cutter could not see is the "before" arm.
+        claim = (f"house: In the {timing}, {export}% of what the array makes leaves "
+                 f"as exports."
+                 if position == "before" else
+                 f"house: {export}% of what the array makes leaves as exports, and "
+                 f"it leaves in the {timing}.")
+        concentration = "The exports concentrate:"
+        window = f"{midday}% of those exported kWh go out in the 10am–2pm window"
+    else:
+        # Legitimate: the timing sits with the figure that MEASURES it, again
+        # on each side of that figure.
+        claim = f"house: {export}% of what the array makes leaves as exports."
+        concentration = (f"The exports concentrate in the {timing}:"
+                         if position == "before" else "The exports concentrate:")
+        window = (f"{midday}% of those exported kWh go out in the 10am–2pm window"
+                  + ("" if position == "before" else f", in the {timing}"))
+    return (f"{opening}{claim} {concentration} {window}, while the EV charged between "
+            f"midnight and 6am on 323 of the year's 365 nights.</p>")
 
 
 def _referent_guard_rejects(para):
@@ -2772,11 +2846,17 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
 
     So probe MEMBER BY MEMBER, generated off _TIME_OF_DAY_WORDS so a phrase
     added tomorrow is probed tomorrow with no edit here. Each member is probed
-    twice, because one direction alone proves nothing: attached to the export
-    share it must be rejected, and in the concentration sentence -- where the
-    report legitimately says WHEN the exports leave, backed by the measured
-    window -- the same phrase must be accepted. A guard that flagged both
-    would pass the first half by flagging everything.
+    in four shapes -- attached to the export share and in the concentration
+    sentence, each written BEFORE the figure and AFTER it. Both axes matter and
+    for different reasons. Attached must be rejected while the concentration
+    sentence -- where the report legitimately says WHEN the exports leave,
+    backed by the measured window -- must be accepted, or a guard could pass
+    the first half by flagging everything. And each of those must hold on both
+    SIDES of the figure, because the second review of this case found that
+    reading only the text after a percentage let the identical defect through
+    reordered: "At midday, 60% of what the array makes leaves as exports" says
+    what the retired wording said, keeps every substring the live paragraph
+    checks look for, and was reported clean.
 
     Deletion is the one weakening these probes cannot see (a phrase removed
     from the constant removes its own probe), which is what
@@ -2789,19 +2869,22 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
         "drop it there too, in the same commit, where a reviewer reads it")
 
     for timing in _TIME_OF_DAY_WORDS:
-        broken = _referent_probe_paragraph(timing, attached=True)
-        reported = _referent_guard_rejects(broken)
-        assert reported, (
-            f"the guard accepts {timing!r} attached to the "
-            f"{_REFERENT_PROBE_EXPORT_PCT}% export share: {broken!r}")
-        assert timing in reported, (
-            f"the guard rejects {timing!r} attached to the export share but does not "
-            f"name it, so the failure does not say which words to move: {reported}")
-        clean = _referent_probe_paragraph(timing, attached=False)
-        assert _referent_guard_rejects(clean) is None, (
-            f"the guard also rejects {timing!r} in the concentration sentence, where "
-            f"the report states it legitimately -- it is flagging the phrase rather "
-            f"than its referent: {_referent_guard_rejects(clean)}")
+        for position in _PROBE_POSITIONS:
+            broken = _referent_probe_paragraph(timing, attached=True, position=position)
+            reported = _referent_guard_rejects(broken)
+            assert reported, (
+                f"the guard accepts {timing!r} written {position} the "
+                f"{_REFERENT_PROBE_EXPORT_PCT}% export share: {broken!r}")
+            assert timing in reported, (
+                f"the guard rejects {timing!r} written {position} the export share but "
+                f"does not name it, so the failure does not say which words to move: "
+                f"{reported}")
+            clean = _referent_probe_paragraph(timing, attached=False, position=position)
+            assert _referent_guard_rejects(clean) is None, (
+                f"the guard also rejects {timing!r} written {position} the "
+                f"{_REFERENT_PROBE_MIDDAY_PCT}% figure in the concentration sentence, "
+                f"where the report states it legitimately -- it is flagging the phrase "
+                f"rather than its referent: {_referent_guard_rejects(clean)}")
 
     # The two shapes above, spelled out once each against the wording the
     # report actually retired and the wording it now carries -- the generated
@@ -2815,6 +2898,33 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
     assert _referent_guard_rejects(retired), (
         "the wording this case exists to reject is accepted again: a midday claim "
         "predicated of the whole export share, contradicted by the 63% beside it")
+
+    # The same defect with the timing moved AHEAD of the figure -- the review
+    # finding that widened the cutter. Nothing else about it is unusual: it
+    # carries, word for word, every substring §2's live case demands, so the
+    # substring checks cannot see it and the referent guard is the only thing
+    # standing between this sentence and publication. Asserted against
+    # _assert_the_two_shares_stay_apart itself (through _referent_guard_rejects),
+    # which is the function case_s2 and case_s8 run on the published paragraphs.
+    reordered = ('<p class="small">That last split is the key architectural fact of this '
+                 "house: At midday, 60% of what the array makes leaves as exports. 63% "
+                 "of those exported kWh go out in the 10am–2pm window, while the EV "
+                 "charged between midnight and 6am on 323 of the year's 365 nights.</p>")
+    for value in ("60% of what the array makes leaves as exports",
+                  "63% of those exported kWh go out in the 10am–2pm window",
+                  "the EV charged between midnight and 6am on 323 of the year's 365 "
+                  "nights"):
+        assert value in reordered, (
+            f"this probe no longer states {value!r}, so it is no longer the shape §2's "
+            "live case would wave through -- rewrite it to keep every substring that "
+            "case demands, or it proves nothing about the gap it exists to hold shut")
+    leading = _referent_guard_rejects(reordered)
+    assert leading and "midday" in leading, (
+        "a time of day written BEFORE the export share is accepted: 'At midday, 60% of "
+        "what the array makes leaves as exports' predicates the midday timing of the "
+        "whole export share exactly as the retired wording did, and it passes every "
+        f"substring §2 checks -- the guard reports {leading!r}")
+
     published = re.search(r'<p class="small">That last split is the key architectural '
                           r"fact.*?</p>", HTML, re.S)
     assert published, "§2's 'key architectural fact' paragraph not found in index.html"
@@ -2822,10 +2932,13 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
         "§2's published paragraph attaches a time of day to the export share: "
         f"{_referent_guard_rejects(published.group(0))}")
     return (f"the export-share referent guard rejects all {len(_TIME_OF_DAY_WORDS)} of "
-            f"its time-of-day phrases when they are attached to the export share, names "
-            f"the offender in each, accepts every one of them in the concentration "
-            f"sentence, and still carries all {len(_TIME_OF_DAY_VOCABULARY_FLOOR)} "
-            "committed vocabulary members")
+            f"its time-of-day phrases attached to the export share on either side of it "
+            f"({len(_TIME_OF_DAY_WORDS) * len(_PROBE_POSITIONS)} probes), names the "
+            f"offender in each, accepts every one of them on either side of the "
+            f"{_REFERENT_PROBE_MIDDAY_PCT}% figure in the concentration sentence, "
+            f"rejects the reordered wording that keeps every substring §2 checks, and "
+            f"still carries all {len(_TIME_OF_DAY_VOCABULARY_FLOOR)} committed "
+            "vocabulary members")
 
 
 # ---------------------------------------------------------------------------
