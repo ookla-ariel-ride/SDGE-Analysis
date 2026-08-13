@@ -2387,6 +2387,300 @@ def case_weather_regression_paragraph_matches_the_artifact():
 
 
 # ---------------------------------------------------------------------------
+# Issue #143: two hand-written paragraphs -- §2's "key architectural fact" line
+# and §8's "more panels" verdict -- state WHEN this array's exports leave and
+# WHEN the EV draws. Both timing figures are derived here from the artifacts
+# that measure them, and each paragraph's export-share figure is held to its
+# own referent, since the two are different quantities that round near each
+# other and have been confused for one another.
+#
+# PROVENANCE OF EVERY FIELD PAIRED BELOW, read out of the generator that writes
+# both sides before pairing them (CLAUDE.md section 8's guard rule). Which of
+# the four relationships each pair is:
+#
+#   report_data.json hourly_S/hourly_W.exp  vs  report_data.json totals.exp --
+#   ONE QUANTITY, ONE PARTITIONED FROM THE OTHER. analysis/report_data.py's
+#   build() computes both from the same frame in the same call: totals.exp is
+#   `d.Generation.sum()`, and hourly_{s}.exp is that same Generation summed by
+#   (season, hour-of-day) and divided by that season's own distinct-date count
+#   (`sub.dt.dt.date.nunique()`). Re-multiplying by those day counts and summing
+#   therefore MUST return totals.exp. The check below is an arithmetic
+#   self-check on the season day counts THIS file derives -- not corroboration
+#   of the midday share -- and its residual is the 3-decimal rounding build()
+#   applies to each hourly mean.
+#
+#   data/hourly_profile.csv  vs  report_data.json's hourly arrays -- THE SAME
+#   QUANTITY, INDEPENDENTLY COMPUTED. analysis/analyze_norelief.py writes
+#   hourly_profile.csv from the same raw export by a different route: a plain
+#   hour-of-day mean over every interval, with no season split and no day-count
+#   division at all. It is the real corroboration of the midday share, and it
+#   needs none of the season bookkeeping above.
+#
+#   report_data.json totals.exp  vs  enphase_daily_production.csv's Total
+#   footer -- TWO INSTRUMENTS MEASURING DIFFERENT QUANTITIES, combined into one
+#   ratio: utility-meter exports over inverter-platform production. That ratio
+#   is the export share both paragraphs state, built here from the same two
+#   fields report_tokens.py's EXPORTED_SHARE builds it from. Neither side is
+#   derived from, clamped to, or tuned against the other.
+#
+#   quiet_night_floor.json's ev_absence_by_window  vs  behavior_rebuild.json's
+#   window -- SAME WINDOW, SAME FRAME: quiet_night_floor.py's main() loads
+#   through `behavior_rebuild.load()`, so its eligible-night count and
+#   behavior_rebuild.json's window.days count the same days. Inside that
+#   artifact, issue_114_investigation() classifies each night with
+#   `behavior_rebuild.detect_sessions()` and counts the nights holding ZERO
+#   detected EV kWh in the window -- so `n` is the ABSENCE count and the paired
+#   `n_eligible_nights` is that window's own denominator (365 here, but 364 for
+#   the wrapped 21-6h window). Nights WITH charging is the difference, and the
+#   two fields may only ever be read as a pair.
+#
+# NOT behavior_rebuild.json's detection.ev_kwh_sop_already, which is the field
+# one reaches for first when asking when the EV charges. Its bucket is the
+# whole super-off-peak PERIOD, which on EV-TOU-5 is the overnight run and the
+# 10am-2pm midday run at once, so a 3am charge and a noon charge are
+# indistinguishable inside it. It cannot answer the question and is
+# deliberately not read here. report_tokens.py's own
+# _overnight_ev_night_counts() carries the same warning for the same reason.
+#
+# WHO OWNS THESE TWO FIGURES. report_tokens.py's _midday_export_share() and
+# _overnight_ev_night_counts() are the canonical derivations -- they feed
+# S2_VERDICT, the token-rendered conclusion line §2 opens with, and they take
+# their windows off the tariff (rates.period()) instead of naming hours. The
+# two paragraphs pinned below are hand-written prose restating those same two
+# measurements, so each case checks them BOTH ways: against the artifacts,
+# recomputed here rather than by calling that module (the convention this file
+# already follows in _expected_month_labels, so that a bug in the generator
+# fails a case instead of being reproduced by it), and against the figure
+# §2's own verdict line publishes. That second comparison is SAME QUANTITY,
+# ONE COMPUTED AND ONE TYPED: the verdict line's share is
+# _midday_export_share()'s output rendered into the page, the paragraphs' is a
+# human copy of it, which is exactly why they can drift apart.
+# ---------------------------------------------------------------------------
+# The hours are hard-coded to the window the two paragraphs name IN WORDS
+# ("10am–2pm") -- the pin is that the prose's own stated window is the one the
+# figure was taken over. report_tokens' canonical version reads the same window
+# off the tariff instead, which is right for a token that has to render for any
+# household; here the words on the page are the thing under test.
+_MIDDAY_EXPORT_HOURS = range(10, 14)
+_EV_NIGHT_WINDOW = "0-6h"              # midnight-6am, the window they name
+# report_tokens._EXPORT_REBUILD_TOLERANCE's bound, and its reasoning: 3-decimal
+# hourly profiles against whole-kWh totals can move the reconstruction ~0.05%
+# on rounding alone, so the band is a publication-rounding allowance rather
+# than a drift budget. Restating it here rather than tightening it -- a
+# stricter private bound would fail a regeneration this repo's own generator
+# considers sound.
+_EXPORT_REBUILD_TOLERANCE = 0.01
+
+
+def _midday_export_share_from_hourly_profile():
+    """The 10am-2pm share of exports, straight off data/hourly_profile.csv.
+
+    The file stores one per-interval mean per hour-of-day, and every hour of
+    the day carries the same number of 15-minute intervals, so the hours can be
+    compared against each other without any reweighting."""
+    with (ROOT / "data" / "hourly_profile.csv").open() as fh:
+        by_hour = {int(r["dt"]): float(r["exp"]) for r in csv.DictReader(fh)}
+    assert set(by_hour) == set(range(24)), (
+        f"data/hourly_profile.csv covers hours {sorted(by_hour)}, not all 24 -- "
+        "an hour-of-day share cannot be taken from it")
+    return sum(by_hour[h] for h in _MIDDAY_EXPORT_HOURS) / sum(by_hour.values())
+
+
+def _season_day_counts():
+    """(summer days, winter days) in the analysis window -- the divisors
+    report_data.py's build() used on its hourly means, recovered from
+    behavior_rebuild.json's window and the tariff's own season months."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import rates as R          # SUMMER_MONTHS lives there and is never re-listed
+    window = BEHAVIOR["window"]
+    start = dt.date.fromisoformat(window["start"].split(" ")[0])
+    end = dt.date.fromisoformat(window["end"].split(" ")[0])
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    summer = sum(1 for d in days if d.month in R.SUMMER_MONTHS)
+    return summer, len(days) - summer
+
+
+def _midday_export_share_from_report_data():
+    """The same share, rebuilt from report_data.json's two seasonal hour-of-day
+    arrays weighted by their own season day counts.
+
+    Returns (share, rebuild error vs totals.exp). The error is the self-check
+    described in the provenance block above: the arrays are a partition of
+    totals.exp, so a wrong season day count shows up here as a rebuilt total
+    that misses the artifact's own, and the share it produced cannot be
+    trusted."""
+    n_summer, n_winter = _season_day_counts()
+    weighted = {"S": (RD["hourly_S"]["exp"], n_summer),
+                "W": (RD["hourly_W"]["exp"], n_winter)}
+    total = sum(sum(exp) * n for exp, n in weighted.values())
+    midday = sum(sum(exp[h] for h in _MIDDAY_EXPORT_HOURS) * n
+                 for exp, n in weighted.values())
+    return midday / total, abs(total - RD["totals"]["exp"]) / RD["totals"]["exp"]
+
+
+_S2_VERDICT_MIDDAY_RE = re.compile(
+    r'<p class="verdict">In one sentence: [^<]*?(\d+)% of its exports leave in the '
+    r"10am–2pm window")
+
+
+def _midday_export_share_pct():
+    """The published integer percentage, with every route to it required to
+    agree: two artifacts written by different generators, and the figure §2's
+    own token-rendered verdict line already states."""
+    from_profile = _midday_export_share_from_hourly_profile()
+    from_report_data, rebuild_err = _midday_export_share_from_report_data()
+    assert rebuild_err < _EXPORT_REBUILD_TOLERANCE, (
+        f"report_data.json's seasonal hour-of-day exports rebuild to a total "
+        f"{rebuild_err * 100:.4f}% off its own totals.exp, past the "
+        f"{_EXPORT_REBUILD_TOLERANCE:.0%} rebuild bound -- the profiles do not "
+        f"describe this window, or the season day counts derived here are not the "
+        f"ones report_data.py divided by")
+    assert round(from_profile * 100) == round(from_report_data * 100), (
+        f"the two artifacts disagree on the 10am-2pm share of exports: "
+        f"hourly_profile.csv says {from_profile * 100:.2f}%, report_data.json's "
+        f"season-weighted hours say {from_report_data * 100:.2f}%")
+    pct = round(from_profile * 100)
+
+    m = _S2_VERDICT_MIDDAY_RE.search(HTML)
+    assert m, ("§2's verdict line no longer states a 10am–2pm share of exports -- "
+               "it is the token-rendered original of the figure the two hand-written "
+               "paragraphs restate, and nothing pins them without it")
+    assert int(m.group(1)) == pct, (
+        f"§2's verdict line publishes {m.group(1)}% of exports in the 10am–2pm "
+        f"window (report_tokens._midday_export_share, through S2_VERDICT) but the "
+        f"artifacts derive {pct}% -- the token and the artifacts have parted, so "
+        f"neither figure may be pinned into the hand-written prose until they agree")
+    return pct
+
+
+def _export_share_pct():
+    """Exports as a share of production -- the OTHER percentage, and the one
+    the two paragraphs must not attach to a time of day."""
+    with (ROOT / "data" / "enphase_daily_production.csv").open() as fh:
+        footer = [r for r in csv.DictReader(fh) if r["Date/Time"] == "Total"]
+    assert footer, ("data/enphase_daily_production.csv has no 'Total' footer row -- "
+                    "annual production cannot be read from it")
+    production = float(footer[0]["Energy Delivered (kWh)"].replace(",", ""))
+    return round(RD["totals"]["exp"] / production * 100)
+
+
+def _nights_with_ev_charging():
+    """(nights the EV drew, eligible nights) in the midnight-6am window."""
+    entry = json.loads((ROOT / "data" / "quiet_night_floor.json").read_text())[
+        "night_floor"]["issue_114_investigation"]["ev_absence_by_window"][_EV_NIGHT_WINDOW]
+    eligible = entry["n_eligible_nights"]
+    assert eligible == BEHAVIOR["window"]["days"], (
+        f"the {_EV_NIGHT_WINDOW} window was classified over {eligible} eligible "
+        f"nights but the analysis window is {BEHAVIOR['window']['days']} days -- "
+        f"the two no longer describe the same year")
+    return eligible - entry["n"], eligible
+
+
+_TIME_OF_DAY_WORDS = ("10am–2pm", "midday")
+
+
+def _clauses_about(para, pct):
+    """Everything the paragraph says about one percentage: from each occurrence
+    of that figure to the next percentage or the end of its sentence, whichever
+    comes first -- so a claim belonging to a LATER figure is never read as
+    describing this one. A period glued to a digit ($2.50, ~10.4¢) is not a
+    sentence end and does not cut the clause short."""
+    for m in re.finditer(rf"\b{pct}%", para):
+        rest = para[m.end():]
+        cut = len(rest)
+        for pattern in (r"\d+(?:\.\d+)?%", r"\.(?:\s|<|$)"):
+            nxt = re.search(pattern, rest)
+            if nxt:
+                cut = min(cut, nxt.start())
+        yield rest[:cut]
+
+
+def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
+    """The defect these cases exist to catch: the exports-over-production
+    figure written as if it were the midday share.
+
+    They are different quantities -- exports at ANY hour over production, and
+    the 10am-2pm slice of those exports -- so the paragraph must state both,
+    and only the time-of-day figure may carry the time-of-day words."""
+    assert export_pct != midday_pct, (
+        f"{where}: the export share and the 10am-2pm share of exports both round "
+        f"to {export_pct}%, so this guard cannot tell which figure a percentage "
+        f"in the paragraph means -- pin them by hand until they part again")
+    assert any(any(w in c for w in _TIME_OF_DAY_WORDS)
+               for c in _clauses_about(para, midday_pct)), (
+        f"{where}: {midday_pct}% is the 10am-2pm share of exports, but no clause "
+        f"stating it names that window -- the timing claim is asserted rather than "
+        f"stated as the measurement it is")
+    for clause in _clauses_about(para, export_pct):
+        offenders = [w for w in _TIME_OF_DAY_WORDS if w in clause]
+        assert not offenders, (
+            f"{where}: {export_pct}% is exports over PRODUCTION, exported at any "
+            f"hour, but its own clause says {clause!r} -- {offenders} describes the "
+            f"midday share, which is {midday_pct}%, a different quantity")
+
+
+def case_s2_key_architectural_fact_matches_the_artifacts():
+    """issue #143: §2's closing .small line is hand-written, not templated
+    (report-template.html carries only a TODO there) -- lock its export share,
+    its 10am-2pm export share and its EV-charging night count to the artifacts
+    that measure them, and hold each percentage to its own referent."""
+    m = re.search(r'<p class="small">That last split is the key architectural fact'
+                  r'.*?</p>', HTML, re.S)
+    assert m, "§2's 'key architectural fact' paragraph not found in index.html"
+    para = m.group(0)
+
+    export_pct = _export_share_pct()
+    midday_pct = _midday_export_share_pct()
+    nights, eligible = _nights_with_ev_charging()
+
+    checks = [
+        f"{export_pct}% of what the array makes leaves as exports",
+        f"{midday_pct}% of those exported kWh go out in the 10am–2pm window",
+        f"the EV charged between midnight and 6am on {nights} of the year's {eligible} nights",
+    ]
+    for value in checks:
+        assert value in para, (
+            f"§2's 'key architectural fact' paragraph: {value!r} not found in it")
+    _assert_the_two_shares_stay_apart(para, "§2's 'key architectural fact' paragraph",
+                                      export_pct, midday_pct)
+    return (f"§2's 'key architectural fact' line states {export_pct}% exported, "
+            f"{midday_pct}% of those exports in the 10am–2pm window (hourly_profile.csv, "
+            f"report_data.json's seasonal hours and §2's own verdict line all agree), "
+            f"and charging on {nights} of {eligible} nights (quiet_night_floor.json)")
+
+
+def case_s8_more_panels_timing_matches_the_artifacts():
+    """issue #143: §8's 'more panels' verdict rests on a timing claim -- that
+    the exports leave while the EV is not drawing -- so pin the two figures
+    that measure it, and the export share they sit beside, to their artifacts.
+
+    §8 is advanced-tier prose and exempt from the basic tier's density cap, so
+    this case checks only the figures and their referents, not the sentence
+    shape."""
+    m = re.search(r"<p><b>More panels: .*?</p>", HTML, re.S)
+    assert m, "§8's 'more panels' paragraph not found in index.html"
+    para = m.group(0)
+
+    export_pct = _export_share_pct()
+    midday_pct = _midday_export_share_pct()
+    nights, eligible = _nights_with_ev_charging()
+
+    checks = [
+        f"exports {export_pct}% of what it makes ({RD['totals']['exp']:,} kWh/yr)",
+        f"{midday_pct}% of those exports leave in the 10am–2pm window",
+        f"the EV charged between midnight and 6am on {nights} of {eligible} nights",
+    ]
+    for value in checks:
+        assert value in para, f"§8's 'more panels' paragraph: {value!r} not found in it"
+    _assert_the_two_shares_stay_apart(para, "§8's 'more panels' paragraph",
+                                      export_pct, midday_pct)
+    return (f"§8's 'more panels' paragraph states {export_pct}% of production exported "
+            f"({RD['totals']['exp']:,} kWh/yr), {midday_pct}% of it in the 10am–2pm "
+            f"window, against charging on {nights} of {eligible} nights")
+
+
+# ---------------------------------------------------------------------------
 # Issue #131: CLAUDE.md section 10 requires every h2 to open with a one-line
 # conclusion, and the report carries one three different ways. The structural
 # half of these cases -- every conclusion PRESENT, none doubled, none over the
@@ -3105,6 +3399,8 @@ CASES = [
     case_cleaning_gain_follows_the_artifacts_own_not_determined_status,
     case_cleaning_gain_is_not_determined_when_two_entries_share_the_date,
     case_weather_regression_paragraph_matches_the_artifact,
+    case_s2_key_architectural_fact_matches_the_artifacts,
+    case_s8_more_panels_timing_matches_the_artifacts,
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,
     case_the_two_structural_guards_reject_the_defects_they_exist_to_catch,
