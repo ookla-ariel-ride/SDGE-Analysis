@@ -2416,6 +2416,26 @@ def case_weather_regression_paragraph_matches_the_artifact():
 #   division at all. It is the real corroboration of the midday share, and it
 #   needs none of the season bookkeeping above.
 #
+#   What it does need is the BUCKET SIZES. Those cells are per-interval MEANS
+#   (analyze_norelief.py line 185: `d.groupby(d.dt.dt.hour).agg(...,
+#   exp=("Generation","mean"), ...)`), so an hour's share of the year's exports
+#   is its mean times the number of 15-minute intervals its bucket holds -- and
+#   the buckets are NOT all the same size once a window spans a DST Sunday.
+#   rates.expected_day_hours() is explicit about it: 96 slots ordinarily, 92 on
+#   the spring-forward Sunday (no 02:00-02:45), 100 on the fall-back Sunday
+#   (01:00-01:45 twice). Over this window that makes hour 1 four intervals
+#   larger and hour 2 four smaller than every other hour, so summing the means
+#   as if they were commensurate does not reconstruct the annual distribution.
+#   The share below is weighted by those counts, taken from
+#   expected_day_hours() so this file cannot disagree with the tariff clock.
+#   MEASURED on the committed data the correction is worth 0.000000 pp,
+#   because exports at 01:00 and 02:00 are identically 0.000 -- the two hours
+#   a DST Sunday resizes are the two the sun is down for. The weighting is
+#   here so that a regeneration whose profile carries any nonzero night export
+#   (a battery exporting overnight, a fork's meter, a re-based window) is
+#   scored by arithmetic that is right rather than by one that happened to be
+#   harmless, and so that a wrong route can never reject a correct report.
+#
 #   report_data.json totals.exp  vs  enphase_daily_production.csv's Total
 #   footer -- TWO INSTRUMENTS MEASURING DIFFERENT QUANTITIES, combined into one
 #   ratio: utility-meter exports over inverter-platform production. That ratio
@@ -2472,18 +2492,70 @@ _EV_NIGHT_WINDOW = "0-6h"              # midnight-6am, the window they name
 _EXPORT_REBUILD_TOLERANCE = 0.01
 
 
+def _dates_between(start, end):
+    """Every calendar day in [start, end], both ends included."""
+    return [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+
+
+def _analysis_window_dates():
+    """Every calendar day in the analysis window.
+
+    behavior_rebuild.json's `window` is where this file already reads the
+    window from, and the sibling season-day derivation below reads it from the
+    same place -- one source of truth, so the two cannot disagree about which
+    year is being described."""
+    window = BEHAVIOR["window"]
+    return _dates_between(dt.date.fromisoformat(window["start"].split(" ")[0]),
+                          dt.date.fromisoformat(window["end"].split(" ")[0]))
+
+
+def _intervals_per_hour_of_day(days):
+    """How many 15-minute intervals each hour-of-day bucket holds over `days`.
+
+    Counted through rates.expected_day_hours(), which is the repo's canonical
+    answer to "what slots does this calendar day carry" and the only place the
+    two DST Sundays are written down. Deriving the weights from it rather than
+    from `4 * len(days)` is what keeps this file from having its own opinion
+    about the tariff clock."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import rates as R
+    counts = {}
+    for day in days:
+        for slot in R.expected_day_hours(day):
+            counts[int(slot)] = counts.get(int(slot), 0) + 1
+    return counts
+
+
+def _midday_share_of(by_hour, counts):
+    """The 10am-2pm share of an hour-of-day MEAN profile.
+
+    Each hour's mean is multiplied by the number of intervals its bucket
+    actually holds before the share is taken -- see the provenance block above
+    for why the buckets differ and by how much."""
+    missing = sorted(set(by_hour) - set(counts))
+    assert not missing, (
+        f"hours {missing} have a profile value but no interval count -- the "
+        f"profile and the analysis window describe different days")
+    weighted = {h: by_hour[h] * counts[h] for h in by_hour}
+    return (sum(weighted[h] for h in _MIDDAY_EXPORT_HOURS)
+            / sum(weighted.values()))
+
+
 def _midday_export_share_from_hourly_profile():
     """The 10am-2pm share of exports, straight off data/hourly_profile.csv.
 
-    The file stores one per-interval mean per hour-of-day, and every hour of
-    the day carries the same number of 15-minute intervals, so the hours can be
-    compared against each other without any reweighting."""
+    The file stores one per-interval MEAN per hour-of-day, and the hours do
+    NOT all carry the same number of 15-minute intervals once the window spans
+    a DST Sunday, so each mean is weighted by its own bucket's interval count
+    over behavior_rebuild.json's window before the share is taken."""
     with (ROOT / "data" / "hourly_profile.csv").open() as fh:
         by_hour = {int(r["dt"]): float(r["exp"]) for r in csv.DictReader(fh)}
     assert set(by_hour) == set(range(24)), (
         f"data/hourly_profile.csv covers hours {sorted(by_hour)}, not all 24 -- "
         "an hour-of-day share cannot be taken from it")
-    return sum(by_hour[h] for h in _MIDDAY_EXPORT_HOURS) / sum(by_hour.values())
+    return _midday_share_of(by_hour, _intervals_per_hour_of_day(
+        _analysis_window_dates()))
 
 
 def _season_day_counts():
@@ -2493,10 +2565,7 @@ def _season_day_counts():
     if str(ROOT / "analysis") not in sys.path:
         sys.path.insert(0, str(ROOT / "analysis"))
     import rates as R          # SUMMER_MONTHS lives there and is never re-listed
-    window = BEHAVIOR["window"]
-    start = dt.date.fromisoformat(window["start"].split(" ")[0])
-    end = dt.date.fromisoformat(window["end"].split(" ")[0])
-    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    days = _analysis_window_dates()
     summer = sum(1 for d in days if d.month in R.SUMMER_MONTHS)
     return summer, len(days) - summer
 
@@ -2769,6 +2838,99 @@ def case_s8_more_panels_timing_matches_the_artifacts():
     return (f"§8's 'more panels' paragraph states {export_pct}% of production exported "
             f"({RD['totals']['exp']:,} kWh/yr), {midday_pct}% of it in the 10am–2pm "
             f"window, against charging on {nights} of {eligible} nights")
+
+
+# Two-week windows CONSTRUCTED around a named DST Sunday, so the weighting
+# guard below keeps testing the correction even if the committed analysis
+# window is re-based onto a year that misses one, and a third with no
+# transition in it as the control.
+_SPRING_PROBE_WINDOW = (dt.date(2026, 3, 1), dt.date(2026, 3, 14))    # 2026-03-08
+_FALL_PROBE_WINDOW = (dt.date(2025, 11, 1), dt.date(2025, 11, 14))    # 2025-11-02
+_FLAT_PROBE_WINDOW = (dt.date(2026, 1, 1), dt.date(2026, 1, 14))      # no transition
+
+
+def case_the_midday_share_weights_each_hour_by_its_real_interval_count():
+    """issue #143 (Codex review): data/hourly_profile.csv's cells are
+    per-interval MEANS, and a window spanning a DST Sunday holds unequal
+    hour-of-day buckets, so the 10am-2pm share has to weight each mean by the
+    number of intervals its own bucket holds. Summing the means as if the
+    buckets matched is arithmetic that is wrong by a little always and could,
+    near an integer-rounding boundary, reject a correctly regenerated report.
+
+    Runs on its own constructed windows rather than on the committed one for
+    two reasons: the committed window's transitions are an accident of the
+    year it covers, and the committed profile exports exactly 0.000 at 01:00
+    and 02:00 -- the two hours a DST Sunday resizes -- so on this household's
+    data the two routes agree to the last digit and could not tell a correct
+    weighting from a wrong one."""
+    spring = _dates_between(*_SPRING_PROBE_WINDOW)
+    fall = _dates_between(*_FALL_PROBE_WINDOW)
+    flat_days = _dates_between(*_FLAT_PROBE_WINDOW)
+
+    # 1. The bucket sizes themselves, straight off rates.expected_day_hours().
+    for days, hour, delta, what in ((spring, 2, -4, "spring-forward"),
+                                    (fall, 1, +4, "fall-back")):
+        counts = _intervals_per_hour_of_day(days)
+        flat = 4 * len(days)
+        odd = sorted(h for h, n in counts.items() if n != flat)
+        assert odd == [hour], (
+            f"over a window containing the {what} Sunday the hours whose interval "
+            f"count differs from {flat} are {odd}, not [{hour}] -- the weights are "
+            f"not being read off rates.expected_day_hours()")
+        assert counts[hour] == flat + delta, (
+            f"the {what} Sunday should leave hour {hour} with {flat + delta} "
+            f"intervals over this window, not {counts[hour]}")
+    counts = _intervals_per_hour_of_day(flat_days)
+    assert set(counts.values()) == {4 * len(flat_days)}, (
+        f"a window with no DST transition should give every hour "
+        f"{4 * len(flat_days)} intervals, got {sorted(set(counts.values()))} -- "
+        f"the weighting is inventing a difference where the clock has none")
+
+    # 2. The share those sizes produce, against hand arithmetic an
+    #    equal-weight route cannot reach. The probe profile is flat at 1.0
+    #    everywhere except the ONE hour the transition resizes, which carries
+    #    3.0, so the whole disagreement between the two routes is attributable.
+    for days, hour, delta, what in ((spring, 2, -4, "spring-forward"),
+                                    (fall, 1, +4, "fall-back")):
+        profile = dict.fromkeys(range(24), 1.0)
+        profile[hour] = 3.0
+        flat = 4 * len(days)
+        # 4 midday hours at 1.0; 19 more flat hours at 1.0; the odd hour at 3.0.
+        by_hand = (4 * flat) / (23 * flat + 3.0 * (flat + delta))
+        equal_weighted = 4 / (23 + 3.0)
+        assert abs(by_hand - equal_weighted) > 1e-4, (
+            f"the {what} probe cannot distinguish the two routes -- it is not "
+            f"evidence about the weighting")
+        got = _midday_share_of(profile, _intervals_per_hour_of_day(days))
+        assert abs(got - by_hand) < 1e-12, (
+            f"over a window containing the {what} Sunday the 10am-2pm share of a "
+            f"profile carrying 3.0 at hour {hour} is {by_hand:.9f}; "
+            f"_midday_share_of returned {got:.9f}. Summing the means unweighted "
+            f"would return {equal_weighted:.9f} -- an hour is being counted at a "
+            f"bucket size it does not have")
+
+    # 3. What the correction is worth on the committed data, and how much room
+    #    the published integer has. Both are reported rather than asserted: the
+    #    figure is pinned by the two cases above, and a bound on the delta
+    #    would be a bound on the household's night exports, not on this file.
+    with (ROOT / "data" / "hourly_profile.csv").open() as fh:
+        live = {int(r["dt"]): float(r["exp"]) for r in csv.DictReader(fh)}
+    weighted = _midday_share_of(live, _intervals_per_hour_of_day(
+        _analysis_window_dates()))
+    unweighted = sum(live[h] for h in _MIDDAY_EXPORT_HOURS) / sum(live.values())
+    published = _midday_export_share_pct()
+    assert round(weighted * 100) == published, (
+        f"the weighted 10am-2pm export share is {weighted * 100:.6f}%, which does "
+        f"not round to the {published}% §2 publishes")
+    to_boundary = 0.5 - abs(weighted * 100 - round(weighted * 100))
+    return (f"the 10am-2pm export share weights each hour by its own interval "
+            f"count from rates.expected_day_hours() (hour 1 +4 on the fall-back "
+            f"Sunday, hour 2 -4 on the spring-forward one, both inside the "
+            f"committed window), reproducing hand arithmetic no unweighted sum "
+            f"can reach; on the committed profile the correction moves the share "
+            f"by {abs(weighted - unweighted) * 100:.6f} pp to {weighted * 100:.4f}%, "
+            f"{to_boundary:.4f} pp from the nearest rounding boundary, and §2 "
+            f"still publishes {published}%")
 
 
 # Synthetic shares for the probes below -- the two figures the referent guard
@@ -3662,6 +3824,7 @@ CASES = [
     case_weather_regression_paragraph_matches_the_artifact,
     case_s2_key_architectural_fact_matches_the_artifacts,
     case_s8_more_panels_timing_matches_the_artifacts,
+    case_the_midday_share_weights_each_hour_by_its_real_interval_count,
     case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim,
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,
