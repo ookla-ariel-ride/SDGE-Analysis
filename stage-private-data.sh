@@ -9,7 +9,9 @@
 #
 # The destination is CHECKED before the first byte is written: this copy of
 # the script stages only into a working tree of the checkout it lives in.
-# See "DESTINATION GUARD" below for what that refuses and why.
+# See "DESTINATION GUARD" below for what that refuses and why, and
+# "ENVIRONMENT SANITIZING" for why the check reads the filesystem rather than
+# the git variables an inherited environment can answer it with.
 #
 # What the pipeline needs and why:
 #   private/household.yaml                    intake file (analysis/household.py)
@@ -41,6 +43,87 @@
 set -euo pipefail
 SRC="${1:?usage: stage-private-data.sh SOURCE_WORKING_COPY DEST_CLONE}"
 DST="${2:?usage: stage-private-data.sh SOURCE_WORKING_COPY DEST_CLONE}"
+
+# ---------------------------------------------------------------------------
+# ENVIRONMENT SANITIZING (issue #184, adversarial review) -- runs before the
+# guard below, because the guard is only as trustworthy as the question it
+# asks git, and git answers "which repository is this path in" from the
+# ENVIRONMENT first and the filesystem second.
+#
+# Left alone that makes the guard advisory rather than binding:
+#
+#   GIT_DIR=<this checkout>/.git GIT_WORK_TREE=<anywhere> \
+#     git -C <anywhere> rev-parse --git-common-dir   -> this checkout's .git
+#
+# and the guard waves <anywhere> through. Verified, not theorized: it staged
+# the archive into an unrelated scratch directory and exited 0. GIT_COMMON_DIR
+# is worse -- it needs no GIT_DIR, it IS the value this guard compares, and it
+# answers BOTH probes at once, so the comparison passes whatever the two
+# directories really are. That defeats even the two destinations the test
+# suite checks by name: an unrelated repository and a different clone of the
+# same remote.
+#
+# So every input to the identity question has to come from the filesystem.
+# What is cleared, and why each earns its place:
+#
+#   GIT_DIR                           replaces repository discovery outright
+#   GIT_COMMON_DIR                    IS the identity this guard compares
+#   GIT_WORK_TREE                     supplies --show-toplevel, the root check
+#   GIT_CEILING_DIRECTORIES           truncates the upward walk
+#   GIT_DISCOVERY_ACROSS_FILESYSTEM   extends the walk across mount points,
+#                                     which can turn "not a repository" into
+#                                     "a repository" -- the direction that
+#                                     turns a refusal into an acceptance
+#   GIT_CONFIG*  (the whole family,   config can carry core.worktree, which is
+#   matched by prefix because the     a working-tree location under another
+#   GIT_CONFIG_KEY_<n>/VALUE_<n>      name; GIT_CONFIG_GLOBAL holding one was
+#   pairs are unbounded)              observed moving --show-toplevel
+#   GIT_OBJECT_DIRECTORY,             these select CONTENT inside an already
+#   GIT_ALTERNATE_OBJECT_DIRECTORIES, chosen repository. None of them moved
+#   GIT_INDEX_FILE, GIT_NAMESPACE     either probe when tested, so they are
+#                                     defence in depth and not part of the
+#                                     fix -- listed because they cost nothing
+#                                     and keep a later git-reading step honest
+#
+# Deliberately NOT cleared: GIT_EXEC_PATH, GIT_SSH_COMMAND, GIT_TEMPLATE_DIR
+# and the like. They tell git HOW to run, not which repository it is looking
+# at, and on a relocatable git install unsetting GIT_EXEC_PATH breaks git
+# outright -- converting a legitimate run into a refusal for no gain.
+#
+# CLEAR, not REJECT. Refusing outright when these are set would be louder, but
+# GIT_DIR is exported by every git hook (this repo installs its own via
+# core.hooksPath) and by `git rebase --exec` and `git bisect run`, so a reject
+# would fail ordinary invocations in which GIT_DIR names THIS checkout and
+# clearing reaches the identical, correct verdict. The operator's remedy for
+# such a refusal would be to re-run under `env -u GIT_DIR ...` -- to perform
+# this clear by hand -- so it would cost a step, add no information, and
+# create exactly the pressure to reach for a bypass flag that the guard below
+# exists to avoid. Silence is the part actually worth fixing, so anything
+# cleared is ANNOUNCED on stderr: the environment is never trusted, and never
+# ignored quietly either.
+#
+# Cleared in THIS shell rather than around each probe, so the guard's verdict
+# and everything it authorizes -- the copies, the household.py child that
+# reads has_gas, and any git command a later edit adds -- run in one
+# environment. A guard that sanitizes only its own probes and then hands the
+# untouched environment to the work it approved has checked one repository and
+# written into another.
+# ---------------------------------------------------------------------------
+_cleared=""
+for _v in GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES \
+          GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_OBJECT_DIRECTORY \
+          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_NAMESPACE \
+          ${!GIT_CONFIG*}; do
+  if [ -n "${!_v+set}" ]; then
+    _cleared="$_cleared $_v"
+    unset "$_v"
+  fi
+done
+if [ -n "$_cleared" ]; then
+  echo "stage-private-data.sh: ignoring inherited git variable(s):$_cleared" >&2
+  echo "  These can make git report any directory as part of any repository, so the" >&2
+  echo "  destination check reads the filesystem instead. Nothing else was changed." >&2
+fi
 
 # ---------------------------------------------------------------------------
 # DESTINATION GUARD (issue #184) -- runs BEFORE the first write.

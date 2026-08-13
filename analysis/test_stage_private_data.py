@@ -3,7 +3,9 @@
 generator actually reads, so a fresh worktree staged only by the script can
 run the full pipeline (issue #33) -- and it must REFUSE to write that archive
 anywhere that is not a working tree of this checkout, before the first byte
-lands (issue #184).
+lands (issue #184) -- including when the caller's environment tells git to
+report some other repository for that destination, which the cases at the
+bottom of this file forge deliberately.
 
 The required-input set is DERIVED by scanning every generator's own source
 for its private/1-raw-data path references, in the four shapes this repo's
@@ -36,6 +38,7 @@ import contextlib
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -303,9 +306,9 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
 # whose failing exit status was swallowed by the last command in the pipe, so
 # nothing in this suite may infer success from output text alone.
 # --------------------------------------------------------------------------
-def _run_script(src, dst, cwd, script=SCRIPT):
+def _run_script(src, dst, cwd, script=SCRIPT, env=None):
     return subprocess.run(["bash", str(script), str(src), str(dst)],
-                          capture_output=True, text=True, cwd=str(cwd))
+                          capture_output=True, text=True, cwd=str(cwd), env=env)
 
 
 def _snapshot(root):
@@ -589,6 +592,257 @@ def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
         "every refusal must be decided before the first write, or a refused "
         "run can still leave a partial copy of the archive behind")
     return "the destination guard and all of its exits precede the first write"
+
+
+# --------------------------------------------------------------------------
+# issue #184, adversarial review: the guard asks git which repository a
+# directory belongs to, and git answers that from the ENVIRONMENT before the
+# filesystem. Every case below sets those variables so a naive probe LIES,
+# and requires a refusal with NOTHING WRITTEN -- the destination's whole
+# contents compared before and after, never the exit status alone. The
+# inherited environment is the one thing the pre-existing cases above cannot
+# see: subprocess.run passes this process's own clean environment through,
+# so a guard that trusts $GIT_DIR passes all of them.
+# --------------------------------------------------------------------------
+
+# The variables a caller can forge. The first three were each demonstrated to
+# subvert a probe on their own; the rest are the ones the script clears as
+# defence in depth, forged here together so shrinking that list shows up as a
+# behavioral failure rather than a silently narrower guard.
+_FORGEABLE = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE",
+              "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+              "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+              "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")
+
+
+def _common_dir_of(path):
+    """The absolute --git-common-dir of `path` -- the identity these cases
+    forge, and the value the guard compares."""
+    r = subprocess.run(["git", "-C", str(path), "rev-parse",
+                        "--path-format=absolute", "--git-common-dir"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SkipCase(f"this checkout has no git identity to forge: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def _probe_lies(dst, env, forged):
+    """Whether `git -C dst rev-parse --git-common-dir` under `env` really does
+    report `forged` -- the naive probe the guard used to make.
+
+    Checked as a precondition instead of assumed. If some future git stops
+    honouring one of these, the case has to announce that it went stale rather
+    than keep passing against a probe that no longer lies, which would leave
+    the suite reporting a refusal it is no longer testing for."""
+    r = subprocess.run(["git", "-C", str(dst), "rev-parse",
+                        "--path-format=absolute", "--git-common-dir"],
+                       capture_output=True, text=True, env=env)
+    return r.returncode == 0 and r.stdout.strip() == forged
+
+
+def _forged_env(dst, forged_common, td):
+    """Every variable in _FORGEABLE set at once, all pointing the guard at the
+    wrong answer: repository and common dir forged to `forged_common`, working
+    tree (directly, and again through an injected core.worktree in both config
+    channels) forged to `dst`. The content-selection variables get throwaway
+    paths inside `td` rather than this checkout's real objects/index, so a case
+    about a guard can never reach into the repository it is guarding."""
+    cfg = pathlib.Path(td) / "injected-gitconfig"
+    cfg.write_text(f"[core]\n\tworktree = {dst}\n")
+    return dict(
+        os.environ,
+        GIT_DIR=forged_common,
+        GIT_COMMON_DIR=forged_common,
+        GIT_WORK_TREE=str(dst),
+        GIT_CEILING_DIRECTORIES=str(pathlib.Path(dst).parent),
+        GIT_DISCOVERY_ACROSS_FILESYSTEM="1",
+        GIT_OBJECT_DIRECTORY=str(pathlib.Path(td) / "forged-objects"),
+        GIT_ALTERNATE_OBJECT_DIRECTORIES=str(pathlib.Path(td) / "forged-alt-objects"),
+        GIT_INDEX_FILE=str(pathlib.Path(td) / "forged-index"),
+        GIT_NAMESPACE="forged",
+        GIT_CONFIG_GLOBAL=str(cfg),
+        GIT_CONFIG_COUNT="1",
+        GIT_CONFIG_KEY_0="core.worktree",
+        GIT_CONFIG_VALUE_0=str(dst),
+    )
+
+
+@case
+def case_refuses_a_plain_directory_that_git_dir_dresses_up_as_this_checkout():
+    """The reproduced bypass. GIT_DIR names this checkout's repository and
+    GIT_WORK_TREE names an unrelated scratch directory, so
+
+        git -C <unrelated> rev-parse --git-common-dir  -> this checkout's .git
+        git -C <unrelated> rev-parse --show-toplevel   -> <unrelated>
+
+    -- all three of the guard's comparisons pass on a directory that has
+    nothing to do with this repository. Before the environment was cleared
+    this run exited 0 and copied the whole private archive there."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "unrelated-scratch-dir"
+        dst.mkdir()
+        (dst / "someone_elses_notes.txt").write_text("unrelated project\n")
+        forged = _common_dir_of(ROOT)
+        env = dict(os.environ, GIT_DIR=forged, GIT_WORK_TREE=str(dst))
+        if not _probe_lies(dst, env, forged):
+            raise SkipCase("this git no longer lets GIT_DIR make an unrelated "
+                           "directory report this checkout, so there is no "
+                           "forgery left for this case to refuse")
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src, env=env)
+        _assert_refused(result, dst, before, "a directory dressed up by GIT_DIR")
+        assert "not a git repository" in result.stderr, result.stderr
+    return ("an unrelated directory that GIT_DIR/GIT_WORK_TREE make look like "
+            "this checkout is refused and left untouched")
+
+
+@case
+def case_refuses_a_foreign_repository_that_git_common_dir_dresses_up():
+    """GIT_COMMON_DIR needs no GIT_DIR, and is worse than it: it IS the value
+    the guard compares, and it answers the probe on BOTH sides at once -- the
+    destination's and the script's own -- so the identity comparison passes
+    whatever the two directories really are. It therefore defeats precisely
+    the two destinations this suite already refuses by name, which is why both
+    are re-run here under the forgery rather than one standing in for the
+    other: a real unrelated repository, and a different clone of this remote."""
+    forged = _common_dir_of(ROOT)
+    checked = []
+    for label in ("an unrelated repository", "a different clone of this remote"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            dst = pathlib.Path(td) / "other-project"
+            if label.startswith("an unrelated"):
+                subprocess.run(["git", "init", "-q", str(dst)], check=True,
+                               capture_output=True, text=True)
+            else:
+                cloned = subprocess.run(
+                    ["git", "clone", "-q", "--no-hardlinks", str(ROOT), str(dst)],
+                    capture_output=True, text=True)
+                if cloned.returncode != 0:
+                    raise SkipCase(f"this checkout cannot be cloned here: {cloned.stderr}")
+            (dst / "someone_elses_notes.txt").write_text("a different project\n")
+            env = dict(os.environ, GIT_COMMON_DIR=forged)   # GIT_DIR is NOT set
+            if not _probe_lies(dst, env, forged):
+                raise SkipCase("this git no longer lets GIT_COMMON_DIR override "
+                               f"the reported identity of {label}")
+            before = _snapshot(dst)
+            result = _run_script(src, dst, cwd=src, env=env)
+            _assert_refused(result, dst, before, f"{label}, forged by GIT_COMMON_DIR")
+            assert "DIFFERENT repository" in result.stderr, result.stderr
+            checked.append(label)
+    return f"GIT_COMMON_DIR cannot make {' or '.join(checked)} pass the guard"
+
+
+@case
+def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
+    """The whole set the script clears, forged together: repository, common
+    dir, working tree (directly and through core.worktree injected via both
+    config channels), the two discovery modifiers, and the content-selection
+    variables. Behavioral first -- the refusal and the untouched destination
+    are what matter -- then structural, because a variable dropped from the
+    script's list would otherwise only show up the day someone exploits it."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "unrelated-scratch-dir"
+        dst.mkdir()
+        (dst / "someone_elses_notes.txt").write_text("unrelated project\n")
+        env = _forged_env(dst, _common_dir_of(ROOT), td)
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src, env=env)
+        _assert_refused(result, dst, before, "a fully forged environment")
+        for name in _FORGEABLE:
+            assert name in result.stderr, (
+                f"{name} was set but the run never said it ignored it: {result.stderr}")
+
+    text = SCRIPT.read_text()
+    cleared = text.split("for _v in", 1)[1].split("; do", 1)[0]
+    for name in _FORGEABLE:
+        assert name in cleared or (name.startswith("GIT_CONFIG")
+                                   and "${!GIT_CONFIG*}" in cleared), (
+            f"{name} is no longer cleared by the script")
+    # The clearing has to happen before the first git invocation, or the first
+    # probe still reads the forged environment. Comment-stripped, since the
+    # explanation above the loop names these variables too.
+    code = [(n, line) for n, line in enumerate(text.splitlines())
+            if line.strip() and not line.lstrip().startswith("#")]
+    first_git = min(n for n, line in code if re.search(r'\bgit\s+-C\b', line))
+    first_unset = min(n for n, line in code if line.strip().startswith("unset "))
+    assert first_unset < first_git, (
+        "the environment must be cleared before the first git probe, not after")
+    return (f"all {len(_FORGEABLE)} forgeable variables are refused together, "
+            f"announced, and cleared before the first git probe")
+
+
+@case
+def case_a_forged_environment_does_not_break_a_legitimate_destination():
+    """The behavioral difference between CLEARING these variables and
+    REJECTING them. A real linked worktree of this checkout is a legitimate
+    destination whether or not the caller's environment is polluted -- and it
+    routinely is, since every git hook exports GIT_DIR -- so the run has to
+    succeed and stage everything. A guard that refused on sight would fail
+    here, which is the cost that decided the design."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as dst:
+            env = _forged_env(dst, _common_dir_of(ROOT), td)
+            result = _run_script(src, dst, cwd=src, env=env)
+            assert result.returncode == 0, (
+                f"clearing the environment must not turn a legitimate worktree "
+                f"into a refusal: {result.stderr}")
+            assert "ignoring inherited git variable" in result.stderr, (
+                "the variables were cleared silently -- an operator whose "
+                "environment is polluted has to be told it was ignored")
+            for required in ("private/household.yaml",
+                             "private/1-raw-data/gas.csv",
+                             "private/verify/usage.csv"):
+                assert (dst / required).is_file(), f"{required} was not staged"
+    return "a legitimate worktree is still accepted and fully staged under a forged environment"
+
+
+@case
+def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
+    """A guard that sanitizes only its own probes and then hands the untouched
+    environment to the work it approved has checked one repository and written
+    into another. The script's post-guard work spawns one child --
+    household.py under $SRC/.venv/bin/python -- so that child is where the
+    authorized environment can be read back.
+
+    The stand-in interpreter is REPLACED (os.replace, atomically, never an
+    unlink) with a shell wrapper that records what it inherited and then execs
+    the real interpreter, so the staging still completes and the recording
+    comes from a genuinely accepted run rather than a synthetic probe."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        record = pathlib.Path(td) / "inherited-by-the-child.txt"
+        wrapper = pathlib.Path(td) / "python-wrapper"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"REC={shlex.quote(str(record))}\n"
+            ': > "$REC"\n'
+            + "".join('printf "%s\\n" "{v}=${{{v}-<unset>}}" >> "$REC"\n'.format(v=v)
+                      for v in _FORGEABLE)
+            + f'exec {shlex.quote(sys.executable)} "$@"\n')
+        wrapper.chmod(0o755)
+        os.replace(wrapper, src / ".venv" / "bin" / "python")
+        with _linked_worktree(td) as dst:
+            env = _forged_env(dst, _common_dir_of(ROOT), td)
+            result = _run_script(src, dst, cwd=src, env=env)
+            assert result.returncode == 0, result.stderr
+            assert record.is_file(), (
+                "the wrapper never ran, so this case proved nothing about the "
+                "environment the copy step runs in")
+            seen = dict(line.split("=", 1) for line in
+                        record.read_text().splitlines() if "=" in line)
+            still_set = {k: v for k, v in seen.items() if v != "<unset>"}
+            assert not still_set, (
+                f"the guard cleared these for its own probes but handed them to "
+                f"the work it authorized: {still_set}")
+            assert set(seen) == set(_FORGEABLE), seen
+    return (f"all {len(_FORGEABLE)} variables are gone from the environment the "
+            f"post-guard work inherits, not just from the probes")
 
 
 @case
