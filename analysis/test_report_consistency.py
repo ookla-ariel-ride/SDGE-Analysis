@@ -2476,13 +2476,98 @@ def case_weather_regression_paragraph_matches_the_artifact():
 # _midday_export_share()'s output rendered into the page, the paragraphs' is a
 # human copy of it, which is exactly why they can drift apart.
 # ---------------------------------------------------------------------------
-# The hours are hard-coded to the window the two paragraphs name IN WORDS
-# ("10am–2pm") -- the pin is that the prose's own stated window is the one the
-# figure was taken over. report_tokens' canonical version reads the same window
-# off the tariff instead, which is right for a token that has to render for any
-# household; here the words on the page are the thing under test.
-_MIDDAY_EXPORT_HOURS = range(10, 14)
+# THE MIDDAY WINDOW COMES OFF THE TARIFF, NOT OFF THIS HOUSEHOLD. The share is
+# taken over the daytime super-off-peak run rates.period() itself defines,
+# recomputed here from rates.period() rather than imported from
+# report_tokens._cheap_run() -- the same recompute convention
+# _expected_month_labels follows, so a bug in the generator's window logic
+# fails a case instead of being reproduced by it.
+#
+# The prose's stated window ("10am-2pm") is then DERIVED from those hours
+# (_MIDDAY_WINDOW_WORDS, below) and required to appear in the paragraphs. That
+# is the pin the hard-coded range(10, 14) used to make -- the words on the page
+# must name the window the figure was taken over -- except that it now adapts
+# to the tariff instead of asserting this household's.
+#
+# FORK NOTE: the hours and the window words above follow your tariff on their
+# own. Three things in this block do NOT, and are pinned to THIS report's
+# dataset and wording. When reproducing the analysis for your own house:
+#
+#   * _EV_NIGHT_WINDOW is a KEY into data/quiet_night_floor.json's own
+#     classification buckets, not a window that can be derived from anything --
+#     pick the bucket your overnight prose actually names.
+#   * the English substrings case_s0/case_s2/case_s8 check ("... go out in the
+#     10am-2pm window", "the EV charged between midnight and 6am on N of the
+#     year's M nights") are these sentences, not any household's. Rewrite them
+#     to match your own prose; the figure pinned to an artifact is the point,
+#     the sentence around it is not.
+#   * _TIME_OF_DAY_WORDS is an English blocklist. A different window needs no
+#     edit there; a different language needs a new list.
+#
+# A fork that skips these gets a failure naming a missing SENTENCE, which reads
+# like a report defect and is a fork-adaptation step. That is the same trap the
+# retired hard-coded window set, and the same reason this note exists.
+# ---------------------------------------------------------------------------
+
+
+def _weekday_tou_runs():
+    """Every consecutive TOU run in a weekday as (start hour, end hour, label),
+    sampled off rates.period() every 15 minutes -- the finest grid any window
+    in this tariff moves on."""
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import rates as R
+    slots = [R.period(i / 4, is_weekend=False) for i in range(96)]
+    runs, start = [], 0
+    for i in range(1, 97):
+        if i == 96 or slots[i] != slots[start]:
+            runs.append((start / 4, i / 4, slots[start]))
+            start = i
+    return runs
+
+
+def _midday_export_hours():
+    """The hour-of-day buckets the midday export share is taken over: the
+    tariff's own DAYTIME super-off-peak run. The overnight super-off-peak run
+    opens at midnight and is a different window -- that is the whole distinction
+    the two paragraphs turn on, so it is made structurally here rather than by
+    naming hours."""
+    daytime = [r for r in _weekday_tou_runs() if r[2] == "sop" and r[0] > 0]
+    assert len(daytime) == 1, (
+        f"rates.period() gives a weekday {len(daytime)} daytime super-off-peak runs "
+        f"({daytime}), so 'the midday window' is not one window on this tariff -- the "
+        f"share these cases pin cannot be taken without first saying which run it means")
+    lo, hi, _lab = daytime[0]
+    assert lo == int(lo) and hi == int(hi), (
+        f"the daytime super-off-peak run is {lo}-{hi}h, but data/hourly_profile.csv and "
+        f"data/report_data.json carry WHOLE-HOUR buckets -- a share taken over them "
+        f"would silently round the window and publish the result as this tariff's")
+    return range(int(lo), int(hi))
+
+
+_MIDDAY_EXPORT_HOURS = _midday_export_hours()
 _EV_NIGHT_WINDOW = "0-6h"              # midnight-6am, the window they name
+
+
+def _clock(hour):
+    """`hour` written on the 12-hour clock the report states windows in."""
+    return f"{hour % 12 or 12}{'am' if hour < 12 else 'pm'}"
+
+
+# The WINDOW the measurement was actually taken over, in the words the
+# paragraphs use. Only this names the midday figure's own provenance, so it is
+# what the positive half of the guard demands -- "midday" alone would let the
+# paragraph gesture at a time of day instead of stating the window the share
+# was computed over.
+#
+# BUILT from _MIDDAY_EXPORT_HOURS rather than typed, so a fork whose daytime
+# super-off-peak run is not 10-14 asks its own prose for its own window. Both
+# dashes, because the report writes the en dash and a plain hyphen is the
+# likelier typo, not a different claim.
+_MIDDAY_WINDOW_WORDS = tuple(
+    f"{_clock(_MIDDAY_EXPORT_HOURS[0])}{dash}{_clock(_MIDDAY_EXPORT_HOURS[-1] + 1)}"
+    for dash in ("–", "-"))
+
 # report_tokens._EXPORT_REBUILD_TOLERANCE's bound, and its reasoning: 3-decimal
 # hourly profiles against whole-kWh totals can move the reconstruction ~0.05%
 # on rounding alone, so the band is a publication-rounding allowance rather
@@ -2588,9 +2673,17 @@ def _midday_export_share_from_report_data():
     return midday / total, abs(total - RD["totals"]["exp"]) / RD["totals"]["exp"]
 
 
+# The span between "In one sentence: " and the percentage is read TAG AND ALL,
+# stopping only at the paragraph's own close and never at a newline. A tag-free
+# span ([^<]*?) was the first draft, and it made the locator a formatting
+# detector: a <b>, an <a href="#s8"> or a <span class="pill"> written ahead of
+# the figure -- all routine in this report -- broke the search, and the case
+# then reported "§2's verdict line no longer states a 10am-2pm share of
+# exports", which is a deleted CLAIM, not a rearranged one. The window words
+# come from _MIDDAY_WINDOW_WORDS for the same reason the hours do.
 _S2_VERDICT_MIDDAY_RE = re.compile(
-    r'<p class="verdict">In one sentence: [^<]*?(\d+)% of its exports leave in the '
-    r"10am–2pm window")
+    r'<p class="verdict">In one sentence: (?:(?!</p>)[^\n])*?(\d+)% of its exports '
+    r"leave in the " + re.escape(_MIDDAY_WINDOW_WORDS[0]) + r" window")
 
 
 def _midday_export_share_pct():
@@ -2646,13 +2739,6 @@ def _nights_with_ev_charging():
     return eligible - entry["n"], eligible
 
 
-# The WINDOW the measurement was actually taken over, in the words the
-# paragraphs use. Only this names the 10am-2pm figure's own provenance, so it
-# is what the positive half of the guard demands -- "midday" alone would let
-# the paragraph gesture at a time of day instead of stating the window the
-# share was computed over.
-_MIDDAY_WINDOW_WORDS = ("10am–2pm", "10am-2pm")
-
 # Everything that PLACES A CLAIM IN THE DAYTIME, which is the wider question
 # the negative half asks. The two halves need different vocabularies: naming
 # the window is a provenance requirement on one figure, while attaching ANY
@@ -2675,9 +2761,14 @@ _TIME_OF_DAY_WORDS = _MIDDAY_WINDOW_WORDS + (
 # from the constant takes its own probe with it and the case goes green by
 # having stopped asking. A SUPERSET needs no edit here; a phrase DISAPPEARING
 # does, in the same commit, where a reviewer reads why.
+#
+# The window member is the one entry that is DERIVED rather than typed: it is
+# whatever _MIDDAY_WINDOW_WORDS built for this tariff, so the floor keeps
+# asking "is the measured window still in the vocabulary" on a fork instead of
+# demanding this household's hours from it.
 _TIME_OF_DAY_VOCABULARY_FLOOR = (
-    "10am–2pm", "midday", "middle of the day", "middle of the afternoon",
-    "daytime", "noon",
+    _MIDDAY_WINDOW_WORDS[0], "midday", "middle of the day",
+    "middle of the afternoon", "daytime", "noon",
 )
 
 
@@ -2707,10 +2798,15 @@ def _time_of_day_words_in(clause):
 # element the figure sits in -- the leading side now does that as the trailing
 # side always did. Left that way on purpose: cutting at markup would narrow the
 # clause and hand back a hiding place ("<b>At midday,</b> 60% of what the array
-# makes ..."). It costs nothing here -- sweeping index.html, GLOSSARY.md,
-# TECHNICAL.md, README.md and report-template.html for every occurrence of the
-# export share turns up no clause carrying a time-of-day word, on the tail-only
-# cutter and on this one alike.
+# makes ..."). It costs nothing on the three GUARDED passages: §0, §2 and §8
+# all pass with the wide cutter. It is not free document-wide -- sweeping
+# index.html, GLOSSARY.md, TECHNICAL.md, README.md and report-template.html for
+# every occurrence of the export share turns up two live conflations this file
+# cannot reach, both in text owned by report_tokens.py rather than written into
+# index.html: §8's heading ("exports 60% of production at low value", from
+# S8_VERDICT_SHORT) and §8's marginal-panel valuation ("therefore earns
+# ~10-12¢", from MARGINAL_EXPORT_VALUE, which prices a new panel's whole output
+# at the midday cell). Both need a generator change, not a prose edit.
 _CLAUSE_END_AFTER = (r"\d+(?:\.\d+)?%", r"\.(?:\s|<|$)")
 _CLAUSE_END_BEFORE = (r"\d+(?:\.\d+)?%", r"\.(?:\s|<)")
 
@@ -2737,16 +2833,114 @@ def _clause_tail(rest):
     return rest[:cut]
 
 
+# THE THIRD HOLE: a sentence end is where a CLAUSE stops, not where a REFERENT
+# does. Both cutters above stop dead at a period, so the timing claim can move
+# one sentence over and point back at the figure -- "60% ... leaves as exports.
+# Nearly all of it leaves in the middle of the day." republishes the exact
+# defect this guard retires, with a LISTED vocabulary member present, and
+# passed. So did "It all goes out at midday." after it, and "Almost all of it
+# at midday." written in front of it. A comma-to-period edit was the whole
+# exploit.
+#
+# WHAT SEPARATES THAT FROM THE REPORT'S OWN PROSE, and it is not the pronoun:
+# the offending sentence carries NO FIGURE OF ITS OWN. A sentence with a figure
+# in it is making its own measured claim and is read on its own terms; a
+# figure-free sentence sitting beside a measured one measures nothing, so a
+# time of day in it can only be describing the measurement next to it. The
+# clause therefore absorbs the RUN of figure-free sentences on either side of
+# it, and stops at the first sentence that carries a digit.
+#
+# THE NARROWER RULE PROPOSED IN REVIEW WAS MEASURED FIRST AND DOES NOT HOLD.
+# "Every sentence carrying a time-of-day phrase must also carry the midday
+# window or the midday share" rejects §8's own "Since the 2026 TOU change those
+# midday exports credit at only ~10.4¢/kWh." and its "it monetizes those midday
+# kWh at 60-87¢ instead of 10¢" -- two correct sentences about the midday
+# slice, neither of which restates the window or the share. The digit rule
+# accepts both (each carries its own figures) and still rejects all four
+# rewordings. case_the_referent_guard_reads_across_a_sentence_boundary pins
+# both halves of that, including the counterexample, so the rule that was NOT
+# adopted stays falsifiable instead of being remembered.
+#
+# The cost is stated: a figure-free sentence beside the export share may not
+# carry a time of day at all, even innocently ("Solar is a daytime resource."
+# next to it now fails). That is the ambiguity the guard exists to force out of
+# the paragraph, and the fix is to put the figure in the sentence.
+_SENTENCE_END_RE = re.compile(r"\.(?:\s|<|$)")
+_FIGURE_RE = re.compile(r"\d")
+
+
+def _carries_a_figure_of_its_own(sentence):
+    """Whether `sentence` states a measurement rather than commenting on the
+    one beside it.
+
+    Two things are removed before the digits are counted, because neither is a
+    measurement. MARKUP: a digit inside <a href="#s8"> is a link target.
+    TIME-OF-DAY PHRASES: "10am-2pm" is the guard's own vocabulary, a window
+    LABEL rather than a quantity taken over it, and counting its digits would
+    hand the defect back its best hiding place -- "60% ... leaves as exports.
+    Nearly all of it leaves in the 10am-2pm window." names the window and still
+    predicates it of the whole share."""
+    bare = re.sub(r"<[^>]*>", "", sentence)
+    for word in _TIME_OF_DAY_WORDS:
+        bare = re.sub(re.escape(word), "", bare, flags=re.I)
+    return bool(_FIGURE_RE.search(bare))
+
+
+def _sentence_spans(text):
+    """(start, end) for every sentence in `text`, split on the same sentence
+    end the clause cutters use so the two cannot disagree about where one
+    stops. Text trailing the last period is a span too -- a paragraph does not
+    have to end on one, and neither does the fragment handed in here."""
+    spans, start = [], 0
+    for m in _SENTENCE_END_RE.finditer(text):
+        spans.append((start, m.start() + 1))
+        start = m.start() + 1
+    if text[start:].strip():
+        spans.append((start, len(text)))
+    return spans
+
+
+def _figure_free_run_before(before):
+    """The run of figure-free sentences `before` ENDS with.
+
+    Self-limiting exactly where it must be: when the clause was cut at a
+    neighbouring PERCENTAGE rather than at a sentence end, `before` ends on
+    that percentage's own digits, its last span carries a figure, and nothing
+    is absorbed -- another figure's clause is never read into this one."""
+    cut = len(before)
+    for start, end in reversed(_sentence_spans(before)):
+        if _carries_a_figure_of_its_own(before[start:end]):
+            break
+        cut = start
+    return before[cut:]
+
+
+def _figure_free_run_after(rest):
+    """The run of figure-free sentences `rest` BEGINS with -- the same rule as
+    _figure_free_run_before, read the other way."""
+    cut = 0
+    for start, end in _sentence_spans(rest):
+        if _carries_a_figure_of_its_own(rest[start:end]):
+            break
+        cut = end
+    return rest[:cut]
+
+
 def _clauses_about(para, pct):
     """Everything the paragraph says about one percentage: for each occurrence
     of that figure, the whole segment it sits in -- the text BEFORE it back to
     the previous clause boundary, the figure itself, and the text after it up
-    to the next one. Both sides are cut by the same rules (see
-    _CLAUSE_END_AFTER), so a phrase reordered around the figure is read the
-    same way wherever the writer put it."""
+    to the next one -- plus the run of figure-free sentences on either side of
+    that segment. Both sides are cut by the same rules (see _CLAUSE_END_AFTER
+    and the figure-free run above), so a phrase reordered around the figure, or
+    moved into a sentence of its own, is read the same way wherever the writer
+    put it."""
     for m in re.finditer(rf"\b{pct}%", para):
-        yield (_clause_head(para[:m.start()]) + m.group(0)
-               + _clause_tail(para[m.end():]))
+        head = _clause_head(para[:m.start()])
+        tail = _clause_tail(para[m.end():])
+        yield (_figure_free_run_before(para[:m.start() - len(head)])
+               + head + m.group(0) + tail
+               + _figure_free_run_after(para[m.end() + len(tail):]))
 
 
 def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
@@ -2767,6 +2961,25 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
         f"{where}: the export share and the 10am-2pm share of exports both round "
         f"to {export_pct}%, so this guard cannot tell which figure a percentage "
         f"in the paragraph means -- pin them by hand until they part again")
+    # A PERCENTAGE IS READ AS A REFERENT HERE, and the guard has no notion of
+    # what any given one measures: it finds every "60%" in the paragraph and
+    # judges the clause around it as if it were the export share. §8 already
+    # carries "60-87¢" in a sentence about battery arbitrage, one keystroke
+    # from a second "60%" that this guard would reject as a referent error
+    # while naming the wrong figure in the message. So require each of the two
+    # to occur exactly once and say so plainly -- an ambiguous paragraph fails
+    # for the reason it is actually failing, not for one that misdirects the
+    # writer to a sentence that was never the problem.
+    for pct, what in ((export_pct, "the export share"),
+                      (midday_pct, f"the {_MIDDAY_WINDOW_WORDS[0]} share of exports")):
+        found = re.findall(rf"\b{pct}%", para)
+        assert len(found) == 1, (
+            f"{where}: {pct}% is {what}, and it appears {len(found)} times in this "
+            f"paragraph. This guard reads a percentage as a referent and cannot tell "
+            f"two occurrences apart, so every one of them would be judged as {what} -- "
+            f"whichever occurrence means something else needs a different form (a "
+            f"range, a ratio, words), or this guard needs to be taught to locate the "
+            f"figure by its own phrase rather than by its digits")
     assert any(any(w.casefold() in c.casefold() for w in _MIDDAY_WINDOW_WORDS)
                for c in _clauses_about(para, midday_pct)), (
         f"{where}: {midday_pct}% is the 10am-2pm share of exports, but no clause "
@@ -2778,6 +2991,21 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
             f"{where}: {export_pct}% is exports over PRODUCTION, exported at any "
             f"hour, but its own clause says {clause!r} -- {offenders} describes the "
             f"midday share, which is {midday_pct}%, a different quantity")
+        # A PRICE IS A TIME OF DAY WRITTEN IN CENTS. §0's bottom line read
+        # "(60% exported at ~10¢)", and the super-off-peak export credit is
+        # what the MIDDAY slice earns -- the rest of the share leaves in
+        # off-peak and on-peak hours and credits at UDC+CEA, several times
+        # higher (rates.py: 46.2¢ and 81.9¢ summer, against 7.6¢). Naming one
+        # cell of the credit map beside the all-hours share says the same
+        # wrong thing "at midday" says, so it fails in the same place rather
+        # than in a second guard that could be extended to two paragraphs and
+        # not the third.
+        assert "¢" not in clause, (
+            f"{where}: {export_pct}% is exports over PRODUCTION, exported at any hour, "
+            f"but its own clause prices them: {clause!r}. No single cell of the export "
+            f"credit map is that share's value -- the {midday_pct}% leaving in the "
+            f"{_MIDDAY_WINDOW_WORDS[0]} window credits super-off-peak and the rest does "
+            f"not, so the price belongs to whichever figure it was measured on")
 
 
 def case_s2_key_architectural_fact_matches_the_artifacts():
@@ -2838,6 +3066,40 @@ def case_s8_more_panels_timing_matches_the_artifacts():
     return (f"§8's 'more panels' paragraph states {export_pct}% of production exported "
             f"({RD['totals']['exp']:,} kWh/yr), {midday_pct}% of it in the 10am–2pm "
             f"window, against charging on {nights} of {eligible} nights")
+
+
+def case_s0_more_solar_bullet_keeps_the_two_shares_apart():
+    """issue #143 review: the §2/§8 sweep left a live instance of the same
+    referent conflation in the BOTTOM LINE, where the report's most-read
+    sentence sat outside the guard because the guard reads two named
+    paragraphs.
+
+    §0's "more solar" item read "(60% exported at ~10¢)", attaching the
+    super-off-peak export credit -- which is what the 10am-2pm slice earns --
+    to the all-hours export share. Only the midday slice of those exports
+    credits there; the rest leave in off-peak and on-peak hours, which under
+    NEM 2.0 credit at UDC+CEA, several times higher (rates.py: 46.2¢ summer
+    off-peak, 81.9¢ summer on-peak, against 7.6¢ super-off-peak).
+
+    §0 is basic tier, so the item states the two shares and nothing about
+    price: the economics it needs are already in the clause beside it (the
+    13-16 yr payback) and the derivation is §8's job. Same guard as §2 and §8,
+    on the same two artifact-derived figures."""
+    m = re.search(r"<li><b>More solar\? No\.</b>.*?</li>", HTML, re.S)
+    assert m, "§0's 'More solar? No.' bullet not found in index.html"
+    item = m.group(0)
+
+    export_pct = _export_share_pct()
+    midday_pct = _midday_export_share_pct()
+
+    for value in (f"{export_pct}% exported",
+                  f"{midday_pct}% of that in the {_MIDDAY_WINDOW_WORDS[0]} window"):
+        assert value in item, f"§0's 'more solar' bullet: {value!r} not found in it"
+    _assert_the_two_shares_stay_apart(item, "§0's 'more solar' bullet",
+                                      export_pct, midday_pct)
+    return (f"§0's 'more solar' bullet states {export_pct}% exported and "
+            f"{midday_pct}% of that in the {_MIDDAY_WINDOW_WORDS[0]} window, with no "
+            f"time of day and no export price attached to the all-hours share")
 
 
 # Two-week windows CONSTRUCTED around a named DST Sunday, so the weighting
@@ -3101,6 +3363,212 @@ def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
             f"rejects the reordered wording that keeps every substring §2 checks, and "
             f"still carries all {len(_TIME_OF_DAY_VOCABULARY_FLOOR)} committed "
             "vocabulary members")
+
+
+# The four rewordings the sentence-bounded cutter accepted, verbatim from the
+# review that found them. The first is the one the branch already rejected and
+# is here as the control: the other three are it with the comma changed to a
+# period, which is the whole edit that used to republish the defect.
+_SENTENCE_SPLIT_REWORDINGS = (
+    ("comma (already rejected)",
+     "60% of what the array makes leaves as exports, and it leaves in the middle "
+     "of the day."),
+    ("next sentence, quantified back-reference",
+     "60% of what the array makes leaves as exports. Nearly all of it leaves in "
+     "the middle of the day."),
+    ("next sentence, bare pronoun",
+     "60% of what the array makes leaves as exports. It all goes out at midday."),
+    ("previous sentence",
+     "Almost all of it at midday. 60% of what the array makes leaves as exports."),
+)
+
+
+def _sentence_split_probe(claim):
+    """§2's paragraph with its opening claim replaced by `claim`, and every
+    other substring §2's live case demands left in place -- so a probe that the
+    referent guard accepts is a sentence the report could publish today."""
+    return ('<p class="small">That last split is the key architectural fact of this '
+            f"house: {claim} The exports concentrate: "
+            f"{_REFERENT_PROBE_MIDDAY_PCT}% of those exported kWh go out in the "
+            "10am–2pm window, while the EV charged between midnight and 6am on 323 "
+            "of the year's 365 nights.</p>")
+
+
+def case_the_referent_guard_reads_across_a_sentence_boundary():
+    """issue #143 review round 3: the clause cutters both stopped at a period,
+    so the timing claim only had to move one sentence over and point back.
+
+    Three of the four wordings below were measured against the shipped guard
+    and ACCEPTED, each with a listed vocabulary member present -- this is not
+    the unlisted-paraphrase limit deferred to #180, it is the guard passing a
+    phrase it knows. A comma-to-period edit republished the defect the branch
+    exists to retire.
+
+    The rule is that a clause absorbs the RUN of FIGURE-FREE sentences beside
+    it: a sentence with no digit in it measures nothing of its own, so a time
+    of day in it can only be describing the measurement next door.
+
+    THE RULE THAT WAS NOT ADOPTED is pinned here too, because it is the
+    obvious one and someone will propose it again. "Every sentence carrying a
+    time-of-day phrase must also carry the midday window or the midday share"
+    is measured below against §8's published paragraph, which carries sentences
+    that state neither and are correct -- so that rule would fail the live
+    report, and the counterexample is asserted rather than remembered."""
+    for label, claim in _SENTENCE_SPLIT_REWORDINGS:
+        para = _sentence_split_probe(claim)
+        assert f"{_REFERENT_PROBE_EXPORT_PCT}% of what the array makes leaves as " \
+               "exports" in para, (
+            f"the {label} probe no longer states the export share in the words §2's "
+            f"live case demands, so it is not the sentence that walked through")
+        reported = _referent_guard_rejects(para)
+        assert reported, f"the guard accepts the {label} reworking: {para!r}"
+        assert "middle of the day" in reported or "midday" in reported, (
+            f"the guard rejects the {label} reworking without naming the words to "
+            f"move: {reported}")
+
+    # Both shapes, over the whole vocabulary rather than the two phrases the
+    # four literals happen to use -- generated so a phrase added tomorrow is
+    # probed tomorrow, the same discipline the sibling case follows.
+    for timing in _TIME_OF_DAY_WORDS:
+        for label, claim in (
+                ("after", f"{_REFERENT_PROBE_EXPORT_PCT}% of what the array makes "
+                          f"leaves as exports. Nearly all of it leaves in the {timing}."),
+                ("before", f"Nearly all of it in the {timing}. "
+                           f"{_REFERENT_PROBE_EXPORT_PCT}% of what the array makes "
+                           f"leaves as exports.")):
+            reported = _referent_guard_rejects(_sentence_split_probe(claim))
+            assert reported and timing in reported, (
+                f"a bare sentence carrying {timing!r} written {label} the export "
+                f"share is accepted, or rejected without naming it: {reported}")
+
+    # THE BOUNDARY, from the other side: a neighbouring sentence that carries
+    # its OWN figures is making its own claim and must still be accepted, or
+    # the rule is just "no time of day anywhere near the share" and §8 cannot
+    # be written. This is §8's real next sentence.
+    priced = _sentence_split_probe(
+        f"{_REFERENT_PROBE_EXPORT_PCT}% of what the array makes leaves as exports. "
+        "Since the 2026 TOU change those midday exports credit at only ~10.4¢/kWh.")
+    assert _referent_guard_rejects(priced) is None, (
+        "a neighbouring sentence that states its own measured figures is being read "
+        "as a back-reference to the export share: "
+        f"{_referent_guard_rejects(priced)}")
+
+    # The rule that was NOT adopted, measured on the live §8 paragraph.
+    live = re.search(r"<p><b>More panels: .*?</p>", HTML, re.S)
+    assert live, "§8's 'more panels' paragraph not found in index.html"
+    s8 = live.group(0)
+    midday_pct = _midday_export_share_pct()
+    counterexamples = [
+        s8[a:b] for a, b in _sentence_spans(s8)
+        if _time_of_day_words_in(s8[a:b])
+        and not any(w.casefold() in s8[a:b].casefold() for w in _MIDDAY_WINDOW_WORDS)
+        and f"{midday_pct}%" not in s8[a:b]]
+    assert counterexamples, (
+        "§8 no longer carries a sentence that names a time of day without restating "
+        "the window or the midday share, so the sentence-level rule this file "
+        "rejected may now be available -- re-measure it before keeping the "
+        "figure-free-run rule, and delete this assertion if it is adopted")
+
+    for where, pattern in (("§2", r'<p class="small">That last split is the key '
+                                  r"architectural fact.*?</p>"),
+                           ("§8", r"<p><b>More panels: .*?</p>"),
+                           ("§0", r"<li><b>More solar\? No\.</b>.*?</li>")):
+        m = re.search(pattern, HTML, re.S)
+        assert m, f"{where}'s guarded passage not found in index.html"
+        assert _assert_the_two_shares_stay_apart(
+            m.group(0), where, _export_share_pct(), midday_pct) is None
+    return (f"the referent guard now reads the run of figure-free sentences beside a "
+            f"figure, rejecting all {len(_SENTENCE_SPLIT_REWORDINGS)} sentence-split "
+            f"rewordings and every one of {len(_TIME_OF_DAY_WORDS)} vocabulary phrases "
+            f"moved into a sentence of its own on either side "
+            f"({len(_TIME_OF_DAY_WORDS) * 2} probes), while still accepting a "
+            f"neighbouring sentence that carries its own figures and all three "
+            f"published passages; §8 carries {len(counterexamples)} sentence(s) that "
+            f"rule out the narrower sentence-level rule")
+
+
+def case_the_referent_guard_reads_a_percentage_only_when_it_is_unambiguous():
+    """issue #143 review round 3: the guard matches every occurrence of a
+    figure and has no idea what any of them measures.
+
+    §8 already carries "60-87¢" in a sentence about battery arbitrage, one
+    keystroke from a second "60%" that this guard would have read as the export
+    share and rejected as a referent error, with a message pointing the writer
+    at the arbitrage sentence. Unrelated figures that collide are not the
+    guard's to adjudicate; failing accurately is."""
+    ambiguous = _sentence_split_probe(
+        f"{_REFERENT_PROBE_EXPORT_PCT}% of what the array makes leaves as exports. A "
+        f"battery would monetize {_REFERENT_PROBE_EXPORT_PCT}% of the midday surplus "
+        "instead.")
+    reported = _referent_guard_rejects(ambiguous)
+    assert reported, (
+        "two occurrences of the export share in one paragraph are accepted, so the "
+        "guard is judging clauses it cannot attribute")
+    assert "appears 2 times" in reported, (
+        f"a paragraph carrying the export share twice fails for the wrong reason: "
+        f"{reported}. It should say the figure is ambiguous, not name a referent "
+        f"error in a sentence that may be about something else entirely")
+    assert "a different quantity" not in reported, (
+        f"the ambiguous paragraph is reported as a referent error: {reported}")
+
+    # And the same paragraph with the second occurrence written any other way
+    # is fine -- what is banned is the collision, not the sentence.
+    fine = _sentence_split_probe(
+        f"{_REFERENT_PROBE_EXPORT_PCT}% of what the array makes leaves as exports. A "
+        "battery would monetize three fifths of that surplus instead.")
+    assert _referent_guard_rejects(fine) is None, (
+        f"the uniqueness rule is rejecting more than a digit collision: "
+        f"{_referent_guard_rejects(fine)}")
+    return (f"the referent guard refuses a paragraph carrying "
+            f"{_REFERENT_PROBE_EXPORT_PCT}% twice, naming the collision rather than "
+            f"reporting a referent error against whichever sentence it landed in, and "
+            f"accepts the same paragraph once the second figure is written in words")
+
+
+def case_the_s2_verdict_locator_tolerates_inline_markup():
+    """issue #143 review round 3: _S2_VERDICT_MIDDAY_RE required the span
+    between "In one sentence: " and the percentage to be TAG-FREE.
+
+    S2_VERDICT is a token-rendered sentence in a report whose prose carries
+    <b>, <i>, <a href="#sN"> and <span class="pill"> everywhere. Any one of
+    them written ahead of the figure broke the search, and the case then
+    reported "§2's verdict line no longer states a 10am-2pm share of exports"
+    -- a formatting change misdiagnosed as a deleted claim, which sends the
+    reader to look for prose that is still there."""
+    live = _S2_VERDICT_MIDDAY_RE.search(HTML)
+    assert live, ("§2's verdict line no longer states a "
+                  f"{_MIDDAY_WINDOW_WORDS[0]} share of exports")
+
+    window = _MIDDAY_WINDOW_WORDS[0]
+    for label, marked in (
+            ("bold", f'<p class="verdict">In one sentence: the array produced <b>16,502 '
+                     f"kWh</b>, but {live.group(1)}% of its exports leave in the "
+                     f"{window} window.</p>"),
+            ("section link", f'<p class="verdict">In one sentence: see <a href="#s8">§8'
+                             f"</a> -- {live.group(1)}% of its exports leave in the "
+                             f"{window} window.</p>"),
+            ("evidence pill", f'<p class="verdict">In one sentence: <span class="pill">'
+                              f"MODELED</span> {live.group(1)}% of its exports leave in "
+                              f"the {window} window.</p>")):
+        m = _S2_VERDICT_MIDDAY_RE.search(marked)
+        assert m, (f"a {label} tag written between 'In one sentence: ' and the figure "
+                   f"hides §2's verdict line from the locator: {marked!r}")
+        assert int(m.group(1)) == int(live.group(1)), (
+            f"the {label} probe resolves to {m.group(1)}%, not {live.group(1)}%")
+
+    # It must still stop at the paragraph it is reading. A verdict line with no
+    # midday claim, followed by one that has it, must not be spliced into a
+    # match that spans both -- that would let a deleted claim be satisfied by
+    # the next section's.
+    spliced = ('<p class="verdict">In one sentence: the rate plan is right.</p>\n'
+               f'<p class="verdict">Not a lead-in: {live.group(1)}% of its exports '
+               f"leave in the {window} window.</p>")
+    assert _S2_VERDICT_MIDDAY_RE.search(spliced) is None, (
+        "the locator matched across two verdict paragraphs, so a §2 line that lost "
+        "its midday claim can be satisfied by a later one")
+    return (f"§2's verdict locator finds the {window} share through inline <b>, <a> "
+            f"and <span> markup and still refuses to match across a paragraph "
+            f"boundary")
 
 
 # ---------------------------------------------------------------------------
@@ -3824,8 +4292,12 @@ CASES = [
     case_weather_regression_paragraph_matches_the_artifact,
     case_s2_key_architectural_fact_matches_the_artifacts,
     case_s8_more_panels_timing_matches_the_artifacts,
+    case_s0_more_solar_bullet_keeps_the_two_shares_apart,
     case_the_midday_share_weights_each_hour_by_its_real_interval_count,
     case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim,
+    case_the_referent_guard_reads_across_a_sentence_boundary,
+    case_the_referent_guard_reads_a_percentage_only_when_it_is_unambiguous,
+    case_the_s2_verdict_locator_tolerates_inline_markup,
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,
     case_the_two_structural_guards_reject_the_defects_they_exist_to_catch,
