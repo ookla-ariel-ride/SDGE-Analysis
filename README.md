@@ -401,9 +401,13 @@ meter (daily therms). It feeds the gas/electrification analyses in
 Everything else needed to reproduce the analysis (daily production, PVOutput records,
 the rate tables in `research/rates-reference.md`, and both models) is in this repo.
 With your own files above plus current rates, the scripts regenerate every number.
-Moving your own copy to a second machine or a fresh clone?
-`./stage-private-data.sh <old-working-copy> <new-clone>` places the gitignored inputs
-where the `private/verify` flow expects them.
+Moving your own copy to a second machine or a fresh clone? Run the **destination's own
+copy** of the script — `cd <new-clone> && ./stage-private-data.sh <old-working-copy> .` —
+and it places the gitignored inputs where the `private/verify` flow expects them. Each copy
+of the script stages only into a working tree of the checkout it lives in, and refuses
+anything else (including a destination that does not exist yet) before writing a byte, so a
+mistyped path or a failed `git worktree add` cannot leave one household's raw archive in an
+unrelated repository.
 
 ## Refreshing this analysis (same house, new data)
 
@@ -414,9 +418,9 @@ where the `private/verify` flow expects them.
 3. Re-run the pipeline scripts (`CLAUDE.md` "Commands" has the exact invocations) and confirm
    each `data/*.json` regenerates cleanly; that diff-check is the acceptance gate. Run the test
    suites as well — `test_scripts_runnable.py` performs the byte-diff across every owned
-   artifact in one pass. For the strictest check, clone fresh, stage the private inputs with
-   `stage-private-data.sh`, and run the same gates there: the pipeline reproduces
-   byte-identically from a clean clone.
+   artifact in one pass. For the strictest check, clone fresh, stage the private inputs from
+   inside that clone with its own `./stage-private-data.sh <old-working-copy> .`, and run the
+   same gates there: the pipeline reproduces byte-identically from a clean clone.
 4. Regenerate the report from `report-template.html` per `reusable-prompt.md` Phase D, or
    paste `reusable-prompt.md` into a Claude Cowork session and let it redo everything.
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """stage-private-data.sh must copy every raw private input a committed
 generator actually reads, so a fresh worktree staged only by the script can
-run the full pipeline (issue #33).
+run the full pipeline (issue #33) -- and it must REFUSE to write that archive
+anywhere that is not a working tree of this checkout, before the first byte
+lands (issue #184).
 
 The required-input set is DERIVED by scanning every generator's own source
 for its private/1-raw-data path references, in the four shapes this repo's
@@ -30,9 +32,12 @@ only_match() ever gains a new call site with a new pattern.
 
 Run from the repo root:  ./.venv/bin/python analysis/test_stage_private_data.py
 """
+import contextlib
+import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -291,6 +296,301 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
     return src
 
 
+# --------------------------------------------------------------------------
+# issue #184: the destination guard. Every case below runs the REAL script
+# against a REAL directory and reads its exit status directly -- the defect
+# being guarded here was born from a pipeline (`git worktree add ... | tail`)
+# whose failing exit status was swallowed by the last command in the pipe, so
+# nothing in this suite may infer success from output text alone.
+# --------------------------------------------------------------------------
+def _run_script(src, dst, cwd, script=SCRIPT):
+    return subprocess.run(["bash", str(script), str(src), str(dst)],
+                          capture_output=True, text=True, cwd=str(cwd))
+
+
+def _snapshot(root):
+    """Every path under `root`, git's own internals excluded.
+
+    A refused run's "nothing was written" claim is checked against the
+    destination's WHOLE contents before and after, not against the absence of
+    one expected directory: a clone of this repo already contains a private/
+    (the committed placeholder README.md, see CLAUDE.md's repo map), so
+    "private/ does not exist" would pass on a directory the script had in
+    fact just filled with the raw archive."""
+    out = set()
+    root = pathlib.Path(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        for name in dirnames + [f for f in filenames if f != ".git"]:
+            out.add(str((pathlib.Path(dirpath) / name).relative_to(root)))
+    return out
+
+
+@contextlib.contextmanager
+def _linked_worktree(td, name="dst"):
+    """A REAL linked worktree of THIS checkout, as the destination.
+
+    It has to be real: the guard's whole point is that the destination's
+    --git-common-dir equals this checkout's, and nothing short of an actual
+    worktree (or the checkout itself) has that property. A plain temp
+    directory -- what these cases used before issue #184 -- is now correctly
+    refused, which is why the two pre-existing end-to-end cases below stage
+    in here as well.
+
+    The finally clause hands the directory back to git rather than leaving it
+    registered: without it every run of this suite would leave a stale entry
+    in the developer's real .git/worktrees. Its argument is always a path
+    this contextmanager itself created inside the caller's
+    TemporaryDirectory, asserted below, and if the removal fails the
+    TemporaryDirectory still clears the files."""
+    path = pathlib.Path(td) / name
+    assert path.parent == pathlib.Path(td), "worktree must live inside the test's tempdir"
+    if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-common-dir"],
+                      capture_output=True, text=True).returncode != 0:
+        raise SkipCase("this checkout is not a git repository, so a linked "
+                       "worktree of it cannot be built")
+    added = subprocess.run(
+        ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
+        capture_output=True, text=True)
+    assert added.returncode == 0, (
+        f"could not create a worktree of this checkout: {added.stderr}")
+    try:
+        yield path
+    finally:
+        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(path)],
+                       capture_output=True, text=True)
+
+
+def _assert_refused(result, dst, before, why):
+    """A refusal is three separate claims, all of which have to hold: it
+    failed, it SAID what it refused and what it wanted (so the operator can
+    tell a typo from a wrong project instead of reaching for a flag that
+    disables the check), and it wrote nothing."""
+    assert result.returncode != 0, (
+        f"{why}: expected a refusal, got exit 0\nstdout: {result.stdout}")
+    msg = result.stderr
+    assert "REFUSED" in msg, f"{why}: refusal was not announced: {msg}"
+    assert str(dst) in msg, f"{why}: the message does not name the destination: {msg}"
+    assert "expected" in msg, f"{why}: the message does not say what was expected: {msg}"
+    after = _snapshot(dst) if pathlib.Path(dst).is_dir() else None
+    assert after == before, (
+        f"{why}: a REFUSED run wrote into the destination: "
+        f"{sorted((after or set()) ^ (before or set()))}")
+
+
+@case
+def case_refuses_a_destination_that_is_not_a_git_repository_at_all():
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "not-a-repo"
+        dst.mkdir()
+        (dst / "someone_elses_notes.txt").write_text("unrelated project\n")
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src)
+        _assert_refused(result, dst, before, "a plain directory")
+        assert "not a git repository" in result.stderr, result.stderr
+    return "a destination that is not a git repository is refused and left untouched"
+
+
+@case
+def case_refuses_a_different_repository():
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "other-project"
+        dst.mkdir()
+        subprocess.run(["git", "init", "-q", str(dst)], check=True,
+                       capture_output=True, text=True)
+        (dst / "README.md").write_text("a different project entirely\n")
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src)
+        _assert_refused(result, dst, before, "an unrelated git repository")
+        assert "DIFFERENT repository" in result.stderr, result.stderr
+    return "an unrelated git repository is refused and left untouched"
+
+
+@case
+def case_refuses_a_different_clone_of_the_same_remote():
+    """The case that decides the shape of the check (issue #184): `git remote
+    -v` matches ANY clone sharing an origin, so it would wave this one
+    through. The question that decides where a secret lands is not "does this
+    share my origin" but "is this the checkout I think it is", and only
+    --git-common-dir answers that."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "same-remote-clone"
+        cloned = subprocess.run(
+            ["git", "clone", "-q", "--no-hardlinks", str(ROOT), str(dst)],
+            capture_output=True, text=True)
+        if cloned.returncode != 0:
+            raise SkipCase(f"this checkout cannot be cloned here: {cloned.stderr}")
+        common = subprocess.run(
+            ["git", "-C", str(dst), "remote", "-v"], capture_output=True, text=True)
+        assert str(ROOT) in common.stdout or "origin" in common.stdout, (
+            "the fixture must actually be a clone with an origin, or it does "
+            "not test what it claims to")
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src)
+        _assert_refused(result, dst, before, "a different clone of the same repo")
+        assert "DIFFERENT repository" in result.stderr, result.stderr
+    return "a different clone of the same remote is refused and left untouched"
+
+
+@case
+def case_refuses_a_destination_that_does_not_exist_and_does_not_create_it():
+    """The exact shape of the 2026-08-13 incident: `git worktree add` had
+    failed (its status hidden by a pipe), so the destination the caller named
+    was never created. `mkdir -p whatever I was handed` is what turned that
+    into a copy of the archive, so a missing destination is refused, not
+    created -- it cannot be a working tree of anything."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "never-created-by-a-failed-worktree-add"
+        result = _run_script(src, dst, cwd=src)
+        _assert_refused(result, dst, None, "a destination that does not exist")
+        assert not dst.exists(), (
+            "the script created the destination it was told to refuse")
+    return "a non-existent destination is refused, and is not created"
+
+
+@case
+def case_refuses_a_destination_that_is_not_a_directory():
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = pathlib.Path(td) / "a-file-not-a-directory"
+        dst.write_text("some file that is not where an archive goes\n")
+        result = _run_script(src, dst, cwd=src)
+        _assert_refused(result, dst, None, "a plain file")
+        assert "not a directory" in result.stderr, result.stderr
+        assert dst.read_text().startswith("some file"), "the file was overwritten"
+    return "a destination that is a file, not a directory, is refused"
+
+
+@case
+def case_refuses_a_git_internal_directory_of_this_checkout():
+    """A git internal directory shares this checkout's --git-common-dir and
+    still has no working tree of its own, so rev-parse --show-toplevel fails
+    there; unhandled, `set -e` would end the run with a bare exit 128 and no
+    explanation, and a silent refusal is the kind that gets "fixed" by
+    disabling the check.
+
+    Unlike every other case here, this one refuses to RUN against a script
+    whose guard is missing, and fails instead. The reason is specific to the
+    fixture: an unguarded script writes wherever it is pointed before
+    anything can check, and here that is git's own metadata -- proven the
+    hard way, by reintroducing the defect and finding the staged tree inside
+    .git/worktrees/, where it also broke the worktree teardown this suite
+    depends on. A guard case still has to fail when the defect returns, so it
+    fails on the missing guard rather than on the probe. The probe below is
+    what proves the message; the assertion here is what keeps proving it
+    cheap."""
+    text = SCRIPT.read_text()
+    assert "DESTINATION GUARD" in text and "no working tree of its own" in text, (
+        "the destination guard, or its no-working-tree refusal, is gone from "
+        "the script -- restore it; this case will not point an unguarded "
+        "script at a git directory to find out what happens")
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as wt:
+            got = subprocess.run(
+                ["git", "-C", str(wt), "rev-parse", "--path-format=absolute", "--git-dir"],
+                capture_output=True, text=True)
+            assert got.returncode == 0, got.stderr
+            gitdir = pathlib.Path(got.stdout.strip())
+            assert gitdir.is_dir() and gitdir != wt, gitdir
+            result = _run_script(src, gitdir, cwd=src)
+            assert result.returncode != 0, "a git internal directory is not a destination"
+            assert "REFUSED" in result.stderr and str(gitdir) in result.stderr, result.stderr
+            assert "no working tree" in result.stderr, result.stderr
+            assert not (gitdir / "private").exists(), (
+                "the script wrote the private archive inside a git directory")
+    return "a git internal directory of this checkout is refused, loudly, with nothing written"
+
+
+@case
+def case_refuses_a_subdirectory_of_a_legitimate_worktree():
+    """A near miss is likelier than a wild one: the destination belongs to
+    this checkout, but naming a subdirectory would bury the archive at
+    <worktree>/analysis/private/ where nobody looks for it."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as wt:
+            dst = wt / "analysis"
+            before = _snapshot(dst)
+            result = _run_script(src, dst, cwd=src)
+            _assert_refused(result, dst, before, "a subdirectory of a real worktree")
+            assert "subdirectory" in result.stderr, result.stderr
+            assert str(wt) in result.stderr, "the message should name the real root"
+    return "a subdirectory of a legitimate worktree is refused and left untouched"
+
+
+@case
+def case_accepts_a_freshly_created_worktree_of_this_checkout():
+    """The normal case, and the one the guard must not break: a worktree
+    created moments ago is a working tree of this checkout, so staging into
+    it succeeds and every documented input arrives."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: true\n", has_gas_bills_dir=True)
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src)
+            assert result.returncode == 0, (
+                f"a fresh worktree of this checkout must be accepted: {result.stderr}")
+            staged = sorted(str(p.relative_to(dst)) for p in (dst / "private").rglob("*")
+                            if p.is_file())
+            for required in ("private/household.yaml",
+                            "private/1-raw-data/gas.csv",
+                            "private/1-raw-data/Electric_15_Minute_test.csv",
+                            "private/verify/usage.csv",
+                            "private/verify/samA.csv",
+                            "private/verify/samB.csv"):
+                assert required in staged, f"{required} missing from {staged}"
+    return f"a freshly created worktree is accepted; {len(staged)} files staged"
+
+
+@case
+def case_accepts_the_worktree_the_script_itself_lives_in():
+    """The guard's reference is the script's OWN location, so a checkout
+    staging into itself is the same shape as the main checkout being the
+    destination. The script under test is copied in rather than taken from
+    the worktree's checked-out HEAD, so this case tests the working copy of
+    the script on this branch, not whatever version HEAD happens to hold."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as dst:
+            its_own_copy = dst / SCRIPT.name
+            its_own_copy.write_text(SCRIPT.read_text())
+            result = _run_script(src, dst, cwd=src, script=its_own_copy)
+            assert result.returncode == 0, (
+                f"a checkout must be able to stage into itself: {result.stderr}")
+            assert (dst / "private" / "household.yaml").is_file()
+    return "the checkout the script itself lives in is accepted as the destination"
+
+
+@case
+def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
+    """The property that matters is ordering, not exit status: the check has
+    to be reached before the first mkdir/cp, or a refusal still leaves a
+    partial archive behind. Proven structurally -- the guard's exit lines all
+    precede the first write in the file -- alongside the behavioral proof
+    above that refused destinations stay byte-identical."""
+    # Line-based and comment-stripped on purpose: matching the raw text would
+    # find "mkdir -p" inside the guard's own explanatory comment and place the
+    # first write before the guard that follows it.
+    code = [(n, line) for n, line in enumerate(SCRIPT.read_text().splitlines())
+            if line.strip() and not line.lstrip().startswith("#")]
+    writes = [n for n, line in code if re.match(r'^\s*(mkdir|cp)\s', line)]
+    guards = [n for n, line in code if "_common_git_dir()" in line]
+    refusals = [n for n, line in code if "REFUSED" in line]
+    assert writes, "the script no longer writes anything -- this case is stale"
+    assert guards, "the destination guard has been removed from the script"
+    assert refusals, "the script has no refusal path left"
+    first_write, guard, last_refusal = min(writes), min(guards), max(refusals)
+    assert guard < first_write, "the destination guard must precede the first write"
+    assert last_refusal < first_write, (
+        "every refusal must be decided before the first write, or a refused "
+        "run can still leave a partial copy of the archive behind")
+    return "the destination guard and all of its exits precede the first write"
+
+
 @case
 def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
     """Codex review, issue #33, pass 3: an earlier version grepped the
@@ -308,8 +608,9 @@ def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
             "household:\n"
             "  has_gas: True\n",
             has_gas_bills_dir=True)
-        dst = pathlib.Path(td) / "dst"
-        import subprocess
+        # A real linked worktree, not a bare temp directory: since issue #184
+        # the script refuses any destination that is not a working tree of
+        # this checkout, and it refuses it before the first write.
         # cwd=src: household.py's _repo_root() checks Path.cwd() BEFORE
         # __file__, so without this the script's `import household` call
         # would silently resolve to whatever real repo this test process
@@ -317,14 +618,13 @@ def case_has_gas_is_read_with_real_yaml_semantics_not_text_scanning():
         # there) instead of the synthetic one built above -- masking this
         # case on any machine that already has private/household.yaml
         # staged at the real repo root (issue #102 review).
-        result = subprocess.run(
-            ["bash", str(SCRIPT), str(src), str(dst)], capture_output=True,
-            text=True, cwd=src)
-        assert result.returncode == 0, (
-            f"a real, pipeline-accepted household.yaml (capitalized True, "
-            f"preceded by an unrelated comment mentioning has_gas:) must not "
-            f"fail staging: {result.stderr}")
-        assert (dst / "private" / "1-raw-data" / "gas-bills").is_dir()
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src)
+            assert result.returncode == 0, (
+                f"a real, pipeline-accepted household.yaml (capitalized True, "
+                f"preceded by an unrelated comment mentioning has_gas:) must not "
+                f"fail staging: {result.stderr}")
+            assert (dst / "private" / "1-raw-data" / "gas-bills").is_dir()
     return "has_gas is read via real YAML semantics, not a text scan"
 
 
@@ -341,8 +641,8 @@ def case_real_archive_stage_script_produces_every_required_path():
                        "this checkout does not have")
     referenced = _referenced_1raw_data_paths()
     with tempfile.TemporaryDirectory() as td:
-        dst = pathlib.Path(td) / "dst"
-        import subprocess
+        # A real linked worktree, not a bare temp directory: since issue #184
+        # the script stages only into a working tree of this checkout.
         # cwd=src: same reason as the synthetic-fixture case above -- without
         # it, household.py's _repo_root() (Path.cwd() checked before
         # __file__) resolves against whatever repo this test process happens
@@ -352,29 +652,28 @@ def case_real_archive_stage_script_produces_every_required_path():
         # unrelated household.yaml, where the mismatch produces a confusing,
         # unrelated-looking failure instead of exercising this checkout's
         # own archive (issue #102 review, round 2).
-        result = subprocess.run(
-            ["bash", str(SCRIPT), str(src), str(dst)],
-            capture_output=True, text=True, cwd=src)
-        assert result.returncode == 0, (
-            f"stage-private-data.sh exited {result.returncode}: {result.stderr}")
-        # gas-bills only exists in the source archive for a has_gas:true
-        # household (parse_bills.py's own invariant); the script's own
-        # conditional mirrors that, so this check must too, or it would
-        # falsely fail on a genuinely supported has_gas:false checkout
-        # (Codex review, issue #33, pass 1).
-        source_has_gas_bills = (src / "private" / "1-raw-data" / "gas-bills").is_dir()
-        missing = []
-        for name in referenced:
-            if name in OPTIONAL_NOT_STAGED:
-                continue
-            if name == "gas-bills" and not source_has_gas_bills:
-                continue
-            if not list((dst / "private" / "1-raw-data").glob(name)) \
-                    and not (dst / "private" / "1-raw-data" / name).exists():
-                missing.append(name)
-        assert not missing, f"staged directory is missing: {missing}"
-        for verify_file in ("usage.csv", "samA.csv", "samB.csv"):
-            assert (dst / "private" / "verify" / verify_file).is_file(), verify_file
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src)
+            assert result.returncode == 0, (
+                f"stage-private-data.sh exited {result.returncode}: {result.stderr}")
+            # gas-bills only exists in the source archive for a has_gas:true
+            # household (parse_bills.py's own invariant); the script's own
+            # conditional mirrors that, so this check must too, or it would
+            # falsely fail on a genuinely supported has_gas:false checkout
+            # (Codex review, issue #33, pass 1).
+            source_has_gas_bills = (src / "private" / "1-raw-data" / "gas-bills").is_dir()
+            missing = []
+            for name in referenced:
+                if name in OPTIONAL_NOT_STAGED:
+                    continue
+                if name == "gas-bills" and not source_has_gas_bills:
+                    continue
+                if not list((dst / "private" / "1-raw-data").glob(name)) \
+                        and not (dst / "private" / "1-raw-data" / name).exists():
+                    missing.append(name)
+            assert not missing, f"staged directory is missing: {missing}"
+            for verify_file in ("usage.csv", "samA.csv", "samB.csv"):
+                assert (dst / "private" / "verify" / verify_file).is_file(), verify_file
     return (f"a real run of stage-private-data.sh produced all "
            f"{len(referenced) - len(OPTIONAL_NOT_STAGED)} required private "
            f"inputs plus the three private/verify sandbox copies")
