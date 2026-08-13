@@ -2577,7 +2577,45 @@ def _nights_with_ev_charging():
     return eligible - entry["n"], eligible
 
 
-_TIME_OF_DAY_WORDS = ("10am–2pm", "midday")
+# The WINDOW the measurement was actually taken over, in the words the
+# paragraphs use. Only this names the 10am-2pm figure's own provenance, so it
+# is what the positive half of the guard demands -- "midday" alone would let
+# the paragraph gesture at a time of day instead of stating the window the
+# share was computed over.
+_MIDDAY_WINDOW_WORDS = ("10am–2pm", "10am-2pm")
+
+# Everything that PLACES A CLAIM IN THE DAYTIME, which is the wider question
+# the negative half asks. The two halves need different vocabularies: naming
+# the window is a provenance requirement on one figure, while attaching ANY
+# time of day to the export-over-production share is the referent error, and
+# it does not stop being one because the writer paraphrased. The first draft
+# of this guard listed only ("10am–2pm", "midday") and passed a paragraph
+# reading "60% ... leaves as exports, and it leaves in the middle of the day"
+# -- the same defect in different words. Matched case-insensitively, so a
+# phrase at the start of a sentence is not a hole.
+_TIME_OF_DAY_WORDS = _MIDDAY_WINDOW_WORDS + (
+    "midday", "mid-day", "middle of the day", "middle of the afternoon",
+    "midafternoon", "mid-afternoon", "afternoon", "daytime", "daylight hours",
+    "solar noon", "noon", "while the sun is up", "in the sun",
+)
+
+# What _TIME_OF_DAY_WORDS must still carry, committed separately from the
+# constant itself -- the same two-place-edit discipline as
+# test_report_tokens._SEAM_VOCABULARY_FLOOR, and for the same reason: the
+# regression case below generates one probe per member, so a member deleted
+# from the constant takes its own probe with it and the case goes green by
+# having stopped asking. A SUPERSET needs no edit here; a phrase DISAPPEARING
+# does, in the same commit, where a reviewer reads why.
+_TIME_OF_DAY_VOCABULARY_FLOOR = (
+    "10am–2pm", "midday", "middle of the day", "middle of the afternoon",
+    "daytime", "noon",
+)
+
+
+def _time_of_day_words_in(clause):
+    """Which of _TIME_OF_DAY_WORDS place `clause` in the daytime."""
+    lowered = clause.casefold()
+    return [w for w in _TIME_OF_DAY_WORDS if w.casefold() in lowered]
 
 
 def _clauses_about(para, pct):
@@ -2607,13 +2645,13 @@ def _assert_the_two_shares_stay_apart(para, where, export_pct, midday_pct):
         f"{where}: the export share and the 10am-2pm share of exports both round "
         f"to {export_pct}%, so this guard cannot tell which figure a percentage "
         f"in the paragraph means -- pin them by hand until they part again")
-    assert any(any(w in c for w in _TIME_OF_DAY_WORDS)
+    assert any(any(w.casefold() in c.casefold() for w in _MIDDAY_WINDOW_WORDS)
                for c in _clauses_about(para, midday_pct)), (
         f"{where}: {midday_pct}% is the 10am-2pm share of exports, but no clause "
         f"stating it names that window -- the timing claim is asserted rather than "
         f"stated as the measurement it is")
     for clause in _clauses_about(para, export_pct):
-        offenders = [w for w in _TIME_OF_DAY_WORDS if w in clause]
+        offenders = _time_of_day_words_in(clause)
         assert not offenders, (
             f"{where}: {export_pct}% is exports over PRODUCTION, exported at any "
             f"hour, but its own clause says {clause!r} -- {offenders} describes the "
@@ -2678,6 +2716,116 @@ def case_s8_more_panels_timing_matches_the_artifacts():
     return (f"§8's 'more panels' paragraph states {export_pct}% of production exported "
             f"({RD['totals']['exp']:,} kWh/yr), {midday_pct}% of it in the 10am–2pm "
             f"window, against charging on {nights} of {eligible} nights")
+
+
+# Synthetic shares for the probes below -- the two figures the referent guard
+# has to keep apart, held apart by construction so the probes stay readable
+# and keep working when the artifacts move. The live figures are pinned by the
+# two cases above; what is under test here is the guard itself.
+_REFERENT_PROBE_EXPORT_PCT = 60      # exports over production, at ANY hour
+_REFERENT_PROBE_MIDDAY_PCT = 63      # the 10am-2pm slice of those exports
+
+
+def _referent_probe_paragraph(timing, attached):
+    """§2's paragraph with `timing` either ATTACHED to the export share (the
+    defect: a time of day predicated of exports-over-production) or sitting in
+    the sentence that introduces the measured window (how the report states
+    it, and what must stay clean).
+
+    Written as prose the report could plausibly carry, not as a minimal
+    string, so a probe that passes is evidence about the real shape. Some
+    members read awkwardly in the slot ("it leaves noon") -- detection is what
+    is being probed, not grammar."""
+    export, midday = _REFERENT_PROBE_EXPORT_PCT, _REFERENT_PROBE_MIDDAY_PCT
+    lead = (f'<p class="small">That last split is the key architectural fact of this '
+            f"house: {export}% of what the array makes leaves as exports")
+    lead += f", and it leaves in the {timing}." if attached else "."
+    concentration = ("The exports concentrate"
+                     + ("" if attached else f" in the {timing}") + ":")
+    return (f"{lead} {concentration} {midday}% of those exported kWh go out in the "
+            f"10am–2pm window, while the EV charged between midnight and 6am on 323 "
+            f"of the year's 365 nights.</p>")
+
+
+def _referent_guard_rejects(para):
+    """The offenders _assert_the_two_shares_stay_apart names for `para`, or
+    None if it accepts the paragraph."""
+    try:
+        _assert_the_two_shares_stay_apart(
+            para, "probe", _REFERENT_PROBE_EXPORT_PCT, _REFERENT_PROBE_MIDDAY_PCT)
+    except AssertionError as e:
+        return str(e)
+    return None
+
+
+def case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim():
+    """issue #143 review: the referent guard can only see what its vocabulary
+    carries, and its first draft carried two phrases.
+
+    That was enough to catch the defect as originally written and not enough
+    to catch it reworded: "60% of what the array makes leaves as exports, and
+    it leaves in the middle of the day" attaches a time of day to the
+    exports-over-production share exactly as the retired wording did -- and it
+    contradicts the next sentence, which measures 63% in the window -- yet the
+    guard passed it. A referent rule that a paraphrase walks through is not a
+    referent rule.
+
+    So probe MEMBER BY MEMBER, generated off _TIME_OF_DAY_WORDS so a phrase
+    added tomorrow is probed tomorrow with no edit here. Each member is probed
+    twice, because one direction alone proves nothing: attached to the export
+    share it must be rejected, and in the concentration sentence -- where the
+    report legitimately says WHEN the exports leave, backed by the measured
+    window -- the same phrase must be accepted. A guard that flagged both
+    would pass the first half by flagging everything.
+
+    Deletion is the one weakening these probes cannot see (a phrase removed
+    from the constant removes its own probe), which is what
+    _TIME_OF_DAY_VOCABULARY_FLOOR is for."""
+    gone = [w for w in _TIME_OF_DAY_VOCABULARY_FLOOR if w not in _TIME_OF_DAY_WORDS]
+    assert not gone, (
+        f"_TIME_OF_DAY_WORDS no longer carries {gone}, so a paragraph placing the "
+        f"export share {gone} is invisible to this guard. Narrowing the vocabulary is "
+        "allowed and hiding it is not: say why in _TIME_OF_DAY_VOCABULARY_FLOOR and "
+        "drop it there too, in the same commit, where a reviewer reads it")
+
+    for timing in _TIME_OF_DAY_WORDS:
+        broken = _referent_probe_paragraph(timing, attached=True)
+        reported = _referent_guard_rejects(broken)
+        assert reported, (
+            f"the guard accepts {timing!r} attached to the "
+            f"{_REFERENT_PROBE_EXPORT_PCT}% export share: {broken!r}")
+        assert timing in reported, (
+            f"the guard rejects {timing!r} attached to the export share but does not "
+            f"name it, so the failure does not say which words to move: {reported}")
+        clean = _referent_probe_paragraph(timing, attached=False)
+        assert _referent_guard_rejects(clean) is None, (
+            f"the guard also rejects {timing!r} in the concentration sentence, where "
+            f"the report states it legitimately -- it is flagging the phrase rather "
+            f"than its referent: {_referent_guard_rejects(clean)}")
+
+    # The two shapes above, spelled out once each against the wording the
+    # report actually retired and the wording it now carries -- the generated
+    # probes share a builder with them, and a builder that drifted would take
+    # every probe with it.
+    retired = ('<p class="small">That last split is the key architectural fact of this '
+               "house: 60% of what the array makes leaves as exports, and it leaves in "
+               "the middle of the day. 63% of those exported kWh go out in the 10am–2pm "
+               "window, while the EV charged between midnight and 6am on 323 of the "
+               "year's 365 nights.</p>")
+    assert _referent_guard_rejects(retired), (
+        "the wording this case exists to reject is accepted again: a midday claim "
+        "predicated of the whole export share, contradicted by the 63% beside it")
+    published = re.search(r'<p class="small">That last split is the key architectural '
+                          r"fact.*?</p>", HTML, re.S)
+    assert published, "§2's 'key architectural fact' paragraph not found in index.html"
+    assert _referent_guard_rejects(published.group(0)) is None, (
+        "§2's published paragraph attaches a time of day to the export share: "
+        f"{_referent_guard_rejects(published.group(0))}")
+    return (f"the export-share referent guard rejects all {len(_TIME_OF_DAY_WORDS)} of "
+            f"its time-of-day phrases when they are attached to the export share, names "
+            f"the offender in each, accepts every one of them in the concentration "
+            f"sentence, and still carries all {len(_TIME_OF_DAY_VOCABULARY_FLOOR)} "
+            "committed vocabulary members")
 
 
 # ---------------------------------------------------------------------------
@@ -3401,6 +3549,7 @@ CASES = [
     case_weather_regression_paragraph_matches_the_artifact,
     case_s2_key_architectural_fact_matches_the_artifacts,
     case_s8_more_panels_timing_matches_the_artifacts,
+    case_the_referent_guard_rejects_every_paraphrase_of_the_timing_claim,
     case_every_h2_section_opens_with_exactly_one_conclusion_line,
     case_basic_tier_verdict_lines_stay_inside_the_density_cap,
     case_the_two_structural_guards_reject_the_defects_they_exist_to_catch,
