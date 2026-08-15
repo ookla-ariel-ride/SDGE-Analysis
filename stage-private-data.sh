@@ -8,9 +8,11 @@
 # every destination is inside the clone's gitignored private/ tree.
 #
 # The destination is CHECKED before the first byte is written: this copy of
-# the script stages only into a working tree of the checkout it lives in, and
-# only into real directories inside it. See "DESTINATION GUARD" below for
-# which TREE is accepted and why, "DESTINATION PATH GUARD" for the paths
+# the script stages only into a REGISTERED working tree of the checkout it
+# lives in, and only into real directories inside it. See "DESTINATION GUARD"
+# below for which TREE is accepted and why, "DESTINATION REGISTRATION GUARD"
+# for why a tree that merely CLAIMS to be one is not enough, "DESTINATION
+# PATH GUARD" for the paths
 # INSIDE that tree (a symbolic link below the root would otherwise carry the
 # archive back out of it), and "ENVIRONMENT SANITIZING" for why the check
 # reads the filesystem rather than the git variables an inherited environment
@@ -153,6 +155,12 @@ fi
 # the wrong test (it matches any clone sharing an origin, while the question
 # that decides where a secret lands is "is this the checkout I think it is").
 #
+# It is the right identity and not, on its own, a sufficient one: see
+# "DESTINATION REGISTRATION GUARD" below. A matching common dir plus a
+# --show-toplevel that equals the destination says the directory CLAIMS to
+# belong to this checkout, and a plain directory can make both claims with a
+# one-line `.git` gitfile. Membership is decided against git's own register.
+#
 # --path-format=absolute is load-bearing, not decoration: without it
 # rev-parse returns a RELATIVE ".git" from a repo root and an ABSOLUTE path
 # from a linked worktree, so the naive comparison rejects a perfectly
@@ -243,6 +251,112 @@ if [ "$DST_TOP" != "$DST_REAL" ]; then
   echo "  destination: $DST  (resolved: $DST_REAL)" >&2
   echo "  expected:    the ROOT of a working tree of this checkout" >&2
   echo "  did you mean: $DST_TOP" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# DESTINATION REGISTRATION GUARD (issue #184, adversarial review) -- the checks
+# above establish what the destination SAYS it is; this one checks it against
+# what git actually records. Still before the first byte.
+#
+# "Its common dir is mine, and its --show-toplevel is itself" is not proof of
+# membership, because both answers come from a file the destination itself
+# supplies. A plain directory holding a one-line `.git` GITFILE --
+#
+#     printf 'gitdir: %s\n' "<this checkout>/.git" > <unrelated>/.git
+#
+# -- answers both probes exactly the way a real worktree does while never
+# having been registered. Reproduced against this script: rc 0, and the whole
+# private archive written into an unrelated scratch directory. The environment
+# hardening above does not reach it; the forgery is on disk, not in the
+# environment, so no amount of clearing changes the answer.
+#
+# It is reachable by accident as much as by intent, which is what makes it
+# worth a mechanism rather than a warning: a directory copied, rsynced or
+# restored from a backup of a linked worktree carries that worktree's `.git`
+# gitfile with it, still pointing at this checkout's common dir, and is now a
+# plain directory that passes every check above.
+#
+# So membership is decided by git's own register instead: `git worktree list
+# --porcelain`, resolved FROM THE VALIDATED COMMON DIR ($SELF_GIT, derived
+# from this script's own location -- never from anything the destination
+# said), and the destination must equal one of the entries. The main checkout
+# is itself an entry in that listing, so staging into it stays supported.
+#
+# Both sides are compared PHYSICALLY (`pwd -P`), for the same reason
+# --path-format=absolute is load-bearing above: the register holds the path a
+# worktree was created with, and a legitimate one created through a symlinked
+# parent (/tmp, /var/folders on macOS) would otherwise never match the
+# destination the operator hands us. A registered entry whose directory no
+# longer exists resolves to nothing and simply matches nothing -- a stale
+# register entry cannot admit a destination.
+#
+# FAIL CLOSED on anything short of a match: a listing that errors, an empty
+# listing (git always reports at least the main worktree, so empty means the
+# question was not answered), or a path this parse cannot recover -- porcelain
+# C-quotes a path containing a newline or a backslash, and an unrecovered path
+# matches nothing rather than being waved through. `bare` entries are dropped
+# before comparison: a bare repository has no working tree to stage into.
+#
+# This runs in the sanitized shell like every other probe here, so the
+# environment cannot redirect the listing the way it could redirect rev-parse.
+#
+# THE ONE LEGITIMATE SHAPE THIS REFUSES, stated rather than discovered later: a
+# working tree created with `--separate-git-dir`. Measured, not assumed -- for
+# such a checkout git reports the EXTERNAL GITDIR as the main worktree's path
+# and never the working tree itself, from either vantage (`git -C <gitdir>` and
+# `git -C <a linked worktree>` return identical listings, and no core.worktree
+# is set to recover it from). So git's own register does not know that
+# directory, and to this guard it is byte-for-byte the forgery above: a plain
+# directory whose only claim is a `.git` gitfile. Nothing available here tells
+# the two apart, so both are refused, which is the fail-closed direction. The
+# remedy is the message's: create the destination with `git worktree add`, or
+# stage into an ordinary checkout. analysis/test_stage_private_data.py pins
+# this so the limitation stays a decision rather than a surprise.
+# ---------------------------------------------------------------------------
+if ! DST_WORKTREES=$(git -C "$SELF_GIT" worktree list --porcelain 2>/dev/null) \
+   || [ -z "$DST_WORKTREES" ]; then
+  echo "stage-private-data.sh: REFUSED -- this checkout's worktrees could not be listed (nothing was written)" >&2
+  echo "  destination: $DST  (resolved: $DST_REAL)" >&2
+  echo "  found:       'git worktree list' failed or reported nothing for $SELF_GIT" >&2
+  echo "  expected:    a listing naming every registered worktree, so the destination" >&2
+  echo "               can be checked against it -- without one, membership is unproven" >&2
+  echo "               and this script does not stage on an unproven destination." >&2
+  exit 1
+fi
+
+_dst_registered=0
+_pending=""
+_match_pending() {   # compare the entry just finished, then clear it
+  local real
+  [ -n "$_pending" ] || return 0
+  real=$(_physical "$_pending" || true)
+  if [ -n "$real" ] && [ "$real" = "$DST_REAL" ]; then _dst_registered=1; fi
+  _pending=""
+}
+# A here-string, never a pipe: a `while` on the right of a pipe runs in a
+# subshell, where _dst_registered would be set and then thrown away -- and the
+# failure mode of that mistake is a guard that refuses every destination, so it
+# would be found, but the same shape with the sense inverted would not be.
+while IFS= read -r _line || [ -n "$_line" ]; do
+  case "$_line" in
+    "worktree "*) _match_pending; _pending=${_line#worktree } ;;
+    "bare")       _pending="" ;;
+    "")           _match_pending ;;
+  esac
+done <<< "$DST_WORKTREES"
+_match_pending
+
+if [ "$_dst_registered" -ne 1 ]; then
+  echo "stage-private-data.sh: REFUSED -- destination is not a REGISTERED worktree of this checkout (nothing was written)" >&2
+  echo "  destination: $DST  (resolved: $DST_REAL)" >&2
+  echo "  found:       a directory that reports git common dir $SELF_GIT but appears in" >&2
+  echo "               no entry of 'git worktree list --porcelain' for it" >&2
+  echo "  expected:    the main checkout, or a worktree created with 'git worktree add'" >&2
+  echo "  A plain directory carrying a .git gitfile that points at this checkout answers" >&2
+  echo "  every other check here exactly like a real worktree -- a copied or restored" >&2
+  echo "  worktree directory does it by accident. Only git's own register settles it." >&2
+  echo "  Create the destination properly:  git worktree add \"$DST\" -b <branch> origin/main" >&2
   exit 1
 fi
 

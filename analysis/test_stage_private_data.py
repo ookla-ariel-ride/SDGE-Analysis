@@ -8,7 +8,11 @@ report some other repository for that destination, which the cases at the
 bottom of this file forge deliberately, and including when the destination
 ROOT is a genuine worktree but a symbolic link planted at a gitignored path
 BELOW it (private/1-raw-data, private/verify, or any file the copies write)
-would carry the archive back out of the tree that just passed every check.
+would carry the archive back out of the tree that just passed every check,
+and including a plain directory that merely CLAIMS the checkout -- a `.git`
+gitfile naming this repository's common directory answers every probe the
+way a real worktree does, so membership is settled against git's own
+`worktree list` register instead.
 
 The required-input set is DERIVED by scanning every generator's own source
 for its private/1-raw-data path references, in the four shapes this repo's
@@ -1024,6 +1028,247 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
             assert set(seen) == set(_FORGEABLE), seen
     return (f"all {len(_FORGEABLE)} variables are gone from the environment the "
             f"post-guard work inherits, not just from the probes")
+
+
+# --------------------------------------------------------------------------
+# issue #184, adversarial review round 3: the guard's identity comparison and
+# its --show-toplevel check both read answers the DESTINATION itself supplies,
+# so a plain directory holding a one-line `.git` gitfile pointing at this
+# checkout's common directory satisfies both without ever having been
+# registered -- reproduced at exit 0 with the whole archive written there.
+# Unlike the forged environment above, the forgery is on disk, so clearing
+# variables does not touch it; membership has to be decided against git's own
+# register instead. The cases below check the destination's whole contents
+# before and after, never the exit status alone.
+# --------------------------------------------------------------------------
+def _forged_gitfile_dir(td, common_dir, name="dir-with-a-forged-gitfile"):
+    """A plain directory that CLAIMS to be a worktree of `common_dir`.
+
+    This is what a copied, rsynced or restored linked-worktree directory looks
+    like once git no longer knows about it: the `.git` gitfile came along for
+    the ride and still names this checkout, so `--git-common-dir` matches and
+    `--show-toplevel` reports the directory itself. Nothing here is exotic --
+    it is one text file."""
+    d = pathlib.Path(td) / name
+    d.mkdir()
+    (d / "someone_elses_notes.txt").write_text("unrelated project\n")
+    (d / ".git").write_text(f"gitdir: {common_dir}\n")
+    return d
+
+
+def _claims_to_be_a_worktree(d, common_dir):
+    """Whether the fixture really does answer both probes the way a genuine
+    worktree does, and really is absent from the register. Asserted as a
+    precondition rather than assumed: if a future git stops honouring bare
+    gitfiles, this case has to announce that it went stale instead of passing
+    against a forgery that no longer forges anything."""
+    def rev(*args):
+        r = subprocess.run(["git", "-C", str(d), "rev-parse", *args],
+                           capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+    top = rev("--show-toplevel")
+    listed = subprocess.run(["git", "-C", str(common_dir), "worktree", "list",
+                             "--porcelain"], capture_output=True, text=True)
+    return (rev("--path-format=absolute", "--git-common-dir") == common_dir
+            and top is not None
+            and pathlib.Path(top).resolve() == pathlib.Path(d).resolve()
+            and str(pathlib.Path(d).resolve()) not in listed.stdout)
+
+
+@case
+def case_refuses_a_plain_directory_whose_git_gitfile_forges_membership():
+    """The reproduction. The directory passes the common-dir comparison and
+    the --show-toplevel check -- both asserted here first, so this case fails
+    loudly if it ever stops being a forgery -- and is refused anyway, because
+    `git worktree list` for this checkout does not name it."""
+    common = _common_dir_of(ROOT)
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = _forged_gitfile_dir(td, common)
+        if not _claims_to_be_a_worktree(dst, common):
+            raise SkipCase("this git no longer lets a bare .git gitfile make a "
+                           "plain directory report this checkout's common dir "
+                           "and itself as the toplevel")
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src)
+        _assert_refused(result, dst, before, "a directory with a forged .git gitfile")
+        assert "REGISTERED" in result.stderr, result.stderr
+        assert not (dst / "private").exists(), (
+            "the private archive was written into a directory that only claimed "
+            "to be a worktree")
+        assert (dst / "someone_elses_notes.txt").read_text() == "unrelated project\n"
+    return ("a plain directory whose .git gitfile forges membership of this "
+            "checkout is refused with nothing written")
+
+
+@case
+def case_refuses_a_forged_gitfile_under_a_forged_environment_too():
+    """The two guards have to compose. The environment hardening cannot see an
+    on-disk gitfile and the register check does not read the environment, so a
+    caller holding both forgeries at once must still be refused -- and the
+    register listing itself must run in the SANITIZED shell, or the hardening
+    was reintroduced with a hole in it. Checked behaviorally, then structurally
+    on every git invocation in the script rather than only the first."""
+    common = _common_dir_of(ROOT)
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst = _forged_gitfile_dir(td, common)
+        if not _claims_to_be_a_worktree(dst, common):
+            raise SkipCase("this git no longer honours a bare .git gitfile")
+        env = _forged_env(dst, common, td)
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src, env=env)
+        _assert_refused(result, dst, before, "a forged gitfile plus a forged environment")
+        assert "REGISTERED" in result.stderr, result.stderr
+        assert "ignoring inherited git variable" in result.stderr, (
+            "the environment was cleared silently: " + result.stderr)
+
+    code = [(n, line) for n, line in enumerate(SCRIPT.read_text().splitlines())
+            if line.strip() and not line.lstrip().startswith("#")]
+    first_unset = min(n for n, line in code if line.strip().startswith("unset "))
+    git_calls = [n for n, line in code if re.search(r'\bgit\s+-C\b', line)]
+    assert git_calls, "the script no longer asks git anything"
+    assert min(git_calls) > first_unset, (
+        "a git invocation runs before the environment is cleared, so it reads "
+        "whatever the caller forged")
+    return ("a forged gitfile and a forged environment together are still "
+            "refused, and every git call runs after the clearing")
+
+
+@case
+def case_accepts_a_registered_linked_worktree_and_the_register_names_it():
+    """The positive half of the same check, and the regression it must not
+    cause: a worktree created with `git worktree add` IS in the register, so it
+    stages fully. The register membership is asserted directly, so an
+    acceptance here can never be a guard that stopped checking."""
+    common = _common_dir_of(ROOT)
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as dst:
+            listed = subprocess.run(["git", "-C", common, "worktree", "list",
+                                     "--porcelain"], capture_output=True, text=True)
+            assert str(dst.resolve()) in listed.stdout, (
+                f"the fixture is not actually registered, so accepting it "
+                f"proves nothing: {listed.stdout}")
+            result = _run_script(src, dst, cwd=src)
+            assert result.returncode == 0, (
+                f"a registered worktree must still stage: {result.stderr}")
+            staged = sorted(str(p.relative_to(dst)) for p in (dst / "private").rglob("*")
+                            if p.is_file())
+            for required in ("private/household.yaml",
+                             "private/1-raw-data/gas.csv",
+                             "private/verify/usage.csv"):
+                assert required in staged, f"{required} missing from {staged}"
+    return (f"a worktree named in 'git worktree list' is accepted and stages "
+            f"fully ({len(staged)} files)")
+
+
+@case
+def case_accepts_a_main_checkout_as_the_destination():
+    """A main checkout is itself an entry in `git worktree list`, and staging
+    into one is supported (README "Refreshing this analysis"), so the register
+    check must not quietly restrict the script to LINKED worktrees.
+
+    Proven on a throwaway repository built here rather than on this machine's
+    real checkout, for the reason the rest of this suite stages into temporary
+    worktrees: the case has to write the archive into whatever it accepts, and
+    the real main checkout is not a place a test may write. The fixture is the
+    same shape -- the script copy lives in a linked worktree, so its own
+    location fixes the identity, and the destination is that repository's main
+    checkout.
+
+    It also exercises the physical-path comparison for free: on macOS the
+    temporary directory sits under a symlinked /var, so the register entry and
+    the destination only agree once both are resolved."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        main = pathlib.Path(td) / "a-main-checkout"
+        made = subprocess.run(["git", "init", "-q", str(main)],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            raise SkipCase(f"could not build a repository fixture: {made.stderr}")
+        (main / "README.md").write_text("a checkout of its own\n")
+        for cmd in (["add", "README.md"],
+                    ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                     "commit", "-qm", "initial"]):
+            r = subprocess.run(["git", "-C", str(main), *cmd],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SkipCase(f"could not commit in the fixture: {r.stderr}")
+        linked = pathlib.Path(td) / "its-linked-worktree"
+        r = subprocess.run(["git", "-C", str(main), "worktree", "add", "--detach",
+                            str(linked), "HEAD"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SkipCase(f"could not add a worktree to the fixture: {r.stderr}")
+        its_own_copy = linked / SCRIPT.name
+        its_own_copy.write_text(SCRIPT.read_text())
+        listed = subprocess.run(["git", "-C", str(main), "worktree", "list",
+                                 "--porcelain"], capture_output=True, text=True)
+        assert "worktree " in listed.stdout, listed.stdout
+        result = _run_script(src, main, cwd=src, script=its_own_copy)
+        assert result.returncode == 0, (
+            f"a main checkout is a registered worktree and must be accepted: "
+            f"{result.stderr}")
+        for required in ("private/household.yaml",
+                         "private/1-raw-data/gas.csv",
+                         "private/verify/usage.csv"):
+            assert (main / required).is_file(), f"{required} was not staged"
+    return "the main checkout of a repository is accepted as the destination"
+
+
+@case
+def case_a_separate_git_dir_checkout_is_the_documented_collateral_refusal():
+    """The cost of the register check, pinned so it stays a decision.
+
+    A `--separate-git-dir` working tree is legitimate and is refused, because
+    git reports the EXTERNAL GITDIR as the main worktree's path and never the
+    working tree -- asserted here from both vantages, so this case fails if a
+    future git learns to report it and the refusal becomes fixable rather than
+    inherent. Until then such a directory's only claim on this checkout is a
+    `.git` gitfile, which is exactly the forgery above, and nothing available
+    to the guard tells them apart. Refusing both is the fail-closed direction;
+    the remedy is in the refusal message."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        wt = pathlib.Path(td) / "sep-worktree"
+        gd = pathlib.Path(td) / "external-gitdir"
+        made = subprocess.run(["git", "init", "-q", "--separate-git-dir", str(gd), str(wt)],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            raise SkipCase(f"this git cannot build a --separate-git-dir fixture: {made.stderr}")
+        (wt / "README.md").write_text("a separate-git-dir checkout\n")
+        for cmd in (["add", "README.md"],
+                    ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                     "commit", "-qm", "initial"]):
+            r = subprocess.run(["git", "-C", str(wt), *cmd], capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SkipCase(f"could not commit in the fixture: {r.stderr}")
+        linked = pathlib.Path(td) / "its-linked-worktree"
+        r = subprocess.run(["git", "-C", str(wt), "worktree", "add", "--detach",
+                            str(linked), "HEAD"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SkipCase(f"could not add a worktree to the fixture: {r.stderr}")
+
+        # The premise: git does not name the working tree, from either vantage.
+        for vantage in (gd, linked):
+            listed = subprocess.run(["git", "-C", str(vantage), "worktree", "list",
+                                     "--porcelain"], capture_output=True, text=True)
+            assert listed.returncode == 0, listed.stderr
+            assert str(wt.resolve()) not in listed.stdout, (
+                f"git now names the --separate-git-dir working tree from "
+                f"{vantage}, so this refusal is no longer inherent and the "
+                f"guard should accept it: {listed.stdout}")
+
+        its_own_copy = linked / SCRIPT.name
+        its_own_copy.write_text(SCRIPT.read_text())
+        before = _snapshot(wt)
+        result = _run_script(src, wt, cwd=src, script=its_own_copy)
+        _assert_refused(result, wt, before, "a --separate-git-dir working tree")
+        assert "REGISTERED" in result.stderr, result.stderr
+        assert "git worktree add" in result.stderr, (
+            "the refusal must carry its remedy: " + result.stderr)
+    return ("a --separate-git-dir working tree is refused -- documented "
+            "collateral of deciding membership by git's register")
 
 
 @case
