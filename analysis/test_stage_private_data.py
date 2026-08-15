@@ -5,7 +5,10 @@ run the full pipeline (issue #33) -- and it must REFUSE to write that archive
 anywhere that is not a working tree of this checkout, before the first byte
 lands (issue #184) -- including when the caller's environment tells git to
 report some other repository for that destination, which the cases at the
-bottom of this file forge deliberately.
+bottom of this file forge deliberately, and including when the destination
+ROOT is a genuine worktree but a symbolic link planted at a gitignored path
+BELOW it (private/1-raw-data, private/verify, or any file the copies write)
+would carry the archive back out of the tree that just passed every check.
 
 The required-input set is DERIVED by scanning every generator's own source
 for its private/1-raw-data path references, in the four shapes this repo's
@@ -526,6 +529,171 @@ def case_refuses_a_subdirectory_of_a_legitimate_worktree():
     return "a subdirectory of a legitimate worktree is refused and left untouched"
 
 
+# --------------------------------------------------------------------------
+# issue #184, adversarial review round 2: the root guard above validates the
+# destination ROOT, and `mkdir -p`/`cp` then follow a symbolic link at any path
+# BELOW it. A genuine linked worktree passes every repository check while a
+# link planted at private/1-raw-data carries the whole archive somewhere else
+# -- reproduced at exit 0, with the script's own success line asserting that
+# nothing outside the gitignored tree had been written.
+#
+# These are the paths where it is reachable: private/1-raw-data and
+# private/verify are gitignored, so they do not exist in a fresh checkout,
+# nothing pre-empts a link planted there, and `git status` never mentions it.
+# private/ is a different shape (the committed private/README.md means a real
+# directory is already there), which is why the accepting case below asserts
+# that shape still stages.
+#
+# Every case here checks the EXTERNAL directory's own contents before and
+# after, not the exit status and not the destination alone: the defect is
+# precisely a run that reports success while writing somewhere else.
+# --------------------------------------------------------------------------
+def _external_target(td, name="escaped"):
+    """A directory outside any worktree, standing in for wherever a planted
+    link points, seeded with a file whose survival is checked afterwards."""
+    ext = pathlib.Path(td) / name
+    ext.mkdir()
+    (ext / "someone_elses_file.txt").write_text("not a staging destination\n")
+    return ext
+
+
+def _assert_nothing_escaped(ext, before, why):
+    after = _snapshot(ext)
+    assert after == before, (
+        f"{why}: files were written outside the destination worktree: "
+        f"{sorted(after ^ before)}")
+    assert (ext / "someone_elses_file.txt").read_text() == "not a staging destination\n", (
+        f"{why}: an existing file outside the destination was overwritten")
+
+
+@case
+def case_refuses_a_symlinked_directory_planted_below_a_legitimate_root():
+    """The reproduction. Each planted link is a DIRECTORY component of a path
+    the script writes through, inside a destination whose root is a real,
+    legitimate linked worktree of this checkout -- so the repository guard
+    above has nothing to object to and the write paths are what redirect."""
+    checked = []
+    for planted in ("private/1-raw-data", "private/verify"):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            ext = _external_target(td)
+            with _linked_worktree(td) as dst:
+                link = dst / planted
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(ext)
+                outside_before = _snapshot(ext)
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src)
+                _assert_refused(result, dst, before, f"a symlinked {planted}")
+                assert "symbolic link" in result.stderr, result.stderr
+                assert str(ext) in result.stderr, (
+                    "the refusal must name where the link pointed: "
+                    + result.stderr)
+                _assert_nothing_escaped(ext, outside_before, f"a symlinked {planted}")
+            checked.append(planted)
+    return f"a symlink planted at {' or '.join(checked)} is refused with nothing written"
+
+
+@case
+def case_refuses_a_symlinked_file_the_copies_would_write_through():
+    """The same defect one level down: `cp` follows a link at the DESTINATION
+    FILE too, so a link left at private/household.yaml, at a name inside
+    private/1-raw-data, or nested under a directory cp -R descends into, sends
+    that file's contents outside the worktree just as effectively. Proven
+    before the fix: household.yaml and gas.csv both landed in the external
+    directory, and the nested bill PDF's target was in line to be overwritten."""
+    planted_at = ("private/household.yaml",
+                  "private/verify/usage.csv",
+                  "private/1-raw-data/gas.csv",
+                  "private/1-raw-data/electric-bills/statement.pdf")
+    for planted in planted_at:
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            (src / "private" / "1-raw-data" / "electric-bills" / "statement.pdf") \
+                .write_text("the source statement\n")
+            ext = _external_target(td)
+            (ext / "statement.pdf").write_text("not a staging destination\n")
+            with _linked_worktree(td) as dst:
+                target = dst / planted
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(ext / pathlib.Path(planted).name)
+                outside_before = _snapshot(ext)
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src)
+                _assert_refused(result, dst, before, f"a symlinked {planted}")
+                assert "symbolic link" in result.stderr, result.stderr
+                _assert_nothing_escaped(ext, outside_before, f"a symlinked {planted}")
+                assert not (ext / pathlib.Path(planted).name).exists() \
+                    or (ext / pathlib.Path(planted).name).read_text() \
+                    == "not a staging destination\n", (
+                        f"a symlinked {planted} let the copy overwrite its target")
+    return (f"a symlink at any of the {len(planted_at)} file destinations "
+            f"(including one nested under a cp -R directory) is refused")
+
+
+@case
+def case_accepts_a_worktree_whose_private_directory_already_exists():
+    """The shape every real destination has, and the one the strict rule must
+    not break: private/ is NOT gitignored away entirely -- the committed
+    private/README.md placeholder (CLAUDE.md's repo map) means a checkout
+    already carries it as a real directory. It is a real directory, not a
+    link, so staging proceeds, creates the two gitignored subdirectories
+    beneath it, and leaves the placeholder alone."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as dst:
+            readme = dst / "private" / "README.md"
+            assert readme.is_file(), (
+                "this checkout no longer commits private/README.md, so this "
+                "case is testing a shape that no longer exists")
+            was = readme.read_text()
+            assert not (dst / "private" / "1-raw-data").exists(), (
+                "the fixture must start without the gitignored subdirectories")
+            result = _run_script(src, dst, cwd=src)
+            assert result.returncode == 0, (
+                f"an ordinary worktree with a real private/ must still stage: "
+                f"{result.stderr}")
+            assert readme.read_text() == was, "the committed placeholder was disturbed"
+            staged = sorted(str(p.relative_to(dst)) for p in (dst / "private").rglob("*")
+                            if p.is_file())
+            for required in ("private/household.yaml",
+                            "private/1-raw-data/gas.csv",
+                            "private/verify/usage.csv"):
+                assert required in staged, f"{required} missing from {staged}"
+            for d in ("private", "private/1-raw-data", "private/verify"):
+                assert not (dst / d).is_symlink(), d
+    return (f"a worktree whose private/ is a real directory with its committed "
+            f"README stages fully ({len(staged)} files)")
+
+
+@case
+def case_the_success_message_reports_what_was_checked_after_writing():
+    """The line this replaces claimed "nothing outside the gitignored tree was
+    written" and checked nothing -- it printed verbatim on the run that wrote
+    the archive outside the tree. The claim now follows a re-resolution of
+    every directory the copies ran through, and the file count is read off the
+    destination rather than inferred from the list of cp lines."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        with _linked_worktree(td) as dst:
+            result = _run_script(src, dst, cwd=src)
+            assert result.returncode == 0, result.stderr
+            real = sum(1 for p in (dst / "private").rglob("*") if p.is_file())
+            assert f"({real} files now under it)" in result.stdout, (
+                f"the message must count what is actually there ({real}): "
+                f"{result.stdout}")
+            assert "verified after writing" in result.stdout, result.stdout
+    text = SCRIPT.read_text()
+    tail = text.split("POST-WRITE VERIFICATION", 1)
+    assert len(tail) == 2, "the post-write verification is gone from the script"
+    assert "_physical" in tail[1], (
+        "the closing message no longer re-resolves the directories it wrote "
+        "through, so it is an assertion again rather than a check")
+    return "the closing message counts the staged files and follows a real re-check"
+
+
 @case
 def case_accepts_a_freshly_created_worktree_of_this_checkout():
     """The normal case, and the one the guard must not break: a worktree
@@ -591,7 +759,20 @@ def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
     assert last_refusal < first_write, (
         "every refusal must be decided before the first write, or a refused "
         "run can still leave a partial copy of the archive behind")
-    return "the destination guard and all of its exits precede the first write"
+    # The path guard (issue #184, round 2) is a second decision with the same
+    # ordering requirement: which PATHS inside the accepted tree are real has
+    # to be settled before the copies, not discovered by following a link
+    # halfway through them. Checked on the CALLS (a trailing quote), never the
+    # definitions, so moving a helper cannot satisfy it by accident.
+    checks = [n for n, line in code if '_check_dir_slot "' in line
+              or '_reject_links_under "' in line or '_reject_link "' in line]
+    copies = [n for n, line in code if re.match(r'^\s*cp\s', line)]
+    assert checks, "the destination path guard's checks are gone from the script"
+    assert max(checks) < min(copies), (
+        "every path check must run before the first cp, or the archive is "
+        "already moving when a planted link is found")
+    return ("the destination guard, the path guard and all of their exits "
+            "precede the first write")
 
 
 # --------------------------------------------------------------------------
