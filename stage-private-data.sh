@@ -9,12 +9,15 @@
 #
 # The destination is CHECKED before the first byte is written: this copy of
 # the script stages only into a REGISTERED working tree of the checkout it
-# lives in, and only into real directories inside it. See "DESTINATION GUARD"
-# below for which TREE is accepted and why, "DESTINATION REGISTRATION GUARD"
-# for why a tree that merely CLAIMS to be one is not enough, "DESTINATION
-# PATH GUARD" for the paths
-# INSIDE that tree (a symbolic link below the root would otherwise carry the
-# archive back out of it), and "ENVIRONMENT SANITIZING" for why the check
+# lives in, only where that tree's own git will not let the archive be
+# committed, and only into real, singly-named files and directories inside it.
+# See "DESTINATION GUARD" below for which TREE is accepted and why,
+# "DESTINATION REGISTRATION GUARD" for why a tree that merely CLAIMS to be one
+# is not enough, "DESTINATION IGNORE GUARD" for why belonging to this checkout
+# is not the same as being unable to commit the archive, "DESTINATION PATH
+# GUARD" for the paths INSIDE that tree (a symbolic link below the root would
+# otherwise carry the archive back out of it, and a hard link would rewrite a
+# file outside it in place), and "ENVIRONMENT SANITIZING" for why the check
 # reads the filesystem rather than the git variables an inherited environment
 # can answer it with.
 #
@@ -361,6 +364,139 @@ if [ "$_dst_registered" -ne 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# REFUSAL, shared by every check from here down. Defined ahead of anything that
+# writes, so "REFUSED" appears in this file only before the first mkdir/cp --
+# the ordering analysis/test_stage_private_data.py checks structurally.
+# ---------------------------------------------------------------------------
+_refuse() {   # $1 = headline, remaining args = detail lines.
+  echo "stage-private-data.sh: REFUSED -- $1 (nothing was written)" >&2
+  shift
+  for _line in "$@"; do echo "  $_line" >&2; done
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# DESTINATION IGNORE GUARD (issue #184, adversarial review) -- the guards above
+# prove WHICH REPOSITORY the destination belongs to. This one proves the
+# property that actually made the incident dangerous: that the paths about to
+# be written cannot become committable there.
+#
+# On 2026-08-13 the archive landed in another project's worktree, and what made
+# that dangerous is not only that it was the wrong repository -- it is that THAT
+# REPOSITORY DID NOT GITIGNORE private/, so the archive sat one `git add -A`
+# from a commit into an unrelated public repo. Until now every mention of
+# gitignore in this file was PROSE: comments, and a closing message asserting
+# that "nothing was written outside the gitignored tree" without ever asking
+# git whether the tree was ignored. Reproduced against this script: a
+# registered worktree of a repository with no .gitignore took the whole archive
+# at exit 0, and `git status` then offered all nine staged files to `git add`.
+#
+# REACHABILITY, measured rather than inflated: every commit in THIS
+# repository's history ignores private/, and the only file ever tracked beneath
+# it is the committed private/README.md placeholder. So no revision reachable
+# today gets past this check by needing it. It becomes reachable the moment a
+# branch drops that rule or tracks a path under private/ -- and it is the check
+# that would have caught the real event from the other side, which is why it is
+# here regardless.
+#
+# WHICH PATHS ARE CHECKED, and why not simply "the three managed directories":
+#
+#   private/1-raw-data   checked AS A DIRECTORY. Everything this script puts
+#   private/verify       there is created by this run, and the names come from
+#                        source-side globs and `cp -R` descents, so no fixed
+#                        list of leaves would cover them. A directory that
+#                        check-ignore reports as ignored settles every path
+#                        beneath it at once, including ones that do not exist
+#                        yet: git cannot re-include a file whose parent
+#                        directory is excluded.
+#
+#   private/household.yaml   checked AS A FILE, because its parent cannot be
+#                        checked as a directory. Measured in this checkout:
+#                        `git check-ignore private` exits 1 -- NOT ignored --
+#                        precisely because the committed private/README.md is
+#                        tracked inside it. private/ is deliberately a
+#                        partially-tracked directory (CLAUDE.md's repo map), so
+#                        demanding that it be ignored would refuse this
+#                        repository's own normal shape. This script writes
+#                        exactly one file directly into private/, so that one
+#                        file is named.
+#
+# TWO QUESTIONS, not one, asked in that order. `git check-ignore` happens to
+# answer both -- it consults the index, so a TRACKED path reports as
+# not-ignored (measured: private/README.md exits 1 here, while the same path
+# under --no-index exits 0) -- but that is an implicit behaviour to rest a
+# privacy guard on, and the two failures want different messages and different
+# remedies: "your .gitignore does not cover this" versus "this path is already
+# committed here". So `git ls-files` is asked separately, and FIRST, or the
+# tracked case would be reported as the ignore case; see the note in the
+# function itself.
+#
+# FAIL CLOSED on anything that is not a clear "ignored AND untracked".
+# check-ignore's status is three-way -- 0 ignored, 1 not ignored, anything else
+# means the question was not answered -- and an unanswered question is refused
+# rather than read as either verdict.
+#
+# Asked OF THE DESTINATION (`git -C "$DST_REAL"`, paths relative to its root),
+# because the answer comes from the destination's own .gitignore, its
+# info/exclude and its index, not from this checkout's -- and asked in the
+# sanitized shell above, because an inherited GIT_CONFIG could otherwise supply
+# a core.excludesFile that manufactures the "ignored" answer.
+# ---------------------------------------------------------------------------
+_require_uncommittable() {   # $1 = a path this script writes, relative to $DST_REAL
+  local rel=$1 rc=0 tracked
+  # TRACKED first, and the order is the whole point. check-ignore consults the
+  # index, so a path that is tracked-though-ignored reports rc 1 -- measured on
+  # a fixture whose .gitignore holds `private/` and which force-added
+  # private/household.yaml and private/verify/usage.csv: check-ignore returned
+  # 1 for both, and for the private/verify DIRECTORY around the tracked file,
+  # while private/1-raw-data returned 0. Asking check-ignore first would
+  # therefore answer "your .gitignore does not cover this" for a file whose
+  # .gitignore covers it perfectly well and which is committed anyway, sending
+  # the operator to edit the wrong file.
+  if ! tracked=$(git -C "$DST_REAL" ls-files -- "$rel"); then
+    _refuse "the destination could not be asked which paths it tracks" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $rel" \
+      "found:       'git ls-files' failed" \
+      "expected:    a listing, so a path that is already COMMITTED there can be" \
+      "             told from one that is merely unignored"
+  fi
+  [ -z "$tracked" ] || _refuse "the destination TRACKS a path this script writes" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "path:        $rel" \
+    "tracked:     $(echo $tracked)" \
+    "expected:    an untracked path. A tracked file stays in the index whatever" \
+    "             .gitignore says, so staging the archive over one puts it" \
+    "             straight into the next commit's diff."
+  git -C "$DST_REAL" check-ignore -q -- "$rel" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) _refuse "the destination does not gitignore a path this script writes" \
+         "destination: $DST  (resolved: $DST_REAL)" \
+         "path:        $rel" \
+         "found:       'git check-ignore' reports it is NOT ignored there" \
+         "expected:    a path that working tree's own git refuses to offer to" \
+         "             'git add', so this household's archive cannot be" \
+         "             committed from it" \
+         "This is the half of the 2026-08-13 incident a repository check cannot" \
+         "see: the destination that took the archive did not ignore private/," \
+         "which is why the data sat one 'git add -A' from a public commit." \
+         "Add the rule to that working tree's .gitignore and re-run." ;;
+    *) _refuse "the destination could not say whether it ignores a path this script writes" \
+         "destination: $DST  (resolved: $DST_REAL)" \
+         "path:        $rel" \
+         "found:       'git check-ignore' exited $rc -- neither 'ignored' (0)" \
+         "             nor 'not ignored' (1), so the question went unanswered" \
+         "expected:    an answerable question. 'Probably ignored' is not a" \
+         "             property to write a private archive on." ;;
+  esac
+}
+
+_require_uncommittable "private/1-raw-data"
+_require_uncommittable "private/verify"
+_require_uncommittable "private/household.yaml"
+
+# ---------------------------------------------------------------------------
 # DESTINATION PATH GUARD (issue #184, adversarial review) -- the guard above
 # decides WHICH TREE may be written to; this one decides which PATHS INSIDE it
 # are real. Both run before the first byte.
@@ -395,6 +531,49 @@ fi
 # by hand, so a worktree staged that way is refused now; the message says so,
 # and the remedy is to let this script copy them.
 #
+# HARD LINKS TOO, and they are the quieter half (issue #184, adversarial
+# review). `[ -L ]` sees symbolic links only, so an existing output file that
+# is a HARD link to a file outside this working tree passes every check above:
+# `cp` opens the destination and truncates it, writing THROUGH the shared
+# inode, so the outside file's contents become this household's private data
+# while nothing here has followed a link and the closing message reports
+# containment. Reproduced against this script at exit 0, three times over --
+# a hard link planted at private/household.yaml, at private/verify/usage.csv
+# and at private/1-raw-data/gas.csv each rewrote a file in an unrelated
+# directory with the staged contents, and the run still printed "nothing was
+# written outside the gitignored tree".
+#
+# REFUSE rather than replace atomically. Writing each output to a temp name in
+# the same directory and `mv`-ing it over the target would also spare the
+# existing inode, but only for the copies this file spells out: `cp -R` creates
+# the entire electric-bills/, gas-bills/ and caiso_raw/ subtrees, and a shell
+# `cp -R` offers no hook to route each of those files through a rename. That
+# fix would be partial while looking total, precisely on the paths the archive
+# is bulkiest. Refusing is also the same answer this guard already gives
+# symbolic links one paragraph up, and it needs no re-staging semantics (the
+# broader stale-destination question is issue #185, deliberately not touched
+# here).
+#
+# THE COST, named so it is a decision and not a surprise: hard-linked backups
+# are how this rule is most likely to fire on someone doing nothing wrong.
+# `cp -al`, `rsync --link-dest` and the incremental backup tools built on them
+# deduplicate by giving one inode a second name, so a private/1-raw-data
+# restored from such a backup can arrive with every file at link count 2 --
+# and the other name is exactly the outside file this refuses to rewrite, so
+# firing there is correct, not collateral. A fresh stage never trips it: `cp`
+# without -l always creates a new inode, so nothing this script writes has a
+# second name afterwards. The remedy is the message's -- delete and re-run.
+#
+# HOW the link count is read, because this runs on a developer's Mac and in
+# CI: `stat -f %l` is BSD-only and `stat -c %h` is GNU-only, and a script that
+# guesses wrong does not fail -- it silently reads nothing and waves the file
+# through. `find ... -type f -links +1` is POSIX (`-links` and `-type` both
+# are), behaves identically under BSD find and GNU findutils, and needs no
+# flavour detection. `-type f` is deliberate: a directory's link count is
+# always at least 2 by construction (its own `.` plus each child's `..`), and
+# directories cannot be hard-linked on the filesystems this runs on, so
+# including them would refuse every destination.
+#
 # CREATE without following: `mkdir -p` is satisfied by an existing link that
 # resolves to a directory and writes straight through it, so it cannot be used
 # here. Each component is created with a plain `mkdir`, one level at a time,
@@ -414,16 +593,6 @@ fi
 # then RE-VERIFIED after the writes, so the closing message reports something
 # that was measured rather than assumed.
 # ---------------------------------------------------------------------------
-_refuse() {   # $1 = headline, remaining args = detail lines.
-              # Defined ahead of anything that writes, so "REFUSED" appears in
-              # this file only before the first mkdir/cp -- the ordering
-              # analysis/test_stage_private_data.py checks structurally.
-  echo "stage-private-data.sh: REFUSED -- $1 (nothing was written)" >&2
-  shift
-  for _line in "$@"; do echo "  $_line" >&2; done
-  exit 1
-}
-
 _reject_link() {   # $1 = a path this script writes to, or writes through
   [ -L "$1" ] || return 0
   _refuse "a destination path is a symbolic link" \
@@ -435,6 +604,31 @@ _reject_link() {   # $1 = a path this script writes to, or writes through
     "outside the working tree this script just validated. Replace the link" \
     "with a real directory and re-run; this script copies the bill" \
     "directories itself, so nothing here needs to be linked in by hand."
+}
+
+_reject_hardlink() {   # $1 = a file `cp` would truncate and write THROUGH
+  local shared
+  # Scoped by this test rather than by -maxdepth (which is in both find
+  # flavours but in neither's POSIX core): a path that is not a plain file
+  # cannot be an inode this run rewrites in place.
+  [ -f "$1" ] || return 0
+  if ! shared=$(find "$1" -type f -links +1 -print); then
+    _refuse "a destination file's link count could not be read" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "expected:    a readable file, so its link count can decide whether cp" \
+      "             would write through an inode shared with somewhere else"
+  fi
+  [ -z "$shared" ] || _refuse "a destination file is a HARD link" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "file:        $1" \
+    "found:       more than one name for this inode" \
+    "expected:    a file with exactly one name inside $DST_REAL" \
+    "cp truncates the file it is handed and writes through it, so every other" \
+    "name for this inode -- including one outside this working tree -- becomes" \
+    "a copy of this household's private data, while every containment check" \
+    "here still passes. Nothing on disk says where the other names are." \
+    "Delete this file and re-run; this script writes it itself."
 }
 
 _check_dir_slot() {   # $1 = a directory this script needs; writes NOTHING
@@ -489,6 +683,26 @@ _reject_links_under() {   # $1 = a directory `cp -R` may write anywhere beneath
     "them for you."
 }
 
+_reject_multilinked_under() {   # $1 = a directory `cp -R` may write anywhere beneath
+  local shared
+  [ -d "$1" ] || return 0
+  if ! shared=$(find "$1" -type f -links +1 -print); then
+    _refuse "the destination could not be scanned for hard links" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "expected:    a readable directory tree"
+  fi
+  [ -z "$shared" ] || _refuse "the destination contains hard-linked file(s)" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "files:       $(echo $shared)" \
+    "expected:    a tree whose files each have exactly one name" \
+    "cp -R truncates every file it lands on and writes through it, so a name" \
+    "shared with a file outside this working tree makes that file a copy of" \
+    "this household's private data -- with no link for the checks above to" \
+    "see and nothing on disk saying where the other name is." \
+    "Delete them and re-run; the copies below stage these files for you."
+}
+
 # Every path is CHECKED first and only then created, in two passes rather than
 # one interleaved walk: a refusal on private/verify must not leave behind the
 # private/1-raw-data a single pass would already have made. "Nothing was
@@ -504,12 +718,19 @@ _check_dir_slot "$DST_REAL/private/verify"
 # three named files there, while the sandbox around them legitimately holds a
 # venv whose bin/ entries are symlinks -- scanning it would refuse a normal
 # re-stage over a working sandbox for links this script never touches.
+#
+# The hard-link scan covers exactly the same ground as the symbolic-link one,
+# for the same reason: those are the paths `cp` and `cp -R` write, and which
+# KIND of link sits at one of them changes how the archive escapes, not
+# whether it can.
 _reject_links_under "$DST_REAL/private/1-raw-data"
+_reject_multilinked_under "$DST_REAL/private/1-raw-data"
 for _leaf in "$DST_REAL/private/household.yaml" \
              "$DST_REAL/private/verify/usage.csv" \
              "$DST_REAL/private/verify/samA.csv" \
              "$DST_REAL/private/verify/samB.csv"; do
   _reject_link "$_leaf"
+  _reject_hardlink "$_leaf"
 done
 
 _ensure_contained_dir "$DST_REAL/private"
@@ -607,3 +828,5 @@ done <<< "$_staged"
 echo "staged into $DST_REAL/private/ ($_n files now under it) — verified after writing:"
 echo "  every directory written through is a real directory inside that working tree, so"
 echo "  nothing was written outside the gitignored tree"
+echo "  (that tree's own git reported every path written here ignored and untracked"
+echo "   before the first byte -- see DESTINATION IGNORE GUARD)"

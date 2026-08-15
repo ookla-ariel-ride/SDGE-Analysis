@@ -12,7 +12,12 @@ would carry the archive back out of the tree that just passed every check,
 and including a plain directory that merely CLAIMS the checkout -- a `.git`
 gitfile naming this repository's common directory answers every probe the
 way a real worktree does, so membership is settled against git's own
-`worktree list` register instead.
+`worktree list` register instead -- and including a genuine registered
+worktree whose own git would let the archive be COMMITTED, either because it
+does not ignore these paths (the property the 2026-08-13 destination lacked,
+and the one that made the incident dangerous) or because it already tracks
+one of them, and including an existing output file that is a HARD link to a
+file outside the tree, which `[ -L ]` cannot see and `cp` rewrites in place.
 
 The required-input set is DERIVED by scanning every generator's own source
 for its private/1-raw-data path references, in the four shapes this repo's
@@ -763,20 +768,27 @@ def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
     assert last_refusal < first_write, (
         "every refusal must be decided before the first write, or a refused "
         "run can still leave a partial copy of the archive behind")
-    # The path guard (issue #184, round 2) is a second decision with the same
-    # ordering requirement: which PATHS inside the accepted tree are real has
-    # to be settled before the copies, not discovered by following a link
-    # halfway through them. Checked on the CALLS (a trailing quote), never the
+    # The path guard (issue #184, round 2) and the ignore guard (round 4) are
+    # further decisions with the same ordering requirement: which PATHS inside
+    # the accepted tree are real, and whether that tree can commit them, both
+    # have to be settled before the copies -- not discovered by following a
+    # link halfway through them, and not left for a `git status` after the
+    # archive has landed. Checked on the CALLS (a trailing quote), never the
     # definitions, so moving a helper cannot satisfy it by accident.
-    checks = [n for n, line in code if '_check_dir_slot "' in line
-              or '_reject_links_under "' in line or '_reject_link "' in line]
+    call_forms = ('_check_dir_slot "', '_reject_links_under "', '_reject_link "',
+                  '_reject_multilinked_under "', '_reject_hardlink "',
+                  '_require_uncommittable "')
+    checks = [n for n, line in code if any(f in line for f in call_forms)]
     copies = [n for n, line in code if re.match(r'^\s*cp\s', line)]
     assert checks, "the destination path guard's checks are gone from the script"
+    for form in call_forms:
+        assert any(form in line for _, line in code), (
+            f"{form.strip()} is no longer called anywhere in the script")
     assert max(checks) < min(copies), (
         "every path check must run before the first cp, or the archive is "
         "already moving when a planted link is found")
-    return ("the destination guard, the path guard and all of their exits "
-            "precede the first write")
+    return ("the destination guard, the ignore guard, the path guard and all "
+            "of their exits precede the first write")
 
 
 # --------------------------------------------------------------------------
@@ -1163,6 +1175,53 @@ def case_accepts_a_registered_linked_worktree_and_the_register_names_it():
             f"fully ({len(staged)} files)")
 
 
+def _throwaway_checkout(td, gitignore_text, name="a-main-checkout"):
+    """A repository of its OWN, built inside the caller's tempdir: a main
+    checkout plus one linked worktree carrying this branch's copy of the
+    script.
+
+    The guard fixes identity from the script's own location, so putting the
+    copy in the LINKED worktree makes that repository's MAIN CHECKOUT a
+    legitimate, registered destination. That is what lets the cases below
+    reach the checks that run after the register check without pointing
+    anything at this machine's real repository, and without touching this
+    repo's own .gitignore.
+
+    `gitignore_text` is the destination's .gitignore, or None for a repository
+    that has none at all -- the shape of the 2026-08-13 incident's
+    destination. Returns (main_checkout, the_script_copy_to_run)."""
+    main = pathlib.Path(td) / name
+    made = subprocess.run(["git", "init", "-q", str(main)],
+                          capture_output=True, text=True)
+    if made.returncode != 0:
+        raise SkipCase(f"could not build a repository fixture: {made.stderr}")
+    (main / "README.md").write_text("a checkout of its own\n")
+    if gitignore_text is not None:
+        (main / ".gitignore").write_text(gitignore_text)
+    for cmd in (["add", "-A"],
+                ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                 "commit", "-qm", "initial"]):
+        r = subprocess.run(["git", "-C", str(main), *cmd],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SkipCase(f"could not commit in the fixture: {r.stderr}")
+    linked = pathlib.Path(td) / f"{name}-linked-worktree"
+    r = subprocess.run(["git", "-C", str(main), "worktree", "add", "--detach",
+                        str(linked), "HEAD"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SkipCase(f"could not add a worktree to the fixture: {r.stderr}")
+    its_own_copy = linked / SCRIPT.name
+    its_own_copy.write_text(SCRIPT.read_text())
+    return main, its_own_copy
+
+
+def _check_ignore_rc(repo, rel):
+    """`git check-ignore`'s three-way status for `rel` inside `repo`:
+    0 ignored, 1 not ignored, anything else the question went unanswered."""
+    return subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", rel],
+                          capture_output=True, text=True).returncode
+
+
 @case
 def case_accepts_a_main_checkout_as_the_destination():
     """A main checkout is itself an entry in `git worktree list`, and staging
@@ -1177,31 +1236,17 @@ def case_accepts_a_main_checkout_as_the_destination():
     location fixes the identity, and the destination is that repository's main
     checkout.
 
+    The fixture carries a .gitignore covering private/, because since the
+    ignore guard a destination that would let the archive be committed is
+    refused. That makes this case the positive half of that guard as well: an
+    ordinary checkout that does ignore these paths still stages in full.
+
     It also exercises the physical-path comparison for free: on macOS the
     temporary directory sits under a symlinked /var, so the register entry and
     the destination only agree once both are resolved."""
     with tempfile.TemporaryDirectory() as td:
         src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
-        main = pathlib.Path(td) / "a-main-checkout"
-        made = subprocess.run(["git", "init", "-q", str(main)],
-                              capture_output=True, text=True)
-        if made.returncode != 0:
-            raise SkipCase(f"could not build a repository fixture: {made.stderr}")
-        (main / "README.md").write_text("a checkout of its own\n")
-        for cmd in (["add", "README.md"],
-                    ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
-                     "commit", "-qm", "initial"]):
-            r = subprocess.run(["git", "-C", str(main), *cmd],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
-                raise SkipCase(f"could not commit in the fixture: {r.stderr}")
-        linked = pathlib.Path(td) / "its-linked-worktree"
-        r = subprocess.run(["git", "-C", str(main), "worktree", "add", "--detach",
-                            str(linked), "HEAD"], capture_output=True, text=True)
-        if r.returncode != 0:
-            raise SkipCase(f"could not add a worktree to the fixture: {r.stderr}")
-        its_own_copy = linked / SCRIPT.name
-        its_own_copy.write_text(SCRIPT.read_text())
+        main, its_own_copy = _throwaway_checkout(td, "private/\n")
         listed = subprocess.run(["git", "-C", str(main), "worktree", "list",
                                  "--porcelain"], capture_output=True, text=True)
         assert "worktree " in listed.stdout, listed.stdout
@@ -1213,6 +1258,11 @@ def case_accepts_a_main_checkout_as_the_destination():
                          "private/1-raw-data/gas.csv",
                          "private/verify/usage.csv"):
             assert (main / required).is_file(), f"{required} was not staged"
+        status = subprocess.run(["git", "-C", str(main), "status", "--porcelain",
+                                 "--untracked-files=all"], capture_output=True, text=True)
+        assert "private/" not in status.stdout, (
+            f"the accepted destination can still offer the archive to git add: "
+            f"{status.stdout}")
     return "the main checkout of a repository is accepted as the destination"
 
 
@@ -1269,6 +1319,177 @@ def case_a_separate_git_dir_checkout_is_the_documented_collateral_refusal():
             "the refusal must carry its remedy: " + result.stderr)
     return ("a --separate-git-dir working tree is refused -- documented "
             "collateral of deciding membership by git's register")
+
+
+# --------------------------------------------------------------------------
+# issue #184, adversarial review round 4: every guard above answers "which
+# repository is this destination", and none answered "can this archive become
+# committable there" -- which is the property the 2026-08-13 incident actually
+# lost. The repository that took the archive did not gitignore private/, so the
+# data sat one `git add -A` from a commit into an unrelated public repo. Every
+# mention of gitignore in the script was prose until now: comments, and a
+# closing message asserting containment it never checked.
+#
+# Both cases build a THROWAWAY repository in a temp directory -- this repo's
+# own .gitignore is never touched -- whose main checkout is a genuine,
+# registered destination, so the refusal they get can only come from the new
+# check and not from one of the guards before it.
+# --------------------------------------------------------------------------
+@case
+def case_refuses_a_destination_that_does_not_ignore_the_paths_it_writes():
+    """The reproduction. Before the fix a registered main checkout of a
+    repository with no .gitignore took the whole archive at exit 0, and
+    `git status --untracked-files=all` then listed all nine staged files as
+    ready for the next `git add -A`.
+
+    Checked in both shapes an unprotected destination really takes: no
+    .gitignore at all, and one that exists but says nothing about private/."""
+    checked = []
+    for label, gi in (("no .gitignore at all", None),
+                      ("a .gitignore that never mentions private/", "*.log\n")):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            dst, script = _throwaway_checkout(td, gi)
+            # The premises, asserted rather than assumed: this destination
+            # passes every guard that runs BEFORE the ignore check, and really
+            # does fail to ignore the paths. Without both, a refusal here could
+            # be the register check firing and would prove nothing.
+            registered = subprocess.run(["git", "-C", str(dst), "worktree", "list",
+                                         "--porcelain"], capture_output=True, text=True)
+            assert str(dst.resolve()) in registered.stdout, (
+                f"the fixture is not a registered worktree, so this case would "
+                f"be testing the register guard instead: {registered.stdout}")
+            for rel in ("private/1-raw-data", "private/verify", "private/household.yaml"):
+                assert _check_ignore_rc(dst, rel) == 1, (
+                    f"{rel} is already ignored in this fixture, so it does not "
+                    f"test what it claims")
+            before = _snapshot(dst)
+            result = _run_script(src, dst, cwd=src, script=script)
+            _assert_refused(result, dst, before, f"a destination with {label}")
+            assert "does not gitignore" in result.stderr, result.stderr
+            assert not (dst / "private").exists(), (
+                "the archive was written into a repository whose git would "
+                "offer it to the next commit")
+            status = subprocess.run(["git", "-C", str(dst), "status", "--porcelain",
+                                     "--untracked-files=all"],
+                                    capture_output=True, text=True)
+            assert "private/" not in status.stdout, (
+                f"the destination's own git can see private material after a "
+                f"refused run: {status.stdout}")
+            checked.append(label)
+    return (f"a registered worktree that would let the archive be committed "
+            f"({' / '.join(checked)}) is refused with nothing written")
+
+
+@case
+def case_refuses_a_destination_that_tracks_a_path_it_writes():
+    """The other half of "cannot become committable". A path can be covered by
+    .gitignore and still be TRACKED -- `git add -f` is one command away, and a
+    repository that ever committed a private/verify/usage.csv still carries it
+    -- because a tracked file stays in the index whatever the ignore rules say.
+    Staging over one puts the archive straight into the next commit's diff.
+
+    It is also why the script asks `git ls-files` FIRST, which this case pins:
+    measured on this very fixture, `git check-ignore` returns 1 (not ignored)
+    for the tracked path AND for the directory around it, so asking it first
+    would blame a .gitignore that is in fact correct and send the operator to
+    edit the wrong file."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst, script = _throwaway_checkout(td, "private/\n")
+        committed = dst / "private" / "verify" / "usage.csv"
+        committed.parent.mkdir(parents=True)
+        committed.write_text("a usage.csv that was force-added long ago\n")
+        for cmd in (["add", "-f", "private/verify/usage.csv"],
+                    ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                     "commit", "-qm", "force-added"]):
+            r = subprocess.run(["git", "-C", str(dst), *cmd], capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SkipCase(f"could not force-add in the fixture: {r.stderr}")
+        # The premise: .gitignore genuinely covers this, so only the tracked
+        # check can distinguish it -- and check-ignore alone would misreport it.
+        assert _check_ignore_rc(dst, "private/1-raw-data") == 0, (
+            "the fixture's .gitignore no longer covers private/")
+        assert _check_ignore_rc(dst, "private/verify") == 1, (
+            "check-ignore no longer reports a directory holding a tracked file "
+            "as unignored, so the ordering this case pins is no longer needed")
+        before = _snapshot(dst)
+        result = _run_script(src, dst, cwd=src, script=script)
+        _assert_refused(result, dst, before, "a destination tracking a written path")
+        assert "TRACKS" in result.stderr, result.stderr
+        assert "private/verify/usage.csv" in result.stderr, (
+            "the refusal must name the tracked path: " + result.stderr)
+        assert "does not gitignore" not in result.stderr, (
+            "a tracked path must not be reported as an unignored one -- the "
+            "remedies are different: " + result.stderr)
+        assert committed.read_text() == "a usage.csv that was force-added long ago\n", (
+            "the refused run overwrote the destination's own committed file")
+        assert not (dst / "private" / "1-raw-data").exists()
+    return ("a destination that tracks a path this script writes is refused, "
+            "and is reported as tracked rather than as unignored")
+
+
+# --------------------------------------------------------------------------
+# issue #184, adversarial review round 4: _reject_link tests `[ -L ]`, which
+# sees SYMBOLIC links only. An existing output file that is a HARD link to a
+# file outside the worktree passes every check -- there is no link to follow --
+# and `cp` then truncates and rewrites the shared inode, so the outside file's
+# contents become this household's private data while the script reports
+# containment. Reproduced at exit 0 on three separate paths, each rewriting a
+# file in an unrelated directory while the closing line still read "nothing was
+# written outside the gitignored tree".
+# --------------------------------------------------------------------------
+@case
+def case_refuses_a_hard_linked_output_file_the_copies_would_write_through():
+    """The reproduction, on every shape of output the script writes: the named
+    household.yaml, a named private/verify copy, a file inside private/1-raw-data
+    whose name a cp line picks, and one nested under a directory `cp -R`
+    descends into.
+
+    The external file's CONTENTS are the assertion, not the exit status: the
+    defect leaves the destination tree looking exactly right and rewrites
+    something else. Each fixture also asserts the planted file is a hard link
+    and NOT a symbolic one, and that the refusal is the hard-link refusal --
+    otherwise this case could pass on the pre-existing symlink guard and prove
+    nothing."""
+    planted_at = ("private/household.yaml",
+                  "private/verify/usage.csv",
+                  "private/1-raw-data/gas.csv",
+                  "private/1-raw-data/electric-bills/statement.pdf")
+    for planted in planted_at:
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            (src / "private" / "1-raw-data" / "electric-bills" / "statement.pdf") \
+                .write_text("the source statement\n")
+            ext = _external_target(td)
+            outside = ext / "an_unrelated_file.txt"
+            outside.write_text("someone else's file\n")
+            with _linked_worktree(td) as dst:
+                target = dst / planted
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.link(outside, target)      # a HARD link: no link to follow
+                assert not target.is_symlink(), planted
+                assert os.stat(target).st_nlink == 2, (
+                    f"the fixture did not create a second name for the inode "
+                    f"at {planted}")
+                outside_before = _snapshot(ext)
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src)
+                _assert_refused(result, dst, before, f"a hard-linked {planted}")
+                assert "hard" in result.stderr.lower(), (
+                    f"the refusal must name what it found at {planted}: "
+                    + result.stderr)
+                assert "symbolic link" not in result.stderr, (
+                    f"a hard link was reported as a symbolic one, so this case "
+                    f"is passing on the wrong guard: {result.stderr}")
+                _assert_nothing_escaped(ext, outside_before, f"a hard-linked {planted}")
+                assert outside.read_text() == "someone else's file\n", (
+                    f"a hard-linked {planted} let cp rewrite the file outside "
+                    f"the worktree that shares its inode")
+    return (f"a hard link at any of the {len(planted_at)} output paths is "
+            f"refused, and the file outside sharing its inode is untouched")
 
 
 @case
