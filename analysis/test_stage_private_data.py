@@ -17,7 +17,17 @@ worktree whose own git would let the archive be COMMITTED, either because it
 does not ignore these paths (the property the 2026-08-13 destination lacked,
 and the one that made the incident dangerous) or because it already tracks
 one of them, and including an existing output file that is a HARD link to a
-file outside the tree, which `[ -L ]` cannot see and `cp` rewrites in place.
+file outside the tree, which `[ -L ]` cannot see and `cp` rewrites in place,
+and including one that is a SPECIAL FILE -- a FIFO or a device node is neither
+a link nor a multiply-linked regular file, so it passes both of those guards,
+and `cp` opening it either hangs the run outright or hands the archive to
+whatever process is reading the other end.
+
+A guard that refuses correct input is the worst kind, so the accepting half is
+pinned just as hard: a genuinely REGISTERED worktree must still be accepted
+even when its path is one the porcelain listing splits across two lines (git
+emits a worktree path raw, newlines included), which is why the register is now
+read with `--porcelain -z`.
 
 The required-input set is DERIVED by scanning every generator's own source
 for its private/1-raw-data path references, in the four shapes this repo's
@@ -52,6 +62,8 @@ import pathlib
 import re
 import shlex
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -318,9 +330,32 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
 # whose failing exit status was swallowed by the last command in the pipe, so
 # nothing in this suite may infer success from output text alone.
 # --------------------------------------------------------------------------
-def _run_script(src, dst, cwd, script=SCRIPT, env=None):
-    return subprocess.run(["bash", str(script), str(src), str(dst)],
-                          capture_output=True, text=True, cwd=str(cwd), env=env)
+def _run_script(src, dst, cwd, script=SCRIPT, env=None, timeout=None):
+    argv = ["bash", str(script), str(src), str(dst)]
+    if timeout is None:
+        return subprocess.run(argv, capture_output=True, text=True,
+                              cwd=str(cwd), env=env)
+    # A BOUNDED run, for the fixtures that plant something `cp` can block on
+    # forever (a FIFO with no reader). Two things subprocess.run's own timeout
+    # would not do: it kills only the bash it started, and the process actually
+    # blocked is a `cp` GRANDCHILD that would survive, keep the fixture's FIFO
+    # open and outlive this suite -- so the whole process GROUP is started and
+    # killed together. And a timeout must FAIL the case rather than be reported
+    # as a slow pass, which is why it raises: a guard case whose script hangs
+    # has found the defect, not an infrastructure problem.
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, cwd=str(cwd), env=env, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)   # start_new_session: pid == pgid
+        out, err = proc.communicate()
+        raise AssertionError(
+            f"the script did not finish within {timeout}s -- it blocked while "
+            f"opening a destination path instead of refusing it before the "
+            f"first write. stderr so far: {err!r}")
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
 
 def _snapshot(root):
@@ -777,6 +812,7 @@ def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
     # definitions, so moving a helper cannot satisfy it by accident.
     call_forms = ('_check_dir_slot "', '_reject_links_under "', '_reject_link "',
                   '_reject_multilinked_under "', '_reject_hardlink "',
+                  '_reject_special_under "', '_reject_special "',
                   '_require_uncommittable "')
     checks = [n for n, line in code if any(f in line for f in call_forms)]
     copies = [n for n, line in code if re.match(r'^\s*cp\s', line)]
@@ -1215,6 +1251,122 @@ def _throwaway_checkout(td, gitignore_text, name="a-main-checkout"):
     return main, its_own_copy
 
 
+def _throwaway_worktree(td, wt_name, name="odd-path-repo"):
+    """A repository of its own whose LINKED WORKTREE is named `wt_name`, with
+    the script copy in its MAIN checkout so that repository fixes the guard's
+    identity. Returns (the_linked_worktree, the_script_copy_to_run).
+
+    Built here rather than with _linked_worktree for a specific reason: these
+    names are deliberately awkward (a space, a newline), and registering one in
+    the developer's REAL .git/worktrees to test a parser is not a trade worth
+    making. Everything below lives and dies inside the caller's tempdir.
+
+    The .gitignore covers private/, because since the ignore guard a
+    destination that would let the archive be committed is refused."""
+    main = pathlib.Path(td) / name
+    made = subprocess.run(["git", "init", "-q", str(main)],
+                          capture_output=True, text=True)
+    if made.returncode != 0:
+        raise SkipCase(f"could not build a repository fixture: {made.stderr}")
+    (main / "README.md").write_text("a checkout of its own\n")
+    (main / ".gitignore").write_text("private/\n")
+    for cmd in (["add", "-A"],
+                ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                 "commit", "-qm", "initial"]):
+        r = subprocess.run(["git", "-C", str(main), *cmd],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SkipCase(f"could not commit in the fixture: {r.stderr}")
+    its_own_copy = main / SCRIPT.name
+    its_own_copy.write_text(SCRIPT.read_text())
+    wt = pathlib.Path(td) / wt_name
+    r = subprocess.run(["git", "-C", str(main), "worktree", "add", "--detach",
+                        str(wt), "HEAD"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SkipCase(f"this filesystem will not hold a worktree named "
+                       f"{wt_name!r}: {r.stderr}")
+    return wt, its_own_copy
+
+
+@case
+def case_accepts_a_registered_worktree_whose_path_the_line_parser_cannot_read():
+    """Codex review, issue #184: the register parse was line-based, so a
+    registered worktree whose path the porcelain listing cannot express on one
+    line would be WRONGLY REFUSED -- a guard failing on correct input, which is
+    the failure mode that gets guards disabled rather than fixed.
+
+    The mechanism review named -- C-quoted paths -- is NOT what this git does,
+    and the premises below say so out loud rather than leaving it to a comment:
+    `git worktree list --porcelain` emits the worktree PATH raw, including a
+    newline. (What it quotes is the `locked` REASON; git's own manual documents
+    the split, and documents `-z` as existing precisely so "a worktree path
+    contains a newline character" can be parsed.)
+
+    The defect is therefore real but arrives the other way round: the raw
+    newline splits one entry across two lines, and a line parser recovers a
+    TRUNCATED PREFIX -- a path the register never contained. Reproduced before
+    the fix, on this exact fixture: registered, and refused.
+
+    The space-named worktree is the case that already worked and must keep
+    working; it is here so a fix for the newline cannot regress it."""
+    checked = []
+    for label, wt_name in (("a space", "a worktree with spaces"),
+                           ("a newline", "a worktree with a\nnewline")):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            try:
+                dst, script = _throwaway_worktree(td, wt_name)
+            except SkipCase:
+                if label == "a space":
+                    raise
+                # A filesystem that will not hold the name cannot test it.
+                continue
+            resolved = str(dst.resolve())
+            listed = subprocess.run(["git", "-C", str(dst.parent / "odd-path-repo"),
+                                     "worktree", "list", "--porcelain"],
+                                    capture_output=True, text=True)
+            # The premises, measured on this git rather than assumed: the
+            # fixture really is registered, and its path really is emitted RAW.
+            assert f"worktree {resolved}" in listed.stdout, (
+                f"the fixture is not registered under its own name, so "
+                f"accepting it would prove nothing: {listed.stdout!r}")
+            if label == "a newline":
+                assert not any(line == f"worktree {resolved}"
+                               for line in listed.stdout.splitlines()), (
+                    "this git now escapes a newline in the worktree PATH, so a "
+                    "line-based parse could read it after all and this case no "
+                    "longer pins what it claims: " + repr(listed.stdout))
+            result = _run_script(src, dst, cwd=src, script=script, timeout=120)
+            assert result.returncode == 0, (
+                f"a registered worktree whose path contains {label} must be "
+                f"accepted: {result.stderr}")
+            for required in ("private/household.yaml",
+                             "private/1-raw-data/gas.csv",
+                             "private/verify/usage.csv"):
+                assert (dst / required).is_file(), (
+                    f"{required} was not staged into the {label} worktree")
+            checked.append(label)
+
+    # Structural, because the behavioral half above would also pass on a parse
+    # that captured the -z output into a variable -- on a path without a
+    # newline. bash cannot hold a NUL and drops them SILENTLY (measured on bash
+    # 3.2, the macOS system shell: `x=$(printf 'a\0b')` yields `ab`, no
+    # warning), so `$(git worktree list --porcelain -z)` glues every record into
+    # one string and matches nothing. The listing has to be read through a
+    # process substitution, and this is the line that says it is.
+    text = SCRIPT.read_text()
+    assert 'done < <(git -C "$SELF_GIT" worktree list --porcelain -z' in text, (
+        "the register listing is no longer read with -z through a process "
+        "substitution -- a command substitution would silently drop the NUL "
+        "separators and match nothing")
+    assert 'worktree list --porcelain 2>/dev/null' in text, (
+        "the line-based fallback for a git too old to know -z is gone, so such "
+        "a git now gets an unexplained refusal on a legitimate destination")
+    return (f"a registered worktree whose path contains {' or '.join(checked)} "
+            f"is accepted and staged, and the register is read with -z")
+
+
 def _check_ignore_rc(repo, rel):
     """`git check-ignore`'s three-way status for `rel` inside `repo`:
     0 ignored, 1 not ignored, anything else the question went unanswered."""
@@ -1490,6 +1642,117 @@ def case_refuses_a_hard_linked_output_file_the_copies_would_write_through():
                     f"the worktree that shares its inode")
     return (f"a hard link at any of the {len(planted_at)} output paths is "
             f"refused, and the file outside sharing its inode is untouched")
+
+
+# --------------------------------------------------------------------------
+# issue #184, Codex review: a SPECIAL FILE at an output path defeats BOTH guards
+# above at once. It is not a symbolic link, so `[ -L ]` says no; it is not a
+# regular file, so `find -type f -links +1` never looks at it. `cp` then opens
+# it -- and on a FIFO that open blocks until some process reads, so the run
+# hangs with no message, or, if something IS reading, hands this household's
+# archive to a process outside the worktree while every containment check still
+# passes.
+#
+# Reproduced against this script before the fix, on a genuine registered
+# worktree: a FIFO at private/verify/usage.csv and one at
+# private/1-raw-data/gas.csv each hung the run until it was killed, and each had
+# ALREADY written household.yaml and most of the raw archive into the
+# destination before blocking -- so the refusal was missing and "nothing was
+# written" was false too.
+#
+# Every case here is BOUNDED (_run_script's timeout) and kills the whole process
+# group: a fixture that plants a FIFO must fail the suite if the guard is gone,
+# never hang it.
+# --------------------------------------------------------------------------
+@case
+def case_refuses_a_fifo_at_an_output_the_copies_would_write_through():
+    """The reproduction, on the same four output shapes the symbolic-link and
+    hard-link cases use -- the named household.yaml, a named private/verify
+    copy, a file inside private/1-raw-data whose name a cp line picks, and one
+    nested under a directory `cp -R` descends into -- so the three guards are
+    demonstrably checking the same surface rather than three different ones.
+
+    No reader is attached, so this is the HANG shape: unrefused, `cp` blocks on
+    the open forever. The bound is what turns that into a failure with
+    evidence. Each case also asserts the refusal is the special-file one and not
+    the symbolic-link or hard-link guard firing, or it could pass on a
+    pre-existing check and prove nothing."""
+    planted_at = ("private/household.yaml",
+                  "private/verify/usage.csv",
+                  "private/1-raw-data/gas.csv",
+                  "private/1-raw-data/electric-bills/statement.pdf")
+    for planted in planted_at:
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            (src / "private" / "1-raw-data" / "electric-bills" / "statement.pdf") \
+                .write_text("the source statement\n")
+            with _linked_worktree(td) as dst:
+                target = dst / planted
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.mkfifo(target)
+                # The premise: this really is the shape both existing guards
+                # miss. Not a link for `[ -L ]` to see, and not a regular file
+                # for `find -type f -links +1` to count.
+                assert stat.S_ISFIFO(os.stat(target).st_mode), planted
+                assert not target.is_symlink(), planted
+                assert not target.is_file(), planted
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=60)
+                _assert_refused(result, dst, before, f"a FIFO at {planted}")
+                assert "FIFO" in result.stderr, (
+                    f"the refusal must name what it found at {planted}: "
+                    + result.stderr)
+                assert "symbolic link" not in result.stderr, (
+                    f"a FIFO was reported as a symbolic link, so this case is "
+                    f"passing on the wrong guard: {result.stderr}")
+                assert "hard link" not in result.stderr.lower(), (
+                    f"a FIFO was reported as a hard link, so this case is "
+                    f"passing on the wrong guard: {result.stderr}")
+                assert stat.S_ISFIFO(os.stat(target).st_mode), (
+                    f"the refused run replaced the FIFO at {planted}")
+    return (f"a FIFO at any of the {len(planted_at)} output paths is refused "
+            f"before the copies, with nothing written and no hang")
+
+
+@case
+def case_a_fifo_with_a_reader_attached_never_receives_the_archive():
+    """The other half of the finding, and the half an exit status cannot show.
+
+    A FIFO only hangs `cp` while nothing is reading it. Hold the read end open
+    and the open succeeds instead: the copy completes, the destination tree
+    looks untouched, and this household's intake file has gone to a process
+    somewhere else entirely. So the pipe itself is read back, and the assertion
+    is that NO BYTES arrived.
+
+    O_NONBLOCK on the read end is what makes that safe to do here -- opening a
+    FIFO for reading otherwise blocks until a writer arrives, which is the very
+    hang this suite must not have."""
+    marker = "# a distinctive marker only this household's file carries\n"
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, marker + "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        with _linked_worktree(td) as dst:
+            target = dst / "private" / "household.yaml"
+            os.mkfifo(target)
+            fd = os.open(str(target), os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=60)
+                try:
+                    leaked = os.read(fd, 1 << 20)
+                except BlockingIOError:
+                    leaked = b""
+                assert leaked == b"", (
+                    f"the private archive was written INTO the pipe -- a "
+                    f"process outside the worktree received "
+                    f"{len(leaked)} bytes: {leaked[:120]!r}")
+                _assert_refused(result, dst, before, "a FIFO with a reader attached")
+                assert "FIFO" in result.stderr, result.stderr
+            finally:
+                os.close(fd)
+    return ("a FIFO whose read end is held open receives nothing: the run is "
+            "refused before cp can hand the archive to the process reading it")
 
 
 @case

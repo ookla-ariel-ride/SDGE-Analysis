@@ -10,14 +10,15 @@
 # The destination is CHECKED before the first byte is written: this copy of
 # the script stages only into a REGISTERED working tree of the checkout it
 # lives in, only where that tree's own git will not let the archive be
-# committed, and only into real, singly-named files and directories inside it.
-# See "DESTINATION GUARD" below for which TREE is accepted and why,
+# committed, and only into ordinary, singly-named files and directories inside
+# it. See "DESTINATION GUARD" below for which TREE is accepted and why,
 # "DESTINATION REGISTRATION GUARD" for why a tree that merely CLAIMS to be one
 # is not enough, "DESTINATION IGNORE GUARD" for why belonging to this checkout
 # is not the same as being unable to commit the archive, "DESTINATION PATH
 # GUARD" for the paths INSIDE that tree (a symbolic link below the root would
-# otherwise carry the archive back out of it, and a hard link would rewrite a
-# file outside it in place), and "ENVIRONMENT SANITIZING" for why the check
+# otherwise carry the archive back out of it, a hard link would rewrite a file
+# outside it in place, and a FIFO or device node would hang the run or hand the
+# archive to another process), and "ENVIRONMENT SANITIZING" for why the check
 # reads the filesystem rather than the git variables an inherited environment
 # can answer it with.
 #
@@ -294,12 +295,59 @@ fi
 # longer exists resolves to nothing and simply matches nothing -- a stale
 # register entry cannot admit a destination.
 #
+# READ WITH -z, and the reason is a MEASURED one rather than the one review
+# suggested. The claim under review was that porcelain C-quotes a path
+# containing unusual characters, so a legitimate worktree would be wrongly
+# refused. That is not what this git does: `git worktree list --porcelain`
+# emits the worktree PATH raw -- spaces, tabs, quotes, backslashes, accented
+# characters and NEWLINES all pass through unescaped, with core.quotePath at
+# its default and when forced true. What IS quoted is the `locked` REASON, and
+# git's own manual says so in as many words ("Unless -z is used any 'unusual'
+# characters in the lock reason ... are escaped"). So the reported case does
+# not exist here.
+#
+# A worse one does, and it was reproduced: a registered worktree whose path
+# contains a NEWLINE is emitted raw, so a line-based parse splits one entry
+# across two lines and recovers a TRUNCATED PREFIX of the real path. A
+# genuinely registered worktree is then refused -- a guard failing on correct
+# input, which is the failure mode that gets guards disabled. Worse than
+# unrecoverable: the prefix is a path the register never contained, so a
+# line-based parse does not merely lose the entry, it invents one. git's manual
+# names this exact case as what `-z` is for ("This makes it possible to parse
+# the output when a worktree path contains a newline character").
+#
+# `-z` changes the RECORD FORMAT, not only the separator, so it was read before
+# this parse was written: each attribute record is NUL-terminated instead of
+# newline-terminated, each entry still ends with an EMPTY record, and the
+# label-space-value shape is unchanged -- but the `locked` reason arrives RAW
+# rather than C-quoted. That last part does not reach this parse, which keys
+# only on `worktree `, `bare` and the empty record, and is noted because a
+# future edit that reads `locked` would be the first to care.
+#
+# It is read through a PROCESS SUBSTITUTION, never `$(...)`: bash cannot hold a
+# NUL in a variable and drops them SILENTLY (measured on bash 3.2, the macOS
+# system shell this runs under: `x=$(printf 'a\0b')` yields `ab`, no warning).
+# Capturing -z output would therefore glue every record into one string and
+# match nothing -- a guard that refuses everything. The `while` still runs in
+# THIS shell, which is the property the here-string below was chosen for too.
+#
+# FALLING BACK rather than requiring a version. A git too old to know `-z`
+# writes nothing to stdout, which this reads as "no entries" and retries the
+# old line-based listing -- correct for every path without a newline, which is
+# every path anyone actually has. Detect-and-fall-back is chosen over declaring
+# a minimum version because the alternative fails a legitimate destination on
+# an old git and calls it a refusal; a refusal a correct caller cannot fix is
+# the thing being repaired here, so it is not worth reintroducing at the seam.
+# When the fallback is what ran AND the destination did not match, the refusal
+# says so, so an operator whose worktree path really does hold a newline reads
+# why instead of guessing.
+#
 # FAIL CLOSED on anything short of a match: a listing that errors, an empty
-# listing (git always reports at least the main worktree, so empty means the
-# question was not answered), or a path this parse cannot recover -- porcelain
-# C-quotes a path containing a newline or a backslash, and an unrecovered path
-# matches nothing rather than being waved through. `bare` entries are dropped
-# before comparison: a bare repository has no working tree to stage into.
+# listing after BOTH attempts (git always reports at least the main worktree,
+# so empty means the question was not answered), or a path that resolves to
+# nothing -- each matches nothing rather than being waved through. `bare`
+# entries are dropped before comparison: a bare repository has no working tree
+# to stage into.
 #
 # This runs in the sanitized shell like every other probe here, so the
 # environment cannot redirect the listing the way it could redirect rev-parse.
@@ -317,18 +365,8 @@ fi
 # stage into an ordinary checkout. analysis/test_stage_private_data.py pins
 # this so the limitation stays a decision rather than a surprise.
 # ---------------------------------------------------------------------------
-if ! DST_WORKTREES=$(git -C "$SELF_GIT" worktree list --porcelain 2>/dev/null) \
-   || [ -z "$DST_WORKTREES" ]; then
-  echo "stage-private-data.sh: REFUSED -- this checkout's worktrees could not be listed (nothing was written)" >&2
-  echo "  destination: $DST  (resolved: $DST_REAL)" >&2
-  echo "  found:       'git worktree list' failed or reported nothing for $SELF_GIT" >&2
-  echo "  expected:    a listing naming every registered worktree, so the destination" >&2
-  echo "               can be checked against it -- without one, membership is unproven" >&2
-  echo "               and this script does not stage on an unproven destination." >&2
-  exit 1
-fi
-
 _dst_registered=0
+_entries=0
 _pending=""
 _match_pending() {   # compare the entry just finished, then clear it
   local real
@@ -337,18 +375,62 @@ _match_pending() {   # compare the entry just finished, then clear it
   if [ -n "$real" ] && [ "$real" = "$DST_REAL" ]; then _dst_registered=1; fi
   _pending=""
 }
-# A here-string, never a pipe: a `while` on the right of a pipe runs in a
-# subshell, where _dst_registered would be set and then thrown away -- and the
-# failure mode of that mistake is a guard that refuses every destination, so it
-# would be found, but the same shape with the sense inverted would not be.
-while IFS= read -r _line || [ -n "$_line" ]; do
-  case "$_line" in
-    "worktree "*) _match_pending; _pending=${_line#worktree } ;;
+_scan_record() {   # $1 = one porcelain record, however it was delimited
+  case "$1" in
+    "worktree "*) _match_pending; _entries=$((_entries + 1)); _pending=${1#worktree } ;;
     "bare")       _pending="" ;;
     "")           _match_pending ;;
   esac
-done <<< "$DST_WORKTREES"
+}
+
+# Neither loop is on the right of a pipe: a `while` there runs in a subshell,
+# where _dst_registered would be set and then thrown away -- and the failure
+# mode of that mistake is a guard that refuses every destination, so it would be
+# found, but the same shape with the sense inverted would not be. Process
+# substitution and a here-string both keep the loop in THIS shell.
+_rec=""
+while IFS= read -r -d '' _rec || [ -n "$_rec" ]; do
+  _scan_record "$_rec"
+done < <(git -C "$SELF_GIT" worktree list --porcelain -z 2>/dev/null)
 _match_pending
+
+# Retry the line-based listing whenever the -z parse did not settle it -- not
+# only when -z produced nothing. Both reasons it can produce nothing are real
+# (this git predates `worktree list -z`, so it wrote usage to stderr and nothing
+# to stdout; or the listing genuinely failed), and retrying on any non-match
+# additionally covers a git that answers -z in some shape this parse does not
+# recognize. The cost is one extra listing on a path that is about to refuse
+# anyway; the benefit is that no unforeseen -z behaviour can turn a legitimate
+# destination into a refusal, which is the failure this whole change is about.
+_z_entries=$_entries
+if [ "$_dst_registered" -ne 1 ]; then
+  _pending=""
+  _line=""
+  if DST_WORKTREES=$(git -C "$SELF_GIT" worktree list --porcelain 2>/dev/null) \
+     && [ -n "$DST_WORKTREES" ]; then
+    while IFS= read -r _line || [ -n "$_line" ]; do
+      _scan_record "$_line"
+    done <<< "$DST_WORKTREES"
+    _match_pending
+  fi
+fi
+
+# The NOTE below is keyed on the -z listing having produced nothing, not on the
+# fallback having run: only then is the fallback's inability to read a newline
+# in a path the reason a registered destination could be sitting here refused.
+_z_listing=1
+[ "$_z_entries" -gt 0 ] || _z_listing=0
+
+if [ "$_entries" -eq 0 ]; then
+  echo "stage-private-data.sh: REFUSED -- this checkout's worktrees could not be listed (nothing was written)" >&2
+  echo "  destination: $DST  (resolved: $DST_REAL)" >&2
+  echo "  found:       'git worktree list' failed or reported nothing for $SELF_GIT," >&2
+  echo "               with and without --porcelain -z" >&2
+  echo "  expected:    a listing naming every registered worktree, so the destination" >&2
+  echo "               can be checked against it -- without one, membership is unproven" >&2
+  echo "               and this script does not stage on an unproven destination." >&2
+  exit 1
+fi
 
 if [ "$_dst_registered" -ne 1 ]; then
   echo "stage-private-data.sh: REFUSED -- destination is not a REGISTERED worktree of this checkout (nothing was written)" >&2
@@ -359,6 +441,13 @@ if [ "$_dst_registered" -ne 1 ]; then
   echo "  A plain directory carrying a .git gitfile that points at this checkout answers" >&2
   echo "  every other check here exactly like a real worktree -- a copied or restored" >&2
   echo "  worktree directory does it by accident. Only git's own register settles it." >&2
+  if [ "$_z_listing" -ne 1 ]; then
+    echo "  NOTE: this git does not support 'git worktree list --porcelain -z', so the" >&2
+    echo "  register was read line by line. git emits a worktree path RAW, so one" >&2
+    echo "  containing a newline is split across lines and cannot be recovered from" >&2
+    echo "  that form -- if this destination's path holds a newline it is registered" >&2
+    echo "  and was refused anyway. Upgrade git, or move it to a path without one." >&2
+  fi
   echo "  Create the destination properly:  git worktree add \"$DST\" -b <branch> origin/main" >&2
   exit 1
 fi
@@ -564,6 +653,41 @@ _require_uncommittable "private/household.yaml"
 # without -l always creates a new inode, so nothing this script writes has a
 # second name afterwards. The remedy is the message's -- delete and re-run.
 #
+# SPECIAL FILES TOO, and they are the loudest half (issue #184, adversarial
+# review). A FIFO or a device node at an output path is NEITHER a symbolic link
+# nor a multiply-linked regular file, so `[ -L ]` says no and `find -links +1`
+# never looks at it (`-type f` excludes it) -- it passes both guards above. `cp`
+# then opens it, and what happens next is decided by whatever is on the other
+# end: on a FIFO the open blocks until some process reads, so the run hangs with
+# no message and no exit status, and if something IS reading, this household's
+# archive is handed to it -- a process outside the worktree, with every
+# containment check here still passing. Reproduced against this script on a
+# genuine registered worktree, twice: a FIFO at private/verify/usage.csv and one
+# at private/1-raw-data/gas.csv each hung the run indefinitely, and each had
+# already written household.yaml and most of the raw archive into the
+# destination before blocking -- so "nothing was written" was false as well.
+#
+# The rule is stated as a POSITIVE shape rather than a list of bad ones: an
+# output leaf must be a REGULAR FILE or must not exist yet. That covers FIFOs,
+# sockets, block and character devices, and a directory sitting where a file
+# belongs (`cp file dir/` would silently deposit the archive one level down),
+# without needing to enumerate the special kinds a future filesystem might add.
+#
+# Two shapes are deliberately NOT refused by it. A path that does not exist is
+# the ORDINARY case -- this script creates every one of these -- so absence is
+# the normal shape, not a special one. And a DIRECTORY where a directory is
+# expected (private/, private/1-raw-data, private/verify) is likewise ordinary;
+# those three slots have their own check, `_check_dir_slot`, which has always
+# refused a non-directory sitting in a directory's place, so the special-file
+# rule is only added to the FILE paths and to the recursive scan.
+#
+# The three checks therefore describe the SAME SURFACE, which is the property
+# worth keeping: the recursive scan under private/1-raw-data (where `cp -R`
+# writes names this script never spells out) and the four named leaves are each
+# checked for symbolic links, for shared inodes, and for not being a regular
+# file. If they ever diverge, the next reader cannot tell which paths are
+# protected from what.
+#
 # HOW the link count is read, because this runs on a developer's Mac and in
 # CI: `stat -f %l` is BSD-only and `stat -c %h` is GNU-only, and a script that
 # guesses wrong does not fail -- it silently reads nothing and waves the file
@@ -572,7 +696,12 @@ _require_uncommittable "private/household.yaml"
 # flavour detection. `-type f` is deliberate: a directory's link count is
 # always at least 2 by construction (its own `.` plus each child's `..`), and
 # directories cannot be hard-linked on the filesystems this runs on, so
-# including them would refuse every destination.
+# including them would refuse every destination. The special-file scan is the
+# same tool with the complementary test -- `! -type d ! -type f ! -type l` --
+# and `find` only lstats what it walks, so nothing here opens a FIFO to find out
+# what it is. Neither does `test`: `-p`, `-S`, `-b`, `-c` and `-d` are all POSIX
+# and all stat rather than open, which is what makes it safe to ASK whether a
+# path is a FIFO on a script whose whole problem is that opening one hangs.
 #
 # CREATE without following: `mkdir -p` is satisfied by an existing link that
 # resolves to a directory and writes straight through it, so it cannot be used
@@ -631,6 +760,32 @@ _reject_hardlink() {   # $1 = a file `cp` would truncate and write THROUGH
     "Delete this file and re-run; this script writes it itself."
 }
 
+_reject_special() {   # $1 = a file `cp` would create or overwrite
+  local what
+  # Absence is the ordinary shape -- this script creates every one of these --
+  # and a symbolic link belongs to _reject_link, which runs first and exits, so
+  # repeating it here would only relabel that refusal. What is left is a name
+  # that exists, is not a link, and is not a regular file.
+  if [ ! -e "$1" ] || [ -L "$1" ] || [ -f "$1" ]; then return 0; fi
+  if   [ -p "$1" ]; then what="a named pipe (FIFO)"
+  elif [ -S "$1" ]; then what="a socket"
+  elif [ -b "$1" ]; then what="a block device"
+  elif [ -c "$1" ]; then what="a character device"
+  elif [ -d "$1" ]; then what="a directory"
+  else                   what="neither a regular file nor a directory"
+  fi
+  _refuse "a destination file is not a regular file" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "path:        $1" \
+    "found:       $what" \
+    "expected:    a regular file, or a name this script can create" \
+    "cp opens whatever it is handed. On a FIFO that open blocks until some" \
+    "other process reads, so this run would hang with no message -- and if" \
+    "something is reading, this household's archive goes to it instead of to" \
+    "a file, while every containment check here still passes." \
+    "Remove this and re-run; this script writes the file itself."
+}
+
 _check_dir_slot() {   # $1 = a directory this script needs; writes NOTHING
   _reject_link "$1"
   if [ -e "$1" ]; then
@@ -683,6 +838,27 @@ _reject_links_under() {   # $1 = a directory `cp -R` may write anywhere beneath
     "them for you."
 }
 
+_reject_special_under() {   # $1 = a directory `cp -R` may write anywhere beneath
+  local special
+  [ -d "$1" ] || return 0
+  if ! special=$(find "$1" ! -type d ! -type f ! -type l -print); then
+    _refuse "the destination could not be scanned for special files" \
+      "destination: $DST  (resolved: $DST_REAL)" \
+      "path:        $1" \
+      "expected:    a readable directory tree"
+  fi
+  [ -z "$special" ] || _refuse "the destination contains special file(s)" \
+    "destination: $DST  (resolved: $DST_REAL)" \
+    "files:       $(echo $special)" \
+    "expected:    a tree of ordinary files and directories" \
+    "cp -R opens every destination name it lands on. A FIFO here blocks the" \
+    "open until something reads, which hangs this run with no message and" \
+    "hands the archive to whatever is on the other end; a device node sends" \
+    "it somewhere stranger still. Neither is a link, so nothing above sees" \
+    "them." \
+    "Remove them and re-run; the copies below stage these files for you."
+}
+
 _reject_multilinked_under() {   # $1 = a directory `cp -R` may write anywhere beneath
   local shared
   [ -d "$1" ] || return 0
@@ -719,17 +895,21 @@ _check_dir_slot "$DST_REAL/private/verify"
 # venv whose bin/ entries are symlinks -- scanning it would refuse a normal
 # re-stage over a working sandbox for links this script never touches.
 #
-# The hard-link scan covers exactly the same ground as the symbolic-link one,
-# for the same reason: those are the paths `cp` and `cp -R` write, and which
-# KIND of link sits at one of them changes how the archive escapes, not
-# whether it can.
+# The hard-link scan and the special-file scan cover exactly the same ground as
+# the symbolic-link one, for the same reason: those are the paths `cp` and
+# `cp -R` write, and WHAT sits at one of them changes how the archive escapes,
+# not whether it can -- a symbolic link redirects the write, a second name on
+# the inode rewrites a file elsewhere in place, and a FIFO or device node hands
+# the bytes to a process. Three checks, one surface; keep them in step.
 _reject_links_under "$DST_REAL/private/1-raw-data"
+_reject_special_under "$DST_REAL/private/1-raw-data"
 _reject_multilinked_under "$DST_REAL/private/1-raw-data"
 for _leaf in "$DST_REAL/private/household.yaml" \
              "$DST_REAL/private/verify/usage.csv" \
              "$DST_REAL/private/verify/samA.csv" \
              "$DST_REAL/private/verify/samB.csv"; do
   _reject_link "$_leaf"
+  _reject_special "$_leaf"
   _reject_hardlink "$_leaf"
 done
 
