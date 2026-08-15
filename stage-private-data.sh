@@ -20,7 +20,8 @@
 # outside it in place, and a FIFO or device node would hang the run or hand the
 # archive to another process), and "ENVIRONMENT SANITIZING" for why the check
 # reads the filesystem rather than the git variables an inherited environment
-# can answer it with.
+# can answer it with -- and why it resolves the destination PATH itself without
+# the environment's help, since CDPATH decides what a bare relative name means.
 #
 # What the pipeline needs and why:
 #   private/household.yaml                    intake file (analysis/household.py)
@@ -94,6 +95,28 @@ DST="${2:?usage: stage-private-data.sh SOURCE_WORKING_COPY DEST_CLONE}"
 #                                     fix -- listed because they cost nothing
 #                                     and keep a later git-reading step honest
 #
+#   CDPATH                            not a git variable at all, and it belongs
+#                                     here for the reason this block exists:
+#                                     the environment can change WHAT A PATH
+#                                     MEANS, and every guard below decides its
+#                                     verdict about whatever directory `cd`
+#                                     picked. POSIX exempts only an operand
+#                                     starting with `/`, `./` or `..` from the
+#                                     CDPATH search, so `.` is safe and a bare
+#                                     relative `mystery` is not. Reproduced: with
+#                                     CDPATH set, `stage-private-data.sh SRC
+#                                     mystery` run from a directory holding its
+#                                     own empty ./mystery validated and staged
+#                                     into a DIFFERENT registered worktree, nine
+#                                     files, exit 0, while ./mystery stayed
+#                                     empty. It cannot escape this checkout's
+#                                     worktrees -- every guard still ran, just
+#                                     against the wrong one of them -- so it is
+#                                     not a cross-repo leak; it is the archive
+#                                     somewhere other than the path on the
+#                                     command line, silently, which is the same
+#                                     sentence the 2026-08-13 incident wrote
+#
 # Deliberately NOT cleared: GIT_EXEC_PATH, GIT_SSH_COMMAND, GIT_TEMPLATE_DIR
 # and the like. They tell git HOW to run, not which repository it is looking
 # at, and on a relocatable git install unsetting GIT_EXEC_PATH breaks git
@@ -117,14 +140,22 @@ DST="${2:?usage: stage-private-data.sh SOURCE_WORKING_COPY DEST_CLONE}"
 # environment. A guard that sanitizes only its own probes and then hands the
 # untouched environment to the work it approved has checked one repository and
 # written into another.
+#
+# Announced SEPARATELY by kind, because the two reasons are different and a
+# message that gave CDPATH the git-variables explanation would be telling the
+# operator something untrue about their own environment.
 # ---------------------------------------------------------------------------
 _cleared=""
-for _v in GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES \
+_cleared_path=""
+for _v in CDPATH GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES \
           GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_OBJECT_DIRECTORY \
           GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_NAMESPACE \
           ${!GIT_CONFIG*}; do
   if [ -n "${!_v+set}" ]; then
-    _cleared="$_cleared $_v"
+    case "$_v" in
+      CDPATH) _cleared_path="$_cleared_path $_v" ;;
+      *)      _cleared="$_cleared $_v" ;;
+    esac
     unset "$_v"
   fi
 done
@@ -132,6 +163,13 @@ if [ -n "$_cleared" ]; then
   echo "stage-private-data.sh: ignoring inherited git variable(s):$_cleared" >&2
   echo "  These can make git report any directory as part of any repository, so the" >&2
   echo "  destination check reads the filesystem instead. Nothing else was changed." >&2
+fi
+if [ -n "$_cleared_path" ]; then
+  echo "stage-private-data.sh: ignoring inherited path variable(s):$_cleared_path" >&2
+  echo "  cd searches CDPATH for a bare relative name, so the destination on the command" >&2
+  echo "  line could resolve to a directory nobody named -- and every check below would" >&2
+  echo "  then run against that one. Relative paths are resolved from the current" >&2
+  echo "  directory only. Nothing else was changed." >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -191,10 +229,67 @@ _common_git_dir() {   # absolute, symlink-resolved --git-common-dir of $1, or fa
   _physical "$out"
 }
 
-SELF_DIR=$(dirname -- "${BASH_SOURCE[0]}")
+# ---------------------------------------------------------------------------
+# WHICH COPY IS RUNNING (issue #184, /review) -- the guard's whole reference is
+# this file's own location, so that location has to be the REAL one.
+#
+# ${BASH_SOURCE[0]} is the path the caller typed, links and all. Invoked through
+# a symlink -- ~/bin/stage-private-data.sh -> <checkout>/stage-private-data.sh,
+# the ordinary way a script gets onto a PATH -- the unresolved dirname is
+# ~/bin, and the guard then fixes its identity from THAT directory:
+#
+#   ~/bin is in no repository        -> the run dies with "this script is not
+#                                       inside a git working tree", pointing at
+#                                       the script rather than at the link
+#   ~/bin is inside a versioned      -> SELF_GIT becomes the DOTFILES repo, and
+#   dotfiles repo (the common case)     EVERY legitimate destination is refused
+#                                       as "belongs to a DIFFERENT repository",
+#                                       naming the destination when the
+#                                       INVOCATION is what is at fault
+#
+# The second is the one that matters: a guard that refuses a correct caller,
+# with a message that misnames the culprit, is the shape that gets guards
+# disabled rather than fixed. So the link chain is followed to the real file
+# before the dirname is taken, and both refusals now name the invoking path
+# next to the resolved one, so a misdiagnosis is at least legible.
+#
+# Resolved BY HAND rather than with `readlink -f`: that flag is GNU/coreutils
+# and BSD-recent, and macOS -- the platform this is developed on -- has no
+# `readlink -f` in its default toolchain (nor `realpath`). The portable pieces
+# are `readlink` reading ONE level (already used by _reject_link below), `cd`
+# + `pwd -P` for the directory, and a loop for the chain. The hop counter is
+# what turns a symlink CYCLE into a refusal instead of a hang -- the same
+# reason the FIFO rule exists further down.
+# ---------------------------------------------------------------------------
+_self_dir() {   # $1 = ${BASH_SOURCE[0]}; prints the real directory it lives in
+  local src=$1 dir hops=0
+  while [ -L "$src" ]; do
+    hops=$((hops + 1))
+    [ "$hops" -le 40 ] || return 1        # a cycle, not a chain
+    dir=$(_physical "$(dirname -- "$src")") || return 1
+    [ -n "$dir" ] || return 1
+    src=$(readlink -- "$src") || return 1
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  _physical "$(dirname -- "$src")"
+}
+
+SELF_PATH="${BASH_SOURCE[0]}"
+if ! SELF_DIR=$(_self_dir "$SELF_PATH") || [ -z "$SELF_DIR" ]; then
+  echo "stage-private-data.sh: REFUSED -- this script's own location could not be resolved" >&2
+  echo "  invoked as:  $SELF_PATH" >&2
+  echo "  found:       a symbolic link chain that does not end at a readable file," >&2
+  echo "               or one that loops" >&2
+  echo "  expected:    a path resolving to a real file inside a checkout of this" >&2
+  echo "               repository, since that checkout is what decides which" >&2
+  echo "               destinations may be staged into" >&2
+  echo "  Nothing was written." >&2
+  exit 1
+fi
 if ! SELF_GIT=$(_common_git_dir "$SELF_DIR"); then
   echo "stage-private-data.sh: REFUSED -- this script is not inside a git working tree" >&2
-  echo "  script:      ${BASH_SOURCE[0]}" >&2
+  echo "  invoked as:  $SELF_PATH" >&2
+  echo "  really in:   $SELF_DIR  (symbolic links resolved)" >&2
   echo "  expected:    to be run from a checkout of this repository, whose worktrees are" >&2
   echo "               the only destinations it may stage private data into" >&2
   echo "  Nothing was written." >&2
@@ -232,9 +327,14 @@ if [ "$DST_GIT" != "$SELF_GIT" ]; then
   echo "  destination: $DST  (resolved: $DST_REAL)" >&2
   echo "  found:       git common dir $DST_GIT" >&2
   echo "  expected:    git common dir $SELF_GIT" >&2
+  echo "  this script: $SELF_PATH" >&2
+  echo "               (really in $SELF_DIR, which is what fixes the expected common dir)" >&2
   echo "  A different clone of the same remote is a different checkout and is refused too:" >&2
   echo "  sharing an origin does not make it the checkout you think it is. To stage into" >&2
   echo "  that clone, run ITS OWN copy of this script from inside it." >&2
+  echo "  If the destination looks right, check the line above: the COPY that is running" >&2
+  echo "  decides which repository is expected, and a symlink or a stray copy on your" >&2
+  echo "  PATH can make that a repository you did not mean to name." >&2
   exit 1
 fi
 
@@ -586,6 +686,106 @@ _require_uncommittable "private/verify"
 _require_uncommittable "private/household.yaml"
 
 # ---------------------------------------------------------------------------
+# SOURCE GUARD (issue #184, /review) -- everything the SOURCE has to satisfy,
+# decided here, before the first byte, for the same reason every destination
+# check is.
+#
+# These source-side questions used to be asked AFTER six cp invocations had already
+# copied household.yaml, the Green Button and SAM globs, gas.csv, the whole of
+# electric-bills/ and the billing-history export. So a source whose venv lives
+# somewhere else, or a has_gas:true household whose gas-bills/ had simply not
+# been pulled yet, exited 1 with a message about the SOURCE -- having already
+# written this household's intake file and fifty-odd bill PDFs into the
+# destination, with nothing in the output saying the destination was now
+# half-staged. Every refusal in this file claims "nothing was written"; on
+# those two paths the claim was false.
+#
+# Hoisting them is possible because EVERY predicate here reads only $SRC: the
+# venv is $SRC/.venv/bin/python, gas-bills/ is $SRC/private/1-raw-data/, and
+# has_gas comes from $SRC's own household.yaml read through $SRC's own
+# interpreter. None consults $DST, so none needed the copies to have happened.
+# (household.py resolves its repo root from the CWD before its own __file__ --
+# unchanged by the move, since the CWD is the same on both sides of it.)
+#
+# The invariant this establishes is the whole-script one: EITHER THIS SCRIPT
+# WRITES NOTHING, OR IT COMPLETES. Not "the guard block writes nothing".
+#
+# HAS_GAS is decided here and consumed twice below -- once to scope the
+# path scan (a gas-bills/ this run will not write must not be scanned for
+# links, or the scan refuses a caller over files it never touches) and once
+# for the copy itself.
+# ---------------------------------------------------------------------------
+if [ ! -x "$SRC/.venv/bin/python" ]; then
+  _refuse "the source has no virtualenv interpreter" \
+    "source:      $SRC" \
+    "path:        $SRC/.venv/bin/python" \
+    "found:       no executable there" \
+    "expected:    the venv the pipeline runs on, since this script reads the" \
+    "             source's household.yaml with it" \
+    "Set it up first (CLAUDE.md \"Commands\"):" \
+    "  python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt"
+fi
+
+# Read the authoritative flag with the SAME YAML parser the pipeline itself
+# uses (household.py's own get(), via yaml.safe_load) rather than a text
+# scan (Codex review, issue #33, pass 3): a text-based grep either matches
+# an unrelated earlier mention of "has_gas:" in a comment, or rejects a
+# valid PyYAML boolean spelling household.py itself accepts (True/TRUE/yes,
+# not just lowercase true) -- both would fail this script on a household
+# configuration the real pipeline runs on without complaint. A missing
+# gas-bills/ on a has_gas:true household must fail loudly here, not two
+# steps later inside parse_bills.py against a destination this script
+# already reported as fully staged; a stale gas-bills/ on a has_gas:false
+# household is equally a real inconsistency worth stopping for. Mirrors
+# parse_bills.py's own fail-closed has_gas invariant exactly.
+if ! HAS_GAS=$(PYTHONPATH="$SRC/analysis" "$SRC/.venv/bin/python" -c \
+  "import household as hh; print(hh.get('household.has_gas'))"); then
+  _refuse "the source's household.yaml could not be read" \
+    "source:      $SRC" \
+    "path:        $SRC/private/household.yaml" \
+    "found:       household.py exited non-zero reading household.has_gas" \
+    "expected:    a readable intake file, since which bill directories this" \
+    "             script stages depends on it (DATA-SOURCES-CHEATSHEET.md)"
+fi
+case "$HAS_GAS" in
+  True)
+    [ -d "$SRC/private/1-raw-data/gas-bills" ] || \
+      _refuse "the source's household.has_gas is true but its gas bills are missing" \
+        "source:      $SRC" \
+        "path:        $SRC/private/1-raw-data/gas-bills" \
+        "found:       no such directory" \
+        "expected:    the detailed gas statements parse_bills.py requires of a" \
+        "             has_gas household -- staging without them produces a" \
+        "             destination that fails two steps later, inside the parser"
+    ;;
+  False)
+    [ ! -d "$SRC/private/1-raw-data/gas-bills" ] || \
+      _refuse "the source's household.has_gas is false but gas bills are present" \
+        "source:      $SRC" \
+        "path:        $SRC/private/1-raw-data/gas-bills" \
+        "found:       a directory that a has_gas:false household should not have" \
+        "expected:    no gas-bills/, or has_gas:true in household.yaml -- this is" \
+        "             a real inconsistency in the source, not a staging detail"
+    ;;
+  *)
+    _refuse "the source's household.has_gas is not a boolean" \
+      "source:      $SRC" \
+      "found:       ${HAS_GAS:-<empty>} from household.py" \
+      "expected:    True or False -- see household.example.yaml"
+    ;;
+esac
+
+# The CAISO day-cache is OPTIONAL, so its absence is not a refusal -- but the
+# decision is a source-side one and is taken here, once, so the path scan below
+# and the copy further down are driven by the same answer. Scanning a subtree
+# this run will not write is precisely the defect this reorganization removes.
+STAGE_CAISO=0
+if [ -d "$SRC/private/1-raw-data/caiso_raw" ] && \
+   ls "$SRC"/private/1-raw-data/caiso_raw/caiso_co2_*.csv >/dev/null 2>&1; then
+  STAGE_CAISO=1
+fi
+
+# ---------------------------------------------------------------------------
 # DESTINATION PATH GUARD (issue #184, adversarial review) -- the guard above
 # decides WHICH TREE may be written to; this one decides which PATHS INSIDE it
 # are real. Both run before the first byte.
@@ -887,13 +1087,39 @@ _check_dir_slot "$DST_REAL/private"
 _check_dir_slot "$DST_REAL/private/1-raw-data"
 _check_dir_slot "$DST_REAL/private/verify"
 
-# 1-raw-data is scanned in full, because `cp -R` below writes anywhere beneath
-# it (electric-bills/, gas-bills/, caiso_raw/) and because the glob copies pick
-# their destination names from the source, so no fixed list of leaves would
-# cover them. private/verify is NOT scanned in full: this script writes exactly
-# three named files there, while the sandbox around them legitimately holds a
-# venv whose bin/ entries are symlinks -- scanning it would refuse a normal
-# re-stage over a working sandbox for links this script never touches.
+# WHAT THE THREE SCANS COVER, and why it is not all of private/1-raw-data
+# (issue #184, /review).
+#
+# The recursive scans used to walk the whole of private/1-raw-data. `cp -R`
+# writes only three subtrees beneath it -- electric-bills/, gas-bills/ and
+# caiso_raw/ -- plus the named and glob-named files at its top level. So a
+# destination whose dsgs_events/ or sdge_nbt_export_rates/ had come back from a
+# `cp -al` or `rsync --link-dest` backup (both deduplicate by giving one inode a
+# second name) was refused with "the destination contains hard-linked file(s)"
+# for files `cp` would never open -- and the remedy the message gave, delete
+# them and re-run, was WRONG, because this script does not stage those two
+# directories back. Deleting them on that advice loses them. A refusal a correct
+# caller cannot act on is the shape that gets guards disabled; both directories
+# are documented as never staged at the top of this file, and now the scans
+# agree with that documentation instead of contradicting it.
+#
+# So each scanned subtree gets the full three-check treatment -- and the
+# subtree's own slot is checked first, because `[ -d ]` is TRUE for a symbolic
+# link to a directory: without _check_dir_slot on the subtree itself, a link at
+# private/1-raw-data/electric-bills would be walked THROUGH rather than refused,
+# and a FIFO there would be skipped by all three scans.
+#
+# The top-level leaves are named instead of scanned, and the two glob copies
+# contribute their destination names from the SOURCE basenames -- which is
+# exactly what `cp` will write, so the list is complete by construction rather
+# than by hand. A pattern that matches nothing in the source stays literal and
+# simply matches no destination path, which every check below treats as absent.
+#
+# private/verify is still NOT scanned in full: this script writes exactly three
+# named files there, while the sandbox around them legitimately holds a venv
+# whose bin/ entries are symlinks -- scanning it would refuse a normal re-stage
+# over a working sandbox for links this script never touches. Same principle,
+# applied consistently now.
 #
 # The hard-link scan and the special-file scan cover exactly the same ground as
 # the symbolic-link one, for the same reason: those are the paths `cp` and
@@ -901,13 +1127,32 @@ _check_dir_slot "$DST_REAL/private/verify"
 # not whether it can -- a symbolic link redirects the write, a second name on
 # the inode rewrites a file elsewhere in place, and a FIFO or device node hands
 # the bytes to a process. Three checks, one surface; keep them in step.
-_reject_links_under "$DST_REAL/private/1-raw-data"
-_reject_special_under "$DST_REAL/private/1-raw-data"
-_reject_multilinked_under "$DST_REAL/private/1-raw-data"
-for _leaf in "$DST_REAL/private/household.yaml" \
-             "$DST_REAL/private/verify/usage.csv" \
-             "$DST_REAL/private/verify/samA.csv" \
-             "$DST_REAL/private/verify/samB.csv"; do
+# The list is built from the SAME two conditions the copies below use -- the
+# validated HAS_GAS, and STAGE_CAISO decided in the source guard -- so a subtree
+# this run will not write is not scanned for links it will never follow. A
+# gas-bills/ left in a has_gas:false destination is stale, not a hazard.
+_scanned_subtrees="electric-bills"
+[ "$HAS_GAS" != True ] || _scanned_subtrees="$_scanned_subtrees gas-bills"
+[ "$STAGE_CAISO" != 1 ] || _scanned_subtrees="$_scanned_subtrees caiso_raw"
+for _sub in $_scanned_subtrees; do
+  _check_dir_slot "$DST_REAL/private/1-raw-data/$_sub"
+  _reject_links_under "$DST_REAL/private/1-raw-data/$_sub"
+  _reject_special_under "$DST_REAL/private/1-raw-data/$_sub"
+  _reject_multilinked_under "$DST_REAL/private/1-raw-data/$_sub"
+done
+
+_dst_leaves=("$DST_REAL/private/household.yaml"
+             "$DST_REAL/private/verify/usage.csv"
+             "$DST_REAL/private/verify/samA.csv"
+             "$DST_REAL/private/verify/samB.csv"
+             "$DST_REAL/private/1-raw-data/gas.csv"
+             "$DST_REAL/private/1-raw-data/electric_billing_history_2024-2026.csv")
+for _srcfile in "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv \
+                "$SRC"/private/1-raw-data/enphase_sam8760_*.csv; do
+  [ -e "$_srcfile" ] || continue
+  _dst_leaves[${#_dst_leaves[@]}]="$DST_REAL/private/1-raw-data/$(basename -- "$_srcfile")"
+done
+for _leaf in "${_dst_leaves[@]}"; do
   _reject_link "$_leaf"
   _reject_special "$_leaf"
   _reject_hardlink "$_leaf"
@@ -925,50 +1170,17 @@ cp -R "$SRC/private/1-raw-data/electric-bills"        "$DST_REAL/private/1-raw-d
 cp "$SRC/private/1-raw-data/electric_billing_history_2024-2026.csv" \
    "$DST_REAL/private/1-raw-data/"
 
-# Read the authoritative flag with the SAME YAML parser the pipeline itself
-# uses (household.py's own get(), via yaml.safe_load) rather than a text
-# scan (Codex review, issue #33, pass 3): a text-based grep either matches
-# an unrelated earlier mention of "has_gas:" in a comment, or rejects a
-# valid PyYAML boolean spelling household.py itself accepts (True/TRUE/yes,
-# not just lowercase true) -- both would fail this script on a household
-# configuration the real pipeline runs on without complaint. A missing
-# gas-bills/ on a has_gas:true household must fail loudly here, not two
-# steps later inside parse_bills.py against a destination this script
-# already reported as fully staged; a stale gas-bills/ on a has_gas:false
-# household is equally a real inconsistency worth stopping for. Mirrors
-# parse_bills.py's own fail-closed has_gas invariant exactly.
-if [ ! -x "$SRC/.venv/bin/python" ]; then
-  echo "stage-private-data.sh: $SRC/.venv/bin/python not found -- set up the venv first (CLAUDE.md Commands)" >&2
-  exit 1
+# The gas statements, on the flag the SOURCE GUARD above already validated --
+# both directions of it, so by here this is a copy and not a decision.
+if [ "$HAS_GAS" = True ]; then
+  cp -R "$SRC/private/1-raw-data/gas-bills" "$DST_REAL/private/1-raw-data/"
 fi
-HAS_GAS=$(PYTHONPATH="$SRC/analysis" "$SRC/.venv/bin/python" -c \
-  "import household as hh; print(hh.get('household.has_gas'))")
-case "$HAS_GAS" in
-  True)
-    if [ ! -d "$SRC/private/1-raw-data/gas-bills" ]; then
-      echo "stage-private-data.sh: household.has_gas is true but $SRC/private/1-raw-data/gas-bills is missing" >&2
-      exit 1
-    fi
-    cp -R "$SRC/private/1-raw-data/gas-bills" "$DST_REAL/private/1-raw-data/"
-    ;;
-  False)
-    if [ -d "$SRC/private/1-raw-data/gas-bills" ]; then
-      echo "stage-private-data.sh: household.has_gas is false but $SRC/private/1-raw-data/gas-bills exists (stale?)" >&2
-      exit 1
-    fi
-    ;;
-  *)
-    echo "stage-private-data.sh: unexpected household.has_gas value from household.py: ${HAS_GAS:-empty}" >&2
-    exit 1
-    ;;
-esac
 
 cp "$SRC"/private/1-raw-data/Electric_15_Minute_*.csv "$DST_REAL/private/verify/usage.csv"
 cp "$SRC/private/1-raw-data/enphase_sam8760_2026.csv" "$DST_REAL/private/verify/samA.csv"
 cp "$SRC/private/1-raw-data/enphase_sam8760_2025.csv" "$DST_REAL/private/verify/samB.csv"
 
-if [ -d "$SRC/private/1-raw-data/caiso_raw" ] && \
-   ls "$SRC"/private/1-raw-data/caiso_raw/caiso_co2_*.csv >/dev/null 2>&1; then
+if [ "$STAGE_CAISO" = 1 ]; then
   cp -R "$SRC/private/1-raw-data/caiso_raw" "$DST_REAL/private/1-raw-data/"
 fi
 

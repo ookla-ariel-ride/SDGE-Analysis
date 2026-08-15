@@ -289,7 +289,7 @@ def case_the_scanner_catches_single_quoted_references_too():
     return "a single-quoted private-input reference is detected"
 
 
-def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
+def _synthetic_src(td, household_yaml_text, has_gas_bills_dir, with_venv=True):
     """A minimal SRC tree the script can run against: just enough of
     analysis/household.py's own repo-root walk-up (analysis/+data/) for it
     to resolve correctly when imported with PYTHONPATH pointed at this
@@ -302,14 +302,22 @@ def _synthetic_src(td, household_yaml_text, has_gas_bills_dir):
     running this test -- rather than symlinking ROOT/.venv: CI (tests.yml)
     never runs `python -m venv`, it just `pip install`s into whatever
     interpreter actions/setup-python provides, so ROOT/.venv does not exist
-    on a runner and a symlink to it would be dangling (issue #102 review)."""
+    on a runner and a symlink to it would be dangling (issue #102 review).
+
+    `with_venv=False` builds the same tree WITHOUT that stand-in, which is the
+    shape of a source whose venv lives somewhere else -- the first of the
+    source-side checks, and one of the two the destination must survive
+    untouched. The tree is built without it rather than by deleting it
+    afterwards: the stand-in is a symlink to the live interpreter, and nothing
+    in this suite may unlink or chmod its way toward that."""
     src = pathlib.Path(td) / "src"
     (src / "analysis").mkdir(parents=True)
     (src / "data").mkdir(parents=True)
     (src / "private" / "1-raw-data").mkdir(parents=True)
     shutil.copy2(ANALYSIS / "household.py", src / "analysis" / "household.py")
-    (src / ".venv" / "bin").mkdir(parents=True)
-    (src / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    if with_venv:
+        (src / ".venv" / "bin").mkdir(parents=True)
+        (src / ".venv" / "bin" / "python").symlink_to(sys.executable)
     (src / "private" / "household.yaml").write_text(household_yaml_text)
     raw = src / "private" / "1-raw-data"
     (raw / "gas.csv").touch()
@@ -455,6 +463,14 @@ def case_refuses_a_different_repository():
         result = _run_script(src, dst, cwd=src)
         _assert_refused(result, dst, before, "an unrelated git repository")
         assert "DIFFERENT repository" in result.stderr, result.stderr
+        # The refusal has to name the INVOKING path too (issue #184, /review
+        # finding 3): which copy is running is what fixes the expected common
+        # dir, so a run refused because the wrong copy was invoked -- through a
+        # symlink, or a stray copy on $PATH -- otherwise reads as an accusation
+        # against a destination that is perfectly fine.
+        assert str(SCRIPT) in result.stderr, (
+            "the message does not say which copy of the script decided the "
+            "expected repository: " + result.stderr)
     return "an unrelated git repository is refused and left untouched"
 
 
@@ -617,7 +633,13 @@ def case_refuses_a_symlinked_directory_planted_below_a_legitimate_root():
     legitimate linked worktree of this checkout -- so the repository guard
     above has nothing to object to and the write paths are what redirect."""
     checked = []
-    for planted in ("private/1-raw-data", "private/verify"):
+    # electric-bills is here because of how the scans are scoped (issue #184,
+    # /review finding 4): `[ -d ]` is TRUE for a symbolic link to a directory,
+    # so a per-subtree scan would happily WALK a linked electric-bills instead
+    # of refusing it. The subtree's own slot check is what closes that, and this
+    # is the case that proves it did not go missing.
+    for planted in ("private/1-raw-data", "private/verify",
+                    "private/1-raw-data/electric-bills"):
         with tempfile.TemporaryDirectory() as td:
             src = _synthetic_src(td, "household:\n  has_gas: false\n",
                                  has_gas_bills_dir=False)
@@ -1753,6 +1775,264 @@ def case_a_fifo_with_a_reader_attached_never_receives_the_archive():
                 os.close(fd)
     return ("a FIFO whose read end is held open receives nothing: the run is "
             "refused before cp can hand the archive to the process reading it")
+
+
+# --------------------------------------------------------------------------
+# issue #184, /review: three of the four cases below are the same shape, and
+# it is the shape that gets guards DISABLED rather than fixed -- a guard that
+# refuses a correct caller, or a message that claims something untrue. The
+# fourth (CDPATH) is a guard that validates one directory and writes into
+# another, which is the original incident wearing a different hat.
+# --------------------------------------------------------------------------
+def _repo_with_two_worktrees(td, wt_basename="mystery", name="cdpath-repo"):
+    """A repository of its own, the script copy in its MAIN checkout, and TWO
+    registered linked worktrees that share a BASENAME under different parents.
+
+    Both are legitimate destinations as far as every guard is concerned, so
+    the only thing that decides which one a bare relative `mystery` names is
+    how the script resolves that path -- which is exactly what CDPATH moves.
+    Returns (the_script_copy_to_run, the_one_the_operator_names,
+    the_one_reachable_only_through_CDPATH)."""
+    main = pathlib.Path(td) / name
+    made = subprocess.run(["git", "init", "-q", str(main)],
+                          capture_output=True, text=True)
+    if made.returncode != 0:
+        raise SkipCase(f"could not build a repository fixture: {made.stderr}")
+    (main / "README.md").write_text("a checkout of its own\n")
+    (main / ".gitignore").write_text("private/\n")
+    for cmd in (["add", "-A"],
+                ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                 "commit", "-qm", "initial"]):
+        r = subprocess.run(["git", "-C", str(main), *cmd],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SkipCase(f"could not commit in the fixture: {r.stderr}")
+    its_own_copy = main / SCRIPT.name
+    its_own_copy.write_text(SCRIPT.read_text())
+    made_worktrees = []
+    for parent in ("named-by-the-operator", "reachable-only-through-cdpath"):
+        p = pathlib.Path(td) / parent
+        p.mkdir()
+        wt = p / wt_basename
+        r = subprocess.run(["git", "-C", str(main), "worktree", "add", "--detach",
+                            str(wt), "HEAD"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SkipCase(f"could not add a worktree to the fixture: {r.stderr}")
+        made_worktrees.append(wt)
+    return its_own_copy, made_worktrees[0], made_worktrees[1]
+
+
+@case
+def case_cdpath_cannot_redirect_a_bare_relative_destination():
+    """issue #184, /review finding 1. Every guard in this script decides its
+    verdict about a directory `cd` picked, and `cd` honours CDPATH: POSIX
+    exempts only an operand starting with `/`, `./` or `..`, so `.` is safe
+    and a BARE RELATIVE name like `mystery` is not. With CDPATH set, the run
+    validated and staged into a DIFFERENT registered worktree while the
+    `./mystery` the operator named stayed empty -- the archive somewhere other
+    than the path on the command line, silently, and with every containment
+    check passing because they all ran against the redirected directory.
+
+    Both fixtures are registered worktrees of the same throwaway repository, so
+    neither is refusable on any other ground; the only difference between a
+    correct run and the defect is WHICH of the two ends up holding the archive.
+    The CDPATH redirection is asserted as a live premise first, so this case
+    announces itself stale rather than passing quietly if some future bash
+    stops searching CDPATH here."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        script, named, elsewhere = _repo_with_two_worktrees(td)
+        assert named.name == elsewhere.name and named.parent != elsewhere.parent
+        env = dict(os.environ, CDPATH=str(elsewhere.parent))
+        # The premise: an unfixed `cd -- mystery` really does land elsewhere.
+        probe = subprocess.run(
+            ["bash", "-c", 'cd -- "$1" >/dev/null 2>&1 && pwd -P', "_", named.name],
+            capture_output=True, text=True, cwd=str(named.parent), env=env)
+        if probe.stdout.strip() != str(elsewhere.resolve()):
+            raise SkipCase("this bash no longer resolves a bare relative "
+                           "directory through CDPATH, so there is no "
+                           "redirection left for this case to close")
+        elsewhere_before = _snapshot(elsewhere)
+        result = _run_script(src, named.name, cwd=named.parent, script=script,
+                             env=env, timeout=120)
+        assert result.returncode == 0, (
+            f"the worktree the operator actually named must still be accepted: "
+            f"{result.stderr}")
+        for required in ("private/household.yaml",
+                         "private/1-raw-data/gas.csv",
+                         "private/verify/usage.csv"):
+            assert (named / required).is_file(), (
+                f"{required} was not staged into the destination named on the "
+                f"command line ({named})")
+        after = _snapshot(elsewhere)
+        assert after == elsewhere_before, (
+            f"the archive was staged into a worktree the operator never named, "
+            f"reached only through CDPATH: {sorted(after ^ elsewhere_before)}")
+        assert "CDPATH" in result.stderr, (
+            "an inherited CDPATH was cleared silently -- the sanitizing block "
+            "announces everything it ignores: " + result.stderr)
+    return ("CDPATH cannot redirect a bare relative destination: the archive "
+            "lands in the worktree named on the command line and nowhere else")
+
+
+@case
+def case_a_failing_source_check_leaves_the_destination_untouched():
+    """issue #184, /review finding 2. The venv check and the two has_gas
+    checks read only $SRC, and they used to run AFTER six cp invocations --
+    so a source whose venv lives elsewhere, or a has_gas:true household whose
+    gas-bills/ had not been pulled, exited 1 with a message about the SOURCE
+    having already written household.yaml and the whole bill directory into
+    the destination, with nothing saying the destination was now half-staged.
+
+    The invariant is "either the script writes nothing, or it completes", not
+    "the guard block writes nothing", so the assertion here is the
+    destination's WHOLE CONTENTS before and after -- an exit code cannot tell
+    a refusal from a half-finished stage."""
+    checked = []
+    for label, yaml_text, gas_dir, venv, needle in (
+            ("a source whose venv lives somewhere else",
+             "household:\n  has_gas: false\n", False, False, ".venv/bin/python"),
+            ("a has_gas:true source whose gas-bills/ has not been pulled",
+             "household:\n  has_gas: true\n", False, True, "gas-bills"),
+            ("a has_gas:false source carrying a stale gas-bills/",
+             "household:\n  has_gas: false\n", True, True, "gas-bills")):
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td, yaml_text, has_gas_bills_dir=gas_dir,
+                                 with_venv=venv)
+            with _linked_worktree(td) as dst:
+                before = _snapshot(dst)
+                result = _run_script(src, dst, cwd=src, timeout=120)
+                assert result.returncode != 0, (
+                    f"{label}: expected a refusal, got exit 0\n{result.stdout}")
+                after = _snapshot(dst)
+                assert after == before, (
+                    f"{label}: the run failed on a SOURCE check but had already "
+                    f"written into the destination: {sorted(after ^ before)}")
+                assert needle in result.stderr, (
+                    f"{label}: the message does not say what was wrong with the "
+                    f"source: {result.stderr}")
+                assert "nothing was written" in result.stderr, (
+                    f"{label}: the refusal does not make the claim it is now "
+                    f"entitled to make: {result.stderr}")
+            checked.append(label)
+    return (f"a source-side refusal ({len(checked)} shapes) leaves the "
+            f"destination byte-for-byte as it found it")
+
+
+@case
+def case_invoked_through_a_symlink_from_inside_another_repository():
+    """issue #184, /review finding 3. SELF_DIR came from ${BASH_SOURCE[0]}
+    unresolved, so a `~/bin/stage-private-data.sh -> <checkout>/...` symlink
+    made SELF_DIR `~/bin`. If that directory sits inside a versioned dotfiles
+    repository -- the common case -- SELF_GIT became the DOTFILES repo, and
+    EVERY legitimate destination was refused as "belongs to a DIFFERENT
+    repository", naming the destination when the invocation was at fault.
+
+    The fixture is that exact shape: a repository of its own whose main
+    checkout is the destination, its script copy in a linked worktree, and the
+    invocation through a symlink inside a second, unrelated repository. The
+    two repositories are asserted to be genuinely different first, or an
+    acceptance here would prove nothing."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
+        dst, its_own_copy = _throwaway_checkout(td, "private/\n")
+        dotfiles = pathlib.Path(td) / "dotfiles"
+        (dotfiles / "bin").mkdir(parents=True)
+        made = subprocess.run(["git", "init", "-q", str(dotfiles)],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            raise SkipCase(f"could not build a dotfiles fixture: {made.stderr}")
+        (dotfiles / "README.md").write_text("someone's versioned dotfiles\n")
+        for cmd in (["add", "-A"],
+                    ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                     "commit", "-qm", "initial"]):
+            r = subprocess.run(["git", "-C", str(dotfiles), *cmd],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SkipCase(f"could not commit in the dotfiles fixture: {r.stderr}")
+        entry = dotfiles / "bin" / SCRIPT.name
+        entry.symlink_to(its_own_copy)
+        # The premises: the invoking directory really is inside a DIFFERENT
+        # repository from the one the real script lives in, and the
+        # destination really belongs to the latter.
+        assert _common_dir_of(entry.parent) != _common_dir_of(its_own_copy.parent), (
+            "the fixture's two repositories are the same one, so this case "
+            "would pass whether or not the symlink is resolved")
+        assert _common_dir_of(dst) == _common_dir_of(its_own_copy.parent)
+        result = _run_script(src, dst, cwd=src, script=entry, timeout=120)
+        assert result.returncode == 0, (
+            f"a legitimate destination was refused because the script was "
+            f"invoked through a symlink from another repository: {result.stderr}")
+        for required in ("private/household.yaml",
+                         "private/1-raw-data/gas.csv",
+                         "private/verify/usage.csv"):
+            assert (dst / required).is_file(), f"{required} was not staged"
+    return ("a script reached through a symlink inside an unrelated repository "
+            "still accepts its own checkout's worktree")
+
+
+@case
+def case_the_recursive_scans_cover_only_what_the_copies_write():
+    """issue #184, /review finding 4. The three recursive scans walked ALL of
+    private/1-raw-data, while `cp -R` writes only electric-bills/, gas-bills/
+    and caiso_raw/ plus the named and glob-named files. dsgs_events/ and
+    sdge_nbt_export_rates/ are documented as never staged -- so a destination
+    whose dsgs_events/ came back from a `cp -al` or `rsync --link-dest` backup
+    was refused for files `cp` would never open, and the refusal's remedy
+    ("delete them and re-run; the copies below stage these files for you") was
+    FALSE: this script does not stage them back.
+
+    The case has to DISCRIMINATE, not merely pass: the same planted shape --
+    a hard link and a FIFO -- goes under a not-staged subtree and under a
+    staged one, and the run must be accepted in the first and refused in the
+    second. A guard scoped to nothing at all would fail the second half."""
+    checked = []
+    for sub, is_written in (("dsgs_events", False),
+                            ("sdge_nbt_export_rates", False),
+                            ("electric-bills", True)):
+        for kind in ("a hard link", "a FIFO"):
+            with tempfile.TemporaryDirectory() as td:
+                src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                     has_gas_bills_dir=False)
+                ext = _external_target(td)
+                outside = ext / "an_unrelated_file.txt"
+                outside.write_text("someone else's file\n")
+                with _linked_worktree(td) as dst:
+                    planted = dst / "private" / "1-raw-data" / sub / "restored.csv"
+                    planted.parent.mkdir(parents=True)
+                    if kind == "a hard link":
+                        os.link(outside, planted)
+                        assert os.stat(planted).st_nlink == 2
+                    else:
+                        os.mkfifo(planted)
+                        assert stat.S_ISFIFO(os.stat(planted).st_mode)
+                    before = _snapshot(dst)
+                    result = _run_script(src, dst, cwd=src, timeout=60)
+                    if is_written:
+                        _assert_refused(result, dst, before,
+                                        f"{kind} under {sub}/")
+                    else:
+                        assert result.returncode == 0, (
+                            f"{kind} under {sub}/ -- a subtree this script "
+                            f"never writes -- was refused, and the refusal's "
+                            f"remedy is wrong because the script does not "
+                            f"stage it back: {result.stderr}")
+                        for required in ("private/household.yaml",
+                                         "private/1-raw-data/gas.csv",
+                                         "private/verify/usage.csv"):
+                            assert (dst / required).is_file(), required
+                        if kind == "a hard link":
+                            assert outside.read_text() == "someone else's file\n", (
+                                "the accepted run rewrote the file outside the "
+                                "worktree that shares the planted inode")
+                        else:
+                            assert stat.S_ISFIFO(os.stat(planted).st_mode), (
+                                "the accepted run wrote to the FIFO it was "
+                                "supposed to be ignoring")
+                checked.append(f"{kind} under {sub}/")
+    return (f"the scans discriminate: {len(checked)} planted shapes, refused "
+            f"under the subtrees the copies write and ignored under the two "
+            f"documented never-staged ones")
 
 
 @case
