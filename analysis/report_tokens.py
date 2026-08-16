@@ -895,13 +895,14 @@ KNOWN_GAPS = {
         "data/*.json or *.csv extracts the dollar figure from it, so there is no "
         "public-ok source for the exact number the tool quoted"),
     "EXPANSION_PAYBACK_YEARS": (
-        "no committed generator computes a marginal-panel-expansion payback; the "
-        "figure quoted in the hand-authored index.html (13-16 yr) is disclosed "
-        "there as coming from unarchived workpaper arithmetic, not a script or a "
-        "data/*.json artifact"),
-    "MARGINAL_EXPORT_VALUE": (
-        "companion figure to EXPANSION_PAYBACK_YEARS (the marginal new-panel kWh's "
-        "export value) -- same gap, no committed script or artifact computes it"),
+        "a payback needs a PRICE as well as a yield, and the price is the half "
+        "this repo does not have. Both other terms are now derived -- the array's "
+        "specific yield off data/enphase_daily_production.csv, and what an added "
+        "kWh earns off MARGINAL_EXPORT_VALUE below -- but retrofit dollars per "
+        "watt is a fact about a local installer market on a date, which nothing "
+        "committed here measures. index.html states the arithmetic and labels the "
+        "per-watt band as the market assumption it is; a token would state the "
+        "years as though the assumption were a measurement"),
     "ELECTRIFICATION_VERDICT_SHORT": (
         "data/heat_pump_conversion.json now prices the space-heating side "
         "(install cost, three COP scenarios, real per-interval-billed "
@@ -2491,8 +2492,15 @@ def _s8_verdict_short(ctx):
                          grandfathering_low=nem["low"], grandfathering_high=nem["high"])
     exp_pct = round(_json("report_data.json")["totals"]["exp"] /
                      _annual_production_kwh(ctx) * 100)
+    # NOT "at low value". That clause priced the ALL-HOURS export share at the
+    # midday cell of the credit map -- the qualitative form of the same
+    # mis-scoping MARGINAL_EXPORT_VALUE now derives away, and the section's
+    # most-read sentence was where it read hardest. The exports are worth
+    # MARGINAL_EXPORT_VALUE, which is nearly twice the super-off-peak import
+    # they would displace, so "low value" is not the reason the answer is no.
+    # The reason is the clause that follows it, and that one is artifact-backed.
     return (f"No, no, and not yet — the array already exports {exp_pct}% of "
-            f"production at low value, and expansion risks the "
+            f"production, and expansion risks the "
             f"${low:,.0f}–{high:,.0f}/yr NEM 2.0 grandfathering")
 
 
@@ -3437,13 +3445,8 @@ def _midday_export_share(ctx):
     before any share is taken. If the weighted profiles no longer rebuild the
     artifact's own annual exports, they are not describing this window and
     nothing derived from them may be published (CLAUDE.md section 0)."""
-    rd = _json("report_data.json")
-    start, end = _analysis_window_dates()
-    days = {"S": 0, "W": 0}
-    d = start
-    while d <= end:
-        days["S" if d.month in R.SUMMER_MONTHS else "W"] += 1
-        d += dt.timedelta(days=1)
+    days = _season_day_counts()
+    profiles = _hourly_export_profiles()
     lo, hi, _lab = _cheap_run()
     # The profiles are hour-of-day buckets, so a window that starts or ends
     # mid-hour cannot be summed out of them -- slicing at int(lo):int(hi)
@@ -3456,13 +3459,67 @@ def _midday_export_share(ctx):
             "buckets and cannot resolve a window boundary inside an hour")
     total = midday = 0.0
     for seas, n in days.items():
+        exp = profiles[seas]
+        total += sum(exp) * n
+        midday += sum(exp[int(lo):int(hi)]) * n
+    _assert_profiles_rebuild_the_year("S2_VERDICT", "when exports happen", total)
+    return midday / total
+
+
+# ---------------------------------------------------------------------------
+# THE ONE READER BEHIND EVERY CLAIM THIS MODULE MAKES ABOUT EXPORT HOURS.
+# Two tokens ask report_data.json's hour-of-day export profiles a question --
+# S2_VERDICT asks WHEN the exports leave, MARGINAL_EXPORT_VALUE asks WHAT THEY
+# ARE WORTH -- and both answers are only this window's if the profiles still
+# rebuild the artifact's own annual export total. Split out rather than copied
+# so the two cannot end up validating the same artifact to different standards,
+# or reading a differently-shaped one without noticing.
+# ---------------------------------------------------------------------------
+def _hourly_export_profiles():
+    """report_data.json's two hour-of-day export profiles, shape-checked.
+
+    Returned as committed: {"S": [24 floats], "W": [24 floats]}, each a MEAN
+    DAY for its own tariff season. Callers scale them by their own day counts,
+    because the two questions need different splits of the window -- the midday
+    SHARE needs only the season (its window is super-off-peak on every day
+    type), the export VALUE needs the day type too."""
+    rd = _json("report_data.json")
+    out = {}
+    for seas in ("S", "W"):
         exp = rd[f"hourly_{seas}"]["exp"]
         if len(exp) != 24:
             raise SystemExit(f"report_tokens: data/report_data.json hourly_{seas}.exp has "
                              f"{len(exp)} hours, not 24 -- it is not an hour-of-day profile")
-        total += sum(exp) * n
-        midday += sum(exp[int(lo):int(hi)]) * n
-    published = rd["totals"]["exp"]
+        out[seas] = exp
+    return out
+
+
+def _season_day_counts():
+    """Days of the analysis window per tariff season."""
+    start, end = _analysis_window_dates()
+    days = {"S": 0, "W": 0}
+    d = start
+    while d <= end:
+        days["S" if d.month in R.SUMMER_MONTHS else "W"] += 1
+        d += dt.timedelta(days=1)
+    return days
+
+
+def _assert_profiles_rebuild_the_year(token, subject, total):
+    """Refuse to publish anything off the profiles unless they still describe
+    this window.
+
+    RELATIONSHIP, `total` against data/report_data.json:totals.exp: SAME
+    QUANTITY, INDEPENDENTLY COMPUTED. Both are the analysis window's exported
+    kWh -- one summed by analysis/build_report_data.py straight off the meter
+    intervals into totals.exp, the other rebuilt here by weighting that same
+    generator's per-season MEAN-DAY profiles by the window's real day counts.
+    Neither is derived from the other, so they are entitled to agree, and a
+    disagreement past the rounding allowance means the profiles are describing
+    a different year than the totals are. Evidence: they rebuild to 0.001% on
+    the committed artifact (see _EXPORT_REBUILD_TOLERANCE above for why the
+    allowance is publication rounding and nothing more)."""
+    published = _json("report_data.json")["totals"]["exp"]
     if total <= 0:
         raise SystemExit("report_tokens: data/report_data.json's hour-of-day export "
                          "profiles carry no exported kWh; there is no timing to report")
@@ -3473,17 +3530,93 @@ def _midday_export_share(ctx):
     # an ordinary reason for totals.exp to be zero.
     if published <= 0:
         raise SystemExit(
-            f"report_tokens: S2_VERDICT cannot say when exports happen -- "
+            f"report_tokens: {token} cannot say {subject} -- "
             f"data/report_data.json:totals.exp is {published:,.0f} kWh, so there is no "
             "year of exports to take a share of")
     if abs(total - published) / published > _EXPORT_REBUILD_TOLERANCE:
         raise SystemExit(
-            f"report_tokens: S2_VERDICT refuses to say when exports happen -- "
+            f"report_tokens: {token} refuses to say {subject} -- "
             f"data/report_data.json's season-weighted hour-of-day profiles rebuild "
             f"{total:,.0f} kWh of exports against its own totals.exp of {published:,.0f} "
             f"kWh, past the {_EXPORT_REBUILD_TOLERANCE:.0%} rebuild bound, so the profiles "
             f"do not describe this window")
-    return midday / total
+
+
+def _marginal_export_value(ctx):
+    """What one more exported kWh is worth to this household, in $/kWh:
+    rates.credit() weighted by WHEN the array actually exports.
+
+    THE QUESTION THIS ANSWERS, and the one it does not. Section 8 asks what a
+    marginal new-panel kWh earns. The array already exports 60% of what it
+    makes, so the daytime hours a new panel would add to are hours whose load
+    is already covered -- the added kWh leaves as an export rather than
+    displacing an import, and its price is the EXPORT CREDIT, not the import
+    rate. That is one figure for the whole year, and it is not any single cell
+    of the credit map: on this profile 63% of the exports leave in the daytime
+    super-off-peak run and credit around 7.6 cents, while the remaining third
+    leaves in off-peak and on-peak hours that credit at UDC+CEA, six to eleven
+    times higher. Quoting the super-off-peak cell as the marginal kWh's value
+    prices a third of the output at the wrong end of the map.
+
+    HOW IT IS WEIGHTED. report_data.json's per-season mean-day export profiles,
+    scaled to the window's real day counts (the same reader and the same
+    rebuild gate as _midday_export_share), then priced hour by hour through
+    rates.credit() at the period rates.period() assigns that hour. The day
+    counts are split by DAY TYPE as well as by season, and the day type comes
+    from rates.off_peak_day() -- the holiday-aware rule rates.py insists every
+    caller use. A bare weekday schedule applied to all 365 days would price the
+    window's weekend and holiday mornings, 111 days of it here, on a schedule
+    the tariff does not bill them under.
+
+    WHAT THE DAY-TYPE RULE IS WORTH, so nobody re-derives it as a rounding
+    argument: pricing all 365 days on the weekday schedule returns 23.6 cents
+    where this returns 22.9. The 0.7-cent difference is not precision, it is
+    the 6-10am band, which the tariff bills off-peak on a weekday and
+    super-off-peak on a weekend and holiday. Getting it wrong misprices 111 of
+    this window's days, not a rounding digit's worth of any of them.
+
+    THE ONE ASSUMPTION, stated because it is not artifact-backed: the profiles
+    are a mean day per SEASON, not per season and day type, so splitting them
+    by day type assumes a weekend's export SHAPE matches a weekday's. Solar
+    production does not know what day it is; household load does, so weekend
+    exports are somewhat differently shaped. No committed artifact in this repo
+    splits the export profile finely enough to remove the assumption.
+
+    NOT the import rate the added kWh might otherwise offset, and not an
+    average of the two: that would be a different question (self-consumption),
+    and section 8 states the import side separately as SUPER_OFF_PEAK_RATE."""
+    start, end = _analysis_window_dates()
+    profiles = _hourly_export_profiles()
+    days = {}
+    d = start
+    while d <= end:
+        key = ("S" if d.month in R.SUMMER_MONTHS else "W", R.off_peak_day(d))
+        days[key] = days.get(key, 0) + 1
+        d += dt.timedelta(days=1)
+    total = value = 0.0
+    for (seas, is_off_peak_day), n in days.items():
+        for hour, kwh in enumerate(profiles[seas]):
+            total += kwh * n
+            value += kwh * n * R.credit(seas, R.period(hour, is_off_peak_day))
+    _assert_profiles_rebuild_the_year(
+        "MARGINAL_EXPORT_VALUE", "what an exported kWh earns", total)
+    exported, credited = _quantities(
+        "MARGINAL_EXPORT_VALUE", "what an exported kWh earns",
+        **{"the kWh data/report_data.json's export profiles rebuild": total,
+           "what rates.credit() pays for them": value})
+    return credited / exported
+
+
+_tok("MARGINAL_EXPORT_VALUE", kind="derived", get=_marginal_export_value, fmt="cents1",
+     sources=["data/report_data.json:hourly_S.exp / hourly_W.exp (the hour-of-day "
+              "export profiles the weighting runs over)",
+              "data/report_data.json:totals.exp (the annual export total the "
+              "reconstruction is gated against)",
+              "data/behavior_rebuild.json:window (the days the profiles are scaled by)",
+              "analysis/rates.py:credit() (UDC+CEA, the NEM 2.0 export credit)",
+              "analysis/rates.py:period() and off_peak_day() (which credit each hour "
+              "of each day type earns)",
+              "analysis/rates.py:SUMMER_MONTHS (which season each day belongs to)"])
 
 
 def _overnight_ev_night_counts(ctx):

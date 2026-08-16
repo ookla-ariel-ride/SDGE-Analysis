@@ -270,8 +270,8 @@ CLASSIFICATION = {
     "s15#6": "prose",  # paired "When" cell
 
     # --- s8 Array upgrades -------------------------------------------
-    "s8#1": "human",   # mixes MARGINAL_EXPORT_VALUE (gap), repowering health evidence,
-                        # and measured-peak-vs-AC-ceiling clipping -- none sourced
+    "s8#1": "human",   # leads with EXPANSION_PAYBACK_YEARS (gap -- the retrofit $/W
+                        # behind it is a market price this repo does not collect)
 
     # --- s9 Deeper analyses ------------------------------------------
     "s9#1": "data",    # teaser -- already rendered by {{SEC9_TEASER}}
@@ -377,13 +377,13 @@ HUMAN_REASONS = {
             "quoted installed price for any battery -- data/battery_sim.json prices "
             "capacity and savings, never a bid -- and a quote is a fact about a local "
             "market on a date, which this pipeline has no way to measure",
-    "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}} and {{MARGINAL_EXPORT_VALUE}}, both "
-            "report_tokens.KNOWN_GAPS tokens: no committed generator computes a "
-            "marginal-panel-expansion payback or the marginal new-panel kWh's export "
-            "value, and the figures the hand-authored report quoted for them come from "
-            "unarchived workpaper arithmetic. (The clipping half of this block's ask IS "
-            "artifact-backed now -- see s9#3 -- but the two expansion figures the block "
-            "leads with are not.)",
+    "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}}, a report_tokens.KNOWN_GAPS token. "
+            "A payback needs a price as well as a yield, and retrofit dollars per watt "
+            "is a fact about a local installer market on a date, which nothing committed "
+            "here measures. (The block's other two asks ARE artifact-backed now: the "
+            "marginal kWh's export value is {{MARGINAL_EXPORT_VALUE}}, derived from the "
+            "committed hour-of-day export profile, and the clipping evidence is s9#3's. "
+            "The years the block leads with are what is still missing.)",
 }
 
 # ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ HUMAN_BLOCKERS = {
     "s6#8": {"outside_fact": "an installed price quote for a specific battery from a "
                              "specific installer on a specific date; ends when a "
                              "committed artifact records one"},
-    "s8#1": {"gap_tokens": ("EXPANSION_PAYBACK_YEARS", "MARGINAL_EXPORT_VALUE")},
+    "s8#1": {"gap_tokens": ("EXPANSION_PAYBACK_YEARS",)},
 }
 
 # Three of report_tokens.py's five KNOWN_GAPS tokens appear in LIVE template

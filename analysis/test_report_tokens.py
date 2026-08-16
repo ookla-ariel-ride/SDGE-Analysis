@@ -3227,6 +3227,114 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
             f"rebuilding the year's exports (live midday share {live:.1%})")
 
 
+def _credit_map():
+    """Every (season, period) cell of rates.py's NEM 2.0 export credit."""
+    return {(s, p): rt.R.credit(s, p)
+            for s in ("S", "W") for p in ("sop", "off", "on")}
+
+
+def _marginal_export_value_recomputed():
+    """The profile-weighted export credit, rebuilt here rather than read from
+    report_tokens -- the recompute convention this suite already follows, so a
+    bug in the generator's weighting fails this case instead of being
+    reproduced by it."""
+    rd = rt._json("report_data.json")
+    start, end = rt._analysis_window_dates()
+    total = value = 0.0
+    d = start
+    while d <= end:
+        seas = "S" if d.month in rt.R.SUMMER_MONTHS else "W"
+        off_day = rt.R.off_peak_day(d)
+        for hour, kwh in enumerate(rd[f"hourly_{seas}"]["exp"]):
+            total += kwh
+            value += kwh * rt.R.credit(seas, rt.R.period(hour, off_day))
+        d += dt.timedelta(days=1)
+    return value / total
+
+
+def _analysis_window_day_count():
+    start, end = rt._analysis_window_dates()
+    return (end - start).days + 1
+
+
+@case
+def case_marginal_export_value_prices_the_whole_export_profile_not_one_period():
+    """issue #182. Section 8 valued a marginal new-panel kWh at the MIDDAY
+    export credit, generalizing one cell of a six-cell map to a whole year of
+    exports. About a third of this array's exports leave in off-peak and
+    on-peak hours, which credit six to eleven times higher, so the single-cell
+    figure was roughly half the profile-weighted one.
+
+    Three pins, because the first two alone would both survive the revert this
+    case exists to catch:
+
+      1. the token equals the independently recomputed weighted average;
+      2. it equals NO single cell of the credit map -- the literal shape of
+         the defect, checked against rates.py rather than against the digits
+         that happen to be published today;
+      3. it MOVES WITH THE PROFILE. A constant, or a value read off one cell,
+         passes 1 and 2 by luck on some household's numbers; only a live
+         weighting answers a profile whose exports all land in one period with
+         that period's own credit. Driven for all three periods.
+
+    RELATIONSHIP, the recomputation against the token: SAME QUANTITY,
+    INDEPENDENTLY COMPUTED from the same committed artifacts. Both read
+    data/report_data.json's hour-of-day export profiles and rates.py's credit
+    map; neither is derived from the other. They are entitled to agree exactly,
+    and a disagreement is a bug in one of the two weightings."""
+    expected = _marginal_export_value_recomputed()
+    live = rt._marginal_export_value(rt.CTX)
+    assert abs(live - expected) < 1e-12, (
+        f"MARGINAL_EXPORT_VALUE derives {live:.9f}/kWh; weighting rates.credit() by "
+        f"data/report_data.json's own export profiles gives {expected:.9f}/kWh")
+    rendered = rt.resolve_token("MARGINAL_EXPORT_VALUE")
+    assert rendered == f"{expected * 100:.1f}¢", (
+        f"MARGINAL_EXPORT_VALUE renders {rendered!r}, not the "
+        f"{expected * 100:.1f}¢ the profile-weighted credit comes to")
+
+    cells = _credit_map()
+    for (seas, period), rate in cells.items():
+        assert abs(live - rate) > 5e-4, (
+            f"MARGINAL_EXPORT_VALUE has reverted to a single period price: it renders "
+            f"{rendered}, which is rates.credit({seas!r}, {period!r}). A marginal "
+            f"exported kWh is priced across every hour the array exports in, and this "
+            f"array's exports do not all leave in one period")
+
+    # 3. Driven. An all-in-one-period profile must price at that period's own
+    #    credit, and the two seasons' cells differ, so the answer has to land
+    #    between them rather than on either -- which is itself evidence the
+    #    season weighting is live too.
+    rd = rt._json("report_data.json")
+    for period in ("sop", "off", "on"):
+        # The probe hour is FOUND, not named: it has to carry `period` on both
+        # day types, or the driven profile prices one hour two ways and the
+        # bracket below proves nothing. Derived from rates.period() so a tariff
+        # whose windows differ picks its own hour instead of inheriting this
+        # household's.
+        agree = [h for h in range(24)
+                 if rt.R.period(h, False) == period == rt.R.period(h, True)]
+        assert agree, (
+            f"no whole hour of this tariff carries {period} on both day types, so "
+            "an all-in-one-period export profile cannot be built for it -- the "
+            "probe needs rewriting against the new windows, not deleting")
+        hour = agree[0]
+        flat = [0.0] * 24
+        flat[hour] = rd["totals"]["exp"] / _analysis_window_day_count()
+        with _swapped(rd["hourly_S"], "exp", list(flat)), \
+             _swapped(rd["hourly_W"], "exp", list(flat)):
+            driven = rt._marginal_export_value(rt.CTX)
+        lo, hi = sorted((cells[("S", period)], cells[("W", period)]))
+        assert lo - 1e-12 <= driven <= hi + 1e-12, (
+            f"an export profile whose every kWh leaves in {period} hours should price "
+            f"between that period's two seasonal credits ({lo:.5f}-{hi:.5f}/kWh); "
+            f"MARGINAL_EXPORT_VALUE returned {driven:.5f}/kWh, so it is not reading "
+            "the profile")
+    return (f"MARGINAL_EXPORT_VALUE is the export-profile-weighted credit "
+            f"({rendered}), matches an independent recomputation to 1e-12, sits on no "
+            f"single cell of the {len(cells)}-cell credit map, and follows a driven "
+            "profile into each of the three periods")
+
+
 @case
 def case_s2_verdict_reports_a_daytime_charger_rather_than_refusing_to_render():
     """"while the EV charges overnight" was asserted outright, and on a
