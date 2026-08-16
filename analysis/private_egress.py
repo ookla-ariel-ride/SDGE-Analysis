@@ -116,6 +116,10 @@ REASONS = {
     "not_ignored":          "the destination's own git does not ignore this path",
     "ignore_unanswerable":  "the destination could not say whether it ignores this path",
     "tracked_unanswerable": "the destination could not be asked which paths it tracks",
+    "glob_source_unlistable": "a leaf pattern's source directory could not be listed, so "
+                              "the destinations that pattern names are unknown",
+    "pattern_names_a_directory": "a glob pattern is used where a DIRECTORY is named, and "
+                                 "this module expands leaf names only",
 }
 
 
@@ -749,17 +753,25 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None)
     hard link; `recursive` names directories a recursive copy descends, whose
     existing contents are scanned for all three. A `leaves` entry may be a glob
     pattern, expanded against `glob_source` (the SOURCE tree, whose basenames
-    are what a copy will actually write) when given, else against `root`.
+    are what a copy will actually write) when given, else against `root`. Only a
+    LEAF may be a pattern: a pattern in `dirs` or `recursive` is refused, because
+    a directory's check is a scan of what is inside it and no literal stands in
+    for that.
 
     Ordered checks first, writes never: this returns a Destination or raises.
 
     Every parameter here DESCRIBES what will be written and where: four name
-    paths, and `glob_source` says which tree a leaf pattern is expanded against
-    -- which UNDERSTATES the set when it is wrong (fewer names, each still fully
-    checked) rather than waiving anything. `env=` is not here, for the reason
-    given at _check_destination(): it can manufacture the "ignored" verdict
-    through HOME, so it is a parameter of the private _check_write_set() below
-    and an ordinary caller gets a TypeError.
+    paths, and `glob_source` says which tree a leaf pattern is expanded against.
+    A WRONG `glob_source` names fewer leaves than the copy will really write, and
+    that is the one thing it can do -- it can no longer take a declared pattern
+    out of the check entirely, which is what an empty expansion used to do: a
+    source that cannot be listed is refused (glob_source_unlistable), and a
+    pattern that matches nothing is checked as the literal it is, so every
+    declared pattern is evaluated as SOMETHING. See _expand() for what the
+    literal does and does not settle. `env=` is not here, for the reason given at
+    _check_destination(): it can manufacture the "ignored" verdict through HOME,
+    so it is a parameter of the private _check_write_set() below and an ordinary
+    caller gets a TypeError.
     """
     return _check_write_set(root, dirs=dirs, leaves=leaves, recursive=recursive,
                             glob_source=glob_source, env=None)
@@ -837,7 +849,8 @@ def _check_write_set(root, *, dirs, leaves, recursive, glob_source, env):
     # where the shell reaches the symlink scan and says symlink_component.
     # Same rule, same answers -- but only because "covered" means covered by a
     # path that was really asked, never by a path that was merely declared.
-    expanded = [n for rel in leaves for n in _expand(rel, root, glob_source)]
+    _require_literal_directories(tuple(dirs) + tuple(recursive))
+    expanded = _expand_leaves(leaves, root, glob_source)
     covered = []
     for rel in tuple(dirs) + tuple(recursive):
         if not _covered_by(rel, covered):
@@ -863,20 +876,144 @@ def _covered_by(rel, prefixes):
     return any(rel == p or rel.startswith(p + "/") for p in prefixes)
 
 
+# The characters that make a leaf a PATTERN rather than a name. fnmatch's own
+# three, which are `sh`'s three, because the copy this describes is a shell glob:
+# a set expression is what `cp private/x[0-9].csv` expands, so reading it as a
+# literal filename would understate the set for a caller who wrote down what
+# their copy really does.
+GLOB_METACHARS = "*?["
+
+
+def _is_pattern(rel):
+    return any(ch in rel for ch in GLOB_METACHARS)
+
+
+def _expand_leaves(leaves, root, glob_source):
+    """`leaves` -> the destination-relative paths the copies will really write.
+
+    THE SOURCE IS PROVEN BEFORE IT IS BELIEVED. `glob_source` names a tree that
+    is not the destination and that no other check in this module looks at, so an
+    unlistable one -- stale, mistyped, on a volume that is not mounted -- used to
+    expand to nothing and take its declared destinations out of the write set
+    with it: no committability question, no leaf check, and check_write_set()
+    returned a Destination anyway. That is acceptance without evaluation, which
+    is a waiver whatever the caller meant by it, and worse than an ordinary
+    waiver because the copy the caller then runs reads its REAL source and writes
+    names this module never saw.
+
+    So the source is listed once, before any pattern is expanded, and a source
+    that cannot be listed is a refusal. Listed lazily -- only when some leaf
+    really is a pattern -- because a `glob_source` nothing expands against has
+    understated nothing, and refusing correct input is how guards get turned off.
+    """
+    out = []
+    proven = False
+    for rel in leaves:
+        if not _is_pattern(rel):
+            out.append(rel)
+            continue
+        if not proven:
+            _require_listable_source(root, glob_source)
+            proven = True
+        out.extend(_expand(rel, root, glob_source))
+    return out
+
+
+def _require_literal_directories(rels):
+    """`dirs` and `recursive` NAME directories; they are not expanded.
+
+    The sibling of the empty expansion, found by looking for the same shape in
+    the arguments beside the one the finding named. A pattern here was taken as a
+    literal path, and a literal path that does not exist is exactly what every
+    check treats as absent: the component walk stops at the glob, _check_leaf()
+    returns because there is nothing there, and _scan_tree() returns because the
+    path is not a directory. So
+
+        check_write_set(ROOT, recursive=("private/1-raw-data/*",))
+
+    ACCEPTED, having scanned none of the directories the copy really descends
+    for the links and hard links that scan exists to find -- acceptance with the
+    tree check evaluating nothing, in a different argument.
+
+    Refused rather than expanded, and the two are not symmetrical with `leaves`:
+    a zero-match leaf pattern can be answered by its literal, because the facts a
+    leaf needs (its component chain, its committability) hold for every name the
+    pattern could yield. A directory needs the facts of what is INSIDE it, and no
+    literal stands in for that. Name the directories.
+    """
+    for rel in rels:
+        if _is_pattern(rel):
+            raise DestinationRefused(
+                "pattern_names_a_directory",
+                "a directory argument is a path, not a pattern: as written it "
+                "names a path that does not exist, so the walk stops at the glob "
+                "and the recursive scan of what is really there never runs. Name "
+                "the directories, or expand them before declaring them", rel)
+
+
+def _require_listable_source(root, glob_source):
+    """The tree leaf patterns are expanded against must exist and be readable."""
+    src = str(root if glob_source is None else glob_source)
+    try:
+        os.listdir(src)
+    except OSError as e:
+        raise DestinationRefused(
+            "glob_source_unlistable",
+            f"the tree leaf patterns are expanded against could not be listed "
+            f"({e}). Every pattern would name nothing, so the destinations they "
+            "declare would go unchecked while the copy still writes them",
+            src) from None
+
+
 def _expand(rel, root, glob_source):
-    """A leaf pattern -> the names a copy will really write. A pattern matching
-    nothing stays literal and simply names a path that does not exist, which
-    every check above treats as absent -- the same way the shell's `cp` glob
-    does."""
-    if "*" not in rel and "?" not in rel:
+    """One leaf pattern -> the destination-relative paths a copy will write.
+
+    A pattern that matches NOTHING returns the pattern itself, and that is a
+    decision rather than a fallback. `cp <src>/enphase_sam8760_*.csv <dst>/`
+    copies nothing when the household has no SAM export, so "no matches" is not
+    an error and refusing it would refuse a correct caller. But the guard may not
+    report success on a destination it never looked at, so the literal pattern is
+    checked in the expansion's place -- and that is not a token check. The
+    component walk runs from the worktree root down to the pattern's own
+    directory, so a link planted at private/1-raw-data is seen exactly as it is
+    for a named leaf; and git answers the committability question for the pattern
+    itself -- `git ls-files -- 'd/*.csv'` reads it as a pathspec and lists every
+    tracked file it matches, `git check-ignore` answers for the whole excluded
+    directory, and an excluded directory cannot have a child re-included. What
+    the literal cannot answer is what sits AT a name the expansion did not yield:
+    a FIFO or a hard link at one particular leaf. That residue belongs to a
+    `glob_source` that does not name the copy's real source, and it is written
+    down here rather than hidden inside an empty list.
+
+    A pattern in a DIRECTORY component is refused instead. No literal stands in
+    for it -- the components below the glob are exactly the ones a walk would
+    have to check -- so its destinations are genuinely unknown.
+    """
+    if not _is_pattern(rel):
         return [rel]
     base = os.path.dirname(rel)
     pat = os.path.basename(rel)
-    src = os.path.join(str(glob_source if glob_source else root), base)
+    if _is_pattern(base):
+        raise DestinationRefused(
+            "pattern_names_a_directory",
+            "this module expands a pattern in the last component only, so the "
+            "directories this one names -- and everything a walk would check "
+            "about them -- are unknown. Name the directory literally", rel)
+    src = os.path.join(str(root if glob_source is None else glob_source), base)
     try:
         names = sorted(n for n in os.listdir(src) if fnmatch.fnmatch(n, pat))
-    except OSError:
-        return []
+    except FileNotFoundError:
+        # The source tree is there (proven above) and this subdirectory of it is
+        # not: the same fact as a pattern matching nothing -- the copy writes
+        # nothing -- so it gets the same answer, the literal.
+        names = []
+    except OSError as e:
+        raise DestinationRefused(
+            "glob_source_unlistable",
+            f"could not list {src} ({e}), so the destinations this pattern "
+            "names are unknown", rel) from None
+    if not names:
+        return [rel]
     return [f"{base}/{n}" if base else n for n in names]
 
 

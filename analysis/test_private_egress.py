@@ -1345,6 +1345,34 @@ API_REACH = {
                              "relative path, and a root has none"),
 }
 
+# The refusals no destination KIND can produce, because they are not about a
+# destination path at all: they are about the whole-set API's own input, the leaf
+# PATTERNS and the tree they are expanded against. check_destination() takes no
+# pattern and no source, so a (kind, reason) row for either would be a fiction.
+#
+# This is a separate table rather than an API_REACH entry with an invented kind
+# set, because the invariant below stays total either way -- every reason is
+# classified in exactly one of the two -- while the classification stays true.
+# Each entry says why no kind reaches it AND names the case that produces it, so
+# "unreachable" cannot be used to park a refusal nothing exercises.
+WRITE_SET_ONLY_REASONS = {
+    "glob_source_unlistable":
+        "raised while EXPANDING a leaf pattern, before any destination path "
+        "exists to ask a kind question about. check_destination() has no "
+        "glob_source, so no kind can produce it -- proved by "
+        "case_a_leaf_pattern_whose_source_cannot_be_listed_is_refused",
+    "pattern_names_a_directory":
+        "the same seam: a pattern where a directory is named picks out no "
+        "definite path, so there is nothing to ask a kind about. Proved by "
+        "case_a_pattern_where_a_directory_is_named_is_refused",
+}
+
+# (reason) codes this run really produced through check_write_set()'s expansion,
+# filled by the cases below. The reach case asserts every WRITE_SET_ONLY_REASONS
+# entry is in here, so a reason declared unreachable-by-kind must still be
+# reachable by SOMETHING.
+WRITE_SET_OBSERVED = set()
+
 # (kind, reason) pairs this run actually observed through check_destination.
 # Filled by the cases below and checked against API_REACH, so the map above is
 # measured where the suite reaches and declared only where it does not.
@@ -2173,12 +2201,17 @@ PUBLIC_PARAMS = {
         "dirs":        "WHICH paths, as directories written into non-recursively",
         "recursive":   "WHICH paths, as directories a recursive copy descends",
         "leaves":      "WHICH paths, as regular files -- a glob among them names "
-                       "fewer paths, never a laxer check on one",
-        "glob_source": "WHICH tree a leaf pattern is expanded against. It can "
-                       "UNDERSTATE the set (a wrong source yields fewer names) "
-                       "and cannot waive a check on any name it does yield, so "
-                       "it describes the destination set rather than weakening "
-                       "the question asked of it",
+                       "fewer paths, never a laxer check on one, and never no "
+                       "check at all: a pattern that matches nothing is checked "
+                       "as the literal it is",
+        "glob_source": "WHICH tree a leaf pattern is expanded against. A wrong "
+                       "one names FEWER leaves than the copy will write, and "
+                       "that is all it can do -- it can no longer take a "
+                       "declared pattern out of the check entirely, because a "
+                       "source that cannot be listed is refused and a pattern "
+                       "that matches nothing is still evaluated. It describes "
+                       "the destination set; it cannot waive the question asked "
+                       "of any part of it",
     },
 }
 
@@ -2476,7 +2509,34 @@ def case_check_write_set_owns_no_refusal_of_its_own():
             and passed[0].value is want, (
             f"the kind='root' call must pass {keyword}={want!r} as a literal -- the "
             "root is the one path here that has earned no exemption")
-    return "_check_write_set() raises nothing the single-path checker cannot raise"
+
+    # The expansion helpers sit on the whole-set side of that line and DO raise,
+    # so the same rule is applied to them by name: what they may refuse is the
+    # input they own -- a pattern, and the tree it is expanded against -- and
+    # nothing about a destination path. A destination check appearing here would
+    # be the old shape again, one API silently stronger than the other.
+    expanders = {"_expand", "_expand_leaves", "_require_listable_source",
+                 "_require_literal_directories"}
+    tops = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    raised = set()
+    for name in sorted(expanders):
+        assert name in tops, f"{name}() is gone; the expansion seam has moved"
+        for n in ast.walk(tops[name]):
+            if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call) \
+                    and getattr(n.exc.func, "id", "") == "DestinationRefused":
+                first = n.exc.args[0] if n.exc.args else None
+                assert isinstance(first, ast.Constant), (
+                    f"{name}() raises a computed reason at line {n.lineno}")
+                raised.add(first.value)
+    assert raised == set(WRITE_SET_ONLY_REASONS), (
+        f"the leaf-expansion helpers raise {sorted(raised)}; "
+        f"WRITE_SET_ONLY_REASONS declares {sorted(WRITE_SET_ONLY_REASONS)}. They "
+        "may refuse their own input -- an unlistable source, an unexpandable "
+        "pattern -- and nothing about a destination path, which belongs behind a "
+        "kind where both public APIs reach it")
+    return ("_check_write_set() raises nothing the single-path checker cannot "
+            f"raise, and its {len(expanders)} expansion helpers raise only the "
+            f"{len(raised)} refusals about their own input")
 
 
 # Every parameter of check_write_set() that NAMES PATHS IT WILL WRITE, and the
@@ -2562,6 +2622,199 @@ def case_every_declared_path_is_asked_the_committability_question():
             "committability question, in both refusal shapes")
 
 
+def _write_set_verdict(**kw):
+    """check_write_set()'s verdict on THIS checkout, as a reason code or None.
+
+    Asked of ROOT because every case below is about the leaf PATTERNS and the
+    tree they are expanded against, not about the destination root: this
+    checkout is a registered worktree of itself, so the root question is settled
+    and what is left is the question under test. Needs no private archive and no
+    throwaway worktree.
+    """
+    try:
+        PE.check_write_set(ROOT, **kw)
+        return None
+    except PE.DestinationRefused as e:
+        WRITE_SET_OBSERVED.add(e.reason)
+        return e.reason
+
+
+@case
+def case_a_leaf_pattern_whose_source_cannot_be_listed_is_refused():
+    """A `glob_source` that cannot be listed used to expand to nothing, and an
+    empty expansion took its declared destinations out of the write set with it:
+
+        check_write_set(ROOT, leaves=("data/*.json",),
+                        glob_source="<a path that is not there>")
+            -> ACCEPTED, on this checkout's own TRACKED data/ directory
+
+    Neither the committability question nor the leaf check ran for that declared
+    pattern, and the function returned a Destination. `glob_source` is a public
+    parameter and points at a tree nothing else here looks at, so a stale path, a
+    typo or an unmounted volume was an off switch for every pattern in the set --
+    while the copy the caller then runs reads its REAL source and writes names
+    this module never saw. Understating the input is what it does when it is
+    merely WRONG; producing acceptance without having evaluated anything is a
+    waiver, whatever the argument was for.
+
+    Both shapes of unlistable are asked, because they arrive by different
+    accidents: a source that is not there at all, and one whose pattern
+    directory is there and unreadable.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        gone = pathlib.Path(td) / "not-mounted"
+        got = _write_set_verdict(leaves=("data/*.json",), glob_source=gone)
+        assert got == "glob_source_unlistable", (
+            f"an absent glob_source gave {got or 'ACCEPTED'} on tracked data/")
+
+        # ... and the source tree itself present, with the pattern's own
+        # directory unreadable: the branch a bare existence check would miss.
+        locked = pathlib.Path(td) / "locked"
+        (locked / "data").mkdir(parents=True)
+        os.chmod(locked / "data", 0o000)
+        try:
+            unreadable = True
+            try:
+                os.listdir(locked / "data")
+                unreadable = False      # running as root, or an OS that ignores it
+            except OSError:
+                pass
+            if unreadable:
+                got = _write_set_verdict(leaves=("data/*.json",), glob_source=locked)
+                assert got == "glob_source_unlistable", (
+                    f"an unreadable pattern directory gave {got or 'ACCEPTED'}")
+        finally:
+            os.chmod(locked / "data", 0o700)
+
+        # The accepting half, on the same fixture: a source that IS listable and
+        # holds the file the pattern names expands to that file, and this
+        # checkout ignores where it would land.
+        real = pathlib.Path(td) / "real-source"
+        (real / "private").mkdir(parents=True)
+        (real / "private" / "cache-a.json").touch()
+        assert _write_set_verdict(leaves=("private/cache-*.json",),
+                                  glob_source=real) is None
+    return ("an absent or unreadable glob_source is refused rather than expanded "
+            "to nothing, and a listable one still expands")
+
+
+@case
+def case_a_leaf_pattern_that_matches_nothing_is_checked_as_a_literal():
+    """The decision the finding asked for, and the reason for it.
+
+    `cp <src>/enphase_sam8760_*.csv <dst>/` copies nothing when the household has
+    no SAM export, so a pattern that matches nothing is not an error and refusing
+    it would refuse a correct caller -- which is how guards get switched off. But
+    the guard may not report success on a destination it never evaluated, so the
+    pattern is checked AS THE LITERAL IT IS: the component walk runs down to the
+    pattern's own directory, and git answers the committability question for the
+    pattern itself (`git ls-files` reads it as a pathspec; `git check-ignore`
+    answers for the whole excluded directory).
+
+    Which is what these two reproductions turn on. Before the fix both ACCEPTED
+    this checkout's own committable data/ directory, having checked nothing:
+
+        leaves=("data/*.json",)        glob_source=<a tree with no data/>
+        leaves=("data/*.json",)        glob_source=<a tree whose data/ is empty>
+
+    They are separate rows because they take different branches -- one cannot
+    find the directory, one finds it and finds nothing in it -- and either one
+    alone would leave the other silently returning [].
+    """
+    with tempfile.TemporaryDirectory() as td:
+        no_dir = pathlib.Path(td) / "wrong-source"
+        no_dir.mkdir()
+        empty = pathlib.Path(td) / "empty-data"
+        (empty / "data").mkdir(parents=True)
+
+        bad = []
+        for what, source in (("a source with no such directory", no_dir),
+                             ("a source whose directory is empty", empty)):
+            # tracked, and untracked-but-not-ignored: both committable, each
+            # refused for its own reason, and neither reachable at all while the
+            # expansion returned [].
+            for pattern, expect in (("data/*.json", "tracked_path"),
+                                    ("data/no-such-*.json", "not_ignored")):
+                got = _write_set_verdict(leaves=(pattern,), glob_source=source)
+                if got != expect:
+                    bad.append(f"leaves=({pattern!r},) against {what}: "
+                               f"{got or 'ACCEPTED'}, expected {expect}")
+        assert not bad, bad
+
+        # The accepting half, and it is the reason this is not a refusal: a
+        # pattern that matches nothing, at a path this checkout really does
+        # ignore, must still be accepted -- with the source given and without.
+        for source in (no_dir, None):
+            got = _write_set_verdict(leaves=("private/nonexistent-*.json",),
+                                     glob_source=source)
+            assert got is None, (
+                f"a zero-match pattern at an ignored path was refused ({got}); a "
+                "household with no SAM export is a correct caller")
+    return ("a pattern that matches nothing is checked as a literal -- the "
+            "committable destination is refused, the ignored one accepted")
+
+
+@case
+def case_a_pattern_where_a_directory_is_named_is_refused():
+    """The same shape in the arguments BESIDE the one the finding named, which
+    is where it has been every round: a pattern that names a DIRECTORY.
+
+        check_write_set(ROOT, recursive=("private/1-raw-data/*",))  -> ACCEPTED
+
+    on this checkout, having scanned none of the directories the copy really
+    descends. `dirs` and `recursive` are not expanded at all, so a pattern in one
+    was read as a literal path -- and a path that does not exist is what every
+    check treats as absent: the walk stops at the glob, the leaf check returns
+    because there is nothing there, and _scan_tree() returns because it is not a
+    directory. The tree scan, which is the only reason `recursive` exists as a
+    separate argument, ran over nothing and the call returned a Destination.
+
+    The leaf half of the same shape is `private/*/cache.json`: dirname is
+    `private/*`, which no listdir can answer, so it fell into the empty
+    expansion. Both are refused rather than answered by a literal, and that
+    asymmetry with a zero-match LEAF is the point -- a leaf's literal carries the
+    facts a leaf needs (its component chain, its committability, which hold for
+    every name the pattern could yield), while a directory's check is a scan of
+    what is inside it and no literal stands in for that.
+    """
+    bad = []
+    for kw in ({"leaves": ("private/*/cache.json",)},
+               {"leaves": ("private/*/*.json",)},
+               {"recursive": ("private/1-raw-data/*",)},
+               {"recursive": ("private/*-bills",)},
+               {"dirs": ("private/*-cache",)}):
+        got = _write_set_verdict(**kw)
+        if got != "pattern_names_a_directory":
+            bad.append(f"check_write_set(ROOT, **{kw}) -> {got or 'ACCEPTED'}")
+    assert not bad, bad
+    # A pattern in a leaf's LAST component is the supported form and still works,
+    # and a literal directory is still accepted -- the refusal is about patterns,
+    # not about these arguments.
+    assert _write_set_verdict(leaves=("private/nonexistent-*.json",)) is None
+    assert _write_set_verdict(dirs=("private/nonexistent-dir",),
+                              recursive=("private/nonexistent-tree",)) is None
+    return ("a pattern is refused wherever it names a directory -- in dirs, in "
+            "recursive, and in a leaf's directory component")
+
+
+@case
+def case_a_bracket_pattern_is_expanded_like_the_shell_expands_it():
+    """`[` is a glob metacharacter to `cp` and to fnmatch, and was not one here.
+
+    A leaf like `private/cache-[0-9].json` was returned literally, so the set the
+    guard checked was one name the copy will never write while the names it will
+    write went unchecked. That is the understating half of the same defect, and
+    it is fixed in the same place: the metacharacter set is fnmatch's own.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src = pathlib.Path(td) / "src"
+        (src / "private").mkdir(parents=True)
+        (src / "private" / "cache-7.json").touch()
+        expanded = PE._expand_leaves(("private/cache-[0-9].json",), ROOT, src)
+        assert expanded == ["private/cache-7.json"], expanded
+    return "a set expression expands to the names it really matches"
+
+
 @case
 def case_the_two_public_apis_differ_only_on_the_root_question():
     """The full comparison, printed: which refusal each destination kind can
@@ -2571,11 +2824,23 @@ def case_the_two_public_apis_differ_only_on_the_root_question():
     Everything the two APIs disagree about is one question -- is this path a
     worktree ROOT -- and the disagreement is deliberate on both sides.
     """
-    assert set(API_REACH) == set(PE.REASONS), (
-        "the reach map and the refusal vocabulary have drifted: only in API_REACH "
-        f"{sorted(set(API_REACH) - set(PE.REASONS))}, only in REASONS "
-        f"{sorted(set(PE.REASONS) - set(API_REACH))}")
+    both = sorted(set(API_REACH) & set(WRITE_SET_ONLY_REASONS))
+    assert not both, (
+        f"{both} is classified as reachable by a kind AND as reachable by none; "
+        "the two tables must partition REASONS, or a code can be described twice "
+        "and checked never")
+    classified = set(API_REACH) | set(WRITE_SET_ONLY_REASONS)
+    assert classified == set(PE.REASONS), (
+        "the reach map and the refusal vocabulary have drifted: only in the reach "
+        f"tables {sorted(classified - set(PE.REASONS))}, only in REASONS "
+        f"{sorted(set(PE.REASONS) - classified)}")
     bad = []
+    for code, why in sorted(WRITE_SET_ONLY_REASONS.items()):
+        if len(why) < 40:
+            bad.append(f"{code}: declared reachable by no kind with no reason given")
+        if code not in WRITE_SET_OBSERVED:
+            bad.append(f"{code}: declared reachable by no kind and produced by no "
+                       "case either -- a refusal nothing exercises")
     for code, (kinds, why) in sorted(API_REACH.items()):
         if not kinds:
             bad.append(f"{code}: reachable through no kind at all")
@@ -2614,10 +2879,14 @@ def case_the_two_public_apis_differ_only_on_the_root_question():
             k for k in PE.KINDS if k in kinds)
         print(f"    {code:<22} {mark:<20} observed={seen or '-'}"
               + (f"  ({why[:60]})" if why else ""))
+    for code in sorted(WRITE_SET_ONLY_REASONS):
+        print(f"    {code:<22} {'no kind':<20} observed=check_write_set()")
     restricted = {c for c, (k, _) in API_REACH.items() if k != ALL_KINDS}
     return (f"{len(API_REACH)} refusals mapped to the kinds that reach them; "
-            f"{len(restricted)} are kind-restricted, each with a stated reason, and "
-            f"{len(OBSERVED)} (kind, reason) pairs were observed and all allowed")
+            f"{len(restricted)} are kind-restricted, each with a stated reason, "
+            f"{len(WRITE_SET_ONLY_REASONS)} belong to the whole-set API's own input "
+            f"and were produced there, and {len(OBSERVED)} (kind, reason) pairs "
+            "were observed and all allowed")
 
 
 @case
