@@ -3233,7 +3233,7 @@ def _credit_map():
             for s in ("S", "W") for p in ("sop", "off", "on")}
 
 
-def _marginal_export_value_recomputed():
+def _avg_export_credit_recomputed():
     """The profile-weighted export credit, rebuilt here rather than read from
     report_tokens -- the recompute convention this suite already follows, so a
     bug in the generator's weighting fails this case instead of being
@@ -3258,12 +3258,17 @@ def _analysis_window_day_count():
 
 
 @case
-def case_marginal_export_value_prices_the_whole_export_profile_not_one_period():
-    """issue #182. Section 8 valued a marginal new-panel kWh at the MIDDAY
-    export credit, generalizing one cell of a six-cell map to a whole year of
-    exports. About a third of this array's exports leave in off-peak and
-    on-peak hours, which credit six to eleven times higher, so the single-cell
-    figure was roughly half the profile-weighted one.
+def case_avg_export_credit_prices_the_whole_export_profile_not_one_period():
+    """issue #182. Section 8 priced the year's exports at the MIDDAY export
+    credit, generalizing one cell of a six-cell map to a whole year of exports.
+    About a third of this array's exports leave in off-peak and on-peak hours,
+    which credit six to eleven times higher, so the single-cell figure was
+    roughly half the profile-weighted one.
+
+    WHAT THIS TOKEN IS NOT, and what no pin here may be read as endorsing: it
+    is the average price the year's EXPORTS fetched, not what one more kW of
+    panels would earn. Exports are the residual left after household load, so
+    added production is not shaped like them (issue #190).
 
     Three pins, because the first two alone would both survive the revert this
     case exists to catch:
@@ -3282,22 +3287,22 @@ def case_marginal_export_value_prices_the_whole_export_profile_not_one_period():
     data/report_data.json's hour-of-day export profiles and rates.py's credit
     map; neither is derived from the other. They are entitled to agree exactly,
     and a disagreement is a bug in one of the two weightings."""
-    expected = _marginal_export_value_recomputed()
-    live = rt._marginal_export_value(rt.CTX)
+    expected = _avg_export_credit_recomputed()
+    live = rt._avg_export_credit(rt.CTX)
     assert abs(live - expected) < 1e-12, (
-        f"MARGINAL_EXPORT_VALUE derives {live:.9f}/kWh; weighting rates.credit() by "
+        f"AVG_EXPORT_CREDIT derives {live:.9f}/kWh; weighting rates.credit() by "
         f"data/report_data.json's own export profiles gives {expected:.9f}/kWh")
-    rendered = rt.resolve_token("MARGINAL_EXPORT_VALUE")
+    rendered = rt.resolve_token("AVG_EXPORT_CREDIT")
     assert rendered == f"{expected * 100:.1f}¢", (
-        f"MARGINAL_EXPORT_VALUE renders {rendered!r}, not the "
+        f"AVG_EXPORT_CREDIT renders {rendered!r}, not the "
         f"{expected * 100:.1f}¢ the profile-weighted credit comes to")
 
     cells = _credit_map()
     for (seas, period), rate in cells.items():
         assert abs(live - rate) > 5e-4, (
-            f"MARGINAL_EXPORT_VALUE has reverted to a single period price: it renders "
-            f"{rendered}, which is rates.credit({seas!r}, {period!r}). A marginal "
-            f"exported kWh is priced across every hour the array exports in, and this "
+            f"AVG_EXPORT_CREDIT has reverted to a single period price: it renders "
+            f"{rendered}, which is rates.credit({seas!r}, {period!r}). An exported "
+            f"kWh is priced across every hour the array exports in, and this "
             f"array's exports do not all leave in one period")
 
     # 3. Driven. An all-in-one-period profile must price at that period's own
@@ -3322,14 +3327,14 @@ def case_marginal_export_value_prices_the_whole_export_profile_not_one_period():
         flat[hour] = rd["totals"]["exp"] / _analysis_window_day_count()
         with _swapped(rd["hourly_S"], "exp", list(flat)), \
              _swapped(rd["hourly_W"], "exp", list(flat)):
-            driven = rt._marginal_export_value(rt.CTX)
+            driven = rt._avg_export_credit(rt.CTX)
         lo, hi = sorted((cells[("S", period)], cells[("W", period)]))
         assert lo - 1e-12 <= driven <= hi + 1e-12, (
             f"an export profile whose every kWh leaves in {period} hours should price "
             f"between that period's two seasonal credits ({lo:.5f}-{hi:.5f}/kWh); "
-            f"MARGINAL_EXPORT_VALUE returned {driven:.5f}/kWh, so it is not reading "
+            f"AVG_EXPORT_CREDIT returned {driven:.5f}/kWh, so it is not reading "
             "the profile")
-    return (f"MARGINAL_EXPORT_VALUE is the export-profile-weighted credit "
+    return (f"AVG_EXPORT_CREDIT is the export-profile-weighted credit "
             f"({rendered}), matches an independent recomputation to 1e-12, sits on no "
             f"single cell of the {len(cells)}-cell credit map, and follows a driven "
             "profile into each of the three periods")

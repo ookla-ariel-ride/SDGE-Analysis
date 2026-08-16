@@ -270,8 +270,8 @@ CLASSIFICATION = {
     "s15#6": "prose",  # paired "When" cell
 
     # --- s8 Array upgrades -------------------------------------------
-    "s8#1": "human",   # leads with EXPANSION_PAYBACK_YEARS (gap -- the retrofit $/W
-                        # behind it is a market price this repo does not collect)
+    "s8#1": "human",   # leads with EXPANSION_PAYBACK_YEARS (gap -- neither the
+                        # marginal-panel yield nor the retrofit $/W is committed here)
 
     # --- s9 Deeper analyses ------------------------------------------
     "s9#1": "data",    # teaser -- already rendered by {{SEC9_TEASER}}
@@ -378,12 +378,14 @@ HUMAN_REASONS = {
             "capacity and savings, never a bid -- and a quote is a fact about a local "
             "market on a date, which this pipeline has no way to measure",
     "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}}, a report_tokens.KNOWN_GAPS token. "
-            "A payback needs a price as well as a yield, and retrofit dollars per watt "
-            "is a fact about a local installer market on a date, which nothing committed "
-            "here measures. (The block's other two asks ARE artifact-backed now: the "
-            "marginal kWh's export value is {{MARGINAL_EXPORT_VALUE}}, derived from the "
-            "committed hour-of-day export profile, and the clipping evidence is s9#3's. "
-            "The years the block leads with are what is still missing.)",
+            "Both halves of that payback are missing: what one more kW would earn needs "
+            "a counterfactual re-billing of the year at a larger array (issue #190), "
+            "because exports are the residual left after household load rather than the "
+            "shape of added production; and retrofit dollars per watt is a fact about a "
+            "local installer market on a date, which nothing committed here measures. "
+            "(The block's other two asks ARE artifact-backed now: what the year's "
+            "exports earn is {{AVG_EXPORT_CREDIT}}, derived from the committed "
+            "hour-of-day export profile, and the clipping evidence is s9#3's.)",
 }
 
 # ---------------------------------------------------------------------------

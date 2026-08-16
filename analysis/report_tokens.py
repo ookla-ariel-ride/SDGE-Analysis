@@ -895,14 +895,17 @@ KNOWN_GAPS = {
         "data/*.json or *.csv extracts the dollar figure from it, so there is no "
         "public-ok source for the exact number the tool quoted"),
     "EXPANSION_PAYBACK_YEARS": (
-        "a payback needs a PRICE as well as a yield, and the price is the half "
-        "this repo does not have. Both other terms are now derived -- the array's "
-        "specific yield off data/enphase_daily_production.csv, and what an added "
-        "kWh earns off MARGINAL_EXPORT_VALUE below -- but retrofit dollars per "
-        "watt is a fact about a local installer market on a date, which nothing "
-        "committed here measures. index.html states the arithmetic and labels the "
-        "per-watt band as the market assumption it is; a token would state the "
-        "years as though the assumption were a measurement"),
+        "a payback needs a YIELD PRICED THE RIGHT WAY and a COST, and neither "
+        "half is committed here. On the yield side, what one more kW of panels "
+        "would earn is not AVG_EXPORT_CREDIT below: exports are the residual "
+        "left after household load, not the shape of added production, so part "
+        "of an added panel's output would displace an import and the rest is "
+        "settled by each month's per-period NEM 2.0 netting. Pricing it needs a "
+        "counterfactual re-billing of the year at a larger array, filed as issue "
+        "#190 and not run by anything committed here. On the cost side, retrofit "
+        "dollars per watt is a fact about a local installer market on a date, "
+        "which this repo does not collect. A token would state the years as "
+        "though both halves were measured"),
     "ELECTRIFICATION_VERDICT_SHORT": (
         "data/heat_pump_conversion.json now prices the space-heating side "
         "(install cost, three COP scenarios, real per-interval-billed "
@@ -2493,12 +2496,12 @@ def _s8_verdict_short(ctx):
     exp_pct = round(_json("report_data.json")["totals"]["exp"] /
                      _annual_production_kwh(ctx) * 100)
     # NOT "at low value". That clause priced the ALL-HOURS export share at the
-    # midday cell of the credit map -- the qualitative form of the same
-    # mis-scoping MARGINAL_EXPORT_VALUE now derives away, and the section's
-    # most-read sentence was where it read hardest. The exports are worth
-    # MARGINAL_EXPORT_VALUE, which is nearly twice the super-off-peak import
-    # they would displace, so "low value" is not the reason the answer is no.
-    # The reason is the clause that follows it, and that one is artifact-backed.
+    # midday cell of the credit map, and the section's most-read sentence was
+    # where it read hardest. The exports are worth AVG_EXPORT_CREDIT, which is
+    # nearly twice the super-off-peak import rate, so "low value" is not the
+    # reason the answer is no. The reason is the clause that follows it -- the
+    # NEM 2.0 growth cap and the grandfathering it puts at risk -- and that one
+    # is artifact-backed.
     return (f"No, no, and not yet — the array already exports {exp_pct}% of "
             f"production, and expansion risks the "
             f"${low:,.0f}–{high:,.0f}/yr NEM 2.0 grandfathering")
@@ -3469,7 +3472,7 @@ def _midday_export_share(ctx):
 # ---------------------------------------------------------------------------
 # THE ONE READER BEHIND EVERY CLAIM THIS MODULE MAKES ABOUT EXPORT HOURS.
 # Two tokens ask report_data.json's hour-of-day export profiles a question --
-# S2_VERDICT asks WHEN the exports leave, MARGINAL_EXPORT_VALUE asks WHAT THEY
+# S2_VERDICT asks WHEN the exports leave, AVG_EXPORT_CREDIT asks WHAT THEY
 # ARE WORTH -- and both answers are only this window's if the profiles still
 # rebuild the artifact's own annual export total. Split out rather than copied
 # so the two cannot end up validating the same artifact to different standards,
@@ -3542,21 +3545,28 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
             f"do not describe this window")
 
 
-def _marginal_export_value(ctx):
-    """What one more exported kWh is worth to this household, in $/kWh:
-    rates.credit() weighted by WHEN the array actually exports.
+def _avg_export_credit(ctx):
+    """What an exported kWh earns this household, in $/kWh: rates.credit()
+    weighted by WHEN the array actually exports.
 
-    THE QUESTION THIS ANSWERS, and the one it does not. Section 8 asks what a
-    marginal new-panel kWh earns. The array already exports 60% of what it
-    makes, so the daytime hours a new panel would add to are hours whose load
-    is already covered -- the added kWh leaves as an export rather than
-    displacing an import, and its price is the EXPORT CREDIT, not the import
-    rate. That is one figure for the whole year, and it is not any single cell
-    of the credit map: on this profile 63% of the exports leave in the daytime
-    super-off-peak run and credit around 7.6 cents, while the remaining third
-    leaves in off-peak and on-peak hours that credit at UDC+CEA, six to eleven
-    times higher. Quoting the super-off-peak cell as the marginal kWh's value
-    prices a third of the output at the wrong end of the map.
+    THE QUESTION THIS ANSWERS, and the one it does not. This is the average
+    price the year's exported kWh actually fetched, one figure for the whole
+    window, and it is not any single cell of the credit map: on this profile
+    63% of the exports leave in the daytime super-off-peak run and credit
+    around 7.6 cents, while the remaining third leaves in off-peak and on-peak
+    hours that credit at UDC+CEA, six to eleven times higher. Quoting the
+    super-off-peak cell as what an exported kWh is worth prices a third of the
+    output at the wrong end of the map.
+
+    IT IS NOT WHAT ONE MORE kW OF PANELS WOULD EARN, and section 8 must not be
+    written as though it were. Exports are the RESIDUAL left after household
+    load, not the shape of added production: some of an added panel's output
+    would displace an import at that hour's own import rate instead of leaving
+    the meter, and what the rest fetches under NEM 2.0 depends on each month's
+    per-period netting rather than on an unconditional credit() call at every
+    hour. Answering that needs
+    a counterfactual re-billing of the year at a larger array (issue #190),
+    which nothing committed here runs.
 
     HOW IT IS WEIGHTED. report_data.json's per-season mean-day export profiles,
     scaled to the window's real day counts (the same reader and the same
@@ -3582,9 +3592,9 @@ def _marginal_export_value(ctx):
     exports are somewhat differently shaped. No committed artifact in this repo
     splits the export profile finely enough to remove the assumption.
 
-    NOT the import rate the added kWh might otherwise offset, and not an
-    average of the two: that would be a different question (self-consumption),
-    and section 8 states the import side separately as SUPER_OFF_PEAK_RATE."""
+    NOT an import rate, and not an average of an import rate and this: that
+    would be a different question (self-consumption), and section 8 states the
+    import side separately as SUPER_OFF_PEAK_RATE."""
     start, end = _analysis_window_dates()
     profiles = _hourly_export_profiles()
     days = {}
@@ -3599,15 +3609,15 @@ def _marginal_export_value(ctx):
             total += kwh * n
             value += kwh * n * R.credit(seas, R.period(hour, is_off_peak_day))
     _assert_profiles_rebuild_the_year(
-        "MARGINAL_EXPORT_VALUE", "what an exported kWh earns", total)
+        "AVG_EXPORT_CREDIT", "what an exported kWh earns", total)
     exported, credited = _quantities(
-        "MARGINAL_EXPORT_VALUE", "what an exported kWh earns",
+        "AVG_EXPORT_CREDIT", "what an exported kWh earns",
         **{"the kWh data/report_data.json's export profiles rebuild": total,
            "what rates.credit() pays for them": value})
     return credited / exported
 
 
-_tok("MARGINAL_EXPORT_VALUE", kind="derived", get=_marginal_export_value, fmt="cents1",
+_tok("AVG_EXPORT_CREDIT", kind="derived", get=_avg_export_credit, fmt="cents1",
      sources=["data/report_data.json:hourly_S.exp / hourly_W.exp (the hour-of-day "
               "export profiles the weighting runs over)",
               "data/report_data.json:totals.exp (the annual export total the "
