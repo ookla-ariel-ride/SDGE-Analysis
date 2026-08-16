@@ -2815,6 +2815,374 @@ def case_a_bracket_pattern_is_expanded_like_the_shell_expands_it():
     return "a set expression expands to the names it really matches"
 
 
+# Every spelling of git pathspec MAGIC that a destination-relative path can carry:
+# the two long forms, the short forms for top and exclude, and the `::` separator
+# that ends a zero-magic short form. Each is a real, creatable directory name
+# inside a worktree, so each is a path a writer can be pointed at.
+PATHSPEC_MAGIC = (":(top)private/foo", ":(exclude)data/x", ":(glob)private/x",
+                  ":(literal)private/foo", ":!data/x", ":^data/x", "::private/foo")
+
+# Real paths of THIS checkout, in every shape _require_uncommittable is asked
+# about: tracked file, tracked directory, ignored directory, ignored leaf, a path
+# nothing has created, and the two glob shapes. The `./` transform must give the
+# identical git answer for all of them, or it has bought a refusal it cannot pay
+# for. `data/*.json` is in here because it is the pattern-literal check: it must
+# keep matching the tracked files it matches as a GLOB.
+PATHSPEC_EQUIVALENT = ("data", "data/package_results.json", "analysis/rates.py",
+                       "index.html", ".gitignore", "private", "private/1-raw-data",
+                       "private/household.yaml", "private/nonexistent",
+                       "no-such-top-level", "data/*.json", "data/no-such-*.json",
+                       "private/*.json", "private/cache-[0-9].json")
+
+
+@case
+def case_a_destination_that_looks_like_pathspec_magic_is_answered_about_itself():
+    """FINDING: git read a leading ':' in the destination as PATHSPEC MAGIC, so
+    both committability questions were answered about a DIFFERENT path.
+
+        check_destination(ROOT / ':(top)private/foo', kind='file')  ->  ACCEPTED
+
+    `<root>/:(top)private/foo` is a perfectly creatable path, and the ignore rule
+    is `private/`, not a directory called `:(top)private` -- so it is one
+    `git add -A` from a commit. The guard accepted it because git was asked about
+    `private/foo`. `::private/foo` did the same. `:(exclude)...` is the worse
+    shape: it turns `git ls-files` into a FILTER, which answers about everything
+    EXCEPT the declared path, so the tracked half passed having evaluated
+    nothing -- the same class of hole as the two already closed here.
+
+    These paths arrive through --cache-dir and dest_dir= arguments, where a
+    leading colon is a typo or a hostile argument and never a real destination.
+
+    THE FIX IS A TRANSFORM, NOT A REFUSAL, and which one was decided by measuring
+    git rather than by preference. `git check-ignore` rejects pathspec magic
+    outright (`:(literal)x` exits 128), and the global escapes do not help: under
+    `--literal-pathspecs` or GIT_LITERAL_PATHSPECS=1 it exits 128 for even a plain
+    path, and `--stdin` parses magic identically. `git ls-files` does accept
+    `:(literal)`, but forcing it there would silently weaken the zero-match
+    pattern check `_expand()` relies on -- `data/*.json` lists 34 tracked files as
+    a glob and 0 as a literal. `./` + path is the one spelling that works for
+    both: no magic is parsed (it starts with '.') and both commands still resolve
+    it as the path it names, so literals stay literal and globs keep globbing.
+    Both halves are asserted below rather than described.
+    """
+    def git_out(cmd, spec):
+        r = PE._git(cmd + [spec], ROOT)
+        return r.returncode, r.stdout
+
+    # 1. The transform preserves every real verdict, for both commands. This is
+    #    what a refusal-based fix could not have done, and it is checked first:
+    #    a guard that starts refusing correct input is how guards get removed.
+    bad, globbed = [], 0
+    for rel in PATHSPEC_EQUIVALENT:
+        spec = PE._pathspec(rel)
+        assert not spec.startswith(":"), f"_pathspec({rel!r}) still carries magic"
+        for cmd in (["ls-files", "--"], ["check-ignore", "-q", "--"]):
+            if git_out(cmd, rel) != git_out(cmd, spec):
+                bad.append(f"{cmd[0]} disagrees for {rel!r} vs {spec!r}")
+        if "*" in rel or "[" in rel:
+            globbed += len(git_out(["ls-files", "--"], spec)[1].split())
+    assert not bad, bad
+    assert globbed > 0, (
+        "no leaf pattern matched a tracked file through the transform -- glob "
+        "semantics have been lost, and the pattern-literal check with them")
+
+    # 2. The hazard itself, measured: asked bare, git answers about another path.
+    #    check-ignore says 'ignored' for a path nothing ignores, and ls-files
+    #    with an exclude pathspec answers about everything except the one asked.
+    assert git_out(["check-ignore", "-q", "--"], ":(top)private/foo")[0] == 0
+    assert git_out(["check-ignore", "-q", "--"], PE._pathspec(":(top)private/foo"))[0] == 1
+    assert len(git_out(["ls-files", "--"], ":(exclude)data/x")[1].split()) > 100
+    assert git_out(["ls-files", "--"], PE._pathspec(":(exclude)data/x"))[1] == ""
+
+    # 3. The verdicts, through both public doors. Every one of these was either
+    #    ACCEPTED or refused for an accidental reason before the fix.
+    for spell in PATHSPEC_MAGIC:
+        got = _single_verdict(ROOT / spell, "file")
+        if got != "not_ignored":
+            bad.append(f"check_destination(ROOT / {spell!r}) -> {got or 'ACCEPTED'}")
+        for arg in WRITE_SET_PATH_ARGS:
+            got = _write_set_verdict(**{arg: (spell,)})
+            if got != "not_ignored":
+                bad.append(f"check_write_set({arg}=({spell!r},)) -> {got or 'ACCEPTED'}")
+    assert not bad, bad
+
+    # 4. The accepting half: a path whose ':' component is real and whose parent
+    #    IS ignored stays accepted, because git is now answering about it. This
+    #    checkout ignores `*/private/`, so `<root>/:/private/foo` really is
+    #    uncommittable -- it was accepted before too, but for the wrong reason.
+    assert _single_verdict(ROOT / ":" / "private" / "foo", "file") is None
+    return (f"all {len(PATHSPEC_MAGIC)} pathspec-magic spellings are answered "
+            f"about the path on disk, and the transform is verdict-identical on "
+            f"{len(PATHSPEC_EQUIVALENT)} real paths for both git commands")
+
+
+@case
+def case_a_one_shot_declaration_is_checked_in_full():
+    """FINDING: `dirs` and `recursive` were converted to tuples MORE THAN ONCE,
+    so a generator was exhausted by the first pass and every later phase iterated
+    nothing.
+
+        check_write_set(ROOT, dirs=(x for x in ['data']))  ->  ACCEPTED
+        check_write_set(ROOT, dirs=('data',))              ->  REFUSED [tracked_path]
+
+    on the same tracked, committable directory. The call returned a Destination
+    having scanned nothing -- the third appearance of one shape, and the first two
+    are the cases directly above and below this one.
+
+    Asked of EVERY path-bearing argument, off WRITE_SET_PATH_ARGS, because the
+    defect has been in the argument the previous round did not test all three
+    times. The consuming half is asserted STRUCTURALLY as well: the materializing
+    call happens once per argument and nothing re-converts them, which is the
+    property that makes the shape impossible rather than fixed at one site.
+    """
+    bad = []
+    for arg in WRITE_SET_PATH_ARGS:
+        for value, expect in (("data", "tracked_path"),
+                              ("data/no-such-file.json", "not_ignored")):
+            one_shot = _write_set_verdict(**{arg: (x for x in [value])})
+            if one_shot != expect:
+                bad.append(f"check_write_set({arg}=<generator [{value!r}]>) -> "
+                           f"{one_shot or 'ACCEPTED'}, expected {expect} -- the "
+                           "same verdict the tuple gets")
+        if _write_set_verdict(**{arg: iter(["data"])}) != "tracked_path":
+            bad.append(f"{arg}=iter([...]) is not checked like a tuple")
+    # All three at once, and the accepting half: one-shot input at paths this
+    # checkout really ignores must still be accepted.
+    if _write_set_verdict(dirs=(x for x in ["data"]),
+                          recursive=(x for x in ["data"]),
+                          leaves=(x for x in ["data/x.json"])) != "tracked_path":
+        bad.append("three generators together are not checked like three tuples")
+    assert not bad, bad
+    assert PE.check_write_set(ROOT,
+                              dirs=(x for x in ["private/nonexistent-dir"]),
+                              recursive=(x for x in ["private/nonexistent-tree"]),
+                              leaves=(x for x in ["private/nonexistent-leaf.json"]))
+
+    # A pathlib.Path entry used to crash in _is_pattern (`ch in rel` on a Path)
+    # rather than reach any check; a BARE path where the sequence belongs is
+    # iterated character by character, so it declares one path and evaluates
+    # others -- a TypeError, like an unknown kind, not a verdict about a path.
+    assert _write_set_verdict(dirs=(pathlib.Path("data"),)) == "tracked_path"
+    for arg in WRITE_SET_PATH_ARGS:
+        for value in ("data", pathlib.Path("data"), b"data"):
+            try:
+                PE.check_write_set(ROOT, **{arg: value})
+                bad.append(f"{arg}={value!r} was accepted as a sequence of paths")
+            except TypeError:
+                pass
+            except PE.DestinationRefused as e:
+                bad.append(f"{arg}={value!r} produced a verdict ({e.reason}) about "
+                           "paths the caller did not name")
+    assert not bad, bad
+
+    # Structural: each path argument is materialized exactly once, and nothing in
+    # the function re-converts a sequence. A second tuple() is the whole defect.
+    tree = ast.parse((ANALYSIS / "private_egress.py").read_text())
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_check_write_set")
+    materialized = [n.args[0].value for n in ast.walk(fn)
+                    if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_paths"
+                    and n.args and isinstance(n.args[0], ast.Constant)]
+    assert sorted(materialized) == sorted(WRITE_SET_PATH_ARGS), (
+        f"_check_write_set() materializes {sorted(materialized)}; the path "
+        f"arguments are {sorted(WRITE_SET_PATH_ARGS)} -- one that is not "
+        "materialized once at entry can be consumed by the first phase")
+    reconverted = [n.lineno for n in ast.walk(fn)
+                   if isinstance(n, ast.Call)
+                   and getattr(n.func, "id", "") in ("tuple", "list", "sorted", "set")]
+    assert not reconverted, (
+        f"_check_write_set() re-materializes a sequence at line(s) {reconverted}; "
+        "the second conversion of a one-shot iterable is the defect itself")
+    return (f"all {len(WRITE_SET_PATH_ARGS)} path arguments are materialized once "
+            "and checked in full as one-shot iterables, and a bare path is a "
+            "TypeError rather than a verdict")
+
+
+@case
+def case_a_declaration_that_plans_no_destination_is_never_accepted():
+    """THE INVARIANT, asserted directly rather than as a fourth one-off case.
+
+    Three review rounds found three instances of ONE shape: a public entry point
+    returns SUCCESS having evaluated nothing, because an input was empty,
+    unexpanded or consumed rather than absent. `recursive` skipped the
+    committability phase; an unlistable glob_source expanded a declared leaf to
+    nothing; a one-shot `dirs` was consumed by the first pass.
+
+    Two things close it structurally, and both are checked here.
+    _paths() materializes each sequence exactly once (the case above), which
+    makes the consumed shape impossible. _require_every_declaration_planned()
+    counts what came out the other end: every declaration must yield at least one
+    concrete destination, so a declared path that vanished between the argument
+    and the checks cannot be accepted -- whatever made it vanish.
+
+    Proved by BREAKING the expansion at that seam, which is the next instance of
+    the shape arriving: an expander that returns [], and one that silently drops
+    an entry. Both must fail the call rather than return a Destination.
+    Deliberately NOT a DestinationRefused: no caller can provoke this state, so a
+    refusal code for it would be a verdict about a destination that is really a
+    statement about this module's own code.
+    """
+    real = PE._expand_leaves
+    leaf = "private/nonexistent-leaf.json"
+    assert PE.check_write_set(ROOT, leaves=(leaf, "private/other-leaf.json")), (
+        "the control must be accepted, or this case proves nothing")
+
+    def refuses_to_return(label, **kw):
+        try:
+            PE.check_write_set(ROOT, **kw)
+        except AssertionError as e:
+            assert "declared" in str(e), f"{label}: unhelpful invariant message"
+            return
+        except PE.DestinationRefused as e:
+            raise AssertionError(f"{label}: refused as {e.reason}, but this is a "
+                                 "fact about the module, not about the path")
+        raise AssertionError(f"{label}: returned a Destination having planned no "
+                             "destination for a declared path")
+
+    try:
+        PE._expand_leaves = lambda leaves, root, src: []
+        refuses_to_return("an expander that returns nothing", leaves=(leaf,))
+        PE._expand_leaves = lambda leaves, root, src: list(real(leaves, root, src))[:-1]
+        refuses_to_return("an expander that drops one entry",
+                          leaves=(leaf, "private/other-leaf.json"))
+    finally:
+        PE._expand_leaves = real
+    assert PE.check_write_set(ROOT, leaves=(leaf,)), "the seam was not restored"
+
+    # The invariant must survive `python -O`, which strips the assert STATEMENT.
+    # A check whose whole job is to notice that a check stopped running must not
+    # be the one thing an optimization flag switches off.
+    prog = (f"import sys; sys.path.insert(0, {str(ANALYSIS)!r});"
+            "import private_egress as PE;"
+            "PE._expand_leaves = lambda leaves, root, src: [];"
+            f"PE.check_write_set({str(ROOT)!r}, leaves=({leaf!r},));"
+            "print('ACCEPTED')")
+    r = subprocess.run([sys.executable, "-O", "-B", "-c", prog],
+                       capture_output=True, text=True, cwd=str(ROOT))
+    assert r.returncode != 0 and "ACCEPTED" not in r.stdout, (
+        "under python -O the invariant no longer fires:\n" + r.stdout + r.stderr)
+
+    src = inspect.getsource(PE._require_every_declaration_planned)
+    assert not [n for n in ast.walk(ast.parse(src.lstrip())) if isinstance(n, ast.Assert)], (
+        "the invariant uses the `assert` statement, which -O removes")
+    return ("a declared path that plans no destination fails the call instead of "
+            "being accepted, under -O as well")
+
+
+@case
+def case_the_recursive_scan_refuses_a_probe_it_cannot_make():
+    """FINDING: `e.stat()` inside the recursive scan raised straight out of both
+    public APIs.
+
+    os.scandir() only reads the directory; the per-entry questions go back to the
+    kernel and can fail for reasons that are facts about the DESTINATION, not
+    bugs here -- PermissionError in a directory that is readable but not
+    searchable, FileNotFoundError for an entry unlinked between the listing and
+    the stat. Only the listing was inside the handler, so a caller holding this
+    module's documented `except DestinationRefused` got an unhandled
+    PermissionError instead of a verdict it could act on.
+
+    The real fixture is the permission one, because it needs no injection: a
+    subdirectory chmod'ed 0o400 with a file in it. The vanishing entry is a race
+    by definition, so it is injected -- and the same injection proves the other
+    half of the requirement, that the handler was not widened until it swallows a
+    programming error.
+
+    Built inside a THROWAWAY worktree, like every other fixture here, never in
+    this checkout's own private/ -- both so the case needs no archive and so it
+    is not itself a write into the real archive.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        with _worktree(td) as wt:
+            probe = wt / "private" / "scan-probe"
+            (probe / "sub").mkdir(parents=True)
+            (probe / "sub" / "f.txt").write_text("x")
+            # The raw error is caught HERE rather than left to escape, so the
+            # defect reads as a failing assertion naming what came out instead
+            # of aborting the run -- "a raw OSError" IS the verdict under test.
+            def verdict(call):
+                try:
+                    return call() and None
+                except PE.DestinationRefused as e:
+                    return e.reason
+                except OSError as e:
+                    return f"raw {type(e).__name__}"
+
+            try:
+                os.chmod(probe / "sub", 0o400)   # readable, NOT searchable
+                if os.access(probe / "sub" / "f.txt", os.R_OK):
+                    raise SkipCase("running as root, or a filesystem ignoring mode")
+                for label, call in (
+                        ("check_destination(kind='tree')",
+                         lambda: PE.check_destination(probe, kind="tree")),
+                        ("check_write_set(recursive=...)",
+                         lambda: PE.check_write_set(wt, recursive=("private/scan-probe",)))):
+                    got = verdict(call)
+                    assert got == "scan_unreadable", (
+                        f"{label} on a readable-but-unsearchable subdirectory gave "
+                        f"{got or 'ACCEPTED'}; this module's contract is that a "
+                        "destination problem is a DestinationRefused")
+                OBSERVED.add(("tree", "scan_unreadable"))
+            finally:
+                os.chmod(probe / "sub", 0o700)
+
+    # The injected half. os.scandir is restored in the finally, and the fake
+    # answers only for the one directory under test.
+    with tempfile.TemporaryDirectory() as td:
+        target = pathlib.Path(td) / "tree"
+        target.mkdir()
+
+        class Entry:
+            def __init__(self, exc, on="stat"):
+                self.path, self.name, self._exc, self._on = str(target / "gone"), "gone", exc, on
+
+            def _maybe(self, which):
+                if which == self._on:
+                    raise self._exc
+                return False
+
+            def is_symlink(self):
+                return self._maybe("is_symlink")
+
+            def stat(self, follow_symlinks=True):
+                self._maybe("stat")
+                return os.stat(__file__)
+
+            def is_dir(self, follow_symlinks=True):
+                return False
+
+            def is_file(self, follow_symlinks=True):
+                return True
+
+        real_scandir = os.scandir
+
+        def fake(path="."):
+            if os.path.abspath(path) == str(target):
+                return iter([entry])
+            return real_scandir(path)
+
+        for entry, expect in (
+                (Entry(FileNotFoundError(2, "No such file or directory")), "scan_unreadable"),
+                (Entry(PermissionError(13, "Permission denied"), on="is_symlink"), "scan_unreadable"),
+                (Entry(TypeError("a bug in this module"), on="is_symlink"), TypeError)):
+            os.scandir = fake
+            try:
+                got = PE._scan_tree(str(target)) or None
+            except PE.DestinationRefused as e:
+                got = e.reason
+            except TypeError:
+                got = TypeError
+            finally:
+                os.scandir = real_scandir
+            assert got == expect, (
+                f"a {type(entry._exc).__name__} at {entry._on}() gave {got!r}, "
+                f"expected {expect!r} -- a programming error must not be reported "
+                "as a fact about the destination, and a kernel refusal must not "
+                "escape as a raw OSError")
+    return ("every per-entry probe in the recursive scan reports scan_unreadable, "
+            "and a TypeError from this module still propagates")
+
+
 @case
 def case_the_two_public_apis_differ_only_on_the_root_question():
     """The full comparison, printed: which refusal each destination kind can

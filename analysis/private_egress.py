@@ -616,6 +616,50 @@ def _check_destination(path, *, kind, require_ignored, worktrees, env):
     return Destination(lit, wt_real, relpath)
 
 
+def _pathspec(relpath):
+    """A destination-relative path -> the PATHSPEC that asks git about THAT path.
+
+    git reads a leading ':' as pathspec MAGIC, so a destination spelled
+    ':(top)private/foo', ':/private/foo', '::private/foo', ':!data/x' or
+    ':(exclude)data/x' makes git answer about a DIFFERENT path than the one on
+    disk. Each of those is a real, creatable name inside the tree -- the ignore
+    rule is 'private/', not a directory literally called ':(top)private' -- so
+    'ignored' was being reported for a path that is one 'git add' from a commit.
+    ':(exclude)' is the worse shape: it turns 'git ls-files' into a filter that
+    evaluates the tracked question against everything EXCEPT the declared path.
+    These arrive through --cache-dir / dest_dir= arguments, where a leading colon
+    is a typo or a hostile argument and never a real destination.
+
+    The transform is './' + relpath, and it is the one form that works for BOTH
+    commands. Measured on this checkout (git 2.50.1), not assumed:
+
+      * 'git check-ignore' rejects pathspec magic OUTRIGHT -- ':(literal)x' exits
+        128, "pathspec magic not supported by this command". The global escapes
+        do not help: '--literal-pathspecs' and GIT_LITERAL_PATHSPECS=1 apply the
+        'literal' magic to EVERY pathspec, so under them even a plain
+        'private/foo' exits 128. '--stdin' does not help either -- it parses
+        magic exactly the same way. So there is no way to ask check-ignore for a
+        literal interpretation, and a refusal would have been the only other
+        answer.
+      * 'git ls-files' does accept ':(literal)', but forcing it would silently
+        weaken the zero-match pattern check _expand() relies on: it lists every
+        tracked file a pattern matches when the pattern is read as a glob and
+        none of them when it is read as a literal, so a tracked file matching a
+        declared pattern would stop being found.
+
+    './x' starts with '.', so no magic is parsed at all, while both commands
+    still resolve it as the path x relative to the cwd -- literal names stay
+    literal and glob patterns keep globbing. Asserted rather than described, in
+    test_private_egress.case_a_destination_that_looks_like_pathspec_magic_is_
+    answered_about_itself: verdict-identical to the bare spelling for every path
+    in its PATHSPEC_EQUIVALENT list (tracked files, tracked directories, ignored
+    paths, absent paths, '*' and '[' patterns) across both commands, still
+    matching tracked files through a glob, and neutralizing every magic spelling
+    above.
+    """
+    return "./" + relpath
+
+
 def _require_uncommittable(worktree, relpath, env=None):
     """`relpath` must be untracked AND ignored in `worktree`.
 
@@ -629,8 +673,14 @@ def _require_uncommittable(worktree, relpath, env=None):
     its info/exclude and its index -- and in the sanitized environment, because
     an inherited GIT_CONFIG could otherwise supply a core.excludesFile that
     manufactures the "ignored" answer.
+
+    This is the ONLY place in this module where a caller-supplied path becomes a
+    git PATHSPEC (everything else hands git a -C directory), so it is the one
+    place _pathspec() has to be applied -- see there for what a leading ':'
+    otherwise does to both questions below.
     """
-    r = _git(["ls-files", "--", relpath], worktree, env)
+    spec = _pathspec(relpath)
+    r = _git(["ls-files", "--", spec], worktree, env)
     if r.returncode != 0:
         raise DestinationRefused(
             "tracked_unanswerable",
@@ -642,7 +692,7 @@ def _require_uncommittable(worktree, relpath, env=None):
             "a tracked file stays in the index whatever .gitignore says, so "
             "writing private data over one puts it straight into the next "
             "commit's diff", os.path.join(worktree, relpath))
-    r = _git(["check-ignore", "-q", "--", relpath], worktree, env)
+    r = _git(["check-ignore", "-q", "--", spec], worktree, env)
     if r.returncode == 0:
         return
     if r.returncode == 1:
@@ -708,7 +758,29 @@ def _check_leaf(dest, kind):
 def _scan_tree(root):
     """Refuse a symlink, a special file or a hard-linked file anywhere beneath
     `root` -- the paths a recursive copy writes through. Never follows a link;
-    the link itself is the refusal."""
+    the link itself is the refusal.
+
+    EVERY filesystem probe is inside the OSError handler, not just the listing.
+    os.scandir() only reads the directory; the per-entry questions below go back
+    to the kernel, and each of them can fail for a reason that is a fact about
+    the destination and not a bug here: e.stat() raises PermissionError in a
+    directory that is readable but not searchable (mode r-- on a parent), and
+    FileNotFoundError for an entry that is unlinked between the listing and the
+    stat. Both used to escape this function raw, out through both public APIs --
+    a caller holding the documented `except DestinationRefused` saw an unhandled
+    PermissionError instead of a refusal it could act on. Reproduced before the
+    fix: a subdirectory chmod'ed 0o400 with one file in it took
+    check_destination(<tree>, kind="tree") and check_write_set(recursive=...)
+    both out through a raw PermissionError.
+
+    The probes are lifted out of the refusal branches so the handler covers the
+    KERNEL CALLS ONLY. os.readlink() is in there too -- it is the one probe that
+    used to sit inside a raise. A DestinationRefused raised below is not an
+    OSError and so passes through untouched, and neither is a TypeError or an
+    AttributeError: widening this to `except Exception` would let a bug in this
+    module report itself as a fact about the destination, which is the mistake
+    the scan_unreadable/symlink_under split exists to avoid in the first place.
+    """
     if not os.path.isdir(root) or os.path.islink(root):
         return
     stack = [root]
@@ -724,17 +796,28 @@ def _scan_tree(root):
             raise DestinationRefused(
                 "scan_unreadable", f"could not scan {cur}: {e}", root) from None
         for e in entries:
-            if e.is_symlink():
+            try:
+                link = e.is_symlink()
+                target = os.readlink(e.path) if link else None
+                st = None if link else e.stat(follow_symlinks=False)
+                isdir = not link and e.is_dir(follow_symlinks=False)
+                isfile = not link and e.is_file(follow_symlinks=False)
+            except OSError as err:
+                raise DestinationRefused(
+                    "scan_unreadable",
+                    f"could not inspect {e.path} while scanning {cur} ({err}), so "
+                    "whether it is a link, a special file or a second name for "
+                    "some other inode is unknown", root) from None
+            if link:
                 raise DestinationRefused(
                     "symlink_under",
-                    f"{e.path} -> {os.readlink(e.path)}; a recursive copy writes "
+                    f"{e.path} -> {target}; a recursive copy writes "
                     "THROUGH it, and one pointing at the source archive makes the "
                     "run overwrite the originals", root)
-            st = e.stat(follow_symlinks=False)
-            if e.is_dir(follow_symlinks=False):
+            if isdir:
                 stack.append(e.path)
                 continue
-            if not e.is_file(follow_symlinks=False):
+            if not isfile:
                 raise DestinationRefused(
                     "special_under",
                     f"{e.path} is neither a directory nor a regular file", root)
@@ -759,6 +842,14 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None)
     for that.
 
     Ordered checks first, writes never: this returns a Destination or raises.
+
+    `dirs`, `leaves` and `recursive` are SEQUENCES of paths, and each is
+    materialized exactly once, at entry, so a generator or any other one-shot
+    iterable is checked in full rather than being consumed by the first phase and
+    read as empty by the rest. A pathlib.Path entry is accepted (os.fspath); a
+    bare string or Path passed where the sequence belongs is a TypeError, because
+    iterating it would check its characters instead of the path it names. See
+    _paths().
 
     Every parameter here DESCRIBES what will be written and where: four name
     paths, and `glob_source` says which tree a leaf pattern is expanded against.
@@ -802,7 +893,28 @@ def _check_write_set(root, *, dirs, leaves, recursive, glob_source, env):
     A caller using `recursive` without redundantly naming its parent in `dirs`
     could copy the archive into a path one `git add` from a commit, through this
     module's own API.
+
+    THE SEQUENCES ARE MATERIALIZED ONCE, AT ENTRY, and that line is load-bearing
+    rather than tidy. `dirs` and `recursive` used to be tuple()-ed twice -- once
+    for the pattern check, once for the committability loop -- and a ONE-SHOT
+    iterable is empty by the second conversion, so
+
+        check_write_set(ROOT, dirs=(x for x in ["data"]))   -> ACCEPTED
+        check_write_set(ROOT, dirs=("data",))               -> REFUSED [tracked_path]
+
+    on the same tracked, committable directory: the later phases iterated an
+    empty sequence and the call returned a Destination having scanned nothing.
+    Materializing once makes that shape structurally impossible rather than
+    fixed at one site, which matters because it is the THIRD appearance of one
+    defect -- a public entry point returning success having evaluated nothing,
+    because an input was empty, unexpanded or consumed rather than absent. See
+    _require_every_declaration_planned() for the other half: the accounting that
+    catches the shapes materializing cannot.
     """
+    dirs = _paths("dirs", dirs)
+    recursive = _paths("recursive", recursive)
+    leaves = _paths("leaves", leaves)
+
     # Nothing turned off: require_ignored is the literal True the public door
     # passes, and the register is the real one. kind="root" never reaches the
     # ignore question anyway (a root's relpath is empty), so the root call needs
@@ -849,23 +961,108 @@ def _check_write_set(root, *, dirs, leaves, recursive, glob_source, env):
     # where the shell reaches the symlink scan and says symlink_component.
     # Same rule, same answers -- but only because "covered" means covered by a
     # path that was really asked, never by a path that was merely declared.
-    _require_literal_directories(tuple(dirs) + tuple(recursive))
+    _require_literal_directories(dirs + recursive)
     expanded = _expand_leaves(leaves, root, glob_source)
+
+    # THE PLAN: every declaration turned into the concrete destinations it names,
+    # built once and then iterated by both phases. The accounting below is what
+    # makes "declared some, evaluated none" a failure instead of a success --
+    # every loop from here on runs over `plan`, so a phase cannot silently
+    # iterate a different (or emptied) sequence than the one that was counted.
+    plan = ([(rel, "dir") for rel in dirs]
+            + [(rel, "tree") for rel in recursive]
+            + [(name, "file") for name in expanded])
+    _require_every_declaration_planned(dirs + recursive + leaves, plan)
+
     covered = []
-    for rel in tuple(dirs) + tuple(recursive):
+    for rel, kind in plan:
+        if kind == "file":
+            continue                    # leaves are asked after the directories
         if not _covered_by(rel, covered):
             _require_uncommittable(dest.path, rel, env)
         covered.append(rel)
-    for name in expanded:
-        if not _covered_by(name, covered):
-            _require_uncommittable(dest.path, name, env)
-    for rel in dirs:
-        one(rel, "dir")
-    for rel in recursive:
-        one(rel, "tree")
-    for name in expanded:
-        one(name, "file")
+    for rel, kind in plan:
+        if kind == "file" and not _covered_by(rel, covered):
+            _require_uncommittable(dest.path, rel, env)
+    for rel, kind in plan:
+        one(rel, kind)
     return dest
+
+
+def _paths(name, value):
+    """A caller's path SEQUENCE -> a tuple of strings, materialized exactly once.
+
+    Three jobs, each of them a shape that has already shipped or that this module
+    would otherwise mis-evaluate:
+
+      * MATERIALIZE. A generator, a map object, an iterator -- anything one-shot
+        -- is exhausted by whoever converts it first, and every later phase then
+        iterates nothing. Converting here, at entry, and never again is what
+        makes that impossible; see _check_write_set's docstring for the
+        reproduction.
+      * NORMALIZE. os.fspath() turns a pathlib.Path into the str the rest of this
+        module needs. Without it a Path entry never even reached a check:
+        _is_pattern() does `ch in rel`, which is a TypeError on a Path, so
+        dirs=(Path("data"),) crashed instead of being refused.
+      * REJECT A BARE PATH. A str, bytes or os.PathLike passed where a SEQUENCE
+        of paths belongs is iterated character by character, so dirs="data"
+        declares four one-character destinations and evaluates those instead of
+        the one the caller named. That is the "declared X, evaluated Y" shape
+        with no way for the accounting below to see it, because the count is
+        right. A TypeError, not a refusal: like an unknown `kind`, a caller who
+        cannot say what it is writing has a bug in itself and must not be able to
+        spell that bug as a verdict about a path.
+    """
+    if isinstance(value, (str, bytes, os.PathLike)):
+        raise TypeError(
+            f"{name}= takes a sequence of worktree-relative paths, not a single "
+            f"path ({value!r}); a bare string is iterated one character at a "
+            "time, so the paths checked would not be the path you named")
+    return tuple(os.fspath(v) for v in value)
+
+
+def _require_every_declaration_planned(declared, plan):
+    """INVARIANT: a call that declared destinations must have planned some.
+
+    NOT a refusal and not about caller input -- it is the standing guard against
+    one defect that has now been found in THREE consecutive review rounds, each
+    time in the argument the previous round did not test:
+
+      1. `recursive` entries skipped the committability phase entirely;
+      2. an unlistable `glob_source` (and a zero-match pattern) expanded a
+         declared leaf to nothing, so its destination was never evaluated;
+      3. a one-shot `dirs`/`recursive` was consumed by the first pass, so the
+         later phases iterated an empty sequence.
+
+    One shape underneath all three: a public entry point returns SUCCESS having
+    evaluated nothing, because an input was empty, unexpanded or consumed rather
+    than absent. Two things close it structurally. _paths() materializes each
+    sequence exactly once, which kills (3) by construction. This counts what came
+    out the other end, which catches (1) and (2) and anything of that shape added
+    later -- a new argument that forgets to extend `plan`, an expander that
+    starts returning [], a filter that drops entries.
+
+    The arithmetic is exact rather than a floor on the total: `dirs` and
+    `recursive` yield one destination each (a pattern in them is refused by
+    _require_literal_directories), and a leaf yields at least one (a pattern that
+    matches nothing is checked as the literal it is -- see _expand). So
+    len(plan) >= len(declared) always holds, and a single declaration that
+    yielded nothing is caught even when its neighbours yielded plenty.
+
+    Raised as an AssertionError, deliberately. Every state it describes is
+    unreachable through the public API as this module stands, so it is a fact
+    about THIS CODE rather than about the destination, and giving it a
+    DestinationRefused code would put a verdict in the refusal vocabulary that
+    no caller can provoke and no test can honestly exercise. It is an explicit
+    raise and not the `assert` statement so that `python -O` cannot switch off
+    the one check whose whole job is to notice that a check stopped running.
+    """
+    if len(plan) < len(declared):
+        raise AssertionError(
+            f"private_egress: {len(declared)} destination(s) were declared and "
+            f"only {len(plan)} planned, so at least one declared path would be "
+            "accepted without being evaluated. Refusing to return a Destination. "
+            f"declared={list(declared)!r} planned={[p for p, _ in plan]!r}")
 
 
 def _covered_by(rel, prefixes):
