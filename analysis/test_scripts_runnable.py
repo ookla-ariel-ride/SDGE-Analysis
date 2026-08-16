@@ -51,6 +51,7 @@ MANIFEST = {
     "rates_history.py": "generator",
     "household.py": "library",
     "privacy_tiers.py": "library",
+    "private_egress.py": "library",
     "publish.py": "library",
     "report_tokens.py": "library",
     "llm_providers.py": "library",

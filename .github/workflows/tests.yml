@@ -120,6 +120,15 @@ jobs:
         run: python analysis/test_dry_run.py
       - name: stage-private-data.sh guard tests
         run: python analysis/test_stage_private_data.py
+      # issue #186: the census of code that copies raw private files, and the
+      # proof that private_egress.py and stage-private-data.sh return identical
+      # verdicts on a shared table of destinations. Needs no private archive --
+      # the agreement table stages a SYNTHETIC source (empty files with the
+      # archive's names) into throwaway `git worktree add` worktrees of the
+      # checkout, so an unregistered mover fails HERE rather than being noticed
+      # after it has written somewhere nobody looks.
+      - name: private-egress census and destination-guard agreement
+        run: python analysis/test_private_egress.py
 
   archive-only-generators:
     # issue #44: these generators used to sit in test_scripts_runnable.py's
