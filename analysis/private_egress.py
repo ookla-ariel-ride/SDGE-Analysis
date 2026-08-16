@@ -28,19 +28,27 @@ THE RULE, matching what stage-private-data.sh already enforces:
      which changes what a bare relative path even MEANS) turn every check below
      into an answer the caller supplied. Cleared, not rejected, for the reason
      the shell gives at length: GIT_DIR is exported by every git hook.
-  2. the destination lies inside a REGISTERED worktree of THIS checkout.
-     Registration is decided against `git worktree list`, resolved from the
-     common dir of the checkout THIS FILE lives in -- never from anything the
-     destination said. A plain directory holding a one-line `.git` gitfile
-     answers --git-common-dir and --show-toplevel exactly like a real worktree;
-     a directory restored from a backup of a linked worktree does it by
-     accident. Only git's own register tells them apart.
+  2. the destination lies inside a REGISTERED worktree of THIS checkout, and
+     that worktree still IS one. Registration is decided against `git worktree
+     list`, resolved from the common dir of the checkout THIS FILE lives in --
+     never from anything the destination said. A plain directory holding a
+     one-line `.git` gitfile answers --git-common-dir and --show-toplevel
+     exactly like a real worktree; a directory restored from a backup of a
+     linked worktree does it by accident. Only git's own register tells them
+     apart. But the register is a RECORD, not a question asked of the
+     directory: git writes the entry when `git worktree add` succeeds and never
+     revalidates one whose directory still exists. So the matched entry is
+     asked, once, which repository it is in NOW -- see
+     _confirm_register_entry().
   3. NO PATH COMPONENT AT OR BELOW THE WORKTREE ROOT IS A SYMLINK. Symlinks
      ABOVE the root are fine and must be (on macOS /tmp and /var are links, and
      a legitimate worktree reached through one has to keep working) -- they are
      resolved before the register is consulted. Below the root a link is a route
      back out of the tree that just passed every check, and every writer here
-     follows it.
+     follows it. The same walk requires every EXISTING component above the last
+     to be a directory: a regular file, a FIFO or a device node there is a path
+     the caller cannot create at all, so accepting it answers the module's one
+     question wrongly.
   4. the path is GENUINELY IGNORED there: untracked, and reported ignored by
      that working tree's OWN git. Untracked is asked first and separately,
      because check-ignore consults the index and reports a tracked-though-
@@ -269,8 +277,14 @@ def _resolve_register(paths):
     made membership depend on the spelling the caller happened to use: on macOS a
     tempdir is /var/folders/... whose realpath is /private/var/folders/..., so
     the same directory matched when passed as a realpath and did not when passed
-    literally. An entry whose directory no longer exists resolves to nothing and
-    is dropped, so a stale register entry cannot admit a destination.
+    literally.
+
+    An entry whose directory no longer EXISTS resolves to nothing and is dropped
+    here, which settles exactly one of the two ways an entry goes stale -- the
+    prunable one. The other, a directory that exists and belongs to somebody
+    else now, survives this function by construction (it resolves perfectly
+    well) and is settled by _confirm_register_entry() against the matched entry.
+    Neither is decided here on its own.
     """
     out = []
     for p in paths:
@@ -285,8 +299,9 @@ def registered_worktrees(common_dir=None, env=None):
 
     Returns [] when the register could not be read at all -- callers treat that
     as a refusal, never as "no restrictions". A registered entry whose directory
-    no longer exists resolves to nothing and is dropped, so a stale register
-    entry cannot admit a destination.
+    no longer exists resolves to nothing and is dropped; an entry whose
+    directory exists is returned AS GIT RECORDED IT and is not believed on that
+    alone -- _confirm_register_entry() re-asks the matched one.
 
     Falls back to the line-based listing whenever -z yields nothing (a git that
     predates `worktree list -z` writes usage to stderr and nothing to stdout),
@@ -345,6 +360,72 @@ def _locate_worktree(path, worktrees):
         if real and real in worktrees:
             return a, real
     return None, None
+
+
+def _confirm_register_entry(wt_real, self_git, env=None):
+    """The matched register entry must STILL be a worktree of this checkout.
+
+    `git worktree list` is a RECORD OF A DIRECTORY, not a question asked of it.
+    git writes the entry when `git worktree add` succeeds and revalidates it
+    only for a directory that is GONE (`git worktree prune`); a directory that
+    exists keeps its entry whatever is now in it. Measured on git 2.50.1, not
+    assumed -- and each of the three outcomes below is one of those
+    measurements:
+
+      * directory deleted, path re-created and `git init`-ed by another project
+        -- the shape `~/limits-wt/` invites, where paths are reused across
+        projects and worktrees are abandoned rather than removed. The entry
+        SURVIVES `git worktree prune` (the directory exists) and `git worktree
+        remove --force` REFUSES it ("is not a .git file"). It is the dangerous
+        one: it makes an unrelated repository a registered worktree of this
+        checkout, and if that repository gitignores private/ -- as many do --
+        every check below then passes, asked of the WRONG REPOSITORY. That is
+        the 2026-08-13 incident with the one detail that made a human notice
+        (`?? private/` in the receiving repo's `git status`) removed.
+      * directory deleted and replaced by a plain directory: still listed until
+        somebody prunes, so it too can be matched here.
+      * directory gone: still listed until pruned, but _resolve_register()
+        drops it because it resolves to nothing, so it never reaches this
+        function. The branch below exists for the window between that
+        resolution and this call, and it says PRUNABLE rather than hijacked --
+        the two have different remedies and must not be reported as each other.
+
+    Asked of the MATCHED ENTRY only, not of every entry in the register. It is
+    cheaper (one `git rev-parse`, not one per registered worktree), and it is
+    more precise: a hijacked entry somewhere else in the register is not a fact
+    about the destination in hand, and refusing this destination for it would be
+    a refusal the caller cannot act on -- which is how guards get switched off.
+
+    The comparison is the one this module already makes; what is new is asking
+    the DIRECTORY rather than the register. `self_git` is this checkout's common
+    dir, resolved from the copy of this module that is running.
+    """
+    now = common_git_dir(wt_real, env)
+    if now == self_git:
+        return
+    if not os.path.isdir(wt_real):
+        raise DestinationRefused(
+            "no_such_destination",
+            "this checkout's register names this worktree, but its directory is "
+            "GONE. The entry is stale and PRUNABLE -- 'git worktree prune' "
+            "removes it. Nothing was written", wt_real)
+    if now is None:
+        raise DestinationRefused(
+            "not_a_worktree",
+            "this checkout's register names this worktree, but the directory "
+            "there is in no git repository NOW: the worktree was deleted "
+            "without 'git worktree remove' and a plain directory was put back "
+            "at the same path. STALE ENTRY, not a missing one -- 'git worktree "
+            "prune' removes it, because the .git it recorded is gone", wt_real)
+    raise DestinationRefused(
+        "different_repository",
+        f"this checkout's register names this worktree, but the directory there "
+        f"belongs to {now} NOW, not to {self_git}: the worktree was deleted "
+        f"without 'git worktree remove' and an UNRELATED repository was created "
+        f"at the same path. Not a missing directory and not a prunable entry -- "
+        f"'git worktree prune' keeps it (the directory exists) and 'git worktree "
+        f"remove --force' refuses it ('is not a .git file'). Remove or move that "
+        f"directory and then run 'git worktree prune'", wt_real)
 
 
 def _diagnose_outside(path, self_git, env):
@@ -554,17 +635,51 @@ def _check_destination(path, *, kind, require_ignored, worktrees, env):
         reason, detail = _diagnose_outside(lit, self_git, env)
         raise DestinationRefused(reason, detail, lit)
 
+    # ... and the entry that matched is asked whether it is still one of ours,
+    # BEFORE any question is asked of the destination -- because every question
+    # below is asked of THAT WORKTREE'S OWN GIT, and a hijacked entry answers
+    # them all about a repository this checkout does not own.
+    #
+    # Only when the register was read from git. A SUPPLIED register replaces the
+    # register outright (see this function's docstring: nothing checks that it
+    # came from this checkout, which is why it is not on a public signature), so
+    # there is no self_git to compare against -- it is not probed on that path.
+    # The one internal caller entitled to it, _check_write_set(), passes exactly
+    # the root that the kind="root" call in the same invocation just put through
+    # the confirmation below, so re-confirming it once per declared path would
+    # buy a git subprocess per path and no fact.
+    if not supplied:
+        _confirm_register_entry(wt_real, self_git, env)
+
     if kind == "root" and _physical(lit) != wt_real:
         raise DestinationRefused(
             "not_worktree_root", f"the worktree root here is {wt_real}", lit)
 
-    # Symlink walk, from the worktree root DOWN. `wt_lit` is the literal prefix
+    # Component walk, from the worktree root DOWN. `wt_lit` is the literal prefix
     # whose resolution is the root, so everything after it is checked as written
     # rather than as resolved: this is what sees a link planted at
     # <worktree>/private, which realpath would silently follow.
+    #
+    # An INTERMEDIATE component is a directory slot whatever `kind` says -- the
+    # caller's own mkdir -p walks through it -- so an existing one that is not a
+    # directory is refused here, with the same code _check_leaf() gives for the
+    # same fact in a directory slot. It used to be walked past: a regular file
+    # (or a FIFO, or a device node) at <worktree>/private made
+    # check_destination(<worktree>/private/blocker/leaf.json, kind="file")
+    # ACCEPTED, and the caller that believed it then could not create the path
+    # at all (FileExistsError/ENOTDIR). No data escapes through that shape, but
+    # the answer to the only question this module is asked -- may private-derived
+    # files be written HERE -- was wrong, and a guard that is wrong where nothing
+    # breaks is a guard nobody checks where something does.
+    #
+    # The FINAL component is exempt here and belongs to _check_leaf(), which
+    # knows from `kind` whether a directory or a regular file is what the caller
+    # will write. Requiring a directory of it here would refuse every file
+    # destination in the module.
     walk = lit[len(wt_lit):].strip(os.sep)
+    parts = [] if not walk else walk.split(os.sep)
     cur = wt_lit
-    for part in ([] if not walk else walk.split(os.sep)):
+    for i, part in enumerate(parts):
         cur = os.path.join(cur, part)
         if os.path.islink(cur):
             raise DestinationRefused(
@@ -574,6 +689,13 @@ def _check_destination(path, *, kind, require_ignored, worktrees, env):
                 "check", lit)
         if not os.path.lexists(cur):
             break                       # the rest is created by the caller
+        if i < len(parts) - 1 and not os.path.isdir(cur):
+            raise DestinationRefused(
+                "not_a_directory",
+                f"{cur} exists and is not a directory, so the path below it "
+                "cannot be created at all -- the caller's own mkdir gets "
+                "ENOTDIR or FileExistsError. Every component above the last is "
+                "a directory slot, whatever kind the leaf is", lit)
 
     relpath = os.path.relpath(lit, wt_lit).replace(os.sep, "/")
     if relpath == ".":

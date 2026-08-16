@@ -1319,7 +1319,14 @@ API_REACH = {
                              "A link that NAMES a registered worktree is a "
                              "legitimate way to say where it is -- the shell "
                              "resolves DST to DST_REAL for the same reason"),
-    "not_a_directory":      (frozenset({"tree", "dir"}), "a claim about a directory slot"),
+    "not_a_directory":      (ALL_KINDS - {"root"},
+                             "a claim about a DIRECTORY SLOT, and there are two: the "
+                             "leaf when the caller says it will write a directory "
+                             "there ('dir'/'tree'), and every existing component above "
+                             "the last, which the caller's own mkdir must walk through "
+                             "whatever the leaf is -- so a 'file' destination reaches "
+                             "it too. kind='root' has no components below it to walk, "
+                             "and has already been required to be a directory"),
     "special_file":         (frozenset({"file"}),
                              "a FIFO or a directory found where a regular file goes; "
                              "asked of a directory slot the same path is "
@@ -1947,6 +1954,208 @@ def case_the_register_is_read_from_this_checkout_not_from_the_destination():
     return "a directory that CLAIMS this checkout is refused; only the register admits one"
 
 
+def _abandon_worktree(td, name, mode):
+    """A REGISTERED worktree of this checkout whose directory is no longer one.
+
+    The register entry is real -- `git worktree add` wrote it -- and then the
+    directory is removed WITHOUT `git worktree remove`, which is how a worktree
+    is abandoned in practice: `rm -rf`, a wiped scratch directory, a reused
+    path. `mode` says what is at the path afterwards:
+
+      "repo"  an unrelated repository, created there by another project, which
+              gitignores private/ as many do. The dangerous one.
+      "plain" a plain directory in no repository.
+      "gone"  nothing.
+
+    THE ONLY REMOVAL IS THE ABANDONMENT ITSELF: `rm -rf` of the worktree
+    directory this function created one line earlier, inside the case's own
+    TemporaryDirectory. It is the fixture, not a cleanup step -- CLAUDE.md sec.4
+    is about a cleanup invented inside a fixture that turned out to be pointed at
+    something real, so the path is fenced to the case's tempdir by the assertion
+    above and nothing else here deletes anything.
+
+    What is left behind is a REGISTER ENTRY, and it cannot be handed back the
+    ordinary way: measured on git 2.50.1, `git worktree remove --force` refuses a
+    hijacked one ("is not a .git file") and `git worktree prune` keeps it while
+    the directory exists -- which is the whole reason the entry survives to be
+    believed. So the case's finally prunes AFTER its TemporaryDirectory is gone,
+    when the entries name directories that no longer exist, which is the only
+    state prune removes and therefore the only entries it can touch.
+    """
+    path = pathlib.Path(td) / name
+    assert path.parent == pathlib.Path(td), "the worktree must live in the case's tempdir"
+    added = subprocess.run(
+        ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
+        capture_output=True, text=True)
+    if added.returncode != 0:
+        raise SkipCase(f"could not create a worktree of this checkout: {added.stderr[:200]}")
+    # os.rmdir/unlink on what git just created, one level at a time, is what
+    # `rm -rf` does; the abandonment being reproduced IS the removal, and it is
+    # fenced to the path this function created inside the case's tempdir.
+    subprocess.run(["rm", "-rf", str(path)], check=True)
+    assert not path.exists()
+    if mode == "gone":
+        return path
+    (path / "private").mkdir(parents=True)
+    if mode == "repo":
+        subprocess.run(["git", "init", "-q", str(path)], capture_output=True, check=True)
+        (path / ".gitignore").write_text("private/\n")
+        subprocess.run(["git", "-C", str(path), "add", ".gitignore"],
+                       capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t",
+                        "-c", "user.name=t", "commit", "-qm", "ignore"],
+                       capture_output=True, check=True)
+    return path
+
+
+@case
+def case_a_stale_register_entry_cannot_admit_an_unrelated_repository():
+    """FINDING: `git worktree list` is a RECORD of a directory, not a question
+    asked of it, and this module believed the record.
+
+        git worktree add --detach <path> HEAD    # a real entry, from this checkout
+        rm -rf <path>                            # abandoned, never `worktree remove`
+        mkdir <path>; git -C <path> init         # another project takes the path
+        printf 'private/\\n' > <path>/.gitignore  # ... and ignores private/, as many do
+
+        check_destination(<path>, kind='root')                     -> ACCEPTED
+        check_destination(<path>/private/household.yaml, 'file')   -> ACCEPTED
+        check_write_set(<path>, dirs=('private',),
+                        leaves=('private/household.yaml',))        -> ACCEPTED
+
+    Every check below the register was then asked of the FOREIGN repository's
+    own git, which answered "ignored" perfectly truthfully about a repository
+    this checkout does not own. That is the 2026-08-13 incident with the one
+    detail that made a human notice removed: pvoutput did NOT ignore private/,
+    so `git status` there showed `?? private/`. A receiving repo that DOES
+    ignore it takes the same archive silently. `~/limits-wt/` on this machine is
+    shared across projects with colliding issue numbers, so abandoned worktrees
+    at reusable paths are the live configuration, not a contrived one.
+
+    THE THREE STALE SHAPES ARE NOT THE SAME FACT and are asserted apart,
+    because their remedies differ and a guard that reports one for another sends
+    the reader to the wrong command:
+
+      gone   -- dropped by _resolve_register() before any match, so the
+                destination is refused for what it is (no directory there);
+                `git worktree prune` clears the entry.
+      plain  -- the directory exists, so it still matches; refused not_a_worktree,
+                and prune clears the entry because the .git it recorded is gone.
+      repo   -- the directory exists AND answers a common dir, just not ours;
+                refused different_repository. Neither prune nor
+                `git worktree remove --force` will clear it.
+
+    And the shell is asked the same question about the same fixture. It was
+    never vulnerable -- stage-private-data.sh asks `_common_git_dir "$DST_REAL"`
+    of the destination itself before it consults the register -- so before this
+    fix the two implementations DISAGREED on the hijacked fixture (shell
+    REFUSED, python ACCEPTED) and now agree.
+    """
+    if not SCRIPT.is_file():
+        raise SkipCase("stage-private-data.sh is not in this checkout")
+    # Per SHAPE and per question, never one expected code for all three: the
+    # vanished directory is refused before the register is consulted at all, so
+    # its two path-shaped questions answer about the nearest existing ancestor
+    # -- which is the tempdir, in no repository. Writing that down is the point
+    # of the case; collapsing it would hide which fact did the refusing.
+    expect = {
+        "repo":  {"root": "different_repository", "file": "different_repository",
+                  "set": "different_repository"},
+        "plain": {"root": "not_a_worktree", "file": "not_a_worktree",
+                  "set": "not_a_worktree"},
+        "gone":  {"root": "no_such_destination", "file": "not_a_worktree",
+                  "set": "no_such_destination"},
+    }
+    bad = []
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            src = _synthetic_src(td)
+            for mode, want in sorted(expect.items()):
+                path = _abandon_worktree(td, f"abandoned-{mode}", mode)
+                register = subprocess.run(
+                    ["git", "-C", str(ROOT), "worktree", "list", "--porcelain"],
+                    capture_output=True, text=True, check=True).stdout
+                listed = f"worktree {os.path.realpath(path)}" in register.splitlines()
+                if mode != "gone" and not listed:
+                    bad.append(f"{mode}: git no longer names the abandoned path, so "
+                               "the fixture cannot prove a stale entry is refused")
+                got = {
+                    "root": _single_verdict(path, "root"),
+                    "file": _single_verdict(path / "private" / "household.yaml", "file"),
+                    "set": _python_verdict(path, src),
+                }
+                for label in sorted(got):
+                    if got[label] != want[label]:
+                        bad.append(f"{mode}/{label}: {got[label] or 'ACCEPTED'}, "
+                                   f"expected {want[label]}")
+                if mode == "repo":
+                    shell = _shell_verdict(_run_shell(src, path, cwd=td))
+                    if shell != want["set"]:
+                        bad.append(f"{mode}: stage-private-data.sh said {shell!r} and "
+                                   f"the python side {want['set']!r} -- the two "
+                                   "implementations disagree on a stale entry")
+
+            # The fourth shape is a RACE and has no fixture: the entry resolves
+            # in _resolve_register() and its directory is gone by the time the
+            # confirmation asks. It is asked of the helper directly because
+            # nothing can produce it through a public door, and it is asked at
+            # all because the ORDER of the two branches decides the message --
+            # common_git_dir() answers None for a vanished directory exactly as
+            # it does for a plain one, so a confirmation that tested "no common
+            # dir" first would tell the reader somebody had put a directory
+            # there. Gone is reported as gone.
+            gone = pathlib.Path(td) / "never-existed"
+            try:
+                PE._confirm_register_entry(str(gone), PE.self_common_git_dir())
+                bad.append("_confirm_register_entry accepted a vanished entry")
+            except PE.DestinationRefused as e:
+                if e.reason != "no_such_destination" or "PRUNABLE" not in e.detail:
+                    bad.append(f"a vanished register entry is reported as "
+                               f"{e.reason} ({e.detail[:60]!r}), not as prunable")
+    finally:
+        # The tempdir is gone by now, so every entry these fixtures left behind
+        # names a directory that no longer exists -- which is precisely what
+        # prune removes and all it removes.
+        subprocess.run(["git", "-C", str(ROOT), "worktree", "prune"],
+                       capture_output=True)
+    assert not bad, bad
+    return ("a register entry whose directory is now an unrelated repository, a "
+            "plain directory, or gone is refused with its own reason through both "
+            "public APIs; the shell agrees on the hijacked one")
+
+
+@case
+def case_a_real_registered_worktree_is_still_accepted_through_a_symlinked_parent():
+    """The accepting half of the case above, and the one the fix could plausibly
+    have broken: the register entry is re-asked which repository it is in, and a
+    legitimate worktree must still answer this checkout.
+
+    Reached through a SYMLINKED PARENT as well, because symlinks above the root
+    are resolved on purpose (on macOS /tmp and /var are links, so every fixture
+    here already arrives through one) while links at or below the root are
+    refused. A confirmation asked of the literal path instead of the resolved
+    root would refuse the legitimate destination and leave the hijack refused
+    for the wrong reason.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        with _worktree(td) as wt:
+            via = pathlib.Path(td) / "reached-through-a-link"
+            via.symlink_to(pathlib.Path(td), target_is_directory=True)
+            assert os.path.realpath(via / wt.name) == os.path.realpath(wt)
+            for path, kind in ((wt, "root"),
+                               (wt / "private" / "cache", "dir"),
+                               (wt / "private" / "cache" / "x.json", "file"),
+                               (via / wt.name, "root"),
+                               (via / wt.name / "private" / "cache", "dir"),
+                               (via / wt.name / "private" / "cache" / "x.json", "file")):
+                got = _single_verdict(path, kind)
+                assert got is None, (
+                    f"a legitimate registered worktree was refused ({got}) for "
+                    f"{path} as {kind}")
+    return ("a registered worktree of this checkout is still accepted, literally "
+            "and through a symlinked parent, for every kind")
+
+
 @case
 def case_an_unreadable_register_refuses_rather_than_admits():
     """Fail closed. git always reports at least the main worktree, so an empty
@@ -2106,6 +2315,86 @@ def case_a_directory_and_a_file_are_refused_in_each_other_s_slot():
                 got = _single_verdict(priv / rel, kind)
                 assert got == expect, f"{rel} as {kind}: expected {expect}, got {got}"
     return "a directory and a regular file are each refused in the other's slot"
+
+
+@case
+def case_a_non_directory_intermediate_component_is_refused():
+    """FINDING: the component walk required every existing component not to be a
+    LINK, and required nothing else of it. So a regular file one level up made
+    the whole path below it acceptable:
+
+        printf 'blocker\\n' > <worktree>/private/blocker
+        check_destination(<worktree>/private/blocker/leaf.json, kind='file')
+            -> ACCEPTED
+
+    and the caller that believed it then could not create the path at all
+    (FileExistsError; ENOTDIR one level deeper). No data escapes -- which is why
+    this is the lower-severity half -- but the module answers one question, "may
+    private-derived files be written here", and the answer was wrong. A FIFO or
+    a device node in an intermediate component is the same shape and gets the
+    same answer, because for a component above the last the only question is
+    whether it is a directory.
+
+    NO NEW REFUSAL CODE. `not_a_directory` is already defined as "a path that
+    must be a directory exists and is not one", and _check_leaf() already
+    answers it for a FIFO or a regular file in a DIRECTORY slot; an intermediate
+    component is a directory slot whatever the leaf's kind is, so the same fact
+    gets the same code and one remedy stays one vocabulary entry. It is also the
+    code stage-private-data.sh's "a destination path exists and is not a
+    directory" already maps to, so the agreement table needs no new mapping.
+    What did change is API_REACH: the leaf-slot form is reachable only for
+    kind='dir'/'tree', while the component form is reachable for kind='file'
+    too, and that widening is asserted by the reach case rather than declared.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        with _worktree(td) as wt:
+            priv = wt / "private"
+            (priv / "blocker").write_text("not a directory\n")
+            os.mkfifo(priv / "pipe")
+            (priv / "realdir").mkdir()
+            bad = []
+            for rel, kind, expect in (
+                    ("blocker/leaf.json", "file", "not_a_directory"),
+                    ("blocker/sub/deep.json", "file", "not_a_directory"),
+                    ("blocker/sub", "dir", "not_a_directory"),
+                    ("blocker/sub", "tree", "not_a_directory"),
+                    ("pipe/leaf.json", "file", "not_a_directory"),
+                    # ... and the accepting half in the same position: a real
+                    # directory there, and a path whose intermediate components
+                    # do not exist yet, are both ordinary destinations.
+                    ("realdir/leaf.json", "file", None),
+                    ("not-created-yet/deep/leaf.json", "file", None)):
+                got = _single_verdict(priv / rel, kind)
+                if got != expect:
+                    bad.append(f"private/{rel} as {kind}: {got or 'ACCEPTED'}, "
+                               f"expected {expect or 'ACCEPTED'}")
+            # The whole-set API asks the same question of the same path.
+            for leaf, expect in (("private/blocker/leaf.json", "not_a_directory"),
+                                 ("private/pipe/leaf.json", "not_a_directory"),
+                                 ("private/realdir/leaf.json", None)):
+                try:
+                    PE.check_write_set(wt, leaves=(leaf,))
+                    got = None
+                except PE.DestinationRefused as e:
+                    got = e.reason
+                if got != expect:
+                    bad.append(f"check_write_set(leaves=({leaf!r},)): "
+                               f"{got or 'ACCEPTED'}, expected {expect or 'ACCEPTED'}")
+            assert not bad, bad
+
+            # The fixture is what it claims, and the ACCEPT really was wrong:
+            # the caller this module answers for cannot create that path.
+            assert stat.S_ISFIFO(os.lstat(priv / "pipe").st_mode)
+            try:
+                (priv / "blocker" / "leaf.json").parent.mkdir(parents=True)
+                raise AssertionError(
+                    "the blocker fixture is not a blocker -- the caller created "
+                    "the directory, so accepting the path was not wrong")
+            except OSError as e:
+                assert isinstance(e, (FileExistsError, NotADirectoryError)), e
+    OBSERVED.add(("file", "not_a_directory"))
+    return ("a regular file or a FIFO in an intermediate component is refused "
+            "not_a_directory for every leaf kind, through both public APIs")
 
 
 @case
@@ -3255,6 +3544,254 @@ def case_the_two_public_apis_differ_only_on_the_root_question():
             f"{len(WRITE_SET_ONLY_REASONS)} belong to the whole-set API's own input "
             f"and were produced there, and {len(OBSERVED)} (kind, reason) pairs "
             "were observed and all allowed")
+
+
+# ===========================================================================
+# THE SWEEP: every fact this module obtains from one source and then trusts for
+# the rest of the call, and whether the thing it describes can differ from the
+# thing that will actually be written.
+#
+# Every review round on this branch has found the same class in the argument the
+# previous round did not test -- a guard reaching a verdict from a fact it
+# obtained once and never rechecked, or from an input it never evaluated: an
+# unlistable glob_source expanding to [], a pattern read as a literal directory,
+# a consumed one-shot iterable, git answering about a different path than the one
+# named, and a register entry believed without re-asking the directory. Four of
+# the five were found one instance at a time. This table is the enumeration, so
+# the next one is found by reading rather than by being shipped.
+#
+# WHAT IS AND IS NOT CLAIMED. This is not an atomicity claim: every fact below is
+# TOCTOU-shaped by construction, because a predicate that returns and a caller
+# that then writes are two moments, and the module says so at the top. The
+# question each row answers is the narrower one that has actually produced
+# defects here -- can this fact describe a DIFFERENT OBJECT than the one that
+# will be written, in ORDINARY use, with nobody racing anything? That is what the
+# stale register entry was: a fact about a directory that existed last week,
+# believed about the directory there today.
+#
+# `stale` is that answer, `answer` is what was done about it, and `where` names
+# the function that obtains the fact. The git rows are ANCHORED: the case below
+# derives, from the module's AST, every function that asks git anything, and a
+# new git question that is not classified here fails it. The filesystem rows
+# cannot be anchored the same way -- os.path is called all over the module and a
+# name-based scan would classify nothing -- so they are declared, with the
+# function checked to exist so a rename cannot silently empty a row.
+# ===========================================================================
+ANSWERS = ("recheck", "reorder", "nothing -- it is the authority",
+           "nothing -- TOCTOU only", "stated residue")
+
+TRUSTED_FACTS = {
+    "which repository this MODULE is in": dict(
+        oracle="git", where=("self_common_git_dir", "common_git_dir"),
+        about="the checkout the running copy of this file lives in, resolved from "
+              "__file__ once per call",
+        stale="no. It is not a destination and nothing compares it against a "
+              "second object: it IS the object every other question is compared "
+              "against. A copy of this module on another path deliberately "
+              "authorizes that path's checkout and not this one",
+        answer="nothing -- it is the authority",
+        proof="case_the_register_is_read_from_this_checkout_not_from_the_destination"),
+
+    "which directories are registered worktrees": dict(
+        oracle="git", where=("registered_worktrees",),
+        about="git's RECORD of the directories `git worktree add` created. Not a "
+              "question asked of any of those directories",
+        stale="YES, and this is the finding. git revalidates an entry only when "
+              "the directory is gone; a directory deleted without `git worktree "
+              "remove` and re-created by another project keeps its entry, so the "
+              "register described a worktree of this checkout and the destination "
+              "was an unrelated repository",
+        answer="recheck",
+        proof="case_a_stale_register_entry_cannot_admit_an_unrelated_repository"),
+
+    "the matched entry is STILL a worktree of this checkout": dict(
+        oracle="git", where=("_confirm_register_entry",),
+        about="the directory the destination resolved into, asked for its own "
+              "common dir at the moment of the check",
+        stale="no -- it is the recheck. Asked of the matched entry only: a "
+              "hijacked entry elsewhere in the register is not a fact about the "
+              "destination in hand, and refusing for it would be a refusal the "
+              "caller cannot act on",
+        answer="recheck",
+        proof="case_a_real_registered_worktree_is_still_accepted_through_a_"
+              "symlinked_parent"),
+
+    "why a path is in no registered worktree": dict(
+        oracle="git", where=("_diagnose_outside",),
+        about="the nearest EXISTING ancestor of the destination -- a diagnosis "
+              "only, reached after the verdict is already refuse",
+        stale="no, but it was once about the wrong object: it asked git about a "
+              "path that does not exist and got an answer about git's cwd. It now "
+              "asks about the ancestor it names",
+        answer="reorder",
+        proof="case_a_path_outside_every_registered_worktree_is_refused"),
+
+    "is this path committable in that worktree": dict(
+        oracle="git", where=("_require_uncommittable",),
+        about="the destination path itself, asked of the worktree that contains "
+              "it, through a pathspec that cannot be read as magic",
+        stale="the PATH is right; the REPOSITORY answering was not. A hijacked "
+              "entry made this question be asked of the foreign repository, which "
+              "answered 'ignored' truthfully about a repository this checkout does "
+              "not own -- which is how the hijack produced an ACCEPT rather than a "
+              "refusal. Fixed upstream of here, by confirming the entry first",
+        answer="reorder",
+        proof="case_a_committable_destination_is_refused"),
+
+    "does a register entry's directory exist, and where does it resolve": dict(
+        oracle="filesystem", where=("_resolve_register", "_physical"),
+        about="each entry git listed, resolved at listing time -- the only "
+              "question this module asks of a register entry's directory apart "
+              "from the recheck above",
+        stale="one half only: an entry whose directory is GONE is dropped here, "
+              "which is the prunable shape. An entry whose directory exists and "
+              "belongs elsewhere resolves perfectly well and is settled by the "
+              "recheck above -- the two are different remedies and are refused "
+              "with different codes",
+        answer="recheck",
+        proof="case_a_stale_register_entry_cannot_admit_an_unrelated_repository"),
+
+    "which registered worktree contains the destination": dict(
+        oracle="filesystem", where=("_locate_worktree",),
+        about="the resolved ancestors of the destination, compared with the "
+              "resolved register; the LITERAL prefix is kept so the walk below "
+              "still sees links under the root",
+        stale="no. Both sides are resolved by one normalizer, so membership no "
+              "longer depends on how a path was spelled",
+        answer="nothing -- TOCTOU only",
+        proof="case_a_supplied_register_is_normalized_the_way_the_read_one_is"),
+
+    "what is at each component of the path": dict(
+        oracle="filesystem", where=("_check_destination",),
+        about="every component from the worktree root down, lstat'ed as written",
+        stale="no, but it was INCOMPLETE: an existing non-final component was "
+              "required not to be a link and nothing else, so a regular file or a "
+              "FIFO there left the path below it accepted and uncreatable",
+        answer="recheck",
+        proof="case_a_non_directory_intermediate_component_is_refused"),
+
+    "what is at the leaf": dict(
+        oracle="filesystem", where=("_check_leaf",),
+        about="the destination itself: link, kind, and link count, from one lstat "
+              "plus follow-free predicates on a path already proved not to be a "
+              "link",
+        stale="no. Every probe is of the leaf, and which probes run is decided by "
+              "the caller's declared kind rather than by a default",
+        answer="nothing -- TOCTOU only",
+        proof="case_a_special_file_and_a_hard_link_are_refused_at_a_leaf"),
+
+    "what is inside a tree a recursive copy will descend": dict(
+        oracle="filesystem", where=("_scan_tree",),
+        about="the entries under the destination at scan time",
+        stale="no -- it describes the tree that will be written, and an entry it "
+              "cannot probe is a refusal rather than an assumption",
+        answer="nothing -- TOCTOU only",
+        proof="case_the_recursive_scan_refuses_a_probe_it_cannot_make"),
+
+    "which leaves a pattern names": dict(
+        oracle="filesystem",
+        where=("_expand", "_expand_leaves", "_require_listable_source"),
+        about="the SOURCE tree, which is not the destination and which no other "
+              "check here looks at",
+        stale="YES, and it is the one row that stays open: a glob_source that is "
+              "not the copy's real source names fewer or other leaves than the "
+              "copy will write. It can no longer take a declared pattern out of "
+              "the check (an unlistable source is refused, a zero-match pattern is "
+              "checked as its literal), so what is left is the residue written "
+              "down in _expand(): what sits AT a name the expansion did not yield",
+        answer="stated residue",
+        proof="case_a_leaf_pattern_whose_source_cannot_be_listed_is_refused"),
+}
+
+
+@case
+def case_every_fact_this_module_trusts_is_classified():
+    """The standing sweep, made mechanical where it can be.
+
+    Five review rounds have found five instances of one class. Four were found
+    one at a time, in the argument the previous round did not test. So the class
+    is enumerated here rather than patched again: every fact the module obtains
+    from one source and then trusts, whether the thing it describes can differ
+    from the thing that will be written, and what was done about it.
+
+    THE ANCHOR is the git half. Every function in the module that asks git
+    anything -- directly through _git() or through common_git_dir() -- is derived
+    from the AST and must appear in a row above. A new git question is a new
+    trusted fact by definition, and it cannot be added without classifying it.
+
+    The two rows whose answer is "recheck" are also checked structurally, because
+    a table that says a recheck exists is worth nothing if the recheck was
+    deleted: _confirm_register_entry() must be reached from _check_destination()
+    and from nowhere else (a second caller means the register is believed on one
+    path and re-asked on another), and the component walk must still be able to
+    refuse a non-directory. Behavioral proof is a named case per row, checked to
+    exist and to be registered -- the same rule the MOVERS census applies to the
+    guards it names.
+
+    WHAT NO TEST HERE CAN DO is decide whether a NEW fact is stale. That is a
+    human reading a row and writing down what the fact describes; the value of
+    the table is that adding a row means writing that sentence under review, and
+    a false one is visible next to ten true ones.
+    """
+    module = ast.parse((ANALYSIS / "private_egress.py").read_text())
+    tops = {n.name: n for n in ast.walk(module) if isinstance(n, ast.FunctionDef)}
+    names = {c.__name__ for c in CASES}
+
+    bad = []
+    for fact, row in sorted(TRUSTED_FACTS.items()):
+        for field in ("about", "stale"):
+            if len(row.get(field, "")) < 40:
+                bad.append(f"{fact}: '{field}' says nothing")
+        if row["answer"] not in ANSWERS:
+            bad.append(f"{fact}: answer {row['answer']!r} is not one of {ANSWERS}")
+        if row["oracle"] not in ("git", "filesystem"):
+            bad.append(f"{fact}: unknown oracle {row['oracle']!r}")
+        for fn in row["where"]:
+            if fn not in tops:
+                bad.append(f"{fact}: names {fn}(), which the module does not define")
+        if row["proof"] not in names:
+            bad.append(f"{fact}: names proof {row['proof']}, which is not a case "
+                       "registered in this suite")
+    assert not bad, bad
+
+    # THE ANCHOR. Every function that asks git anything is classified above.
+    askers = {name for name, fn in tops.items()
+              for n in ast.walk(fn)
+              if isinstance(n, ast.Call)
+              and getattr(n.func, "id", "") in ("_git", "common_git_dir")}
+    classified = {fn for row in TRUSTED_FACTS.values() if row["oracle"] == "git"
+                  for fn in row["where"]}
+    assert askers == classified, (
+        f"these functions ask git a question that no TRUSTED_FACTS row classifies: "
+        f"{sorted(askers - classified)}; and these are classified as asking git and "
+        f"do not: {sorted(classified - askers)}. A fact obtained from git is a fact "
+        "trusted for the rest of the call -- say what it describes and whether that "
+        "can differ from what will be written")
+
+    # The two rechecks, structurally. A table asserting a recheck exists proves
+    # nothing if the recheck has been deleted.
+    callers = sorted({name for name, fn in tops.items()
+                      for n in ast.walk(fn)
+                      if isinstance(n, ast.Call)
+                      and getattr(n.func, "id", "") == "_confirm_register_entry"})
+    assert callers == ["_check_destination"], (
+        f"_confirm_register_entry() is called from {callers}; it must be reached "
+        "from the one place every destination goes through, or the register is "
+        "re-asked on one path and believed on another")
+    walk_refusals = {n.exc.args[0].value for n in ast.walk(tops["_check_destination"])
+                     if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
+                     and getattr(n.exc.func, "id", "") == "DestinationRefused"
+                     and n.exc.args and isinstance(n.exc.args[0], ast.Constant)}
+    assert "not_a_directory" in walk_refusals, (
+        "_check_destination() can no longer refuse a non-directory component, so "
+        "an existing regular file or FIFO above the leaf is walked past again")
+
+    rechecked = sorted(f for f, r in TRUSTED_FACTS.items() if r["answer"] == "recheck")
+    print(f"  {len(TRUSTED_FACTS)} trusted facts classified "
+          f"({len(askers)} git askers anchored); rechecked: {len(rechecked)}")
+    return (f"all {len(TRUSTED_FACTS)} facts this module obtains once are "
+            f"classified, every one of the {len(askers)} functions that asks git "
+            f"is among them, and both rechecks are wired")
 
 
 @case
