@@ -478,15 +478,16 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 
 <h2 id="s8">8 · Array upgrades: more panels, bigger panels, or new microinverters? {{S8_VERDICT_SHORT}}</h2>
 <!-- TODO: four verdict paragraphs, each led by a bold claim, in the reference voice:
-     1. More panels — what the year's exports actually earn, what the marginal import costs, retrofit $/W, payback years.
+     1. More panels — what the year's exports actually earn, and what the marginal import they would offset costs.
         Example sentence: "Across the hours the array actually exports in, not the midday cell alone, an exported kWh is worth between {{EXPORT_VALUE_SURPLUS_BOUND}} if every export settles as surplus and {{EXPORT_VALUE_NETTING_BOUND}} if every export cancels an import in its own month and period, while the marginal import it would offset costs {{SUPER_OFF_PEAK_RATE}}."
         Publish BOTH ends and say the settlement falls between them — a bound is not the value. Say too that the hourly profile behind them is a season-wide mean that has already discarded day type, so the weekday/off-peak-day split is an assumption the figures carry.
         Do NOT restate either figure as what one more kW of panels would earn: exports are the residual left after household load, not the shape of added production. Say the marginal-panel value is not derived here.
+        The expansion payback ({{EXPANSION_PAYBACK_YEARS}}) stays unwritten for the same reason and is a report_tokens.py KNOWN_GAPS token: it needs both a counterfactual re-billing of the year at a larger array (issue #190) and a retrofit price per watt, a local-market fact nothing committed here collects. Do not supply a figure for it, here or in the paragraph below.
      2. The regulatory landmine — NEM growth limits and the grandfathering value at risk.
      3. Repowering with bigger panels — health evidence says keep the hardware.
      4. Microinverter upgrade / clipping — what the high-resolution power data shows vs the platform's clipping flags; recoverable value vs swap cost; warranty timeline.
      Close with: when WOULD expansion make sense (structural load growth, V2H), and cheaper interim moves. -->
-<p><b>More panels: {{EXPANSION_VERDICT_SHORT}}.</b> The constraint isn't generation — it's timing: the array already exports {{EXPORTED_SHARE}} of what it makes, and added capacity returns a {{EXPANSION_PAYBACK_YEARS}} payback.</p>
+<p><b>More panels: {{EXPANSION_VERDICT_SHORT}}.</b> The constraint isn't generation — it's timing: the array already exports {{EXPORTED_SHARE}} of what it makes. What one more kW of panels would earn is not derived here.</p>
 
 <details class="sec" id="sec9" open>
 <summary><h2 id="s9">9 · Deeper analyses</h2><span class="teaser">{{SEC9_TEASER}}<!-- TODO: one line — the two or three headline findings from the deep dives. --></span></summary>

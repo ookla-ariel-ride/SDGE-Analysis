@@ -3096,6 +3096,13 @@ def _rates_module():
     return R
 
 
+def _report_tokens_module():
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import report_tokens as rt
+    return rt
+
+
 def _export_bound_from_report_data(rate_name):
     """One end of what an exported kWh is worth, $/kWh: a rates.py price map
     weighted by report_data.json's own hour-of-day export profiles.
@@ -3151,10 +3158,23 @@ def _s8_section():
 # sentence that carries one of them AND a price. Written as the shape of the
 # claim rather than as the exact wording that shipped, so a paraphrase is
 # caught too.
+#
+# EVERY ALTERNATIVE HERE NAMES ADDED CAPACITY, and that is the property that
+# keeps the guard from refusing correct prose. A bare "to add" once sat in this
+# list and did not: paired with _ANY_PRICE_RE, which matches any ¢ or $ figure
+# anywhere in the sentence, it fails ordinary §8 sentences that price an
+# installation rather than valuing a marginal kWh -- "≈$8,000 to add a second
+# string", "the right time to add storage is after the panels are paid off, at
+# ~$0.30/W". A guard that refuses correct input is worse than no guard here,
+# because the remedy under pressure is to switch it off; so the infinitive has
+# to carry the capacity noun with it. Both halves are pinned by
+# case_the_added_capacity_guard_rejects_the_defect_and_accepts_a_priced_install.
 _ADDED_CAPACITY_EARNS_RE = re.compile(
     r"marginal (?:new-)?panel|marginal kW|new-panel kWh|"
     r"added (?:panel|panels|capacity|kW|output)|an added kWh|one more kW|"
-    r"per kW per year|kWh/kW/yr\s*[×x]|[\d.,]+ ?kW at |to add\b|"
+    r"per kW per year|kWh/kW/yr\s*[×x]|[\d.,]+ ?kW at |"
+    r"to add (?:\d[\d.,]*\s*kW|(?:a |an |another |more |extra )?"
+    r"(?:panels?|capacity|kW|array))\b|"
     r"expansion (?:earns|returns|pays|yields)", re.I)
 
 # Any price at all: a cents figure, a dollar figure, or a $/W band.
@@ -3357,6 +3377,313 @@ def case_s8_export_value_is_published_as_a_bounded_range():
             f"prices no added capacity in any of its "
             f"{len(_EXPANSION_PAYBACK_FORMS)} forbidden payback forms, and says the "
             "marginal-kW value is not derived here")
+
+
+# The three TOU periods this window's exports leave in, each with a locator
+# for the words §8 names it by. "off-peak" needs the lookbehind or it matches
+# inside "super-off-peak" and reads the wrong share back.
+_EXPORT_PERIOD_WORDS = (
+    ("sop", "super-off-peak", r"super-off-peak"),
+    ("off", "off-peak", r"(?<![-\w])off-peak"),
+    ("on", "on-peak", r"(?<![-\w])on-peak"),
+)
+
+# The periods whose price band §8 must state. The sentence's whole point is
+# that the cheapest cell is not the year, so the two dearer periods have to
+# carry the prices that make that visible; super-off-peak is the cell being
+# argued against and is priced elsewhere in the section.
+_PERIODS_NEEDING_A_BAND = ("off", "on")
+
+
+def _export_period_shares():
+    """{period: share of the window's exported kWh that leaves in it}, and the
+    profiles' rebuild error against totals.exp.
+
+    Same reader, same weighting and same rebuild gate as
+    _export_bound_from_report_data: report_data.json's per-season mean-day
+    export profiles over the window's real days, with the period taken from
+    rates.period() at each hour's own day type (rates.off_peak_day()). The day
+    type is what moves the 6-10am band between off-peak and super-off-peak, so
+    a share computed on a bare weekday schedule is a different number."""
+    R = _rates_module()
+    kwh = {"sop": 0.0, "off": 0.0, "on": 0.0}
+    for d in _analysis_window_dates():
+        seas = "S" if d.month in R.SUMMER_MONTHS else "W"
+        off_day = R.off_peak_day(d)
+        for hour, k in enumerate(RD[f"hourly_{seas}"]["exp"]):
+            kwh[R.period(hour, off_day)] += k
+    total = sum(kwh.values())
+    return ({p: v / total for p, v in kwh.items()},
+            abs(total - RD["totals"]["exp"]) / RD["totals"]["exp"])
+
+
+def _export_period_price_band(period):
+    """What an export leaving in `period` is credited, in whole cents, as the
+    two ends the rest of §8 already publishes: the cheapest SURPLUS credit and
+    the dearest NETTING value across the two seasons. Same pair of rates.py
+    functions as the two published bounds, read cell by cell instead of
+    profile-weighted, so the band a reader checks against the price map is
+    derived from the map rather than typed beside it."""
+    R = _rates_module()
+    return (min(R.credit(s, period) for s in ("S", "W")),
+            max(R.energy(s, period) for s in ("S", "W")))
+
+
+def case_s8_export_period_split_matches_the_profiles():
+    """issue #182 review: §8's "neither end rests on the cheapest cell"
+    sentence carries five derived figures -- the three period shares of the
+    year's exported kWh and the two price bands beside them -- typed into
+    prose while the two bounds in the same sentence were pinned three ways.
+    Re-run the pipeline on another window and the shares drift silently; they
+    are shares OF A WINDOW, not constants of the tariff.
+
+    WHY A CASE AND NOT FIVE TOKENS. Both were available, and the two export
+    bounds in this same sentence went the other way, so the difference is worth
+    stating. Those two are single self-formatting values ("22.9¢") that the
+    TEMPLATE names in its own worked example, which is what makes a token pay:
+    report_tokens.py resolves it, the seam guard renders it into its template
+    line, and generate_report.py can write the sentence. These five are not one
+    value each -- they are a partition and its price map, read only inside a
+    human-authored paragraph of a block report_blocks.py classifies "human",
+    which the generator never writes. A token for each would have to be given a
+    live seam in a template that deliberately leaves this paragraph blank, and
+    five self-formatting tokens strung through one sentence would render as
+    five figures nothing checks the SUM of. Recomputing them here pins all five
+    to the same artifact and the same weighting the bounds use, and pins the
+    partition as a partition.
+
+    RELATIONSHIP, these shares against the published bounds: SAME PROFILES,
+    DIFFERENT QUESTION. The bounds are the profile weighted by a price; these
+    are the profile weighted by nothing, split by the period rates.period()
+    assigns each hour. A bound that moved without the split moving (or the
+    reverse) means one of the two weightings stopped reading the artifact.
+
+    Four pins:
+
+      1. every share is the one the profiles produce, at the precision §8
+         prints;
+      2. the three of them partition the year -- a split whose parts do not sum
+         to the whole is not a split;
+      3. each price band §8 attaches to a period is that period's own two
+         settlement treatments, derived from rates.py rather than typed;
+      4. the split is published in ONE place. report_tokens.py's block comment
+         above _export_value_bound used to re-type it, so drift had to be
+         caught twice; it now points here instead."""
+    section = _s8_section()
+    shares, rebuild_err = _export_period_shares()
+    assert rebuild_err < _EXPORT_REBUILD_TOLERANCE, (
+        f"report_data.json's hour-of-day export profiles rebuild to a total "
+        f"{rebuild_err * 100:.4f}% off its own totals.exp, past the "
+        f"{_EXPORT_REBUILD_TOLERANCE:.0%} bound -- no share of them describes this "
+        "window")
+
+    text = htmlmod.unescape(re.sub(r"<[^>]+>", " ", section))
+    # The sentence is located by naming all three periods, not by its own
+    # wording, so a rewrite that keeps the claim keeps the pin. Split on the
+    # repo's sentence rule: a bare [^.]* cuts inside "64.6" and "22.9¢".
+    stated = [s for s in re.split(r"\.(?=\s|$)", text)
+              if all(re.search(rx, s) for _p, _w, rx in _EXPORT_PERIOD_WORDS)
+              and len(re.findall(r"[\d.]+%", s)) >= len(_EXPORT_PERIOD_WORDS)]
+    assert len(stated) == 1, (
+        f"§8 has {len(stated)} sentences putting a share of the year's exports in each "
+        "of the three TOU periods, expected exactly one. With none, a reader has the "
+        "two export bounds and no evidence that neither rests on the cheapest cell; "
+        "with two, the split is published twice and the copies can drift")
+    sentence = stated[0]
+
+    published = []
+    for period, words, rx in _EXPORT_PERIOD_WORDS:
+        rendered = f"{shares[period] * 100:.1f}%"
+        # The share BESIDE this period's name: [^%] cannot cross another
+        # percentage, so the match is the nearest one ahead of the word.
+        m = re.search(rf"([\d.]+)%[^%]{{0,80}}?{rx}", sentence)
+        assert m, (
+            f"§8's export-split sentence states no share for {words}: {sentence.strip()!r}")
+        assert f"{m.group(1)}%" == rendered, (
+            f"§8 puts {m.group(1)}% of the year's exports in {words} where "
+            f"data/report_data.json's own hour-of-day profiles, weighted over the "
+            f"window and split by rates.period() at each day's own day type, give "
+            f"{rendered}")
+        published.append((words, rendered))
+
+        band = re.search(rf"{rx}(?: at ([\d.]+)\s*[–-]\s*([\d.]+)¢)?", sentence)
+        lo, hi = _export_period_price_band(period)
+        if band and band.group(1):
+            assert (band.group(1), band.group(2)) == (f"{lo * 100:.0f}", f"{hi * 100:.0f}"), (
+                f"§8 prices a {words} export at {band.group(1)}-{band.group(2)}¢ where "
+                f"rates.py gives {lo * 100:.0f}-{hi * 100:.0f}¢ -- the cheapest surplus "
+                f"credit and the dearest netting value across the two seasons, the same "
+                f"two settlement treatments as the published bounds")
+        else:
+            assert period not in _PERIODS_NEEDING_A_BAND, (
+                f"§8 states the {words} share without the price beside it, so the "
+                "sentence no longer shows why the cheapest cell is not the year's "
+                f"price: {sentence.strip()!r}")
+
+    total = sum(shares.values())
+    assert abs(total - 1) < 1e-9, (
+        f"the three period shares sum to {total:.6f}, not 1 -- rates.period() is "
+        "putting exported kWh somewhere this split does not name")
+    printed = sum(float(r.rstrip('%')) for _w, r in published)
+    assert abs(printed - 100) <= 0.15, (
+        f"§8's three published shares sum to {printed}%, not 100% -- they are stated as "
+        "a split of the year's exports and a split has to account for all of it")
+
+    # 4. ONE COPY. report_tokens.py's block comment above _export_value_bound
+    #    typed the same split; the drift it would cause is invisible from
+    #    index.html, so the copy is gone and this keeps it gone.
+    src = (ROOT / "analysis" / "report_tokens.py").read_text()
+    head = src.find("# WHAT AN EXPORTED kWh IS WORTH IS A RANGE")
+    tail = src.find("def _export_value_bound(", head)
+    assert head > 0 and tail > head, (
+        "report_tokens.py's export-value block comment was not found, so this pin "
+        "cannot tell whether it re-types the split; re-point it at the renamed block")
+    for _words, rendered in published:
+        assert rendered not in src[head:tail], (
+            f"report_tokens.py's export-value block comment types {rendered} again. "
+            "That is a second copy of a figure that moves with the analysis window, "
+            "and drift would then have to be caught in two places -- state it "
+            "qualitatively there and let §8 publish the digits")
+
+    return ("§8 splits the year's exports as "
+            + ", ".join(f"{r} {w}" for w, r in published)
+            + " -- recomputed from data/report_data.json's own hour-of-day profiles at "
+              "each day's real day type, summing to the whole, with each stated price "
+              "band derived from rates.py's credit/energy cells, and typed nowhere else")
+
+
+def case_the_template_prices_no_added_capacity_and_needs_no_gap_token_in_s8():
+    """issue #182 review, finding 1. index.html and report-template.html are
+    two copies of §8's argument, and only one of them was corrected: the
+    template's live paragraph went on saying "added capacity returns a
+    {{EXPANSION_PAYBACK_YEARS}} payback" four lines under TODO text telling its
+    author not to price added capacity at all.
+
+    That is worse than a stale sentence. EXPANSION_PAYBACK_YEARS is a
+    report_tokens.KNOWN_GAPS entry, and a gap token in LIVE markup is one
+    generate_report.py demands a human-supplied override for -- so the
+    documented reproduction route required the author to invent the single
+    number this issue proved is not derivable here, and then printed the
+    sentence.
+
+    Two pins on the template's LIVE §8 markup (comments masked, since a TODO
+    block naming the gap as a figure NOT to supply is exactly right and is
+    where report_blocks.py's s8#1 scope now picks the token up):
+
+      1. no KNOWN_GAPS token is referenced, so regenerating §8 asks nobody to
+         invent a figure;
+      2. no sentence pairs an added-capacity phrase with a price OR a token --
+         a {{TOKEN}} is a figure that has not been substituted yet, and the
+         retired sentence carried its valuation in one."""
+    rt = _report_tokens_module()
+    template = (ROOT / "report-template.html").read_text()
+    live = re.sub(r"<!--.*?-->", " ", template, flags=re.S)
+    start = live.find('<h2 id="s8"')
+    end = live.find('<details class="sec" id="sec9"', start)
+    assert start > 0 and end > start, (
+        "§8's live span could not be bounded in report-template.html -- the heading or "
+        "§9's wrapper has been renamed, and this pin would otherwise sweep the rest of "
+        "the template")
+    section = live[start:end]
+
+    gaps = {n for n, spec in rt.TOKENS.items() if spec.get("kind") == "gap"}
+    referenced = set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", section))
+    assert not (referenced & gaps), (
+        f"report-template.html's live §8 markup references the KNOWN_GAPS token(s) "
+        f"{sorted(referenced & gaps)}. A gap token in live markup makes "
+        "generate_report.py demand a human-supplied override, so every regeneration of "
+        "this section starts by asking someone to supply a figure this repo has "
+        "declared it cannot derive")
+
+    text = htmlmod.unescape(re.sub(r"<[^>]+>", " ", section))
+    for sentence in re.split(r"\.(?=\s|$)", text):
+        capacity = _ADDED_CAPACITY_EARNS_RE.search(sentence)
+        priced = _ANY_PRICE_RE.search(sentence) or re.search(r"\{\{[A-Z0-9_]+\}\}",
+                                                             sentence)
+        assert not (capacity and priced), (
+            f"report-template.html's live §8 markup prices added capacity: "
+            f"{sentence.strip()!r} carries {capacity.group(0)!r} and "
+            f"{priced.group(0)!r}. What one more kW would earn is not derived in this "
+            "repo (issue #190), and the template is the route by which the sentence "
+            "comes back")
+    return ("report-template.html's live §8 markup references no KNOWN_GAPS token and "
+            "attaches no price or unresolved token to added capacity")
+
+
+def case_s0_expansion_cap_matches_the_s8_one():
+    """RELATIONSHIP, §0's growth cap against §8's: SAME QUANTITY, TWO TYPED
+    COPIES. Neither is recomputed -- the array's DC nameplate lives in
+    private/household.yaml and this file runs without the private archive, so
+    §8's copy is pinned to its tariff citation by
+    case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering and this
+    pins §0's to §8's.
+
+    §0's "more solar" bullet is now the sentence a reader acts on -- it says
+    the cap is what settles the question -- so the cap figure in it is
+    load-bearing, and it is the same drift class
+    case_s8_specific_yield_matches_the_token_rendered_one exists for: two
+    hand-typed copies of one figure with nothing tying them together."""
+    m = re.search(r"<li><b>More solar\? No\.</b>.*?</li>", HTML, re.S)
+    assert m, "§0's 'More solar? No.' bullet not found in index.html"
+    s0 = re.search(r"caps? (?:the )?expansion (?:at|to) ~?([\d.]+) ?kW", m.group(0))
+    assert s0, (
+        "§0's 'more solar' bullet no longer states the NEM 2.0 growth cap, which is "
+        f"what it says settles the question: {m.group(0)!r}")
+    s8 = re.search(r"that's <b>~([\d.]+) kW</b>", _s8_section())
+    assert s8, (
+        "§8 no longer states the NEM 2.0 growth cap in kW, so §0's copy of it has "
+        "nothing to be checked against")
+    assert s0.group(1) == s8.group(1), (
+        f"§0 caps expansion at ~{s0.group(1)} kW while §8 derives ~{s8.group(1)} kW "
+        "from the tariff's 10%-or-1-kW rule against this array's nameplate. One of the "
+        "two hand-typed copies has drifted")
+    return (f"§0's 'more solar' bullet and §8 both cap expansion at ~{s0.group(1)} kW")
+
+
+def case_the_added_capacity_guard_rejects_the_defect_and_accepts_a_priced_install():
+    """_ADDED_CAPACITY_EARNS_RE has to fail on the sentences this issue retired
+    and pass ordinary §8 prose. Only the first half was ever driven, and the
+    second half is where the guard was wrong: a bare "to add" alternative,
+    paired with _ANY_PRICE_RE matching any figure anywhere in the sentence,
+    refuses an installed price for anything at all -- a string of panels, a
+    battery -- while no marginal-capacity valuation is being made. A guard that
+    fails on correct input gets switched off, so both directions are pinned.
+
+    The rejected sentences are the ones index.html really published before
+    issue #182, plus the paraphrase the narrowed infinitive still has to
+    catch."""
+    retired = (
+        "A marginal new-panel kWh earns that 22.9¢, not the 10.4¢, because the "
+        "daytime load is already covered.",
+        "That gives 1,642 kWh/kW/yr × 22.9¢ = $376 per kW per year, and at retrofit "
+        "pricing of ~$2.50–3.00/W, a 6.6–8.0 year payback.",
+        "Set that against what the cap actually permits: 1.0 kW at the 22.9¢ derived "
+        "above earns about $378/yr.",
+        "At ~$2.50/W to add capacity, an exported kWh still only fetches 22.9¢.",
+        "It costs about $3.00/W to add 1 kW, which earns 22.9¢ a kWh.",
+    )
+    benign = (
+        "≈$8,000 to add a second string, and the roof has room for it.",
+        "The right time to add storage is once the panels are paid off, at ~$0.30/W.",
+        "Net recoverable value ≤ ~$35/yr against ~$8,000–11,000 to swap 30 "
+        "microinverters: a non-starter.",
+    )
+    for sentence in retired:
+        capacity = _ADDED_CAPACITY_EARNS_RE.search(sentence)
+        assert capacity and _ANY_PRICE_RE.search(sentence), (
+            "the added-capacity guard no longer rejects a sentence that prices a "
+            f"marginal kW: {sentence!r}"
+            + ("" if capacity else " -- no alternative in _ADDED_CAPACITY_EARNS_RE "
+                                   "matches it any more"))
+    for sentence in benign:
+        capacity = _ADDED_CAPACITY_EARNS_RE.search(sentence)
+        assert not (capacity and _ANY_PRICE_RE.search(sentence)), (
+            f"the added-capacity guard refuses a correct sentence: {sentence!r} carries "
+            f"{capacity.group(0)!r} and a price, but values no marginal kW. A guard "
+            "that fails on correct input is worse than no guard: narrow the pattern so "
+            "every alternative names added CAPACITY rather than an infinitive")
+    return (f"the added-capacity guard rejects all {len(retired)} retired valuations "
+            f"and accepts {len(benign)} priced sentences that value no marginal kW")
 
 
 def case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering():
@@ -4646,6 +4973,10 @@ CASES = [
     case_s2_key_architectural_fact_matches_the_artifacts,
     case_s8_more_panels_timing_matches_the_artifacts,
     case_s8_export_value_is_published_as_a_bounded_range,
+    case_s8_export_period_split_matches_the_profiles,
+    case_the_template_prices_no_added_capacity_and_needs_no_gap_token_in_s8,
+    case_s0_expansion_cap_matches_the_s8_one,
+    case_the_added_capacity_guard_rejects_the_defect_and_accepts_a_priced_install,
     case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering,
     case_s8_specific_yield_matches_the_token_rendered_one,
     case_s0_more_solar_bullet_keeps_the_two_shares_apart,

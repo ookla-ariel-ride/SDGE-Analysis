@@ -3538,8 +3538,8 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
     if published <= 0:
         raise SystemExit(
             f"report_tokens: {token} cannot say {subject} -- "
-            f"data/report_data.json:totals.exp is {published:,.0f} kWh, so there is no "
-            "year of exports to take a share of")
+            f"data/report_data.json:totals.exp is {published:,.0f} kWh, so this window "
+            "has no exports to describe")
     if abs(total - published) / published > _EXPORT_REBUILD_TOLERANCE:
         raise SystemExit(
             f"report_tokens: {token} refuses to say {subject} -- "
@@ -3554,10 +3554,13 @@ def _assert_profiles_rebuild_the_year(token, subject, total):
 #
 # THE QUANTITY. One figure for the whole window: the price the year's exported
 # kWh fetched, averaged over the hours the array actually exports in. It is not
-# any single cell of the price map -- on this profile 64.6% of the exports
-# leave in the daytime super-off-peak run and 35.4% in off-peak and on-peak
-# hours that pay six to eleven times more, so quoting the super-off-peak cell
-# prices a third of the output at the wrong end of the map.
+# any single cell of the price map -- most of this profile's exports leave in
+# the daytime super-off-peak run, but the rest leave in off-peak and on-peak
+# hours priced several times higher, so quoting the super-off-peak cell prices
+# that remainder at the wrong end of the map. The split itself is not typed
+# here: section 8 publishes it, and case_s8_export_period_split_matches_the_
+# profiles in test_report_consistency.py recomputes it from the same profiles,
+# so there is one copy of those figures rather than two to keep in step.
 #
 # WHY IT IS A RANGE AND NOT A NUMBER. rates.bill_nem_monthly(), the engine
 # behind every other published figure in this report, settles NEM 2.0 by
@@ -3620,8 +3623,11 @@ def _export_value_bound(token, subject, rate, rate_name):
     bill them under.
 
     WHAT THE DAY-TYPE RULE IS WORTH, so nobody re-derives it as a rounding
-    argument: pricing all 365 days on the weekday schedule adds 0.7 cents at
-    either end (23.6 against 22.9 surplus, 26.5 against 25.7 netting). That is
+    argument: pricing all 365 days on the weekday schedule adds 0.75 cents at
+    either end (23.64 against 22.89 surplus, 26.47 against 25.72 netting) --
+    two decimals because at one the same delta prints as 0.7 on one end and
+    0.8 on the other, and a reader checking the subtraction is owed digits
+    that agree with the claim above them. That is
     not precision, it is the 6-10am band, which the tariff bills off-peak on a
     weekday and super-off-peak on a weekend and holiday. Getting it wrong
     misprices 111 of this window's days, not a rounding digit's worth of any of

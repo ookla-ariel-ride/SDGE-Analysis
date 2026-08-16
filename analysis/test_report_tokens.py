@@ -3476,6 +3476,233 @@ def case_the_two_export_bounds_are_the_two_settlement_treatments():
             f"than assumed, and is rates.energy() rather than rates.allin()")
 
 
+def _export_bound_recomputed_on_the_weekday_schedule(rate_name):
+    """The same weighting as _export_bound_recomputed with the day-type rule
+    switched OFF -- every day of the window priced on the weekday schedule.
+    This is the comparison _export_value_bound's docstring publishes, and it
+    exists so nobody re-derives the day-type rule's worth as a rounding
+    argument."""
+    rate = getattr(rt.R, rate_name)
+    rd = rt._json("report_data.json")
+    start, end = rt._analysis_window_dates()
+    total = value = 0.0
+    d = start
+    while d <= end:
+        seas = "S" if d.month in rt.R.SUMMER_MONTHS else "W"
+        for hour, kwh in enumerate(rd[f"hourly_{seas}"]["exp"]):
+            total += kwh
+            value += kwh * rate(seas, rt.R.period(hour, False))
+        d += dt.timedelta(days=1)
+    return value / total
+
+
+# The sentence in _export_value_bound's docstring that prices the day-type
+# rule. Parsed rather than read, because its whole job is to save a reader the
+# re-derivation, and a reader who re-derives from its own digits must not find
+# a contradiction: as first written it claimed "0.7 cents at either end" beside
+# a netting pair whose printed digits differ by 0.8.
+_DAY_TYPE_WORTH_RE = re.compile(
+    r"adds ([\d.]+) cents at either end \(([\d.]+) against ([\d.]+) surplus, "
+    r"([\d.]+) against ([\d.]+) netting\)")
+
+
+@case
+def case_the_day_type_rules_worth_is_stated_in_digits_that_agree():
+    """issue #182 review, finding 7. _export_value_bound's docstring publishes
+    what rates.off_peak_day() is worth so that nobody re-derives it as a
+    rounding argument. Three pins, and the third is the one that failed:
+
+      1. each of the four figures is the one the artifacts produce, at the
+         precision it is printed to -- the weekday-only pair recomputed here
+         with the day-type rule switched off, the published pair with it on;
+      2. the stated delta is the real difference between them;
+      3. the printed digits SUBTRACT to the printed delta, at both ends. A
+         paragraph whose own numbers contradict its claim teaches the reader
+         to distrust it, which is the opposite of why it exists."""
+    # Whitespace-normalized: the sentence is wrapped across docstring lines,
+    # and the pin is about its digits, not about where its line breaks fall.
+    doc = re.sub(r"\s+", " ", rt._export_value_bound.__doc__)
+    m = _DAY_TYPE_WORTH_RE.search(doc)
+    assert m, (
+        "_export_value_bound's docstring no longer prices the day-type rule in the "
+        "form this case reads (\"adds N cents at either end (A against B surplus, C "
+        "against D netting)\"). That paragraph is what stops the rule being re-derived "
+        "as a rounding argument; reword the pin with it, do not drop it")
+    delta, wk_surplus, day_surplus, wk_netting, day_netting = m.groups()
+
+    checked = []
+    for printed, rate_name, weekday_only, label in (
+            (wk_surplus, "credit", True, "the weekday-only surplus figure"),
+            (day_surplus, "credit", False, "the published surplus figure"),
+            (wk_netting, "energy", True, "the weekday-only netting figure"),
+            (day_netting, "energy", False, "the published netting figure")):
+        live = (_export_bound_recomputed_on_the_weekday_schedule(rate_name)
+                if weekday_only else _export_bound_recomputed(rate_name))
+        places = len(printed.split(".")[1]) if "." in printed else 0
+        assert printed == f"{live * 100:.{places}f}", (
+            f"the docstring's {label} is {printed} cents where weighting "
+            f"rates.{rate_name}() by data/report_data.json's export profiles "
+            f"{'on the weekday schedule' if weekday_only else 'at each day type'} "
+            f"gives {live * 100:.{places}f}")
+        checked.append(f"{label} {printed}")
+
+    for end, weekday, published in (("surplus", wk_surplus, day_surplus),
+                                    ("netting", wk_netting, day_netting)):
+        places = max(len(x.split(".")[1]) if "." in x else 0
+                     for x in (weekday, published, delta))
+        printed_delta = f"{float(weekday) - float(published):.{places}f}"
+        assert printed_delta == f"{float(delta):.{places}f}", (
+            f"the docstring's {end} pair prints {weekday} against {published}, a "
+            f"difference of {printed_delta} cents, while the sentence above them "
+            f"claims {delta}. A reader re-deriving the difference from these digits "
+            "finds the contradiction the paragraph exists to prevent -- print enough "
+            "decimals that the subtraction comes out, or restate the claim")
+
+    surplus_gap = (_export_bound_recomputed_on_the_weekday_schedule("credit")
+                   - _export_bound_recomputed("credit")) * 100
+    return (f"the docstring's day-type paragraph checks out: {', '.join(checked)}, "
+            f"a real gap of {surplus_gap:.4f} cents stated as {delta}")
+
+
+@case
+def case_the_rebuild_refusal_describes_no_callers_own_operation():
+    """issue #182 review, finding 6. _assert_profiles_rebuild_the_year was
+    parameterized on (token, subject) when the export-value bounds started
+    using it, but its FIRST refusal -- the one for an artifact whose
+    totals.exp is zero -- kept the tail it was written with for the
+    midday-SHARE caller: "...so there is no year of exports to take a share
+    of". Handed to a caller that prices a kWh, that names an operation it does
+    not perform, in the one message a reader gets when nothing else worked.
+
+    Driven through the real callers rather than the helper, so a caller wired
+    to a private copy of the message is caught too. Two pins: every caller's
+    refusal carries the same tail (it is parameterized, not per-caller), and
+    that tail names no single caller's own operation."""
+    rd = rt._json("report_data.json")
+    # Each caller invoked the way the token really reaches the helper. The
+    # midday-share caller is called directly rather than through S2_VERDICT:
+    # that token needs the private household, and the refusal under test is
+    # raised before any household value is read.
+    callers = (("S2_VERDICT", lambda: rt._midday_export_share(rt.CTX)),
+               ("EXPORT_VALUE_SURPLUS_BOUND",
+                lambda: rt.TOKENS["EXPORT_VALUE_SURPLUS_BOUND"]["get"](rt.CTX)),
+               ("EXPORT_VALUE_NETTING_BOUND",
+                lambda: rt.TOKENS["EXPORT_VALUE_NETTING_BOUND"]["get"](rt.CTX)))
+    # Vocabulary that belongs to ONE caller. A refusal about an artifact with
+    # no exports in it may describe the ARTIFACT; the moment it describes an
+    # operation, it is describing whichever caller it was written for.
+    operations = {"share": "the midday-share caller", "worth": "the export-value "
+                  "callers", "price": "the export-value callers"}
+    tails = {}
+    with _swapped(rd["totals"], "exp", 0):
+        for token, call in callers:
+            try:
+                value = call()
+            except SystemExit as e:
+                message = str(e)
+            else:
+                raise AssertionError(
+                    f"{token} published {value!r} from an artifact whose totals.exp is "
+                    "0 kWh, instead of refusing")
+            parsed = re.match(r"report_tokens: (\S+) cannot say (.+?) -- (.+)\Z",
+                              message, re.S)
+            assert parsed, (
+                f"{token}'s zero-exports refusal no longer names the token and the "
+                f"subject it was refusing to state: {message!r}")
+            assert parsed.group(1) == token, (
+                f"the refusal names {parsed.group(1)}, not the token that asked "
+                f"({token}): {message!r}")
+            tails[token] = parsed.group(3)
+    # Nothing leaked: the artifact is back and every caller resolves again.
+    for token, call in callers:
+        assert call() is not None
+
+    distinct = set(tails.values())
+    assert len(distinct) == 1, (
+        f"the zero-exports refusal reads differently for different callers "
+        f"({tails}) -- the message beyond the token and its subject is supposed to be "
+        "one statement about the artifact")
+    tail = distinct.pop()
+    for word, whose in sorted(operations.items()):
+        assert word not in tail.casefold(), (
+            f"the zero-exports refusal ends {tail!r}, which names an operation only "
+            f"{whose} perform(s) ({word!r}). Every caller of "
+            "_assert_profiles_rebuild_the_year "
+            "gets this sentence, so it may state what the artifact holds and nothing "
+            "about what the caller was going to do with it")
+    return (f"all {len(tails)} callers' zero-exports refusals share one tail ({tail!r}) "
+            "that names no single caller's own operation")
+
+
+# The two names whose SIZE has already been typed into prose and gone stale:
+# report_tokens.KNOWN_GAPS and report_blocks.LIVE_GAP_TOKENS. Both are computed
+# -- one declared in this repo's own source, one derived from the template at
+# import time -- so any count of them written into a comment is a second copy
+# of a fact the code already states.
+_GAP_SET_NAMES = r"(?:KNOWN_GAPS|LIVE_GAP_TOKENS)"
+_PLURAL_CARDINAL = (r"(?:[2-9]|\d\d+|two|three|four|five|six|seven|eight|nine|ten|"
+                    r"eleven|twelve)")
+_CARDINAL = rf"(?:1|one|{_PLURAL_CARDINAL})"
+#
+# The cardinal has to be QUANTIFYING the set, not merely near it: only a
+# possessive ("report_tokens.py's five KNOWN_GAPS") or a plain adjective
+# ("two live KNOWN_GAPS") may sit between them, and behind the name only a
+# bare plural ("the KNOWN_GAPS five"). A looser window flags ordinary prose --
+# "a KNOWN_GAPS token: that ONE is about storage" reads as a count to any
+# pattern that allows two free words, and a guard that refuses correct writing
+# gets deleted rather than obeyed.
+_TYPED_GAP_COUNT_RES = (
+    # "...py's five KNOWN_GAPS", "two live KNOWN_GAPS"
+    re.compile(rf"(?<![\w#]){_CARDINAL}\s+(?:\S+?'s\s+)?"
+               rf"(?:live\s+|declared\s+|remaining\s+|current\s+)?{_GAP_SET_NAMES}",
+               re.I),
+    # "the KNOWN_GAPS five", "LIVE_GAP_TOKENS holds three"
+    re.compile(rf"{_GAP_SET_NAMES}\s+"
+               rf"(?:tokens?|entries|set|holds|has|have|carries|lists|names)?\s*"
+               rf"{_CARDINAL}\b", re.I),
+    # "three of the KNOWN_GAPS tokens". The cardinal is PLURAL on purpose: "one
+    # of the KNOWN_GAPS tokens" points at a member, which is ordinary correct
+    # writing, while "three of" is a count.
+    re.compile(rf"(?<![\w#]){_PLURAL_CARDINAL}\s+of\s+(?:\S+\s+){{0,2}}?"
+               rf"{_GAP_SET_NAMES}", re.I),
+)
+# Scoped to the two modules that DEFINE these sets -- the place a maintainer
+# looks the count up instead of re-deriving it, and where both stale copies
+# were found. generate_report.py's narrative about two gap tokens sitting in
+# two different sections is a claim about the template's shape rather than a
+# documented inventory count, and that file is not this case's to police.
+_GAP_COUNT_SOURCES = ("report_tokens.py", "report_blocks.py")
+
+
+@case
+def case_no_module_types_a_count_of_the_gap_token_sets():
+    """issue #182 review, finding 5. report_blocks.py said "Three of
+    report_tokens.py's FIVE KNOWN_GAPS tokens" in two places, one of them the
+    header of the LIVE_GAP_TOKENS derivation itself. KNOWN_GAPS had held four
+    since a token left it, and the live count moved to two when the template
+    stopped pricing added capacity -- so both halves of the sentence were
+    wrong, in a comment written precisely so a maintainer would not have to
+    re-derive them.
+
+    A count of a computed set does not belong in prose beside the computation.
+    len(report_tokens.KNOWN_GAPS) and report_blocks.LIVE_GAP_TOKENS are both
+    one expression away, and report_blocks.main() prints the live set."""
+    offenders = []
+    for name in _GAP_COUNT_SOURCES:
+        text = (rt.ROOT / "analysis" / name).read_text()
+        for rx in _TYPED_GAP_COUNT_RES:
+            for m in rx.finditer(text):
+                line = text[:m.start()].count("\n") + 1
+                offenders.append(f"{name}:{line} {m.group(0)!r}")
+    assert not offenders, (
+        f"{len(offenders)} typed count(s) of a computed gap-token set: "
+        + "; ".join(offenders)
+        + ". Both counts have gone stale here before, in the same sentence. Name the "
+          "tokens or let len(KNOWN_GAPS) and LIVE_GAP_TOKENS say how many there are")
+    return (f"neither {' nor '.join(_GAP_COUNT_SOURCES)} types a count of KNOWN_GAPS "
+            f"or LIVE_GAP_TOKENS (live now: {len(rt.KNOWN_GAPS)} declared)")
+
+
 @case
 def case_s2_verdict_reports_a_daytime_charger_rather_than_refusing_to_render():
     """"while the EV charges overnight" was asserted outright, and on a
@@ -7519,10 +7746,11 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #
 # CI. This runs with NO private archive. Where private/household.yaml is
 # absent, the household-sourced tokens are resolved against the committed
-# household.example.yaml instead (see _seam_values), so all 206 non-gap tokens
-# are checked on the merge-guarding runner rather than the 162 that read only
-# data/. The five KNOWN_GAPS tokens are the only ones skipped, and the case
-# asserts that set by name. The two paths are not identical and this guard
+# household.example.yaml instead (see _seam_values), so EVERY non-gap token is
+# checked on the merge-guarding runner rather than only the ones that read
+# data/ alone. The KNOWN_GAPS tokens are the only ones skipped, and the case
+# asserts that set BY NAME rather than by a count -- counts of this inventory
+# have gone stale here before. The two paths are not identical and this guard
 # does not claim they are: see _seam_stand_in_household for the one shape
 # difference measured between them.
 # ---------------------------------------------------------------------------
@@ -7773,7 +8001,7 @@ def _seam_render(line, values):
     figure. case_the_seam_guard_compares_the_values_the_generator_writes pins
     the two against each other rather than trusting this comment.
 
-    A token with no value (the KNOWN_GAPS five) is left as its literal
+    A token with no value (a KNOWN_GAPS entry) is left as its literal
     {{NAME}}, which no rule below can mistake for a figure or a unit."""
     out, spans, pos = [], [], 0
     for m in _SEAM_TOKEN_RE.finditer(line):
@@ -8103,9 +8331,9 @@ def _seam_stale_allowlist(template_text, values):
 
 class _seam_stand_in_household:
     """private/household.yaml stood in for by the COMMITTED
-    household.example.yaml, so the seam guard checks all 206 non-gap tokens on
-    a runner that has no private archive instead of the 162 that read only
-    data/.
+    household.example.yaml, so the seam guard checks EVERY non-gap token on a
+    runner that has no private archive instead of only the ones that read
+    data/ alone.
 
     Three of the example file's placeholder answers have to agree with
     committed artifacts or the token they feed refuses to render (correctly --
@@ -8221,8 +8449,8 @@ def _seam_values():
     """{token: rendered value} for every non-gap token, plus the names skipped.
 
     Resolved against the real archive where it is staged and against the
-    committed stand-in otherwise, so the same 206 tokens are checked in both
-    places."""
+    committed stand-in otherwise, so the same tokens are checked in both
+    places -- the set, not a count of it, is what the case asserts."""
     def resolve():
         out = {}
         for name, spec in rt.TOKENS.items():
@@ -8406,8 +8634,8 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
 def case_the_seam_guard_checks_the_same_tokens_without_the_private_archive():
     """The case above resolves against private/household.yaml where it is
     staged, and .github/workflows/tests.yml runs this suite where it is not.
-    A guard that quietly checks 162 of 206 tokens on the runner that actually
-    guards merges is the failure mode this file has already recorded twice
+    A guard that quietly checks the data/-only tokens on the runner that
+    actually guards merges is the failure mode this file has already recorded twice
     (the SEC9 and verdict round-trip cases), so the archive-less path is
     driven HERE, on every checkout, and asserted to cover the same set.
 
