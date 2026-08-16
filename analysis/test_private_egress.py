@@ -796,11 +796,34 @@ def _python_verdict(root, src, env=None):
 # implementation only. Each builder returns the destination to hand both.
 # ===========================================================================
 class DestCase:
-    def __init__(self, name, build, expect, why):
+    """One destination fixture, asked of the shell AND of BOTH python entry
+    points.
+
+    The first version of this table ran the shell against check_write_set()
+    only. Both defects found in review afterwards were in check_destination(),
+    the OTHER public entry point -- the one the argument-derived writers call --
+    and the table could not have caught either, because it never called it. So
+    every row now carries a `probe`: the path (relative to the destination) and
+    the destination KIND the single-path API is asked about, and its own
+    expected verdict.
+
+    The two python answers are allowed to differ, and three rows do differ, but
+    never silently: a row whose `single` verdict is not its `expect` must say
+    why in `asymmetry`, and a row that cannot be asked of the single-path API at
+    all must say why in `single_na`. Enforced by
+    case_every_table_case_is_asked_of_both_public_apis.
+    """
+
+    def __init__(self, name, build, expect, why, probe=None, single=None,
+                 asymmetry=None, single_na=None):
         self.name = name
         self.build = build          # (td, worktree_or_None) -> (dest, env|None)
         self.expect = expect        # None to accept, else a reason code
         self.why = why
+        self.probe = probe          # (relpath_under_dest, kind) or None
+        self.single = single        # check_destination's verdict on that probe
+        self.asymmetry = asymmetry  # required when single != expect
+        self.single_na = single_na  # required when probe is None
         # Every builder takes (td, worktree_or_None); the ones that need a real
         # worktree name that second parameter `wt` and the ones that do not name
         # it `_wt`. Exact equality, not a substring test: a rename that silently
@@ -942,35 +965,80 @@ def _regular_file_where_a_directory_belongs(td, wt):
     return wt, None
 
 
+def _directory_where_a_file_belongs(td, wt):
+    """The reverse of the case above: a DIRECTORY sitting where one of the
+    copied files goes. `cp` neither truncates it nor writes through it -- it
+    writes INSIDE it, under a name the operator never asked for, and the file
+    the run was supposed to produce is not there."""
+    (wt / "private" / "household.yaml").mkdir(parents=True)
+    return wt, None
+
+
 TABLE = [
     DestCase("a registered worktree of this checkout", _registered_worktree, None,
              "the accepting half: a guard that refuses correct input is the shape "
-             "that gets guards disabled"),
+             "that gets guards disabled",
+             probe=("private/verify/usage.csv", "file"), single=None),
+    DestCase("the same root, asked as an ordinary destination", _registered_worktree,
+             None,
+             "FINDING 1's fixture, and the row the old table had no column for. "
+             "The shell's only question is 'stage the archive into this root', "
+             "which this root answers yes to; an argument-derived writer asking "
+             "'may I write files AT this path' must be told no, because the root "
+             "is the one path in the tree that its own git does not ignore",
+             probe=("", "dir"), single="worktree_root_itself",
+             asymmetry="the same fixture, two different questions. kind='root' is "
+                       "'stage into this worktree' and the ignore question is not "
+                       "asked of a root; every other kind is 'write files at this "
+                       "path', and at the root that is a path one `git add -A` "
+                       "from a commit. Before the fix the ordinary question "
+                       "returned ACCEPTED here"),
     DestCase("a destination that does not exist", _missing_dir, "no_such_destination",
              "the incident's own shape -- a failed `git worktree add` whose failure "
-             "was swallowed by a pipe, followed by a write to the path anyway"),
-    DestCase("a plain directory in no repository", _plain_dir, "not_a_worktree", ""),
+             "was swallowed by a pipe, followed by a write to the path anyway",
+             probe=("", "dir"), single="not_a_worktree",
+             asymmetry="a path that does not exist yet is ordinary for the "
+                       "single-path API -- writers create their own directories -- "
+                       "so it reports why the nearest EXISTING ancestor is "
+                       "ineligible instead. Both refuse; only the root question "
+                       "can say 'this is not an existing directory', because only "
+                       "it requires the destination to already be a worktree"),
+    DestCase("a plain directory in no repository", _plain_dir, "not_a_worktree", "",
+             probe=("", "dir"), single="not_a_worktree"),
     DestCase("a different repository", _unrelated_repo, "different_repository",
-             "what the archive was actually written into on 2026-08-13"),
+             "what the archive was actually written into on 2026-08-13",
+             probe=("", "dir"), single="different_repository"),
     DestCase("a plain directory with a forged .git gitfile", _gitfile_forgery,
              "not_registered",
              "answers --git-common-dir and --show-toplevel like a real worktree; "
-             "only git's own register tells them apart"),
+             "only git's own register tells them apart",
+             probe=("", "dir"), single="not_registered"),
     DestCase("a plain directory dressed up by the environment", _env_forged_plain_dir,
              "not_a_worktree",
              "GIT_COMMON_DIR/GIT_DIR/GIT_WORK_TREE set: both implementations must "
-             "clear them before probing, or the caller supplies the answer"),
+             "clear them before probing, or the caller supplies the answer",
+             probe=("", "dir"), single="not_a_worktree"),
     DestCase("a subdirectory of a legitimate worktree", _worktree_subdirectory,
-             "not_worktree_root", ""),
+             "not_worktree_root", "",
+             probe=("", "dir"), single="tracked_path",
+             asymmetry="a subdirectory is the single-path API's ORDINARY input, so "
+                       "it does not refuse for being one -- it asks the question "
+                       "that actually matters about analysis/, which is that this "
+                       "checkout tracks it. Both refuse; the codes differ because "
+                       "the remedies do (the shell wants the worktree root, the "
+                       "writer wants an ignored path)"),
     DestCase("a worktree that does not gitignore private/",
              _worktree_not_ignoring_private, "not_ignored",
              "the half of the incident a repository check cannot see: the data sat "
-             "one `git add -A` from a commit into an unrelated public repo"),
+             "one `git add -A` from a commit into an unrelated public repo",
+             probe=("private/verify/usage.csv", "file"), single="not_ignored"),
     DestCase("a worktree that already tracks a staged path",
              _worktree_tracking_a_staged_path, "tracked_path",
-             "a tracked file stays in the index whatever .gitignore says"),
+             "a tracked file stays in the index whatever .gitignore says",
+             probe=("private/household.yaml", "file"), single="tracked_path"),
     DestCase("a symlink at private/1-raw-data", _symlink_at_raw_data,
-             "symlink_component", ""),
+             "symlink_component", "",
+             probe=("private/1-raw-data/gas.csv", "file"), single="symlink_component"),
     DestCase("a symlink at private/ itself", _symlink_at_private, "ignore_unanswerable",
              "one level above every path either implementation names. Both refuse, "
              "and both refuse for the same measured reason rather than the obvious "
@@ -979,18 +1047,36 @@ TABLE = [
              "question is asked before any path is inspected -- in both "
              "implementations, which is why the phase order in check_write_set() "
              "matches the script's. Fail-closed either way; the case is here so "
-             "the shared answer is a recorded decision and not a coincidence"),
+             "the shared answer is a recorded decision and not a coincidence",
+             probe=("private/verify/usage.csv", "file"), single="symlink_component",
+             asymmetry="PHASE ORDER, and it is the whole of the difference. The "
+                       "whole-set API settles 'could this tree commit any of what "
+                       "I am about to write' for the DECLARED SET before inspecting "
+                       "any path, and git answers that question 128 here; the "
+                       "single-path API has one path, so it walks that path's "
+                       "components first and sees the link itself. Both refuse, "
+                       "neither writes"),
     DestCase("a symlink deep inside a scanned subtree",
-             _symlink_deep_inside_a_scanned_subtree, "symlink_under", ""),
+             _symlink_deep_inside_a_scanned_subtree, "symlink_under", "",
+             probe=("private/1-raw-data/electric-bills", "tree"), single="symlink_under"),
     DestCase("a FIFO at a file the copies write", _fifo_at_a_written_leaf,
              "special_file",
              "neither a link nor a multiply-linked regular file; opening it blocks "
-             "the run or hands the archive to whatever is reading"),
+             "the run or hands the archive to whatever is reading",
+             probe=("private/verify/usage.csv", "file"), single="special_file"),
     DestCase("a hard link at a file the copies write", _hard_link_at_a_written_leaf,
              "hard_link",
-             "`[ -L ]` cannot see it and cp rewrites the shared inode in place"),
+             "`[ -L ]` cannot see it and cp rewrites the shared inode in place",
+             probe=("private/household.yaml", "file"), single="hard_link"),
     DestCase("a regular file where a staged directory belongs",
-             _regular_file_where_a_directory_belongs, "not_a_directory", ""),
+             _regular_file_where_a_directory_belongs, "not_a_directory", "",
+             probe=("private/1-raw-data", "dir"), single="not_a_directory"),
+    DestCase("a directory where a staged file belongs", _directory_where_a_file_belongs,
+             "special_file",
+             "the reverse mismatch: `cp` writes INSIDE it rather than over it, so "
+             "the run reports success and the file it was supposed to write is not "
+             "there",
+             probe=("private/household.yaml", "file"), single="special_file"),
 ]
 
 # Anti-narrowing for the table, same shape as MOVERS_FLOOR: every refusal
@@ -1000,6 +1086,104 @@ TABLE_FLOOR = frozenset({
     "not_worktree_root", "not_ignored", "tracked_path", "symlink_component",
     "symlink_under", "special_file", "hard_link", "not_a_directory",
 })
+
+# The same floor for the OTHER public entry point. It is a separate constant
+# because it is a separate claim: TABLE_FLOOR says the shell's refusals stay
+# exercised, this says the single-path API reaches them too. The four leaf and
+# tree refusals in it were reachable only through check_write_set() until the
+# fix, which is exactly how the FIFO and hard-link holes survived a table that
+# looked complete.
+SINGLE_FLOOR = frozenset({
+    "worktree_root_itself", "special_file", "hard_link", "not_a_directory",
+    "symlink_under", "symlink_component", "tracked_path", "not_ignored",
+    "not_a_worktree", "different_repository", "not_registered",
+})
+
+# ---------------------------------------------------------------------------
+# WHICH REFUSAL IS REACHABLE THROUGH WHICH API
+#
+# check_write_set() raises nothing of its own any more: it asks
+# check_destination() about the root with kind="root" and about every path below
+# it with the kind that path will be written as, and asks _require_uncommittable
+# for the declared set -- which check_destination also asks. That is asserted
+# structurally by case_check_write_set_owns_no_refusal_of_its_own, and it is
+# what makes "reachable through one API and not the other" a question about the
+# KIND argument rather than about the two functions.
+#
+# So this maps each reason to the kinds that can produce it, with the reason for
+# every restriction. Everything unrestricted is reachable through both public
+# entry points; everything restricted is restricted by the destination kind the
+# caller declared, which is the point of making the kind mandatory.
+# ---------------------------------------------------------------------------
+ALL_KINDS = frozenset(PE.KINDS)
+API_REACH = {
+    "self_unlocatable":     (ALL_KINDS, ""),
+    "register_unavailable": (ALL_KINDS, ""),
+    "unnormalized_path":    (ALL_KINDS, ""),
+    "no_such_destination":  (ALL_KINDS,
+                             "kind='root' produces it for a destination that is not "
+                             "an existing directory; the other kinds produce it only "
+                             "for a path whose nearest existing ancestor is not a "
+                             "directory, because a path that does not exist YET is "
+                             "what a writer is about to create"),
+    "not_a_worktree":       (ALL_KINDS, ""),
+    "different_repository": (ALL_KINDS, ""),
+    "no_worktree_of_its_own": (ALL_KINDS, ""),
+    "not_registered":       (ALL_KINDS, ""),
+    "not_worktree_root":    (frozenset({"root"}),
+                             "only the root question can be answered 'this is a "
+                             "subdirectory'; for every other kind a subdirectory is "
+                             "the ordinary input"),
+    "worktree_root_itself": (ALL_KINDS - {"root"},
+                             "the mirror image: only an ordinary write can be "
+                             "refused for landing ON a root. kind='root' is asking "
+                             "to stage INTO one"),
+    "symlink_component":    (ALL_KINDS - {"root"},
+                             "the walk runs from the worktree root DOWN, and a "
+                             "kind='root' destination has nothing below it to walk. "
+                             "A link that NAMES a registered worktree is a "
+                             "legitimate way to say where it is -- the shell "
+                             "resolves DST to DST_REAL for the same reason"),
+    "not_a_directory":      (frozenset({"tree", "dir"}), "a claim about a directory slot"),
+    "special_file":         (frozenset({"file"}),
+                             "a FIFO or a directory found where a regular file goes; "
+                             "asked of a directory slot the same path is "
+                             "not_a_directory"),
+    "hard_link":            (frozenset({"file"}), "only a regular file has a link count "
+                                                  "a copy would write through"),
+    "symlink_under":        (frozenset({"tree"}), "only a recursive copy descends"),
+    "special_under":        (frozenset({"tree"}), "only a recursive copy descends"),
+    "hardlink_under":       (frozenset({"tree"}), "only a recursive copy descends"),
+    "scan_unreadable":      (frozenset({"tree"}), "only a recursive copy descends"),
+    "tracked_path":         (ALL_KINDS - {"root"},
+                             "no checkout ignores its own root, so the question is "
+                             "not asked of one"),
+    "not_ignored":          (ALL_KINDS - {"root"},
+                             "as tracked_path: the ignore question is asked of a "
+                             "path INSIDE a worktree, never of the worktree"),
+    "ignore_unanswerable":  (ALL_KINDS - {"root"},
+                             "as tracked_path; check_write_set() also reaches it for "
+                             "the declared set, which is how a link at private/ is "
+                             "refused there while the single-path walk sees the link"),
+    "tracked_unanswerable": (ALL_KINDS - {"root"},
+                             "as tracked_path: 'git ls-files' is asked about a "
+                             "relative path, and a root has none"),
+}
+
+# (kind, reason) pairs this run actually observed through check_destination.
+# Filled by the cases below and checked against API_REACH, so the map above is
+# measured where the suite reaches and declared only where it does not.
+OBSERVED = set()
+
+
+def _single_verdict(path, kind):
+    """check_destination()'s verdict on one path, as a reason code or None."""
+    try:
+        PE.check_destination(path, kind=kind)
+        return None
+    except PE.DestinationRefused as e:
+        OBSERVED.add((kind, e.reason))
+        return e.reason
 
 
 # ===========================================================================
@@ -1240,11 +1424,60 @@ def case_the_agreement_table_exercises_every_refusal_the_shell_adds():
 
 
 @case
-def case_the_shell_and_the_python_predicate_agree_on_every_destination():
-    """The whole point: one table, two implementations, identical verdicts.
+def case_every_table_case_is_asked_of_both_public_apis():
+    """The hole the first version of this table had: every case ran through
+    check_write_set() and none through check_destination(), so both defects
+    review found sat in the API the table never called.
 
-    Each case gets its own throwaway worktree, because the ACCEPTING case
-    really does run the copies -- against a synthetic source holding no real
+    Structural, and it runs before the table itself: a row may only skip the
+    single-path API with a written reason, and a row whose two python verdicts
+    differ must say why. Neither can be omitted silently.
+    """
+    bad = []
+    for c in TABLE:
+        if c.probe is None:
+            if len(c.single_na or "") < 40:
+                bad.append(f"{c.name}: no single-path probe and no reason given")
+            continue
+        if c.single_na:
+            bad.append(f"{c.name}: has a probe AND a reason for having none")
+        rel, kind = c.probe
+        if kind not in PE.KINDS:
+            bad.append(f"{c.name}: probe kind {kind!r} is not one of {PE.KINDS}")
+        if c.single is not None and c.single not in PE.REASONS:
+            bad.append(f"{c.name}: expects {c.single!r}, which REASONS does not define")
+        if c.single != c.expect and len(c.asymmetry or "") < 40:
+            bad.append(f"{c.name}: shell says {c.expect!r} and check_destination "
+                       f"says {c.single!r} with no asymmetry stated")
+        if c.single == c.expect and c.asymmetry:
+            bad.append(f"{c.name}: states an asymmetry but both APIs agree")
+    assert not bad, bad
+    covered = {c.single for c in TABLE if c.single}
+    missing = sorted(SINGLE_FLOOR - covered)
+    assert not missing, (
+        f"no table case reaches {missing} through check_destination() any more -- "
+        "restore the case, or drop the reason from SINGLE_FLOOR in the same commit")
+    assert any(c.single is None and c.probe for c in TABLE), (
+        "no row expects the single-path API to ACCEPT anything")
+    differ = [c.name for c in TABLE if c.single != c.expect]
+    return (f"all {len(TABLE)} rows are asked of both public APIs, "
+            f"{len(differ)} with a stated asymmetry, covering all "
+            f"{len(SINGLE_FLOOR)} single-path floor refusals")
+
+
+@case
+def case_the_shell_and_the_python_predicate_agree_on_every_destination():
+    """The whole point: one table, THREE runners, and no case that passes for
+    one API while failing for another.
+
+    stage-private-data.sh, check_write_set() and check_destination() are each
+    asked about the same fixture. The first two must return identical verdicts;
+    the third answers about the row's own probe path, and must return the
+    verdict the row declares -- which for three rows is a different code, for
+    the reason written into the row.
+
+    Each case gets its own throwaway worktree, because the ACCEPTING cases
+    really do run the copies -- against a synthetic source holding no real
     data. Reading exit status directly, never through a pipe.
     """
     if not SCRIPT.is_file():
@@ -1266,18 +1499,35 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
                         os.environ.update({k: v for k, v in env.items()
                                            if k not in saved or saved[k] != v})
                     py = _python_verdict(dest, src)
+                    single = kind = None
+                    if tc.probe is not None:
+                        rel, kind = tc.probe
+                        probe = pathlib.Path(dest) / rel if rel else pathlib.Path(dest)
+                        single = _single_verdict(probe, kind)
                 finally:
                     os.environ.clear()
                     os.environ.update(saved)
-        rows.append(f"  {tc.name:<52} shell={shell or 'ACCEPT':<22} "
-                    f"python={py or 'ACCEPT'}")
+        shown = (f"{kind}:{single or 'ACCEPT'}" if tc.probe is not None
+                 else f"n/a -- {tc.single_na[:40]}")
+        # The marker reports what the TABLE declares, not what this run
+        # produced: a difference the table did not declare must show up as a
+        # failure below, never as a printed "by design".
+        differs = tc.probe is not None and tc.single != tc.expect
+        rows.append(f"  {tc.name:<48} {shell or 'ACCEPT':<21} {py or 'ACCEPT':<21} "
+                    f"{shown}" + ("   <- differs, by design" if differs else ""))
         if shell != py:
-            bad.append(f"{tc.name}: shell={shell!r} python={py!r}")
+            bad.append(f"{tc.name}: shell={shell!r} check_write_set={py!r}")
         elif shell != tc.expect:
             bad.append(f"{tc.name}: both said {shell!r}, the table expects {tc.expect!r}")
+        if tc.probe is not None and single != tc.single:
+            bad.append(f"{tc.name}: check_destination(kind={kind!r}) said {single!r}, "
+                       f"the table expects {tc.single!r}")
+    print(f"  {'fixture':<48} {'stage-private-data.sh':<21} "
+          f"{'check_write_set()':<21} check_destination(kind=..)")
     print("\n".join(rows))
-    assert not bad, "the two implementations disagree: " + "; ".join(bad)
-    return f"shell and private_egress return identical verdicts on all {len(TABLE)} cases"
+    assert not bad, "the implementations disagree: " + "; ".join(bad)
+    return (f"the shell and check_write_set() agree on all {len(TABLE)} cases, and "
+            f"check_destination() returns the declared verdict on every one")
 
 
 # ===========================================================================
@@ -1286,10 +1536,12 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
 @case
 def case_this_checkout_and_its_private_tree_are_accepted():
     """The accepting half, on the paths the argument-derived writers really
-    use: generate_report.py's cache and manifest defaults."""
-    for rel in ("private/report_cache", "private/report_generation_manifest.json",
-                "private/llm_dry_run/20260816T000000-deadbeef.json"):
-        d = PE.check_destination(ROOT / rel)
+    use: generate_report.py's cache and manifest defaults, each asked with the
+    kind that writer actually writes."""
+    for rel, kind in (("private/report_cache", "dir"),
+                      ("private/report_generation_manifest.json", "file"),
+                      ("private/llm_dry_run/20260816T000000-deadbeef.json", "file")):
+        d = PE.check_destination(ROOT / rel, kind=kind)
         assert d.relpath == rel, d
     return "the repo root's own private/ destinations are accepted"
 
@@ -1298,9 +1550,9 @@ def case_this_checkout_and_its_private_tree_are_accepted():
 def case_a_committable_destination_is_refused():
     """The rule that is not about worktrees at all: inside the right checkout,
     at a path that checkout would happily commit."""
-    assert PE.refusal(ROOT / "data" / "leak.json") == "not_ignored"
-    assert PE.refusal(ROOT / "index.html") == "tracked_path"
-    assert PE.refusal(ROOT / "private" / "README.md") == "tracked_path", (
+    assert PE.refusal(ROOT / "data" / "leak.json", kind="file") == "not_ignored"
+    assert PE.refusal(ROOT / "index.html", kind="file") == "tracked_path"
+    assert PE.refusal(ROOT / "private" / "README.md", kind="file") == "tracked_path", (
         "the committed private/ placeholder is TRACKED -- check-ignore alone "
         "reports it 'not ignored', which would send the operator to edit a "
         ".gitignore that is already correct")
@@ -1310,8 +1562,8 @@ def case_a_committable_destination_is_refused():
 @case
 def case_a_path_outside_every_registered_worktree_is_refused():
     with tempfile.TemporaryDirectory() as td:
-        assert PE.refusal(pathlib.Path(td) / "anywhere") == "not_a_worktree"
-    assert PE.refusal("/") in ("not_a_worktree", "different_repository")
+        assert PE.refusal(pathlib.Path(td) / "anywhere", kind="dir") == "not_a_worktree"
+    assert PE.refusal("/", kind="dir") in ("not_a_worktree", "different_repository")
     return "a temp directory and / are both refused"
 
 
@@ -1320,7 +1572,7 @@ def case_a_dotdot_component_is_refused_rather_than_resolved():
     """`<worktree>/private/../elsewhere` cannot be normalized without following
     symlinks, and a caller-supplied '..' is exactly the argument shape this
     predicate exists for."""
-    assert PE.refusal(ROOT / "private" / ".." / "data") == "unnormalized_path"
+    assert PE.refusal(ROOT / "private" / ".." / "data", kind="dir") == "unnormalized_path"
     return "'..' is refused, never lexically normalized"
 
 
@@ -1339,7 +1591,7 @@ def case_the_register_is_read_from_this_checkout_not_from_the_destination():
         assert PE.common_git_dir(str(d)) == common, (
             "the fixture is not a faithful forgery -- it must answer "
             "--git-common-dir exactly like a real worktree")
-        assert PE.refusal(d / "private" / "x") == "not_registered"
+        assert PE.refusal(d / "private" / "x", kind="file") == "not_registered"
     return "a directory that CLAIMS this checkout is refused; only the register admits one"
 
 
@@ -1348,7 +1600,8 @@ def case_an_unreadable_register_refuses_rather_than_admits():
     """Fail closed. git always reports at least the main worktree, so an empty
     listing means the question went unanswered -- which must not read as 'no
     restrictions'."""
-    assert PE.refusal(ROOT / "private" / "x", worktrees=[]) == "register_unavailable"
+    assert PE.refusal(ROOT / "private" / "x", kind="file",
+                      worktrees=[]) == "register_unavailable"
     return "an empty worktree register refuses every destination"
 
 
@@ -1362,19 +1615,27 @@ def case_a_symlinked_component_below_the_worktree_root_is_refused():
             outside = pathlib.Path(td) / "outside"
             outside.mkdir()
             (wt / "private" / "cache").symlink_to(outside, target_is_directory=True)
-            assert PE.refusal(wt / "private" / "cache") == "symlink_component"
-            assert PE.refusal(wt / "private" / "cache" / "deep" / "file.json") \
-                == "symlink_component", "a link above the leaf must still be seen"
+            assert _single_verdict(wt / "private" / "cache", "dir") == "symlink_component"
+            assert _single_verdict(wt / "private" / "cache" / "deep" / "file.json",
+                                   "file") == "symlink_component", \
+                "a link above the leaf must still be seen"
             # and the same worktree, without the link, is accepted
-            assert PE.refusal(wt / "private" / "real_cache") is None
+            assert _single_verdict(wt / "private" / "real_cache", "dir") is None
     return "a symlinked component at or below the worktree root is refused, at any depth"
 
 
 @case
 def case_a_special_file_and_a_hard_link_are_refused_at_a_leaf():
-    """Neither is a symlink, so the link check cannot see either: a FIFO blocks
+    """THROUGH THE PUBLIC SINGLE-PATH API, which is the whole of the fix here:
+    these checks used to be reachable only via check_write_set(), so
+    check_destination() -- the entry point the argument-derived writers call --
+    accepted a FIFO and accepted a hard link to a file outside the worktree, and
+    the caller's ordinary overwrite then rewrote the outside inode.
+
+    Neither is a symlink, so the component walk cannot see either: a FIFO blocks
     the open (or hands the bytes to a reader), a second name on the inode makes
-    a file elsewhere a copy of the data."""
+    a file elsewhere a copy of the data.
+    """
     with tempfile.TemporaryDirectory() as td:
         with _worktree(td) as wt:
             priv = wt / "private"
@@ -1383,19 +1644,188 @@ def case_a_special_file_and_a_hard_link_are_refused_at_a_leaf():
             elsewhere.write_text("{}\n")
             os.link(elsewhere, priv / "hard.json")
             (priv / "plain.json").write_text("{}\n")
-            for name, expect in (("fifo.json", "special_file"),
-                                 ("hard.json", "hard_link"),
-                                 ("plain.json", None)):
-                got = None
-                try:
-                    p = priv / name
-                    PE.check_destination(p)
-                    PE._check_leaf(str(p), "file")
-                except PE.DestinationRefused as e:
-                    got = e.reason
+            for name, kind, expect in (("fifo.json", "file", "special_file"),
+                                       ("hard.json", "file", "hard_link"),
+                                       ("plain.json", "file", None)):
+                got = _single_verdict(priv / name, kind)
                 assert got == expect, f"{name}: expected {expect}, got {got}"
             assert stat.S_ISFIFO(os.lstat(priv / "fifo.json").st_mode)
-    return "a FIFO and a hard-linked file are both refused where a plain file is not"
+            assert os.lstat(elsewhere).st_nlink == 2, (
+                "the fixture must really be a second name for an inode outside "
+                "the worktree, or the case proves nothing")
+    return ("a FIFO and a hard-linked file are refused by check_destination() "
+            "itself, where a plain file is not")
+
+
+@case
+def case_a_directory_and_a_file_are_refused_in_each_other_s_slot():
+    """The other half of what the destination KIND buys: the same path is
+    accepted or refused according to what the caller says it will write there.
+    A directory where a file goes is not overwritten, it is written INSIDE --
+    the run reports success and the file is not there; a file where a directory
+    goes fails the caller's own mkdir, or worse, gets truncated."""
+    with tempfile.TemporaryDirectory() as td:
+        with _worktree(td) as wt:
+            priv = wt / "private"
+            (priv / "adir").mkdir()
+            (priv / "afile.json").write_text("{}\n")
+            for rel, kind, expect in (("adir", "dir", None),
+                                      ("adir", "file", "special_file"),
+                                      ("afile.json", "file", None),
+                                      ("afile.json", "dir", "not_a_directory"),
+                                      ("afile.json", "tree", "not_a_directory")):
+                got = _single_verdict(priv / rel, kind)
+                assert got == expect, f"{rel} as {kind}: expected {expect}, got {got}"
+    return "a directory and a regular file are each refused in the other's slot"
+
+
+@case
+def case_the_worktree_root_itself_is_not_an_ordinary_destination():
+    """FINDING 1, direct: check_destination(<a registered worktree root>) used
+    to be ACCEPTED, because an empty relpath fell straight through the
+    ignore-requirement guard. A writer handed the checkout root -- an
+    argument-derived cache or manifest directory pointed one level too high --
+    would have put private-derived files where every one of them is
+    committable.
+
+    kind='root' still accepts it, because that is a different question: stage an
+    archive INTO this worktree, then declare the paths to check_write_set()."""
+    assert PE.refusal(ROOT, kind="dir") == "worktree_root_itself"
+    assert PE.refusal(ROOT, kind="tree") == "worktree_root_itself"
+    assert PE.refusal(ROOT, kind="file") == "worktree_root_itself"
+    assert PE.refusal(ROOT, kind="root") is None, (
+        "the root question must still accept a registered worktree root, or "
+        "check_write_set() refuses every legitimate staging destination")
+    OBSERVED.update({("dir", "worktree_root_itself"), ("tree", "worktree_root_itself"),
+                     ("file", "worktree_root_itself")})
+    with tempfile.TemporaryDirectory() as td:
+        with _worktree(td) as wt:
+            # ... and on a worktree that is not the one this module lives in,
+            # so the refusal is about being a root and not about being THIS root.
+            assert PE.refusal(wt, kind="dir") == "worktree_root_itself"
+            assert PE.refusal(wt / "private" / "cache", kind="dir") is None
+    return "a worktree root is refused for every ordinary kind and accepted only as a root"
+
+
+@case
+def case_the_public_api_cannot_be_asked_without_a_destination_kind():
+    """Why a required argument rather than a check_leaf=True flag: a flag has to
+    have a default, and a default that is safe for one caller is the weaker
+    check for the next one who does not know it is there. Omitting the kind is a
+    TypeError before any work happens; naming a kind that does not exist is a
+    ValueError, not a refusal -- a caller who cannot say what it is writing has
+    a bug in itself, and must not be able to spell that bug as 'accepted'."""
+    for call in (lambda: PE.check_destination(ROOT / "private" / "x"),
+                 lambda: PE.refusal(ROOT / "private" / "x")):
+        try:
+            call()
+        except TypeError as e:
+            assert "kind" in str(e), e
+        else:
+            raise AssertionError("the kind is not required -- a caller can still get "
+                                 "the weaker check by saying nothing")
+    for bad in ("leaf", "", None, "DIR"):
+        try:
+            PE.check_destination(ROOT / "private" / "x", kind=bad)
+        except ValueError as e:
+            assert "kind" in str(e), e
+        except PE.DestinationRefused as e:
+            raise AssertionError(f"kind={bad!r} produced a refusal ({e.reason}) rather "
+                                 "than a programming error")
+        else:
+            raise AssertionError(f"kind={bad!r} was accepted")
+    return f"the kind is required, and only {list(PE.KINDS)} are accepted"
+
+
+@case
+def case_check_write_set_owns_no_refusal_of_its_own():
+    """The structural half of the asymmetry question: every refusal reachable
+    through check_write_set() must be reachable through check_destination()
+    too, or the agreement table can be complete for one API and still miss a
+    hole in the other -- which is exactly what happened.
+
+    Proved by reading the module: check_write_set() raises nothing itself. It
+    asks check_destination() about the root and about every path below it, and
+    _require_uncommittable() -- which check_destination() also asks -- about the
+    declared set.
+    """
+    tree = ast.parse((ANALYSIS / "private_egress.py").read_text())
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "check_write_set")
+    raises = [n.lineno for n in ast.walk(fn)
+              if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
+              and getattr(n.exc.func, "id", "") == "DestinationRefused"]
+    assert not raises, (
+        f"check_write_set() raises a refusal of its own at line(s) {raises} -- move "
+        "the check into check_destination() behind a kind, or the single-path API "
+        "silently has one fewer check than the whole-set one")
+    called = {n.func.id for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert "check_destination" in called, (
+        "check_write_set() no longer routes through the public single-path API, so "
+        "the two can drift again")
+    assert "_check_leaf" not in called and "_scan_tree" not in called, (
+        "check_write_set() reaches past check_destination() to a private check -- "
+        "that is the shape that left the single-path API weaker than this one")
+    return "check_write_set() raises nothing check_destination() cannot raise"
+
+
+@case
+def case_the_two_public_apis_differ_only_on_the_root_question():
+    """The full comparison, printed: which refusal each destination kind can
+    produce, with a written reason for every restriction, and the three
+    root-shaped codes proved behaviorally rather than declared.
+
+    Everything the two APIs disagree about is one question -- is this path a
+    worktree ROOT -- and the disagreement is deliberate on both sides.
+    """
+    assert set(API_REACH) == set(PE.REASONS), (
+        "the reach map and the refusal vocabulary have drifted: only in API_REACH "
+        f"{sorted(set(API_REACH) - set(PE.REASONS))}, only in REASONS "
+        f"{sorted(set(PE.REASONS) - set(API_REACH))}")
+    bad = []
+    for code, (kinds, why) in sorted(API_REACH.items()):
+        if not kinds:
+            bad.append(f"{code}: reachable through no kind at all")
+        if kinds != ALL_KINDS and len(why) < 20:
+            bad.append(f"{code}: restricted to {sorted(kinds)} with no reason given")
+        unknown = kinds - ALL_KINDS
+        if unknown:
+            bad.append(f"{code}: names kinds that do not exist: {sorted(unknown)}")
+    assert not bad, bad
+
+    # Behavioral, on the three codes the two questions do not share.
+    with tempfile.TemporaryDirectory() as td:
+        with _worktree(td) as wt:
+            missing = wt / "private" / "not-created-yet"
+            assert PE.refusal(missing, kind="root") == "no_such_destination"
+            assert PE.refusal(missing, kind="dir") is None, (
+                "an ordinary destination that does not exist yet must be accepted -- "
+                "writers create their own directories")
+            assert PE.refusal(wt / "analysis", kind="root") == "not_worktree_root"
+            assert PE.refusal(wt / "analysis", kind="dir") == "tracked_path"
+            assert PE.refusal(wt, kind="dir") == "worktree_root_itself"
+            assert PE.refusal(wt, kind="root") is None
+    OBSERVED.update({("root", "no_such_destination"), ("root", "not_worktree_root"),
+                     ("dir", "tracked_path"), ("dir", "worktree_root_itself")})
+
+    undeclared = sorted((k, r) for k, r in OBSERVED if r not in API_REACH
+                        or k not in API_REACH[r][0])
+    assert not undeclared, (
+        f"this run produced (kind, reason) pairs the reach map does not allow: "
+        f"{undeclared}")
+    print("  kind reachability of every refusal (measured where the suite reaches "
+          "it, declared otherwise):")
+    for code, (kinds, why) in sorted(API_REACH.items()):
+        seen = sorted(k for k in PE.KINDS if (k, code) in OBSERVED)
+        mark = "all kinds" if kinds == ALL_KINDS else ",".join(
+            k for k in PE.KINDS if k in kinds)
+        print(f"    {code:<22} {mark:<20} observed={seen or '-'}"
+              + (f"  ({why[:60]})" if why else ""))
+    restricted = {c for c, (k, _) in API_REACH.items() if k != ALL_KINDS}
+    return (f"{len(API_REACH)} refusals mapped to the kinds that reach them; "
+            f"{len(restricted)} are kind-restricted, each with a stated reason, and "
+            f"{len(OBSERVED)} (kind, reason) pairs were observed and all allowed")
 
 
 @case

@@ -46,6 +46,13 @@ THE RULE, matching what stage-private-data.sh already enforces:
      because check-ignore consults the index and reports a tracked-though-
      ignored path as "not ignored" -- which would send the operator to edit a
      .gitignore that was already correct.
+  5. the thing already at the path is the KIND the caller says it will write.
+     A hard link, a FIFO, a device node and a directory-where-a-file-goes are
+     each invisible to 1-4: they are inside the tree, they are ignored there,
+     and they still send the bytes somewhere else (a second name on the inode,
+     a reader on the other end of the pipe) or hang the run. Which checks apply
+     is decided by the REQUIRED `kind` argument, never by a default -- see
+     check_destination().
 
 WHAT IT DOES NOT DO. It does not open, create or write anything, and it does
 not wire itself into any caller: this is the predicate only. Wiring it into the
@@ -62,7 +69,7 @@ an attacker racing the copy: anyone able to write inside the destination
 mid-run already has the archive.
 
 Run directly for a one-path verdict:
-    ./.venv/bin/python analysis/private_egress.py <path>
+    ./.venv/bin/python analysis/private_egress.py <root|tree|dir|file> <path>
 """
 import fnmatch
 import os
@@ -91,6 +98,8 @@ REASONS = {
     "not_registered":       "the destination claims this checkout but appears in no entry of "
                             "its worktree register",
     "not_worktree_root":    "the destination is a subdirectory, not a worktree root",
+    "worktree_root_itself": "the destination IS a worktree root, and no checkout ignores "
+                            "its own root",
     "symlink_component":    "a path component at or below the worktree root is a symbolic link",
     "not_a_directory":      "a path that must be a directory exists and is not one",
     "special_file":         "a path exists and is neither a regular file nor a directory",
@@ -336,8 +345,10 @@ def _diagnose_outside(path, self_git, env):
             "a copied or restored directory never had")
 
 
-def check_destination(path, *, require_root=False, require_ignored=True,
-                      worktrees=None, env=None):
+KINDS = ("root", "tree", "dir", "file")
+
+
+def check_destination(path, *, kind, require_ignored=True, worktrees=None, env=None):
     """Raise DestinationRefused unless private-derived files may be written to
     `path`. Returns a Destination on success. Writes nothing, creates nothing.
 
@@ -345,12 +356,34 @@ def check_destination(path, *, require_root=False, require_ignored=True,
     component of it that DOES exist is checked, and the containing worktree must
     exist and be registered.
 
-    require_root=True additionally demands that `path` BE a worktree root: that
-    is stage-private-data.sh's question ("stage the archive into this
-    destination"), and it is the question the agreement table asks both
-    implementations. The default (False) is the question the argument-derived
-    writers ask: "may I write at this path, which sits inside a worktree".
+    `kind` IS REQUIRED, and it has no default on purpose. It says what the
+    caller will do with the path, and every check that depends on what is
+    already there hangs off it:
+
+      "root"  stage a whole archive INTO this registered worktree root. It must
+              BE a root, and the ignore question is not asked of it (no checkout
+              ignores its own root); the caller then passes the paths it will
+              really write to check_write_set(). stage-private-data.sh's
+              question, and the one the agreement table asks both
+              implementations.
+      "tree"  a directory a RECURSIVE copy will descend. Everything "dir"
+              checks, plus a scan of what is already inside it for the three
+              ways an existing entry redirects a write.
+      "dir"   a directory the caller creates and then writes named leaves into,
+              checking each leaf itself (what check_write_set does). It does NOT
+              look inside: if the caller will copy a tree in, it must say
+              "tree".
+      "file"  a regular file the caller creates or overwrites.
+
+    A kind was chosen over an optional `check_leaf=` flag because a flag that
+    defaults to the weaker check is a hole a caller falls into silently -- which
+    is exactly how the FIFO and hard-link cases reached this API unchecked while
+    check_write_set() refused them. An unknown kind is a ValueError, not a
+    refusal: a caller that cannot name what it is writing has a bug in itself,
+    and must not be able to spell that bug as "accepted".
     """
+    if kind not in KINDS:
+        raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
     given = pathlib.PurePath(str(path))
     if ".." in given.parts:
         raise DestinationRefused(
@@ -373,7 +406,7 @@ def check_destination(path, *, require_root=False, require_ignored=True,
                 f"{__file__} does not resolve into a git working tree, so which "
                 "checkout's worktrees are eligible cannot be established", lit)
 
-    if require_root and not os.path.isdir(lit):
+    if kind == "root" and not os.path.isdir(lit):
         # Refused, never created: a directory that does not exist cannot be a
         # working tree of anything, and "mkdir -p whatever I was handed" is
         # precisely what turned a failed `git worktree add` into a copy of the
@@ -399,7 +432,7 @@ def check_destination(path, *, require_root=False, require_ignored=True,
         reason, detail = _diagnose_outside(lit, self_git, env)
         raise DestinationRefused(reason, detail, lit)
 
-    if require_root and _physical(lit) != wt_real:
+    if kind == "root" and _physical(lit) != wt_real:
         raise DestinationRefused(
             "not_worktree_root", f"the worktree root here is {wt_real}", lit)
 
@@ -425,10 +458,39 @@ def check_destination(path, *, require_root=False, require_ignored=True,
         relpath = ""
     # The worktree ROOT itself is never asked the ignore question: no checkout
     # ignores its own root, so demanding it would refuse every destination.
-    # `require_root` callers are asking a different question anyway, and pass the
+    # kind="root" callers are asking a different question anyway, and pass the
     # paths they intend to write to check_write_set().
+    #
+    # Which is why an ORDINARY call naming the root is REFUSED here rather than
+    # allowed to skip the same check. An empty relpath used to fall through the
+    # `and relpath` guard below and return accepted, so
+    # check_destination(<checkout>) -- an argument-derived cache or manifest
+    # directory pointed at the checkout root -- said yes to writing
+    # private-derived files at a path every one of those files is committable
+    # from. It has its own reason because its remedy is its own: name a path
+    # INSIDE the tree that the tree ignores.
+    if kind != "root" and not relpath:
+        raise DestinationRefused(
+            "worktree_root_itself",
+            "a worktree root is not a place to write private-derived files: its "
+            "own git ignores nothing about it, so anything written here is one "
+            "'git add -A' from a commit. Name a path inside it that it ignores "
+            "-- or, to stage a whole archive into it, ask with kind='root' and "
+            "declare the paths to check_write_set()", lit)
     if require_ignored and relpath:
         _require_uncommittable(wt_lit, relpath, env)
+
+    # The leaf, last, and part of the PUBLIC contract rather than of
+    # check_write_set() alone. Skipped only for kind="root": the root is
+    # resolved before the register is consulted (exactly as the shell resolves
+    # DST to DST_REAL), so a symbolic link that NAMES a registered worktree is a
+    # legitimate way to say where it is -- links BELOW the root are what the
+    # walk above refuses -- and the isdir check above has already settled that
+    # it is a directory.
+    if kind != "root":
+        _check_leaf(lit, "dir" if kind in ("tree", "dir") else "file")
+        if kind == "tree":
+            _scan_tree(lit)
     return Destination(lit, wt_real, relpath)
 
 
@@ -475,19 +537,26 @@ def _require_uncommittable(worktree, relpath, env=None):
 
 
 # ---------------------------------------------------------------------------
-# Whole write sets
+# What is already AT the path
 #
-# A single path is not the whole question for a caller that writes a TREE. The
-# three checks below cover the three ways a destination path redirects a write
+# The two below cover the three ways a destination path redirects a write
 # without being outside the worktree: a symbolic link sends it elsewhere, a
 # second name on the inode rewrites a file elsewhere in place, and a FIFO or
 # device node hands the bytes to a process (and blocks the open until something
 # reads, so the run hangs with no message). One surface, three checks; keep them
 # in step.
+#
+# Both are reached from check_destination(), driven by its `kind`, so the
+# single-path API and check_write_set() ask the same questions of the same path.
+# They stay private because `kind` is the way to ask for them: a caller reaching
+# past the public entry point gets the walk from the worktree root skipped,
+# which is what sees a link planted ABOVE the leaf.
 # ---------------------------------------------------------------------------
 def _check_leaf(dest, kind):
-    """`dest` is a path a caller will create or overwrite. `kind` is "dir" or
-    "file". Absence is fine -- the caller creates it."""
+    """`dest` is a path a caller will create or overwrite. `kind` here is the
+    SLOT -- "dir" or "file" -- which check_destination() derives from its own
+    four-valued public `kind` ("tree" wants a directory slot too, and then a
+    scan). Absence is fine -- the caller creates it."""
     if os.path.islink(dest):
         raise DestinationRefused("symlink_component",
                                  f"{dest} -> {os.readlink(dest)}", dest)
@@ -566,17 +635,23 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None,
     are what a copy will actually write) when given, else against `root`.
 
     Ordered checks first, writes never: this returns a Destination or raises.
+
+    Every path it asks about goes through check_destination() -- the same public
+    entry point an argument-derived writer calls -- so a destination cannot pass
+    for one API and fail for the other. That was not true before: the leaf
+    checks lived here, and the single-path API accepted a FIFO and a hard link.
     """
-    dest = check_destination(root, require_root=True, require_ignored=False, env=env)
+    dest = check_destination(root, kind="root", require_ignored=False, env=env)
     wts = [dest.worktree]
 
     def one(rel, kind):
         # check_destination re-walks every component from the worktree root
         # down, which is what sees a link planted ABOVE the leaf: a link at
         # <root>/private is invisible to an lstat of <root>/private/1-raw-data.
+        # require_ignored=False because the ignore question is asked once per
+        # DECLARED path in the phase above, not again per leaf.
         p = os.path.join(dest.path, rel)
-        check_destination(p, require_ignored=False, worktrees=wts, env=env)
-        _check_leaf(p, kind)
+        check_destination(p, kind=kind, require_ignored=False, worktrees=wts, env=env)
         return p
 
     # In PHASES, not path by path, because the phases answer different questions
@@ -599,7 +674,7 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None,
     for rel in dirs:
         one(rel, "dir")
     for rel in recursive:
-        _scan_tree(one(rel, "dir"))
+        one(rel, "tree")
     for name in expanded:
         one(name, "file")
     return dest
@@ -622,20 +697,24 @@ def _expand(rel, root, glob_source):
     return [f"{base}/{n}" if base else n for n in names]
 
 
-def refusal(path, **kw):
-    """Non-raising form: the refusal reason code, or None if accepted."""
+def refusal(path, *, kind, **kw):
+    """Non-raising form: the refusal reason code, or None if accepted.
+
+    `kind` is required here too. A convenience wrapper that quietly supplied one
+    would be the optional-flag hole again, one layer out.
+    """
     try:
-        check_destination(path, **kw)
+        check_destination(path, kind=kind, **kw)
         return None
     except DestinationRefused as e:
         return e.reason
 
 
 if __name__ == "__main__":   # pragma: no cover - manual smoke check
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: private_egress.py <destination path>")
+    if len(sys.argv) != 3 or sys.argv[1] not in KINDS:
+        raise SystemExit(f"usage: private_egress.py <{'|'.join(KINDS)}> <destination path>")
     try:
-        d = check_destination(sys.argv[1])
+        d = check_destination(sys.argv[2], kind=sys.argv[1])
     except DestinationRefused as exc:
         print(exc)
         raise SystemExit(1)
