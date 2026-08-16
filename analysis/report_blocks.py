@@ -72,14 +72,20 @@ CLASSIFICATION
   ids.
 
 LIVE GAP TOKENS
-  Three of report_tokens.py's five KNOWN_GAPS tokens (UTILITY_TOOL_BEST_
-  PLAN_FIGURE, EXPANSION_PAYBACK_YEARS, ELECTRIFICATION_VERDICT_SHORT)
-  appear in LIVE template markup -- static prose OUTSIDE any TODO block,
-  not just inside worked examples -- so they always fail resolve_token()
-  regardless of how any TODO block is classified. generate_report.py treats
-  these exactly like a "human" block: LIVE_GAP_TOKENS names them so the
-  orchestrator can require an explicit human-supplied override or refuse to
-  publish, rather than crashing on the first resolve_token() call.
+  Some of report_tokens.py's KNOWN_GAPS tokens appear in LIVE template
+  markup -- static prose OUTSIDE any TODO block, not just inside worked
+  examples -- so they always fail resolve_token() regardless of how any
+  TODO block is classified. generate_report.py treats these exactly like a
+  "human" block: LIVE_GAP_TOKENS names them so the orchestrator can require
+  an explicit human-supplied override or refuse to publish, rather than
+  crashing on the first resolve_token() call.
+
+  WHICH ones, and HOW MANY of each set, are deliberately not written down
+  here: both counts have gone stale already (a gap token left KNOWN_GAPS,
+  and a template edit moved another out of live markup), and a maintainer
+  reads a typed count instead of re-deriving it. LIVE_GAP_TOKENS below is
+  computed from the template at import time, len(report_tokens.KNOWN_GAPS)
+  is the other count, and main() prints the live set.
 """
 import datetime as dt
 import html as _html
@@ -270,8 +276,12 @@ CLASSIFICATION = {
     "s15#6": "prose",  # paired "When" cell
 
     # --- s8 Array upgrades -------------------------------------------
-    "s8#1": "human",   # mixes MARGINAL_EXPORT_VALUE (gap), repowering health evidence,
-                        # and measured-peak-vs-AC-ceiling clipping -- none sourced
+    "s8#1": "human",   # asks for EXPANSION_PAYBACK_YEARS (gap -- neither the
+                        # marginal-panel yield nor the retrofit $/W is committed
+                        # here). Named in the block's own TODO text as a figure
+                        # that must NOT be supplied, which is where its scope
+                        # picks the token up now that no live markup prices
+                        # added capacity.
 
     # --- s9 Deeper analyses ------------------------------------------
     "s9#1": "data",    # teaser -- already rendered by {{SEC9_TEASER}}
@@ -377,13 +387,17 @@ HUMAN_REASONS = {
             "quoted installed price for any battery -- data/battery_sim.json prices "
             "capacity and savings, never a bid -- and a quote is a fact about a local "
             "market on a date, which this pipeline has no way to measure",
-    "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}} and {{MARGINAL_EXPORT_VALUE}}, both "
-            "report_tokens.KNOWN_GAPS tokens: no committed generator computes a "
-            "marginal-panel-expansion payback or the marginal new-panel kWh's export "
-            "value, and the figures the hand-authored report quoted for them come from "
-            "unarchived workpaper arithmetic. (The clipping half of this block's ask IS "
-            "artifact-backed now -- see s9#3 -- but the two expansion figures the block "
-            "leads with are not.)",
+    "s8#1": "blocked on {{EXPANSION_PAYBACK_YEARS}}, a report_tokens.KNOWN_GAPS token. "
+            "Both halves of that payback are missing: what one more kW would earn needs "
+            "a counterfactual re-billing of the year at a larger array (issue #190), "
+            "because exports are the residual left after household load rather than the "
+            "shape of added production; and retrofit dollars per watt is a fact about a "
+            "local installer market on a date, which nothing committed here measures. "
+            "(The block's other two asks ARE artifact-backed now: what the year's "
+            "exports are worth is bounded by {{EXPORT_VALUE_SURPLUS_BOUND}} and "
+            "{{EXPORT_VALUE_NETTING_BOUND}}, the two NEM 2.0 settlement treatments "
+            "of the committed hour-of-day export profile, and the clipping evidence "
+            "is s9#3's.)",
 }
 
 # ---------------------------------------------------------------------------
@@ -404,14 +418,15 @@ HUMAN_BLOCKERS = {
     "s6#8": {"outside_fact": "an installed price quote for a specific battery from a "
                              "specific installer on a specific date; ends when a "
                              "committed artifact records one"},
-    "s8#1": {"gap_tokens": ("EXPANSION_PAYBACK_YEARS", "MARGINAL_EXPORT_VALUE")},
+    "s8#1": {"gap_tokens": ("EXPANSION_PAYBACK_YEARS",)},
 }
 
-# Three of report_tokens.py's five KNOWN_GAPS tokens appear in LIVE template
-# markup (outside any TODO comment), so they fail resolve_token() regardless
-# of any TODO block's classification. Computed from the template itself, not
-# hardcoded, so a template edit that removes one is caught rather than silently
-# leaving a stale entry here.
+# The report_tokens.py KNOWN_GAPS tokens that appear in LIVE template markup
+# (outside any TODO comment) fail resolve_token() regardless of any TODO
+# block's classification. Which ones, and how many, is computed from the
+# template itself rather than typed here -- a typed count is the thing a
+# maintainer trusts instead of re-deriving, and both halves of the one that
+# used to head this comment ("three of five") went stale.
 def _live_gap_tokens(html=None):
     live, _ = rt.template_tokens(html)
     gaps = {n for n, s in rt.TOKENS.items() if s.get("kind") == "gap"}

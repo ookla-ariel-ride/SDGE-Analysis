@@ -3227,6 +3227,482 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
             f"rebuilding the year's exports (live midday share {live:.1%})")
 
 
+# The two published ends of what an exported kWh is worth, and the rates.py
+# function each one prices the profile through. Written here as a table so the
+# pins below sweep both ends with one body: an end added or renamed on the
+# generator side has to be added here before any of them can pass.
+_EXPORT_BOUNDS = (("EXPORT_VALUE_SURPLUS_BOUND", "credit"),
+                  ("EXPORT_VALUE_NETTING_BOUND", "energy"))
+
+
+def _price_map(rate_name):
+    """Every (season, period) cell of one of rates.py's price maps."""
+    rate = getattr(rt.R, rate_name)
+    return {(s, p): rate(s, p) for s in ("S", "W") for p in ("sop", "off", "on")}
+
+
+def _export_bound_recomputed(rate_name):
+    """One end of the export-value range, rebuilt here rather than read from
+    report_tokens -- the recompute convention this suite already follows, so a
+    bug in the generator's weighting fails this case instead of being
+    reproduced by it."""
+    rate = getattr(rt.R, rate_name)
+    rd = rt._json("report_data.json")
+    start, end = rt._analysis_window_dates()
+    total = value = 0.0
+    d = start
+    while d <= end:
+        seas = "S" if d.month in rt.R.SUMMER_MONTHS else "W"
+        off_day = rt.R.off_peak_day(d)
+        for hour, kwh in enumerate(rd[f"hourly_{seas}"]["exp"]):
+            total += kwh
+            value += kwh * rate(seas, rt.R.period(hour, off_day))
+        d += dt.timedelta(days=1)
+    return value / total
+
+
+def _analysis_window_day_count():
+    start, end = rt._analysis_window_dates()
+    return (end - start).days + 1
+
+
+@case
+def case_each_export_bound_prices_the_whole_export_profile_not_one_period():
+    """issue #182. Section 8 priced the year's exports at the MIDDAY cell of
+    the price map, generalizing one cell of six to a whole year of exports.
+    About a third of this array's exports leave in off-peak and on-peak hours,
+    which pay six to eleven times more, so the single-cell figure was roughly
+    half the profile-weighted one.
+
+    WHAT THESE TOKENS ARE NOT, and what no pin here may be read as endorsing:
+    they are the price the year's EXPORTS fetched, not what one more kW of
+    panels would earn. Exports are the residual left after household load, so
+    added production is not shaped like them (issue #190).
+
+    Both ends of the range are swept by the same three pins, because the first
+    two alone would both survive the revert this case exists to catch:
+
+      1. the token equals the independently recomputed weighted average;
+      2. it equals NO single cell of its own price map -- the literal shape of
+         the defect, checked against rates.py rather than against the digits
+         that happen to be published today;
+      3. it MOVES WITH THE PROFILE. A constant, or a value read off one cell,
+         passes 1 and 2 by luck on some household's numbers; only a live
+         weighting answers a profile whose exports all land in one period with
+         that period's own price. Driven for all three periods.
+
+    RELATIONSHIP, the recomputation against the token: SAME QUANTITY,
+    INDEPENDENTLY COMPUTED from the same committed artifacts. Both read
+    data/report_data.json's hour-of-day export profiles and the same rates.py
+    price map; neither is derived from the other. They are entitled to agree
+    exactly, and a disagreement is a bug in one of the two weightings."""
+    rd = rt._json("report_data.json")
+    swept = []
+    for token, rate_name in _EXPORT_BOUNDS:
+        expected = _export_bound_recomputed(rate_name)
+        live = rt._export_value_bound(token, "probe", getattr(rt.R, rate_name),
+                                      rate_name)
+        assert abs(live - expected) < 1e-12, (
+            f"{token} derives {live:.9f}/kWh; weighting rates.{rate_name}() by "
+            f"data/report_data.json's own export profiles gives {expected:.9f}/kWh")
+        rendered = rt.resolve_token(token)
+        assert rendered == f"{expected * 100:.1f}¢", (
+            f"{token} renders {rendered!r}, not the {expected * 100:.1f}¢ the "
+            f"profile-weighted rates.{rate_name}() comes to")
+
+        cells = _price_map(rate_name)
+        for (seas, period), rate in cells.items():
+            assert abs(live - rate) > 5e-4, (
+                f"{token} has reverted to a single period price: it renders "
+                f"{rendered}, which is rates.{rate_name}({seas!r}, {period!r}). An "
+                f"exported kWh is priced across every hour the array exports in, and "
+                f"this array's exports do not all leave in one period")
+
+        # 3. Driven. An all-in-one-period profile must price at that period's
+        #    own rate, and the two seasons' cells differ, so the answer has to
+        #    land between them rather than on either -- which is itself
+        #    evidence the season weighting is live too.
+        for period in ("sop", "off", "on"):
+            # The probe hour is FOUND, not named: it has to carry `period` on
+            # both day types, or the driven profile prices one hour two ways
+            # and the bracket below proves nothing. Derived from rates.period()
+            # so a tariff whose windows differ picks its own hour instead of
+            # inheriting this household's.
+            agree = [h for h in range(24)
+                     if rt.R.period(h, False) == period == rt.R.period(h, True)]
+            assert agree, (
+                f"no whole hour of this tariff carries {period} on both day types, so "
+                "an all-in-one-period export profile cannot be built for it -- the "
+                "probe needs rewriting against the new windows, not deleting")
+            hour = agree[0]
+            flat = [0.0] * 24
+            flat[hour] = rd["totals"]["exp"] / _analysis_window_day_count()
+            with _swapped(rd["hourly_S"], "exp", list(flat)), \
+                 _swapped(rd["hourly_W"], "exp", list(flat)):
+                driven = rt._export_value_bound(token, "probe",
+                                                getattr(rt.R, rate_name), rate_name)
+            lo, hi = sorted((cells[("S", period)], cells[("W", period)]))
+            assert lo - 1e-12 <= driven <= hi + 1e-12, (
+                f"an export profile whose every kWh leaves in {period} hours should "
+                f"price between that period's two seasonal rates ({lo:.5f}-{hi:.5f}"
+                f"/kWh); {token} returned {driven:.5f}/kWh, so it is not reading "
+                "the profile")
+        swept.append(f"{token}={rendered}")
+    return (f"both export-value bounds ({', '.join(swept)}) are profile-weighted, "
+            "match an independent recomputation to 1e-12, sit on no single cell of "
+            "their own six-cell price map, and follow a driven profile into each of "
+            "the three periods")
+
+
+@case
+def case_the_two_export_bounds_are_the_two_settlement_treatments():
+    """issue #182, the finding this pair of tokens exists to answer: one
+    profile-weighted figure was published as "what an exported kWh earns" when
+    it was only the ALL-SURPLUS end of the answer.
+
+    rates.bill_nem_monthly() settles NEM 2.0 by monthly per-period netting, so
+    an exported kWh either cancels an import inside its own month and period or
+    is paid the surplus credit. Two treatments, two prices, and the artifacts
+    do not resolve which one any individual month took -- so both are
+    published, and neither may be published as the settled value.
+
+    Four pins, and the fourth is the one that fails if a bound is dressed up as
+    the value:
+
+      1. the ORDER is right: surplus is the low end, netting the high end. A
+         swap of the two rate functions renders the range backwards, and pins
+         1-3 of the sibling case survive it, since each end would still be a
+         valid profile weighting of a real price map;
+      2. the gap between them IS the difference between the two rates -- PCIA,
+         the only term rates.energy() adds to rates.credit() -- rather than
+         some other quantity that happens to sit between the two figures;
+      3. the netting end is rates.energy() and NOT rates.allin(). MEASURED
+         AGAINST THE ENGINE, not argued from the constants: one more exported
+         kWh in a netting cell moves rates.bill_nem() by exactly energy(), and
+         in a surplus cell by exactly credit(). allin() = energy() + NBC is
+         what a GROSS import costs, and bill_nem_monthly() bills NBC on gross
+         imports before any netting, so an export never avoids it. Pricing an
+         export at allin() re-commits the NBC-netting error CLAUDE.md section 9
+         records;
+      4. NEITHER END IS PUBLISHED AS THE VALUE. index.html must state both, and
+         must say the settlement lies between them. A page that names one and
+         drops the other, or names both and calls either one the answer, fails
+         here -- which is the whole failure class this issue closes."""
+    import pandas as pd
+
+    surplus = rt.resolve_token("EXPORT_VALUE_SURPLUS_BOUND")
+    netting = rt.resolve_token("EXPORT_VALUE_NETTING_BOUND")
+    # THE LIVE VALUES, off the registered getters, not two recomputations done
+    # here. A recomputation cannot see which rate map each TOKEN was wired to,
+    # so an order pin written against one passes with the two getters swapped
+    # -- measured, not supposed: the first draft of pin 1 did exactly that and
+    # reported "ordered low-to-high" on a report rendering 25.7¢-22.9¢.
+    lo_live = rt.TOKENS["EXPORT_VALUE_SURPLUS_BOUND"]["get"](rt.CTX)
+    hi_live = rt.TOKENS["EXPORT_VALUE_NETTING_BOUND"]["get"](rt.CTX)
+
+    # 1. Order, and each end wired to its own price map.
+    assert lo_live < hi_live, (
+        f"the surplus bound ({lo_live:.5f}/kWh) is not below the netting bound "
+        f"({hi_live:.5f}/kWh) -- the two rate functions are the wrong way round, and "
+        "the report publishes the range backwards")
+    for token, live, rate_name in (("EXPORT_VALUE_SURPLUS_BOUND", lo_live, "credit"),
+                                   ("EXPORT_VALUE_NETTING_BOUND", hi_live, "energy")):
+        expected = _export_bound_recomputed(rate_name)
+        assert abs(live - expected) < 1e-12, (
+            f"{token} resolves to {live:.6f}/kWh where weighting rates.{rate_name}() "
+            f"by the export profile gives {expected:.6f}/kWh -- this end is wired to "
+            "the wrong settlement treatment")
+
+    # 2. The gap is PCIA and nothing else.
+    assert abs((hi_live - lo_live) - rt.R.PCIA) < 1e-12, (
+        f"the two bounds differ by {hi_live - lo_live:.6f}/kWh where rates.energy() "
+        f"adds only PCIA ({rt.R.PCIA:.6f}) to rates.credit() -- one of the ends is not "
+        "the price map it claims to be")
+
+    # 3. The netting end, measured against the billing engine itself.
+    frame = pd.DataFrame([
+        dict(dt=pd.Timestamp("2025-07-10 12:00"), seas="S", p="sop", ym="2025-07",
+             Consumption=100.0, Generation=40.0)])
+    bumped = frame.copy()
+    bumped.loc[0, "Generation"] += 1.0
+    netting_delta = rt.R.bill_nem(frame) - rt.R.bill_nem(bumped)
+    assert abs(netting_delta - rt.R.energy("S", "sop")) < 1e-9, (
+        f"one more exported kWh in a NETTING cell moves rates.bill_nem() by "
+        f"{netting_delta:.6f}, not rates.energy() ({rt.R.energy('S', 'sop'):.6f}) -- "
+        "the high end of the published range is not the engine's own netting value")
+    assert abs(netting_delta - rt.R.allin("S", "sop")) > 1e-6, (
+        "an exported kWh in a netting cell is worth rates.allin() to this engine, so "
+        "NBC is being netted away by an export; CLAUDE.md section 9 records that "
+        "defect and bill_nem_monthly() is supposed to bill NBC on GROSS imports")
+    surplus_frame = frame.copy()
+    surplus_frame.loc[0, "Generation"] = 200.0
+    bumped = surplus_frame.copy()
+    bumped.loc[0, "Generation"] += 1.0
+    surplus_delta = rt.R.bill_nem(surplus_frame) - rt.R.bill_nem(bumped)
+    assert abs(surplus_delta - rt.R.credit("S", "sop")) < 1e-9, (
+        f"one more exported kWh in a SURPLUS cell moves rates.bill_nem() by "
+        f"{surplus_delta:.6f}, not rates.credit() "
+        f"({rt.R.credit('S', 'sop'):.6f}) -- the low end of the published range is "
+        "not the engine's own surplus value")
+
+    # 4. The page publishes the range, not one end of it.
+    html = (rt.ROOT / "index.html").read_text()
+    for token, rendered in (("EXPORT_VALUE_SURPLUS_BOUND", surplus),
+                            ("EXPORT_VALUE_NETTING_BOUND", netting)):
+        assert rendered in html, (
+            f"index.html does not state {rendered}, the {token} end of what an "
+            "exported kWh is worth. A bound published on its own reads as the value, "
+            "which is the failure this pair of tokens exists to prevent")
+    # The valuation SENTENCE, located by its own words rather than by which
+    # paragraph it sits in, and read to its sentence end on the repo's own rule
+    # (a period followed by whitespace, a tag or the end -- never the period
+    # inside "22.9¢"). It has to frame the figure as a range: a sentence naming
+    # both bounds without "between" can still be reporting one of them as the
+    # answer and the other as a foil.
+    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
+    assert claim, ("index.html no longer says what an exported kWh on this profile is "
+                   "worth, so the range this pair of tokens publishes cannot be found")
+    assert re.search(r"is worth between\b", claim.group(0)), (
+        "section 8 no longer frames the export value as a range between two "
+        f"settlement treatments: {claim.group(0)!r}")
+    for rendered in (surplus, netting):
+        assert rendered in claim.group(0), (
+            f"the valuation sentence names only one end of the range: "
+            f"{claim.group(0)!r} does not carry {rendered}")
+    return (f"the export value is published as the range {surplus}-{netting}, the two "
+            f"NEM 2.0 settlement treatments, ordered low-to-high and separated by "
+            f"exactly PCIA; the netting end is the engine's own marginal value for an "
+            f"export that cancels an import, measured against rates.bill_nem() rather "
+            f"than assumed, and is rates.energy() rather than rates.allin()")
+
+
+def _export_bound_recomputed_on_the_weekday_schedule(rate_name):
+    """The same weighting as _export_bound_recomputed with the day-type rule
+    switched OFF -- every day of the window priced on the weekday schedule.
+    This is the comparison _export_value_bound's docstring publishes, and it
+    exists so nobody re-derives the day-type rule's worth as a rounding
+    argument."""
+    rate = getattr(rt.R, rate_name)
+    rd = rt._json("report_data.json")
+    start, end = rt._analysis_window_dates()
+    total = value = 0.0
+    d = start
+    while d <= end:
+        seas = "S" if d.month in rt.R.SUMMER_MONTHS else "W"
+        for hour, kwh in enumerate(rd[f"hourly_{seas}"]["exp"]):
+            total += kwh
+            value += kwh * rate(seas, rt.R.period(hour, False))
+        d += dt.timedelta(days=1)
+    return value / total
+
+
+# The sentence in _export_value_bound's docstring that prices the day-type
+# rule. Parsed rather than read, because its whole job is to save a reader the
+# re-derivation, and a reader who re-derives from its own digits must not find
+# a contradiction: as first written it claimed "0.7 cents at either end" beside
+# a netting pair whose printed digits differ by 0.8.
+_DAY_TYPE_WORTH_RE = re.compile(
+    r"adds ([\d.]+) cents at either end \(([\d.]+) against ([\d.]+) surplus, "
+    r"([\d.]+) against ([\d.]+) netting\)")
+
+
+@case
+def case_the_day_type_rules_worth_is_stated_in_digits_that_agree():
+    """issue #182 review, finding 7. _export_value_bound's docstring publishes
+    what rates.off_peak_day() is worth so that nobody re-derives it as a
+    rounding argument. Three pins, and the third is the one that failed:
+
+      1. each of the four figures is the one the artifacts produce, at the
+         precision it is printed to -- the weekday-only pair recomputed here
+         with the day-type rule switched off, the published pair with it on;
+      2. the stated delta is the real difference between them;
+      3. the printed digits SUBTRACT to the printed delta, at both ends. A
+         paragraph whose own numbers contradict its claim teaches the reader
+         to distrust it, which is the opposite of why it exists."""
+    # Whitespace-normalized: the sentence is wrapped across docstring lines,
+    # and the pin is about its digits, not about where its line breaks fall.
+    doc = re.sub(r"\s+", " ", rt._export_value_bound.__doc__)
+    m = _DAY_TYPE_WORTH_RE.search(doc)
+    assert m, (
+        "_export_value_bound's docstring no longer prices the day-type rule in the "
+        "form this case reads (\"adds N cents at either end (A against B surplus, C "
+        "against D netting)\"). That paragraph is what stops the rule being re-derived "
+        "as a rounding argument; reword the pin with it, do not drop it")
+    delta, wk_surplus, day_surplus, wk_netting, day_netting = m.groups()
+
+    checked = []
+    for printed, rate_name, weekday_only, label in (
+            (wk_surplus, "credit", True, "the weekday-only surplus figure"),
+            (day_surplus, "credit", False, "the published surplus figure"),
+            (wk_netting, "energy", True, "the weekday-only netting figure"),
+            (day_netting, "energy", False, "the published netting figure")):
+        live = (_export_bound_recomputed_on_the_weekday_schedule(rate_name)
+                if weekday_only else _export_bound_recomputed(rate_name))
+        places = len(printed.split(".")[1]) if "." in printed else 0
+        assert printed == f"{live * 100:.{places}f}", (
+            f"the docstring's {label} is {printed} cents where weighting "
+            f"rates.{rate_name}() by data/report_data.json's export profiles "
+            f"{'on the weekday schedule' if weekday_only else 'at each day type'} "
+            f"gives {live * 100:.{places}f}")
+        checked.append(f"{label} {printed}")
+
+    for end, weekday, published in (("surplus", wk_surplus, day_surplus),
+                                    ("netting", wk_netting, day_netting)):
+        places = max(len(x.split(".")[1]) if "." in x else 0
+                     for x in (weekday, published, delta))
+        printed_delta = f"{float(weekday) - float(published):.{places}f}"
+        assert printed_delta == f"{float(delta):.{places}f}", (
+            f"the docstring's {end} pair prints {weekday} against {published}, a "
+            f"difference of {printed_delta} cents, while the sentence above them "
+            f"claims {delta}. A reader re-deriving the difference from these digits "
+            "finds the contradiction the paragraph exists to prevent -- print enough "
+            "decimals that the subtraction comes out, or restate the claim")
+
+    surplus_gap = (_export_bound_recomputed_on_the_weekday_schedule("credit")
+                   - _export_bound_recomputed("credit")) * 100
+    return (f"the docstring's day-type paragraph checks out: {', '.join(checked)}, "
+            f"a real gap of {surplus_gap:.4f} cents stated as {delta}")
+
+
+@case
+def case_the_rebuild_refusal_describes_no_callers_own_operation():
+    """issue #182 review, finding 6. _assert_profiles_rebuild_the_year was
+    parameterized on (token, subject) when the export-value bounds started
+    using it, but its FIRST refusal -- the one for an artifact whose
+    totals.exp is zero -- kept the tail it was written with for the
+    midday-SHARE caller: "...so there is no year of exports to take a share
+    of". Handed to a caller that prices a kWh, that names an operation it does
+    not perform, in the one message a reader gets when nothing else worked.
+
+    Driven through the real callers rather than the helper, so a caller wired
+    to a private copy of the message is caught too. Two pins: every caller's
+    refusal carries the same tail (it is parameterized, not per-caller), and
+    that tail names no single caller's own operation."""
+    rd = rt._json("report_data.json")
+    # Each caller invoked the way the token really reaches the helper. The
+    # midday-share caller is called directly rather than through S2_VERDICT:
+    # that token needs the private household, and the refusal under test is
+    # raised before any household value is read.
+    callers = (("S2_VERDICT", lambda: rt._midday_export_share(rt.CTX)),
+               ("EXPORT_VALUE_SURPLUS_BOUND",
+                lambda: rt.TOKENS["EXPORT_VALUE_SURPLUS_BOUND"]["get"](rt.CTX)),
+               ("EXPORT_VALUE_NETTING_BOUND",
+                lambda: rt.TOKENS["EXPORT_VALUE_NETTING_BOUND"]["get"](rt.CTX)))
+    # Vocabulary that belongs to ONE caller. A refusal about an artifact with
+    # no exports in it may describe the ARTIFACT; the moment it describes an
+    # operation, it is describing whichever caller it was written for.
+    operations = {"share": "the midday-share caller", "worth": "the export-value "
+                  "callers", "price": "the export-value callers"}
+    tails = {}
+    with _swapped(rd["totals"], "exp", 0):
+        for token, call in callers:
+            try:
+                value = call()
+            except SystemExit as e:
+                message = str(e)
+            else:
+                raise AssertionError(
+                    f"{token} published {value!r} from an artifact whose totals.exp is "
+                    "0 kWh, instead of refusing")
+            parsed = re.match(r"report_tokens: (\S+) cannot say (.+?) -- (.+)\Z",
+                              message, re.S)
+            assert parsed, (
+                f"{token}'s zero-exports refusal no longer names the token and the "
+                f"subject it was refusing to state: {message!r}")
+            assert parsed.group(1) == token, (
+                f"the refusal names {parsed.group(1)}, not the token that asked "
+                f"({token}): {message!r}")
+            tails[token] = parsed.group(3)
+    # Nothing leaked: the artifact is back and every caller resolves again.
+    for token, call in callers:
+        assert call() is not None
+
+    distinct = set(tails.values())
+    assert len(distinct) == 1, (
+        f"the zero-exports refusal reads differently for different callers "
+        f"({tails}) -- the message beyond the token and its subject is supposed to be "
+        "one statement about the artifact")
+    tail = distinct.pop()
+    for word, whose in sorted(operations.items()):
+        assert word not in tail.casefold(), (
+            f"the zero-exports refusal ends {tail!r}, which names an operation only "
+            f"{whose} perform(s) ({word!r}). Every caller of "
+            "_assert_profiles_rebuild_the_year "
+            "gets this sentence, so it may state what the artifact holds and nothing "
+            "about what the caller was going to do with it")
+    return (f"all {len(tails)} callers' zero-exports refusals share one tail ({tail!r}) "
+            "that names no single caller's own operation")
+
+
+# The two names whose SIZE has already been typed into prose and gone stale:
+# report_tokens.KNOWN_GAPS and report_blocks.LIVE_GAP_TOKENS. Both are computed
+# -- one declared in this repo's own source, one derived from the template at
+# import time -- so any count of them written into a comment is a second copy
+# of a fact the code already states.
+_GAP_SET_NAMES = r"(?:KNOWN_GAPS|LIVE_GAP_TOKENS)"
+_PLURAL_CARDINAL = (r"(?:[2-9]|\d\d+|two|three|four|five|six|seven|eight|nine|ten|"
+                    r"eleven|twelve)")
+_CARDINAL = rf"(?:1|one|{_PLURAL_CARDINAL})"
+#
+# The cardinal has to be QUANTIFYING the set, not merely near it: only a
+# possessive ("report_tokens.py's five KNOWN_GAPS") or a plain adjective
+# ("two live KNOWN_GAPS") may sit between them, and behind the name only a
+# bare plural ("the KNOWN_GAPS five"). A looser window flags ordinary prose --
+# "a KNOWN_GAPS token: that ONE is about storage" reads as a count to any
+# pattern that allows two free words, and a guard that refuses correct writing
+# gets deleted rather than obeyed.
+_TYPED_GAP_COUNT_RES = (
+    # "...py's five KNOWN_GAPS", "two live KNOWN_GAPS"
+    re.compile(rf"(?<![\w#]){_CARDINAL}\s+(?:\S+?'s\s+)?"
+               rf"(?:live\s+|declared\s+|remaining\s+|current\s+)?{_GAP_SET_NAMES}",
+               re.I),
+    # "the KNOWN_GAPS five", "LIVE_GAP_TOKENS holds three"
+    re.compile(rf"{_GAP_SET_NAMES}\s+"
+               rf"(?:tokens?|entries|set|holds|has|have|carries|lists|names)?\s*"
+               rf"{_CARDINAL}\b", re.I),
+    # "three of the KNOWN_GAPS tokens". The cardinal is PLURAL on purpose: "one
+    # of the KNOWN_GAPS tokens" points at a member, which is ordinary correct
+    # writing, while "three of" is a count.
+    re.compile(rf"(?<![\w#]){_PLURAL_CARDINAL}\s+of\s+(?:\S+\s+){{0,2}}?"
+               rf"{_GAP_SET_NAMES}", re.I),
+)
+# Scoped to the two modules that DEFINE these sets -- the place a maintainer
+# looks the count up instead of re-deriving it, and where both stale copies
+# were found. generate_report.py's narrative about two gap tokens sitting in
+# two different sections is a claim about the template's shape rather than a
+# documented inventory count, and that file is not this case's to police.
+_GAP_COUNT_SOURCES = ("report_tokens.py", "report_blocks.py")
+
+
+@case
+def case_no_module_types_a_count_of_the_gap_token_sets():
+    """issue #182 review, finding 5. report_blocks.py said "Three of
+    report_tokens.py's FIVE KNOWN_GAPS tokens" in two places, one of them the
+    header of the LIVE_GAP_TOKENS derivation itself. KNOWN_GAPS had held four
+    since a token left it, and the live count moved to two when the template
+    stopped pricing added capacity -- so both halves of the sentence were
+    wrong, in a comment written precisely so a maintainer would not have to
+    re-derive them.
+
+    A count of a computed set does not belong in prose beside the computation.
+    len(report_tokens.KNOWN_GAPS) and report_blocks.LIVE_GAP_TOKENS are both
+    one expression away, and report_blocks.main() prints the live set."""
+    offenders = []
+    for name in _GAP_COUNT_SOURCES:
+        text = (rt.ROOT / "analysis" / name).read_text()
+        for rx in _TYPED_GAP_COUNT_RES:
+            for m in rx.finditer(text):
+                line = text[:m.start()].count("\n") + 1
+                offenders.append(f"{name}:{line} {m.group(0)!r}")
+    assert not offenders, (
+        f"{len(offenders)} typed count(s) of a computed gap-token set: "
+        + "; ".join(offenders)
+        + ". Both counts have gone stale here before, in the same sentence. Name the "
+          "tokens or let len(KNOWN_GAPS) and LIVE_GAP_TOKENS say how many there are")
+    return (f"neither {' nor '.join(_GAP_COUNT_SOURCES)} types a count of KNOWN_GAPS "
+            f"or LIVE_GAP_TOKENS (live now: {len(rt.KNOWN_GAPS)} declared)")
+
+
 @case
 def case_s2_verdict_reports_a_daytime_charger_rather_than_refusing_to_render():
     """"while the EV charges overnight" was asserted outright, and on a
@@ -7270,10 +7746,11 @@ def case_the_poison_harness_does_not_claim_findings_it_does_not_close():
 #
 # CI. This runs with NO private archive. Where private/household.yaml is
 # absent, the household-sourced tokens are resolved against the committed
-# household.example.yaml instead (see _seam_values), so all 206 non-gap tokens
-# are checked on the merge-guarding runner rather than the 162 that read only
-# data/. The five KNOWN_GAPS tokens are the only ones skipped, and the case
-# asserts that set by name. The two paths are not identical and this guard
+# household.example.yaml instead (see _seam_values), so EVERY non-gap token is
+# checked on the merge-guarding runner rather than only the ones that read
+# data/ alone. The KNOWN_GAPS tokens are the only ones skipped, and the case
+# asserts that set BY NAME rather than by a count -- counts of this inventory
+# have gone stale here before. The two paths are not identical and this guard
 # does not claim they are: see _seam_stand_in_household for the one shape
 # difference measured between them.
 # ---------------------------------------------------------------------------
@@ -7524,7 +8001,7 @@ def _seam_render(line, values):
     figure. case_the_seam_guard_compares_the_values_the_generator_writes pins
     the two against each other rather than trusting this comment.
 
-    A token with no value (the KNOWN_GAPS five) is left as its literal
+    A token with no value (a KNOWN_GAPS entry) is left as its literal
     {{NAME}}, which no rule below can mistake for a figure or a unit."""
     out, spans, pos = [], [], 0
     for m in _SEAM_TOKEN_RE.finditer(line):
@@ -7854,9 +8331,9 @@ def _seam_stale_allowlist(template_text, values):
 
 class _seam_stand_in_household:
     """private/household.yaml stood in for by the COMMITTED
-    household.example.yaml, so the seam guard checks all 206 non-gap tokens on
-    a runner that has no private archive instead of the 162 that read only
-    data/.
+    household.example.yaml, so the seam guard checks EVERY non-gap token on a
+    runner that has no private archive instead of only the ones that read
+    data/ alone.
 
     Three of the example file's placeholder answers have to agree with
     committed artifacts or the token they feed refuses to render (correctly --
@@ -7972,8 +8449,8 @@ def _seam_values():
     """{token: rendered value} for every non-gap token, plus the names skipped.
 
     Resolved against the real archive where it is staged and against the
-    committed stand-in otherwise, so the same 206 tokens are checked in both
-    places."""
+    committed stand-in otherwise, so the same tokens are checked in both
+    places -- the set, not a count of it, is what the case asserts."""
     def resolve():
         out = {}
         for name, spec in rt.TOKENS.items():
@@ -8157,8 +8634,8 @@ def case_no_token_renders_a_broken_seam_in_its_own_template_context():
 def case_the_seam_guard_checks_the_same_tokens_without_the_private_archive():
     """The case above resolves against private/household.yaml where it is
     staged, and .github/workflows/tests.yml runs this suite where it is not.
-    A guard that quietly checks 162 of 206 tokens on the runner that actually
-    guards merges is the failure mode this file has already recorded twice
+    A guard that quietly checks the data/-only tokens on the runner that
+    actually guards merges is the failure mode this file has already recorded twice
     (the SEC9 and verdict round-trip cases), so the archive-less path is
     driven HERE, on every checkout, and asserted to cover the same set.
 
