@@ -2803,10 +2803,11 @@ def _time_of_day_words_in(clause):
 # reach were both in text report_tokens.py owns rather than text written into
 # index.html, and both are now closed at the generator: §8's heading no longer
 # characterises the all-hours share's worth at all (S8_VERDICT_SHORT), and what
-# the year's exports earn is AVG_EXPORT_CREDIT, the credit weighted across the
-# whole export profile instead of read off the midday cell. The paragraph that
-# publishes it is pinned by
-# case_s8_export_credit_is_stated_as_what_exports_earn below.
+# the year's exports are worth is the EXPORT_VALUE_SURPLUS_BOUND /
+# EXPORT_VALUE_NETTING_BOUND range, the whole export profile priced through both
+# NEM 2.0 settlement treatments instead of read off the midday cell. The
+# paragraph that publishes it is pinned by
+# case_s8_export_value_is_published_as_a_bounded_range below.
 _CLAUSE_END_AFTER = (r"\d+(?:\.\d+)?%", r"\.(?:\s|<|$)")
 _CLAUSE_END_BEFORE = (r"\d+(?:\.\d+)?%", r"\.(?:\s|<)")
 
@@ -3068,17 +3069,42 @@ def case_s8_more_panels_timing_matches_the_artifacts():
             f"window, against charging on {nights} of {eligible} nights")
 
 
-def _avg_export_credit_from_report_data():
-    """What an exported kWh earns this household, $/kWh: rates.py's NEM 2.0
-    export credit weighted by report_data.json's own hour-of-day export
-    profiles.
+# The two ends of what an exported kWh is worth, low first, each with the
+# rates.py price map that produces it and the words §8 must use to name the
+# settlement treatment behind it. rates.bill_nem_monthly() settles NEM 2.0 by
+# MONTHLY PER-PERIOD NETTING: inside one month and period an export first
+# cancels an import (rates.energy(), UDC+CEA+PCIA) and only the leftover is paid
+# the surplus credit (rates.credit(), UDC+CEA). Two treatments, two prices, and
+# no committed artifact resolves which one any individual month took -- so the
+# report publishes both and neither is the value.
+#
+# THE HIGH END IS energy() AND NOT allin(). allin() = energy() + NBC is what a
+# GROSS import costs; bill_nem_monthly() bills NBC on gross imports before any
+# netting, so an export never avoids it. That is measured against the engine in
+# test_report_tokens.case_the_two_export_bounds_are_the_two_settlement_
+# treatments rather than argued from the constants here.
+_EXPORT_BOUNDS = (
+    ("EXPORT_VALUE_SURPLUS_BOUND", "credit", "surplus"),
+    ("EXPORT_VALUE_NETTING_BOUND", "energy", "cancel"),
+)
 
-    This is the average price the year's EXPORTS fetched. It is NOT what one
-    more kW of panels would earn -- exports are the residual left after
-    household load, not the shape of added production -- and no case in this
-    file may use it that way (issue #190).
 
-    Rebuilt here rather than imported from report_tokens._avg_export_credit
+def _rates_module():
+    if str(ROOT / "analysis") not in sys.path:
+        sys.path.insert(0, str(ROOT / "analysis"))
+    import rates as R
+    return R
+
+
+def _export_bound_from_report_data(rate_name):
+    """One end of what an exported kWh is worth, $/kWh: a rates.py price map
+    weighted by report_data.json's own hour-of-day export profiles.
+
+    Neither end is what one more kW of panels would earn -- exports are the
+    residual left after household load, not the shape of added production --
+    and no case in this file may use either that way (issue #190).
+
+    Rebuilt here rather than imported from report_tokens._export_value_bound
     -- the recompute convention this file already follows in
     _expected_month_labels and _midday_export_share_from_report_data, so a bug
     in the generator's weighting fails a case instead of being reproduced by
@@ -3087,25 +3113,25 @@ def _avg_export_credit_from_report_data():
     The day counts are split by DAY TYPE as well as by season, through
     rates.off_peak_day(): the tariff bills a weekend or holiday morning
     super-off-peak and a weekday morning off-peak, and this window holds 111
-    days of the former. Returns (value, rebuild error against totals.exp)."""
-    if str(ROOT / "analysis") not in sys.path:
-        sys.path.insert(0, str(ROOT / "analysis"))
-    import rates as R
+    days of the former. The profiles are a mean day per SEASON, so that split
+    is a modelled assumption both ends carry, and §8 says so.
+    Returns (value, rebuild error against totals.exp)."""
+    R = _rates_module()
+    rate = getattr(R, rate_name)
     total = value = 0.0
     for d in _analysis_window_dates():
         seas = "S" if d.month in R.SUMMER_MONTHS else "W"
         off_day = R.off_peak_day(d)
         for hour, kwh in enumerate(RD[f"hourly_{seas}"]["exp"]):
             total += kwh
-            value += kwh * R.credit(seas, R.period(hour, off_day))
+            value += kwh * rate(seas, R.period(hour, off_day))
     return value / total, abs(total - RD["totals"]["exp"]) / RD["totals"]["exp"]
 
 
-def _credit_map_cells():
-    if str(ROOT / "analysis") not in sys.path:
-        sys.path.insert(0, str(ROOT / "analysis"))
-    import rates as R
-    return {(s, p): R.credit(s, p)
+def _price_map_cells(rate_name):
+    R = _rates_module()
+    rate = getattr(R, rate_name)
+    return {(s, p): rate(s, p)
             for s in ("S", "W") for p in ("sop", "off", "on")}
 
 
@@ -3134,6 +3160,16 @@ _ADDED_CAPACITY_EARNS_RE = re.compile(
 # Any price at all: a cents figure, a dollar figure, or a $/W band.
 _ANY_PRICE_RE = re.compile(r"[\d.,]+¢|\$[\d.,]+")
 
+# A sentence SAYING WHAT AN EXPORTED kWh IS WORTH -- the claim that may never
+# rest on one end of the range. Written as subject-plus-valuation-verb rather
+# than as the shipped wording, so the point estimate cannot come back as a
+# paraphrase. The subject is deliberately narrow: §8 also prices battery
+# arbitrage and the midday cell, and neither of those is a claim about what the
+# year's exports fetched.
+_VALUATION_CLAIM_RE = re.compile(
+    r"(?:an? exported kWh|the year's exports|those exports|its exports)"
+    r"[^.]{0,120}?(?:is worth|are worth|earns?|fetch(?:es)?|settles? at)", re.I)
+
 # The payback arithmetic that rested on pricing added capacity at the export
 # credit. None of these forms may appear anywhere in §8.
 _EXPANSION_PAYBACK_FORMS = (
@@ -3146,91 +3182,146 @@ _EXPANSION_PAYBACK_FORMS = (
 )
 
 
-def case_s8_export_credit_is_stated_as_what_exports_earn():
-    """issue #182: §8 priced the year's exports at the MIDDAY export credit,
-    generalizing one cell of the credit map to a whole year of exports. About a
-    third of this array's exports leave in off-peak and on-peak hours, which
-    credit several times higher. The profile-weighted figure that replaces it
-    answers what an EXPORTED kWh is worth -- and only that.
+def case_s8_export_value_is_published_as_a_bounded_range():
+    """issue #182: §8 priced the year's exports at the MIDDAY cell of the price
+    map, generalizing one cell of six to a whole year of exports; the
+    profile-weighted figure that replaced it was then published as though the
+    ALL-SURPLUS treatment were the settled answer. Both are the same failure --
+    a derivation narrower than the sentence it is written into.
 
-    WHAT ONE MORE kW WOULD EARN IS A DIFFERENT QUANTITY, and this case's main
-    job is keeping the two apart. Exports are the residual left after household
-    load, not the shape of added production: part of an added panel's output
-    would displace an import rather than leave the meter, and what the rest
-    fetches depends on each month's per-period NEM 2.0 netting. Pricing it
+    WHAT THE ARTIFACTS SETTLE AND WHAT THEY DO NOT. rates.bill_nem_monthly()
+    nets NEM 2.0 monthly and per period, so an exported kWh either cancels an
+    import (rates.energy()) or is paid the surplus credit (rates.credit()).
+    data/report_data.json:period_split shows imports above exports in all six
+    season/period cells, so most exports net and the truth sits nearer the
+    netting end -- but period_split is an ANNUAL total and the netting is
+    MONTHLY, so nothing committed here says how any month settled. The range is
+    therefore the answer, and a bound does not claim to be the value.
+
+    WHAT ONE MORE kW WOULD EARN IS A DIFFERENT QUANTITY AGAIN, and keeping that
+    apart is this case's other job. Exports are the residual left after
+    household load, not the shape of added production: part of an added panel's
+    output would displace an import rather than leave the meter. Pricing it
     needs a counterfactual re-billing at a larger array (issue #190), which
     nothing committed here runs, which is why EXPANSION_PAYBACK_YEARS is a
     report_tokens.KNOWN_GAPS token.
 
-    Five pins:
+    Eight pins:
 
-      1. the published rate IS the profile-weighted credit, recomputed here;
-      2. it is NO single cell of the credit map -- the shape of the original
-         defect, checked against rates.py rather than against today's digits;
-      3. no sentence in §8 attaches a price to added capacity. This is the pin
-         that fails if the marginal-panel step comes back, in the shipped
-         wording or a paraphrase of it;
-      4. §8 publishes no expansion payback arithmetic -- the chain that rested
-         on the step pin 3 forbids;
-      5. §8 says out loud that the marginal-panel value is not derived here, so
-         a reader cannot take the export credit as the answer by default.
+      1. BOTH bounds are published, each recomputed here from the artifacts;
+      2. they appear in the valuation sentence low end first, as a range;
+      3. neither is a single cell of its own price map -- the shape of the
+         original defect, checked against rates.py rather than today's digits;
+      4. NEITHER IS PUBLISHED AS THE VALUE. No sentence in §8 may make a
+         valuation claim about an exported kWh while naming one bound and not
+         the other. This is the pin that fails if the range is collapsed back
+         to a point estimate, at either end;
+      5. §8 states that the settlement falls between the two;
+      6. §8 states the day-type assumption both bounds carry;
+      7. no sentence in §8 attaches a price to added capacity, and §8 publishes
+         none of the expansion payback arithmetic that rested on doing so;
+      8. §8 says out loud that the marginal-panel value is not derived here, so
+         a reader cannot take either bound as the answer by default.
 
     §8's own verdict is checked separately by
     case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering, which
     holds the two artifact-backed figures the "no" actually rests on."""
-    m = re.search(r"<p><b>More panels: .*?</p>", HTML, re.S)
-    assert m, "§8's 'more panels' paragraph not found in index.html"
-    para = m.group(0)
+    # SCOPED TO §8, not to the 'more panels' paragraph. The section's timing
+    # figures and its export valuation are pinned by different cases and are
+    # deliberately different paragraphs -- one paragraph carrying both would be
+    # over this repo's own length rule. _s8_section() is bounded at §9's
+    # wrapper, so "somewhere in §8" is still a bounded claim, and the
+    # valuation sentence is located by its own words rather than by position.
     section = _s8_section()
 
-    value, rebuild_err = _avg_export_credit_from_report_data()
-    assert rebuild_err < _EXPORT_REBUILD_TOLERANCE, (
-        f"report_data.json's hour-of-day export profiles rebuild to a total "
-        f"{rebuild_err * 100:.4f}% off its own totals.exp, past the "
-        f"{_EXPORT_REBUILD_TOLERANCE:.0%} bound -- nothing priced off them describes "
-        "this window")
-
-    published_rate = f"{value * 100:.1f}¢"
-    assert published_rate in para, (
-        f"§8's 'more panels' paragraph does not state {published_rate}, the export "
-        f"credit weighted by data/report_data.json's own hour-of-day export profiles")
-
-    for (seas, period), rate in _credit_map_cells().items():
-        assert abs(value - rate) > 5e-4, (
-            f"the exported kWh is being priced at rates.credit({seas!r}, "
-            f"{period!r}) -- a single cell of a six-cell map, applied to a year of "
-            "exports that do not all leave in one period")
+    published = []
+    for token, rate_name, treatment in _EXPORT_BOUNDS:
+        value, rebuild_err = _export_bound_from_report_data(rate_name)
+        assert rebuild_err < _EXPORT_REBUILD_TOLERANCE, (
+            f"report_data.json's hour-of-day export profiles rebuild to a total "
+            f"{rebuild_err * 100:.4f}% off its own totals.exp, past the "
+            f"{_EXPORT_REBUILD_TOLERANCE:.0%} bound -- nothing priced off them "
+            "describes this window")
+        rendered = f"{value * 100:.1f}¢"
+        assert rendered in section, (
+            f"§8 does not state {rendered}, the "
+            f"{token} end of what an exported kWh is worth (rates.{rate_name}() "
+            "weighted by data/report_data.json's own hour-of-day export profiles). "
+            "Both ends are published because the settlement lies between them; one "
+            "of them alone reads as the value")
+        for (seas, period), rate in _price_map_cells(rate_name).items():
+            assert abs(value - rate) > 5e-4, (
+                f"the {token} end is rates.{rate_name}({seas!r}, {period!r}) -- a "
+                "single cell of a six-cell map, applied to a year of exports that do "
+                "not all leave in one period")
+        published.append((token, rendered, treatment))
 
     # THE SENTENCE THAT MAKES THE CLAIM, not merely the paragraph that contains
-    # it. The valuation sentence must name the profile's price FIRST: that is
-    # the one the verb attaches to and the one a reader takes as the answer.
-    # The clause quotes a second price on purpose (the midday cell it is
-    # distinguishing itself from), so "no other price here" would be the wrong
-    # rule -- order is what separates the claim from its foil.
+    # it. It must state a RANGE, low end first: that ordering is what tells a
+    # reader the first figure is a floor rather than the answer.
     # The sentence end is a period followed by space, tag or end -- NOT any
     # period. "22.9¢" and "$2.50" carry periods glued to digits, and a bare
     # [^.]* locator cuts the clause at "22", which is how the first draft of
     # this pin reported "names no price at all" on a sentence that names two.
     # Same rule _CLAUSE_END_AFTER above uses, for the same reason.
-    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", para, re.S)
+    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", section, re.S)
     assert claim, (
-        "§8's 'more panels' paragraph no longer contains a sentence saying what an "
-        "exported kWh on this profile earns -- the valuation claim this case pins has "
-        "been reworded, and the case cannot tell a rewording from a deletion")
-    prices = re.findall(r"[\d.]+¢", claim.group(0))
-    assert prices, (
-        f"§8's export-value claim names no price at all: {claim.group(0)!r}")
-    assert prices[0] == published_rate, (
-        f"§8 prices an exported kWh at {prices[0]} -- the first figure its own "
-        f"valuation sentence names -- where the export profile gives "
-        f"{published_rate}. {prices[0]} is one cell of the credit map applied to a "
-        f"year of exports that do not all leave in one period: {claim.group(0)!r}")
+        "§8 no longer contains a sentence saying what an "
+        "exported kWh on this profile is worth -- the valuation claim this case pins "
+        "has been reworded, and the case cannot tell a rewording from a deletion")
+    claim_text = claim.group(0)
+    assert re.search(r"\bbetween\b", claim_text), (
+        f"§8's valuation sentence no longer states a range: {claim_text!r}. What an "
+        "exported kWh is worth depends on whether it nets against an import or is "
+        "settled as surplus, and the committed artifacts do not resolve that per "
+        "month -- so the sentence must publish both ends, not one of them")
+    prices = re.findall(r"[\d.]+¢", claim_text)
+    assert prices[:2] == [published[0][1], published[1][1]], (
+        f"§8's valuation sentence names {prices[:2]} where the two bounds are "
+        f"{[p[1] for p in published]}, low end first. The low end leading is what "
+        f"makes it read as a floor rather than as the answer: {claim_text!r}")
+    for _token, rendered, treatment in published:
+        head = claim_text[:claim_text.index(rendered)]
+        rest = claim_text[claim_text.index(rendered) + len(rendered):]
+        window = head[-90:] + rest[:90]
+        assert treatment in window.casefold(), (
+            f"§8's valuation sentence states {rendered} without naming the settlement "
+            f"treatment that produces it (looked for {treatment!r} beside it). An "
+            f"unnamed bound is indistinguishable from a point estimate: {claim_text!r}")
 
-    # 3. No sentence prices ADDED CAPACITY. Sentence-split on the repo's own
+    # 4. NEITHER END STANDS ALONE AS THE VALUE. Every sentence in §8 that makes
+    #    a valuation claim about an exported kWh must carry both bounds or
+    #    neither -- a sentence naming one of them and saying what an exported
+    #    kWh "is worth" or "earns" has republished the point estimate with the
+    #    other end deleted, which is the exact failure this issue closes.
+    text = htmlmod.unescape(re.sub(r"<[^>]+>", " ", section))
+    lo_fig, hi_fig = published[0][1], published[1][1]
+    for sentence in re.split(r"\.(?=\s|$)", text):
+        if not _VALUATION_CLAIM_RE.search(sentence):
+            continue
+        has = [f for f in (lo_fig, hi_fig) if f in sentence]
+        assert len(has) != 1, (
+            f"§8 states what an exported kWh is worth as the single figure {has[0]}: "
+            f"{sentence.strip()!r}. That is one END of the range -- "
+            f"{'the all-surplus floor' if has[0] == lo_fig else 'the all-netting ceiling'}"
+            f" -- and the settlement lies between {lo_fig} and {hi_fig}. Publish both")
+
+    # 5. The range is named as a range, in the section's own words.
+    assert re.search(r"(?:sits|falls|lies|land\w*)\s+between\b|between the two\b", text), (
+        "§8 never says the real settlement falls between the two bounds. Without it "
+        "the pair reads as two competing answers rather than as a bracket around one")
+
+    # 6. The assumption both bounds carry, stated rather than hidden.
+    assert re.search(r"season-wide mean", text) and re.search(r"day type", text), (
+        "§8 no longer states that the hour-of-day export profile behind both bounds "
+        "is a season-wide mean that has already discarded day type, so the "
+        "weekday/off-peak-day split is a modeled assumption rather than a "
+        "reconstruction")
+
+    # 7. No sentence prices ADDED CAPACITY. Sentence-split on the repo's own
     #    rule, because the defect this catches lives in one sentence: the
     #    paragraph legitimately contains both prices and the words "one more kW
     #    of panels", and only their appearing TOGETHER is the claim.
-    text = htmlmod.unescape(re.sub(r"<[^>]+>", " ", section))
     for sentence in re.split(r"\.(?=\s|$)", text):
         capacity = _ADDED_CAPACITY_EARNS_RE.search(sentence)
         priced = _ANY_PRICE_RE.search(sentence)
@@ -3239,10 +3330,10 @@ def case_s8_export_credit_is_stated_as_what_exports_earn():
             f"{capacity.group(0)!r} and the price {priced.group(0)!r}. What one more kW "
             "would earn is not derived in this repo -- exports are the residual left "
             "after household load, not the shape of added production (issue #190) -- "
-            f"and {published_rate} is what an EXPORTED kWh earns, not what an added one "
-            "would")
+            f"and {lo_fig}-{hi_fig} brackets what an EXPORTED kWh is worth, not what an "
+            "added one would be")
 
-    # 4. And none of the arithmetic that rested on it survives anywhere in §8.
+    # And none of the arithmetic that rested on it survives anywhere in §8.
     for pattern, what in _EXPANSION_PAYBACK_FORMS:
         hit = re.search(pattern, text)
         assert not hit, (
@@ -3251,16 +3342,19 @@ def case_s8_export_credit_is_stated_as_what_exports_earn():
             "$/W price it does not collect, which is why EXPANSION_PAYBACK_YEARS is a "
             "KNOWN_GAPS token")
 
-    # 5. The gap is stated, not left to inference.
+    # 8. The gap is stated, not left to inference.
     assert re.search(r"one more kW of panels[^<]{0,80}?"
                      r"(does not answer|not derived|no answer here)", text), (
         "§8 never says that what one more kW of panels would earn is undetermined. "
-        "Without it a reader takes the export credit beside it as the answer, which is "
+        "Without it a reader takes the export bounds beside it as the answer, which is "
         "the conflation this case exists to prevent")
 
-    return (f"§8 states {published_rate} as what an exported kWh earns -- the credit "
-            f"weighted across data/report_data.json's own hour-of-day profiles, on no "
-            f"cell of rates.py's credit map -- prices no added capacity in any of its "
+    return (f"§8 publishes what an exported kWh is worth as the range {lo_fig}-{hi_fig} "
+            f"-- the two NEM 2.0 settlement treatments of data/report_data.json's own "
+            f"hour-of-day profiles, neither on any cell of its own price map, neither "
+            f"standing alone in any valuation sentence -- says the settlement falls "
+            f"between them, states the season-wide-mean day-type assumption both carry, "
+            f"prices no added capacity in any of its "
             f"{len(_EXPANSION_PAYBACK_FORMS)} forbidden payback forms, and says the "
             "marginal-kW value is not derived here")
 
@@ -4551,7 +4645,7 @@ CASES = [
     case_weather_regression_paragraph_matches_the_artifact,
     case_s2_key_architectural_fact_matches_the_artifacts,
     case_s8_more_panels_timing_matches_the_artifacts,
-    case_s8_export_credit_is_stated_as_what_exports_earn,
+    case_s8_export_value_is_published_as_a_bounded_range,
     case_s8_expansion_verdict_rests_on_the_cap_and_the_grandfathering,
     case_s8_specific_yield_matches_the_token_rendered_one,
     case_s0_more_solar_bullet_keeps_the_two_shares_apart,

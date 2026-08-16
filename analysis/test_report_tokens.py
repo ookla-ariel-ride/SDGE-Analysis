@@ -3227,17 +3227,26 @@ def case_s2_verdict_refuses_to_time_exports_it_cannot_rebuild():
             f"rebuilding the year's exports (live midday share {live:.1%})")
 
 
-def _credit_map():
-    """Every (season, period) cell of rates.py's NEM 2.0 export credit."""
-    return {(s, p): rt.R.credit(s, p)
-            for s in ("S", "W") for p in ("sop", "off", "on")}
+# The two published ends of what an exported kWh is worth, and the rates.py
+# function each one prices the profile through. Written here as a table so the
+# pins below sweep both ends with one body: an end added or renamed on the
+# generator side has to be added here before any of them can pass.
+_EXPORT_BOUNDS = (("EXPORT_VALUE_SURPLUS_BOUND", "credit"),
+                  ("EXPORT_VALUE_NETTING_BOUND", "energy"))
 
 
-def _avg_export_credit_recomputed():
-    """The profile-weighted export credit, rebuilt here rather than read from
+def _price_map(rate_name):
+    """Every (season, period) cell of one of rates.py's price maps."""
+    rate = getattr(rt.R, rate_name)
+    return {(s, p): rate(s, p) for s in ("S", "W") for p in ("sop", "off", "on")}
+
+
+def _export_bound_recomputed(rate_name):
+    """One end of the export-value range, rebuilt here rather than read from
     report_tokens -- the recompute convention this suite already follows, so a
     bug in the generator's weighting fails this case instead of being
     reproduced by it."""
+    rate = getattr(rt.R, rate_name)
     rd = rt._json("report_data.json")
     start, end = rt._analysis_window_dates()
     total = value = 0.0
@@ -3247,7 +3256,7 @@ def _avg_export_credit_recomputed():
         off_day = rt.R.off_peak_day(d)
         for hour, kwh in enumerate(rd[f"hourly_{seas}"]["exp"]):
             total += kwh
-            value += kwh * rt.R.credit(seas, rt.R.period(hour, off_day))
+            value += kwh * rate(seas, rt.R.period(hour, off_day))
         d += dt.timedelta(days=1)
     return value / total
 
@@ -3258,86 +3267,213 @@ def _analysis_window_day_count():
 
 
 @case
-def case_avg_export_credit_prices_the_whole_export_profile_not_one_period():
-    """issue #182. Section 8 priced the year's exports at the MIDDAY export
-    credit, generalizing one cell of a six-cell map to a whole year of exports.
+def case_each_export_bound_prices_the_whole_export_profile_not_one_period():
+    """issue #182. Section 8 priced the year's exports at the MIDDAY cell of
+    the price map, generalizing one cell of six to a whole year of exports.
     About a third of this array's exports leave in off-peak and on-peak hours,
-    which credit six to eleven times higher, so the single-cell figure was
-    roughly half the profile-weighted one.
+    which pay six to eleven times more, so the single-cell figure was roughly
+    half the profile-weighted one.
 
-    WHAT THIS TOKEN IS NOT, and what no pin here may be read as endorsing: it
-    is the average price the year's EXPORTS fetched, not what one more kW of
+    WHAT THESE TOKENS ARE NOT, and what no pin here may be read as endorsing:
+    they are the price the year's EXPORTS fetched, not what one more kW of
     panels would earn. Exports are the residual left after household load, so
     added production is not shaped like them (issue #190).
 
-    Three pins, because the first two alone would both survive the revert this
-    case exists to catch:
+    Both ends of the range are swept by the same three pins, because the first
+    two alone would both survive the revert this case exists to catch:
 
       1. the token equals the independently recomputed weighted average;
-      2. it equals NO single cell of the credit map -- the literal shape of
+      2. it equals NO single cell of its own price map -- the literal shape of
          the defect, checked against rates.py rather than against the digits
          that happen to be published today;
       3. it MOVES WITH THE PROFILE. A constant, or a value read off one cell,
          passes 1 and 2 by luck on some household's numbers; only a live
          weighting answers a profile whose exports all land in one period with
-         that period's own credit. Driven for all three periods.
+         that period's own price. Driven for all three periods.
 
     RELATIONSHIP, the recomputation against the token: SAME QUANTITY,
     INDEPENDENTLY COMPUTED from the same committed artifacts. Both read
-    data/report_data.json's hour-of-day export profiles and rates.py's credit
-    map; neither is derived from the other. They are entitled to agree exactly,
-    and a disagreement is a bug in one of the two weightings."""
-    expected = _avg_export_credit_recomputed()
-    live = rt._avg_export_credit(rt.CTX)
-    assert abs(live - expected) < 1e-12, (
-        f"AVG_EXPORT_CREDIT derives {live:.9f}/kWh; weighting rates.credit() by "
-        f"data/report_data.json's own export profiles gives {expected:.9f}/kWh")
-    rendered = rt.resolve_token("AVG_EXPORT_CREDIT")
-    assert rendered == f"{expected * 100:.1f}¢", (
-        f"AVG_EXPORT_CREDIT renders {rendered!r}, not the "
-        f"{expected * 100:.1f}¢ the profile-weighted credit comes to")
-
-    cells = _credit_map()
-    for (seas, period), rate in cells.items():
-        assert abs(live - rate) > 5e-4, (
-            f"AVG_EXPORT_CREDIT has reverted to a single period price: it renders "
-            f"{rendered}, which is rates.credit({seas!r}, {period!r}). An exported "
-            f"kWh is priced across every hour the array exports in, and this "
-            f"array's exports do not all leave in one period")
-
-    # 3. Driven. An all-in-one-period profile must price at that period's own
-    #    credit, and the two seasons' cells differ, so the answer has to land
-    #    between them rather than on either -- which is itself evidence the
-    #    season weighting is live too.
+    data/report_data.json's hour-of-day export profiles and the same rates.py
+    price map; neither is derived from the other. They are entitled to agree
+    exactly, and a disagreement is a bug in one of the two weightings."""
     rd = rt._json("report_data.json")
-    for period in ("sop", "off", "on"):
-        # The probe hour is FOUND, not named: it has to carry `period` on both
-        # day types, or the driven profile prices one hour two ways and the
-        # bracket below proves nothing. Derived from rates.period() so a tariff
-        # whose windows differ picks its own hour instead of inheriting this
-        # household's.
-        agree = [h for h in range(24)
-                 if rt.R.period(h, False) == period == rt.R.period(h, True)]
-        assert agree, (
-            f"no whole hour of this tariff carries {period} on both day types, so "
-            "an all-in-one-period export profile cannot be built for it -- the "
-            "probe needs rewriting against the new windows, not deleting")
-        hour = agree[0]
-        flat = [0.0] * 24
-        flat[hour] = rd["totals"]["exp"] / _analysis_window_day_count()
-        with _swapped(rd["hourly_S"], "exp", list(flat)), \
-             _swapped(rd["hourly_W"], "exp", list(flat)):
-            driven = rt._avg_export_credit(rt.CTX)
-        lo, hi = sorted((cells[("S", period)], cells[("W", period)]))
-        assert lo - 1e-12 <= driven <= hi + 1e-12, (
-            f"an export profile whose every kWh leaves in {period} hours should price "
-            f"between that period's two seasonal credits ({lo:.5f}-{hi:.5f}/kWh); "
-            f"AVG_EXPORT_CREDIT returned {driven:.5f}/kWh, so it is not reading "
-            "the profile")
-    return (f"AVG_EXPORT_CREDIT is the export-profile-weighted credit "
-            f"({rendered}), matches an independent recomputation to 1e-12, sits on no "
-            f"single cell of the {len(cells)}-cell credit map, and follows a driven "
-            "profile into each of the three periods")
+    swept = []
+    for token, rate_name in _EXPORT_BOUNDS:
+        expected = _export_bound_recomputed(rate_name)
+        live = rt._export_value_bound(token, "probe", getattr(rt.R, rate_name),
+                                      rate_name)
+        assert abs(live - expected) < 1e-12, (
+            f"{token} derives {live:.9f}/kWh; weighting rates.{rate_name}() by "
+            f"data/report_data.json's own export profiles gives {expected:.9f}/kWh")
+        rendered = rt.resolve_token(token)
+        assert rendered == f"{expected * 100:.1f}¢", (
+            f"{token} renders {rendered!r}, not the {expected * 100:.1f}¢ the "
+            f"profile-weighted rates.{rate_name}() comes to")
+
+        cells = _price_map(rate_name)
+        for (seas, period), rate in cells.items():
+            assert abs(live - rate) > 5e-4, (
+                f"{token} has reverted to a single period price: it renders "
+                f"{rendered}, which is rates.{rate_name}({seas!r}, {period!r}). An "
+                f"exported kWh is priced across every hour the array exports in, and "
+                f"this array's exports do not all leave in one period")
+
+        # 3. Driven. An all-in-one-period profile must price at that period's
+        #    own rate, and the two seasons' cells differ, so the answer has to
+        #    land between them rather than on either -- which is itself
+        #    evidence the season weighting is live too.
+        for period in ("sop", "off", "on"):
+            # The probe hour is FOUND, not named: it has to carry `period` on
+            # both day types, or the driven profile prices one hour two ways
+            # and the bracket below proves nothing. Derived from rates.period()
+            # so a tariff whose windows differ picks its own hour instead of
+            # inheriting this household's.
+            agree = [h for h in range(24)
+                     if rt.R.period(h, False) == period == rt.R.period(h, True)]
+            assert agree, (
+                f"no whole hour of this tariff carries {period} on both day types, so "
+                "an all-in-one-period export profile cannot be built for it -- the "
+                "probe needs rewriting against the new windows, not deleting")
+            hour = agree[0]
+            flat = [0.0] * 24
+            flat[hour] = rd["totals"]["exp"] / _analysis_window_day_count()
+            with _swapped(rd["hourly_S"], "exp", list(flat)), \
+                 _swapped(rd["hourly_W"], "exp", list(flat)):
+                driven = rt._export_value_bound(token, "probe",
+                                                getattr(rt.R, rate_name), rate_name)
+            lo, hi = sorted((cells[("S", period)], cells[("W", period)]))
+            assert lo - 1e-12 <= driven <= hi + 1e-12, (
+                f"an export profile whose every kWh leaves in {period} hours should "
+                f"price between that period's two seasonal rates ({lo:.5f}-{hi:.5f}"
+                f"/kWh); {token} returned {driven:.5f}/kWh, so it is not reading "
+                "the profile")
+        swept.append(f"{token}={rendered}")
+    return (f"both export-value bounds ({', '.join(swept)}) are profile-weighted, "
+            "match an independent recomputation to 1e-12, sit on no single cell of "
+            "their own six-cell price map, and follow a driven profile into each of "
+            "the three periods")
+
+
+@case
+def case_the_two_export_bounds_are_the_two_settlement_treatments():
+    """issue #182, the finding this pair of tokens exists to answer: one
+    profile-weighted figure was published as "what an exported kWh earns" when
+    it was only the ALL-SURPLUS end of the answer.
+
+    rates.bill_nem_monthly() settles NEM 2.0 by monthly per-period netting, so
+    an exported kWh either cancels an import inside its own month and period or
+    is paid the surplus credit. Two treatments, two prices, and the artifacts
+    do not resolve which one any individual month took -- so both are
+    published, and neither may be published as the settled value.
+
+    Four pins, and the fourth is the one that fails if a bound is dressed up as
+    the value:
+
+      1. the ORDER is right: surplus is the low end, netting the high end. A
+         swap of the two rate functions renders the range backwards, and pins
+         1-3 of the sibling case survive it, since each end would still be a
+         valid profile weighting of a real price map;
+      2. the gap between them IS the difference between the two rates -- PCIA,
+         the only term rates.energy() adds to rates.credit() -- rather than
+         some other quantity that happens to sit between the two figures;
+      3. the netting end is rates.energy() and NOT rates.allin(). MEASURED
+         AGAINST THE ENGINE, not argued from the constants: one more exported
+         kWh in a netting cell moves rates.bill_nem() by exactly energy(), and
+         in a surplus cell by exactly credit(). allin() = energy() + NBC is
+         what a GROSS import costs, and bill_nem_monthly() bills NBC on gross
+         imports before any netting, so an export never avoids it. Pricing an
+         export at allin() re-commits the NBC-netting error CLAUDE.md section 9
+         records;
+      4. NEITHER END IS PUBLISHED AS THE VALUE. index.html must state both, and
+         must say the settlement lies between them. A page that names one and
+         drops the other, or names both and calls either one the answer, fails
+         here -- which is the whole failure class this issue closes."""
+    import pandas as pd
+
+    surplus = rt.resolve_token("EXPORT_VALUE_SURPLUS_BOUND")
+    netting = rt.resolve_token("EXPORT_VALUE_NETTING_BOUND")
+    # THE LIVE VALUES, off the registered getters, not two recomputations done
+    # here. A recomputation cannot see which rate map each TOKEN was wired to,
+    # so an order pin written against one passes with the two getters swapped
+    # -- measured, not supposed: the first draft of pin 1 did exactly that and
+    # reported "ordered low-to-high" on a report rendering 25.7¢-22.9¢.
+    lo_live = rt.TOKENS["EXPORT_VALUE_SURPLUS_BOUND"]["get"](rt.CTX)
+    hi_live = rt.TOKENS["EXPORT_VALUE_NETTING_BOUND"]["get"](rt.CTX)
+
+    # 1. Order, and each end wired to its own price map.
+    assert lo_live < hi_live, (
+        f"the surplus bound ({lo_live:.5f}/kWh) is not below the netting bound "
+        f"({hi_live:.5f}/kWh) -- the two rate functions are the wrong way round, and "
+        "the report publishes the range backwards")
+    for token, live, rate_name in (("EXPORT_VALUE_SURPLUS_BOUND", lo_live, "credit"),
+                                   ("EXPORT_VALUE_NETTING_BOUND", hi_live, "energy")):
+        expected = _export_bound_recomputed(rate_name)
+        assert abs(live - expected) < 1e-12, (
+            f"{token} resolves to {live:.6f}/kWh where weighting rates.{rate_name}() "
+            f"by the export profile gives {expected:.6f}/kWh -- this end is wired to "
+            "the wrong settlement treatment")
+
+    # 2. The gap is PCIA and nothing else.
+    assert abs((hi_live - lo_live) - rt.R.PCIA) < 1e-12, (
+        f"the two bounds differ by {hi_live - lo_live:.6f}/kWh where rates.energy() "
+        f"adds only PCIA ({rt.R.PCIA:.6f}) to rates.credit() -- one of the ends is not "
+        "the price map it claims to be")
+
+    # 3. The netting end, measured against the billing engine itself.
+    frame = pd.DataFrame([
+        dict(dt=pd.Timestamp("2025-07-10 12:00"), seas="S", p="sop", ym="2025-07",
+             Consumption=100.0, Generation=40.0)])
+    bumped = frame.copy()
+    bumped.loc[0, "Generation"] += 1.0
+    netting_delta = rt.R.bill_nem(frame) - rt.R.bill_nem(bumped)
+    assert abs(netting_delta - rt.R.energy("S", "sop")) < 1e-9, (
+        f"one more exported kWh in a NETTING cell moves rates.bill_nem() by "
+        f"{netting_delta:.6f}, not rates.energy() ({rt.R.energy('S', 'sop'):.6f}) -- "
+        "the high end of the published range is not the engine's own netting value")
+    assert abs(netting_delta - rt.R.allin("S", "sop")) > 1e-6, (
+        "an exported kWh in a netting cell is worth rates.allin() to this engine, so "
+        "NBC is being netted away by an export; CLAUDE.md section 9 records that "
+        "defect and bill_nem_monthly() is supposed to bill NBC on GROSS imports")
+    surplus_frame = frame.copy()
+    surplus_frame.loc[0, "Generation"] = 200.0
+    bumped = surplus_frame.copy()
+    bumped.loc[0, "Generation"] += 1.0
+    surplus_delta = rt.R.bill_nem(surplus_frame) - rt.R.bill_nem(bumped)
+    assert abs(surplus_delta - rt.R.credit("S", "sop")) < 1e-9, (
+        f"one more exported kWh in a SURPLUS cell moves rates.bill_nem() by "
+        f"{surplus_delta:.6f}, not rates.credit() "
+        f"({rt.R.credit('S', 'sop'):.6f}) -- the low end of the published range is "
+        "not the engine's own surplus value")
+
+    # 4. The page publishes the range, not one end of it.
+    html = (rt.ROOT / "index.html").read_text()
+    for token, rendered in (("EXPORT_VALUE_SURPLUS_BOUND", surplus),
+                            ("EXPORT_VALUE_NETTING_BOUND", netting)):
+        assert rendered in html, (
+            f"index.html does not state {rendered}, the {token} end of what an "
+            "exported kWh is worth. A bound published on its own reads as the value, "
+            "which is the failure this pair of tokens exists to prevent")
+    # The valuation SENTENCE, located by its own words rather than by which
+    # paragraph it sits in, and read to its sentence end on the repo's own rule
+    # (a period followed by whitespace, a tag or the end -- never the period
+    # inside "22.9¢"). It has to frame the figure as a range: a sentence naming
+    # both bounds without "between" can still be reporting one of them as the
+    # answer and the other as a foil.
+    claim = re.search(r"an exported kWh on this profile.*?\.(?=\s|<|$)", html, re.S)
+    assert claim, ("index.html no longer says what an exported kWh on this profile is "
+                   "worth, so the range this pair of tokens publishes cannot be found")
+    assert re.search(r"is worth between\b", claim.group(0)), (
+        "section 8 no longer frames the export value as a range between two "
+        f"settlement treatments: {claim.group(0)!r}")
+    for rendered in (surplus, netting):
+        assert rendered in claim.group(0), (
+            f"the valuation sentence names only one end of the range: "
+            f"{claim.group(0)!r} does not carry {rendered}")
+    return (f"the export value is published as the range {surplus}-{netting}, the two "
+            f"NEM 2.0 settlement treatments, ordered low-to-high and separated by "
+            f"exactly PCIA; the netting end is the engine's own marginal value for an "
+            f"export that cancels an import, measured against rates.bill_nem() rather "
+            f"than assumed, and is rates.energy() rather than rates.allin()")
 
 
 @case

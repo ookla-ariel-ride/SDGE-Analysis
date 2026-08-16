@@ -384,8 +384,10 @@ HUMAN_REASONS = {
             "shape of added production; and retrofit dollars per watt is a fact about a "
             "local installer market on a date, which nothing committed here measures. "
             "(The block's other two asks ARE artifact-backed now: what the year's "
-            "exports earn is {{AVG_EXPORT_CREDIT}}, derived from the committed "
-            "hour-of-day export profile, and the clipping evidence is s9#3's.)",
+            "exports are worth is bounded by {{EXPORT_VALUE_SURPLUS_BOUND}} and "
+            "{{EXPORT_VALUE_NETTING_BOUND}}, the two NEM 2.0 settlement treatments "
+            "of the committed hour-of-day export profile, and the clipping evidence "
+            "is s9#3's.)",
 }
 
 # ---------------------------------------------------------------------------
