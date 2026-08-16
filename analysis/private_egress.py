@@ -255,6 +255,27 @@ def _parse_worktree_records(text, sep):
     return paths, entries
 
 
+def _resolve_register(paths):
+    """A list of worktree paths -> the same list physically resolved, deduped,
+    with everything that is not an existing directory dropped.
+
+    ONE normalizer for both registers -- the one read from git and the one an
+    internal caller supplies -- because _locate_worktree() compares against the
+    RESOLVED ancestors of the destination. Resolving one side and not the other
+    made membership depend on the spelling the caller happened to use: on macOS a
+    tempdir is /var/folders/... whose realpath is /private/var/folders/..., so
+    the same directory matched when passed as a realpath and did not when passed
+    literally. An entry whose directory no longer exists resolves to nothing and
+    is dropped, so a stale register entry cannot admit a destination.
+    """
+    out = []
+    for p in paths:
+        real = _physical(p)
+        if real and real not in out:
+            out.append(real)
+    return out
+
+
 def registered_worktrees(common_dir=None, env=None):
     """Every registered worktree of this checkout, physically resolved.
 
@@ -278,12 +299,7 @@ def registered_worktrees(common_dir=None, env=None):
         r = _git(["worktree", "list", "--porcelain"], common_dir, env)
         if r.returncode == 0:
             paths, entries = _parse_worktree_records(r.stdout, "\n")
-    out = []
-    for p in paths:
-        real = _physical(p)
-        if real and real not in out:
-            out.append(real)
-    return out
+    return _resolve_register(paths)
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +331,10 @@ def _locate_worktree(path, worktrees):
     literal prefix is kept, which is what makes the symlink walk below able to
     see a link BELOW the root. The longest match wins, so a worktree nested
     inside another is attributed to the inner one.
+
+    `worktrees` must ALREADY be resolved -- both sides of this comparison are
+    physical paths or neither is. Every caller gets it from _resolve_register(),
+    which is the one place that guarantees it.
     """
     for a in _ancestors(path):          # longest first
         real = _physical(a)
@@ -348,7 +368,7 @@ def _diagnose_outside(path, self_git, env):
 KINDS = ("root", "tree", "dir", "file")
 
 
-def check_destination(path, *, kind, require_ignored=True, worktrees=None, env=None):
+def check_destination(path, *, kind):
     """Raise DestinationRefused unless private-derived files may be written to
     `path`. Returns a Destination on success. Writes nothing, creates nothing.
 
@@ -381,6 +401,96 @@ def check_destination(path, *, kind, require_ignored=True, worktrees=None, env=N
     check_write_set() refused them. An unknown kind is a ValueError, not a
     refusal: a caller that cannot name what it is writing has a bug in itself,
     and must not be able to spell that bug as "accepted".
+
+    NOTHING ON THIS SIGNATURE WEAKENS A CHECK. `path` and `kind` DESCRIBE the
+    destination and what the caller will write there; neither can turn a check
+    off, and neither has a default that is weaker than the other value. The
+    three parameters that DO weaken a check -- require_ignored=, worktrees= and
+    env= -- are parameters of the private _check_destination() below and NOT of
+    this signature, so a caller outside this module gets
+
+        TypeError: check_destination() got an unexpected keyword argument 'env'
+
+    rather than a weaker check. Each is legitimate for exactly one internal
+    caller and each is documented there with the acceptance it can manufacture.
+    test_private_egress.PUBLIC_PARAMS holds every public parameter as an
+    ALLOWLIST with what it DESCRIBES written beside it: a fourth weakener cannot
+    reach a public door without being added there, and adding it means writing a
+    description of it that is false, in review, next to entries that are true.
+    No test can decide that question; the table puts it where a human does.
+
+    kind="root" skips the ignore question, the leaf check and the component
+    walk, and it is still not a waiver: it pays for them by REQUIRING the path
+    to BE a registered worktree root, and the caller then declares the paths it
+    will really write to check_write_set(). See the kind list above and
+    test_private_egress.API_REACH.
+    """
+    return _check_destination(path, kind=kind, require_ignored=True,
+                              worktrees=None, env=None)
+
+
+def _check_destination(path, *, kind, require_ignored, worktrees, env):
+    """check_destination()'s body, carrying the three parameters that are
+    deliberately absent from its signature.
+
+    Each is a real internal need, each is handed its STRONG value as a literal
+    by check_destination(), and each -- measured on this checkout, not asserted
+    -- can manufacture an acceptance that the module exists to refuse:
+
+      require_ignored=False   skips _require_uncommittable entirely, so
+                              data/leak.json and even the TRACKED index.html are
+                              accepted. Legitimate in exactly one place:
+                              _check_write_set(), which asks that question
+                              itself -- once per declared path, and for a leaf
+                              through a declared path that covers it -- before
+                              handing the paths below the root here.
+      worktrees=[...]         replaces the register. self_common_git_dir() is
+                              never probed, so nothing checks that the answer
+                              came from THIS checkout: with a list naming an
+                              unrelated repository, a gitignored path inside
+                              THAT repository is accepted -- the 2026-08-13
+                              shape, through a keyword. It exists so
+                              _check_write_set() can ask about a dozen paths in
+                              one ALREADY-VERIFIED worktree without a git
+                              subprocess each, and it passes exactly the root
+                              this module just accepted. Entries are normalized
+                              by _resolve_register() before use, the same way
+                              the git-read register is, so membership does not
+                              depend on whether the caller spelled the path as a
+                              realpath.
+      env={...}               is sanitized of the git IDENTITY variables (see
+                              sanitized_env), which is what stops a caller
+                              supplying the answer to "which repository is
+                              this". It does NOT clear HOME: an env whose HOME
+                              holds a .gitconfig with core.excludesFile can
+                              manufacture the "ignored" verdict, and
+                              data/leak.json is then accepted. The TRACKED half
+                              still refuses -- git ls-files is asked first and
+                              an excludes file cannot empty the index -- so the
+                              forgery costs a tracked path, not an ignored one.
+                              HOME stays UNCLEARED on purpose, and the reason is
+                              not oversight: HOME supplies a legitimate input to
+                              the real repository's answer rather than replacing
+                              which repository answers, clearing it would
+                              manufacture a divergence from the operator's own
+                              shell that no fixture here would catch, and the
+                              forgery needs an in-process caller who could
+                              equally call shutil.copy. The lever taken instead
+                              is the REACH of this parameter: it is not on a
+                              public door. See
+                              test_private_egress.case_no_public_entry_point_
+                              can_weaken_a_check, which records the decision.
+
+    Why signatures and not a convention: this module's argument is that a check
+    which CAN be waived will be waived. It exists because stage-private-data.sh
+    printed a success message while writing an archive into a repository this
+    checkout does not own; `kind` was made required rather than defaulted for
+    the same reason; and the `recursive` hole in check_write_set() was
+    require_ignored being passed without the phase that was supposed to justify
+    it. Python enforces the function name and nothing else -- reaching for a
+    leading underscore is still possible, exactly as it is for _check_leaf --
+    but none of the three can any more be reached by a caller who never left the
+    documented API.
     """
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
@@ -416,14 +526,22 @@ def check_destination(path, *, kind, require_ignored=True, worktrees=None, env=N
             "not an existing directory" if not os.path.lexists(lit)
             else "exists but is not a directory", lit)
 
-    if worktrees is None:
-        worktrees = registered_worktrees(self_git, env)
+    # Normalized either way. registered_worktrees() resolves what it reads from
+    # git; a supplied register goes through the SAME normalizer rather than
+    # being trusted as written, because _locate_worktree compares it against
+    # resolved ancestors and a half-resolved comparison answers "not a member"
+    # for a directory that is one.
+    supplied = worktrees is not None
+    worktrees = (_resolve_register(worktrees) if supplied
+                 else registered_worktrees(self_git, env))
     if not worktrees:
         raise DestinationRefused(
             "register_unavailable",
-            f"'git worktree list' reported nothing for "
-            f"{self_git or 'this checkout'}, with and without -z; membership is "
-            "unproven, and unproven is refused", lit)
+            ("the register handed to this call named no existing directory"
+             if supplied else
+             f"'git worktree list' reported nothing for "
+             f"{self_git or 'this checkout'}, with and without -z")
+            + "; membership is unproven, and unproven is refused", lit)
 
     wt_lit, wt_real = _locate_worktree(lit, worktrees)
     if wt_real is None:
@@ -622,8 +740,7 @@ def _scan_tree(root):
                     f"{e.path} has more than one name for its inode", root)
 
 
-def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None,
-                    env=None):
+def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None):
     """The whole question for a caller that stages a set of paths into `root`.
 
     `root` must be a registered worktree root (stage-private-data.sh's
@@ -636,22 +753,68 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None,
 
     Ordered checks first, writes never: this returns a Destination or raises.
 
-    Every path it asks about goes through check_destination() -- the same public
-    entry point an argument-derived writer calls -- so a destination cannot pass
-    for one API and fail for the other. That was not true before: the leaf
-    checks lived here, and the single-path API accepted a FIFO and a hard link.
+    Every parameter here DESCRIBES what will be written and where: four name
+    paths, and `glob_source` says which tree a leaf pattern is expanded against
+    -- which UNDERSTATES the set when it is wrong (fewer names, each still fully
+    checked) rather than waiving anything. `env=` is not here, for the reason
+    given at _check_destination(): it can manufacture the "ignored" verdict
+    through HOME, so it is a parameter of the private _check_write_set() below
+    and an ordinary caller gets a TypeError.
     """
-    dest = check_destination(root, kind="root", require_ignored=False, env=env)
+    return _check_write_set(root, dirs=dirs, leaves=leaves, recursive=recursive,
+                            glob_source=glob_source, env=None)
+
+
+def _check_write_set(root, *, dirs, leaves, recursive, glob_source, env):
+    """check_write_set()'s body, carrying the `env` its signature omits.
+
+    Every path it asks about goes through the same checker the single-path API
+    is a one-line delegation to -- the root with nothing turned off, the paths
+    below it with the committability exemption this function has earned by
+    asking that question itself. Same body either way, so a destination cannot
+    pass for one API and fail for the other. That was not true before: the leaf
+    checks lived here, and the single-path API accepted a FIFO and a hard link.
+
+    EVERY declared path is asked the committability question, `recursive` and
+    `leaves` no less than `dirs`. The one exemption is a path that an
+    ALREADY-ANSWERED path contains, because git answers both halves for a whole
+    subtree: an
+    excluded directory cannot have a child re-included, and `git ls-files -- d`
+    lists everything tracked beneath d. Nothing else is exempt. That is written
+    as one loop over the union rather than as one loop per argument, because the
+    per-argument version is what left `recursive` unchecked: its entries went
+    straight to the checker with require_ignored=False -- the phase
+    below hands every path that flag on the strength of THIS phase having asked
+    -- so check_write_set(root, recursive=("data",)) accepted a tracked,
+    committable destination that check_write_set(root, dirs=("data",)) refused.
+    A caller using `recursive` without redundantly naming its parent in `dirs`
+    could copy the archive into a path one `git add` from a commit, through this
+    module's own API.
+    """
+    # Nothing turned off: require_ignored is the literal True the public door
+    # passes, and the register is the real one. kind="root" never reaches the
+    # ignore question anyway (a root's relpath is empty), so the root call needs
+    # no exemption and does not take one.
+    dest = _check_destination(root, kind="root", require_ignored=True,
+                              worktrees=None, env=env)
     wts = [dest.worktree]
 
     def one(rel, kind):
-        # check_destination re-walks every component from the worktree root
+        # The checker re-walks every component from the worktree root
         # down, which is what sees a link planted ABOVE the leaf: a link at
         # <root>/private is invisible to an lstat of <root>/private/1-raw-data.
         # require_ignored=False because the ignore question is asked once per
-        # DECLARED path in the phase above, not again per leaf.
+        # DECLARED path in the phase above -- which is why that phase must cover
+        # every argument that reaches here, and why the loop below is over their
+        # union rather than over `dirs` alone. It goes through the PRIVATE
+        # _check_destination() because that exemption is not on the public
+        # signature: this module is the only caller entitled to it, and the
+        # single-path API a writer calls must not be able to spell it. Same
+        # function body either way -- check_destination() is a one-line
+        # delegation to it, so the two cannot drift. `wts` is the root this call
+        # just accepted, already physically resolved.
         p = os.path.join(dest.path, rel)
-        check_destination(p, kind=kind, require_ignored=False, worktrees=wts, env=env)
+        _check_destination(p, kind=kind, require_ignored=False, worktrees=wts, env=env)
         return p
 
     # In PHASES, not path by path, because the phases answer different questions
@@ -660,16 +823,28 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None,
     # whole set before any of it is inspected for links. It is also the order
     # stage-private-data.sh checks in, which is what lets the two be compared.
     #
-    # The ignore/tracked question is asked of the DECLARED paths, and of a leaf
-    # only when no declared directory already covers it: check-ignore and
-    # ls-files both answer for a whole subtree, so asking again per leaf would
-    # add a second verdict on the same fact and a second way to drift.
-    covered = tuple(dirs) + tuple(recursive)
+    # The ignore/tracked question is asked of EVERY declared path -- every
+    # directory, every recursively-copied subtree, every leaf -- and skipped
+    # only where a path already asked covers it: check-ignore and ls-files both
+    # answer for a whole subtree, so asking again underneath would add a second
+    # verdict on the same fact and a second way to drift.
+    #
+    # Covered-not-asked is also what keeps the two implementations comparable.
+    # stage-private-data.sh asks about three managed paths and copies its
+    # subtrees beneath one of them; asking again for private/1-raw-data/
+    # electric-bills would make the python side refuse ignore_unanswerable
+    # (check-ignore exits 128 for a path beyond a symbolic link) on a fixture
+    # where the shell reaches the symlink scan and says symlink_component.
+    # Same rule, same answers -- but only because "covered" means covered by a
+    # path that was really asked, never by a path that was merely declared.
     expanded = [n for rel in leaves for n in _expand(rel, root, glob_source)]
-    for rel in dirs:
-        _require_uncommittable(dest.path, rel, env)
+    covered = []
+    for rel in tuple(dirs) + tuple(recursive):
+        if not _covered_by(rel, covered):
+            _require_uncommittable(dest.path, rel, env)
+        covered.append(rel)
     for name in expanded:
-        if not any(name == d or name.startswith(d + "/") for d in covered):
+        if not _covered_by(name, covered):
             _require_uncommittable(dest.path, name, env)
     for rel in dirs:
         one(rel, "dir")
@@ -678,6 +853,14 @@ def check_write_set(root, *, dirs=(), leaves=(), recursive=(), glob_source=None,
     for name in expanded:
         one(name, "file")
     return dest
+
+
+def _covered_by(rel, prefixes):
+    """Is `rel` inside a path already answered for? `prefixes` holds the paths
+    whose committability has been settled -- asked directly, or contained in one
+    that was, which is the same fact one level up. Matched on a PATH BOUNDARY,
+    never on characters: "private/verify2" is not covered by "private/verify"."""
+    return any(rel == p or rel.startswith(p + "/") for p in prefixes)
 
 
 def _expand(rel, root, glob_source):
@@ -701,7 +884,11 @@ def refusal(path, *, kind, **kw):
     """Non-raising form: the refusal reason code, or None if accepted.
 
     `kind` is required here too. A convenience wrapper that quietly supplied one
-    would be the optional-flag hole again, one layer out.
+    would be the optional-flag hole again, one layer out. `**kw` widens nothing:
+    it can only carry what check_destination() accepts, so require_ignored=,
+    worktrees= and env= each raise TypeError through this door as well -- not
+    caught here, because a keyword that does not exist is a bug in the caller
+    and not a verdict about the path.
     """
     try:
         check_destination(path, kind=kind, **kw)

@@ -37,6 +37,7 @@ Run from the repo root:  ./.venv/bin/python analysis/test_private_egress.py
 """
 import ast
 import contextlib
+import inspect
 import os
 import pathlib
 import re
@@ -75,13 +76,30 @@ class SkipCase(Exception):
 # DATA, or a write of private-derived content at a fixed private path -- which
 # is a dozen or so sites in this tree, not the ~120 that write anything:
 #
-#   python   a copy call (shutil.copy/copy2/copyfile/copytree/move, os.link,
-#            os.symlink, tarfile extraction, shutil.unpack_archive) any of
-#            whose arguments is a path ANCHORED AT THE REPO ROOT that names
+#   python   a copy call (shutil.copy/copy2/copyfile/copytree/copyfileobj/move,
+#            os.link, os.symlink, tarfile extraction, shutil.unpack_archive) any
+#            of whose arguments is a path ANCHORED AT THE REPO ROOT that names
 #            private/, or a write call (write_text/write_bytes/mkdir) AT such a
 #            path. Root-anchoring is what separates the real archive from the
 #            many test fixtures built under a temp directory whose own path
 #            contains the word "private".
+#   python   an ORDINARY WRITE of a file at such a path, which is the way a
+#            mover would most likely be written by somebody not thinking about
+#            this registry at all: open(p, "wb") or Path.open("w") or
+#            os.open(p, O_WRONLY) in any write-capable mode, os.write() to a
+#            descriptor opened that way, and the rename/replace family
+#            (os.replace, os.rename, os.renames, Path.replace, Path.rename,
+#            Path.symlink_to, Path.hardlink_to) -- which is how an atomic write
+#            lands, and how a `tmp` file written anywhere becomes the archive.
+#            A read-mode open is NOT a mover: reading the archive is what the
+#            whole pipeline does. The mode decides, and it is read out of the
+#            slot that call shape really puts it in, never out of any string
+#            that happens to be an argument. An open whose mode is a variable
+#            counts as a write -- fail closed, like the SyntaxError branch.
+#            For the rename family and for Path.open the RECEIVER counts as
+#            well as the arguments: `tmp.replace(ROOT/"private"/x)` taints
+#            through the argument, `(ROOT/"private"/x).replace(elsewhere)`
+#            through the receiver, and both move the archive.
 #   python   a tempfile.mkstemp/mkdtemp/NamedTemporaryFile with NO dir= in a
 #            SHIPPED module that handles private data. That is not a copy, it
 #            is worse: the destination is whatever TMPDIR says, so the file
@@ -103,7 +121,21 @@ class SkipCase(Exception):
 # fixture into their own temp directory. With them fixed the same rule adds
 # three sites and no false positives -- measured, both times, on this tree.
 #
-# WHAT IT MISSES, stated rather than discovered later:
+# The ordinary-write rules above were added the same way and measured the same
+# way: on this tree they add ZERO sites -- no new movers and no false positives
+# -- so what they buy is entirely prospective. That is the point. The census
+# existed for two review rounds while recognising only a hard-coded set of copy
+# calls, so a mover written the ordinary way (open(p, "wb"), copyfileobj, an
+# atomic replace) would never have appeared in it and the census would have
+# stayed green with an unguarded egress path shipping. A census with a blind
+# spot is worse than no census, because it is what a reviewer trusts instead of
+# looking. Every pattern claimed here has a planted positive control in
+# case_discovery_finds_every_supported_write_pattern, which fails if the rule is
+# removed -- "supported" is proved, not asserted.
+#
+# WHAT IT MISSES, stated rather than discovered later. Two of these were
+# MEASURED and deliberately left open, with the numbers, because the rule that
+# would close them costs more than it buys on this tree:
 #   * a private path that arrives as a bare function PARAMETER. The pass
 #     propagates through assignments, for-targets, with-targets and parameter
 #     DEFAULTS within a scope, and through a function's return value; it does
@@ -119,10 +151,44 @@ class SkipCase(Exception):
 #     of tracked files plus untracked-not-ignored ones, so a mover added but
 #     not yet committed IS seen; one hidden inside private/ is not, and that is
 #     deliberate: private/ is not published.
+#   * CONTENT taint: private bytes read into a variable and written at a
+#     destination that is not itself a private path --
+#     `dest.write_bytes((ROOT/"private"/x).read_bytes())`. Every rule here
+#     taints PATHS, never payloads. MEASURED: extending write_text/write_bytes
+#     to fire on a tainted ARGUMENT rather than a tainted receiver finds exactly
+#     one site in this tree, parse_bills.main writing
+#     data/bill_corpus_boundary.json -- a de-identified artifact, which is the
+#     product and not egress. One false positive, no true positives, so the
+#     rule is not adopted. The same measurement on the serialiser family
+#     (to_csv/to_json/json.dump with a tainted argument) finds four sites, all
+#     four of them generators writing committed artifacts into data/. A rule
+#     whose whole yield on the real tree is the thing the census explicitly
+#     excludes would teach people to suppress it.
+#   * a serialiser handed the private path directly: `df.to_csv(ROOT/"private"/
+#     x)`, `np.save`, `fig.savefig`. Not in any call set above, and not addable
+#     without the false positives just measured. Narrower than it looks:
+#     `json.dump(obj, fh)` IS discovered, because the handle it needs comes from
+#     a write-capable open of a private path and that open is a rule above. A
+#     serialiser that opens the file itself is what stays invisible.
+#   * a file written by neither python nor a shell script: a Makefile, a
+#     CI workflow's `cp` step, an editor task, a git hook that is not a shell
+#     script. discover_shell() reads .sh files and shebang-sh files only.
+#   * a mover reached through a name this cannot resolve: getattr(shutil, name),
+#     a dispatch table of functions, a subprocess argv built from a glob rather
+#     than from the script's literal name.
 # ===========================================================================
-COPY_CALLS = {"copy", "copy2", "copyfile", "copytree", "move", "unpack_archive",
-              "extractall", "extract", "link", "symlink"}
+COPY_CALLS = {"copy", "copy2", "copyfile", "copytree", "copyfileobj", "move",
+              "unpack_archive", "extractall", "extract", "link", "symlink"}
 WRITE_CALLS = {"write_text", "write_bytes", "mkdir"}
+# The rename/replace family, matched on the RECEIVER as well as the arguments:
+# os.replace(tmp, private) taints through an argument, tmp.replace(private)
+# through both, (ROOT/"private"/x).rename(elsewhere) through the receiver.
+MOVE_METHODS = {"replace", "rename", "renames", "symlink_to", "hardlink_to",
+                "link_to"}
+# Write-capable open modes. Checked against the mode STRING, whose meaning is
+# the same for open() and Path.open(); os.open() is checked against its flags.
+WRITE_MODE = re.compile(r"[wax+]")
+OS_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC", "O_EXCL"}
 TEMP_CALLS = {"mkstemp", "mkdtemp", "NamedTemporaryFile", "TemporaryFile"}
 RUN_CALLS = {"run", "Popen", "call", "check_call", "check_output"}
 SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -287,6 +353,90 @@ def _call_name(node):
     return f.id if isinstance(f, ast.Name) else ""
 
 
+def _is_os(node):
+    return isinstance(node, ast.Name) and node.id == "os"
+
+
+def _mode_writes(node):
+    """Can a file opened with this mode/flags argument be written through?
+
+    None is a READ: both open() and Path.open() default to "r", and reading the
+    archive is what this pipeline does all day. A literal is read literally. An
+    os.open() flags expression is read for the O_* names it mentions. Anything
+    else -- a mode held in a variable, an f-string, a conditional -- counts as a
+    write: a rule that cannot see the mode must not answer "read", for the same
+    reason discover_python() refuses to skip a file it cannot parse.
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str) and bool(WRITE_MODE.search(node.value))
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Attribute) and sub.attr in OS_WRITE_FLAGS:
+            return True
+        if isinstance(sub, ast.Name) and sub.id in OS_WRITE_FLAGS:
+            return True
+    if any(isinstance(sub, ast.Attribute) and sub.attr == "O_RDONLY"
+           for sub in ast.walk(node)):
+        return False
+    return True
+
+
+def _write_open(node, tainted):
+    """A write-capable open OF a repo-root private path -> the evidence line.
+
+    The mode is taken from the slot the CALL SHAPE puts it in, never from "any
+    string argument": open(file, mode) and os.open(path, flags) carry it
+    second, Path.open(mode) carries it first and the path as the receiver. A
+    looser reading would call open(p, "r", encoding="utf-8") a write on the
+    strength of some unrelated argument.
+    """
+    f = node.func
+    kw = {k.arg: k.value for k in node.keywords}
+    pos = list(node.args)
+    if isinstance(f, ast.Name) and f.id == "open":
+        path = pos[0] if pos else kw.get("file")
+        mode, label = (pos[1] if len(pos) > 1 else kw.get("mode")), "open()"
+    elif isinstance(f, ast.Attribute) and _is_os(f.value) and f.attr in ("open", "fdopen"):
+        path = pos[0] if pos else None
+        slot = "flags" if f.attr == "open" else "mode"
+        mode, label = (pos[1] if len(pos) > 1 else kw.get(slot)), f"os.{f.attr}()"
+    elif isinstance(f, ast.Attribute) and f.attr == "open":
+        path = f.value
+        mode, label = (pos[0] if pos else kw.get("mode")), "Path.open()"
+    else:
+        return None
+    if path is None or not _tainted(path, tainted) or not _mode_writes(mode):
+        return None
+    return f"{label} in a write mode AT a repo-root private path"
+
+
+def _move_call(node, tainted):
+    """A rename/replace/link of a repo-root private path -> the evidence line.
+
+    Read by ARITY as well as by name, because `str.replace` shares a name with
+    `Path.replace` and this pass has no types. os.replace(src, dst) and
+    os.rename(src, dst) take two paths; every method form here --
+    Path.replace/rename/symlink_to/hardlink_to -- takes exactly one positional
+    path, and a two-positional `s.replace(old, new)` on a string built from a
+    private path is a string edit, not a move. Widening the CALL SET must not
+    widen the taint rule, and this is where it would have.
+    """
+    f = node.func
+    if not isinstance(f, ast.Attribute) or f.attr not in MOVE_METHODS:
+        return None
+    if _is_os(f.value):
+        if f.attr not in ("replace", "rename", "renames"):
+            return None
+    elif len(node.args) != 1:
+        return None
+    args = list(node.args) + [k.value for k in node.keywords]
+    if not (_tainted(f.value, tainted) or any(_tainted(a, tainted) for a in args)):
+        return None
+    where = "os." if _is_os(f.value) else "Path."
+    return f"{where}{f.attr}() of a repo-root private path"
+
+
 def discover_shell(root=ROOT, files=None):
     """{(relpath, "<script>"): [evidence]} for shell scripts that copy.
 
@@ -348,12 +498,22 @@ def discover_python(root=ROOT, files=None, shell_scripts=()):
                     continue
                 nm = _call_name(node)
                 args = list(node.args) + [k.value for k in node.keywords]
+                recv = node.func.value if isinstance(node.func, ast.Attribute) else None
+                opened = _write_open(node, tainted)
+                moved = _move_call(node, tainted)
                 why = None
                 if nm in COPY_CALLS and any(_tainted(a, tainted) for a in args):
                     why = f"{nm}() of a repo-root private path"
                 elif (nm in WRITE_CALLS and isinstance(node.func, ast.Attribute)
                       and _tainted(node.func.value, tainted)):
                     why = f"{nm}() AT a repo-root private path"
+                elif opened:
+                    why = opened
+                elif moved:
+                    why = moved
+                elif (nm == "write" and _is_os(recv) and args
+                      and _tainted(args[0], tainted)):
+                    why = "os.write() to a descriptor opened at a repo-root private path"
                 elif nm in RUN_CALLS and any(
                         _taints(a, scripts, script_seed) for a in args):
                     why = "invokes a mover script"
@@ -772,7 +932,18 @@ def _shell_verdict(res):
 
 def _python_verdict(root, src, env=None):
     """private_egress's verdict on the same question, over the write set parsed
-    from the shell script itself."""
+    from the shell script itself.
+
+    env=None -- the ordinary case, where a forged environment is really SET in
+    this process rather than handed over as a parameter the module could ignore
+    -- goes through the public check_write_set(). A forged environment passed as
+    a PARAMETER goes through the private _check_write_set(), because `env=` can
+    manufacture the "ignored" verdict and therefore sits on no public signature
+    (PUBLIC_PARAMS). The agreement case asks both ways and requires the same
+    answer: a parameter that produced a different verdict from the real
+    environment would make every env fixture in this table a test of the wrong
+    thing.
+    """
     ignore, subtrees, leaves = _shell_write_set(SCRIPT.read_text())
     # A managed path that the copies also write as a FILE is a leaf, not a
     # directory -- derived from the two parsed lists rather than re-typed, so a
@@ -784,8 +955,12 @@ def _python_verdict(root, src, env=None):
     recursive = [f"private/1-raw-data/{s}" for s in subtrees
                  if (pathlib.Path(src) / "private" / "1-raw-data" / s).is_dir()]
     try:
-        PE.check_write_set(root, dirs=dirs, leaves=leaves, recursive=recursive,
-                           glob_source=src, env=env)
+        if env is None:
+            PE.check_write_set(root, dirs=dirs, leaves=leaves,
+                               recursive=recursive, glob_source=src)
+        else:
+            PE._check_write_set(root, dirs=dirs, leaves=leaves,
+                                recursive=recursive, glob_source=src, env=env)
         return None
     except PE.DestinationRefused as e:
         return e.reason
@@ -1186,6 +1361,25 @@ def _single_verdict(path, kind):
         return e.reason
 
 
+def _private_verdict(path, *, kind, require_ignored=True, worktrees=None, env=None):
+    """The same verdict through the PRIVATE _check_destination().
+
+    Every parameter that can weaken a check lives there and on no public
+    signature (PUBLIC_PARAMS below), so a case that needs one -- an empty
+    register, a forged environment, the committability exemption -- has to be an
+    in-module caller rather than an ordinary one, exactly like check_write_set().
+    Kept as one helper so the cases below cannot each invent their own way past
+    the public door.
+    """
+    try:
+        PE._check_destination(path, kind=kind, require_ignored=require_ignored,
+                              worktrees=worktrees, env=env)
+        return None
+    except PE.DestinationRefused as e:
+        OBSERVED.add((kind, e.reason))
+        return e.reason
+
+
 # ===========================================================================
 # CASES -- the census
 # ===========================================================================
@@ -1338,6 +1532,124 @@ def case_discovery_finds_an_unregistered_mover():
         assert ("analysis/planted.py", "stage") not in again, (
             "a function that only READS a private path was reported as a mover")
     return "a planted copy is discovered in both languages; a mere read is not"
+
+
+# One planted control per write pattern the discovery pass claims to support,
+# and one per shape it must keep OUT. Each positive is a mover written the way
+# somebody who never read this registry would write it; each negative is a
+# shape the widened call set could have swallowed. Written as data so that
+# "supported" is a row here rather than a sentence in a comment: deleting a
+# rule from discover_python() fails on its own row, naming the pattern.
+#
+# Every body is planted at ROOT/private/..., because ROOT-ANCHORING IS THE
+# TAINT RULE and widening the call set must not widen it. The third negative is
+# the same builtin open() as the first positive, at a path that merely contains
+# the word "private" -- the fixture shape this whole tree is full of.
+PLANTED_WRITE_PATTERNS = (
+    ("builtin_open_wb", "open() in a write mode",
+     '    with open(ROOT / "private" / "cache.json", "wb") as fh:\n'
+     "        fh.write(payload)\n"),
+    ("path_open_w", "Path.open() in a write mode",
+     '    fh = (ROOT / "private" / "cache.json").open("w")\n'
+     "    fh.close()\n"),
+    ("open_with_the_mode_in_a_variable", "open() in a write mode",
+     '    fh = open(ROOT / "private" / "cache.json", mode)\n'
+     "    fh.close()\n"),
+    ("os_open_then_os_write", "os.write()",
+     '    fd = os.open(str(ROOT / "private" / "cache.json"),\n'
+     "                 os.O_WRONLY | os.O_CREAT)\n"
+     "    os.write(fd, payload)\n"
+     "    os.close(fd)\n"),
+    # The descriptor, not the open: this one is opened READ-ONLY, so the
+    # os.open() rule does not fire and only the os.write() rule can see it.
+    # Without it, removing the os.write() rule would still leave the row above
+    # discovered by its own os.open(), and the control would prove nothing.
+    ("os_write_to_a_read_opened_descriptor", "os.write()",
+     '    fd = os.open(str(ROOT / "private" / "cache.json"), os.O_RDONLY)\n'
+     "    os.write(fd, payload)\n"
+     "    os.close(fd)\n"),
+    ("copyfileobj_from_the_archive", "copyfileobj()",
+     '    with open(ROOT / "private" / "1-raw-data" / "usage.csv", "rb") as src, \\\n'
+     '            open(dest, "wb") as dst:\n'
+     "        shutil.copyfileobj(src, dst)\n"),
+    ("atomic_replace_onto_the_archive", "os.replace()",
+     '    tmp = pathlib.Path(str(dest) + ".tmp")\n'
+     "    tmp.write_bytes(payload)\n"
+     '    os.replace(tmp, ROOT / "private" / "cache.json")\n'),
+    ("path_replace_of_the_archive", "Path.replace()",
+     '    (ROOT / "private" / "cache.json").replace(dest)\n'),
+    ("os_rename_of_the_archive", "os.rename()",
+     '    os.rename(ROOT / "private" / "cache.json", dest)\n'),
+    ("symlink_to_the_archive", "Path.symlink_to()",
+     '    dest.symlink_to(ROOT / "private" / "1-raw-data")\n'),
+)
+
+PLANTED_NON_MOVERS = (
+    ("reads_the_archive_in_binary",
+     '    with open(ROOT / "private" / "1-raw-data" / "usage.csv", "rb") as fh:\n'
+     "        return fh.read()\n"),
+    ("reads_the_archive_with_path_open",
+     '    return (ROOT / "private" / "cache.json").open().read()\n'),
+    ("writes_a_fixture_under_a_temp_path_containing_private",
+     '    p = os.path.join(tmpdir, "private", "usage.csv")\n'
+     '    with open(p, "wb") as fh:\n'
+     "        fh.write(payload)\n"),
+    ("edits_a_string_built_from_an_archive_path",
+     '    return str(ROOT / "private" / "cache.json").replace("private", "public")\n'),
+)
+
+
+@case
+def case_discovery_finds_every_supported_write_pattern():
+    """A planted positive control for EVERY pattern this pass claims to read,
+    and a negative for every shape it must not read.
+
+    The census recognised a hard-coded set of copy calls for two review rounds.
+    A mover written the ordinary way -- open(p, "wb"), copyfileobj, an atomic
+    os.replace -- would never have appeared in MOVERS, and every case above
+    would have gone on passing while an unguarded egress path shipped. The
+    single planted control that existed exercised shutil.copytree only, so the
+    hole was invisible to the suite that was supposed to prove there was none.
+
+    Each row is planted in its own function so a failure names the pattern that
+    broke rather than "discovery found fewer things".
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        subprocess.run(["git", "init", "-q", str(root)], capture_output=True, check=True)
+        (root / "analysis").mkdir()
+        body = ["import os\nimport pathlib\nimport shutil\n",
+                "ROOT = pathlib.Path(__file__).resolve().parent.parent\n"]
+        for name, _, code in PLANTED_WRITE_PATTERNS:
+            body.append(f"\n\ndef {name}(dest, payload, mode, tmpdir):\n{code}")
+        for name, code in PLANTED_NON_MOVERS:
+            body.append(f"\n\ndef {name}(dest, payload, mode, tmpdir):\n{code}")
+        (root / "analysis" / "planted.py").write_text("".join(body))
+        found = discover(root)
+
+    missed, mislabelled, spurious = [], [], []
+    for name, evidence, _ in PLANTED_WRITE_PATTERNS:
+        hits = found.get(("analysis/planted.py", name))
+        if not hits:
+            missed.append(name)
+        elif not any(evidence in h for h in hits):
+            mislabelled.append(f"{name}: expected {evidence!r}, got {hits}")
+    for name, _ in PLANTED_NON_MOVERS:
+        if ("analysis/planted.py", name) in found:
+            spurious.append(f"{name}: {found[('analysis/planted.py', name)]}")
+    assert not missed, (
+        "discovery does not see these ordinary ways to write a file, so a mover "
+        f"written that way would never reach MOVERS: {missed}")
+    assert not mislabelled, (
+        "discovered, but by a rule that does not describe what it found -- the "
+        f"evidence line is what a reviewer reads: {mislabelled}")
+    assert not spurious, (
+        "discovery reported a non-mover. Widening the CALL set must not widen "
+        "the TAINT rule: a read is not a move, a two-argument str.replace is not "
+        f"a rename, and a fixture under a temp path is not the archive: {spurious}")
+    return (f"all {len(PLANTED_WRITE_PATTERNS)} supported write patterns are "
+            f"discovered on planted controls, and all {len(PLANTED_NON_MOVERS)} "
+            "near-miss shapes are not")
 
 
 @case
@@ -1507,6 +1819,18 @@ def case_the_shell_and_the_python_predicate_agree_on_every_destination():
                 finally:
                     os.environ.clear()
                     os.environ.update(saved)
+                # ... and the same forged environment handed over as a
+                # PARAMETER -- through the private door that carries it, since
+                # no public one does -- must reach the same verdict as really
+                # having it in the process. The two are the same sanitizer or
+                # every env fixture in this table proves nothing about the
+                # parameter, which is the form an in-process caller uses.
+                if env is not None:
+                    by_param = _python_verdict(dest, src, env=env)
+                    if by_param != py:
+                        bad.append(f"{tc.name}: the forged environment gives "
+                                   f"{py!r} when set in the process and "
+                                   f"{by_param!r} when passed as env=")
         shown = (f"{kind}:{single or 'ACCEPT'}" if tc.probe is not None
                  else f"n/a -- {tc.single_na[:40]}")
         # The marker reports what the TABLE declares, not what this run
@@ -1599,10 +1923,87 @@ def case_the_register_is_read_from_this_checkout_not_from_the_destination():
 def case_an_unreadable_register_refuses_rather_than_admits():
     """Fail closed. git always reports at least the main worktree, so an empty
     listing means the question went unanswered -- which must not read as 'no
-    restrictions'."""
-    assert PE.refusal(ROOT / "private" / "x", kind="file",
-                      worktrees=[]) == "register_unavailable"
-    return "an empty worktree register refuses every destination"
+    restrictions'.
+
+    Asked through the private door: `worktrees=` REPLACES the register, so it is
+    not on a public signature (PUBLIC_PARAMS). An empty list is the one value of
+    it that cannot weaken anything, and it is still reached the same way -- a
+    test that kept a public route open for its own convenience would be arguing
+    against the thing it tests.
+    """
+    assert _private_verdict(ROOT / "private" / "x", kind="file",
+                            worktrees=[]) == "register_unavailable"
+    # A register naming only directories that do not exist is the same fact: the
+    # entries resolve to nothing and are dropped, exactly as a stale entry from
+    # git's own register is, so it fails closed rather than falling through to a
+    # membership question it cannot answer.
+    assert _private_verdict(ROOT / "private" / "x", kind="file",
+                            worktrees=["/no/such/worktree"]) == "register_unavailable"
+    return "an empty or wholly stale worktree register refuses every destination"
+
+
+@case
+def case_a_supplied_register_is_normalized_the_way_the_read_one_is():
+    """The asymmetry that made `worktrees=` behave differently depending on how
+    the caller SPELLED a path.
+
+    _locate_worktree() matches by resolving each literal ancestor of the
+    destination and comparing against the register. registered_worktrees()
+    resolves what it reads from git; a SUPPLIED register used to be compared
+    raw. So one directory, three spellings, three answers:
+
+        worktrees=[realpath(repo)]   -> ACCEPTED
+        worktrees=[repo]             -> different_repository   (macOS /var, ...)
+        worktrees=[symlink_to(repo)] -> different_repository
+
+    It only ever worked because check_write_set() happens to pass
+    Destination.worktree, which is already resolved. That is a property of one
+    call site, not of the parameter, and the next internal caller -- the only
+    kind there can be now -- would have been told "different repository" about a
+    directory that is the very worktree it just verified.
+
+    Both registers now go through _resolve_register(), so this case asserts the
+    three spellings AGREE rather than asserting any one verdict. Needs no
+    private archive: the fixture is a throwaway repository.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = pathlib.Path(td) / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+        (repo / ".gitignore").write_text("scratch/\n")
+        link = pathlib.Path(td) / "reached-through-a-link"
+        link.symlink_to(repo, target_is_directory=True)
+        target = repo / "scratch" / "x"
+
+        spellings = {
+            "realpath": os.path.realpath(repo),
+            "literal": str(repo),
+            "symlink": str(link),
+        }
+        got = {name: _private_verdict(target, kind="dir", worktrees=[p])
+               for name, p in spellings.items()}
+        assert len(set(got.values())) == 1, (
+            f"the same registered directory gets different verdicts depending on "
+            f"how it is spelled in the register: {got}")
+        assert got["realpath"] is None, (
+            f"the fixture stopped being an accepting one ({got['realpath']}) -- it "
+            "has to accept, or agreeing verdicts prove nothing")
+
+    # And the two registers share ONE normalizer, so they cannot drift back
+    # apart: the function git's own listing is resolved by is the function a
+    # supplied list is resolved by.
+    tree = ast.parse((ANALYSIS / "private_egress.py").read_text())
+    users = sorted({fn.name for fn in ast.walk(tree)
+                    if isinstance(fn, ast.FunctionDef)
+                    for n in ast.walk(fn)
+                    if isinstance(n, ast.Call)
+                    and getattr(n.func, "id", "") == "_resolve_register"})
+    assert users == ["_check_destination", "registered_worktrees"], (
+        f"_resolve_register() is called from {users}; the read register and the "
+        "supplied one must both go through it, or one side of _locate_worktree's "
+        "comparison is resolved and the other is not")
+    return ("a supplied register is resolved exactly as the one read from git: "
+            f"{len(spellings)} spellings of one worktree, one verdict")
 
 
 @case
@@ -1737,6 +2138,293 @@ def case_the_public_api_cannot_be_asked_without_a_destination_kind():
     return f"the kind is required, and only {list(PE.KINDS)} are accepted"
 
 
+# The module's PUBLIC entry points and every parameter each one takes -- as an
+# ALLOWLIST, with what each parameter DESCRIBES written next to it.
+#
+# The generalisation of the defect below. Three separate keywords have now been
+# found on a public signature that did not describe the destination but weakened
+# the answer about it (require_ignored=, worktrees=, env=), and each was found by
+# somebody reading the signature. A set of names alone cannot tell the next one
+# apart from a legitimate addition; a set of names with a stated ROLE can, because
+# adding a fourth weakener here means writing down a description of it that is
+# false, under review, next to three that are true.
+#
+# What this table CAN check mechanically is the exact parameter set -- a keyword
+# added to a public door and not classified here fails at once -- plus, through
+# PRIVATE_DOORS below, that every known weakener is on the private side and only
+# there. What it cannot check is whether a NEW parameter weakens a check; no test
+# can. It gets the reader to the one place where a human decides, which is what
+# the earlier version of this table was for and what it did not quite say.
+PUBLIC_PARAMS = {
+    "check_destination": {
+        "path": "WHICH path the caller will write to",
+        "kind": "WHAT it will write there -- and its four values are all equally "
+                "strong, so there is no weak one to fall into",
+    },
+    "refusal": {
+        "path": "as check_destination",
+        "kind": "as check_destination",
+        "kw":   "forwarded verbatim to check_destination(), so it is bounded by "
+                "that signature and can carry nothing this table does not list. "
+                "Asserted below rather than assumed",
+    },
+    "check_write_set": {
+        "root":        "WHICH worktree root the set is staged into",
+        "dirs":        "WHICH paths, as directories written into non-recursively",
+        "recursive":   "WHICH paths, as directories a recursive copy descends",
+        "leaves":      "WHICH paths, as regular files -- a glob among them names "
+                       "fewer paths, never a laxer check on one",
+        "glob_source": "WHICH tree a leaf pattern is expanded against. It can "
+                       "UNDERSTATE the set (a wrong source yields fewer names) "
+                       "and cannot waive a check on any name it does yield, so "
+                       "it describes the destination set rather than weakening "
+                       "the question asked of it",
+    },
+}
+
+# The parameters that WEAKEN a check, what each can manufacture, and the private
+# door that carries it. Each was reachable from a public signature at some point
+# in this module's history, and each is now spellable only from inside it.
+WEAKENERS = {
+    "require_ignored": "skips the ignore/tracked question entirely, so the "
+                       "TRACKED index.html is accepted",
+    "worktrees":       "replaces the register, so a gitignored path in an "
+                       "UNRELATED repository is accepted -- the 2026-08-13 "
+                       "shape, through a keyword",
+    "env":             "does not clear HOME, so a .gitconfig with "
+                       "core.excludesFile manufactures the 'ignored' verdict "
+                       "and data/leak.json is accepted",
+}
+
+# public entry point -> (the private door it delegates to, the weakeners that
+# door carries). Both directions are asserted: the private door must carry
+# exactly these beyond its public face, so moving one back out to the public
+# signature fails HERE as well as in PUBLIC_PARAMS -- two locks, because a
+# single one can be opened by the same edit that opens the door.
+PRIVATE_DOORS = {
+    "check_destination": ("_check_destination", {"require_ignored", "worktrees", "env"}),
+    "check_write_set":   ("_check_write_set", {"env"}),
+}
+
+
+@case
+def case_no_public_entry_point_can_weaken_a_check():
+    """FINDINGS 2-4: three checks had a public off switch, found one at a time.
+
+        check_destination(ROOT/"index.html", kind="file")
+            -> REFUSED [tracked_path]
+        check_destination(ROOT/"index.html", kind="file", require_ignored=False)
+            -> ACCEPTED                            on the repo's own TRACKED file
+
+        check_destination(<other repo>/private/x, kind="dir")
+            -> REFUSED [different_repository]
+        check_destination(<other repo>/private/x, kind="dir",
+                          worktrees=[realpath(<other repo>)])
+            -> ACCEPTED               a gitignored path in an UNRELATED checkout,
+                                      which is the 2026-08-13 incident exactly
+
+        check_destination(ROOT/"data/leak.json", kind="file")
+            -> REFUSED [not_ignored]
+        check_destination(ROOT/"data/leak.json", kind="file", env=<HOME with a
+                          .gitconfig whose core.excludesFile names leak.json>)
+            -> ACCEPTED                       and check_write_set(env=...) too
+
+    Each passed every OTHER check -- symlink walk, register, leaf, kind -- so in
+    all three the refusal that did not happen is the only thing missing.
+
+    Each capability is legitimate for exactly one internal caller and still
+    exists: check_write_set() asks the committability question itself and then
+    hands the paths below the root through with the exemption, in one
+    already-verified worktree, in one environment. All three moved to the
+    PRIVATE _check_destination()/_check_write_set(), which the public doors are
+    one-line delegations to. So they were made unreachable, not deleted --
+    asserted both ways below, because a "fix" that deleted them would make
+    check_write_set() re-ask the ignore question underneath an answered path and
+    change the verdicts the agreement table compares.
+
+    Why signatures and not a convention: this module's whole argument is that a
+    check which can be waived will be waived. That is why `kind` is required
+    rather than defaulted, and the `recursive` hole was require_ignored being
+    passed without the phase meant to justify it. `env=` was the sharpest of the
+    three -- a TEST-ONLY parameter sitting on the door an argument-derived
+    writer calls.
+
+    ON env= AND HOME, so a later reader does not re-open it and reach for the
+    sanitizer list instead: HOME is deliberately NOT added to GIT_IDENTITY_VARS.
+    It supplies a legitimate INPUT to the real repository's answer rather than
+    replacing WHICH repository answers, which is the property that whole list is
+    for; clearing it would make this module disagree with the operator's own
+    shell in a way no fixture here would catch, since this checkout has
+    core.excludesFile unset; and the forgery needs an in-process caller who
+    could equally call shutil.copy. The equality with
+    stage-private-data.sh's sanitizer therefore stays as it is, and the lever
+    taken instead is the REACH of the parameter -- which is this case.
+    """
+    tracked = ROOT / "index.html"
+    assert tracked.is_file(), f"{tracked} is missing -- pick another tracked file"
+    assert _single_verdict(tracked, "file") == "tracked_path", (
+        "the reproduction's premise is gone: this tracked path is no longer "
+        "refused even with the check ON")
+
+    with tempfile.TemporaryDirectory() as td:
+        # One reproduction per weakener, each a value that REALLY manufactures
+        # an acceptance -- proved in step 1a against the private door, because a
+        # "reproduction" whose value happened to be inert would prove only that
+        # the keyword is now spelled somewhere else.
+        other = pathlib.Path(td) / "unrelated-project"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q", str(other)], check=True, capture_output=True)
+        (other / ".gitignore").write_text("private/\n")
+        home = pathlib.Path(td) / "home"
+        home.mkdir()
+        (home / "excludes").write_text("leak.json\n")
+        (home / ".gitconfig").write_text(
+            f"[core]\n\texcludesFile = {home / 'excludes'}\n")
+        forged = dict(os.environ, HOME=str(home))
+
+        fixtures = {
+            "require_ignored": (tracked, "file", False,
+                                "the repo's own TRACKED report file"),
+            "worktrees":       (other / "private" / "x", "dir",
+                                [os.path.realpath(other)],
+                                "a gitignored path in an UNRELATED repository"),
+            "env":             (ROOT / "data" / "leak.json", "file", forged,
+                                "a committable path made to look ignored via HOME"),
+        }
+        assert set(fixtures) == set(WEAKENERS), (
+            f"no reproduction for {sorted(set(WEAKENERS) ^ set(fixtures))} -- a "
+            "weakener classified but never typed at a public door is a claim, "
+            "not a test")
+
+        # 1a. Every value is potent, and the capability still exists where it is
+        #     earned: refused with the strong answer, ACCEPTED with the weak one.
+        #     This is also the "moved, not deleted" half -- a fix that deleted
+        #     the exemption would make the whole-set checker re-ask the ignore
+        #     question underneath an answered path and change the verdicts the
+        #     agreement table compares.
+        for keyword, (path, kind, value, what) in sorted(fixtures.items()):
+            strong = _private_verdict(path, kind=kind)
+            assert strong is not None, (
+                f"the {keyword}= reproduction lost its premise: {what} is no longer "
+                "refused with the check ON, so accepting it proves nothing")
+            weak = _private_verdict(path, kind=kind, **{keyword: value})
+            assert weak is None, (
+                f"{keyword}={value!r} did not manufacture an acceptance ({weak}) on "
+                f"{what}; without that this case tests a keyword that never worked")
+        # ... including through the whole-set door env= used to sit on.
+        PE._check_write_set(ROOT, dirs=(), recursive=(),
+                            leaves=("data/leak.json",), glob_source=None, env=forged)
+
+        # 1b. Behavioral: not spellable through ANY public door. TypeError, not a
+        #     refusal and not a Destination -- it is a bug in the caller, not a
+        #     verdict about the path.
+        for keyword, (path, kind, value, what) in sorted(fixtures.items()):
+            for describe, call in (
+                    ("check_destination",
+                     lambda p=path, k=kind, w=keyword, v=value:
+                     PE.check_destination(p, kind=k, **{w: v})),
+                    ("refusal",
+                     lambda p=path, k=kind, w=keyword, v=value:
+                     PE.refusal(p, kind=k, **{w: v})),
+                    ("check_write_set",
+                     lambda w=keyword, v=value:
+                     PE.check_write_set(ROOT, leaves=("data/leak.json",), **{w: v}))):
+                try:
+                    got = call()
+                except TypeError as e:
+                    assert keyword in str(e), (
+                        f"{describe}({keyword}=...) raised a TypeError that does "
+                        f"not name the keyword: {e}")
+                except PE.DestinationRefused as e:
+                    raise AssertionError(
+                        f"{describe}({keyword}=...) produced a refusal ({e.reason}) "
+                        "rather than rejecting the keyword -- a caller that types "
+                        "it must learn it does not exist, not that this one path "
+                        "happened to fail")
+                else:
+                    raise AssertionError(
+                        f"{describe}({keyword}=...) returned {got!r} on {what}: an "
+                        "ordinary caller can still weaken this check -- "
+                        f"{WEAKENERS[keyword]}")
+
+    # 2. Structural: every public signature is exactly the allowlist, each entry
+    #    says what it DESCRIBES, and none can smuggle a keyword through.
+    for name, declared in PUBLIC_PARAMS.items():
+        params = inspect.signature(getattr(PE, name)).parameters
+        assert set(params) == set(declared), (
+            f"{name}() takes {sorted(set(params) ^ set(declared))} that PUBLIC_PARAMS "
+            "does not classify. Add it here with what it DESCRIBES about the "
+            "destination -- and if it turns a check OFF instead, it belongs on the "
+            "private door, where a caller outside the module cannot reach it")
+        thin = sorted(k for k, why in declared.items() if len(why) < 20)
+        assert not thin, (
+            f"{name}() has parameter(s) {thin} listed with no stated role. This table "
+            "is an allowlist of parameters that only DESCRIBE the destination; an "
+            "entry with nothing written next to it classifies nothing")
+        assert not set(declared) & set(WEAKENERS), (
+            f"{name}() declares {sorted(set(declared) & set(WEAKENERS))}, which "
+            "WEAKENERS says weakens a check. A public door may not carry it")
+        var_kw = [p for p in params.values() if p.kind is inspect.Parameter.VAR_KEYWORD]
+        if var_kw:
+            # refusal(**kw) is bounded by check_destination's own signature, which
+            # the loop above pins. Asserted, not assumed: a **kw forwarded to
+            # something laxer would put the keyword straight back.
+            assert name == "refusal", (
+                f"{name}() takes **{var_kw[0].name}, so any keyword reaches whatever "
+                "it forwards to")
+
+    # 3. The capabilities still exist where they are earned, on the private side
+    #    and only there. The second lock: a weakener moved back onto a public
+    #    signature fails here as well as in PUBLIC_PARAMS.
+    for public, (private, carried) in PRIVATE_DOORS.items():
+        pub = set(inspect.signature(getattr(PE, public)).parameters)
+        priv = set(inspect.signature(getattr(PE, private)).parameters)
+        assert priv - pub == carried, (
+            f"{private}() carries {sorted(priv - pub)} beyond {public}(); "
+            f"PRIVATE_DOORS declares {sorted(carried)}. A weakener that moved out "
+            "to the public signature shows up here")
+        assert not carried - set(WEAKENERS), (
+            f"{private}() is declared to carry {sorted(carried - set(WEAKENERS))}, "
+            "which WEAKENERS does not describe")
+
+    # 4. Each public door is a one-line delegation to its private one, passing
+    #    the STRONG value of every weakener as a literal.
+    tree = ast.parse((ANALYSIS / "private_egress.py").read_text())
+    tops = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    strong_literals = {"require_ignored": True, "worktrees": None, "env": None}
+    for public, (private, carried) in PRIVATE_DOORS.items():
+        body = [n for n in tops[public].body
+                if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))]
+        assert len(body) == 1 and isinstance(body[0], ast.Return), (
+            f"{public}() is no longer a single delegation -- two bodies drift, and "
+            "the public one is the one nobody exercises with the keyword")
+        call = body[0].value
+        assert isinstance(call, ast.Call) and getattr(call.func, "id", "") == private, (
+            f"{public}() must delegate to {private}()")
+        for keyword in sorted(carried):
+            passed = [k.value for k in call.keywords if k.arg == keyword]
+            assert len(passed) == 1 and isinstance(passed[0], ast.Constant) \
+                and passed[0].value is strong_literals[keyword], (
+                f"{public}() must pass {keyword}={strong_literals[keyword]!r} as a "
+                "literal: anything computed can be computed to the weak value")
+
+    # ... and nothing else in the module reaches a private door.
+    for private, entitled in (("_check_destination",
+                               ["_check_write_set", "check_destination"]),
+                              ("_check_write_set", ["check_write_set"])):
+        callers = sorted({name for name, fn in tops.items()
+                          for n in ast.walk(fn)
+                          if isinstance(n, ast.Call)
+                          and getattr(n.func, "id", "") == private})
+        assert callers == entitled, (
+            f"{private}() is called from {callers}, expected {entitled}; only the "
+            "public delegation and the whole-set checker -- which asks the "
+            "committability question itself -- are entitled to these")
+    return (f"none of the {len(WEAKENERS)} weakening keywords is spellable at any of "
+            f"the {len(PUBLIC_PARAMS)} public entry points, and each still works "
+            "from the private door that earns it")
+
+
 @case
 def case_check_write_set_owns_no_refusal_of_its_own():
     """The structural half of the asymmetry question: every refusal reachable
@@ -1744,30 +2432,134 @@ def case_check_write_set_owns_no_refusal_of_its_own():
     too, or the agreement table can be complete for one API and still miss a
     hole in the other -- which is exactly what happened.
 
-    Proved by reading the module: check_write_set() raises nothing itself. It
-    asks check_destination() about the root and about every path below it, and
-    _require_uncommittable() -- which check_destination() also asks -- about the
-    declared set.
+    Proved by reading the module: the whole-set checker raises nothing itself.
+    It asks the single-path checker about the root and about every path below
+    it, and _require_uncommittable() -- which that checker also asks -- about
+    the declared set.
+
+    Read off _check_write_set(), which is where the body lives now that `env=`
+    has been taken off the public signature. Same body: check_write_set() is a
+    one-line delegation to it, asserted by
+    case_no_public_entry_point_can_weaken_a_check.
     """
     tree = ast.parse((ANALYSIS / "private_egress.py").read_text())
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "check_write_set")
+              if isinstance(n, ast.FunctionDef) and n.name == "_check_write_set")
     raises = [n.lineno for n in ast.walk(fn)
               if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
               and getattr(n.exc.func, "id", "") == "DestinationRefused"]
     assert not raises, (
-        f"check_write_set() raises a refusal of its own at line(s) {raises} -- move "
-        "the check into check_destination() behind a kind, or the single-path API "
-        "silently has one fewer check than the whole-set one")
+        f"_check_write_set() raises a refusal of its own at line(s) {raises} -- move "
+        "the check into the single-path checker behind a kind, or that API silently "
+        "has one fewer check than the whole-set one")
     called = {n.func.id for n in ast.walk(fn)
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-    assert "check_destination" in called, (
-        "check_write_set() no longer routes through the public single-path API, so "
+    assert "_check_destination" in called, (
+        "_check_write_set() no longer routes through the single-path checker, so "
         "the two can drift again")
     assert "_check_leaf" not in called and "_scan_tree" not in called, (
-        "check_write_set() reaches past check_destination() to a private check -- "
-        "that is the shape that left the single-path API weaker than this one")
-    return "check_write_set() raises nothing check_destination() cannot raise"
+        "_check_write_set() reaches past the single-path checker to a private check "
+        "-- that is the shape that left the single-path API weaker than this one")
+    # The ROOT call takes no exemption. It is the one call here that must not:
+    # a root's own committability is asked by nobody else, and this is the
+    # question stage-private-data.sh is being compared against.
+    root_calls = [n for n in ast.walk(fn)
+                  if isinstance(n, ast.Call)
+                  and getattr(n.func, "id", "") == "_check_destination"
+                  and any(k.arg == "kind" and isinstance(k.value, ast.Constant)
+                          and k.value.value == "root" for k in n.keywords)]
+    assert len(root_calls) == 1, (
+        f"expected exactly one kind='root' call, found {len(root_calls)}")
+    for keyword, want in (("require_ignored", True), ("worktrees", None)):
+        passed = [k.value for k in root_calls[0].keywords if k.arg == keyword]
+        assert len(passed) == 1 and isinstance(passed[0], ast.Constant) \
+            and passed[0].value is want, (
+            f"the kind='root' call must pass {keyword}={want!r} as a literal -- the "
+            "root is the one path here that has earned no exemption")
+    return "_check_write_set() raises nothing the single-path checker cannot raise"
+
+
+# Every parameter of check_write_set() that NAMES PATHS IT WILL WRITE, and the
+# two others it takes. Split out so a fourth path argument added later cannot
+# quietly skip the committability phase: the case below fails until it is
+# classified here and exercised in the loop.
+WRITE_SET_PATH_ARGS = ("dirs", "recursive", "leaves")
+WRITE_SET_OTHER_ARGS = ("root", "glob_source", "env")
+
+
+@case
+def case_every_declared_path_is_asked_the_committability_question():
+    """FINDING 1: `recursive=` skipped the check the module exists to run.
+
+    check_write_set() hands every path below the root to the checker with
+    require_ignored=False, on the strength of an earlier phase having asked
+    the ignore/tracked question for the declared set. That phase looped over
+    `dirs` and over the leaves no declared path covered -- never over
+    `recursive`. So:
+
+        check_write_set(ROOT, recursive=("data",))  ->  ACCEPTED
+        check_write_set(ROOT, dirs=("data",))       ->  REFUSED [tracked_path]
+
+    on the same tracked, committable directory. A caller staging a subtree with
+    `recursive` -- without redundantly naming its parent in `dirs` -- could
+    recursively copy the archive into a path one `git add -A` from a commit,
+    through this module's own public API, which is the exact outcome it exists
+    to prevent.
+
+    Asked here of EVERY path-bearing argument rather than of the one named in
+    the finding, and of the two refusals a committable destination can produce
+    (tracked, and untracked-but-not-ignored), because the defect is not
+    "`recursive` was forgotten" but "a per-argument loop can forget an
+    argument". Needs no private archive and no worktree: it asks about this
+    checkout's own tracked paths.
+    """
+    # The UNION of the public door and the private one it delegates to: a path
+    # argument added to either has to be classified, or a fourth `recursive`
+    # could arrive on the side this case does not read.
+    params = (set(inspect.signature(PE.check_write_set).parameters)
+              | set(inspect.signature(PE._check_write_set).parameters))
+    unclassified = sorted(params - set(WRITE_SET_PATH_ARGS) - set(WRITE_SET_OTHER_ARGS))
+    assert not unclassified, (
+        f"check_write_set() has argument(s) {unclassified} that this case does not "
+        "classify. If they name paths it will write, add them to "
+        "WRITE_SET_PATH_ARGS -- the loop below then proves they are asked the "
+        "committability question, which is what `recursive` was not")
+
+    def verdict(**kw):
+        try:
+            PE.check_write_set(ROOT, **kw)
+            return None
+        except PE.DestinationRefused as e:
+            return e.reason
+
+    # "data" is tracked; "data/no-such-file.json" is untracked and NOT ignored.
+    # Both are committable, and each is refused for its own reason.
+    bad = []
+    for arg in WRITE_SET_PATH_ARGS:
+        for value, expect in (("data", "tracked_path"),
+                              ("data/no-such-file.json", "not_ignored")):
+            got = verdict(**{arg: (value,)})
+            if got != expect:
+                bad.append(f"check_write_set(ROOT, {arg}=({value!r},)) -> "
+                           f"{got or 'ACCEPTED'}, expected {expect}")
+    # ... and the transitive form: a leaf is exempt from the phase when a
+    # declared directory covers it, so an unchecked `recursive` entry exempted
+    # its own contents too. Both were accepted before the fix.
+    got = verdict(recursive=("data",), leaves=("data/no-such-file.json",))
+    if got != "tracked_path":
+        bad.append(f"check_write_set(ROOT, recursive=('data',), leaves=(...)) -> "
+                   f"{got or 'ACCEPTED'}, expected tracked_path")
+    assert not bad, bad
+
+    # The accepting half, on paths nothing has created: a guard that refuses
+    # correct input is the shape that gets guards disabled. Archive-independent
+    # by construction -- these three do not exist in any checkout.
+    d = PE.check_write_set(ROOT, dirs=("private/nonexistent-dir",),
+                           recursive=("private/nonexistent-tree",),
+                           leaves=("private/nonexistent-leaf.json",))
+    assert d.worktree == str(pathlib.Path(ROOT).resolve()), d
+    return (f"all {len(WRITE_SET_PATH_ARGS)} path arguments are asked the "
+            "committability question, in both refusal shapes")
 
 
 @case
