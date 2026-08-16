@@ -127,7 +127,14 @@ jobs:
       # archive's names) into throwaway `git worktree add` worktrees of the
       # checkout, so an unregistered mover fails HERE rather than being noticed
       # after it has written somewhere nobody looks.
-      - name: private-egress census and destination-guard agreement
+      # The suite FAILS rather than skips when git cannot give it a worktree
+      # register or a file list: main() counted a SkipCase and exited 0, so a
+      # runner where `git worktree add` or `git ls-files` refuses turned the
+      # census and the whole 17-row agreement table into skips with this step
+      # still green (measured: 33 of 48 cases pass on their own that way).
+      # REQUIRED_CASES names the three that may not skip; every other skip is
+      # still reported, in a banner saying what it leaves unproven.
+      - name: private-egress census and destination-guard agreement (census and agreement table must RUN, not skip)
         run: python analysis/test_private_egress.py
 
   archive-only-generators:

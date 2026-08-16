@@ -41,6 +41,7 @@ import inspect
 import os
 import pathlib
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -176,6 +177,20 @@ class SkipCase(Exception):
 #   * a mover reached through a name this cannot resolve: getattr(shutil, name),
 #     a dispatch table of functions, a subprocess argv built from a glob rather
 #     than from the script's literal name.
+#     ... and to the same rule in SHELL. SHELL_COPY now reads a command that is
+#     not the first on its line (after `&&`, `;`, `|`, `then`, `do`, a subshell),
+#     but it still matches a LITERAL command NAME in a position a command can
+#     start. MEASURED against the regex, these four stay invisible:
+#         CP=cp; $CP -R "$SRC/private" "$d"          the name is a variable
+#         find "$SRC/private" -exec cp {} "$d" \;    the copy is an argument
+#         ls "$SRC/private" | xargs cp -t "$d"       ... to another command
+#         eval "cp -R $SRC/private $d"               the command is a string
+#     A line CONTINUATION is not among them: the continued line begins with the
+#     command, so `mkdir -p "$d" && \` + `cp -R ...` is found on the second line.
+#     There is no AST for shell; resolving any of the four would be a shell
+#     parser. The scan also keys on the FILE rather than the symbol, so a copy
+#     inside a shell function is found as a hit on the script, which is all this
+#     half of the census ever claims.
 # ===========================================================================
 COPY_CALLS = {"copy", "copy2", "copyfile", "copytree", "copyfileobj", "move",
               "unpack_archive", "extractall", "extract", "link", "symlink"}
@@ -194,7 +209,25 @@ RUN_CALLS = {"run", "Popen", "call", "check_call", "check_output"}
 SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 ROOT_NAMES = {"ROOT"}          # the repo-root constant every module here uses
 ROOT_ATTRS = {"root"}          # ... and dry_run's Sandbox.root
-SHELL_COPY = re.compile(r"^\s*(?:[\w.]+=\S*\s+)*(cp|rsync|install|ln|tar|scp|ditto)\s")
+
+# WHERE A COMMAND CAN START on a line of shell: at the beginning, or after a
+# separator (`;` `&&` `||` `|` `&`), a subshell/group opener, or one of the
+# keywords that introduce a command body (`then` `else` `do`). Anchoring at the
+# start of the LINE only -- which is what this was -- made
+#
+#     mkdir -p "$d" && cp -R "$SRC/private" "$d"
+#     if [ -d "$SRC/private" ]; then cp -R "$SRC/private" "$d"; fi
+#     cd "$d" && rsync -a "$SRC/private/" .
+#
+# invisible to the census, so case_every_discovered_mover_is_registered stayed
+# green with an unregistered mover shipping. These are ordinary shell, not exotic
+# ones. No such line exists in this tree today, which is the same footing the
+# python ordinary-write rules stand on: the value is prospective, and a census
+# with a blind spot is worse than no census because it is what a reviewer trusts
+# instead of looking. What is still missed is enumerated in WHAT IT MISSES above.
+SHELL_CMD_START = r"(?:^|[;&|(){}]|\b(?:then|else|do)\s)"
+SHELL_COPY = re.compile(
+    SHELL_CMD_START + r"\s*(?:[\w.]+=\S*\s+)*(cp|rsync|install|ln|tar|scp|ditto)\s")
 
 
 def source_files(root=ROOT):
@@ -331,8 +364,19 @@ def _scopes(tree, seed=_archive_expr, params=True):
                 start = set(inherited)
                 if params and isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     args = c.args
-                    slots = list(args.args) + list(args.kwonlyargs)
-                    defaults = ([None] * (len(args.args) - len(args.defaults))
+                    # POSITIONAL-ONLY PARAMETERS COUNT, and leaving them out did
+                    # not merely miss them -- it MISALIGNED the whole pairing.
+                    # ast puts one `defaults` list behind posonlyargs + args
+                    # together, so for `def f(script=SCRIPT, /, *, dst=None)` the
+                    # padding `len(args.args) - len(args.defaults)` went negative,
+                    # collapsed to [], and the zip paired `dst` with SCRIPT's
+                    # default: a false negative on the parameter that really
+                    # carries the mover and a false positive on one that does not.
+                    # Pad against the combined positional length, which is what
+                    # `defaults` is really indexed from.
+                    positional = list(args.posonlyargs) + list(args.args)
+                    slots = positional + list(args.kwonlyargs)
+                    defaults = ([None] * (len(positional) - len(args.defaults))
                                 + list(args.defaults) + list(args.kw_defaults))
                     for a, d in zip(slots, defaults):
                         if d is not None and _taints(d, start, seed):
@@ -845,6 +889,60 @@ def _worktree(td, name="dst"):
     finally:
         subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(path)],
                        capture_output=True, text=True)
+
+
+def _register_admin_dir():
+    """`<common dir>/worktrees` -- the directory holding one ADMIN ENTRY per
+    linked worktree of this checkout. None when there is no common dir."""
+    common = PE.self_common_git_dir()
+    return pathlib.Path(common) / "worktrees" if common else None
+
+
+def _register_entry_names(admin):
+    if admin is None:
+        return set()
+    try:
+        return {p.name for p in admin.iterdir() if p.is_dir()}
+    except OSError:
+        return set()
+
+
+@contextlib.contextmanager
+def _register_entries_confined_to(td):
+    """Hand back ONLY the register entries this block creates for worktrees
+    inside `td`, and leave every other entry exactly as it was found.
+
+    `git worktree prune` was here, and prune is not scoped: it removes EVERY
+    entry whose directory is missing, not only the ones a fixture left behind.
+    A developer with a worktree on an unmounted volume, a network share, or a
+    directory mid-rebuild loses that registration by running this suite -- or
+    check_coverage.sh, which runs it -- and has to `git worktree repair` or add
+    it again. "Prune removes what these fixtures left" is true; "and all it
+    removes" does not follow from it, and that was the argument the comment made.
+
+    Git has no per-entry prune, so the scope is built here, and an entry is
+    removed only when BOTH hold: it appeared while this block was running, and
+    the `gitdir` file git wrote in it names a directory inside `td` -- the
+    case's own TemporaryDirectory. An entry that fails either test, including
+    every entry that predates the block, is left alone. `finally`, so a case
+    that raises mid-way still hands its own entries back.
+    """
+    admin = _register_admin_dir()
+    before = _register_entry_names(admin)
+    fence = os.path.realpath(str(td))
+    try:
+        yield
+    finally:
+        for name in sorted(_register_entry_names(admin) - before):
+            entry = admin / name
+            try:
+                # git writes '<worktree>/.git' here; its dirname is the worktree.
+                owner = os.path.realpath(
+                    os.path.dirname((entry / "gitdir").read_text().strip()))
+            except OSError:
+                continue        # not ours to read, so not ours to remove
+            if owner == fence or owner.startswith(fence + os.sep):
+                shutil.rmtree(entry, ignore_errors=True)
 
 
 def _run_shell(src, dst, cwd, env=None, timeout=120):
@@ -1687,6 +1785,125 @@ def case_discovery_finds_every_supported_write_pattern():
             "near-miss shapes are not")
 
 
+# The shell half of the same idea, and the same reason for it: SHELL_COPY was
+# anchored at the start of a LINE, so a copy that is not the first command on
+# its own line was invisible. Each positive is an ordinary way to write the
+# stage-private-data.sh copy that would have shipped unregistered; each negative
+# is a shape the widened anchor could have swallowed.
+PLANTED_SHELL_COPIES = (
+    ("a copy after &&", 'mkdir -p "$d" && cp -R "$SRC/private" "$d"'),
+    ("a copy after `then` on a one-line if",
+     'if [ -d "$SRC/private" ]; then cp -R "$SRC/private" "$d"; fi'),
+    ("an rsync after cd &&", 'cd "$d" && rsync -a "$SRC/private/" .'),
+    ("a copy after a semicolon", 'echo staging; cp "$SRC/private/household.yaml" "$d"'),
+    ("a copy after `do` in a loop body",
+     'for f in "$SRC"/private/*; do cp "$f" "$d"; done'),
+    ("a copy after a pipeline", 'printf x | cat; scp "$SRC/private/gas.csv" "$h:/t"'),
+    ("a copy inside a subshell", '(cd "$SRC/private" && tar cf - .) > "$d/a.tar"'),
+    ("an env-prefixed copy after a separator",
+     'true && LC_ALL=C cp "$SRC/private/gas.csv" "$d"'),
+    ("a copy after ||", 'test -e "$d/private" || cp -R "$SRC/private" "$d"'),
+)
+
+PLANTED_SHELL_NON_COPIES = (
+    ("a command name that is only the tail of a word",
+     'echo "$SRC/private" | grep -c scp foo'),
+    ("a copy named only in prose", 'echo "this does not cp anything from private/"'),
+    ("a flag whose value contains a command name",
+     'helper --install-prefix=/opt "$SRC/private"'),
+    ("a command whose name merely starts with one",
+     'cpio -o < "$SRC/private/list" > "$d/a.cpio"'),
+)
+
+
+@case
+def case_discovery_finds_a_shell_copy_that_is_not_first_on_its_line():
+    """FINDING: SHELL_COPY matched only at the START of a line.
+
+        mkdir -p "$d" && cp -R "$SRC/private" "$d"
+
+    is an ordinary way to write the copy this whole census exists for, and the
+    scan could not see it -- so case_every_discovered_mover_is_registered stayed
+    green while an unregistered mover shipped. Prospective, like the python
+    ordinary-write rules: no line in this tree has this shape today.
+
+    One planted script per form, because discover_shell() keys on the FILE: all
+    nine in one script would pass on any single match and prove nothing about
+    the other eight.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        subprocess.run(["git", "init", "-q", str(root)], capture_output=True, check=True)
+        planted = {}
+        for i, (label, line) in enumerate(PLANTED_SHELL_COPIES + PLANTED_SHELL_NON_COPIES):
+            rel = f"planted-{i:02d}.sh"
+            (root / rel).write_text(f'#!/bin/bash\nSRC="$1"; d="$2"\n{line}\n')
+            planted[label] = rel
+        found = discover_shell(root, files=sorted(planted.values()))
+
+    missed = [f"{label}: {planted[label]}" for label, _ in PLANTED_SHELL_COPIES
+              if (planted[label], "<script>") not in found]
+    spurious = [f"{label}: {found[(planted[label], '<script>')]}"
+                for label, _ in PLANTED_SHELL_NON_COPIES
+                if (planted[label], "<script>") in found]
+    assert not missed, (
+        "the shell scan cannot see a copy that is not the first command on its "
+        f"line, so a mover written that way would never reach MOVERS: {missed}")
+    assert not spurious, (
+        "widening WHERE a command may start must not widen WHAT counts as one: "
+        f"{spurious}")
+    return (f"all {len(PLANTED_SHELL_COPIES)} compound-command copy forms are "
+            f"discovered, and all {len(PLANTED_SHELL_NON_COPIES)} near-miss "
+            "shapes are not")
+
+
+@case
+def case_the_taint_pass_reads_a_positional_only_parameter():
+    """FINDING: `slots` left out `posonlyargs`, and ast indexes `args.defaults`
+    from `posonlyargs + args` together.
+
+    For `def f(script=SCRIPT, /, *, dst=None)` the padding
+    `len(args.args) - len(args.defaults)` was -1, so the padding collapsed to []
+    and the zip paired `dst` with SCRIPT's default: SCRIPT's taint landed on the
+    wrong name. Both halves are asserted, because the misalignment is worse than
+    the omission -- a false negative on the parameter that carries the mover AND
+    a false positive on one that does not.
+    """
+    src = ('SCRIPT = "stage-private-data.sh"\n'
+           'def f(script=SCRIPT, /, *, dst=None):\n'
+           '    return script, dst\n')
+
+    def seed(node):
+        return any(isinstance(s, ast.Constant) and s.value == "stage-private-data.sh"
+                   for s in ast.walk(node))
+
+    names = {qn: nm for _, qn, nm in _scopes(ast.parse(src), seed, params=True)}
+    assert "script" in names["f"], (
+        "the positional-only parameter carrying the mover's default is not "
+        f"tainted: {sorted(names['f'])}")
+    assert "dst" not in names["f"], (
+        "a keyword-only parameter with an inert default was tainted -- the "
+        f"defaults are being paired with the wrong slots: {sorted(names['f'])}")
+
+    # ... and behaviorally, through the discovery pass: a mover whose archive
+    # path arrives as a positional-only DEFAULT and is used nowhere else.
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        subprocess.run(["git", "init", "-q", str(root)], capture_output=True, check=True)
+        (root / "analysis").mkdir()
+        (root / "analysis" / "planted.py").write_text(
+            "import pathlib, shutil\n"
+            "ROOT = pathlib.Path(__file__).resolve().parent.parent\n"
+            "def stage(archive=ROOT / 'private' / '1-raw-data', /, *, quiet=False):\n"
+            "    shutil.copytree(archive, '/tmp/somewhere')\n")
+        found = discover(root)
+    assert ("analysis/planted.py", "stage") in found, (
+        "a copytree of a repo-root private path reached through a positional-only "
+        f"parameter default is invisible to discovery: {sorted(found)}")
+    return ("a positional-only parameter's default taints the parameter it "
+            "belongs to, and not its neighbour")
+
+
 @case
 def case_discovery_reads_the_working_tree_not_only_the_index():
     """A mover added but not yet committed must fail the build. Checked by
@@ -1978,9 +2195,12 @@ def _abandon_worktree(td, name, mode):
     ordinary way: measured on git 2.50.1, `git worktree remove --force` refuses a
     hijacked one ("is not a .git file") and `git worktree prune` keeps it while
     the directory exists -- which is the whole reason the entry survives to be
-    believed. So the case's finally prunes AFTER its TemporaryDirectory is gone,
-    when the entries name directories that no longer exist, which is the only
-    state prune removes and therefore the only entries it can touch.
+    believed. So the case wraps itself in _register_entries_confined_to(), which
+    removes the admin directory of each entry that appeared during the case AND
+    names a worktree inside the case's own tempdir. Not `git worktree prune`:
+    prune would also remove the developer's unrelated entries whose directories
+    happen to be missing -- an unmounted volume, a network share -- and those are
+    not this suite's to touch.
     """
     path = pathlib.Path(td) / name
     assert path.parent == pathlib.Path(td), "the worktree must live in the case's tempdir"
@@ -2067,8 +2287,12 @@ def case_a_stale_register_entry_cannot_admit_an_unrelated_repository():
                   "set": "no_such_destination"},
     }
     bad = []
-    try:
-        with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory() as td:
+        # Every entry these fixtures leave behind is handed back on the way out,
+        # and NOTHING ELSE IS: see _register_entries_confined_to(). The `git
+        # worktree prune` that used to stand here removed every entry in the
+        # developer's register whose directory happened to be missing.
+        with _register_entries_confined_to(td):
             src = _synthetic_src(td)
             for mode, want in sorted(expect.items()):
                 path = _abandon_worktree(td, f"abandoned-{mode}", mode)
@@ -2112,16 +2336,82 @@ def case_a_stale_register_entry_cannot_admit_an_unrelated_repository():
                 if e.reason != "no_such_destination" or "PRUNABLE" not in e.detail:
                     bad.append(f"a vanished register entry is reported as "
                                f"{e.reason} ({e.detail[:60]!r}), not as prunable")
-    finally:
-        # The tempdir is gone by now, so every entry these fixtures left behind
-        # names a directory that no longer exists -- which is precisely what
-        # prune removes and all it removes.
-        subprocess.run(["git", "-C", str(ROOT), "worktree", "prune"],
-                       capture_output=True)
     assert not bad, bad
     return ("a register entry whose directory is now an unrelated repository, a "
             "plain directory, or gone is refused with its own reason through both "
             "public APIs; the shell agrees on the hijacked one")
+
+
+@case
+def case_the_suite_removes_only_the_register_entries_it_created():
+    """FINDING: this suite ran `git worktree prune` against the developer's REAL
+    checkout, and prune is not scoped.
+
+    The case above leaves register entries that cannot be handed back the
+    ordinary way, so its finally pruned. Prune removes EVERY entry whose
+    directory is missing, not only the ones a fixture left: a developer with a
+    worktree on an unmounted volume, a network share, or a directory being
+    rebuilt loses that registration by running this suite -- or
+    analysis/check_coverage.sh, which now runs it -- and has to `git worktree
+    repair` or add it again.
+
+    The fixture is a BYSTANDER: a registered worktree created here, its
+    directory then removed, exactly the state prune exists to clear. It must
+    survive a confined block that creates and abandons its own worktree, and the
+    block's own entries must be gone. Both halves, because a cleanup that
+    removes nothing is not a fix.
+
+    Every removal here is fenced to something this case created: the worktree
+    directory lives in this case's own TemporaryDirectory (asserted), and the
+    one admin entry removed at the end is the one that appeared when this case
+    ran `git worktree add`.
+    """
+    admin = _register_admin_dir()
+    if admin is None:
+        raise SkipCase("this checkout has no git common dir, so it has no register")
+    with tempfile.TemporaryDirectory() as bystander_td:
+        before = _register_entry_names(admin)
+        path = pathlib.Path(bystander_td) / "bystander"
+        assert path.parent == pathlib.Path(bystander_td), "the fixture must be fenced"
+        added = subprocess.run(
+            ["git", "-C", str(ROOT), "worktree", "add", "--detach", str(path), "HEAD"],
+            capture_output=True, text=True)
+        if added.returncode != 0:
+            raise SkipCase(f"could not create a worktree of this checkout: "
+                           f"{added.stderr[:200]}")
+        appeared = _register_entry_names(admin) - before
+        assert len(appeared) == 1, (
+            f"`git worktree add` wrote {sorted(appeared)} register entries; this "
+            "case can only clean up after itself if it knows which one is its own")
+        bystander = appeared.pop()
+        try:
+            # The abandonment being reproduced IS this removal, of the directory
+            # created three lines up inside this case's own tempdir.
+            subprocess.run(["rm", "-rf", str(path)], check=True)
+            assert not path.exists()
+            with tempfile.TemporaryDirectory() as td:
+                with _register_entries_confined_to(td):
+                    own = pathlib.Path(td) / "own"
+                    assert own.parent == pathlib.Path(td), "the fixture must be fenced"
+                    subprocess.run(
+                        ["git", "-C", str(ROOT), "worktree", "add", "--detach",
+                         str(own), "HEAD"], capture_output=True, check=True)
+                    made = _register_entry_names(admin) - before - {bystander}
+                    assert made, "the block created no register entry to hand back"
+                    subprocess.run(["rm", "-rf", str(own)], check=True)
+                left = _register_entry_names(admin)
+            still_there = sorted(made & left)
+            assert not still_there, (
+                f"the block did not hand back the entries it created: {still_there}")
+            assert bystander in left, (
+                "a register entry this suite did not create, whose directory is "
+                "missing, was removed by running it. That is `git worktree prune`'s "
+                "reach, not this suite's: the developer's worktree on an unmounted "
+                "volume is the same state, and it now needs `git worktree repair`")
+        finally:
+            shutil.rmtree(admin / bystander, ignore_errors=True)
+    return ("a confined block hands back its own register entries and leaves a "
+            "missing-directory entry it did not create registered")
 
 
 @case
@@ -3094,14 +3384,22 @@ def case_a_bracket_pattern_is_expanded_like_the_shell_expands_it():
     guard checked was one name the copy will never write while the names it will
     write went unchecked. That is the understating half of the same defect, and
     it is fixed in the same place: the metacharacter set is fnmatch's own.
+
+    The expansion is read as the (declaration, names) pairs it really is, which
+    is what _require_every_declaration_planned() accounts against: a name that
+    reached the plan attributed to no declaration would be a destination checked
+    on nobody's behalf, and a declaration with no names is the invariant's own
+    case above.
     """
     with tempfile.TemporaryDirectory() as td:
         src = pathlib.Path(td) / "src"
         (src / "private").mkdir(parents=True)
         (src / "private" / "cache-7.json").touch()
         expanded = PE._expand_leaves(("private/cache-[0-9].json",), ROOT, src)
-        assert expanded == ["private/cache-7.json"], expanded
-    return "a set expression expands to the names it really matches"
+        assert expanded == [("private/cache-[0-9].json", ["private/cache-7.json"])], (
+            expanded)
+    return ("a set expression expands to the names it really matches, attributed "
+            "to the declaration that named them")
 
 
 # Every spelling of git pathspec MAGIC that a destination-relative path can carry:
@@ -3305,22 +3603,36 @@ def case_a_declaration_that_plans_no_destination_is_never_accepted():
     and the checks cannot be accepted -- whatever made it vanish.
 
     Proved by BREAKING the expansion at that seam, which is the next instance of
-    the shape arriving: an expander that returns [], and one that silently drops
-    an entry. Both must fail the call rather than return a Destination.
-    Deliberately NOT a DestinationRefused: no caller can provoke this state, so a
-    refusal code for it would be a verdict about a destination that is really a
-    statement about this module's own code.
+    the shape arriving: an expander that returns [], one that silently drops an
+    entry, and -- the shape a COUNT cannot see -- one that empties a single
+    declaration while its neighbour yields plenty. All three must fail the call
+    rather than return a Destination. Deliberately NOT a DestinationRefused: no
+    caller can provoke this state, so a refusal code for it would be a verdict
+    about a destination that is really a statement about this module's own code.
+
+    THE MIXED SHAPE IS WHY THE ACCOUNTING IS PER DECLARATION. Measured against
+    the counting version, whose docstring claimed it caught this:
+
+        _expand -> [] for 'b-*', two names otherwise
+        check_write_set(ROOT, leaves=('private/a-*.json', 'private/b-*.json'))
+            -> ACCEPTED. Two entries planned for two declarations, so the total
+               held while 'private/b-*.json' was never evaluated.
     """
     real = PE._expand_leaves
+    real_expand = PE._expand
     leaf = "private/nonexistent-leaf.json"
     assert PE.check_write_set(ROOT, leaves=(leaf, "private/other-leaf.json")), (
         "the control must be accepted, or this case proves nothing")
 
-    def refuses_to_return(label, **kw):
+    def refuses_to_return(label, names=(), **kw):
         try:
             PE.check_write_set(ROOT, **kw)
         except AssertionError as e:
             assert "declared" in str(e), f"{label}: unhelpful invariant message"
+            unnamed = [n for n in names if n not in str(e)]
+            assert not unnamed, (
+                f"{label}: the message does not name the declaration(s) that "
+                f"planned nothing ({unnamed}), so it points at the wrong path: {e}")
             return
         except PE.DestinationRefused as e:
             raise AssertionError(f"{label}: refused as {e.reason}, but this is a "
@@ -3330,12 +3642,25 @@ def case_a_declaration_that_plans_no_destination_is_never_accepted():
 
     try:
         PE._expand_leaves = lambda leaves, root, src: []
-        refuses_to_return("an expander that returns nothing", leaves=(leaf,))
+        refuses_to_return("an expander that returns nothing", names=(leaf,),
+                          leaves=(leaf,))
         PE._expand_leaves = lambda leaves, root, src: list(real(leaves, root, src))[:-1]
         refuses_to_return("an expander that drops one entry",
+                          names=("private/other-leaf.json",),
                           leaves=(leaf, "private/other-leaf.json"))
     finally:
         PE._expand_leaves = real
+    try:
+        # One declaration plans plenty, its neighbour plans nothing: the total
+        # holds and the neighbour is never looked at.
+        PE._expand = lambda rel, root, src: (
+            [] if "b-" in rel else ["private/x1.json", "private/x2.json"])
+        refuses_to_return("an expander that empties ONE declaration of several",
+                          names=("private/b-*.json",),
+                          leaves=("private/a-*.json", "private/b-*.json"),
+                          glob_source=str(ROOT))
+    finally:
+        PE._expand = real_expand
     assert PE.check_write_set(ROOT, leaves=(leaf,)), "the seam was not restored"
 
     # The invariant must survive `python -O`, which strips the assert STATEMENT.
@@ -3355,7 +3680,62 @@ def case_a_declaration_that_plans_no_destination_is_never_accepted():
     assert not [n for n in ast.walk(ast.parse(src.lstrip())) if isinstance(n, ast.Assert)], (
         "the invariant uses the `assert` statement, which -O removes")
     return ("a declared path that plans no destination fails the call instead of "
-            "being accepted, under -O as well")
+            "being accepted -- including when a neighbour planned plenty, and "
+            "under -O")
+
+
+@case
+def case_a_declaration_that_is_not_worktree_relative_is_refused():
+    """FINDING: a declaration git answers about a DIFFERENT path than the one
+    named.
+
+    Every declared path becomes a git pathspec through _pathspec(), which
+    prefixes './'. So an ABSOLUTE entry became './/etc/passwd', which git
+    resolves relative to the worktree -- the tracked/ignored verdict described
+    <root>/etc/passwd. Measured before the fix:
+
+        check_write_set(ROOT, leaves=("/etc/passwd",))
+            -> REFUSED [not_ignored] -- path: /etc/passwd
+
+    It did not ACCEPT, and the check that stopped it was measured as well: the
+    os.path.join in one() leaves an absolute entry absolute, so it falls outside
+    the register and _diagnose_outside refuses it `no_such_destination`. But
+    that is a SECOND check covering for a wrong answer from the first, and the
+    refusal the operator actually reads is the first one, naming a path nobody
+    asked about -- the same lesson as asking check-ignore before ls-files. The
+    refusal now comes from the entry itself, before git is asked anything.
+
+    Asked of every path-bearing argument and of both spellings, because the
+    defect has been in the argument the previous round did not test every time.
+    """
+    bad = []
+    for arg in WRITE_SET_PATH_ARGS:
+        for value in ("/etc/passwd", "/", "private/../../elsewhere.json",
+                      "../outside.json", ".."):
+            got = _write_set_verdict(**{arg: (value,)})
+            if got != "unnormalized_path":
+                bad.append(f"check_write_set(ROOT, {arg}=({value!r},)) -> "
+                           f"{got or 'ACCEPTED'}, expected unnormalized_path")
+    assert not bad, bad
+
+    # The refusal must name the entry AS WRITTEN -- pointing at the path the
+    # caller declared is the whole difference between this and the old verdict.
+    try:
+        PE.check_write_set(ROOT, leaves=("/etc/passwd",))
+        raise AssertionError("an absolute declaration was accepted")
+    except PE.DestinationRefused as e:
+        assert e.path == "/etc/passwd", e
+        assert os.path.join(str(ROOT), "etc") not in (e.detail or ""), e
+
+    # The accepting half: an ordinary relative declaration, and one whose name
+    # merely CONTAINS dots, are untouched.
+    assert PE.check_write_set(ROOT, dirs=("private/nonexistent-dir",),
+                              recursive=("private/nonexistent-tree",),
+                              leaves=("private/..hidden.json",
+                                      "private/a..b/c.json")), (
+        "a relative declaration with dots in a NAME is not a '..' component")
+    return ("an absolute or '..'-bearing declaration is refused in every path "
+            "argument, naming the entry the caller wrote")
 
 
 @case
@@ -3795,6 +4175,42 @@ def case_every_fact_this_module_trusts_is_classified():
 
 
 @case
+def case_the_vocabulary_describes_every_fact_its_code_is_raised_for():
+    """FINDING: REASONS['special_file'] read "a path exists and is neither a
+    regular file nor a directory", and _check_leaf() raises that code for
+    EXACTLY a directory where a regular file goes.
+
+    REASONS is the module's published contract -- SHELL_HEADLINES maps the
+    shell's refusals onto it and the agreement table compares codes, not prose --
+    so a description that EXCLUDES one of the two facts its code is raised for
+    sends a reader hunting for a FIFO that is not there. API_REACH, which is
+    commentary in this file, had the wider meaning right; the authoritative dict
+    did not.
+
+    Tied to the fixtures that produce each fact rather than asserted on its own,
+    because the claim is 'the description covers what the code is raised for':
+    the table's FIFO row and its directory-where-a-file-belongs row both expect
+    special_file, and both must stay.
+    """
+    producing = sorted(c.name for c in TABLE if c.single == "special_file")
+    assert len(producing) >= 2, (
+        f"only {producing} reaches special_file through check_destination; the "
+        "claim below is that ONE code covers two different facts, so both "
+        "fixtures have to exist")
+    for label, text in (("REASONS", PE.REASONS["special_file"]),
+                        ("API_REACH", API_REACH["special_file"][1])):
+        assert "directory" in text, (
+            f"{label}'s special_file description does not mention a directory, "
+            "which is one of the two things it is raised for")
+        assert "nor a directory" not in text, (
+            f"{label} describes special_file as excluding a directory: {text!r}. "
+            "_check_leaf() raises it for exactly a directory in a file slot -- "
+            "the description must be as wide as the code, and no wider")
+    return (f"special_file's description admits both facts it is raised for, "
+            f"produced by {len(producing)} table fixtures")
+
+
+@case
 def case_a_refusal_names_a_reason_the_module_defines():
     """Every raise carries a code from REASONS, so the agreement table can
     compare verdicts instead of prose. Checked by AST over the module, not by
@@ -3835,8 +4251,61 @@ def case_a_refusal_names_a_reason_the_module_defines():
             "actually produced somewhere in the module")
 
 
+# ===========================================================================
+# THE CASES THAT MAY NOT SKIP
+#
+# A SkipCase used to cost nothing: main() returned 1 for failures only, so a
+# skipped case exited 0 and a run that proved nothing was indistinguishable from
+# a run that proved everything. That matters here more than in most suites,
+# because the preconditions are not the private archive -- which nothing here
+# needs -- but GIT ITSELF. _worktree() raises SkipCase on any `git worktree add`
+# failure and source_files() on any `git ls-files` failure, so a runner where git
+# refuses the checkout ("detected dubious ownership", a checkout-action change, a
+# container whose worktree register is unusable) turns the census AND the whole
+# agreement table into skips, and the step still goes green. That is the
+# false-green-over-an-unexercised-guarantee shape this whole module is written
+# against, sitting in its own CI wiring.
+#
+# NAMED CASES rather than a floor on the count, and the reason is the same one
+# MOVERS_FLOOR gives: a count is satisfied by the wrong cases. MEASURED, with
+# both seams made to raise SkipCase: 33 of 48 cases still PASS -- the static
+# ones, which read this module's AST and its own signatures and never ask git
+# anything -- so any floor those 33 can reach on their own is green in exactly
+# the run where the guarantee went unexercised. The three below are the
+# guarantees the CI step's name claims: discovery really ran over this tree, the
+# two implementations really were compared on every fixture, and the
+# stale-register recheck really was exercised.
+#
+# NOT every skippable case. Skipping stays legitimate where the precondition is
+# a property of the machine and not of the guarantee: running as root makes the
+# unreadable-directory probe meaningless (case_the_recursive_scan_refuses_a_
+# probe_it_cannot_make), and it is not here. Adding a case here is a claim that
+# there is no environment where its skip is honest.
+# ===========================================================================
+REQUIRED_CASES = frozenset({
+    "case_every_discovered_mover_is_registered",
+    "case_the_shell_and_the_python_predicate_agree_on_every_destination",
+    "case_a_stale_register_entry_cannot_admit_an_unrelated_repository",
+})
+
+
+@case
+def case_every_required_case_is_a_case_this_suite_runs():
+    """A floor naming a case that no longer exists is not a floor. Renaming one
+    of the three must fail here rather than silently empty the requirement."""
+    names = {c.__name__ for c in CASES}
+    gone = sorted(REQUIRED_CASES - names)
+    assert not gone, (
+        f"REQUIRED_CASES names {gone}, which this suite does not define. Rename "
+        "the entry in the same commit, or the run can no longer tell whether the "
+        "guarantee was exercised")
+    return (f"all {len(REQUIRED_CASES)} cases that may not skip are registered in "
+            "this suite")
+
+
 def main():
     ran = skipped = failures = 0
+    skips = []
     for c in CASES:
         try:
             msg = c()
@@ -3844,10 +4313,24 @@ def main():
             ran += 1
         except SkipCase as e:
             print(f"SKIP  {c.__name__} ({e})")
+            skips.append((c.__name__, str(e)))
             skipped += 1
         except AssertionError as e:
             print(f"FAIL  {c.__name__}: {e}")
             failures += 1
+    if skips:
+        print(f"\n{'=' * 72}\nSKIPPED, and what each leaves unproven:")
+        for name, why in skips:
+            print(f"  · {name}\n      {why}")
+        print("=" * 72)
+    unexercised = sorted(n for n, _ in skips if n in REQUIRED_CASES)
+    if unexercised:
+        failures += len(unexercised)
+        print(f"\nFAIL  the guarantees this suite exists for were not exercised: "
+              f"{unexercised} SKIPPED rather than ran. Their preconditions are git "
+              "itself -- a usable worktree register and file list -- not the "
+              "private archive, so this is a broken run and not a reduced one. "
+              "See REQUIRED_CASES.")
     tail = f", {skipped} skipped" if skipped else ""
     print(f"\n{ran}/{len(CASES)} passed{tail}")
     return 1 if failures else 0

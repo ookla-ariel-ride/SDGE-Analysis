@@ -98,7 +98,9 @@ REASONS = {
     "self_unlocatable":     "this module is not inside a git working tree, so it cannot say "
                             "which checkout's worktrees are eligible",
     "register_unavailable": "this checkout's worktrees could not be listed",
-    "unnormalized_path":    "the path contains a '..' component",
+    "unnormalized_path":    "a path is not a normalized name for one place: it contains a "
+                            "'..' component, or -- where a worktree-relative declaration "
+                            "belongs -- it is absolute",
     "no_such_destination":  "the destination does not exist, or is not a directory",
     "not_a_worktree":       "the destination is not inside a git working tree",
     "different_repository": "the destination belongs to a different repository",
@@ -110,7 +112,8 @@ REASONS = {
                             "its own root",
     "symlink_component":    "a path component at or below the worktree root is a symbolic link",
     "not_a_directory":      "a path that must be a directory exists and is not one",
-    "special_file":         "a path exists and is neither a regular file nor a directory",
+    "special_file":         "a path where a REGULAR FILE goes exists and is not one: a "
+                            "directory, a FIFO, a socket or a device node",
     "hard_link":            "a destination file has more than one name for its inode",
     "symlink_under":        "a directory that will be written into recursively contains a "
                             "symbolic link",
@@ -1087,26 +1090,28 @@ def _check_write_set(root, *, dirs, leaves, recursive, glob_source, env):
     expanded = _expand_leaves(leaves, root, glob_source)
 
     # THE PLAN: every declaration turned into the concrete destinations it names,
-    # built once and then iterated by both phases. The accounting below is what
-    # makes "declared some, evaluated none" a failure instead of a success --
-    # every loop from here on runs over `plan`, so a phase cannot silently
-    # iterate a different (or emptied) sequence than the one that was counted.
-    plan = ([(rel, "dir") for rel in dirs]
-            + [(rel, "tree") for rel in recursive]
-            + [(name, "file") for name in expanded])
+    # built once and then iterated by both phases. Each entry CARRIES THE
+    # DECLARATION IT CAME FROM, which is what lets the accounting below be per
+    # declaration rather than a total -- see
+    # _require_every_declaration_planned(). Every loop from here on runs over
+    # `plan`, so a phase cannot silently iterate a different (or emptied)
+    # sequence than the one that was counted.
+    plan = ([(rel, "dir", rel) for rel in dirs]
+            + [(rel, "tree", rel) for rel in recursive]
+            + [(name, "file", decl) for decl, names in expanded for name in names])
     _require_every_declaration_planned(dirs + recursive + leaves, plan)
 
     covered = []
-    for rel, kind in plan:
+    for rel, kind, _decl in plan:
         if kind == "file":
             continue                    # leaves are asked after the directories
         if not _covered_by(rel, covered):
             _require_uncommittable(dest.path, rel, env)
         covered.append(rel)
-    for rel, kind in plan:
+    for rel, kind, _decl in plan:
         if kind == "file" and not _covered_by(rel, covered):
             _require_uncommittable(dest.path, rel, env)
-    for rel, kind in plan:
+    for rel, kind, _decl in plan:
         one(rel, kind)
     return dest
 
@@ -1134,17 +1139,48 @@ def _paths(name, value):
         right. A TypeError, not a refusal: like an unknown `kind`, a caller who
         cannot say what it is writing has a bug in itself and must not be able to
         spell that bug as a verdict about a path.
+      * REQUIRE EACH ENTRY TO NAME ONE PLACE, RELATIVE TO THE ROOT. Every entry
+        here becomes a git PATHSPEC through _pathspec(), which prefixes './' --
+        so an ABSOLUTE entry becomes './' + itself, which git resolves inside
+        the worktree and answers about <root> + that entry, a different path
+        entirely. Measured before this check existed: a leaves= entry naming the
+        system password file by absolute path was refused `not_ignored`, with
+        the refusal naming a path the caller never asked about, which sends the
+        operator to fix the wrong file. It did not ACCEPT, and the second check
+        that stopped it was measured too: the os.path.join in _check_write_set's
+        one() leaves such an entry absolute, so it lands outside the register and
+        _diagnose_outside refuses it `no_such_destination`. A second check
+        covering for a wrong answer from the first is the same shape as asking
+        check-ignore before ls-files -- correct today, by an accident of which
+        check runs next.
+        A '..' entry is the same fact one spelling over -- it cannot be
+        normalized without following symlinks -- and gets the same refusal
+        _check_destination gives a '..' path, because the remedy is identical:
+        name a normalized path relative to the worktree root. It is a
+        DestinationRefused rather than a TypeError because, unlike a bare string
+        or an unknown kind, the caller HAS named one definite path; it is just
+        not one this API can be asked about.
     """
     if isinstance(value, (str, bytes, os.PathLike)):
         raise TypeError(
             f"{name}= takes a sequence of worktree-relative paths, not a single "
             f"path ({value!r}); a bare string is iterated one character at a "
             "time, so the paths checked would not be the path you named")
-    return tuple(os.fspath(v) for v in value)
+    out = tuple(os.fspath(v) for v in value)
+    for rel in out:
+        if os.path.isabs(rel) or ".." in pathlib.PurePath(rel).parts:
+            raise DestinationRefused(
+                "unnormalized_path",
+                f"{name}= entries are paths relative to the destination root, and "
+                "each becomes a git pathspec asked of that root. An absolute or "
+                "'..'-bearing entry makes git answer about a DIFFERENT path than "
+                "the one named, so the verdict -- and the path in it -- would "
+                "describe somewhere the caller never asked about", rel)
+    return out
 
 
 def _require_every_declaration_planned(declared, plan):
-    """INVARIANT: a call that declared destinations must have planned some.
+    """INVARIANT: EVERY declared destination must have planned at least one.
 
     NOT a refusal and not about caller input -- it is the standing guard against
     one defect that has now been found in THREE consecutive review rounds, each
@@ -1159,17 +1195,35 @@ def _require_every_declaration_planned(declared, plan):
     One shape underneath all three: a public entry point returns SUCCESS having
     evaluated nothing, because an input was empty, unexpanded or consumed rather
     than absent. Two things close it structurally. _paths() materializes each
-    sequence exactly once, which kills (3) by construction. This counts what came
-    out the other end, which catches (1) and (2) and anything of that shape added
-    later -- a new argument that forgets to extend `plan`, an expander that
-    starts returning [], a filter that drops entries.
+    sequence exactly once, which kills (3) by construction. This ATTRIBUTES what
+    came out the other end back to what went in, so it catches (1) and (2) and
+    the one shape they share -- a declaration that reaches the checks with no
+    destination of its own, whatever emptied it: a new argument that forgets to
+    extend `plan`, an expander that starts returning [], a filter that drops
+    entries.
 
-    The arithmetic is exact rather than a floor on the total: `dirs` and
-    `recursive` yield one destination each (a pattern in them is refused by
-    _require_literal_directories), and a leaf yields at least one (a pattern that
-    matches nothing is checked as the literal it is -- see _expand). So
-    len(plan) >= len(declared) always holds, and a single declaration that
-    yielded nothing is caught even when its neighbours yielded plenty.
+    THE ACCOUNTING IS PER DECLARATION, NOT A TOTAL, and that is the whole of
+    what it can claim. Every plan entry carries the declared path it came from
+    (`dirs` and `recursive` name themselves; a leaf names the declaration that
+    expanded to it), and each declared path must own at least one entry. A
+    length comparison -- which is what this was -- holds while a declaration
+    vanishes, because a neighbour that yielded plenty pays for it:
+
+        leaves=("a-*.json", "b-*.json") where the first expands to two names and
+        the second to none plans TWO entries for TWO declarations, so
+        len(plan) >= len(declared) is satisfied and 'b-*.json' is never
+        evaluated
+
+    -- which is exactly the regression this guard names below (an expander that
+    starts returning [], a filter that drops entries), arriving in the mixed
+    shape instead of the all-empty one. Counted by attribution, the empty
+    neighbour is named in the message.
+
+    What it does NOT check: that a declaration planned the RIGHT destinations. A
+    plan entry attributed to a declaration proves that declaration was evaluated,
+    not that the expansion was correct -- an expander returning one wrong name
+    per declaration passes this. That residue belongs to _expand() and to the
+    `glob_source` the caller supplies, and is written down there.
 
     Raised as an AssertionError, deliberately. Every state it describes is
     unreachable through the public API as this module stands, so it is a fact
@@ -1179,12 +1233,14 @@ def _require_every_declaration_planned(declared, plan):
     raise and not the `assert` statement so that `python -O` cannot switch off
     the one check whose whole job is to notice that a check stopped running.
     """
-    if len(plan) < len(declared):
+    accounted = {decl for _, _, decl in plan}
+    unplanned = [d for d in declared if d not in accounted]
+    if unplanned:
         raise AssertionError(
-            f"private_egress: {len(declared)} destination(s) were declared and "
-            f"only {len(plan)} planned, so at least one declared path would be "
-            "accepted without being evaluated. Refusing to return a Destination. "
-            f"declared={list(declared)!r} planned={[p for p, _ in plan]!r}")
+            f"private_egress: of {len(declared)} declared destination(s), "
+            f"{unplanned!r} planned none, so each of those would be accepted "
+            "without being evaluated. Refusing to return a Destination. "
+            f"declared={list(declared)!r} planned={[p for p, _, _ in plan]!r}")
 
 
 def _covered_by(rel, prefixes):
@@ -1208,7 +1264,13 @@ def _is_pattern(rel):
 
 
 def _expand_leaves(leaves, root, glob_source):
-    """`leaves` -> the destination-relative paths the copies will really write.
+    """`leaves` -> [(declaration, [the paths the copies will really write])].
+
+    ONE PAIR PER DECLARED LEAF, in order, and the pairing is the point rather
+    than a convenience: _require_every_declaration_planned() accounts per
+    declaration, so it needs to know which names came from which pattern. A flat
+    list of names cannot answer that, and a flat list is what let a declaration
+    that expanded to nothing hide behind a neighbour that expanded to two.
 
     THE SOURCE IS PROVEN BEFORE IT IS BELIEVED. `glob_source` names a tree that
     is not the destination and that no other check in this module looks at, so an
@@ -1229,12 +1291,12 @@ def _expand_leaves(leaves, root, glob_source):
     proven = False
     for rel in leaves:
         if not _is_pattern(rel):
-            out.append(rel)
+            out.append((rel, [rel]))
             continue
         if not proven:
             _require_listable_source(root, glob_source)
             proven = True
-        out.extend(_expand(rel, root, glob_source))
+        out.append((rel, _expand(rel, root, glob_source)))
     return out
 
 
