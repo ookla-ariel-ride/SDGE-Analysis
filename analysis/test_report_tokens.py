@@ -4956,8 +4956,11 @@ def case_the_plan_prompts_in_sections_0_and_3_assert_no_standing():
 
     Sections 0 and 3 only, which is where the standing is stated. Prompts
     elsewhere that lean on the same assumption are reported rather than
-    rewritten here; §4's conclusion brief ("by how much it moves the lead")
-    and §7's "All packages keep {{BEST_PLAN}}" are the two live examples.
+    rewritten here; §4's conclusion brief ("by how much it moves the lead") is
+    the live example. §7's "All packages keep {{BEST_PLAN}}" was the other one
+    and is not any more -- it carries {{S7_PLAN_FOOTING}} now, which states the
+    footing the packages are priced on
+    (case_section_7s_package_footing_states_the_plan_it_prices_on).
 
     A TOKEN THAT WROTE THE RECOMMENDATION would move the choice out of the
     model's hands, and was not the fix: "switch to X" is an ACTION, and no
@@ -5417,6 +5420,199 @@ def case_section_3s_published_chrome_round_trips_into_index_html():
     return ("section 0's plan card, section 3's household row and its lead-in each render "
             "into index.html verbatim at the published household's standing ("
             + "; ".join(f"{k}: {v[:60]!r}" for k, v in checked.items()) + ")")
+
+
+# ---------------------------------------------------------------------------
+# SECTION 7'S PACKAGE FOOTING -- the last sentence in this family that stated
+# no standing at all (issue #196).
+# ---------------------------------------------------------------------------
+# THE FIXED FORM: the bold plan name closed by a full stop the template owned,
+# with nothing between it and the baseline clause. "All packages keep <plan>."
+# is TRUE of every household -- data/package_results.json models all three
+# packages on the plan the house is on -- but it says nothing about that being
+# a modelling basis, and it sits in a section headed "The decision", over three
+# package cards and a recommendation. So a household section 0 has just told
+# "a cheaper rate plan exists", and section 3 has just told by how much, read
+# on into three packages priced on the losing tariff with no sign that the
+# comparison and the packages are on different footings.
+#
+# Restore this literal and the trails state goes straight back to that, which
+# is what the case below fails on.
+_S7_FOOTING_FIXED = "<b>{{BEST_PLAN}}</b>. <b>Baseline"
+# WHAT REPLACED IT: one slot, immediately after the bold plan name, carrying
+# the sentence's own punctuation. The plan name cannot come out of the slot --
+# generate_report.render() HTML-escapes every token value, so no token can emit
+# the <b> around it -- which is why the footing sits after the name rather than
+# rewriting the clause in front of it.
+_S7_FOOTING_SLOT = "<b>{{BEST_PLAN}}</b>{{S7_PLAN_FOOTING}}"
+# Where the half these tokens own stops. Everything from here is the baseline
+# and method half of the paragraph, which states no standing and is not this
+# case's to read.
+_S7_FOOTING_STOP = "<b>Baseline"
+
+
+def _s7_footing_line():
+    """report-template.html's section 7 opening paragraph, with the fixed
+    full-stop assertion checked GONE and the slot checked present exactly once.
+
+    One line, asserted: a second copy is a second place section 7 states this
+    household's footing, and the case below could not say which one a reader is
+    shown."""
+    template = rt.TEMPLATE.read_text()
+    assert _S7_FOOTING_FIXED not in template, (
+        f"report-template.html has gone back to closing section 7's opening clause with "
+        f"a fixed full stop ({_S7_FOOTING_FIXED!r}), so a household the ranking beats is "
+        "told every package keeps its plan with nothing saying the plan comparison above "
+        "is on a different footing -- the whole of this half of issue #196")
+    hits = [ln for ln in template.splitlines() if _S7_FOOTING_SLOT in ln]
+    assert len(hits) == 1, (
+        f"report-template.html carries {len(hits)} line(s) holding {_S7_FOOTING_SLOT!r}, "
+        f"not the one section 7 opening this case reads: {hits}")
+    return hits[0]
+
+
+def _s7_footing_markup():
+    """That paragraph's opening as a reader would be shown it, cut where these
+    tokens' own sentence ends -- every {{TOKEN}} resolved and HTML-escaped the
+    way generate_report.render() fills it, so this reads the page rather than a
+    paraphrase."""
+    def fill(m):
+        name = m.group(1)
+        if rt.TOKENS.get(name, {}).get("kind") == "gap":
+            return m.group(0)
+        return _htmllib.escape(rt.resolve_token(name), quote=True)
+
+    head = _s7_footing_line().split(_S7_FOOTING_STOP)[0]
+    return re.sub(r"\{\{([A-Z0-9_]+)\}\}", fill, head).rstrip()
+
+
+@case
+def case_section_7s_package_footing_states_the_plan_it_prices_on():
+    """ISSUE #196, THE DECISION SECTION. Sections 0 and 3 state this
+    household's standing; section 7 then prices three packages on the
+    household's own plan and used to say only "All packages keep <plan>." For a
+    household the ranking beats, that is a recommendation to stay written over
+    a page that has just said staying costs more, and the reader cannot tell
+    that the plan comparison and the packages are on different footings.
+
+    WHAT THE FOOTING MUST SAY, AND WHAT IT MAY NOT. It states which plan the
+    packages hold, whether the ranking beats it, and -- when it does -- that
+    switching is in no saving below. It may not price the switch: re-basing the
+    packages onto another plan is a different analysis with its own artifacts
+    and its own baseline question (issue #200), so no dollar figure may appear
+    in this slot at any standing, which is asserted in every state below.
+
+    THE THREE STATES ARE DRIVEN THROUGH THE RENDERED MARKUP, a rival priced $1
+    above this household, at exactly its total, and $1 below it -- the same
+    stored `==`/min() identity the rest of this family ranks on, with no band
+    (issue #141). Each state is checked as an IFF against section 3's own
+    sole-winner sentence, and against section 0's headline clause and its card,
+    so the four statements a reader meets on one page cannot drift apart: the
+    footing is bare punctuation exactly when section 3 says the plan is still
+    cheapest, and carries the disclosure exactly when it does not.
+
+    AND THE WINNING STATE ROUND-TRIPS INTO index.html character for character.
+    The published household is sole cheapest, so this fix has to be inert on
+    the path that exists today: the rendered opening must be markup the
+    published page already carries, or regenerating the report would silently
+    rewrite a sentence nobody re-checked.
+
+    The whole token set is swept in every state, catching BaseException through
+    _sweep_every_token, because the claim that matters is "this household gets
+    a report" rather than "this sentence renders"."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))["plan"]
+    index_html = (rt.ROOT / "index.html").read_text()
+    m = re.search(r'<tr class="[a-z0-9-]+"><td>([A-Za-z0-9-]+) ✓ current</td>', index_html)
+    assert m, "index.html has no section 3 household row for this case to read"
+    published_plan = m.group(1)
+    assert published_plan == cheapest, (
+        f"index.html publishes {published_plan!r} while data/plan_results.csv ranks "
+        f"{cheapest!r} cheapest in the {provider!r} column; the round trip below assumes "
+        "the published household is the sole cheapest one")
+    seen = {}
+    with _stub_plan(cheapest, provider):
+        _baseline_ok, baseline_refused = _sweep_every_token()
+        for standing, rival_total in (("win", own + 1), ("tie", own),
+                                      ("trails", own - 1)):
+            with _plan_repriced(provider, {cheapest: own, rival: rival_total}):
+                opening = _s7_footing_markup()
+                footing = rt.resolve_token("S7_PLAN_FOOTING")
+                s3, s0 = rt.resolve_token("S3_VERDICT"), rt.resolve_token("S0_VERDICT")
+                card = rt.resolve_token("S0_BEST_PLAN_CARD")
+                rendered, refused = _sweep_every_token()
+            _assert_no_new_refusals(baseline_refused, refused,
+                                    f"a household in the {standing} state")
+
+            # 1. THE FOUR STATEMENTS AGREE, by construction: section 3's own
+            #    sole-winner sentence decides, and the footing, section 0's
+            #    headline clause and its card each track it both ways.
+            wins = "is still the cheapest plan" in s3
+            assert wins == (standing == "win"), (
+                f"section 3's verdict does not report the {standing} state a rival priced "
+                f"{rival_total - own:+.0f} against {cheapest} produces: {s3}")
+            assert (footing == ".") == wins, (
+                f"section 7's footing reads {footing!r} while section 3's verdict says "
+                f"{s3!r}")
+            assert ("the rate plan is right" in s0) == wins, (s0, s3)
+            assert card.startswith("Best plan in every scenario") == wins, (card, s3)
+
+            # 2. NO FIGURE IN THIS SLOT, IN ANY STATE. The gap in dollars is
+            #    section 3's to state; pricing the switch here would be issue
+            #    #200's analysis smuggled into a sentence with no artifact.
+            assert "$" not in footing, (
+                f"section 7's footing quotes a figure in the {standing} state ({footing!r}) "
+                "-- no committed artifact prices a plan switch, and the gap between plans "
+                "belongs to section 3")
+
+            # 3. AND EACH STATE SAYS THE PARTICULAR TRUE THING, in the markup a
+            #    reader is shown.
+            if standing == "win":
+                assert opening.endswith(f"<b>{cheapest}</b>."), opening
+                assert index_html.count(opening) == 1, (
+                    f"section 7's winning-state opening is not markup index.html carries "
+                    f"exactly once ({index_html.count(opening)} occurrence(s)); "
+                    f"regenerating the report would change the published page:\n"
+                    f"  rendered: {opening!r}")
+            else:
+                assert not opening.endswith(f"<b>{cheapest}</b>."), (
+                    f"section 7 tells a household in the {standing} state that all "
+                    f"packages keep its plan and stops there: {opening}")
+                assert rival in opening, (
+                    f"section 7's footing does not name the plan that ranks at or above "
+                    f"this household in the {standing} state: {opening}")
+                assert "rate plan comparison above" in opening, (
+                    f"section 7's footing does not point the reader at the section that "
+                    f"ranks the plans: {opening}")
+            if standing == "tie":
+                assert f"level with {rival}" in opening, opening
+                assert "not the cheapest" not in opening, (
+                    f"section 7 calls a plan tied for cheapest beaten: {opening}")
+            if standing == "trails":
+                assert "the plan this house is on, not the cheapest one" in opening, (
+                    opening)
+                # No apostrophe in any branch: render() escapes with
+                # quote=True, so a possessive would publish as "house&#x27;s".
+                assert "&#x27;" not in opening and "&quot;" not in opening, (
+                    f"section 7's footing publishes an escaped quote into the page "
+                    f"source: {opening}")
+                assert "none of the savings below includes switching to it" in opening, (
+                    f"section 7 leaves a beaten household to assume the packages below "
+                    f"include the switch section 3 has just said is cheaper: {opening}")
+            assert set(rendered) >= set(_BEST_PLAN_TOKENS), (
+                f"{sorted(set(_BEST_PLAN_TOKENS) - set(rendered))} refused in the "
+                f"{standing} state")
+            seen[standing] = opening[opening.index("</b>"):][4:].strip() or "(bare stop)"
+
+        assert rt.resolve_token("S7_PLAN_FOOTING") == ".", (
+            "the substituted plan total leaked out of this case")
+    return ("section 7's opening states the footing its packages are priced on in all "
+            "three standings, agrees with section 3's verdict, section 0's headline and "
+            "section 0's card in each, quotes no figure, and renders into index.html "
+            "verbatim on the winning path ("
+            + "; ".join(f"{k}: {v[:70]!r}" for k, v in seen.items()) + ")")
 
 
 # ---------------------------------------------------------------------------

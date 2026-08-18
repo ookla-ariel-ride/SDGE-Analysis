@@ -2064,6 +2064,88 @@ _tok("S3_WHY_LEAD", kind="derived", get=_s3_why_lead,
               "private/household.yaml:household.cca (which provider column ranks)"])
 
 
+# ---- section 7's package footing (issue #196) ------------------------------
+#
+# THE LAST SENTENCE IN THIS FAMILY THAT STATED NO STANDING. Section 7 opens the
+# decision with "All packages keep <plan>", and that clause is TRUE of every
+# household: data/package_results.json models all three packages with the house
+# on the plan it is already on, and nothing committed prices any of them on a
+# different tariff. What it does not say is that this is a MODELLING BASIS. In
+# a section headed "The decision", under three package cards and a
+# recommendation, "keep" reads as advice -- and for a household the ranking
+# beats, the reader has just been told in section 0 that a cheaper plan exists
+# and in section 3 by how much, and is then handed three packages priced on the
+# losing tariff with nothing saying the two are on different footings.
+#
+# WHAT THIS TOKEN SAYS AND WHAT IT DELIBERATELY DOES NOT. It states the
+# footing: whose plan the packages hold, whether the ranking beats it, and --
+# when it does -- that switching is not inside any saving below. It does not
+# price the switch. Re-basing the packages onto another plan is a different
+# analysis with its own artifacts and its own unresolved baseline question (the
+# savings below are deltas against ACTUAL BILLS, which were billed on this
+# plan, so re-basing changes what the baseline means -- CLAUDE.md section 1's
+# one-rate-vintage rule), and it is issue #200's, not this one's. No figure
+# either: the gap in dollars is section 3's to state, and S3_VERDICT states it.
+#
+# WHY A SLOT AFTER THE PLAN NAME RATHER THAN A REWRITTEN CLAUSE IN FRONT OF IT.
+# generate_report.render() HTML-escapes every token value, so no token can emit
+# the <b> around {{BEST_PLAN}}; the bold plan name is fixed markup and pins the
+# sentence's shape. A token in front of it could swap the verb and nothing
+# else -- it could carry neither the pointer to section 3 nor the
+# not-included-here clause, which is the whole substance. A token after it
+# carries both AND qualifies the verb in the same breath, in one slot instead
+# of two.
+#
+# WHY IT NAMES SECTION 3 BY ITS HEADING INSTEAD OF WRITING THE SIGIL. The same
+# escaping: CLAUDE.md section 10 requires every "section N" reference in report
+# prose to be a real <a href="#sN"> link, and an escaped token value cannot
+# carry one. The sentence points at section 3 by that section's own heading
+# ("Rate plan comparison"), which needs no sigil and no link.
+#
+# NO APOSTROPHE IN ANY BRANCH, for the third consequence of the same escaping:
+# render() escapes with quote=True, so a possessive would reach the published
+# HTML as "house&#x27;s". It displays correctly and reads as a defect in the
+# source of a page whose whole point is that a reader can check it.
+#
+# THE PERIOD IS THE TOKEN'S, and that is what keeps the winning household's
+# published page character-for-character what it was: at "win" this value IS
+# ".", so the rendered sentence is the "All packages keep <plan>." index.html
+# already carries. See
+# test_report_tokens.case_section_7s_package_footing_states_the_plan_it_prices_on.
+def _s7_plan_footing(ctx):
+    """The clause closing section 7's "All packages keep <plan>" sentence: the
+    footing the three packages below are priced on.
+
+    Three states, off _plan_standing -- the same helper section 0's verdict and
+    its card, section 3's verdict, section 3's row and section 3's lead-in all
+    branch on, so this sentence cannot tell the reader a different story from
+    the four statements above it. A household whose plan is beaten reads "not
+    the cheapest one" here and "a cheaper rate plan exists" in section 0; a
+    household whose plan wins reads neither, because there is nothing to
+    disclose.
+    """
+    standing, plan, _plan_total, _cheapest, winners = _plan_standing(
+        ctx, "S7_PLAN_FOOTING")
+    if standing == "win":
+        return "."
+    if standing == "tie":
+        others = _join_plan_names([p for p in winners if p != plan])
+        return (f" — the plan this house is on, level with {others} at the cheapest "
+                "modeled total in the rate plan comparison above.")
+    # Verb agreement on the winners' set, the same way S3_VERDICT takes it: two
+    # plans tied ahead of this one are "each price lower", not "prices lower".
+    verb = "prices" if len(winners) == 1 else "each price"
+    return (" — the plan this house is on, not the cheapest one. "
+            f"{_join_plan_names(winners)} {verb} lower in the rate plan comparison "
+            "above, and none of the savings below includes switching to it.")
+
+
+_tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
+     sources=["data/plan_results.csv (the household provider's total column)",
+              "private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)"])
+
+
 def _wildcard_totals():
     """{plan: [modeled annual totals]} off data/deep_results.json:wildcard.
 
