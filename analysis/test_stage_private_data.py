@@ -1108,19 +1108,53 @@ def case_every_git_invocation_carries_the_configuration_override():
     one override. `git` inside a quoted message is not an invocation and is
     skipped, which is why the quote parity is counted rather than the word.
 
-    The behavioural half -- that the override really does defeat an ambient
-    excludes file on a git that ignores the variables -- is
+    TWO KINDS of override now, and the wrapper has to carry both (adversarial
+    review, round two). core.excludesFile is switched OFF, and its value is
+    known before the destination is: it is written into the wrapper literally.
+    core.ignoreCase and core.precomposeUnicode are taken FROM the destination --
+    an ambient one widens the destination's own patterns until they cover a path
+    it never named, and forcing them off outright would refuse the ordinary
+    macOS and Windows repository whose git really does match case-insensitively.
+    Their values arrive through the _GIT_DEST_CONFIG array, which
+    _adopt_destination_config fills per destination, so what this case can check
+    structurally is that the array is IN the wrapper, that it starts life at
+    git's own default rather than empty, and that it names every key
+    _adopt_destination_config reads.
+
+    The behavioural half -- that the overrides really do defeat an ambient
+    excludes file, an ambient core.ignoreCase and an ambient
+    core.precomposeUnicode on a git that ignores the variables -- is
     test_private_egress.case_a_git_that_ignores_the_config_variables_cannot_be_
-    told_a_committable_path_is_ignored, which runs this script under a PATH shim.
+    told_a_committable_path_is_ignored and
+    case_ambient_matching_configuration_cannot_widen_the_destinations_own_rules,
+    which run this script under a PATH shim.
     """
     text = SCRIPT.read_text()
-    m = re.search(r"^_git\(\) \{\n\s*command git ((?:-c \S+ )+)\"\$@\"\n\}$",
-                  text, re.M)
+    m = re.search(r"^_git\(\) \{\n\s*command git ((?:-c \S+ )+)"
+                  r"\"\$\{_GIT_DEST_CONFIG\[@\]\}\" \"\$@\"\n\}$", text, re.M)
     assert m, ("stage-private-data.sh no longer defines a _git wrapper that passes "
-               "-c options -- the ignore verdict is back on whatever the running "
-               "git's version happens to make of GIT_CONFIG_GLOBAL and friends")
+               "-c options and the destination-derived array -- the ignore verdict "
+               "is back on whatever the running git's version happens to make of "
+               "GIT_CONFIG_GLOBAL and friends, or on the operator's own "
+               "core.ignoreCase")
     overrides = [tok for tok in m.group(1).split() if tok != "-c"]
-    assert overrides, "the wrapper passes no configuration override at all"
+    assert overrides, "the wrapper passes no literal configuration override at all"
+
+    init = re.search(r"^_GIT_DEST_CONFIG=\((.*?)\)$", text, re.M)
+    assert init, ("_GIT_DEST_CONFIG is never initialized, so under `set -u` the "
+                  "wrapper above is a syntax error away from running with no "
+                  "destination-derived override at all")
+    seeded = dict(tok.split("=", 1) for tok in init.group(1).split() if tok != "-c")
+    assert seeded and all(v == "false" for v in seeded.values()), (
+        "the destination-derived overrides do not start at git's own default "
+        f"({seeded}) -- a probe running before the adoption would then widen the "
+        "matching instead of narrowing it")
+    read = set(re.findall(r"^\s*for key in (.+); do$", text, re.M)[0].split())
+    assert read == set(seeded), (
+        "the keys the wrapper seeds and the keys _adopt_destination_config reads "
+        f"differ: seeded {sorted(seeded)}, read {sorted(read)} -- one of them is "
+        "left on a value nothing measured")
+    overrides += [f"{k}=<destination's own>" for k in sorted(read)]
 
     strays = []
     for n, line in enumerate(text.splitlines(), 1):
@@ -1732,6 +1766,121 @@ def case_refuses_a_destination_that_tracks_a_path_it_writes():
         assert not (dst / "private" / "1-raw-data").exists()
     return ("a destination that tracks a path this script writes is refused, "
             "and is reported as tracked rather than as unignored")
+
+
+def _old_git_shim(td, name="old-git"):
+    """A directory holding a `git` that unsets the 2021 GIT_CONFIG_* variables
+    and execs the real one -- a git that has never heard of them, which is what
+    the script's own comment says it still has to work on.
+
+    A process that never reads a variable and a process that never receives it
+    cannot be told apart, so this is that git exactly. GIT_CONFIG_NOSYSTEM is
+    left in place: it is from 2008 and such a git really does read it."""
+    real = shutil.which("git")
+    if not real:
+        raise SkipCase("no git on PATH to shim")
+    d = pathlib.Path(td) / name
+    d.mkdir()
+    (d / "git").write_text(
+        "#!/bin/sh\n"
+        "unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_COUNT "
+        "GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0\n"
+        f'exec {shlex.quote(real)} "$@"\n')
+    (d / "git").chmod(0o755)
+    return d
+
+
+@case
+def case_ambient_matching_configuration_cannot_widen_the_destinations_own_rules():
+    """Issue #193, adversarial review round two, in the implementation that
+    actually handles the archive.
+
+    The ignore guard asks the destination whether its own rules cover the paths
+    this script writes. core.ignoreCase decides how those rules MATCH, and it is
+    answered from the operator's ~/.gitconfig whenever the destination states
+    none of its own -- which is every repository whose .git/config was written
+    on a case-sensitive filesystem, since that is the only case where git init
+    writes nothing. So a destination whose .gitignore says `Private/` while the
+    script writes `private/1-raw-data` used to take the whole archive, because
+    the machine happened to be configured to match case-insensitively.
+
+    Three rows, and the second is the one a blanket `-c core.ignoreCase=false`
+    would break: a repository that states core.ignoreCase=true really does cover
+    the path, and refusing it would be the guard refusing a correct caller.
+
+    Run under a PATH shim, because on a git that reads the 2021 GIT_CONFIG_*
+    variables the wholesale switch-off hides the question this case is asking.
+    The ambient value is delivered through XDG_CONFIG_HOME rather than HOME for
+    the reason the other ambient cases give: the source's stand-in interpreter
+    resolves through the real HOME, and forging it breaks `import yaml` inside
+    the run for a reason that has nothing to do with this check.
+    """
+    rows = (
+        ("a rule spelled Private/ and no core.ignoreCase of its own",
+         "Private/\n", None, "refuse"),
+        ("the same rule, and core.ignoreCase=true as git init writes it on a "
+         "case-insensitive filesystem", "Private/\n", "true", "accept"),
+        ("a rule spelled as the path is, with no core.ignoreCase of its own",
+         "private/\n", None, "accept"),
+    )
+    checked = []
+    for label, gi, local, expected in rows:
+        with tempfile.TemporaryDirectory() as td:
+            shim = _old_git_shim(td)
+            xdg = pathlib.Path(td) / "xdg"
+            (xdg / "git").mkdir(parents=True)
+            (xdg / "git" / "config").write_text("[core]\n\tignoreCase = true\n")
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            dst, script = _throwaway_checkout(td, gi)
+            subprocess.run(["git", "-C", str(dst), "config", "--local", "--unset",
+                            "core.ignorecase"], capture_output=True)
+            if local is not None:
+                subprocess.run(["git", "-C", str(dst), "config", "--local",
+                                "core.ignorecase", local], capture_output=True,
+                               check=True)
+            env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}",
+                       XDG_CONFIG_HOME=str(xdg))
+            # The fixture's POTENCY, established against raw git under the same
+            # shim and with everything the script forces EXCEPT the
+            # destination-derived value: on the refusing row the ambient config
+            # really does manufacture "ignored", or the run below would prove
+            # nothing. On the accepting rows the destination really does cover
+            # the path on its own.
+            probe = subprocess.run(
+                ["git", "-c", "core.excludesFile=/dev/null", "-C", str(dst),
+                 "check-ignore", "-q", "--", "./private/1-raw-data"],
+                capture_output=True, text=True,
+                env=dict(env, GIT_CONFIG_GLOBAL="/dev/null",
+                         GIT_CONFIG_SYSTEM="/dev/null", GIT_CONFIG_NOSYSTEM="1",
+                         GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.excludesFile",
+                         GIT_CONFIG_VALUE_0="/dev/null"))
+            if probe.returncode != 0:
+                raise SkipCase(
+                    f"this git does not call ./private/1-raw-data ignored in a "
+                    f"repository with {label}, so the row cannot be tested "
+                    f"(exit {probe.returncode})")
+            before = _snapshot(dst)
+            result = _run_script(src, dst, cwd=src, script=script, env=env)
+            if expected == "refuse":
+                _assert_refused(result, dst, before,
+                                f"a destination with {label} under an ambient "
+                                "core.ignoreCase=true")
+                assert "does not gitignore" in result.stderr, result.stderr
+                assert not (dst / "private" / "1-raw-data").exists(), (
+                    "the archive was written into a repository whose own rules "
+                    "do not cover it -- the operator's ~/.gitconfig decided")
+            else:
+                assert result.returncode == 0, (
+                    f"a destination with {label} is a correct caller and must "
+                    f"still be staged: {result.stderr[-800:]}")
+                assert (dst / "private" / "household.yaml").is_file(), (
+                    "the run reported success and staged nothing")
+            checked.append(label)
+    return ("an ambient core.ignoreCase cannot widen the destination's own "
+            f"ignore rules ({len(checked)} rows, on a git that reads none of the "
+            "2021 GIT_CONFIG_* variables), and a destination that asks for the "
+            "wider matching itself is still accepted and staged")
 
 
 # --------------------------------------------------------------------------

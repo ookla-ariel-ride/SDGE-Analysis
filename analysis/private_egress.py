@@ -35,10 +35,15 @@ THE RULE, matching what stage-private-data.sh already enforces:
      forced on the command line of every probe, and global, XDG and system
      configuration are additionally switched off on any git that reads the
      variables for it, while the destination's own .gitignore and
-     .git/info/exclude stay fully in effect. The command-line half is what makes
-     that version-independent, and it is verified against the running git before
-     any answer is believed. See sanitized_env(), _git() and
-     _require_isolation_proven().
+     .git/info/exclude stay fully in effect. Two keys are forced FROM the
+     destination instead of off: core.ignoreCase and core.precomposeUnicode
+     decide how the destination's own patterns MATCH, so an ambient one widens
+     the matching until a rule the destination does not have covers the path
+     anyway -- their values are read from that repository's own configuration
+     and forced to what it says. The command-line half is what makes all of this
+     version-independent, and it is verified against the running git before any
+     answer is believed. See sanitized_env(), _git(), _destination_overrides()
+     and _require_isolation_proven().
   2. the destination lies inside a REGISTERED worktree of THIS checkout, and
      that worktree still IS one. Registration is decided against `git worktree
      list`, resolved from the common dir of the checkout THIS FILE lives in --
@@ -289,21 +294,57 @@ class Destination:
 # HOME, whose refusals an operator could not fix by editing anything in the
 # repository.
 #
-# WHAT ELSE COULD REACH THE VERDICT, asked in the same suspicious spirit that
-# turned up the default ignore path, because the first remedy proposed for #193
-# looked complete and was not. Two other keys could move an answer this module
-# acts on: core.ignoreCase widens pattern matching, which is the direction that
-# turns "not ignored" into "ignored", and core.worktree moves --show-toplevel.
-# Measured on the old-git shim with the -c in place, neither is an AMBIENT
-# lever: ignoreCase is answered from the destination's own .git/config, which
-# git init writes and which outranks global, and a core.worktree in global
-# config did not move --show-toplevel at all. The excludes file is the ambient
-# input, and it is the one that is forced.
+# WHAT ELSE COULD REACH THE VERDICT. The excludes file is not the only ambient
+# input, and the sweep that said it was had a hole in its METHOD: it was run
+# against fixtures `git init` had just built, and git init writes the very keys
+# it was testing into .git/config, where they outrank global. A local value that
+# is PRESENT masks the ambient one. Re-run with each key's local value REMOVED
+# -- the state of any repository whose config was written on a case-sensitive
+# filesystem, or by hand -- two keys move a verdict this module acts on, both in
+# the ADMITTING direction. Fixture: .gitignore holds `Private/` and `café/`
+# (NFC); the questions are './private/leak.json' and './café/leak.json' (NFD).
+# Old-git shim, with the -c core.excludesFile already in place:
+#
+#   ambient key (global)          local value present    local value removed
+#   core.ignoreCase = true        1  not ignored         0  IGNORED
+#   core.precomposeUnicode = true 1  not ignored         0  IGNORED
+#
+# Neither is an excludes file: they decide how the destination's OWN patterns
+# match, and both widen the match, so an ambient one makes a rule the
+# destination does not have cover the path anyway. All five ambient routes
+# deliver them -- $HOME/.gitconfig, $XDG_CONFIG_HOME/git/config,
+# $HOME/.config/git/config, include.path and includeIf gitdir:.
+#
+# THEY ARE NOT FORCED OFF, they are forced FROM THE DESTINATION -- see
+# _destination_overrides(). Forcing core.ignoreCase=false outright closes the
+# hole and breaks correct callers: measured on a repository whose own
+# .git/config says ignorecase=true (what git init writes on macOS and Windows)
+# with .gitignore `private/`, the question './Private/leak.json' answers 0
+# unforced and 1 forced-false -- the guard refusing a destination whose git
+# really would refuse the path. A guard that refuses ordinary correct callers is
+# one that gets switched off.
+#
+# WHAT WAS TESTED AND IS INERT, with each key's local value removed and the
+# ambient one set: core.worktree, core.bare, core.symlinks, core.fileMode,
+# core.quotePath, core.attributesFile, core.hooksPath, core.fsmonitor,
+# core.sparseCheckout, core.protectHFS, core.autocrlf, core.longpaths,
+# core.checkStat, core.untrackedCache, index.sparse, status.showUntrackedFiles,
+# safe.directory, and aliases named after the three commands run here (git does
+# not let an alias shadow a builtin). core.bare is the one that needs its own
+# sentence: an ambient bare=true does make `git worktree list` report a MAIN
+# worktree as bare -- which _parse_worktree_records() drops, refusing a
+# destination inside it -- but only when the listing is made from inside a
+# working tree. registered_worktrees() lists from the COMMON GIT DIR, and there
+# the main worktree's bareness is decided by the cwd and by the repository's own
+# core.bare (which git init always writes as false), not by the ambient value:
+# measured inert in that call shape, with the local value present and removed.
+# Refusing-direction in either case, so it is left alone rather than made a
+# fourth forced key.
 #
 # AND IT IS PROVED, not assumed: _require_isolation_proven() below asks the
-# running git what core.excludesFile actually reads back as, and refuses if it is
-# not ours. Version numbers are what this comment can offer; what the guard acts
-# on is the git in front of it.
+# running git what each forced key actually reads back as, and refuses if any of
+# them is not ours. Version numbers are what this comment can offer; what the
+# guard acts on is the git in front of it.
 #
 # The ORDER matters and is asserted by construction below: the inherited
 # GIT_CONFIG* family is dropped first, then the six are written in. An inherited
@@ -349,6 +390,53 @@ GIT_CONFIG_OVERRIDES = (
 # proof cannot go on asserting a key the isolation has stopped forcing.
 ISOLATION_PROOF_KEY, ISOLATION_PROOF_VALUE = GIT_CONFIG_OVERRIDES[0]
 
+# The keys whose value is taken FROM THE DESTINATION rather than switched off,
+# with the value used when that repository states none. Boolean, and forced as
+# git's own normalized spelling ("true"/"false") so the readback in
+# _require_isolation_proven() compares like with like.
+#
+# WHY NOT OFF: core.excludesFile names an alternative FILE of rules, so an empty
+# one leaves the destination's .gitignore and .git/info/exclude to answer alone
+# -- exactly what the guard wants to ask. These two are not rules, they are the
+# MATCHING SEMANTICS the destination's own rules are read with, and the right
+# semantics are a property of the repository (and of the filesystem under it),
+# not of the machine the staging happens to run on.
+#
+# WHY "false" WHEN ABSENT: it is the value the destination's own git already
+# uses when nothing states one, so the guard reproduces what `git add` would do
+# there with the operator's configuration out of the picture, which is the
+# question this whole module asks. git-config(1) says it outright for
+# core.ignoreCase ("The default is false, except git-clone or git-init will
+# probe and set core.ignoreCase true if appropriate"); it states no default for
+# core.precomposeUnicode, so that half is MEASURED rather than cited -- with
+# neither a local nor an ambient value, the NFD question against the NFC rule
+# answered "not ignored", which is what false does. It is also the narrow
+# direction in both cases: false matches fewer paths, so it can only refuse
+# where a wrong default would otherwise accept.
+#
+# WHAT ABSENT COSTS, stated because it is real: on a case-insensitive
+# filesystem whose repository has no local core.ignoreCase, the destination's
+# `Private/` rule stops covering `private/`, and a path already tracked as
+# `Private/x` stops answering `ls-files private/x`. `git init` and `git clone`
+# write core.ignoreCase=true on such a filesystem, so this is a repository whose
+# config was hand-edited or carried over from a case-sensitive machine -- and
+# the remedy is one command inside the destination, `git config core.ignoreCase
+# true`, which is what git would have written.
+DESTINATION_CONFIG_KEYS = (
+    ("core.ignoreCase", "false"),
+    ("core.precomposeUnicode", "false"),
+)
+# The repository-internal scopes the value above is read from, in git's own
+# precedence order (highest first). BOTH, because `--local` does not see a
+# per-worktree value: measured on a repository with extensions.worktreeConfig
+# enabled and core.ignoreCase=true in config.worktree, `git config --local
+# --get` exits 1 while check-ignore behaves as true, so a guard reading --local
+# alone would force false over a value the destination really is using. Neither
+# scope can be reached from the environment or from ambient config files, which
+# is what makes the read safe to make with the ambient configuration still
+# standing.
+DESTINATION_CONFIG_SCOPES = ("--worktree", "--local")
+
 
 def sanitized_env(env=None):
     """`env` (default os.environ) with every variable that can move git's answer
@@ -369,7 +457,7 @@ def sanitized_env(env=None):
     return out
 
 
-def _git(args, cwd, env=None):
+def _git(args, cwd, env=None, overrides=GIT_CONFIG_OVERRIDES):
     """Every git this module runs, with the isolation attached to the command
     line as well as to the environment.
 
@@ -379,11 +467,64 @@ def _git(args, cwd, env=None):
     test_private_egress.case_every_git_invocation_carries_the_configuration_
     override -- because an isolation a later probe can forget to apply is the
     defect this funnel exists to make impossible.
+
+    `overrides` defaults to the constant table, which is every -c whose value is
+    known without asking anything: it applies to identity and register probes,
+    which no destination-derived key moves. The two probes whose ANSWER those
+    keys move are handed the fuller list _require_isolation_proven() has just
+    proved -- see _destination_overrides().
     """
-    opts = [tok for name, value in GIT_CONFIG_OVERRIDES
+    opts = [tok for name, value in overrides
             for tok in ("-c", f"{name}={value}")]
     return subprocess.run(["git"] + opts + ["-C", str(cwd)] + list(args),
                           capture_output=True, text=True, env=sanitized_env(env))
+
+
+def _destination_config(worktree, key, default, env=None):
+    """`key`'s value as the DESTINATION's own repository configuration states
+    it, normalized to "true"/"false", or `default` when it states none.
+
+    Read with `git config <scope> --bool --get`, and the scope is what keeps the
+    read clean: --worktree and --local name one file each, inside the
+    destination's own git directory, so neither the ambient configuration this
+    is about to override nor the -c that overrides it can contaminate the
+    answer. Measured, because a read that quietly saw the value it was about to
+    force would prove nothing: with core.ignoreCase=true in $HOME/.gitconfig and
+    -c core.ignoreCase=false on the command line, `config --local --bool --get`
+    still printed the destination's own `true`, and printed nothing (exit 1) in
+    a repository that states none. A scope is not optional: an effective `config
+    --get` would read the -c this module has already put on the command line, so
+    the read would confirm the value it is about to force and the destination
+    would never be consulted at all.
+
+    --bool for the spelling, not for the truth: git accepts `yes`, `on`, `1` and
+    a valueless key, and all of them have to arrive at the readback in
+    _require_isolation_proven() as the same word git would print back. A value
+    git cannot read as boolean exits non-zero here and takes the default -- and
+    costs nothing, because that same value makes every other git command in that
+    repository fatal (measured: check-ignore, ls-files and rev-parse all exit
+    128 on `ignorecase = bogus`, with the -c in place), so the probes below
+    refuse it as unanswerable rather than believing the default.
+    """
+    for scope in DESTINATION_CONFIG_SCOPES:
+        r = _git(["config", scope, "--bool", "--get", key], worktree, env)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    return default
+
+
+def _destination_overrides(worktree, env=None):
+    """The full -c list for a probe asked ABOUT `worktree`: the constant
+    overrides, plus each destination-derived key set to what that repository
+    itself says (DESTINATION_CONFIG_KEYS).
+
+    Derived per call rather than once per run, for the reason
+    _require_isolation_proven() is: a config file is an ordinary file that can
+    be rewritten between the first probe and the last.
+    """
+    derived = tuple((key, _destination_config(worktree, key, default, env))
+                    for key, default in DESTINATION_CONFIG_KEYS)
+    return tuple(GIT_CONFIG_OVERRIDES) + derived
 
 
 def _physical(path):
@@ -1007,7 +1148,14 @@ def _require_isolation_proven(worktree, env=None):
     git that is going to answer, in the destination, where every configuration
     file that could reach the ignore verdict is already in the stack:
 
-        git config --get core.excludesFile   must read back as ours
+        git config --get <key>   must read back as ours, for EVERY key forced
+
+    EVERY key, and that word is the finding this round: the proof read back
+    core.excludesFile alone, so the isolation could have stopped applying
+    anywhere else and the proof would still have passed. It now walks the same
+    list the probes are given, which is why it RETURNS that list -- the caller
+    runs its probes with the overrides this function has just proved, and there
+    is no second derivation for the two to disagree about.
 
     It is the RESULT that is checked, not the mechanism, so this keeps holding if
     the mechanisms change and it fails closed if some later git reorders
@@ -1019,22 +1167,25 @@ def _require_isolation_proven(worktree, env=None):
     between the first probe and the last, and a fact obtained once and trusted
     for the rest of the call is the shape of most defects review has found here.
     """
-    r = _git(["config", "--get", ISOLATION_PROOF_KEY], worktree, env)
-    effective = r.stdout.strip()
-    if effective == ISOLATION_PROOF_VALUE:
-        return
-    version = _git(["--version"], worktree, env).stdout.strip() or "unknown"
-    raise DestinationRefused(
-        "isolation_unproven",
-        f"{ISOLATION_PROOF_KEY} reads back as "
-        f"{effective or '<unset>'!r} in {worktree}, not "
-        f"{ISOLATION_PROOF_VALUE!r} ('git config --get' exited {r.returncode}; "
-        f"{version}). The ignore question below would then be answered by the "
-        "operator's global, XDG or system configuration rather than by the "
-        "repository, and a destination that does NOT ignore private data could "
-        "answer that it does. 'git -c' has existed since git 1.7.2 (2010), so a "
-        "git that ignores it is older than anything this repository is developed "
-        "on: upgrade git", worktree)
+    overrides = _destination_overrides(worktree, env)
+    for key, value in overrides:
+        r = _git(["config", "--get", key], worktree, env, overrides)
+        effective = r.stdout.strip()
+        if effective == value:
+            continue
+        version = _git(["--version"], worktree, env).stdout.strip() or "unknown"
+        raise DestinationRefused(
+            "isolation_unproven",
+            f"{key} reads back as "
+            f"{effective or '<unset>'!r} in {worktree}, not "
+            f"{value!r} ('git config --get' exited {r.returncode}; "
+            f"{version}). The ignore question below would then be answered by the "
+            "operator's global, XDG or system configuration rather than by the "
+            "repository, and a destination that does NOT ignore private data could "
+            "answer that it does. 'git -c' has existed since git 1.7.2 (2010), so a "
+            "git that ignores it is older than anything this repository is developed "
+            "on: upgrade git", worktree)
+    return overrides
 
 
 def _require_uncommittable(worktree, relpath, env=None):
@@ -1051,21 +1202,26 @@ def _require_uncommittable(worktree, relpath, env=None):
     inherited GIT_CONFIG could otherwise supply a core.excludesFile that
     manufactures the "ignored" answer, an AMBIENT one (the operator's global,
     XDG or system config, or the default global ignore file) could manufacture
-    it with nothing forged at all, and an inherited GIT_*_PATHSPECS could make
-    both questions below answer about a different path or refuse every path
-    outright. The first and third are settled in sanitized_env(), the second on
-    the command line in _git(), and _require_isolation_proven() above checks that
-    the git in front of us really did apply it. What is left is the destination's
-    own .gitignore, its info/exclude and its index.
+    it with nothing forged at all, an ambient core.ignoreCase or
+    core.precomposeUnicode could widen the destination's OWN rules until they
+    cover a path the destination never named, and an inherited GIT_*_PATHSPECS
+    could make both questions below answer about a different path or refuse
+    every path outright. The first and last are settled in sanitized_env(), the
+    middle two on the command line in _git() -- switched off, and taken from the
+    destination's own configuration, respectively -- and
+    _require_isolation_proven() above checks that the git in front of us really
+    did apply every one of them, handing back the list the two probes then run
+    with. What is left is the destination's own .gitignore, its info/exclude and
+    its index.
 
     This is the ONLY place in this module where a caller-supplied path becomes a
     git PATHSPEC (everything else hands git a -C directory), so it is the one
     place _pathspec() has to be applied -- see there for what a leading ':'
     otherwise does to both questions below.
     """
-    _require_isolation_proven(worktree, env)
+    overrides = _require_isolation_proven(worktree, env)
     spec = _pathspec(relpath)
-    r = _git(["ls-files", "--", spec], worktree, env)
+    r = _git(["ls-files", "--", spec], worktree, env, overrides)
     if r.returncode != 0:
         raise DestinationRefused(
             "tracked_unanswerable",
@@ -1077,7 +1233,7 @@ def _require_uncommittable(worktree, relpath, env=None):
             "a tracked file stays in the index whatever .gitignore says, so "
             "writing private data over one puts it straight into the next "
             "commit's diff", os.path.join(worktree, relpath))
-    r = _git(["check-ignore", "-q", "--", spec], worktree, env)
+    r = _git(["check-ignore", "-q", "--", spec], worktree, env, overrides)
     if r.returncode == 0:
         return
     if r.returncode == 1:
@@ -1086,8 +1242,12 @@ def _require_uncommittable(worktree, relpath, env=None):
             "that working tree's own git would offer this path to 'git add' -- "
             "the half of the 2026-08-13 incident a repository check cannot see. "
             "Asked with global, XDG and system configuration off, so a global "
-            "excludes file does not count: the remedy is inside the destination, "
-            "in its .gitignore or its .git/info/exclude",
+            "excludes file does not count, and with core.ignoreCase and "
+            "core.precomposeUnicode as the DESTINATION's own config states them "
+            "(git's default, false, when it states neither), so a rule whose "
+            "spelling differs from the path's only in case or in unicode "
+            "composition does not count either: the remedy is inside the "
+            "destination, in its .gitignore or its .git/info/exclude",
             os.path.join(worktree, relpath))
     raise DestinationRefused(
         "ignore_unanswerable",
