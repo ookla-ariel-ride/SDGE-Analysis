@@ -4931,6 +4931,143 @@ def case_section_0s_card_counts_every_scenario_it_names():
             "takes the every-scenario claim off the card, and all three stay named")
 
 
+def _wildcard_priced(totals):
+    """data/deep_results.json:wildcard substituted whole, restored on the way
+    out -- the same in-memory contract _swapped and _matrix_priced keep.
+
+    Keys are built in the artifact's own prose shape ("<plan> + PW3", "<plan>
+    no battery"), because _wildcard_totals identifies the plan by splitting
+    them there; a case that passed bare plan names would be driving a shape no
+    run of the deep-dive workup produces."""
+    return _swapped(rt._json("deep_results.json"), "wildcard", totals)
+
+
+@case
+def case_a_non_finite_wildcard_total_drops_the_scenario_instead_of_ranking_the_rest():
+    """A nan in data/deep_results.json:wildcard used to be FILTERED OUT and
+    the surviving totals ranked -- `[t for t in ours if _finite(t)]` on this
+    household's side, `any(_finite(t) ...)` on the rivals' -- while section
+    0's card went on counting the wildcard as a scenario it had scored.
+
+    WHICH INVERTS THE STANDING, not merely blurs it. The discarded total is
+    exactly the one that could have beaten this plan: a rival priced [90, 300]
+    against our 100 TRAILS, and with the 90 poisoned the filter ranks us
+    against the 300 and publishes a WIN -- inside a label reading "Best plan
+    in every scenario tested (..., <rival> wildcard)", over a comparison whose
+    cheaper side the artifact never priced. That is this branch's own
+    mixed-matrix finding one input along: the computation drops a value and
+    the sentence keeps counting it.
+
+    THE FIX IS A DROP, NOT A REFUSAL, and the two halves are asserted
+    separately below. _bpm_cheapest and _plan_ranking REFUSE a non-finite cell
+    because section 3's verdict, section 4's row class and section 7's footing
+    all have to state that ranking and have no absent state to land in
+    (case_a_non_finite_rival_cell_refuses_rather_than_electing_a_runner_up_by
+    _key_order holds that, and this case must not loosen it). The wildcard
+    does have one: _wildcard_scenario already returns None for a workup that
+    prices a single plan, and the card drops what it is not handed. So the
+    card must keep RENDERING here -- one scenario shorter, and identical to
+    the label a household with no wildcard plan at all gets.
+
+    Every artifact here is synthetic and every household answer is stubbed, so
+    this runs with or without the private archive -- the fail-closed reason
+    _stub_household's docstring gives."""
+    plan, rival = "TEST-PLAN", "RIVAL-PLAN"
+    # OURS 100, THEIRS 90 -- the rival wins, so a filter that loses the 90 is
+    # visible as a flipped standing rather than as a lost tie.
+    clean = {f"{plan} + PW3": 100, f"{plan} no battery": 140,
+             f"{rival} + PW3": 90, f"{rival} no battery": 300}
+    poisons = {}
+    for bad in (float("nan"), float("inf")):
+        poisons[f"the rival's cheaper total is {bad!r}"] = {
+            **clean, f"{rival} + PW3": bad}
+        poisons[f"the rival's dearer total is {bad!r}"] = {
+            **clean, f"{rival} no battery": bad}
+        poisons[f"one of this plan's own totals is {bad!r}"] = {
+            **clean, f"{plan} no battery": bad}
+        # EVERY total of the only rival: that plan used to be dropped out of
+        # `rivals` wholesale, taking the name out of the card's parenthetical
+        # with it and leaving the scenario counted against nobody.
+        poisons[f"every total the rival carries is {bad!r}"] = {
+            **clean, f"{rival} + PW3": bad, f"{rival} no battery": bad}
+    with _stub_household({"household.plan": plan}):
+        with _wildcard_priced(clean):
+            baseline = rt._wildcard_scenario(rt.CTX)
+        assert baseline == (f"{rival} wildcard", "trails"), (
+            f"the finite artifact {clean} ranks {plan} behind {rival}, which is the "
+            f"standing a filtered ranking has to be able to flip: {baseline}")
+        for label, totals in poisons.items():
+            with _wildcard_priced(totals):
+                got = rt._wildcard_scenario(rt.CTX)
+            assert got is None, (
+                f"the wildcard artifact where {label} was ranked over its finite subset "
+                f"and answered {got!r}; a total the artifact does not carry as a number "
+                "cannot be dropped and the remainder ranked")
+
+    # AND THE CARD: it must still render, name one scenario fewer, and land on
+    # exactly the label a household whose workup prices ONE plan already gets.
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    csv_rival = min((r for r in priced if r["plan"] != cheapest),
+                    key=lambda r: float(r["total"]))["plan"]
+    named = f"{rival} wildcard"
+    ranked = {f"{cheapest} + PW3": 100, f"{rival} + PW3": 90, f"{rival} no battery": 300}
+    dropped = {f"{cheapest} + PW3": 100}          # no rival priced: the absent state
+    cards = {}
+    with _stub_plan(cheapest, provider):
+        published = rt.resolve_token("S0_BEST_PLAN_CARD")
+        for standing, states in (("winning", contextlib.nullcontext()),
+                                 ("beaten", _plan_repriced(provider,
+                                                           {cheapest: own,
+                                                            csv_rival: own - 1}))):
+            with states:
+                for label, totals in (("ranked", ranked),
+                                      ("non-finite", {**ranked,
+                                                      f"{rival} + PW3": float("nan")}),
+                                      ("absent", dropped)):
+                    with _wildcard_priced(totals):
+                        cards[standing, label] = rt.resolve_token("S0_BEST_PLAN_CARD")
+            assert named in cards[standing, "ranked"], (
+                f"the {standing} card does not name the wildcard even with a rankable "
+                f"artifact, so this case is not driving it: {cards[standing, 'ranked']}")
+            assert named not in cards[standing, "non-finite"], (
+                f"the {standing} card still counts a wildcard whose artifact carries a "
+                f"nan: {cards[standing, 'non-finite']}")
+            assert cards[standing, "non-finite"] == cards[standing, "absent"], (
+                "a dropped wildcard does not land where an absent one does, so the drop "
+                f"is being special-cased somewhere: {cards[standing, 'non-finite']!r} vs "
+                f"{cards[standing, 'absent']!r}")
+            counts = [_card_totals(cards[standing, k]) for k in ("ranked", "non-finite")]
+            assert counts[0] - counts[1] == 1, (
+                f"the {standing} card counted {counts[0]} scenarios with the wildcard "
+                f"ranked and {counts[1]} with it dropped: {cards[standing, 'ranked']!r} "
+                f"-> {cards[standing, 'non-finite']!r}")
+        assert rt.resolve_token("S0_BEST_PLAN_CARD") == published, (
+            "a substituted artifact leaked out of this case")
+    return ("a non-finite wildcard total drops section 0's card's third scenario instead "
+            f"of ranking what is left ({len(poisons)} poisoned artifacts, every one "
+            f"answering None, against the finite artifact's {baseline[1]!r} -- the "
+            "standing the discarded total used to flip to a 'win'), and the card renders "
+            "one scenario shorter in both standings, identical to the absent-wildcard "
+            "label: "
+            + "; ".join(f"{s}/{k} -> {v[:v.index(')') + 1]}"
+                        for (s, k), v in cards.items() if k != "absent"))
+
+
+def _card_totals(label):
+    """How many scenarios section 0's card's label says it tested, read out of
+    the sentence rather than recomputed -- _card_claim's rule, narrowed to the
+    one number this case compares. The two branches that state no total say
+    "every scenario tested" over the parenthetical instead, so the count is
+    taken off the names it lists."""
+    named = label[label.index("(") + 1:label.index(")")].split(", ")
+    m = re.search(r"of the (\d+)", label)
+    if m:
+        assert int(m.group(1)) == len(named), (
+            f"the card says {m.group(1)} scenarios and names {named}: {label}")
+    return len(named)
+
+
 @case
 def case_the_plan_prompts_in_sections_0_and_3_assert_no_standing():
     """ISSUE #196, THE PROMPT SIDE. Section 0's item-1 brief read:

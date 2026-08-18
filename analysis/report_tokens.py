@@ -2171,15 +2171,52 @@ def _wildcard_scenario(ctx):
     ranked was not tested. Refusing would take the whole report down for a
     household whose wildcard workup prices one plan -- the failure mode this
     issue is about.
+
+    A NON-FINITE TOTAL DROPS THE WHOLE SCENARIO, and it used to be filtered
+    out of the ranking instead -- `[t for t in ... if _finite(t)]` on our side
+    and `any(_finite(t) ...)` on the rivals'. A plan with a nan beside a
+    finite figure kept its finite figure, the min() was taken over what was
+    left, and the card went on counting the wildcard as a scenario it scored:
+    "Best plan in every scenario tested (..., TOU-DR-P wildcard)" over a
+    comparison one of whose sides the artifact never priced. The value that
+    was discarded is exactly the one that could have beaten this plan, so the
+    filter does not merely lose precision -- it can invert the standing, and
+    it does so silently, which is the same shape as the mixed-matrix finding
+    one input along.
+
+    EVERY total in the artifact is required, not just the two min() lands on:
+    `theirs` is a minimum over every rival total and `ours` over every one of
+    ours, so any one of them can move the answer, and a rival whose totals are
+    ALL non-finite was dropped out of `rivals` entirely -- the same partial
+    ranking, one step further along, and it also decides whether there is a
+    rival to name at all. One rule instead of three: an artifact that is not
+    made of numbers ranks nothing here.
+
+    DROP RATHER THAN REFUSE, which is the opposite of what _bpm_cheapest and
+    _plan_ranking do with a non-finite cell, and for a reason that is about
+    the SENTENCE rather than about the number. Those two rank the CSV and the
+    matrix, and section 3's verdict, section 3's row, section 4's row class
+    and section 7's footing all have to say something about that ranking --
+    there is no "this ranking is absent" state for them to land in, so the
+    only honest answer is _claim's NOT_DETERMINED and a named SystemExit. The
+    wildcard has that state already, and this function returns it three lines
+    up for a household whose workup prices one plan. Nothing else reads these
+    totals either: WILDCARD_PLAN parses the artifact's KEYS, and section 9's
+    wildcard paragraph is a <!-- TODO --> block in report-template.html, so no
+    token publishes a figure off them. A wildcard the artifact cannot rank is
+    "this scenario is not determined", not "the report cannot be written" --
+    CLAUDE.md section 0's two different answers -- and the card is already
+    built to say the first by naming one scenario fewer.
     """
     plan = hh1("household.plan")
     totals = _wildcard_totals()
-    ours = [t for t in totals.get(plan, []) if _finite(t)]
-    rivals = sorted(name for name in totals if name != plan
-                    and any(_finite(t) for t in totals[name]))
+    if not _finite(*(t for values in totals.values() for t in values)):
+        return None
+    ours = totals.get(plan, [])
+    rivals = sorted(name for name in totals if name != plan)
     if not ours or not rivals:
         return None
-    theirs = min(t for name in rivals for t in totals[name] if _finite(t))
+    theirs = min(t for name in rivals for t in totals[name])
     ours = min(ours)
     standing = "win" if ours < theirs else "tie" if ours == theirs else "trails"
     return f"{_join_plan_names(rivals)} wildcard", standing
@@ -2240,9 +2277,10 @@ def _plan_card_label(csv_standing, matrix_pair, wildcard):
     matrix_pair:   data/battery_plan_matrix.json's two columns, (worst,
                    strongest), sorted by _bpm_standing_pair.
     wildcard:      (phrase, standing), or None when deep_results.json cannot
-                   rank this plan against another -- in which case the
-                   scenario is DROPPED rather than counted, since a ranking
-                   that could not be taken was not a test.
+                   rank this plan against another -- it prices one plan, or
+                   it carries a total that is not a finite number -- in which
+                   case the scenario is DROPPED rather than counted, since a
+                   ranking that could not be taken was not a test.
 
     The label states the strongest true summary and nothing above it: sole
     cheapest everywhere is "Best plan in every scenario tested"; a tie
