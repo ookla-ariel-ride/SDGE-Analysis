@@ -1133,6 +1133,28 @@ def _plan_ranking_inputs():
     return provider, cheapest["plan"], priced
 
 
+@contextlib.contextmanager
+def _plan_repriced(provider, prices):
+    """data/plan_results.csv's total column, repriced {plan: total} for ONE
+    generation provider's rows and restored on the way out.
+
+    Module-level because three cases now need it -- the below-zero sweep, the
+    plan-chrome states and the second-in-both-rankings report -- and a copy
+    nested in one of them is a copy the others reprice slightly differently.
+    Nothing on disk is touched: the substitution is in report_tokens' own
+    parsed rows, the same contract _swapped keeps."""
+    rows = rt._csv_rows("plan_results.csv")
+    original = [r["total"] for r in rows]
+    try:
+        for row in rows:
+            if row["provider"] == provider and row["plan"] in prices:
+                row["total"] = f"{float(prices[row['plan']]):.2f}"
+        yield
+    finally:
+        for row, was in zip(rows, original):
+            row["total"] = was
+
+
 # CLAUDE.md section 10's density cap applies to EVERY branch, but
 # test_report_consistency.py can only see the one branch index.html happens to
 # carry. Same lead-sentence rule, applied here to the branches that do not
@@ -4542,14 +4564,33 @@ def case_the_two_battery_scenarios_are_never_cross_checked_against_each_other():
             "against each other")
 
 
-# The template chrome that ASSERTS the household's plan wins. Named here so
-# the cases below fail if the chrome is ever made conditional (at which point
-# the gates it justifies can go) as loudly as if a gate regressed.
-_PLAN_CHROME = ("Best plan in every scenario", 'Why {{BEST_PLAN}} wins:')
-# The two families are rendered from different artifacts, and since issue #178
-# only ONE of them is gated at all: section 3's chrome still asserts the win in
-# fixed markup, section 4's row carries {{S4_ROW_CLASS}} and states the
-# standing the matrix supports in each of its two columns -- see
+# THE THREE SLOTS THAT USED TO ASSERT THE WIN (issue #196). Each of these was
+# fixed markup no token could reach, so BEST_PLAN and the two annual cells
+# refused rather than render figures the chrome around them contradicted --
+# and a refusal is not a missing sentence, it is no report at all. They are
+# named here as literals that must be GONE: if any comes back, the tokens
+# below are decorating a page that has already made the claim for them.
+_S3_CHROME_ASSERTIONS = (
+    "Best plan in every scenario — the solid conclusion",
+    "Why {{BEST_PLAN}} wins:",
+    '<tr class="win"><td>{{BEST_PLAN}}',
+)
+# What replaced them, keyed by the slot each one fills: the section 0 card's
+# label, the class on section 3's household row, and the bold lead-in over the
+# paragraph that explains the ranking.
+_S3_CHROME_SLOTS = {
+    "card": '<div class="lbl">{{S0_BEST_PLAN_CARD}}</div>',
+    "row": '<tr class="{{S3_ROW_CLASS}}">',
+    "lead": "{{S3_WHY_LEAD}}</b>",
+}
+# The token each slot exists to carry -- what a case comparing that slot's
+# markup has to find inside it.
+_S3_SLOT_TOKENS = {"card": "S0_BEST_PLAN_CARD", "row": "S3_ROW_CLASS",
+                   "lead": "S3_WHY_LEAD"}
+# The two families are rendered from different artifacts, and NEITHER is gated
+# any more: section 4's row carries {{S4_ROW_CLASS}} (issue #178) and section
+# 3's three slots carry the tokens above (issue #196). Both state the standing
+# their own artifact supports -- see the two cases below and
 # case_section_4s_row_class_tracks_the_matrix_its_cells_come_from.
 _CSV_PLAN_TOKENS = ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA", "BEST_PLAN_ANNUAL_BUNDLED")
 _MATRIX_PLAN_TOKENS = ("BEST_PLAN_NOBATT_MODELED", "BEST_PLAN_BATT_MODELED",
@@ -4557,107 +4598,459 @@ _MATRIX_PLAN_TOKENS = ("BEST_PLAN_NOBATT_MODELED", "BEST_PLAN_BATT_MODELED",
 _BEST_PLAN_TOKENS = _CSV_PLAN_TOKENS + _MATRIX_PLAN_TOKENS
 
 
-@case
-def case_best_plan_family_fails_closed_on_chrome_it_cannot_make_true():
-    """FINDING 2 (round two). _plan_ranking no longer requires the household's
-    plan to be cheapest, but BEST_PLAN was a bare household.plan passthrough
-    and report-template.html still asserts the ranking as FIXED CHROME: a
-    section 0 card reading "Best plan in every scenario", a `class="win"` row
-    carrying {{BEST_PLAN}} in section 3, and the line "Why {{BEST_PLAN}}
-    wins:". So a losing household got section 3's own inverted verdict
-    ("... is not the cheapest plan for this house") printed beside a card
-    calling the same plan the best in every scenario.
+def _s3_chrome_lines():
+    """{slot: the one template line that fills it}, with the fixed assertions
+    those slots used to carry checked GONE.
 
-    The template is not this module's to edit, and no value rendered into
-    those slots makes that page true -- so the family is state 3 there,
-    failing closed with a message that NAMES the chrome as the reason. This
-    deliberately re-refuses a case round one asked to invert; the difference
-    is that round one refused sentences this module OWNS (which now invert,
-    and are driven in the plan-verdict case above), while these tokens feed
-    sentences it does not own.
-
-    THE FAMILY IS THE THREE TOKENS RENDERED FROM data/plan_results.csv, and
-    it is now the ONLY gated family. Section 4's three matrix cells were
-    gated here too, off a CSV that does not price a battery at all; they moved
-    to their own artifact, and issue #178 then took that gate down entirely by
-    making section 4's row conditional. This case still asserts they are NOT
-    taken down by a CSV-only change, which is the other half of gating the
-    right artifact.
-
-    A TIE renders: a plan tying for cheapest is a cheapest plan, so the card
-    and the win row are true of it.
-
-    The chrome literals are asserted present in report-template.html, so if
-    that file is ever made conditional this case fails and the gate comes out
-    rather than quietly outliving its reason -- which is exactly what happened
-    to section 4's half of it."""
+    One line each, asserted: a second copy of any of these is a second place
+    the page states this household's standing, and the cases below could not
+    say which markup a reader is shown."""
     template = rt.TEMPLATE.read_text()
-    for literal in _PLAN_CHROME:
-        assert literal in template, (
-            f"report-template.html no longer carries {literal!r}; if the plan chrome is "
-            "now conditional, _best_plan's gate has outlived its reason -- delete both")
-    win_rows = [ln for ln in template.splitlines()
-                if 'class="win"' in ln and "{{BEST_PLAN}}" in ln]
-    assert len(win_rows) == 1, (
-        f"report-template.html carries {len(win_rows)} fixed class=\"win\" row(s) holding "
-        f"{{{{BEST_PLAN}}}}, not the one section 3 row this gate is left for; if that row "
-        "is now conditional too, _best_plan's gate has outlived its reason -- delete both, "
-        "the way section 4's went")
-    conditional = [ln for ln in template.splitlines() if "{{S4_ROW_CLASS}}" in ln]
-    assert len(conditional) == 1 and "{{BEST_PLAN}}" in conditional[0], (
-        "section 4's household row no longer takes its class from a token, so the cells "
-        f"inside it are back under fixed chrome: {conditional}")
+    for literal in _S3_CHROME_ASSERTIONS:
+        assert literal not in template, (
+            f"report-template.html has gone back to asserting the plan ranking as fixed "
+            f"markup ({literal!r}). The tokens {sorted(_S3_CHROME_SLOTS)} cannot make that "
+            "true for a household the CSV ranks second, which is the whole of issue #196")
+    lines = {}
+    for slot, needle in _S3_CHROME_SLOTS.items():
+        hits = [ln for ln in template.splitlines() if needle in ln]
+        assert len(hits) == 1, (
+            f"report-template.html carries {len(hits)} line(s) holding {needle!r}, not the "
+            f"one {slot} slot these cases read: {hits}")
+        lines[slot] = hits[0]
+    return lines
 
+
+def _s3_chrome_markup():
+    """{slot: the markup a reader would be shown}, filled the way
+    generate_report.py fills it -- every {{TOKEN}} replaced by its resolved
+    value, HTML-escaped -- so these cases read the page and not a paraphrase.
+
+    Two deliberate stops. The line is CUT at its first <!-- TODO -->: what
+    follows is the LLM's brief and the fragment it will write, neither of
+    which these tokens own (the lead-in's brief also quotes its own token, so
+    deleting the comment in place would leave a second copy of the value in
+    the "markup"). KNOWN_GAPS tokens are left standing as {{NAME}}:
+    resolve_token refuses them by design (UTILITY_TOOL_BEST_PLAN_FIGURE has no
+    committed source) and generate_report fills them from a human block, so a
+    case that resolved them would assert something this pipeline never
+    renders."""
+    out = {}
+
+    def fill(m):
+        name = m.group(1)
+        if rt.TOKENS.get(name, {}).get("kind") == "gap":
+            return m.group(0)
+        return _htmllib.escape(rt.resolve_token(name), quote=True)
+
+    for slot, line in _s3_chrome_lines().items():
+        out[slot] = re.sub(r"\{\{([A-Z0-9_]+)\}\}", fill, line.split("<!--")[0])
+    return out
+
+
+@case
+def case_section_3s_plan_chrome_states_what_the_ranking_supports():
+    """ISSUE #196. Section 3's household row, section 0's plan card and the
+    "Why ... wins:" lead-in all ASSERTED that this household is on the
+    cheapest plan, in fixed markup no token could reach. So BEST_PLAN and the
+    two annual cells inside that row failed closed instead -- naming the
+    chrome as the reason -- and generate_report folds a refusal into
+    `failures`, which stops the run. A household one dollar off the cheapest
+    plan got NO REPORT AT ALL over its own plan's name and its own two
+    modeled bills. Section 4's row was the same defect; issue #178 fixed that
+    half.
+
+    THE THREE STATES ARE DRIVEN THROUGH THE THREE SLOTS AT ONCE, in the
+    rendered markup rather than in a helper's return value, because the claim
+    at issue is what the page says. A rival priced $1 above this household, at
+    exactly its total, and $1 below it: sole winner, genuine tie, beaten.
+    Identity is the stored `==` -- $1 IS an ordering, and widening it into a
+    band is what once put a runner-up into the winners' set (issue #141).
+
+    AND THEY ARE CHECKED AGAINST THE TWO VERDICT SENTENCES, in every state.
+    The card sits a few hundred pixels above section 3's verdict and the
+    lead-in sits inside the section; a card calling this plan the best over a
+    sentence saying it is not is the contradiction that made the gate look
+    necessary. Each of the four assertions below is an IFF against
+    S3_VERDICT's own sole-winner clause, so neither side can drift: the row
+    paints `win` exactly when the verdict says the plan is still cheapest, the
+    card claims "Best plan" exactly then, the lead-in says "Why <this plan>
+    wins" exactly then, and section 0's headline says the rate plan is right
+    exactly then."""
     provider, cheapest, priced = _plan_ranking_inputs()
-    runner_up = min((r for r in priced if r["plan"] != cheapest),
-                    key=lambda r: float(r["total"]))
-    cheapest_total = next(r["total"] for r in priced if r["plan"] == cheapest)
-
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))["plan"]
+    seen = {}
     with _stub_plan(cheapest, provider):
-        published = {t: rt.resolve_token(t) for t in _BEST_PLAN_TOKENS}
-        for token, value in published.items():
-            assert value.strip(), f"{token} resolved blank on the winning household"
+        # The card counts THREE scenarios and only one of them is the CSV this
+        # case reprices, so its published wording is only reachable while the
+        # other two also rank this plan alone cheapest. Asserted, not assumed.
+        assert rt.resolve_token("S4_ROW_CLASS") == "win", (
+            "this checkout's battery matrix does not price the household's plan alone "
+            "cheapest in both columns, so section 0's card cannot reach its "
+            "every-scenario wording and this case cannot be driven here")
+        assert rt._wildcard_scenario(rt.CTX)[1] == "win", (
+            "this checkout's deep_results.json:wildcard does not rank the household's "
+            "plan ahead, so section 0's card cannot reach its every-scenario wording")
+        _baseline_ok, baseline_refused = _sweep_every_token()
+        # The card scores the matrix by taking the WORSE of its two column
+        # standings off S4_ROW_CLASS's own name, which is built worst-first.
+        # Every class that token can reach must therefore lead with a standing
+        # this module recognises, or the card is scoring a state it cannot read.
+        for cls in rt._S4_ROW_CLASSES:
+            assert cls.split("-")[0] in rt._PLAN_STANDINGS, (
+                f"section 4's class {cls!r} does not lead with one of "
+                f"{list(rt._PLAN_STANDINGS)}, so section 0's card cannot score it")
+        for standing, rival_total in (("win", own + 1), ("tie", own),
+                                      ("trails", own - 1)):
+            with _plan_repriced(provider, {cheapest: own, rival: rival_total}):
+                markup = _s3_chrome_markup()
+                card = rt.resolve_token("S0_BEST_PLAN_CARD")
+                lead = rt.resolve_token("S3_WHY_LEAD")
+                row_class = rt.resolve_token("S3_ROW_CLASS")
+                s3, s0 = rt.resolve_token("S3_VERDICT"), rt.resolve_token("S0_VERDICT")
+                # THE CLAIM THAT MATTERS is not "this sentence renders" but
+                # "this household gets a report", so the whole set is swept
+                # in every state, catching BaseException -- against the
+                # winning path's own sweep, so this runs with or without the
+                # private archive (see _assert_no_new_refusals).
+                rendered, refused = _sweep_every_token()
+            _assert_no_new_refusals(baseline_refused, refused,
+                                    f"a household in the {standing} state")
 
-        # 1. Beaten in the CSV: the three CSV-rendered tokens fail closed,
-        #    naming the chrome. The household stays on the plan the matrix
-        #    prices, so the refusal can only be the ranking gate and not a
-        #    missing artifact row.
-        with _swapped(runner_up, "total", str(float(cheapest_total) - 500)):
-            for token in _CSV_PLAN_TOKENS:
-                try:
-                    value = rt.resolve_token(token)
-                    raise AssertionError(
-                        f"{token} rendered {value!r} into report-template.html's "
-                        f"'Best plan in every scenario' chrome while {runner_up['plan']} "
-                        f"prices $500/yr below {cheapest}")
-                except SystemExit as e:
-                    assert token in str(e), e
-                    assert "best plan" in str(e), (
-                        f"{token}'s refusal does not name the claim it cannot make: {e}")
-                    assert "report-template.html" in str(e) and _PLAN_CHROME[0] in str(e), (
-                        f"{token}'s refusal does not name the chrome that makes the page "
-                        f"unrenderable, so a reader cannot tell what to fix: {e}")
-            # ... and the matrix cells, which this CSV does not rank, are
-            # untouched by it.
-            for token in _MATRIX_PLAN_TOKENS:
-                assert rt.resolve_token(token) == published[token], (
-                    f"{token} refused on a data/plan_results.csv change, but its value "
-                    "is a data/battery_plan_matrix.json cell that CSV does not price")
+            # 1. NO SLOT MAY CONTRADICT THE VERDICT UNDER IT. Four iffs, one
+            #    per slot plus section 0's headline clause, all against
+            #    section 3's own sole-winner sentence.
+            wins = "is still the cheapest plan" in s3
+            assert wins == (standing == "win"), (
+                f"section 3's verdict does not report the {standing} state a rival priced "
+                f"{rival_total - own:+.0f} against {cheapest} produces: {s3}")
+            assert ('class="win"' in markup["row"]) == wins, (
+                f"section 3's row paints {row_class!r} while its verdict says {s3!r}: "
+                f"{markup['row']}")
+            assert card.startswith("Best plan in every scenario") == wins, (
+                f"section 0's card reads {card!r} under a section 3 verdict reading {s3!r}")
+            assert (f"Why {cheapest} wins:" in markup["lead"]) == wins, (
+                f"section 3's lead-in reads {lead!r} while its verdict says {s3!r}")
+            assert ("the rate plan is right" in s0) == wins, (
+                f"section 0's headline clause and section 3's verdict disagree about the "
+                f"same ranking: {s0!r} vs {s3!r}")
 
-        # 2. An exact tie still renders: a joint-cheapest plan IS a best plan.
-        with _swapped(runner_up, "total", cheapest_total):
-            for token in _BEST_PLAN_TOKENS:
-                assert rt.resolve_token(token) == published[token], (
-                    f"{token} refused a household tying for cheapest, which the chrome "
-                    "describes truthfully")
+            # 2. AND EACH STATE SAYS THE PARTICULAR TRUE THING, in the markup.
+            if standing == "win":
+                assert row_class == "win", row_class
+                assert lead == f"Why {cheapest} wins:", lead
+                assert card.startswith("Best plan in every scenario tested ("), card
+            elif standing == "tie":
+                assert row_class == "s3-tie" and 'class="s3-tie"' in markup["row"], markup
+                assert lead == f"Why {cheapest} ties {rival}:", lead
+                assert card.startswith("Cheapest plan in every scenario tested ("), card
+                assert "level with a rival" in card, card
+                assert f"ties {rival}" in s3, s3
+            else:
+                assert row_class == "s3-trails" and 'class="s3-trails"' in markup["row"], \
+                    markup
+                assert lead == f"Why {rival} wins instead:", lead
+                assert "Best plan" not in card and "every scenario tested" not in card, card
+                assert "beaten in the rest" in card, card
+                assert "is not the cheapest plan" in s3, s3
+            assert set(rendered) >= set(_BEST_PLAN_TOKENS), (
+                f"{sorted(set(_BEST_PLAN_TOKENS) - set(rendered))} refused in the "
+                f"{standing} state -- these six are the cells the two chrome gates used "
+                "to take the whole report down over")
+            seen[standing] = f"{row_class} row, lead-in {lead!r}, {len(rendered)} tokens"
 
-        for token, value in published.items():
-            assert rt.resolve_token(token) == value, (
-                f"the substituted plan total leaked out of this case ({token})")
-    return (f"the {len(_CSV_PLAN_TOKENS)} plan_results.csv-rendered tokens fail closed "
-            f"naming report-template.html's own plan chrome when {cheapest} stops winning "
-            f"there, the {len(_MATRIX_PLAN_TOKENS)} matrix cells are untouched by it, and "
-            "all six still render on a tie")
+        # Nothing leaked: the published state is what it was before this case.
+        assert rt.resolve_token("S3_ROW_CLASS") == "win", (
+            "the substituted plan total leaked out of this case")
+    return ("section 3's row, its lead-in and section 0's card each state the standing "
+            "data/plan_results.csv supports, agree with both verdict sentences in all "
+            "three states, and leave the whole token set resolvable ("
+            + "; ".join(f"{k}: {v}" for k, v in seen.items()) + ")")
+
+
+@case
+def case_a_household_second_in_both_rankings_still_gets_a_whole_report():
+    """ISSUE #196's acceptance case, and the one #178's could not make: a
+    household ranked second in data/plan_results.csv AND in
+    data/battery_plan_matrix.json, sweeping the WHOLE token set.
+
+    #178 took the matrix half of the gate down, so a household second in the
+    matrix alone already got its report -- but moving a rival $1 under it in
+    the CSV was still enough on its own to refuse BEST_PLAN,
+    BEST_PLAN_ANNUAL_CCA and BEST_PLAN_ANNUAL_BUNDLED, and three refusals are
+    an empty index.html. Both rankings are moved here because that is the
+    household the issue names, and because a fix that only reached one
+    artifact would pass a case that only moved one.
+
+    BaseException, through _resolve_every_token: resolve_token refuses with
+    SystemExit, which inherits from BaseException, and an `except Exception`
+    walks straight past it. The claim is "this household gets a report"."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))["plan"]
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    assert cheapest in plans, (
+        f"the CSV's cheapest plan {cheapest!r} is not priced in battery_plan_matrix.json "
+        f"({sorted(plans)}); this case cannot put the household second in both")
+    m_rival = min((p for p in plans if p != cheapest),
+                  key=lambda p: plans[p]["no_battery"])
+    beaten = {m_rival: (plans[cheapest]["no_battery"] - 1,
+                        plans[cheapest]["with_battery"] - 1)}
+    with _stub_plan(cheapest, provider):
+        published, baseline_refused = _sweep_every_token()
+        with _plan_repriced(provider, {cheapest: own, rival: own - 1}), \
+                _matrix_priced(plans, beaten):
+            rendered, refused = _sweep_every_token()
+            row_class = rt.resolve_token("S3_ROW_CLASS")
+            s4_class = rt.resolve_token("S4_ROW_CLASS")
+            card = rt.resolve_token("S0_BEST_PLAN_CARD")
+        _assert_no_new_refusals(baseline_refused, refused,
+                                "a household ranked second in both artifacts")
+        assert set(rendered) == set(published), (
+            "the token set is not the same for a household ranked second in both "
+            f"artifacts: {sorted(set(published) - set(rendered))}")
+        for token in _BEST_PLAN_TOKENS:
+            assert rendered[token], f"{token} rendered blank"
+        assert rendered["BEST_PLAN"] == cheapest, rendered["BEST_PLAN"]
+        # Neither row claims the win, and the card counts instead of
+        # quantifying -- the three slots and section 4's row all inverted.
+        assert row_class == "s3-trails" and s4_class == "trails", (row_class, s4_class)
+        assert "Best plan" not in card and "every scenario tested" not in card, card
+        assert _sweep_every_token()[0] == published, (
+            "the substituted totals leaked out of this case")
+    return (f"a household priced $1 above {rival} in data/plan_results.csv and $1 above "
+            f"{m_rival} in both columns of data/battery_plan_matrix.json resolves the same "
+            f"{len(rendered)} tokens the winning path does -- {sorted(_BEST_PLAN_TOKENS)} "
+            "included, all six of "
+            "which the two chrome gates used to refuse -- with section 3's row reading "
+            f"{row_class!r}, section 4's {s4_class!r} and the card counting scenarios "
+            f"({card!r})")
+
+
+@case
+def case_section_0s_card_counts_every_scenario_it_names():
+    """The card's label quantifies -- "in every scenario tested (no-battery,
+    battery×plan matrix, <rival> wildcard)" -- over three artifacts, and it
+    used to be fixed text over three rankings nothing read.
+
+    So each of the three is driven to a LOSS on its own, with the other two
+    left winning. Each must drop the count by one and must take the
+    every-scenario wording off the card, while the parenthetical keeps naming
+    all three: a scenario that was tested and lost is still a scenario that
+    was tested. A scenario that changed nothing would be a scenario the label
+    names and does not read -- which is the fixed-text defect with a token
+    wrapped round it.
+
+    The wildcard is moved by repricing data/deep_results.json:wildcard's own
+    key for this household's plan, since that artifact's keys are prose and
+    the module identifies the household's entry by parsing them."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))["plan"]
+    plans = rt._json("battery_plan_matrix.json")["plans"]
+    m_rival = min((p for p in plans if p != cheapest),
+                  key=lambda p: plans[p]["no_battery"])
+    wildcard = rt._json("deep_results.json")["wildcard"]
+    ours = [k for k in wildcard
+            if re.split(r"\s*\+|\s+no battery", k)[0].strip() == cheapest]
+    assert len(ours) == 1, (
+        f"deep_results.json:wildcard names {ours} for {cheapest}; this case moves exactly "
+        "one entry")
+    dearest = max(wildcard.values())
+
+    seen = {}
+    with _stub_plan(cheapest, provider):
+        published = rt.resolve_token("S0_BEST_PLAN_CARD")
+        assert published.startswith("Best plan in every scenario tested ("), (
+            f"this checkout's artifacts do not put the household's plan alone cheapest in "
+            f"all three scenarios, so this case cannot drive them one at a time: "
+            f"{published}")
+        named = published[published.index("(") + 1:published.index(")")].split(", ")
+        assert len(named) == 3, named
+        for scenario, losing in (
+                ("no-battery", _plan_repriced(provider, {cheapest: own, rival: own - 1})),
+                ("battery×plan matrix",
+                 _matrix_priced(plans, {m_rival: (plans[cheapest]["no_battery"] - 1,
+                                                  plans[cheapest]["with_battery"] - 1)})),
+                (named[2], _swapped(wildcard, ours[0], dearest + 1))):
+            with losing:
+                card = rt.resolve_token("S0_BEST_PLAN_CARD")
+            assert card.startswith("Cheapest in 2 of the 3 scenarios tested ("), (
+                f"losing the {scenario} scenario did not drop section 0's card to two of "
+                f"three; the card names that scenario and does not read it: {card}")
+            assert "every scenario tested" not in card and "Best plan" not in card, card
+            for phrase in named:
+                assert phrase in card, (
+                    f"the card stopped naming the {phrase!r} scenario once this household "
+                    f"lost the {scenario} one; a scenario that was tested and lost is "
+                    f"still a scenario that was tested: {card}")
+            seen[scenario] = card
+        assert rt.resolve_token("S0_BEST_PLAN_CARD") == published, (
+            "a substituted artifact leaked out of this case")
+    return (f"section 0's card reads all three scenarios it names ({', '.join(named)}): "
+            "each one driven to a loss on its own drops the count to two of three and "
+            "takes the every-scenario claim off the card, and all three stay named")
+
+
+# What section 3's row is allowed to stamp on the plan-name cell, per state:
+#
+#     state -> (badge text, whether this plan is a cheapest plan in the one
+#               column this table RANKS, whether it is the only one there)
+#
+# "win" carries no badge and is deliberately the same class section 4's sole
+# winner uses: `tr.win td` paints it, and a state with nothing to qualify has
+# no badge that could be wrong in either section. The other two need names of
+# their own -- section 4's `tie` and `trails` badges count that table's two
+# battery columns, and section 3 has none to count, so borrowing them would
+# stamp a false claim on the row.
+#
+# Written here as well as in report-template.html on purpose: the stylesheet
+# is where the WORDS are, this table is where their MEANING is, and the case
+# below checks the text against the <style> block that ships and the meaning
+# against the rankings the CSV actually produces.
+_S3_ROW_BADGES = {
+    "win": (None, True, True),
+    "s3-tie": ("tied for cheapest at this house's generation rates", True, False),
+    "s3-trails": ("not the cheapest at this house's generation rates", False, False),
+}
+
+
+@case
+def case_section_3s_row_class_is_a_state_the_stylesheet_can_paint():
+    """ISSUE #196, the guard an attribute value needs. S3_ROW_CLASS resolves
+    into an HTML attribute, and every seam rule in this file is anchored on a
+    figure (a doubled sigil, a lost dimension, an echoed number), so none of
+    them can read a CSS class name.
+
+    What goes wrong with a class name is not a malformed render. It is a class
+    the stylesheet does not paint -- the row then draws like every other row
+    and this household loses the one mark saying which plan is its own -- or a
+    class painted with a FALSE badge, which looks even less broken. So:
+
+      1. THE VOCABULARY IS CLOSED. Every state the resolver can reach is a
+         member of report_tokens._S3_ROW_CLASSES, driven over all three
+         standings a rival's total can produce.
+      2. EVERY MEMBER IS PAINTED by a rule in report-template.html's own
+         <style> block, and every state that is not a sole win SAYS SO in the
+         row -- a ::after badge, because colour alone does not tell a reader
+         where they stand.
+      3. EVERY BADGE IS TRUE OF THE STATE THAT REACHES IT, checked against the
+         cheapest set the repriced CSV actually produces rather than against
+         the module's own naming rule.
+      4. SECTION 4's BADGES ARE NOT BORROWED. Section 3's table ranks one
+         column -- this household's own generation provider -- so a badge
+         counting "both columns" would be false here even when section 4's is
+         true. The two vocabularies are asserted disjoint apart from `win`,
+         which carries no badge at all."""
+    provider, cheapest, priced = _plan_ranking_inputs()
+    own = float(next(r["total"] for r in priced if r["plan"] == cheapest))
+    rival = min((r for r in priced if r["plan"] != cheapest),
+                key=lambda r: float(r["total"]))["plan"]
+    style = rt.TEMPLATE.read_text()
+    style = style[style.index("<style>"):style.index("</style>")]
+
+    assert set(_S3_ROW_BADGES) == set(rt._S3_ROW_CLASSES), (
+        f"this case declares a badge for {sorted(_S3_ROW_BADGES)} while S3_ROW_CLASS can "
+        f"reach {list(rt._S3_ROW_CLASSES)}; a state with no declared claim is a state "
+        "whose badge nothing here reads")
+    shared = (set(rt._S3_ROW_CLASSES) & set(rt._S4_ROW_CLASSES)) - {"win"}
+    assert not shared, (
+        f"section 3 and section 4 both use the class(es) {sorted(shared)}, whose badge is "
+        "written for the battery matrix's two columns; section 3's table ranks one column "
+        "and cannot carry a claim about two")
+
+    for state, (text, _cheapest_here, _sole) in _S3_ROW_BADGES.items():
+        assert f"tr.{state} td" in style, (
+            f"report-template.html's stylesheet has no rule for tr.{state}, a state "
+            f"S3_ROW_CLASS can put on section 3's household row; an unpainted class is not "
+            "a broken render, it is a runner-up's row drawn like every other row")
+        if text is None:
+            assert f"tr.{state} td:first-child::after" not in style, (
+                f"tr.{state} badges the row while this case records it as the state with "
+                "nothing to qualify -- this house's plan, alone cheapest")
+            continue
+        assert f'tr.{state} td:first-child::after{{content:"{text}"}}' in style, (
+            f"report-template.html does not badge tr.{state} with {text!r}. A missing badge "
+            "states in colour alone that this household is not the sole cheapest plan; a "
+            "DIFFERENT badge is a claim whose truth was checked against the wording this "
+            "case carries, and has to be re-derived against the new one")
+
+    seen = {}
+    with _stub_plan(cheapest, provider):
+        for rival_total in (own + 1, own, own - 1):
+            with _plan_repriced(provider, {cheapest: own, rival: rival_total}):
+                state = rt.resolve_token("S3_ROW_CLASS")
+                _standing, plan, _t, _c, winners = rt._plan_standing(rt.CTX, "PROBE")
+            assert state in rt._S3_ROW_CLASSES, (
+                f"S3_ROW_CLASS resolved {state!r}, which is not one of "
+                f"{list(rt._S3_ROW_CLASSES)} and so is a class nothing in "
+                "report-template.html paints")
+            _badge, cheapest_here, sole = _S3_ROW_BADGES[state]
+            assert (plan in winners) == cheapest_here, (
+                f"tr.{state}'s badge says this plan {'is' if cheapest_here else 'is not'} "
+                f"a cheapest plan, but the CSV's cheapest set is {winners}")
+            only = "the only" if sole else "not the only"
+            assert (winners == [plan]) == sole, (
+                f"tr.{state}'s badge says this plan is {only} cheapest, but the CSV's "
+                f"cheapest set is {winners}")
+            seen[f"rival at {rival_total - own:+.0f}"] = state
+        assert rt.resolve_token("S3_ROW_CLASS") == "win", (
+            "the substituted plan total leaked out of this case")
+    return (f"every state S3_ROW_CLASS reaches ({seen}) is painted and badged by "
+            "report-template.html's own <style> block, each badge is true of the CSV "
+            "ranking that produced it, and none of section 4's two-column badges is "
+            "borrowed")
+
+
+@case
+def case_section_3s_published_chrome_round_trips_into_index_html():
+    """The three slots, resolved at the standing the PUBLISHED household has,
+    must render exactly the markup index.html carries -- character for
+    character, the same anti-drift equality the section-verdict cases keep.
+
+    This is what makes issue #196's fix inert on the winning path: the card's
+    label, the row's class and the lead-in are computed now, and a computed
+    value that does not reproduce the published page is a silent rewrite of a
+    report nobody re-checked. The household's plan is read off index.html's
+    own section 3 row rather than assumed, so this runs with or without the
+    private archive.
+
+    Comparison stops at the first KNOWN_GAPS token, which resolve_token
+    refuses by design and generate_report fills from a human block: everything
+    before it is what these tokens own."""
+    index_html = (rt.ROOT / "index.html").read_text()
+    m = re.search(r'<tr class="([a-z0-9-]+)"><td>([A-Za-z0-9-]+) ✓ current</td>', index_html)
+    assert m, "index.html has no section 3 household row for this case to read"
+    published_class, published_plan = m.group(1), m.group(2)
+    provider, _cheapest, _priced = _plan_ranking_inputs()
+    checked = {}
+    with _stub_plan(published_plan, provider):
+        assert rt.resolve_token("S3_ROW_CLASS") == published_class, (
+            f"S3_ROW_CLASS resolves {rt.resolve_token('S3_ROW_CLASS')!r} for the plan "
+            f"index.html publishes ({published_plan}), whose row is class "
+            f"{published_class!r}")
+        for slot, markup in _s3_chrome_markup().items():
+            fragment = markup.split("{{")[0].rstrip()
+            # The compared fragment must actually contain the value the slot's
+            # own token resolved to, or this case is comparing boilerplate
+            # either side of it and would pass with the token unrendered.
+            owned = _htmllib.escape(rt.resolve_token(_S3_SLOT_TOKENS[slot]), quote=True)
+            assert owned in fragment, (
+                f"the {slot} slot's compared markup does not contain {owned!r}, the value "
+                f"{_S3_SLOT_TOKENS[slot]} resolved to, so this case is comparing markup "
+                f"the token does not own: {markup!r}")
+            assert index_html.count(fragment) == 1, (
+                f"the {slot} slot renders markup index.html does not carry exactly once "
+                f"({index_html.count(fragment)} occurrence(s)); regenerating the report "
+                f"would change the published page:\n  rendered: {fragment!r}")
+            checked[slot] = fragment
+    return ("section 0's plan card, section 3's household row and its lead-in each render "
+            "into index.html verbatim at the published household's standing ("
+            + "; ".join(f"{k}: {v[:60]!r}" for k, v in checked.items()) + ")")
 
 
 @case
@@ -7581,46 +7974,34 @@ def case_a_plan_total_that_models_below_zero_still_gets_a_report():
     runner_up = others[0]["plan"]
     totals = {r["plan"]: r["total"] for r in priced}
 
-    @contextlib.contextmanager
-    def _repriced(prices):
-        """plan_results.csv's total column, repriced for this household's own
-        generation provider. Every plan named goes below zero."""
-        rows = rt._csv_rows("plan_results.csv")
-        original = [r["total"] for r in rows]
-        try:
-            for row in rows:
-                if row["provider"] == provider and row["plan"] in prices:
-                    row["total"] = f"{prices[row['plan']]:.2f}"
-            yield
-        finally:
-            for row, was in zip(rows, original):
-                row["total"] = was
-
     rendered = {}
     with _stub_plan(cheapest, provider):
         for label, prices, quoted in (
                 ("sole cheapest", {cheapest: -5000.0, runner_up: -1200.0}, -5000.0),
                 ("tied cheapest", {cheapest: -5000.0, runner_up: -5000.0}, -5000.0),
                 ("beaten", {cheapest: -1200.0, runner_up: -5000.0}, -1200.0)):
-            with _repriced(prices):
+            with _plan_repriced(provider, prices):
                 s3 = rt.resolve_token("S3_VERDICT")
-                # BEST_PLAN and its two annual cells go through _best_plan's
-                # chrome gate, whose DETAIL string _claim builds on every call
-                # -- the site that aborted the report while its own claim was
-                # supported. Only reachable while this plan still wins.
-                gated = ({n: rt.resolve_token(n)
-                          for n in ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA",
-                                    "BEST_PLAN_ANNUAL_BUNDLED")}
-                         if label != "beaten" else {})
+                # BEST_PLAN and its two annual cells, IN ALL THREE BRANCHES.
+                # They used to be reachable only while this plan still won --
+                # not because a beaten household has no plan name and no two
+                # modeled bills, but because report-template.html asserted the
+                # win in fixed chrome and _best_plan refused rather than fill
+                # it. Issue #196 gave that chrome its own tokens, so the
+                # beaten branch renders like the other two and the sweep this
+                # case is FOR -- a bill below zero formatted with the minus
+                # outside the sigil -- finally covers it.
+                gated = {n: rt.resolve_token(n)
+                         for n in ("BEST_PLAN", "BEST_PLAN_ANNUAL_CCA",
+                                   "BEST_PLAN_ANNUAL_BUNDLED")}
             assert f"{quoted:,.0f}".replace("-", "-$") + "/yr" in s3, (
                 f"section 3 does not state a modeled bill below zero on the {label} "
                 f"branch: {s3}")
             assert "$-" not in s3, f"the minus went back inside the sigil: {s3}"
             rendered[f"S3 {label}"] = _assert_within_density_cap("S3_VERDICT", s3, label)
-            if gated:
-                assert gated["BEST_PLAN"] == cheapest, gated
-                assert gated["BEST_PLAN_ANNUAL_CCA"].startswith("-$") or \
-                    gated["BEST_PLAN_ANNUAL_BUNDLED"].startswith("-$"), gated
+            assert gated["BEST_PLAN"] == cheapest, gated
+            assert gated["BEST_PLAN_ANNUAL_CCA"].startswith("-$") or \
+                gated["BEST_PLAN_ANNUAL_BUNDLED"].startswith("-$"), gated
 
     # The matrix's two modeled-bill columns, same sweep.
     plans = rt._json("battery_plan_matrix.json")["plans"]
@@ -10190,9 +10571,8 @@ def _floor_at(median_kw, floor_w_used=None):
     return edit
 
 
-def _resolve_every_token():
-    """{token: rendered} for every non-gap token, or an AssertionError naming
-    the ones that could not be resolved.
+def _sweep_every_token():
+    """({token: rendered}, {token: why it refused}) over every non-gap token.
 
     THE WHOLE SET, and BaseException, both deliberately. resolve_token signals
     refusal with SystemExit, and generate_report.resolve_tokens_with_gaps()
@@ -10208,10 +10588,43 @@ def _resolve_every_token():
             rendered[name] = rt.resolve_token(name)
         except BaseException as exc:            # noqa: BLE001 - SystemExit is the refusal
             refused[name] = f"{type(exc).__name__}: {exc}"
+    return rendered, refused
+
+
+def _resolve_every_token():
+    """{token: rendered} for every non-gap token, or an AssertionError naming
+    the ones that could not be resolved. Needs the private archive: without
+    household.yaml the household-sourced tokens refuse for a reason that has
+    nothing to do with the case calling this."""
+    rendered, refused = _sweep_every_token()
     assert not refused, (
         f"{len(refused)} token(s) refused, so this household gets no report at all: "
         + "; ".join(f"{n} -- {why}" for n, why in sorted(refused.items())))
     return rendered
+
+
+def _assert_no_new_refusals(baseline_refused, now_refused, what):
+    """The archive-independent form of "this household still gets a report".
+
+    A case that sweeps the whole token set and demands ZERO refusals can only
+    run where private/household.yaml is staged, so it SKIPS in CI -- and a
+    guard that skips where bad merges are caught is not a guard. The claim is
+    made against a baseline swept in the same environment instead: whatever a
+    household on the winning path can resolve here, a household this case has
+    moved to second must resolve too. Where the archive IS staged the baseline
+    is the complete set, so this is exactly "the full token set resolves";
+    where it is not, the 30-odd household-sourced tokens are refused
+    identically on both sides and every token this issue is about is still
+    swept."""
+    new = {n: why for n, why in now_refused.items() if n not in baseline_refused}
+    assert not new, (
+        f"{len(new)} token(s) refuse for {what} that resolve for the same household on "
+        "the winning path, so it gets no report at all: "
+        + "; ".join(f"{n} -- {why}" for n, why in sorted(new.items())))
+    healed = sorted(set(baseline_refused) - set(now_refused))
+    assert not healed, (
+        f"{healed} refused on the winning path but resolved for {what}; the two sweeps "
+        "are not comparable, so this case cannot say what it changed")
 
 
 @case

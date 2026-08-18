@@ -101,15 +101,21 @@
   th{font-family:var(--mono);color:var(--sub);font-weight:500;text-transform:uppercase;font-size:.68rem;letter-spacing:.1em;border-bottom:2px solid var(--ink)}
   td:first-child,th:first-child{text-align:left}
   td:first-child{font-family:var(--disp);font-size:.9rem}
-  tr.win td,tr.tie-win td,tr.tie td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
+  tr.win td,tr.tie-win td,tr.tie td,tr.s3-tie td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
   tr.trails-win td,tr.trails-tie td{background:color-mix(in srgb,var(--offpeak) 9%,transparent);font-weight:600}
-  tr.trails td{background:color-mix(in srgb,var(--onpeak) 7%,transparent);font-weight:600}
-  tr.tie-win td:first-child::after,tr.tie td:first-child::after,tr.trails-win td:first-child::after,tr.trails-tie td:first-child::after,tr.trails td:first-child::after{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-left:8px;white-space:nowrap}
+  tr.trails td,tr.s3-trails td{background:color-mix(in srgb,var(--onpeak) 7%,transparent);font-weight:600}
+  tr.tie-win td:first-child::after,tr.tie td:first-child::after,tr.trails-win td:first-child::after,tr.trails-tie td:first-child::after,tr.trails td:first-child::after,tr.s3-tie td:first-child::after,tr.s3-trails td:first-child::after{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-left:8px;white-space:nowrap}
   tr.tie-win td:first-child::after{content:"cheapest in both columns, tied in one"}
   tr.tie td:first-child::after{content:"tied for cheapest in both columns"}
   tr.trails-win td:first-child::after{content:"cheapest in one column only"}
   tr.trails-tie td:first-child::after{content:"tied for cheapest in one column only"}
   tr.trails td:first-child::after{content:"not the cheapest in either column"}
+  /* Section 3 ranks ONE column -- the household's own generation provider --
+     so its row cannot borrow the two badges above, which count columns the
+     battery matrix has and this table does not. Section 3's sole-cheapest
+     state IS tr.win: same paint, and "win" carries no badge to be wrong. */
+  tr.s3-tie td:first-child::after{content:"tied for cheapest at this house's generation rates"}
+  tr.s3-trails td:first-child::after{content:"not the cheapest at this house's generation rates"}
   .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
   .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
   .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
@@ -286,7 +292,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 </div>
 
 <div class="cards">
-  <div class="card"><div class="big">{{BEST_PLAN}}</div><div class="lbl">Best plan in every scenario — the solid conclusion</div></div>
+  <div class="card"><div class="big">{{BEST_PLAN}}</div><div class="lbl">{{S0_BEST_PLAN_CARD}}</div></div>
   <div class="card"><div class="big blue">~{{ACTUAL_MONTHLY_BILL}}/mo</div><div class="lbl">Actual electric bill — {{ACTUAL_ANNUAL_BILL}}/yr from a complete {{ANALYSIS_DAYS}}-day bill audit</div></div>
   <div class="card"><div class="big">{{EV_FIX_SAVINGS_100}}/yr</div><div class="lbl">Free win: fully super-off-peak EV charging (session-level, 100% compliance)</div></div>
   <div class="card"><div class="big warn">~{{BATTERY_PAYBACK_RANGE}}</div><div class="lbl">Battery-alone payback with price-aware dispatch ({{BATTERY_PAYBACK_EVENING_ONLY}} evening-only)</div></div>
@@ -332,12 +338,12 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <table>
 <thead><tr><th>Plan</th><th>Annual ({{GENERATION_PROVIDER_SHORT}} gen)</th><th>Annual ({{UTILITY_NAME}} bundled)</th><th>vs. current</th><th>{{UTILITY_NAME}}'s own tool says</th></tr></thead>
 <tbody>
-<tr class="win"><td>{{BEST_PLAN}} ✓ current</td><td>{{BEST_PLAN_ANNUAL_CCA}}</td><td>{{BEST_PLAN_ANNUAL_BUNDLED}}</td><td>—</td><td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" ✓</td></tr>
+<tr class="{{S3_ROW_CLASS}}"><td>{{BEST_PLAN}} ✓ current</td><td>{{BEST_PLAN_ANNUAL_CCA}}</td><td>{{BEST_PLAN_ANNUAL_BUNDLED}}</td><td>—</td><td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" ✓</td></tr>
 <!-- TODO: one <tr> per remaining eligible plan, sorted by annual cost; mark footnoted plans (e.g. event-surcharge plans) with an asterisk. -->
 </tbody>
 </table>
 <p class="small"><!-- TODO: footnotes — event-surcharge caveat, utility-tool capture date and its CCA-pricing disclaimer, any legacy plans it listed. --></p>
-<p><b>Why {{BEST_PLAN}} wins:</b> <!-- TODO: the structural reason, e.g. share of imports landing in the cheapest window and the rate spread vs the other plans. --></p>
+<p><b>{{S3_WHY_LEAD}}</b> <!-- TODO: the structural reason the table ranks the way it does — e.g. the share of imports landing in the cheapest window and the rate spread between the plans. Follow the lead-in {{S3_WHY_LEAD}} states: it says whether this house's plan wins outright, ties, or is beaten, so a paragraph explaining a win under a lead-in that names another plan as the winner contradicts the table above it. --></p>
 <div class="note"><!-- TODO: generation-provider note — what the bills show about the CCA product, whether any relief credit applies, and what opting out would/wouldn't change. --></div>
 
 <h2 id="s4">4 · Does a battery change which plan is best? {{S4_VERDICT_SHORT}}</h2>
