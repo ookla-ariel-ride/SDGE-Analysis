@@ -864,11 +864,43 @@ def case_the_guard_is_what_refuses_and_it_runs_before_any_write():
 # subvert a probe on their own; the rest are the ones the script clears as
 # defence in depth, forged here together so shrinking that list shows up as a
 # behavioral failure rather than a silently narrower guard.
+#
+# The four GIT_*_PATHSPECS (issue #194) are the newest, and they forge a
+# different thing: not which repository answers but what the PATH handed to it
+# means. Each was measured -- LITERAL and NOGLOB empty a glob-backed `git
+# ls-files`, and all four make `git check-ignore` exit 128, which turns every
+# staging run into a refusal. Forged here alongside the rest, so the legitimate
+# destination below has to survive them too.
 _FORGEABLE = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE",
               "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
               "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
               "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_CONFIG_GLOBAL",
-              "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")
+              "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+              "GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS",
+              "GIT_GLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")
+
+
+def _forced_config():
+    """The NAME=VALUE pairs the script FORCES into its own environment (issue
+    #193), parsed from its own loop.
+
+    These are the other half of the sanitizing: the clearing above stops a
+    caller replacing the configuration, and this stops the operator's ORDINARY
+    global, XDG and system configuration -- a core.excludesFile there makes a
+    committable destination answer "ignored" with nothing forged at all. Read
+    from the script rather than retyped, so a value changed there is compared
+    against what the run really exports.
+    """
+    text = SCRIPT.read_text()
+    m = re.search(r"^for _kv in (.*?); do$", text, re.M | re.S)
+    assert m, ("stage-private-data.sh no longer forces its git configuration -- "
+               "the ignore verdict is back on the operator's ~/.gitconfig")
+    out = {}
+    for tok in m.group(1).replace("\\\n", " ").split():
+        name, sep, value = tok.partition("=")
+        assert sep, f"not a NAME=VALUE pair in the forcing loop: {tok!r}"
+        out[name] = value
+    return out
 
 
 def _common_dir_of(path):
@@ -920,6 +952,10 @@ def _forged_env(dst, forged_common, td):
         GIT_CONFIG_COUNT="1",
         GIT_CONFIG_KEY_0="core.worktree",
         GIT_CONFIG_VALUE_0=str(dst),
+        GIT_LITERAL_PATHSPECS="1",
+        GIT_NOGLOB_PATHSPECS="1",
+        GIT_GLOB_PATHSPECS="1",
+        GIT_ICASE_PATHSPECS="1",
     )
 
 
@@ -1008,8 +1044,16 @@ def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
         before = _snapshot(dst)
         result = _run_script(src, dst, cwd=src, env=env)
         _assert_refused(result, dst, before, "a fully forged environment")
+        # Read out of the IGNORING lines only. The script also announces the
+        # configuration it FORCES (issue #193), and those lines name
+        # GIT_CONFIG_GLOBAL and friends too -- searching the whole of stderr
+        # would let the forcing announcement stand in for the ignoring one and
+        # this assertion would pass on a script that cleared nothing.
+        announced = " ".join(
+            ln for ln in result.stderr.splitlines()
+            if "stage-private-data.sh: ignoring inherited" in ln)
         for name in _FORGEABLE:
-            assert name in result.stderr, (
+            assert name in announced, (
                 f"{name} was set but the run never said it ignored it: {result.stderr}")
 
     text = SCRIPT.read_text()
@@ -1023,12 +1067,267 @@ def case_refuses_a_plain_directory_with_every_forgeable_variable_set_at_once():
     # explanation above the loop names these variables too.
     code = [(n, line) for n, line in enumerate(text.splitlines())
             if line.strip() and not line.lstrip().startswith("#")]
-    first_git = min(n for n, line in code if re.search(r'\bgit\s+-C\b', line))
+    # Every probe now goes through the _git wrapper (see the case below), so the
+    # first probe is the first line that CALLS it -- matched without the leading
+    # underscore, which `\bgit` would not see, and excluding the wrapper's own
+    # definition and the `command git` inside it.
+    git_lines = [n for n, line in code
+                 if re.search(r'(?<![\w.-])_git\s+-C\b', line)]
+    assert git_lines, ("no _git -C probe found in the script -- this case can no "
+                       "longer tell whether the sanitizing happens first")
+    first_git = min(git_lines)
     first_unset = min(n for n, line in code if line.strip().startswith("unset "))
     assert first_unset < first_git, (
         "the environment must be cleared before the first git probe, not after")
+    # Same requirement for the configuration the script FORCES (issue #193):
+    # exported after the clearing, because every forced name is in the
+    # GIT_CONFIG* family the clearing drops by prefix, and before the first
+    # probe, or the first probe still answers from the operator's ~/.gitconfig.
+    first_export = min(n for n, line in code if line.strip().startswith("export "))
+    assert first_unset < first_export < first_git, (
+        f"the forced configuration must be exported after the clearing "
+        f"(line {first_unset}) and before the first git probe (line {first_git}), "
+        f"not at line {first_export}")
     return (f"all {len(_FORGEABLE)} forgeable variables are refused together, "
-            f"announced, and cleared before the first git probe")
+            f"announced, and cleared -- and the forced configuration exported -- "
+            f"before the first git probe")
+
+
+def _wrapper_body(text):
+    """stage-private-data.sh's _git function body."""
+    m = re.search(r"^_git\(\) \{\n(.*?)\n\}$", text, re.M | re.S)
+    assert m, ("stage-private-data.sh no longer defines a _git wrapper -- every "
+               "git invocation in that script is supposed to go through it")
+    return m.group(1)
+
+
+def _forced_overrides(text):
+    """The (key, value) pairs stage-private-data.sh forces on every git command,
+    read from _GIT_FORCED_CONFIG -- the single place that states them."""
+    m = re.search(r"^_GIT_FORCED_CONFIG=\((.*?)\)$", text, re.M)
+    assert m, ("stage-private-data.sh: _GIT_FORCED_CONFIG could not be found, so "
+               "the ignore verdict is back on whatever the running git makes of "
+               "GIT_CONFIG_GLOBAL and friends")
+    pairs = [tuple(tok.split("=", 1)) for tok in m.group(1).split() if tok != "-c"]
+    assert pairs and all(len(p) == 2 for p in pairs), (
+        f"_GIT_FORCED_CONFIG holds no NAME=VALUE pair: {m.group(1)!r}")
+    return pairs
+
+
+@case
+def case_the_isolation_proof_reads_back_whatever_the_wrapper_forces():
+    """ISSUE #193, /review round three. The proof must FOLLOW the wrapper, not
+    keep its own list of what to check.
+
+    private_egress.py derives its proof key from the table its _git() uses
+    (ISOLATION_PROOF_KEY, ISOLATION_PROOF_VALUE = GIT_CONFIG_OVERRIDES[0]), and
+    a case in test_private_egress asserts that. The shell -- the implementation
+    that actually handles the archive -- restated `core.excludesFile=/dev/null`
+    as a literal inside _require_isolation_proven's own loop, and nothing tied
+    the two together. A later edit adding a third forced key to _git would have
+    left the proof walking its two-item list: the new key passed on every
+    command, read back by nothing, free to be inert while the proof still
+    passed. That is this PR's own round-one finding, re-created in the shell.
+
+    STRUCTURE first: both arrays the wrapper expands are the arrays the proof
+    loops over, and no -c is written anywhere else.
+
+    THEN BEHAVIOUR, because a structural check can be satisfied by text that
+    does not run. A scratch copy of the script gets a THIRD forced key, and a
+    PATH shim strips that one -c back out of git's argument vector -- a git that
+    ignores the option, which is exactly what the proof exists to catch. The
+    destination's own config states a different value for it, so the readback
+    must come back as the destination's and the run must refuse, naming the new
+    key. The same fixture with the unmodified script passes, which is what makes
+    the refusal attributable to the added key rather than to the shim.
+    """
+    text = SCRIPT.read_text()
+    body = _wrapper_body(text)
+    proof = re.search(r"^_require_isolation_proven\(\) \{\n(.*?)\n\}$", text,
+                      re.M | re.S)
+    assert proof, "stage-private-data.sh no longer proves the isolation at all"
+    loop = re.search(r"^\s*for kv in (.+); do$", proof.group(1), re.M)
+    assert loop, "_require_isolation_proven no longer loops over anything"
+    walked = loop.group(1)
+    for array in ("_GIT_FORCED_CONFIG", "_GIT_DEST_CONFIG"):
+        assert f"${{{array}[@]" in body, (
+            f"the _git wrapper does not expand {array}")
+        assert f"${{{array}[@]" in walked, (
+            f"_require_isolation_proven does not read back {array}, which _git "
+            "puts on every command line: a key added there would be forced and "
+            "verified by nothing")
+    assert not re.search(r"-c \S+=\S+", body), (
+        "the _git wrapper names a -c option outside those arrays, so it is "
+        "forced without being proved")
+    assert not re.search(r'"\S+\.\S+=\S+"', walked), (
+        "_require_isolation_proven walks a literal key/value of its own again")
+
+    forced = _forced_overrides(text)
+    with tempfile.TemporaryDirectory() as td:
+        # The third forced key. core.attributesFile is chosen because it is
+        # inert here (nothing in the guard reads gitattributes), so the only
+        # thing it can change is whether the PROOF notices it.
+        extra = "core.attributesFile=/dev/null"
+        patched = text.replace(
+            f"_GIT_FORCED_CONFIG=({' '.join('-c ' + f'{k}={v}' for k, v in forced)})",
+            f"_GIT_FORCED_CONFIG=({' '.join('-c ' + f'{k}={v}' for k, v in forced)} "
+            f"-c {extra})")
+        assert patched != text, (
+            "the scratch copy could not be given a third forced key -- "
+            "_GIT_FORCED_CONFIG is not spelled as this case expects")
+
+        real = shutil.which("git")
+        if not real:
+            raise SkipCase("no git on PATH to shim")
+        shim = pathlib.Path(td) / "shim"
+        shim.mkdir()
+        # A git that ignores exactly one -c and passes everything else through,
+        # argument by argument rather than by re-splitting a string, so a value
+        # containing a space survives it.
+        (shim / "git").write_text(
+            "#!/bin/sh\n"
+            "n=$#; i=0\n"
+            "while [ $i -lt $n ]; do\n"
+            "  a=$1; shift; i=$((i+1))\n"
+            '  if [ "$a" = "-c" ] && [ $i -lt $n ]; then\n'
+            "    b=$1; shift; i=$((i+1))\n"
+            f'    if [ "$b" = "{extra}" ]; then continue; fi\n'
+            '    set -- "$@" "$a" "$b"; continue\n'
+            "  fi\n"
+            '  set -- "$@" "$a"\n'
+            "done\n"
+            f'exec {shlex.quote(real)} "$@"\n')
+        (shim / "git").chmod(0o755)
+        env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}")
+
+        src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                             has_gas_bills_dir=False)
+        with _linked_worktree(td, "third-key-dst") as dst:
+            # The scratch copy lives INSIDE the destination worktree, because
+            # the copy that runs is what decides which checkout's worktrees are
+            # eligible: a modified copy in a tempdir is in no checkout at all and
+            # would be refused for that instead (measured while writing this).
+            scratch = dst / "with-a-third-forced-key.sh"
+            scratch.write_text(patched)
+            subprocess.run(["git", "-C", str(dst), "config", "--local",
+                            "core.attributesFile", str(pathlib.Path(td) / "attrs")],
+                           capture_output=True, check=True)
+            ok = _run_script(src, dst, cwd=src, env=env)
+            assert ok.returncode == 0, (
+                "the unmodified script does not pass under the shim, so a refusal "
+                f"below would not be attributable to the added key: {ok.stderr[-600:]}")
+            for name in ("private/household.yaml", "private/1-raw-data/gas.csv"):
+                assert (dst / name).is_file(), f"{name} was not staged"
+            shutil.rmtree(dst / "private" / "1-raw-data")
+            (dst / "private" / "household.yaml").unlink()
+            refused = _run_script(src, dst, cwd=src, script=scratch, env=env)
+    assert refused.returncode != 0, (
+        "a key added to _GIT_FORCED_CONFIG was passed on every git command and "
+        "read back by nothing: the proof is still walking its own list")
+    assert "could not be isolated" in refused.stderr, (
+        f"the refusal is not the isolation proof's: {refused.stderr[-600:]}")
+    assert "core.attributesFile" in refused.stderr, (
+        f"the proof refused without naming the key it checked: {refused.stderr[-600:]}")
+    return ("the shell's isolation proof reads back the arrays the wrapper "
+            f"expands ({len(forced)} forced key(s) plus the destination-derived "
+            "ones); a third key added to the wrapper in a scratch copy is read "
+            "back and refused when a shim strips it")
+
+
+@case
+def case_every_git_invocation_carries_the_configuration_override():
+    """Issue #193, adversarial review. The environment half of the configuration
+    isolation is read only by git 2.31 and newer; an older git ignores those
+    variables in silence, and the guard's ignore verdict goes back to whatever
+    the operator's ~/.gitconfig says. What closes that on every version is
+    `-c core.excludesFile=...` on the command line, and a command-line option is
+    per-invocation: a probe that goes round the wrapper is a probe without it.
+
+    So this reads the script rather than running it. Every git invocation in the
+    executable text must be a call to the _git wrapper; the wrapper's own
+    `command git -c ...` line is the one exception, and it must carry at least
+    one override. `git` inside a quoted message is not an invocation and is
+    skipped, which is why the quote parity is counted rather than the word.
+
+    TWO KINDS of override now, and the wrapper has to carry both (adversarial
+    review, round two). core.excludesFile is switched OFF, and its value is
+    known before the destination is: it lives in _GIT_FORCED_CONFIG, the array
+    the wrapper expands and the proof reads back. core.ignoreCase and
+    core.precomposeUnicode are taken FROM the destination -- an ambient one
+    widens the destination's own patterns until they cover a path it never
+    named, and forcing them off outright would refuse the ordinary macOS and
+    Windows repository whose git really does match case-insensitively. Their
+    values arrive through the _GIT_DEST_CONFIG array, which
+    _adopt_destination_config fills per destination, so what this case can check
+    structurally is that the array is IN the wrapper and that it holds no key the
+    forced list already switches off.
+
+    The array starts EMPTY, which is the shape private_egress.py has always had:
+    its _git() defaults to the forced table alone, and the two probes whose
+    answer the destination-derived keys move are handed the fuller list
+    explicitly. It used to be seeded with git's own defaults under a comment
+    saying a probe before the adoption was hypothetical -- six run, they were
+    carrying an override the python side does not put on the same probes, and
+    the seed was measured inert for all six (round three).
+
+    The behavioural half -- that the overrides really do defeat an ambient
+    excludes file, an ambient core.ignoreCase and an ambient
+    core.precomposeUnicode on a git that ignores the variables -- is
+    test_private_egress.case_a_git_that_ignores_the_config_variables_cannot_be_
+    told_a_committable_path_is_ignored and
+    case_ambient_matching_configuration_cannot_widen_the_destinations_own_rules,
+    which run this script under a PATH shim.
+    """
+    text = SCRIPT.read_text()
+    body = _wrapper_body(text)
+    forced = _forced_overrides(text)
+    overrides = [f"{k}={v}" for k, v in forced]
+
+    read = set(re.findall(r"^\s*for key in (.+); do$", text, re.M)[0].split())
+    assert "${_GIT_DEST_CONFIG[@]" in body, (
+        "the _git wrapper no longer expands _GIT_DEST_CONFIG, so the keys "
+        f"{sorted(read)} are read from the destination and then not forced")
+    assert not (read & set(dict(forced))), (
+        "a key is both switched off in _GIT_FORCED_CONFIG and read from the "
+        "destination -- the last -c on the command line would decide which")
+    overrides += [f"{k}=<destination's own>" for k in sorted(read)]
+
+    strays, raw = [], []
+    for n, line in enumerate(text.splitlines(), 1):
+        code = line.split("#", 1)[0] if line.lstrip().startswith("#") else line
+        if line.lstrip().startswith("#"):
+            continue
+        for hit in re.finditer(r"(?<![\w./-])git\b", code):
+            if code[:hit.start()].count('"') % 2:
+                continue                       # inside a quoted message
+            if code[:hit.start()].rstrip().endswith("command"):
+                raw.append(n)                  # `command git`: allowlisted below
+                continue
+            strays.append(f"line {n}: {line.strip()[:90]}")
+    assert not strays, (
+        "these git invocations do not go through the _git wrapper, so they run "
+        "without the configuration override:\n  " + "\n  ".join(strays))
+    # `command git` is how the wrapper reaches the real git, so the stray check
+    # above has to let it past -- which means a later edit could add a probe that
+    # way and be invisible to it. The sites are therefore allowlisted BY FUNCTION,
+    # with the two that may hold one named: the wrapper itself (both its attempt
+    # and its retry), and the ambient read, which cannot go through the wrapper
+    # because it exists to see the configuration the wrapper switches off and
+    # would recurse if it tried.
+    allowed = {"_git", "_load_ambient_protected_config"}
+    lines = text.splitlines()
+    for n in raw:
+        owner = next((re.match(r"^(\w+)\(\) \{$", lines[i]).group(1)
+                      for i in range(n - 1, -1, -1)
+                      if re.match(r"^\w+\(\) \{$", lines[i])), None)
+        assert owner in allowed, (
+            f"line {n} runs `command git` from {owner!r}, which is not one of "
+            f"{sorted(allowed)}: a probe that reaches git without the wrapper "
+            "runs without the configuration override")
+    calls = len(re.findall(r"(?<![\w./-])_git\s", text))
+    return (f"every git invocation in the script goes through _git, which passes "
+            f"{len(overrides)} override(s): {' '.join(overrides)} ({calls} call "
+            f"sites; {len(raw)} `command git` lines, all inside {sorted(allowed)})")
 
 
 @case
@@ -1068,7 +1367,19 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
     The stand-in interpreter is REPLACED (os.replace, atomically, never an
     unlink) with a shell wrapper that records what it inherited and then execs
     the real interpreter, so the staging still completes and the recording
-    comes from a genuinely accepted run rather than a synthetic probe."""
+    comes from a genuinely accepted run rather than a synthetic probe.
+
+    TWO different requirements, and the difference is the whole point (issue
+    #193). Nothing the CALLER set may survive -- that is the original claim, and
+    every forged value must read back <unset>. But the script also FORCES its own
+    configuration, and those values must survive, for the same reason the
+    clearing has to: a run that isolated its own probes and then handed the
+    ambient configuration to the work it authorized would be checking one set of
+    ignore rules and copying under another. So a forced name is required to read
+    back as the script's value, not as <unset>, and a name that is neither
+    forged-and-cleared nor forced would be classified by neither rule -- which
+    is asserted rather than left to arithmetic."""
+    forced = _forced_config()
     with tempfile.TemporaryDirectory() as td:
         src = _synthetic_src(td, "household:\n  has_gas: false\n", has_gas_bills_dir=False)
         record = pathlib.Path(td) / "inherited-by-the-child.txt"
@@ -1078,7 +1389,7 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
             f"REC={shlex.quote(str(record))}\n"
             ': > "$REC"\n'
             + "".join('printf "%s\\n" "{v}=${{{v}-<unset>}}" >> "$REC"\n'.format(v=v)
-                      for v in _FORGEABLE)
+                      for v in sorted(set(_FORGEABLE) | set(forced)))
             + f'exec {shlex.quote(sys.executable)} "$@"\n')
         wrapper.chmod(0o755)
         os.replace(wrapper, src / ".venv" / "bin" / "python")
@@ -1091,13 +1402,20 @@ def case_the_cleared_environment_reaches_the_work_the_guard_authorized():
                 "environment the copy step runs in")
             seen = dict(line.split("=", 1) for line in
                         record.read_text().splitlines() if "=" in line)
-            still_set = {k: v for k, v in seen.items() if v != "<unset>"}
-            assert not still_set, (
+            assert set(seen) == set(_FORGEABLE) | set(forced), seen
+            leaked = {k: v for k, v in seen.items()
+                      if k not in forced and v != "<unset>"}
+            assert not leaked, (
                 f"the guard cleared these for its own probes but handed them to "
-                f"the work it authorized: {still_set}")
-            assert set(seen) == set(_FORGEABLE), seen
-    return (f"all {len(_FORGEABLE)} variables are gone from the environment the "
-            f"post-guard work inherits, not just from the probes")
+                f"the work it authorized: {leaked}")
+            wrong = {k: seen[k] for k, v in forced.items() if seen[k] != v}
+            assert not wrong, (
+                f"the guard forced these for its own probes and then handed the "
+                f"ambient configuration to the work it authorized: {wrong} "
+                f"(expected {forced})")
+    return (f"all {len(set(_FORGEABLE) - set(forced))} forgeable variables are gone "
+            f"from the environment the post-guard work inherits, and the "
+            f"{len(forced)} values the script forces reach it unchanged")
 
 
 # --------------------------------------------------------------------------
@@ -1196,7 +1514,8 @@ def case_refuses_a_forged_gitfile_under_a_forged_environment_too():
     code = [(n, line) for n, line in enumerate(SCRIPT.read_text().splitlines())
             if line.strip() and not line.lstrip().startswith("#")]
     first_unset = min(n for n, line in code if line.strip().startswith("unset "))
-    git_calls = [n for n, line in code if re.search(r'\bgit\s+-C\b', line)]
+    git_calls = [n for n, line in code
+                 if re.search(r'(?<![\w.-])_git\s+-C\b', line)]
     assert git_calls, "the script no longer asks git anything"
     assert min(git_calls) > first_unset, (
         "a git invocation runs before the environment is cleared, so it reads "
@@ -1378,7 +1697,7 @@ def case_accepts_a_registered_worktree_whose_path_the_line_parser_cannot_read():
     # one string and matches nothing. The listing has to be read through a
     # process substitution, and this is the line that says it is.
     text = SCRIPT.read_text()
-    assert 'done < <(git -C "$SELF_GIT" worktree list --porcelain -z' in text, (
+    assert 'done < <(_git -C "$SELF_GIT" worktree list --porcelain -z' in text, (
         "the register listing is no longer read with -z through a process "
         "substitution -- a command substitution would silently drop the NUL "
         "separators and match nothing")
@@ -1602,6 +1921,121 @@ def case_refuses_a_destination_that_tracks_a_path_it_writes():
         assert not (dst / "private" / "1-raw-data").exists()
     return ("a destination that tracks a path this script writes is refused, "
             "and is reported as tracked rather than as unignored")
+
+
+def _old_git_shim(td, name="old-git"):
+    """A directory holding a `git` that unsets the 2021 GIT_CONFIG_* variables
+    and execs the real one -- a git that has never heard of them, which is what
+    the script's own comment says it still has to work on.
+
+    A process that never reads a variable and a process that never receives it
+    cannot be told apart, so this is that git exactly. GIT_CONFIG_NOSYSTEM is
+    left in place: it is from 2008 and such a git really does read it."""
+    real = shutil.which("git")
+    if not real:
+        raise SkipCase("no git on PATH to shim")
+    d = pathlib.Path(td) / name
+    d.mkdir()
+    (d / "git").write_text(
+        "#!/bin/sh\n"
+        "unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_COUNT "
+        "GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0\n"
+        f'exec {shlex.quote(real)} "$@"\n')
+    (d / "git").chmod(0o755)
+    return d
+
+
+@case
+def case_ambient_matching_configuration_cannot_widen_the_destinations_own_rules():
+    """Issue #193, adversarial review round two, in the implementation that
+    actually handles the archive.
+
+    The ignore guard asks the destination whether its own rules cover the paths
+    this script writes. core.ignoreCase decides how those rules MATCH, and it is
+    answered from the operator's ~/.gitconfig whenever the destination states
+    none of its own -- which is every repository whose .git/config was written
+    on a case-sensitive filesystem, since that is the only case where git init
+    writes nothing. So a destination whose .gitignore says `Private/` while the
+    script writes `private/1-raw-data` used to take the whole archive, because
+    the machine happened to be configured to match case-insensitively.
+
+    Three rows, and the second is the one a blanket `-c core.ignoreCase=false`
+    would break: a repository that states core.ignoreCase=true really does cover
+    the path, and refusing it would be the guard refusing a correct caller.
+
+    Run under a PATH shim, because on a git that reads the 2021 GIT_CONFIG_*
+    variables the wholesale switch-off hides the question this case is asking.
+    The ambient value is delivered through XDG_CONFIG_HOME rather than HOME for
+    the reason the other ambient cases give: the source's stand-in interpreter
+    resolves through the real HOME, and forging it breaks `import yaml` inside
+    the run for a reason that has nothing to do with this check.
+    """
+    rows = (
+        ("a rule spelled Private/ and no core.ignoreCase of its own",
+         "Private/\n", None, "refuse"),
+        ("the same rule, and core.ignoreCase=true as git init writes it on a "
+         "case-insensitive filesystem", "Private/\n", "true", "accept"),
+        ("a rule spelled as the path is, with no core.ignoreCase of its own",
+         "private/\n", None, "accept"),
+    )
+    checked = []
+    for label, gi, local, expected in rows:
+        with tempfile.TemporaryDirectory() as td:
+            shim = _old_git_shim(td)
+            xdg = pathlib.Path(td) / "xdg"
+            (xdg / "git").mkdir(parents=True)
+            (xdg / "git" / "config").write_text("[core]\n\tignoreCase = true\n")
+            src = _synthetic_src(td, "household:\n  has_gas: false\n",
+                                 has_gas_bills_dir=False)
+            dst, script = _throwaway_checkout(td, gi)
+            subprocess.run(["git", "-C", str(dst), "config", "--local", "--unset",
+                            "core.ignorecase"], capture_output=True)
+            if local is not None:
+                subprocess.run(["git", "-C", str(dst), "config", "--local",
+                                "core.ignorecase", local], capture_output=True,
+                               check=True)
+            env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}",
+                       XDG_CONFIG_HOME=str(xdg))
+            # The fixture's POTENCY, established against raw git under the same
+            # shim and with everything the script forces EXCEPT the
+            # destination-derived value: on the refusing row the ambient config
+            # really does manufacture "ignored", or the run below would prove
+            # nothing. On the accepting rows the destination really does cover
+            # the path on its own.
+            probe = subprocess.run(
+                ["git", "-c", "core.excludesFile=/dev/null", "-C", str(dst),
+                 "check-ignore", "-q", "--", "./private/1-raw-data"],
+                capture_output=True, text=True,
+                env=dict(env, GIT_CONFIG_GLOBAL="/dev/null",
+                         GIT_CONFIG_SYSTEM="/dev/null", GIT_CONFIG_NOSYSTEM="1",
+                         GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.excludesFile",
+                         GIT_CONFIG_VALUE_0="/dev/null"))
+            if probe.returncode != 0:
+                raise SkipCase(
+                    f"this git does not call ./private/1-raw-data ignored in a "
+                    f"repository with {label}, so the row cannot be tested "
+                    f"(exit {probe.returncode})")
+            before = _snapshot(dst)
+            result = _run_script(src, dst, cwd=src, script=script, env=env)
+            if expected == "refuse":
+                _assert_refused(result, dst, before,
+                                f"a destination with {label} under an ambient "
+                                "core.ignoreCase=true")
+                assert "does not gitignore" in result.stderr, result.stderr
+                assert not (dst / "private" / "1-raw-data").exists(), (
+                    "the archive was written into a repository whose own rules "
+                    "do not cover it -- the operator's ~/.gitconfig decided")
+            else:
+                assert result.returncode == 0, (
+                    f"a destination with {label} is a correct caller and must "
+                    f"still be staged: {result.stderr[-800:]}")
+                assert (dst / "private" / "household.yaml").is_file(), (
+                    "the run reported success and staged nothing")
+            checked.append(label)
+    return ("an ambient core.ignoreCase cannot widen the destination's own "
+            f"ignore rules ({len(checked)} rows, on a git that reads none of the "
+            "2021 GIT_CONFIG_* variables), and a destination that asks for the "
+            "wider matching itself is still accepted and staged")
 
 
 # --------------------------------------------------------------------------
