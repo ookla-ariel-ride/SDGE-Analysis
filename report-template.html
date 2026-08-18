@@ -101,7 +101,11 @@
   th{font-family:var(--mono);color:var(--sub);font-weight:500;text-transform:uppercase;font-size:.68rem;letter-spacing:.1em;border-bottom:2px solid var(--ink)}
   td:first-child,th:first-child{text-align:left}
   td:first-child{font-family:var(--disp);font-size:.9rem}
-  tr.win td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
+  tr.win td,tr.tie td{background:color-mix(in srgb,var(--sop) 9%,transparent);font-weight:600}
+  tr.trails td{background:color-mix(in srgb,var(--onpeak) 7%,transparent);font-weight:600}
+  tr.tie td:first-child::after,tr.trails td:first-child::after{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-left:8px;white-space:nowrap}
+  tr.tie td:first-child::after{content:"ties for cheapest"}
+  tr.trails td:first-child::after{content:"not the cheapest"}
   .pill{display:inline-block;font-family:var(--mono);font-size:.64rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:2px 8px;border-radius:3px;border:1.5px solid;vertical-align:middle}
   .pill.g{color:var(--sop);border-color:var(--sop)} .pill.y{color:var(--offpeak);border-color:var(--offpeak)} .pill.r{color:var(--onpeak);border-color:var(--onpeak)}
   .chartbox{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:16px 0}
@@ -337,7 +341,7 @@ Every answer carries its evidence: <span class="pill g">measured</span>, <span c
 <table>
 <thead><tr><th>Plan</th><th>No battery (modeled)</th><th>With 1 × {{BATTERY_MODEL}} (modeled)</th><th>Battery's value on this plan</th></tr></thead>
 <tbody>
-<tr class="win"><td>{{BEST_PLAN}}</td><td>{{BEST_PLAN_NOBATT_MODELED}}</td><td>{{BEST_PLAN_BATT_MODELED}}</td><td>{{BATTERY_VALUE_BEST_PLAN}}/yr</td></tr>
+<tr class="{{S4_ROW_CLASS}}"><td>{{BEST_PLAN}}</td><td>{{BEST_PLAN_NOBATT_MODELED}}</td><td>{{BEST_PLAN_BATT_MODELED}}</td><td>{{BATTERY_VALUE_BEST_PLAN}}/yr</td></tr>
 <!-- TODO: one <tr> per alternative plan tested. -->
 </tbody>
 </table>
