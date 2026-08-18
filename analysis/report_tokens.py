@@ -894,6 +894,52 @@ KNOWN_GAPS = {
         "private-only (a screenshot of an account-specific page); no committed "
         "data/*.json or *.csv extracts the dollar figure from it, so there is no "
         "public-ok source for the exact number the tool quoted"),
+    # THE OTHER HALF OF THE SAME CELL, and the reason it is a token at all.
+    #
+    # Section 3's fifth column is headed "<utility>'s own tool says", and its
+    # household row used to answer it in FIXED MARKUP:
+    #
+    #     <td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" ✓</td>
+    #
+    # The figure was a token; the verdict beside it was not. So the page
+    # asserted that the utility's tool had named THIS household's plan its
+    # best one, for every household, with nothing able to make that false --
+    # the same shape as the three assertions issue #196 removed from this row,
+    # the card above it and the lead-in below it. It is worse than a stale
+    # sentence: the two rankings can legitimately disagree, and the
+    # disagreement is exactly what a reader of that column wants to see.
+    #
+    # WHY THE LABEL ITSELF STAYS LITERAL IN THE TEMPLATE. The tidier shape is
+    # one token owning the whole cell, and it cannot work here.
+    # generate_report.render() HTML-escapes every substituted token value with
+    # quote=True (its own adversarial-review finding 4), so a human answer
+    # carrying `"Your Best Plan"` publishes as `&quot;Your Best Plan&quot;`.
+    # The straight quotes in the published cell can therefore only come from
+    # the template. So the template keeps the LABEL -- the tool's own words,
+    # the thing being asked about -- and this token carries the ANSWER that
+    # follows it. Nothing in the fixed half says the label applies.
+    #
+    # WHY IT IS A GAP AND NOT SOURCED, even though this checkout's
+    # research/sdge-plan-comparison-capture.md writes the tool's verdict down.
+    # That note is prose a person typed after reading a screenshot -- the same
+    # attestation this token asks for, one file over -- and nothing here reads
+    # a token out of research/. Same standing as the FIGURE above, which has
+    # sat in this dict with that note already committed. Making research/ a
+    # token source is a real proposal and a different one: it needs a parse
+    # contract every household's own capture note has to meet.
+    "UTILITY_TOOL_BEST_PLAN_VERDICT": (
+        "whether the utility's plan-comparison tool applied the \"Your Best Plan\" "
+        "label in section 3's fifth column to THIS household's plan, and which plan "
+        "it named if not. Same capture as UTILITY_TOOL_BEST_PLAN_FIGURE above and "
+        "uncommitted for the same reason: DATA-SOURCES-CHEATSHEET.md's "
+        "plan_comparison_capture is a private-only screenshot of an account-specific "
+        "page, and no committed data/*.json or *.csv reads a verdict out of it. It "
+        "cannot be derived either -- data/plan_results.csv ranks THIS repo's modeled "
+        "annual totals, and where a third party's tool puts the same plans is a fact "
+        "about that tool, not an arithmetic result. Answer with the mark that follows "
+        "the label: a bare check where the tool named this plan, or a short phrase "
+        "naming the plan it named instead. Answer nothing and the run refuses, which "
+        "is the point: this repo cannot state either verdict on the human's behalf"),
     "EXPANSION_PAYBACK_YEARS": (
         "a payback needs a YIELD PRICED THE RIGHT WAY and a COST, and neither "
         "half is committed here. On the yield side, what one more kW of panels "
@@ -928,9 +974,114 @@ KNOWN_GAPS = {
 
 
 # ---------------------------------------------------------------------------
-# 2. THE TOKEN MAP. One entry per sourceable token (127 live + 16 legitimate
-#    comment-only examples = 143; see test_report_tokens.py for the exact
-#    count check against a fresh template parse).
+# WHAT AN ANSWER TO A GAP HAS TO CARRY.
+#
+# A gap token refuses to resolve, and the operator answers it by hand
+# (generate_report.py's --human-answers file, keyed "TOKEN:<name>"). That
+# answer is spliced straight into the published page. Nothing checked it, and
+# for one of these tokens the surrounding markup is a sentence the answer
+# COMPLETES rather than a slot it fills, so a non-answer does not render as a
+# blank -- it renders as an assertion:
+#
+#     <td>{{UTILITY_TOOL_BEST_PLAN_FIGURE}} — "Your Best Plan" {{..._VERDICT}}</td>
+#
+# The label is fixed markup (see the token's own note: render() escapes every
+# substituted value, so the straight quotes can only come from the template),
+# and only the mark after it is a token. Answer the verdict "" and the cell
+# publishes `$4,519.65 — "Your Best Plan" `, which reads exactly as the tool
+# having applied that label to this plan -- the fixed win-claim issue #196
+# removed, restored by an empty string. A bare plan name reads the same way:
+# `... "Your Best Plan" TOU-DR-P` says the tool named this plan and mentions
+# another one. Neither is a verdict, and both publish silently.
+#
+# So the contract lives here, beside the gap it constrains, and it is the
+# token's -- not the operator's, and not the renderer's. Two rules:
+#
+#   * every gap: an answer that is blank or only whitespace is not an answer.
+#     A gap exists because this repo will not state something on the human's
+#     behalf, and an empty attestation states it just as loudly as a wrong one.
+#   * named gaps: the shape the sentence around the slot requires. The verdict
+#     has to LEAD with a mark, which is what KNOWN_GAPS' own reason text asks
+#     for ("a bare check where the tool named this plan, or a short phrase
+#     naming the plan it named instead"), and it is the only part checkable
+#     without reading the screenshot: a mark negates or affirms the label
+#     beside it, and English after the mark can say whatever the capture shows.
+#     The figure has to carry a digit, for the same reason one slot along -- an
+#     empty figure publishes a verdict attached to a quotation that is not
+#     there.
+#
+# WHAT THIS MODULE CANNOT DO. generate_report.run() splices the operator's
+# answer with `resolved[name] = human_answers[override_key]` and never asks
+# this module whether the answer is one; that call site has to pass it through
+# validate_gap_answer() for a refusal to reach the page. The contract is
+# declared and enforced here, so the check is one call away and cannot be
+# reinvented differently at the splice; whether it is CALLED is that file's.
+# ---------------------------------------------------------------------------
+# Marks that state a verdict by themselves. Written out rather than derived
+# because this is a vocabulary, not a rule: a check, a cross, and the shapes of
+# each a capture note is likely to be typed with.
+GAP_VERDICT_MARKS = ("✓", "✔", "✅", "✗", "✘", "❌", "×")
+
+
+def _answer_leads_with_a_verdict_mark(answer):
+    return answer.strip().startswith(GAP_VERDICT_MARKS)
+
+
+def _answer_quotes_a_figure(answer):
+    return any(ch.isdigit() for ch in answer)
+
+
+GAP_ANSWER_CONTRACTS = {
+    "UTILITY_TOOL_BEST_PLAN_VERDICT": (
+        _answer_leads_with_a_verdict_mark,
+        "the answer completes a cell whose fixed half is the tool's own label "
+        "(<figure> — \"Your Best Plan\" <answer>), so it has to open with the mark "
+        "that answers it -- one of " + " ".join(GAP_VERDICT_MARKS) + " -- optionally "
+        "followed by the plan the tool named instead. An answer that states no "
+        "verdict leaves the label standing as this report's own claim about a third "
+        "party's tool"),
+    "UTILITY_TOOL_BEST_PLAN_FIGURE": (
+        _answer_quotes_a_figure,
+        "the answer is the dollar figure the utility's tool quoted, so it has to "
+        "carry a digit. Without one the cell publishes a verdict beside a quotation "
+        "that is not there"),
+}
+
+
+def validate_gap_answer(name, answer):
+    """The operator's answer to gap token `name`, or SystemExit saying what the
+    answer has to carry and why.
+
+    Returns the answer unchanged when it meets the contract -- callers can
+    substitute the return value and keep the check on the same line.
+    """
+    spec = TOKENS.get(name)
+    if spec is None or spec.get("kind") != "gap":
+        raise SystemExit(f"report_tokens: {name!r} is not a gap token, so there is no "
+                          "hand-written answer for it to carry -- it either resolves "
+                          "from a committed source or is not declared at all")
+    if not isinstance(answer, str) or not answer.strip():
+        raise SystemExit(
+            f"report_tokens: the answer given for gap token {name} is blank, and a "
+            "blank attestation is not an answer -- the slot publishes into a sentence "
+            f"that reads without it. What this gap needs: {spec['reason']}")
+    check = spec.get("answer_contract")
+    if check is not None and not check[0](answer):
+        raise SystemExit(
+            f"report_tokens: the answer given for gap token {name} ({answer!r}) does "
+            f"not carry what that slot has to state -- {check[1]}")
+    return answer
+
+
+# ---------------------------------------------------------------------------
+# 2. THE TOKEN MAP. One entry per sourceable token: the ones live in static
+#    markup AND the legitimate comment-only examples inside <!-- TODO -->
+#    blocks, which the brief for this module is explicit about ("legitimate
+#    tokens... the map must source them too"). No count is written here on
+#    purpose -- it went stale twice while the template grew, and
+#    test_report_tokens.case_token_map_key_set_equals_the_templates_full_token_set
+#    checks the key set against a fresh template parse, both ways, which is
+#    the claim a number here was only approximating.
 # ---------------------------------------------------------------------------
 TOKENS = {}
 
@@ -982,7 +1133,10 @@ def is_attribute_only(name):
 
 
 for _gap_name, _gap_reason in KNOWN_GAPS.items():
-    _tok(_gap_name, kind="gap", reason=_gap_reason)
+    # The contract rides on the token, so validate_gap_answer needs the name
+    # and nothing else, and a gap with no shape rule still gets the blank floor.
+    _tok(_gap_name, kind="gap", reason=_gap_reason,
+         answer_contract=GAP_ANSWER_CONTRACTS.get(_gap_name))
 
 
 # ---- household / plan / utility identity -----------------------------------
@@ -1857,60 +2011,71 @@ def _plan_ranking(ctx, token):
     return plan, provider, totals[plan], cheapest, winners
 
 
-def _best_plan(ctx, token):
-    """The household's own plan -- refused unless the chrome report-template.html
-    wraps it in can be rendered truthfully.
+# The three states this household's plan can be in, in the ranking section 3
+# publishes. Named once because FIVE things branch on it -- section 0's
+# verdict and its plan card, section 3's verdict, section 3's household row
+# and the lead-in over the paragraph explaining that row -- and a reader meets
+# all five on one page. Two of them disagreeing is not cosmetic drift: it is a
+# card calling this plan the best a few hundred pixels above a sentence saying
+# it is not, which is the contradiction issue #196 exists to remove.
+_PLAN_STANDINGS = ("win", "tie", "trails")
 
-    report-template.html does not ASK whether this plan wins; it ASSERTS it, in
-    fixed markup no token can reach: a section 0 card labelled "Best plan in
-    every scenario — the solid conclusion", the `<tr class="win">` row carrying
-    {{BEST_PLAN}} in section 3, and the running line "Why {{BEST_PLAN}}
-    wins:". (Section 4's row carried the same assertion until issue #178 gave
-    its class a token; the three slots left are section 3's and section 0's,
-    and they are as fixed as they ever were.) BEST_PLAN was a bare
-    household.plan passthrough, so a household
-    whose plan is NOT cheapest got section 3's own (correctly inverted) verdict
-    -- "... is not the cheapest plan for this house" -- printed a few hundred
-    pixels under a card calling that same plan the best in every scenario.
 
-    That is state 3 for the report as a whole, and it fails closed NAMING THE
-    CHROME as the reason rather than pretending the sentence is unwritable.
-    Review round one asked for refusals to become inversions and every clause
-    this module OWNS now inverts -- but a sentence this module does not own
-    cannot be inverted from here, and the remaining choice is between failing
-    closed and publishing a page that contradicts itself. CLAUDE.md section 0
-    picks the first. Making the plan chrome conditional in report-template.html
-    is the real fix, and it belongs to whoever owns that file; this gate goes
-    away the day it lands.
+def _plan_standing(ctx, token):
+    """(standing, plan, plan_total, cheapest, winners): _plan_ranking with its
+    three-way outcome NAMED here instead of re-derived at each caller.
 
-    A TIE is allowed through. A plan tying for cheapest IS a cheapest plan, so
-    the card, the win rows and "wins" are all true of it, and section 3's own
-    verdict says "ties ... as the cheapest plan" beside them.
+    Every caller used to write `winners == [plan]` / `plan in winners` out for
+    itself. That is one comparison, but it is also the whole of what section
+    0's card, section 3's row, section 3's lead-in and both verdict sentences
+    claim, and five copies of a rule are five chances for one of them to
+    answer a tie differently from its neighbour. One helper, one answer.
     """
     plan, _provider, plan_total, cheapest, winners = _plan_ranking(ctx, token)
-    # _usd0_signed, for the reason BEST_PLAN_ANNUAL_* is declared with it a few
-    # lines below: a plan's annual total is a BILL NET OF EXPORTS, and nothing
-    # in data/plan_results.csv holds it above zero. Making _usd0 refuse a
-    # negative amount (issue #131 review round 5) turned every inline _usd0
-    # over one of these totals into a refusal where it used to render -- so a
-    # solar-plus-battery household modelling below zero lost the whole report
-    # to a REFUSAL MESSAGE's own formatting. The sign belongs outside the
-    # sigil here, not fatal (review round 6, finding 3).
-    _claim(
-        token, "that this household is on the best plan",
-        SUPPORTED if plan in winners else NOT_DETERMINED,
-        f"data/plan_results.csv prices {plan} at {_usd0_signed(plan_total)}/yr against "
-        f"{_join_plan_names(winners)} at {_usd0_signed(cheapest)}/yr",
-        unsettled="report-template.html asserts the answer as fixed chrome this module "
-                  "cannot reach (the section 0 card 'Best plan in every scenario', the "
-                  'class="win" row in section 3, and the line "Why {{BEST_PLAN}} '
-                  'wins:"), so no value rendered into this slot makes the page true')
-    return plan
+    standing = "win" if winners == [plan] else "tie" if plan in winners else "trails"
+    return standing, plan, plan_total, cheapest, winners
+
+
+def _best_plan(ctx, token):
+    """The household's own plan -- at every standing, since issue #196.
+
+    WHAT THIS USED TO REFUSE, AND WHY IT NO LONGER HAS TO. report-template.html
+    did not ASK whether this plan wins; it ASSERTED it, in fixed markup no
+    token could reach: a section 0 card reading "Best plan in every scenario",
+    the `<tr class="win">` row carrying {{BEST_PLAN}} in section 3, and the
+    running line "Why {{BEST_PLAN}} wins:". So this token failed closed for a
+    household whose plan is not cheapest -- naming the chrome as the reason --
+    and since generate_report.py folds any refusal into `failures`, that
+    household got NO REPORT AT ALL over its own plan's name and two of its own
+    modeled bills. Section 4's row was the same defect and issue #178 gave it
+    a token; these three slots were the rest of it.
+
+    All three are conditional now, and each takes its state from
+    _plan_standing, the same helper both verdict sentences branch on:
+    S3_ROW_CLASS paints the row (and badges it where the plan is not alone
+    cheapest), S3_WHY_LEAD writes the lead-in over the paragraph that explains
+    the ranking, and S0_BEST_PLAN_CARD writes the card's own label. There is
+    no sentence left for a value here to contradict, so there is nothing left
+    to gate: the answer to "is this the best plan" is written beside the name,
+    in the chrome, at whatever the ranking says.
+
+    THE RANKING CALL STAYS, and it is not vestigial. _plan_ranking is what
+    establishes that data/plan_results.csv prices this household's plan at all
+    and that the column it prices it in is made of numbers -- the two cases
+    where BEST_PLAN_ANNUAL_* would quote a figure off a ranking that does not
+    exist, and where a nan would otherwise reach this row as a bare
+    IndexError several tokens later.
+    """
+    return _plan_ranking(ctx, token)[0]
 
 
 def _best_plan_annual(token, provider):
-    """A BEST_PLAN_ANNUAL_* total, behind the same chrome gate: these two
-    figures are the cells of the section 3 `class="win"` row itself."""
+    """A BEST_PLAN_ANNUAL_* total: the two money cells of section 3's
+    household row.
+
+    Still routed through _best_plan, which is now the ranking's own
+    validity check rather than a chrome gate (see its docstring): these cells
+    may not quote a figure out of a column that cannot be ranked."""
     _best_plan(CTX, token)
     return float(_plan_row(provider)["total"])
 
@@ -1924,6 +2089,428 @@ _tok("BEST_PLAN_ANNUAL_CCA", kind="derived",
 _tok("BEST_PLAN_ANNUAL_BUNDLED", kind="derived",
      get=lambda ctx: _best_plan_annual("BEST_PLAN_ANNUAL_BUNDLED", "SDGE"),
      sources=["data/plan_results.csv"], fmt="usd0_signed")
+
+
+# ---- section 3's household row, and section 0's plan card (issue #196) -----
+#
+# ONE CLASS PER STANDING, and the sole-cheapest state IS "win" -- the class
+# section 3's row has always carried, painted by the same `tr.win td` rule.
+# The other two need names of their own because report-template.html's `tie`
+# and `trails` badges are SECTION 4's: they count the battery matrix's two
+# columns ("tied for cheapest in both columns"), and section 3's table has no
+# battery columns to count. Reusing them would put a false badge on the row --
+# the exact defect issue #178's pair-of-standings class was written to avoid,
+# one table over.
+#
+# WHAT SECTION 3's BADGES SAY INSTEAD names the column this ranking is over:
+# the household's own generation provider, which is the column _plan_ranking
+# ranks and the one this house actually pays. The bundled column beside it is
+# priced but not ranked, and no badge here claims anything about it.
+_S3_ROW_CLASS_BY_STANDING = {"win": "win", "tie": "s3-tie", "trails": "s3-trails"}
+_S3_ROW_CLASSES = tuple(_S3_ROW_CLASS_BY_STANDING[s] for s in _PLAN_STANDINGS)
+
+
+def _s3_row_class(ctx):
+    """The CSS class on section 3's household row: one of _S3_ROW_CLASSES.
+
+    The row opened as a fixed `<tr class="win">` until issue #196, so the
+    three cells inside it -- this plan's name and its two annual totals --
+    refused rather than render figures the row around them contradicted, and
+    a household the CSV ranks second got no report at all. The claim has a
+    token now, so it comes out true, false or tied, and the report is written
+    either way.
+
+    Identity on the STORED totals, through _plan_ranking's `==`/min(): a
+    stored total above the minimum is a strictly dearer bill, and equal
+    totals are a tie. No band -- widening "cheapest" by a dollar is what puts
+    a runner-up into the winners' set and paints it as the winner (issue #141;
+    see the rounding derivation further down).
+    """
+    return _S3_ROW_CLASS_BY_STANDING[_plan_standing(ctx, "S3_ROW_CLASS")[0]]
+
+
+# fmt="raw", attribute_only=True: this value is markup, not language -- the
+# same declaration S4_ROW_CLASS carries, for the same two reasons. See
+# is_attribute_only() for what the flag does, and
+# test_report_tokens.case_section_3s_row_class_is_a_state_the_stylesheet_can_paint
+# for the guard an attribute value actually needs: that every state it can
+# reach is a class report-template.html's own <style> block paints, and badges
+# with a claim the ranking supports.
+_tok("S3_ROW_CLASS", kind="derived", get=_s3_row_class, fmt="raw",
+     attribute_only=True,
+     sources=["data/plan_results.csv (the household provider's total column)",
+              "private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)"])
+
+
+def _s3_why_lead(ctx):
+    """The bold lead-in over section 3's explanatory paragraph.
+
+    It read "Why {{BEST_PLAN}} wins:" as fixed text, which is a claim -- and
+    for a household whose plan does not win, a claim contradicted by the
+    verdict line at the top of the same section. The lead-in now says which
+    question the paragraph under it answers, which for a beaten household is
+    "why the other plan wins", not "why yours does".
+    """
+    standing, plan, _plan_total, _cheapest, winners = _plan_standing(ctx, "S3_WHY_LEAD")
+    if standing == "win":
+        return f"Why {plan} wins:"
+    if standing == "tie":
+        return f"Why {plan} ties {_join_plan_names([p for p in winners if p != plan])}:"
+    return (f"Why {_join_plan_names(winners)} "
+            f"{'wins' if len(winners) == 1 else 'win'} instead:")
+
+
+_tok("S3_WHY_LEAD", kind="derived", get=_s3_why_lead,
+     sources=["data/plan_results.csv (the household provider's total column)",
+              "private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)"])
+
+
+# ---- section 7's package footing (issue #196) ------------------------------
+#
+# THE LAST SENTENCE IN THIS FAMILY THAT STATED NO STANDING. Section 7 opens the
+# decision with "All packages keep <plan>", and that clause is TRUE of every
+# household: data/package_results.json models all three packages with the house
+# on the plan it is already on, and nothing committed prices any of them on a
+# different tariff. What it does not say is that this is a MODELLING BASIS. In
+# a section headed "The decision", under three package cards and a
+# recommendation, "keep" reads as advice -- and for a household the ranking
+# beats, the reader has just been told in section 0 that a cheaper plan exists
+# and in section 3 by how much, and is then handed three packages priced on the
+# losing tariff with nothing saying the two are on different footings.
+#
+# WHAT THIS TOKEN SAYS AND WHAT IT DELIBERATELY DOES NOT. It states the
+# footing: whose plan the packages hold, whether the ranking beats it, and --
+# when it does -- that switching is not inside any saving below. It does not
+# price the switch. Re-basing the packages onto another plan is a different
+# analysis with its own artifacts and its own unresolved baseline question (the
+# savings below are deltas against ACTUAL BILLS, which were billed on this
+# plan, so re-basing changes what the baseline means -- CLAUDE.md section 1's
+# one-rate-vintage rule), and it is issue #200's, not this one's. No figure
+# either: the gap in dollars is section 3's to state, and S3_VERDICT states it.
+#
+# WHY A SLOT AFTER THE PLAN NAME RATHER THAN A REWRITTEN CLAUSE IN FRONT OF IT.
+# generate_report.render() HTML-escapes every token value, so no token can emit
+# the <b> around {{BEST_PLAN}}; the bold plan name is fixed markup and pins the
+# sentence's shape. A token in front of it could swap the verb and nothing
+# else -- it could carry neither the pointer to section 3 nor the
+# not-included-here clause, which is the whole substance. A token after it
+# carries both AND qualifies the verb in the same breath, in one slot instead
+# of two.
+#
+# WHY IT NAMES SECTION 3 BY ITS HEADING INSTEAD OF WRITING THE SIGIL. The same
+# escaping: CLAUDE.md section 10 requires every "section N" reference in report
+# prose to be a real <a href="#sN"> link, and an escaped token value cannot
+# carry one. The sentence points at section 3 by that section's own heading
+# ("Rate plan comparison"), which needs no sigil and no link.
+#
+# NO APOSTROPHE IN ANY BRANCH, for the third consequence of the same escaping:
+# render() escapes with quote=True, so a possessive would reach the published
+# HTML as "house&#x27;s". It displays correctly and reads as a defect in the
+# source of a page whose whole point is that a reader can check it.
+#
+# THE PERIOD IS THE TOKEN'S, and that is what keeps the winning household's
+# published page character-for-character what it was: at "win" this value IS
+# ".", so the rendered sentence is the "All packages keep <plan>." index.html
+# already carries. See
+# test_report_tokens.case_section_7s_package_footing_states_the_plan_it_prices_on.
+def _s7_plan_footing(ctx):
+    """The clause closing section 7's "All packages keep <plan>" sentence: the
+    footing the three packages below are priced on.
+
+    Three states, off _plan_standing -- the same helper section 0's verdict and
+    its card, section 3's verdict, section 3's row and section 3's lead-in all
+    branch on, so this sentence cannot tell the reader a different story from
+    the four statements above it. A household whose plan is beaten reads "not
+    the cheapest one" here and "a cheaper rate plan exists" in section 0; a
+    household whose plan wins reads neither, because there is nothing to
+    disclose.
+    """
+    standing, plan, _plan_total, _cheapest, winners = _plan_standing(
+        ctx, "S7_PLAN_FOOTING")
+    if standing == "win":
+        return "."
+    if standing == "tie":
+        others = _join_plan_names([p for p in winners if p != plan])
+        return (f" — the plan this house is on, level with {others} at the cheapest "
+                "modeled total in the rate plan comparison above.")
+    # AGREEMENT ON THE WINNERS' SET, in BOTH halves of the sentence. The verb
+    # takes it the same way S3_VERDICT does -- two plans tied ahead of this one
+    # are "each price lower", not "prices lower" -- and so does the pronoun the
+    # closing clause points back at them with. It said "switching to it" in
+    # every branch, so a household beaten by two tied plans read "TOU-DR-P and
+    # TOU-DR-1 each price lower ..., and none of the savings below includes
+    # switching to it": a singular referent for a subject the same sentence has
+    # just made plural, leaving the reader to guess which of the two it means.
+    plural = len(winners) > 1
+    verb = "each price" if plural else "prices"
+    switch_to = "any of them" if plural else "it"
+    return (" — the plan this house is on, not the cheapest one. "
+            f"{_join_plan_names(winners)} {verb} lower in the rate plan comparison "
+            f"above, and none of the savings below includes switching to {switch_to}.")
+
+
+_tok("S7_PLAN_FOOTING", kind="derived", get=_s7_plan_footing,
+     sources=["data/plan_results.csv (the household provider's total column)",
+              "private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)"])
+
+
+# data/deep_results.json:wildcard's keys are PROSE ("TOU-DR-P + PW3 (15 events
+# dodged)", "EV-TOU-5 no battery"), so the plan name is the leading run before
+# the "+ <battery>" or "no battery" qualifier. ONE regex, read here and nowhere
+# else, because the card and section 9's heading both name "the wildcard plan"
+# and a second split drifts from the first silently.
+#
+# IT ALREADY HAD. This split used to be written twice: here without the
+# battery's name and in _wildcard_plan as r"\s*\+\s*PW3|\s+no battery", with
+# this household's battery hardcoded into the second copy. Both agree on the
+# keys THIS checkout happens to carry and part company on any other battery: a
+# workup labelled "Powerwall 3" rather than "PW3" left the card saying
+# "TOU-DR-P wildcard" while WILDCARD_PLAN resolved to the whole prose key, so
+# section 9's heading read "can TOU-DR-P + Powerwall 3 (15 events dodged) + a
+# battery beat EV-TOU-5?" beside a section 0 card naming something else. A
+# hardcoded product name is not a parse rule; the qualifier is whatever follows
+# the "+".
+_WILDCARD_KEY_QUALIFIER_RE = re.compile(r"\s*\+|\s+no battery")
+
+
+def _wildcard_key_plan(key):
+    """The plan name one data/deep_results.json:wildcard key is about."""
+    return _WILDCARD_KEY_QUALIFIER_RE.split(key)[0].strip()
+
+
+def _wildcard_totals():
+    """{plan: [modeled annual totals]} off data/deep_results.json:wildcard,
+    keyed by _wildcard_key_plan -- the one split every reader of that artifact
+    takes, so the card and the section 9 heading cannot disagree about which
+    plan the wildcard is about.
+    """
+    totals = {}
+    for key, value in _json("deep_results.json")["wildcard"].items():
+        totals.setdefault(_wildcard_key_plan(key), []).append(value)
+    return totals
+
+
+def _wildcard_rivals(plan):
+    """Every plan the wildcard workup prices OTHER than `plan`, sorted.
+
+    THE SHARED FACT behind both sentences that name the wildcard: section 0's
+    card names these plans in its parenthetical and section 9's heading asks
+    whether the first of them can beat this house's plan. One list, one order,
+    so the two cannot name different plans off the same artifact.
+    """
+    return sorted(name for name in _wildcard_totals() if name != plan)
+
+
+def _wildcard_scenario(ctx):
+    """(phrase, standing) for the section 9 wildcard, or None when that
+    artifact cannot rank this household's plan against another.
+
+    None DROPS the scenario from the card's list rather than refusing: the
+    card's claim is "in every scenario tested", and a scenario that cannot be
+    ranked was not tested. Refusing would take the whole report down for a
+    household whose wildcard workup prices one plan -- the failure mode this
+    issue is about.
+
+    A NON-FINITE TOTAL DROPS THE WHOLE SCENARIO, and it used to be filtered
+    out of the ranking instead -- `[t for t in ... if _finite(t)]` on our side
+    and `any(_finite(t) ...)` on the rivals'. A plan with a nan beside a
+    finite figure kept its finite figure, the min() was taken over what was
+    left, and the card went on counting the wildcard as a scenario it scored:
+    "Best plan in every scenario tested (..., TOU-DR-P wildcard)" over a
+    comparison one of whose sides the artifact never priced. The value that
+    was discarded is exactly the one that could have beaten this plan, so the
+    filter does not merely lose precision -- it can invert the standing, and
+    it does so silently, which is the same shape as the mixed-matrix finding
+    one input along.
+
+    EVERY total in the artifact is required, not just the two min() lands on:
+    `theirs` is a minimum over every rival total and `ours` over every one of
+    ours, so any one of them can move the answer, and a rival whose totals are
+    ALL non-finite was dropped out of `rivals` entirely -- the same partial
+    ranking, one step further along, and it also decides whether there is a
+    rival to name at all. One rule instead of three: an artifact that is not
+    made of numbers ranks nothing here.
+
+    DROP RATHER THAN REFUSE, which is the opposite of what _bpm_cheapest and
+    _plan_ranking do with a non-finite cell, and for a reason that is about
+    the SENTENCE rather than about the number. Those two rank the CSV and the
+    matrix, and section 3's verdict, section 3's row, section 4's row class
+    and section 7's footing all have to say something about that ranking --
+    there is no "this ranking is absent" state for them to land in, so the
+    only honest answer is _claim's NOT_DETERMINED and a named SystemExit. The
+    wildcard has that state already, and this function returns it three lines
+    up for a household whose workup prices one plan. Nothing else reads these
+    totals either: WILDCARD_PLAN parses the artifact's KEYS, and section 9's
+    wildcard paragraph is a <!-- TODO --> block in report-template.html, so no
+    token publishes a figure off them. A wildcard the artifact cannot rank is
+    "this scenario is not determined", not "the report cannot be written" --
+    CLAUDE.md section 0's two different answers -- and the card is already
+    built to say the first by naming one scenario fewer.
+    """
+    plan = hh1("household.plan")
+    totals = _wildcard_totals()
+    if not _finite(*(t for values in totals.values() for t in values)):
+        return None
+    ours = totals.get(plan, [])
+    rivals = _wildcard_rivals(plan)
+    if not ours or not rivals:
+        return None
+    theirs = min(t for name in rivals for t in totals[name])
+    ours = min(ours)
+    standing = "win" if ours < theirs else "tie" if ours == theirs else "trails"
+    # SLASH-JOINED, never _join_plan_names, and this is about the CARD's
+    # punctuation rather than about prose. _plan_card_label lists the scenarios
+    # it scored in a parenthetical joined with ", ", and _join_plan_names emits
+    # ", " itself from three names up. Three rivals therefore published
+    # "Cheapest in 2 of the 3 scenarios tested (no-battery, battery×plan
+    # matrix, TOU-DR-1, TOU-DR-2 and TOU-DR-P wildcard)" -- a parenthetical
+    # reading as five items beside a sentence counting three, and the count is
+    # the claim. A scenario phrase has to be ONE item, so the rivals are joined
+    # with a separator the list cannot mistake for its own. One name renders
+    # exactly as before.
+    return f"{'/'.join(rivals)} wildcard", standing
+
+
+# The one clause that keeps section 0's card honest about a SPLIT battery
+# matrix, and the reason it is a clause rather than a fourth scenario.
+#
+# THE DEFECT IT EXISTS TO REMOVE. The card scored the matrix as ONE scenario
+# taken at the WORSE of its two columns, and three different households came
+# out as one sentence:
+#
+#     loses no-batt, WINS with-batt   ->  "Cheapest in 2 of the 3 ... beaten in the rest"
+#     WINS no-batt, loses with-batt   ->  the same sentence
+#     loses BOTH columns              ->  the same sentence again
+#
+# So a household the matrix ranks cheapest in one of its two columns was
+# published as having lost that scenario outright, indistinguishable from one
+# that lost both. That is issue #178's finding one section along: the weaker of
+# two columns is RIGHT for a row's CSS class, whose badge may say only what
+# BOTH columns support, and WRONG for a sentence, which is all this card is.
+#
+# WHY NOT SCORE THE TWO COLUMNS AS TWO SCENARIOS (a count out of four). It is
+# the tidier shape and it was written first, but the card's label is pinned
+# CHARACTER FOR CHARACTER to the one index.html publishes
+# (test_report_tokens.case_section_3s_published_chrome_round_trips_into_index
+# _html), and naming two matrix columns in the parenthetical rewrites that
+# label for the winning household too -- a silent rewrite of a published page,
+# on the one path this issue is not about. Counting rankings the parenthetical
+# does not name would be worse: the card would claim tests it does not list.
+# So the matrix stays ONE named scenario, scored at the standing the matrix as
+# a whole supports (cheapest in one of two columns is not cheapest in the
+# matrix -- the same rule section 4's row applies), and the label carves the
+# won column out of its own absolutes with this clause. The winning path never
+# reaches it: a split pair needs a trailing column, and every branch above the
+# clause requires none.
+def _matrix_split_clause(worst, strongest):
+    """The exception clause for a matrix whose two columns disagree, or "".
+
+    Only a pair that TRAILS in one column and is cheapest in the other needs
+    it. A win/tie pair is counted as "tie" and the tie branches already say
+    "level with a rival", which is true of the column that ties and understates
+    nothing the reader is owed; a pair that agrees has no exception to carve.
+    """
+    if worst != "trails" or strongest == "trails":
+        return ""
+    return (", except in one of the battery×plan matrix's two columns, where it "
+            + ("is the cheapest plan" if strongest == "win" else "ties for cheapest"))
+
+
+def _plan_card_label(csv_standing, matrix_pair, wildcard):
+    """Section 0's card label, FROM STANDINGS ALONE -- no artifact reads, so
+    the whole product of standings that can reach it is enumerable against the
+    English it produces (test_report_tokens.case_section_0s_card_is_true_of_
+    every_ranking_it_can_be_handed walks all 108 of them).
+
+    csv_standing:  data/plan_results.csv's ranking of this household's plan.
+    matrix_pair:   data/battery_plan_matrix.json's two columns, (worst,
+                   strongest), sorted by _bpm_standing_pair.
+    wildcard:      (phrase, standing), or None when deep_results.json cannot
+                   rank this plan against another -- it prices one plan, or
+                   it carries a total that is not a finite number -- in which
+                   case the scenario is DROPPED rather than counted, since a
+                   ranking that could not be taken was not a test.
+
+    The label states the strongest true summary and nothing above it: sole
+    cheapest everywhere is "Best plan in every scenario tested"; a tie
+    somewhere drops "best" for "cheapest ... level with a rival"; anything
+    beaten counts instead of quantifying, and section 3's plan table has the
+    ranking that produced the count. Every branch is a claim about HOW MANY of
+    the scenarios NAMED in the parenthetical price this plan cheapest AND how
+    many of those are ties, plus _matrix_split_clause's exception where the
+    matrix is half won.
+
+    A TIE IS NEVER LET READ AS A SOLE WIN, in any branch. The every-scenario
+    branch refuses to say "Best plan" once anything ties and quantifies the
+    ties instead; the partial branch used to print a bare count and did not,
+    so a plan tying in two scenarios and beaten in a third published "Cheapest
+    in 2 of the 3 scenarios tested (...) — beaten in the rest", asserting sole
+    cheapest in two scenarios it only drew. The same silence made two
+    different households one sentence: cheapest outright in two scenarios, and
+    cheapest in one with a tie in another, were byte-identical labels. The tie
+    count is stated wherever there is one to state. It cannot arise in the
+    last branch -- a tie IS a cheapest standing, so nothing counted cheapest
+    means nothing tied -- and the guard checks that rather than assuming it
+    (test_report_tokens.case_section_0s_card_is_true_of_every_ranking_it_can_
+    be_handed reads a tie count out of all four branches).
+    """
+    worst, strongest = matrix_pair
+    scenarios = [("no-battery", csv_standing), ("battery×plan matrix", worst)]
+    if wildcard:
+        scenarios.append(wildcard)
+    split = _matrix_split_clause(worst, strongest)
+    tested = ", ".join(phrase for phrase, _standing in scenarios)
+    standings = [standing for _phrase, standing in scenarios]
+    total, cheapest_in = len(standings), sum(s != "trails" for s in standings)
+    tied_in = sum(s == "tie" for s in standings)
+    if cheapest_in == total and not tied_in:
+        return f"Best plan in every scenario tested ({tested}) — the solid conclusion"
+    if cheapest_in == total:
+        return (f"Cheapest plan in every scenario tested ({tested}), level with a rival "
+                f"in {tied_in} of the {total} — nothing priced beats it")
+    if cheapest_in:
+        level = (f", level with a rival in {tied_in} of those" if tied_in else "")
+        return (f"Cheapest in {cheapest_in} of the {total} scenarios tested ({tested})"
+                f"{level} — beaten in the rest{split}")
+    return (f"Not the cheapest in any of the {total} scenarios tested ({tested}) "
+            f"— a cheaper plan exists in each{split}")
+
+
+def _s0_best_plan_card(ctx):
+    """Section 0's plan card label -- the card whose fixed text read "Best plan
+    in every scenario — the solid conclusion".
+
+    "IN EVERY SCENARIO" IS A QUANTIFIER, and it was written as fixed markup
+    over three rankings nothing checked. They are read now: the no-battery
+    ranking (data/plan_results.csv, the same one both verdict sentences use),
+    the battery×plan matrix (data/battery_plan_matrix.json -- BOTH of its
+    columns, through _bpm_standing_pair, with a half-won matrix carved out of
+    the label's absolutes rather than collapsed into a loss; see
+    _matrix_split_clause), and section 9's wildcard workup
+    (data/deep_results.json:wildcard). The scenarios NAMED in the label are
+    exactly the ones scored, so the parenthetical cannot claim a test that did
+    not happen.
+
+    It adds no failure mode of its own. The two refusals it can inherit --
+    a matrix that does not price this plan, a column that is not made of
+    numbers -- belong to _bpm_best/_bpm_cheapest and _plan_ranking, all of
+    which report-template.html already resolves for section 3 and section 4.
+    """
+    return _plan_card_label(_plan_standing(ctx, "S0_BEST_PLAN_CARD")[0],
+                            _bpm_standing_pair("S0_BEST_PLAN_CARD"),
+                            _wildcard_scenario(ctx))
+
+
+_tok("S0_BEST_PLAN_CARD", kind="derived", get=_s0_best_plan_card,
+     sources=["data/plan_results.csv (the household provider's total column)",
+              "data/battery_plan_matrix.json:plans (both columns, via "
+              "_bpm_standing_pair)",
+              "data/deep_results.json:wildcard",
+              "private/household.yaml:household.plan",
+              "private/household.yaml:household.cca (which provider column ranks)"])
 
 
 def _bpm_plans():
@@ -2236,6 +2823,96 @@ def _bpm_cheapest(token, column):
 #   win     the plan stores the minimum and no other plan does.
 _S4_COLUMN_STANDINGS = ("trails", "tie", "win")
 
+# The same three words section 3 ranks the CSV in, ordered the other way round.
+# Section 0's card scores a matrix COLUMN against a CSV standing and a wildcard
+# standing in one count, so the two vocabularies have to be the same set or the
+# card is counting a state it cannot read. Checked at import rather than at each
+# caller: this is a fact about two tuples, and the runtime guard it replaces
+# (_matrix_standing's, which parsed a standing back out of a CSS class name)
+# only existed because the card used to read this ranking through S4_ROW_CLASS.
+#
+# AN `if ... raise`, NOT AN `assert`, and the difference is the whole point of
+# a guard whose job is to stop a card scoring a standing it cannot read.
+# `python -O` compiles an assert statement out of the bytecode entirely, so the
+# check would be absent in exactly the run where nothing else is watching --
+# the card would go on counting a vocabulary that no longer matches and publish
+# a label off it. A raise survives -O. SystemExit and not AssertionError
+# because this module answers a condition it cannot honestly work around with
+# SystemExit everywhere else (resolve_token, _plan_ranking, _bpm_best,
+# _bpm_standing_pair), and it names itself in the message the way they do: an
+# import-time refusal is what stops report_blocks, generate_report and the
+# suites, so the message has to say which module refused and why.
+if set(_S4_COLUMN_STANDINGS) != set(_PLAN_STANDINGS):
+    raise SystemExit(
+        "report_tokens: the matrix's per-column standings "
+        f"{_S4_COLUMN_STANDINGS} and the CSV's {_PLAN_STANDINGS} are no longer the same "
+        "vocabulary, so S0_BEST_PLAN_CARD cannot score them in one count")
+
+
+def _bpm_column_standings(token):
+    """[(column, phrase, standing)] -- where battery_plan_matrix.json puts the
+    household's plan in EACH of its columns, in _BPM_COLUMNS order.
+
+    ONE RANKING OF THE MATRIX, READ BY BOTH SENTENCES THAT QUOTE IT. Section
+    4's row class needs the PAIR (sorted worst first and joined, so a badge
+    says only what both columns support) and section 0's card needs each
+    column ON ITS OWN (so a count is a count of rankings, not of artifacts).
+    Those are two views of one three-way test, so the test is taken here,
+    once. Two independent rankings of the same two columns drift over exactly
+    the cases that matter -- whether a tie counts as cheapest, which column
+    decides -- which is the rule _s4_row_class's docstring already keeps
+    against the heading directly above it.
+
+    Ranked through _bpm_cheapest, so its refusals stand for both callers: a
+    column that is not made of numbers, and (through _bpm_best) a household
+    plan the matrix does not price at all. `token` names the caller in those
+    refusals.
+
+    Identity on the STORED cells: battery_plan_matrix.py rounds every cell to
+    whole dollars and round() is non-decreasing, so a cell above the minimum
+    came from a strictly dearer bill and equal cells are a tie the artifact
+    cannot separate. _BPM_TIE_USD bounds a SIZE and has no business here.
+    """
+    plan, _row = _bpm_best()
+    out = []
+    for column, phrase in _BPM_COLUMNS:
+        winners = _bpm_cheapest(token, column)
+        out.append((column, phrase,
+                    "trails" if plan not in winners
+                    else "tie" if len(winners) > 1 else "win"))
+    return out
+
+
+def _bpm_standing_pair(token):
+    """(worst, strongest) -- the two columns' standings, sorted worst first.
+
+    A LIST SORTED, never a set: the two columns agreeing is a state of its own
+    ("win", "tie", "trails") and not a duplicate to be collapsed away.
+
+    THE PAIR IS THE SHARED FACT. Section 4's row class is the pair joined, and
+    section 0's card counts the WORSE of it while carving out the stronger
+    column when they disagree -- two readings of one ranking, both taken here
+    so a tie cannot be answered one way by the card and another by the row a
+    screen below it.
+
+    Exactly two, checked rather than assumed: min() used to catch the empty
+    case by raising ValueError and nothing at all caught a third column, which
+    would have silently produced "trails-tie" from three standings and a card
+    clause that says "two columns" over a table with more.
+    """
+    standings = sorted((s for _column, _phrase, s in _bpm_column_standings(token)),
+                       key=_S4_COLUMN_STANDINGS.index)
+    if len(standings) != 2:
+        raise SystemExit(
+            f"report_tokens: {token} states one standing per battery column and "
+            f"report_tokens._BPM_COLUMNS now names {len(standings)} of them "
+            f"({[c for c, _p in _BPM_COLUMNS]}); section 4's row class is a pair and "
+            "section 0's card's split clause counts two columns in as many words, so "
+            "the vocabulary in _S4_ROW_CLASSES, the clause in _matrix_split_clause and "
+            "the rules in report-template.html's <style> block all have to be "
+            "re-derived before either can name a state")
+    return tuple(standings)
+
 
 # The states section 4's household ROW can be in, as the CSS class names
 # report-template.html styles: ONE PER UNORDERED PAIR of the two columns'
@@ -2334,28 +3011,12 @@ def _s4_row_class(ctx):
     price at all (_bpm_best). Neither leaves a standing this token could
     state honestly.
     """
-    plan, _row = _bpm_best()
-    # A LIST, sorted worst first -- never a set. Both standings are carried
-    # into the class name, so the two columns agreeing is a state of its own
-    # ("win", "tie", "trails") and not a duplicate to be collapsed away.
-    standings = sorted(
-        ("trails" if plan not in winners else "tie" if len(winners) > 1 else "win"
-         for winners in (_bpm_cheapest("S4_ROW_CLASS", column)
-                         for column, _phrase in _BPM_COLUMNS)),
-        key=_S4_COLUMN_STANDINGS.index)
-    # The name is built from EXACTLY two standings, so a _BPM_COLUMNS that
-    # stops holding exactly two columns has to refuse rather than emit a
-    # class nothing paints. Checked, not assumed: min() used to catch the
-    # empty case by raising ValueError and nothing at all caught a third
-    # column, which would have silently produced "trails-tie" from three.
-    if len(standings) != 2:
-        raise SystemExit(
-            "report_tokens: section 4's household row states one standing per battery "
-            f"column and report_tokens._BPM_COLUMNS now names {len(standings)} of them "
-            f"({[c for c, _p in _BPM_COLUMNS]}); the row's class is a pair, so the "
-            "vocabulary in _S4_ROW_CLASSES and the rules in report-template.html's "
-            "<style> block both have to be re-derived before this token can name a state")
-    worst, strongest = standings
+    # Off _bpm_standing_pair, which section 0's card reads the same two columns
+    # through: the pair this class is built from and the standing that card
+    # counts are one ranking seen twice, and a second ranking here would
+    # eventually answer a tie differently from the card a screen above it.
+    # That helper also owns the "exactly two columns" refusal, for both.
+    worst, strongest = _bpm_standing_pair("S4_ROW_CLASS")
     return worst if worst == strongest else f"{worst}-{strongest}"
 
 
@@ -2606,14 +3267,20 @@ _tok("S4_VERDICT_SHORT", kind="derived", get=_s4_verdict_short,
 
 
 def _wildcard_plan(ctx):
+    """The plan section 9's wildcard heading asks about.
+
+    OFF _wildcard_rivals, which is off _wildcard_totals, which is off
+    _wildcard_key_plan -- so this token and section 0's card read that
+    artifact's prose keys through one split instead of two. This function used
+    to carry its own, with this household's battery ("PW3") written into it;
+    see _WILDCARD_KEY_QUALIFIER_RE for what the two disagreed about.
+    """
     best = hh1("household.plan")
-    for key in _json("deep_results.json")["wildcard"]:
-        if best not in key and "+" in key or "no battery" in key:
-            name = re.split(r"\s*\+\s*PW3|\s+no battery", key)[0].strip()
-            if name != best:
-                return name
-    raise SystemExit("report_tokens: could not identify a wildcard plan name in "
-                      "deep_results.json:wildcard's keys")
+    rivals = _wildcard_rivals(best)
+    if not rivals:
+        raise SystemExit("report_tokens: could not identify a wildcard plan name in "
+                          "deep_results.json:wildcard's keys")
+    return rivals[0]
 
 
 _tok("WILDCARD_PLAN", kind="derived", get=_wildcard_plan,
@@ -3316,10 +3983,10 @@ def _s0_verdict(ctx):
     # beaten. The clause is the same length either way (5-6 words), which is
     # what keeps every branch inside section 10's density cap on a sentence
     # that already spends 34 of its 35 words.
-    plan, _provider, _plan_total, _cheapest, winners = _plan_ranking(ctx, "S0_VERDICT")
-    if winners == [plan]:
+    standing, plan, _plan_total, _cheapest, winners = _plan_standing(ctx, "S0_VERDICT")
+    if standing == "win":
         plan_clause = "the rate plan is right"
-    elif plan in winners:
+    elif standing == "tie":
         plan_clause = "the rate plan ties for cheapest"
     else:
         plan_clause = "a cheaper rate plan exists"
@@ -4006,7 +4673,7 @@ def _s3_verdict(ctx):
     # much" is the most useful sentence section 3 can carry. The ranking
     # itself lives in _plan_ranking, shared with S0_VERDICT, which reports the
     # same three outcomes in the report's headline.
-    plan, _provider, plan_total, cheapest, winners = _plan_ranking(ctx, "S3_VERDICT")
+    standing, plan, plan_total, cheapest, winners = _plan_standing(ctx, "S3_VERDICT")
     # EVERY plan TOTAL in this sentence formats through _usd0_signed, in all
     # three branches. These are annual bills net of exports off
     # data/plan_results.csv -- the same field BEST_PLAN_ANNUAL_CCA is declared
@@ -4021,10 +4688,10 @@ def _s3_verdict(ctx):
     # strictly above cheapest and the gap is positive by construction. A
     # negative one would mean the ranking above contradicted itself, and
     # _usd0's refusal is the right answer to that.
-    if winners == [plan]:
+    if standing == "win":
         claim = (f"{plan} is still the cheapest plan for this house at a modeled "
                  f"{_usd0_signed(cheapest)}/yr, and every alternative priced costs more.")
-    elif plan in winners:
+    elif standing == "tie":
         others = [p for p in winners if p != plan]
         claim = (f"{plan} ties {_join_plan_names(others)} as the cheapest plan for this "
                  f"house at a modeled {_usd0_signed(cheapest)}/yr, and nothing priced "

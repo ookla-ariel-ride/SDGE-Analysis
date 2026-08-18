@@ -74,6 +74,15 @@ def make_fake_call(text=SAFE_FRAGMENT, finish_reason="end_turn", calls=None):
     return fake_call
 
 
+# Stand-in answers for gap tokens whose slot constrains the answer's shape.
+# Modelled on what index.html actually publishes, so the fixture exercises the
+# accepting path a real operator reaches -- not a value invented to clear a regex.
+_GAP_ANSWER_FIXTURES = {
+    "UTILITY_TOOL_BEST_PLAN_FIGURE": "$4,519.65",
+    "UTILITY_TOOL_BEST_PLAN_VERDICT": "\u2713",
+}
+
+
 def _all_human_answers():
     """Fabricated operator-supplied answers covering every human-classified
     block AND every live KNOWN_GAPS token EXCEPT the provenance review
@@ -86,8 +95,26 @@ def _all_human_answers():
     # fixtures must pass that gate exactly like a real operator answer would.
     answers = {bid: f"<b>Operator-supplied</b> answer for {bid} (fabricated for this test)."
               for bid in rb.HUMAN_REASONS}
+    # A gap answer lands in fixed markup that already carries half the sentence,
+    # so some tokens declare a SHAPE the answer has to satisfy
+    # (report_tokens.GAP_ANSWER_CONTRACTS). A generic placeholder does not, and
+    # generate_report now puts every token answer through that contract, so a
+    # fixture of placeholders would exercise the refusal path instead of the run
+    # it is here to test.
     for name in sorted(rb.LIVE_GAP_TOKENS):
-        answers[f"TOKEN:{name}"] = f"(operator-supplied placeholder for {name})"
+        answers[f"TOKEN:{name}"] = _GAP_ANSWER_FIXTURES.get(
+            name, f"(operator-supplied placeholder for {name})")
+    # And the fixture proves itself rather than being trusted: a contract added
+    # later without a fixture beside it fails HERE, naming the token, instead of
+    # surfacing as an unrelated run failure three cases along.
+    for name in sorted(rb.LIVE_GAP_TOKENS):
+        try:
+            rt.validate_gap_answer(name, answers[f"TOKEN:{name}"])
+        except SystemExit as e:
+            raise AssertionError(
+                f"the stand-in answer for gap token {name} does not satisfy its own "
+                f"contract, so these fixtures no longer model a real operator answer -- "
+                f"add one to _GAP_ANSWER_FIXTURES: {e}") from None
     return answers
 
 
