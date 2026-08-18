@@ -120,9 +120,12 @@ THE CORPUS BOUNDARY — which statements get published, and why it is derived
         missing, the missing date ranges), computed against the analysis window
         read from data/behavior_rebuild.json — never implied.
 
-    WHY DERIVED, NOT A DATE CONSTANT. The exclusion ends by itself: re-pull the
-    export, re-run, and the statement is published with nobody remembering to
-    delete an exclusion. A hardcoded cutoff date would have to be found and
+    WHY DERIVED, NOT A DATE CONSTANT. The exclusion ends by itself: stage an
+    export that covers the statement, re-run, and it is published with nobody
+    remembering to delete an exclusion. WHICH export that is depends on the
+    direction — see A LEADING EXCLUSION IS NOT A TRAILING ONE below; what is true
+    either way is that nothing in this file or in the artifact has to be edited to
+    end an exclusion. A hardcoded cutoff date would have to be found and
     removed by hand, and would go on silently truncating the corpus until someone
     did — the same rot a stale hand-maintained list has already produced twice in
     this repository.
@@ -1239,7 +1242,12 @@ def _boundary_record(elec, export_info, excluded, gas=None):
     Written on EVERY run, including the runs that exclude nothing: it is the corpus
     boundary, not an exception log. An empty excluded_statements list is the positive
     evidence that the export covered everything on that run — which is also what makes
-    re-pulling the export self-healing and visible in one diff.
+    the boundary self-healing and visible in one diff: the next run with an export that
+    covers the statement publishes it, and the diff of this file says so.
+
+    The `rule` field states only what holds in BOTH directions. The remedy is
+    direction-dependent (issue #154) and lives per statement, in
+    excluded_statements[].exclusion_ends_when — see the comment on `rule` below.
 
     UNLESS THERE WAS NO EXPORT TO DERIVE IT FROM, in which case an empty
     excluded_statements list is evidence of nothing at all: no statement was tested.
@@ -1253,13 +1261,26 @@ def _boundary_record(elec, export_info, excluded, gas=None):
     bounds = [_elec_period_bounds(p) for p in elec.period]
     record = {
         "generated_by": "analysis/parse_bills.py",
+        # DIRECTION-NEUTRAL ON PURPOSE. What ends an exclusion depends on which end
+        # of the export the statement falls off, and it is stated ONCE — per
+        # statement, in excluded_statements[].exclusion_ends_when (_excluded_detail).
+        # Restating either branch here would put the remedy in two prose sites that
+        # can drift apart, and the trailing branch stated unconditionally is false of
+        # a leading exclusion: it would send the operator to re-pull a rolling window,
+        # which starts no earlier and can drop more statements off the front. So this
+        # field carries only what is true in BOTH directions — the boundary is
+        # re-derived every run, nothing here is ever edited to end an exclusion — and
+        # names the field that carries the direction-dependent part.
         "rule": (
             "A statement is inside the reconcilable electric bill corpus if and only "
             "if SDG&E's billing-history export also carries a row for it. Statements "
             "with a PDF but no export row are listed under excluded_statements and "
             "appear in no artifact. The boundary is derived from the export on every "
-            "run — no cutoff date is stored — so re-pulling the export publishes the "
-            "statement again with nothing here to edit. An export row with no PDF is "
+            "run — no cutoff date is stored — so nothing here is ever edited to end an "
+            "exclusion: stage an export that covers the statement and the next run "
+            "publishes it. WHICH export that is depends on which end of the export's "
+            "range the statement falls outside, and is stated per statement in "
+            "excluded_statements[].exclusion_ends_when. An export row with no PDF is "
             "the opposite case and fails the run closed instead."),
         "export": export_info,
         "statements_parsed": len(published) + len(excluded),

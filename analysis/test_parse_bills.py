@@ -1124,8 +1124,12 @@ def case_export_missing_a_statement_excludes_and_records_it(tmp):
 def case_export_covering_every_statement_publishes_every_statement(tmp):
     """The other half of the proof, and the reason the rule is derived rather than a
     date: the SAME corpus and the SAME statement as the case above, with an export
-    that covers it, must publish it and record ZERO exclusions. Re-pulling the export
-    is the whole remedy — nothing in the parser has to be edited."""
+    that covers it, must publish it and record ZERO exclusions. For a TRAILING
+    exclusion like this one, re-pulling the export is the whole remedy — nothing in
+    the parser has to be edited. (A LEADING exclusion needs an export whose range
+    reaches back instead; case_export_leading_hole_records_a_remedy_that_is_true_of_it
+    and case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion
+    cover that direction.)"""
     dates = _corpus_dates(tmp)
     victim = dates[-1]
     if len(dates) < 3:
@@ -1302,6 +1306,102 @@ def case_export_leading_hole_records_a_remedy_that_is_true_of_it(tmp):
     return (f"a statement older than the export's earliest row ({victim}) is excluded "
             f"with the remedy that is true of it (widen the export, not re-pull it) "
             f"and {cov['days_missing']} day(s) lost off the front of the window")
+
+
+# A re-pull mentioned as the thing that BRINGS THE STATEMENT BACK. The pair is what
+# makes the claim: "a re-pull starts no earlier" names a re-pull and prescribes
+# nothing, and "the next run publishes it" prescribes something without naming a
+# re-pull. Neither is a violation; the two in one sentence, unqualified, is.
+_REPULL_NAMED = re.compile(r"re-?pull", re.I)
+_REPULL_RESTORES = re.compile(
+    r"publish|restore|comes? back|covers this statement|back in(?:to)? the corpus",
+    re.I)
+# ...unless the sentence scopes or negates the claim, which is how a correct
+# TRAILING-only or explicitly two-branched wording reads. Keeping this escape hatch
+# is deliberate: the guarded property is "no UNCONDITIONAL re-pull remedy at
+# artifact level", not "the word never appears".
+_REPULL_QUALIFIED = re.compile(
+    r"trailing|newer than|not the remedy|does not|do not|cannot|can't|never|"
+    r"no earlier|is not", re.I)
+
+
+def _artifact_level_strings(node, path="$"):
+    """Every string in the boundary record OUTSIDE excluded_statements, tagged with
+    the JSON path it came from.
+
+    Those per-statement records are the ONE place the direction-dependent remedy
+    belongs, because only there is the direction known. Every other string in the
+    file is a general statement about the boundary and is read as applying to both
+    directions — which is exactly why an unconditional remedy at that level is a
+    defect even on a corpus whose only exclusion is trailing."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "excluded_statements":
+                continue
+            yield from _artifact_level_strings(v, f"{path}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _artifact_level_strings(v, f"{path}[{i}]")
+    elif isinstance(node, str):
+        yield path, node
+
+
+def _sentences(text):
+    return [s for s in re.split(r"(?<=[.;])\s+", text) if s.strip()]
+
+
+def case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion(tmp):
+    """The per-statement remedy being direction-aware is not enough: the record's
+    general prose must not contradict it.
+
+    data/bill_corpus_boundary.json states its rule once, at the top, and that is what
+    a consumer reads first. When it says a re-pull publishes the excluded statement
+    again, and the leading exclusion recorded below it says a re-pull is precisely the
+    action that cannot work, the file carries two mutually exclusive remedies and the
+    authoritative-looking one is the false one — an operator following it re-pulls a
+    rolling window repeatedly, losing more statements off the front each time and
+    leaving the corpus truncated.
+
+    So: with a LEADING exclusion recorded, no string in the record outside
+    excluded_statements may name a re-pull as the thing that restores the statement,
+    unless the sentence scopes or negates the claim. The rule must also either state
+    the leading branch itself or point at the field that does, so the first thing read
+    is never a dead end."""
+    victim, dates = _stage_leading_hole(tmp)
+    r = _run(tmp)
+    assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
+
+    # The per-statement record is the one place the remedy lives, and on this run it
+    # says a re-pull is NOT it. Everything below is about what the REST of the file
+    # says while that record is sitting in it.
+    ends = b["excluded_statements"][0]["exclusion_ends_when"]
+    assert "reaches BACK" in ends and "NOT the remedy" in ends, ends
+
+    offenders = []
+    for where, text in _artifact_level_strings(b):
+        for sentence in _sentences(text):
+            if (_REPULL_NAMED.search(sentence)
+                    and _REPULL_RESTORES.search(sentence)
+                    and not _REPULL_QUALIFIED.search(sentence)):
+                offenders.append(f"{where}: {sentence.strip()}")
+    assert not offenders, (
+        f"{len(offenders)} artifact-level string(s) prescribe a re-pull as the remedy "
+        f"while the record's only exclusion ({victim}) is a LEADING one, which a "
+        f"re-pull cannot recover — the file contradicts its own per-statement remedy "
+        f"and the general claim is the one a consumer reads first: "
+        + " | ".join(offenders))
+
+    rule = b["rule"]
+    assert "exclusion_ends_when" in rule or "reaches back" in rule.lower(), (
+        f"the top-level rule neither states the leading branch nor names the "
+        f"per-statement field that does, so a consumer who reads it first is left "
+        f"with no remedy at all for the exclusion recorded below it: {rule}")
+    return (f"with a leading exclusion ({victim}) recorded, no artifact-level string "
+            f"prescribes a re-pull as its remedy "
+            f"({len(list(_artifact_level_strings(b)))} strings checked) and the rule "
+            f"points at the per-statement field that carries the true one")
 
 
 def case_gas_days_inside_an_excluded_electric_period_are_recorded(tmp):
@@ -1620,6 +1720,7 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_export_row_with_no_pdf_fails_closed,
                 case_export_hole_in_the_middle_fails_closed,
                 case_export_leading_hole_records_a_remedy_that_is_true_of_it,
+                case_artifact_level_guidance_never_prescribes_a_repull_for_a_leading_exclusion,
                 case_gas_days_inside_an_excluded_electric_period_are_recorded,
                 case_export_sharing_no_statement_fails_closed,
                 case_no_export_publishes_the_whole_corpus,

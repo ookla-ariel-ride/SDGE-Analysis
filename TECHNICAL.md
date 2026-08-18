@@ -4864,7 +4864,9 @@ SDG&E's billing-history export (`private/1-raw-data/electric_billing_history_202
 also carries a row for it: the export reconciliation in `bill_decomposition.py` cannot cover a
 statement the export does not carry, so publishing one would claim coverage the export does not
 corroborate. The boundary is DERIVED from the export on every run rather than stored as a cutoff
-date — re-pulling the export publishes the statement again with nothing to edit or remember,
+date — staging an export that covers the statement publishes it again with nothing to edit or
+remember (a re-pull does that for a statement NEWER than the export; one OLDER needs an export
+reaching further back, since the export is a rolling window),
 where a hardcoded date would go on truncating the corpus until somebody found it. The restriction
 is never silent (CLAUDE.md §1: coverage is counted in days, not files): `parse_bills.py` prints
 the excluded statements, the reason, the remedy and the day-coverage shortfall, and
