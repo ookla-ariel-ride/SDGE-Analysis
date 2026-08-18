@@ -85,8 +85,12 @@ OUTPUTS (committed, de-identified)
                                     the whole corpus — or, when no export was staged
                                     to derive the boundary from at all, an extra
                                     boundary_not_derived block saying so, so that the
-                                    empty list is never read as an all-clear. See THE
-                                    CORPUS BOUNDARY.
+                                    empty list is never read as an all-clear. It also
+                                    carries a gas_corpus block, because the boundary
+                                    governs ELECTRIC only: it names what governs the
+                                    gas artifacts instead, and counts the published gas
+                                    days that fall inside an excluded electric period.
+                                    See THE CORPUS BOUNDARY.
     When household.has_gas is false the three gas artifacts (bill_periods_gas.csv,
     bill_gas_detail.csv, gas_bill_summary.csv) are still published — as HEADER-ONLY
     CSVs (same headers, zero rows), in the same atomic set as the electric ones, so a
@@ -131,6 +135,33 @@ THE CORPUS BOUNDARY — which statements get published, and why it is derived
     nothing. So does an export hole in the MIDDLE of the corpus (which would
     punch a gap into an otherwise contiguous published series) and an export that
     covers none of the parsed statements at all.
+
+    A LEADING EXCLUSION IS NOT A TRAILING ONE. Both are absorbed by narrowing the
+    corpus, but they end differently and the record says so per statement. A
+    TRAILING exclusion (the PDF is newer than the export's last row) means the
+    export has not caught up: re-pull it and the statement is published. A LEADING
+    one (the PDF is older than the export's first row) is the opposite — SDG&E's
+    billing-history export is a rolling window, so re-pulling it starts no earlier
+    and may drop MORE statements off the front. Its remedy is an export whose date
+    range reaches back to the statement, and telling the operator to "re-pull the
+    export" there would be false. Both directions cost days off the analysis
+    window, and _window_coverage() counts those days either way — missing_ranges
+    shows which end they came off (issue #154).
+
+    ELECTRIC ONLY, AND SAID SO. The export's rows are ELECTRIC statements. Gas
+    statements are billed on their own cycle and carry their own dates, most of
+    which appear in no row of it (18 of this corpus's 25 do not); the ones that do
+    coincide are days a consolidated statement billed both fuels, which is not
+    export corroboration of the gas bill. So the derivation above cannot be applied
+    to gas — it would exclude gas statements on evidence that was never about
+    them, deleting most of a corpus the export could never corroborate either way.
+    The gas artifacts are
+    therefore published unrestricted by this boundary — governed by _validate()'s
+    duplicate/continuity/cross-foot checks and the SUMMARY_STATEMENTS_GAS presence
+    check — and the record's gas_corpus block states that, names what governs gas
+    instead, and counts (in DAYS, per CLAUDE.md §1) the published gas days that
+    fall inside an excluded electric period. A gas corpus wider than the electric
+    one is then visible in the artifact rather than silent (issue #159).
 
     NO EXPORT STAGED. The boundary is then underivable, so nothing is excluded:
     every parsed statement is published, the run says so, and
@@ -919,31 +950,72 @@ def _elec_period_bounds(period):
             dt.datetime.strptime(e.strip(), "%m/%d/%y").date())
 
 
-def _excluded_detail(elec, statement_dates):
+def _gas_period_bounds(period):
+    """('May 25, 2024 - Jun 25, 2024') -> (date(2024, 5, 25), date(2024, 6, 25)).
+
+    Gas periods print in a different format from electric ones on the same
+    statement layout, which is why _validate() carries a per-fuel format string."""
+    s, e = period.split(" - ")
+    return (dt.datetime.strptime(s.strip(), "%b %d, %Y").date(),
+            dt.datetime.strptime(e.strip(), "%b %d, %Y").date())
+
+
+def _excluded_detail(elec, statement_dates, kept):
     """One record per statement being left outside the corpus, carrying everything a
     reader needs to judge the exclusion: which periods it would have contributed,
     how many billed days those cover, the calendar span, why it is out, and the one
-    thing that would put it back in."""
+    thing that would put it back in.
+
+    The remedy DEPENDS ON THE DIRECTION (issue #154), so `kept` — the statements the
+    export does cover — is needed to tell them apart. A statement newer than the
+    export's last row is waiting for the export to catch up, and re-pulling it is
+    the whole remedy. A statement OLDER than its first row is the opposite case: the
+    export is a rolling window that has aged past this statement, so a re-pull starts
+    no earlier and can drop more statements off the front. Writing the trailing
+    remedy on a leading exclusion would send the operator to do the one thing that
+    cannot work, so each direction states what is true of it. An interior hole never
+    reaches here — _restrict_to_reconcilable_corpus() has already refused it."""
     out = []
+    first = kept[0]             # anything not older than this is a trailing exclusion
     for stmt in sorted(statement_dates):
         grp = elec[elec.statement_date == stmt]
         periods = list(grp.period)
         spans = [_elec_period_bounds(p) for p in periods]
+        leading = stmt < first
+        if leading:
+            reason = (
+                f"{HISTORY_CSV.name} carries no row for this statement: it is older "
+                f"than the export's earliest row ({first}), so the billing-history "
+                f"export reconciliation cannot cover it; publishing it would claim "
+                f"coverage SDG&E's own export does not corroborate")
+            ends_when = (
+                "a billing-history export that reaches BACK to this statement is "
+                "staged. Re-pulling the export is NOT the remedy in this direction: "
+                f"it is a rolling window, so a fresh pull starts no earlier than "
+                f"{first} and may start later still, dropping more statements off the "
+                f"front. Widen the export's date range to include this statement (or "
+                f"keep the earlier pull that did). The boundary is re-derived from "
+                f"whatever export is staged on every parse_bills.py run — no cutoff "
+                f"date is stored anywhere, so nothing has to be edited or remembered "
+                f"when an export that reaches back arrives")
+        else:
+            reason = (
+                f"{HISTORY_CSV.name} carries no row for this statement, so the "
+                f"billing-history export reconciliation cannot cover it; publishing "
+                f"it would claim coverage SDG&E's own export does not corroborate")
+            ends_when = (
+                "the billing-history export is re-pulled so that it covers this "
+                "statement. The boundary is re-derived from the export on every "
+                "parse_bills.py run — no cutoff date is stored anywhere, so nothing "
+                "has to be edited or remembered when the export catches up")
         out.append({
             "statement_date": stmt,
             "periods": periods,
             "billed_days": int(grp.days.sum()),
             "period_span": [min(s for s, _ in spans).isoformat(),
                             max(e for _, e in spans).isoformat()],
-            "reason": (
-                f"{HISTORY_CSV.name} carries no row for this statement, so the "
-                f"billing-history export reconciliation cannot cover it; publishing "
-                f"it would claim coverage SDG&E's own export does not corroborate"),
-            "exclusion_ends_when": (
-                "the billing-history export is re-pulled so that it covers this "
-                "statement. The boundary is re-derived from the export on every "
-                "parse_bills.py run — no cutoff date is stored anywhere, so nothing "
-                "has to be edited or remembered when the export catches up"),
+            "reason": reason,
+            "exclusion_ends_when": ends_when,
         })
     return out
 
@@ -1006,7 +1078,7 @@ def _restrict_to_reconcilable_corpus(elec, tou):
             f"claim export coverage they do not have. Re-pull the export so it covers "
             f"the whole corpus — this one cannot be resolved by narrowing it.")
 
-    records = _excluded_detail(elec, excluded)
+    records = _excluded_detail(elec, excluded, kept)
     export_info = {
         "path": str(HISTORY_CSV.relative_to(ROOT)),
         "statements": len(export),
@@ -1052,7 +1124,20 @@ def _window_coverage(elec, excluded):
     once meant 338 days with a hidden 27-day hole. _validate()'s continuity check has
     already proved the published periods tile without gap or overlap, so the corpus
     covers exactly [first period start .. last period end]; the shortfall against the
-    window is that interval's complement inside it."""
+    window is that interval's complement inside it.
+
+    THE `window` KEY IS PROVENANCE, NOT DECORATION (issue #155). It is the window this
+    block was computed against, recorded VERBATIM from window_source's own artifact
+    (dates only). parse_bills.py cannot run without the private bill corpus, so it
+    cannot run in CI — but every figure here is a pure function of two COMMITTED,
+    de-identified files (that window and bill_periods_electric.csv) plus the excluded
+    statements recorded alongside. So recording the window makes the staleness that
+    nothing else could catch — behavior_rebuild.json regenerated onto a new window
+    and committed while this artifact still reports day coverage against the retired
+    one — a recomputable mismatch between two committed files. Keep this key equal to
+    the source artifact's window: test_parse_bills.py's
+    case_committed_boundary_is_current_with_the_committed_window recomputes the whole
+    block from those files and is the CI gate on it."""
     win = _analysis_window()
     if win is None:
         return None
@@ -1078,7 +1163,77 @@ def _window_coverage(elec, excluded):
     }
 
 
-def _boundary_record(elec, export_info, excluded):
+def _gas_corpus_scope(gas, excluded):
+    """What governs the GAS artifacts, and by how many days they can disagree with
+    the electric corpus (issue #159).
+
+    The boundary above restricts electric only, and it cannot honestly do otherwise:
+    the export's rows are ELECTRIC statements, and gas bills on its own cycle under
+    its own dates, so applying the same rule to gas would exclude gas statements on
+    evidence that was never about them — deleting most of a corpus the export could
+    not corroborate either way. What is NOT acceptable is leaving that asymmetry
+    unstated: a reader comparing bill_periods_gas.csv with bill_periods_electric.csv
+    would otherwise find gas covering billed days the electric corpus deliberately
+    excludes, with nothing anywhere saying why. So this block names what governs gas
+    instead, and counts the overlap in DAYS (CLAUDE.md §1 — a coverage claim is a
+    number or it is not a claim). Zero on a corpus whose gas periods end before the
+    first excluded electric period, which is the only reason this repository has
+    never seen it."""
+    governs = (
+        f"nothing in this record. {HISTORY_CSV.name} is the ELECTRIC billing-history "
+        f"export: its rows are electric statements, and gas is billed on its own "
+        f"cycle under its own statement dates, so a gas date that coincides with a "
+        f"row is a consolidated statement billing both fuels that day, not export "
+        f"corroboration of the gas bill. The rule above therefore cannot be applied "
+        f"to the gas corpus without excluding gas statements on evidence that was "
+        f"never about them. The gas artifacts publish "
+        f"every gas statement parsed, governed by parse_bills.py's _validate() "
+        f"checks (no duplicate periods, periods tiling with no gap or overlap, "
+        f"charge cross-foot) and by the SUMMARY_STATEMENTS_GAS presence check, not "
+        f"by this boundary")
+    if gas is None or gas.empty:
+        return {
+            "restricted_by_this_boundary": False,
+            "what_governs_it_instead": (
+                "no gas corpus is published in this set (household.has_gas is false, "
+                "so the three gas artifacts are header-only), so there is no gas "
+                "coverage for this boundary to disagree with"
+                if gas is None else governs),
+            "statements_published": 0,
+            "published_period_span": None,
+            "days_published_inside_an_excluded_electric_period": 0,
+            "periods_inside_an_excluded_electric_period": [],
+        }
+    bounds = {(r.statement_date, r.period): _gas_period_bounds(r.period)
+              for r in gas.itertuples()}
+    overlaps, days = [], set()
+    for rec in excluded:
+        a, b = (dt.date.fromisoformat(x) for x in rec["period_span"])
+        for (stmt, period), (g_start, g_end) in sorted(bounds.items()):
+            lo, hi = max(a, g_start), min(b, g_end)
+            if lo > hi:
+                continue
+            overlaps.append({
+                "gas_statement_date": stmt,
+                "gas_period": period,
+                "excluded_electric_statement_date": rec["statement_date"],
+                "days": (hi - lo).days + 1,
+                "span": [lo.isoformat(), hi.isoformat()],
+            })
+            days |= {lo + dt.timedelta(days=i) for i in range((hi - lo).days + 1)}
+    return {
+        "restricted_by_this_boundary": False,
+        "what_governs_it_instead": governs,
+        "statements_published": int(gas.statement_date.nunique()),
+        "published_period_span": [
+            min(s for s, _ in bounds.values()).isoformat(),
+            max(e for _, e in bounds.values()).isoformat()],
+        "days_published_inside_an_excluded_electric_period": len(days),
+        "periods_inside_an_excluded_electric_period": overlaps,
+    }
+
+
+def _boundary_record(elec, export_info, excluded, gas=None):
     """The committed statement of where the corpus stops and why.
 
     Written on EVERY run, including the runs that exclude nothing: it is the corpus
@@ -1114,6 +1269,9 @@ def _boundary_record(elec, export_info, excluded):
                                   max(e for _, e in bounds).isoformat()],
         "excluded_statements": excluded,
         "window_coverage": _window_coverage(elec, excluded),
+        # The boundary is electric-only, so it says so and says what governs gas —
+        # see _gas_corpus_scope() and THE CORPUS BOUNDARY, "ELECTRIC ONLY".
+        "gas_corpus": _gas_corpus_scope(gas, excluded),
     }
     if export_info is None:
         record["boundary_not_derived"] = {
@@ -1165,6 +1323,15 @@ def _announce_boundary(record):
               f"It is parsed from its PDF but published in no artifact.")
         print(f"    why:      {rec['reason']}.")
         print(f"    ends when: {rec['exclusion_ends_when']}.")
+    gasc = record["gas_corpus"]
+    if gasc["days_published_inside_an_excluded_electric_period"]:
+        names = ", ".join(sorted({o["gas_statement_date"] for o in
+                                  gasc["periods_inside_an_excluded_electric_period"]}))
+        print(f"  NOTICE: GAS IS WIDER — this boundary restricts the ELECTRIC corpus "
+              f"only, and the gas artifacts publish "
+              f"{gasc['days_published_inside_an_excluded_electric_period']} billed "
+              f"day(s) that fall inside an excluded electric period (gas statement(s) "
+              f"{names}). {gasc['what_governs_it_instead']}.")
     cov = record["window_coverage"]
     if cov is None:
         print(f"    day coverage against the analysis window: not stated — "
@@ -1597,7 +1764,7 @@ def main():
 
     _validate(elec, gas, tou, gas_detail)
 
-    boundary = _boundary_record(elec, export_info, excluded)
+    boundary = _boundary_record(elec, export_info, excluded, gas)
 
     es = _summary_frame(elec, SUMMARY_STATEMENTS_ELEC,
                         "SUMMARY_STATEMENTS_ELEC", "electric")

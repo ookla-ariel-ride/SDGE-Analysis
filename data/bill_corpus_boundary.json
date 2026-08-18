@@ -50,5 +50,16 @@
    ]
   ],
   "days_the_excluded_statements_would_supply": 27
+ },
+ "gas_corpus": {
+  "restricted_by_this_boundary": false,
+  "what_governs_it_instead": "nothing in this record. electric_billing_history_2024-2026.csv is the ELECTRIC billing-history export: its rows are electric statements, and gas is billed on its own cycle under its own statement dates, so a gas date that coincides with a row is a consolidated statement billing both fuels that day, not export corroboration of the gas bill. The rule above therefore cannot be applied to the gas corpus without excluding gas statements on evidence that was never about them. The gas artifacts publish every gas statement parsed, governed by parse_bills.py's _validate() checks (no duplicate periods, periods tiling with no gap or overlap, charge cross-foot) and by the SUMMARY_STATEMENTS_GAS presence check, not by this boundary",
+  "statements_published": 25,
+  "published_period_span": [
+   "2024-05-25",
+   "2026-06-26"
+  ],
+  "days_published_inside_an_excluded_electric_period": 0,
+  "periods_inside_an_excluded_electric_period": []
  }
 }

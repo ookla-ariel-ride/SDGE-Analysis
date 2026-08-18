@@ -1236,6 +1236,131 @@ def case_export_hole_in_the_middle_fails_closed(tmp):
     return f"export hole at {victim} (interior) -> exits, artifacts untouched"
 
 
+def _stage_leading_hole(tmp):
+    """Stage an export whose earliest row is the corpus's SECOND statement — the shape
+    a rolling-window re-pull produces when it has aged past the oldest statement on
+    disk. Returns (victim, dates). SkipCase on a corpus that cannot express it."""
+    dates = _corpus_dates(tmp)
+    victim = dates[0]
+    if len(dates) < 3 or _summary_pinned(tmp, victim):
+        raise SkipCase("needs an oldest statement outside the SUMMARY_STATEMENTS lists")
+    _stage_export(tmp, dates[1:])
+    return victim, dates
+
+
+def case_export_leading_hole_records_a_remedy_that_is_true_of_it(tmp):
+    """A statement OLDER than the export's earliest row is absorbed like a trailing
+    one — but its remedy is the opposite, and the record has to say the true one
+    (issue #154).
+
+    SDG&E's billing-history export is a rolling window. When it rolls forward past
+    the oldest statement on disk, "re-pull the export" — the remedy that ends a
+    TRAILING exclusion — is precisely the action that cannot work: a fresh pull
+    starts no earlier, and can drop more statements off the front. The days come off
+    the FRONT of the analysis window, which is the CLAUDE.md §1 shape (coverage quietly
+    short), so the day loss must be a number too."""
+    victim, dates = _stage_leading_hole(tmp)
+    # A window opening on the excluded statement's own period start, so its day loss
+    # lands at the FRONT of the window and cannot be confused with a trailing one.
+    r = _run(tmp)
+    assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert [e["statement_date"] for e in b["excluded_statements"]] == [victim], b
+    v_start, v_end = (dt.date.fromisoformat(x)
+                      for x in b["excluded_statements"][0]["period_span"])
+    _stage_window(tmp, v_start.isoformat(),
+                  (v_start + dt.timedelta(days=364)).isoformat())
+    r = _run(tmp)
+    assert r.returncode == 0, f"a leading exclusion failed the run:\n{r.stderr}"
+
+    published = {p["statement_date"]
+                 for p in _rows(tmp / "data" / "bill_periods_electric.csv")}
+    assert victim not in published and published == set(dates[1:]), sorted(published)
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    rec = b["excluded_statements"][0]
+    assert rec["statement_date"] == victim, b
+
+    # The remedy must be the one that works in THIS direction, and must not be the
+    # one that does not: a re-pull starts no earlier than the export already staged.
+    ends = rec["exclusion_ends_when"]
+    assert "reaches BACK" in ends and "rolling window" in ends, (
+        f"a leading exclusion carries a remedy written for a trailing one: {ends}")
+    assert "re-pulled so that it covers this statement" not in ends, (
+        f"the leading exclusion still tells the operator to re-pull the export, "
+        f"which is the one action that cannot recover it: {ends}")
+    assert dates[1] in ends, (
+        f"the remedy does not say where the export actually starts: {ends}")
+    assert "older than the export's earliest row" in rec["reason"], rec["reason"]
+
+    # ...and the day loss off the front is a number, in the artifact and on stdout.
+    cov = b["window_coverage"]
+    assert cov["missing_ranges"][0][0] == v_start.isoformat(), (
+        f"the days lost off the FRONT of the window are not in missing_ranges: {cov}")
+    assert cov["days_the_excluded_statements_would_supply"] == cov["days_missing"] > 0, cov
+    assert "reaches BACK" in r.stdout, \
+        f"the leading exclusion's remedy is not announced:\n{r.stdout}"
+    return (f"a statement older than the export's earliest row ({victim}) is excluded "
+            f"with the remedy that is true of it (widen the export, not re-pull it) "
+            f"and {cov['days_missing']} day(s) lost off the front of the window")
+
+
+def case_gas_days_inside_an_excluded_electric_period_are_recorded(tmp):
+    """The boundary restricts ELECTRIC only, so the gas artifacts can publish billed
+    days the electric ones exclude. That asymmetry must be in the record, counted in
+    days, never left for a reader to discover by diffing the two artifacts (#159).
+
+    The export is an electric billing-history export and the gas statements carry
+    their own dates, so restricting gas by it would delete a corpus it was never able
+    to corroborate. What the record owes instead: that it does not govern gas, what
+    does, and how many published gas days fall inside an excluded electric period."""
+    victim, _dates = _stage_leading_hole(tmp)
+    r = _run(tmp)
+    assert r.returncode == 0, f"the run failed:\n{r.stderr}"
+    b = json.loads((tmp / "data" / "bill_corpus_boundary.json").read_text())
+    assert "gas_corpus" in b, (
+        "the boundary record says nothing about the gas corpus, so a gas artifact "
+        "wider than the electric one is left for a reader to discover by diffing "
+        f"the two: {sorted(b)}")
+    gasc = b["gas_corpus"]
+    assert gasc["restricted_by_this_boundary"] is False, gasc
+    assert "ELECTRIC billing-history export" in gasc["what_governs_it_instead"], gasc
+    assert "SUMMARY_STATEMENTS_GAS" in gasc["what_governs_it_instead"], gasc
+
+    gas_rows = _rows(tmp / "data" / "bill_periods_gas.csv")
+    if not gas_rows:
+        raise SkipCase("this corpus publishes no gas statements")
+    # Recomputed here from the published gas artifact and the excluded electric
+    # period, not read back from the helper that wrote the block.
+    ex = [(dt.date.fromisoformat(e["period_span"][0]),
+           dt.date.fromisoformat(e["period_span"][1])) for e in b["excluded_statements"]]
+    days, twins = set(), set()
+    for row in gas_rows:
+        s, e = (dt.datetime.strptime(x.strip(), "%b %d, %Y").date()
+                for x in row["period"].split(" - "))
+        for a, z in ex:
+            lo, hi = max(a, s), min(z, e)
+            if lo <= hi:
+                days |= {lo + dt.timedelta(days=i) for i in range((hi - lo).days + 1)}
+                twins.add(row["statement_date"])
+    if not days:
+        raise SkipCase("this corpus's gas periods do not reach the excluded electric one")
+
+    assert gasc["days_published_inside_an_excluded_electric_period"] == len(days), (
+        f"the gas corpus publishes {len(days)} billed day(s) inside the excluded "
+        f"electric period but the record says "
+        f"{gasc['days_published_inside_an_excluded_electric_period']}: {gasc}")
+    assert {o["gas_statement_date"]
+            for o in gasc["periods_inside_an_excluded_electric_period"]} == twins, gasc
+    assert {o["excluded_electric_statement_date"]
+            for o in gasc["periods_inside_an_excluded_electric_period"]} == {victim}, gasc
+    assert gasc["statements_published"] == len({g["statement_date"] for g in gas_rows}), gasc
+    # ...and it is announced, so the run is not silent about it either.
+    assert "GAS IS WIDER" in r.stdout and str(len(days)) in r.stdout, \
+        f"the gas/electric asymmetry is not announced:\n{r.stdout}"
+    return (f"the gas artifacts publish {len(days)} billed day(s) inside excluded "
+            f"electric statement {victim}, recorded and announced instead of silent")
+
+
 def case_export_sharing_no_statement_fails_closed(tmp):
     """An export documenting a different account would exclude the entire corpus.
     Publishing nothing at all is never the honest reading of "restrict deliberately",
@@ -1360,6 +1485,115 @@ def case_export_with_only_blank_statement_dates_fails_closed(tmp):
     return "export with every statement_date blank -> exits, artifacts untouched"
 
 
+def _ranges(days):
+    """[date, ...] -> [[first, last], ...] over each contiguous run (ISO strings)."""
+    out = []
+    for d in sorted(days):
+        if out and d - dt.date.fromisoformat(out[-1][1]) == dt.timedelta(days=1):
+            out[-1][1] = d.isoformat()
+        else:
+            out.append([d.isoformat(), d.isoformat()])
+    return out
+
+
+def _assert_boundary_window_current(data_dir):
+    """Recompute bill_corpus_boundary.json's window_coverage block from the OTHER
+    committed artifacts and assert the committed block matches.
+
+    Every input is committed and de-identified — behavior_rebuild.json's window,
+    bill_periods_electric.csv's published periods, and the excluded statements'
+    own spans — so this runs in CI, where parse_bills.py itself cannot (it needs
+    the gitignored bill PDFs). AssertionError, with the diagnosis, on a mismatch."""
+    b = json.loads((data_dir / "bill_corpus_boundary.json").read_text())
+    cov = b["window_coverage"]
+    w = json.loads((data_dir / "behavior_rebuild.json").read_text())["window"]
+    w_start = dt.date.fromisoformat(str(w["start"])[:10])
+    w_end = dt.date.fromisoformat(str(w["end"])[:10])
+    stale = (f"Re-run analysis/parse_bills.py (it needs the private bill corpus) and "
+             f"commit its seven artifacts: data/bill_corpus_boundary.json publishes "
+             f"day-coverage figures computed against a window that no longer exists.")
+    assert cov["window"] == [w_start.isoformat(), w_end.isoformat()], (
+        f"data/bill_corpus_boundary.json reports coverage against the window "
+        f"{cov['window']}, but data/behavior_rebuild.json's window is now "
+        f"[{w_start.isoformat()}, {w_end.isoformat()}]. {stale}")
+
+    bounds = [_period_bounds(r["period"])
+              for r in _rows(data_dir / "bill_periods_electric.csv")]
+    c_start, c_end = min(s for s, _ in bounds), max(e for _, e in bounds)
+    assert b["published_period_span"] == [c_start.isoformat(), c_end.isoformat()], (
+        f"the boundary record says the published corpus spans "
+        f"{b['published_period_span']}, but data/bill_periods_electric.csv spans "
+        f"[{c_start.isoformat()}, {c_end.isoformat()}]. {stale}")
+    window = [w_start + dt.timedelta(days=i) for i in range((w_end - w_start).days + 1)]
+    covered = [d for d in window if c_start <= d <= c_end]
+    missing = [d for d in window if not (c_start <= d <= c_end)]
+    supplied = set()
+    for rec in b["excluded_statements"]:
+        a, z = (dt.date.fromisoformat(x) for x in rec["period_span"])
+        supplied |= {d for d in missing if a <= d <= z}
+    for key, want in (("window_days", len(window)),
+                      ("days_covered", len(covered)),
+                      ("days_missing", len(missing)),
+                      ("missing_ranges", _ranges(missing)),
+                      ("days_the_excluded_statements_would_supply", len(supplied))):
+        assert cov[key] == want, (
+            f"window_coverage.{key} is {cov[key]!r}, recomputed from the committed "
+            f"artifacts it is {want!r}. {stale}")
+
+
+def case_committed_boundary_is_current_with_the_committed_window():
+    """The committed boundary artifact must still be true of the committed window.
+
+    parse_bills.py reads the analysis window from data/behavior_rebuild.json, which
+    another generator owns. Regenerate that against a fresh Green Button export and
+    its window moves; nothing re-derives the boundary, so data/bill_corpus_boundary
+    .json goes on publishing day-coverage figures (the 338-of-365 the report quotes)
+    against a window that no longer exists. Every check that could catch it needs the
+    private bill corpus and skips in CI, which is exactly why this one is computed
+    from committed, de-identified artifacts only and runs anywhere (issue #155).
+
+    It then proves itself on a tampered copy: a check that cannot fail on the drift
+    it names is not a gate."""
+    data = ROOT / "data"
+    names = ("bill_corpus_boundary.json", "behavior_rebuild.json",
+             "bill_periods_electric.csv")
+    for n in names:
+        if not (data / n).exists():
+            raise SkipCase(f"data/{n} is not committed in this checkout")
+    b = json.loads((data / "bill_corpus_boundary.json").read_text())
+    if b.get("window_coverage") is None:
+        raise SkipCase("the committed boundary records no window coverage")
+    if not _rows(data / "bill_periods_electric.csv"):
+        raise SkipCase("no published electric periods to recompute coverage from")
+
+    _assert_boundary_window_current(data)
+
+    with tempfile.TemporaryDirectory() as td:
+        moved = pathlib.Path(td) / "data"
+        moved.mkdir()
+        for n in names:
+            shutil.copy2(data / n, moved / n)
+        j = json.loads((moved / "behavior_rebuild.json").read_text())
+        for end in ("start", "end"):
+            v = str(j["window"][end])
+            j["window"][end] = (dt.date.fromisoformat(v[:10])
+                                + dt.timedelta(days=30)).isoformat() + v[10:]
+        (moved / "behavior_rebuild.json").write_text(json.dumps(j))
+        try:
+            _assert_boundary_window_current(moved)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(
+                "behavior_rebuild.json's window moved 30 days and the committed "
+                "boundary's day figures still passed — the check cannot detect the "
+                "staleness it exists for")
+    cov = b["window_coverage"]
+    return (f"the committed boundary's {cov['days_covered']}/{cov['window_days']}-day "
+            f"coverage recomputes from the committed window and periods, and the "
+            f"check fails when that window moves")
+
+
 # Cases needing the gitignored bill PDFs. Only these can be skipped.
 CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_mid_corpus_gap, case_mid_corpus_gas_gap,
@@ -1385,6 +1619,8 @@ CORPUS_CASES = [case_healthy_corpus, case_missing_summary_statement,
                 case_export_day_coverage_shortfall_is_a_number,
                 case_export_row_with_no_pdf_fails_closed,
                 case_export_hole_in_the_middle_fails_closed,
+                case_export_leading_hole_records_a_remedy_that_is_true_of_it,
+                case_gas_days_inside_an_excluded_electric_period_are_recorded,
                 case_export_sharing_no_statement_fails_closed,
                 case_no_export_publishes_the_whole_corpus,
                 case_no_export_records_the_underivable_boundary_in_the_artifact,
@@ -1406,7 +1642,8 @@ STANDALONE_CASES = [case_write_rollback, case_rollback_after_partial_swap,
                     case_fork_corpus_skips_presence_check,
                     case_partial_overlap_still_fails,
                     case_neither_fixed_charge_label_present_fails,
-                    case_both_fixed_charge_labels_present_prefers_bsc]
+                    case_both_fixed_charge_labels_present_prefers_bsc,
+                    case_committed_boundary_is_current_with_the_committed_window]
 
 
 def main():
